@@ -35,11 +35,6 @@ class TestCloudM(unittest.TestCase):
     def test_show_version(self):
         comd = []
         res = self.app.run_function("Version", command=comd)
-        api_ver = self.app.AC_MOD.api_version
-        if api_ver:
-            self.assertEqual(api_ver, "0.0.1")
-        else:
-            print("API Not Found")
         self.assertEqual(res, "0.0.1")
 
     def test_new_module(self):

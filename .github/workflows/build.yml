@@ -23,10 +23,6 @@ jobs:
                     - { os:  windows-latest, py: "3.8" }
                     - { os:  windows-latest, py: "3.9" }
                     - { os:  windows-latest, py: "3.10" }
-                    - { os:  windows-10, py: "3.7" }
-                    - { os:  windows-10, py: "3.8" }
-                    - { os:  windows-10, py: "3.9" }
-                    - { os:  windows-10, py: "3.10" }
 
         env:
             SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
