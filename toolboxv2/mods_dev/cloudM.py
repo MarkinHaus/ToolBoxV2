@@ -208,24 +208,23 @@ class Tools(MainTool, FileHandler):
         mod_name = command[1]
         if len(command) == 2:
             boilerplate = boilerplate.replace('pass', '').replace('# ~ ', '')
-        postfix = "_dev" if app.debug else ""
         self.print(f"Test existing {self.api_version=} ", end='')
         if self.api_version != '404':
             if self.download(["", mod_name]):
                 self.print(Style.Bold(Style.RED("MODULE exists-on-api pleas use a other name")))
                 return False
         self.print("NEW MODULE: " + mod_name, end=" ")
-        if os.path.exists(f"mods{postfix}\\" + mod_name + ".py"):
+        if os.path.exists(f"mods_dev/" + mod_name + ".py"):
             self.print(Style.Bold(Style.RED("MODULE exists pleas use a other name")))
             return False
 
         # fle = Path("mods_dev/" + mod_name + ".py")
         # fle.touch(exist_ok=True)
-        mod_file = open(f"mods{postfix}/" + mod_name + ".py", "wb")
-        mod_file.write(
-            bytes(boilerplate.replace('NAME', mod_name), 'ISO-8859-1')
-        )
-        mod_file.close()
+        with open(f"mods_dev/" + mod_name + ".py", "wb") as mod_file:
+            mod_file.write(
+                bytes(boilerplate.replace('NAME', mod_name), 'ISO-8859-1')
+            )
+
         self.print("finished")
         return True
 
