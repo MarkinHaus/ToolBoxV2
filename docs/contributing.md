@@ -53,7 +53,7 @@ Ready to contribute? Here's how to set up ToolBoxV2 for local development.
 2.  Clone your fork locally:
 
     ```shell
-    $ git clone git@github.com:your_name_here/ToolBoxV2.git
+    $ git clone git@github.com:MarkinHaus/ToolBoxV2.git
     ```
 
 3.  Install your local copy into a virtualenv. Assuming you have

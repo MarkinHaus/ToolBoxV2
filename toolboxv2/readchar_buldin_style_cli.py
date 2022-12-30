@@ -149,7 +149,7 @@ def run_cli(app: App):
             print(f"{app.id = }\n{app.stuf_load = }\n{app.mlm = }\n{app.auto_save = }"
                   f"\n{app.AC_MOD = }\n{app.debug = }")
 
-        elif command[0].upper() == "EXIT":  # builtin events(exit)
+        elif command[0].lower() == "EXIT":  # builtin events(exit)
             if input("Do you want to exit? (y/n): ") in ["y", "yes", "Y"]:
                 app.save_exit()
                 app.exit()
@@ -158,7 +158,7 @@ def run_cli(app: App):
             n = command[1] if len(command) > 2 else ''
             app.help(n)
 
-        elif command[0].upper() == 'LOAD-MOD':  # builtin events(event(cloudM(_)->event(Build)))
+        elif command[0].lower() == 'LOAD-MOD':  # builtin events(event(cloudM(_)->event(Build)))
             if len(command) == 2:
                 app.save_load(command[1])
                 app.new_ac_mod(command[1])
@@ -198,15 +198,15 @@ def run_cli(app: App):
         elif command[0] == 'mode:stuf':
             app.stuf_load = not app.stuf_load
 
-        elif command[0].upper() in app.MOD_LIST.keys():
+        elif command[0].lower() in app.MOD_LIST.keys():
             app.new_ac_mod(command[0])
 
             if len(command) > 1:
-                if command[1].upper() in app.SUPER_SET:
+                if command[1].lower() in app.SUPER_SET:
                     app.run_function(command[1], command[1:])
 
         elif app.AC_MOD:  # builtin events(AC_MOD(MOD))
-            if command[0].upper() in app.SUPER_SET:
+            if command[0].lower() in app.SUPER_SET:
                 app.run_function(command[0], command)
             else:
                 print(Style.RED("function could not be found"))

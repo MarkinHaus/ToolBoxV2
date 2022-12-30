@@ -57,7 +57,7 @@ def close():
 
 
 @app.get("/id")
-def close():
+def id_api():
     return {"res": str(tb_app.id)}
 
 

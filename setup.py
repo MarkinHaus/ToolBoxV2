@@ -56,7 +56,7 @@ setup(
     include_package_data=True,
     keywords='toolboxv2',
     name='ToolBoxV2',
-    packages=find_packages(include=['toolboxv2', 'toolboxv2.mods.*', 'toolboxv2.*']),
+    packages=find_packages(include=['toolboxv2', 'toolboxv2.mods.*',  'toolboxv2.mods_dev.*', 'toolboxv2.*']),
     setup_requires=setup_requirements,
     test_suite='tests',
     tests_require=test_requirements,

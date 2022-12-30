@@ -8,18 +8,17 @@ from toolboxv2.Style import Style
 
 class Tools(MainTool):
     def __init__(self, app=None):
-        self.version = "0.3.2"
+        self.version = "0.0.1"
         self.name = "welcome"
         self.logs = app.logs_ if app else None
         self.color = "YELLOW"
         self.tools = {
-            "all": [["Version", "Shows current Version "], ["tool_tip", "tips"], ["Animation", "TOOL BOX 0 8s"],
+            "all": [["Version", "Shows current Version "], ["Animation", "TOOL BOX 0 8s"],
                     ["Animation1", "TOOL BOX 1 8s"], ["printT", "print TOOL BOX"]],
-            "name": "print_main",
+            "name": "welcome",
             "Animation": self.ali1,
             "Animation1": self.ali2,
             "Version": self.show_version,
-            "tool_tip": self.tip,
             "printT": self.print_t}
 
         MainTool.__init__(self, load=None, v=self.version, tool=self.tools,
@@ -34,7 +33,7 @@ class Tools(MainTool):
         printc("******██║***╚██████╔╝*╚██████╔╝*███████╗****██████╔╝*╚██████╔╝*██╔╝*██╗***")
         printc("******╚═╝****╚═════╝***╚═════╝**╚══════╝****╚═════╝***╚═════╝**╚═╝**╚═╝***")
         printc("**************************************************************************")
-        print("Version:", self.version, ":", system())
+        self.print(f"Version: {self.version} : {system()}")
         return "TOOL BOX"
 
     def print_a(self):
@@ -46,17 +45,13 @@ class Tools(MainTool):
         printc("******██║***╚██████╔╝*╚██████╔╝**██████╔╝**██╔╝*██╗****██╔════════██╗**██║**********██║****")
         printc("******╚═╝****╚═════╝***╚═════╝***╚═════╝***╚═╝**╚═╝****╚═╝********╚═╝**╚═╝**********╚═╝****")
         printc("*******************************************************************************************")
-        print("Version:", self.version, ":", system())
+        self.print(f"Version: {self.version} : {system()}")
         return "TOOBX API"
-
-    def tip(self):
-        printc(self.tools)
-        input(":")
 
     def cls(self):
         if system() == "Windows":
             os.system("cls")
-        if system() == "Linux":
+        else:
             os.system("clear")
 
     def ali2(self):
@@ -432,6 +427,8 @@ class Tools(MainTool):
         sleep(0.2)
         self.cls()
 
+        return "Animation1"
+
     def ali1(self):
         printc("**************************************************************************")
         printc("**************************************************************************")
@@ -592,10 +589,19 @@ class Tools(MainTool):
         printc("**************************************************************************")
         sleep(0.5)
         self.cls()
+        return "Animation"
 
     def show_version(self):
-        print("Version: ", self.version)
+        self.print(f"Version: {self.version}")
+        return self.version
 
 
 def printc(str_):
-    print(Style.GREEN(str(str_)))
+    try:
+        print(Style.GREEN(str(str_, 'Utf-8')))
+    except TypeError:
+        print('*********************************TypeError********************************')
+        try:
+            print(Style.GREEN(str(str_, 'ISO-88591')))
+        except TypeError:
+            print('*********************************TypeError********************************', end='\r')

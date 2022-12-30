@@ -6,7 +6,6 @@ import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from importlib import import_module
-from pathlib import Path
 
 import jwt
 import requests
@@ -231,11 +230,11 @@ class Tools(MainTool, FileHandler):
         return True
 
     def upload(self, input_):
-            version_command = self.get_file_handler(self.keys["URL"])
-            url = "http://127.0.0.1:8081/upload-file"
-            if version_command is not None:
-                url = version_command + "/upload-file"
-        #try:
+        version_command = self.get_file_handler(self.keys["URL"])
+        url = "http://127.0.0.1:5000/upload-file"
+        if version_command is not None:
+            url = version_command + "/upload-file"
+        try:
             if len(input_) >= 2:
                 name = input_[1]
                 os.system("cd")
@@ -269,9 +268,9 @@ class Tools(MainTool, FileHandler):
 
             else:
                 self.print((Style.YELLOW(f"SyntaxError : upload filename {input_}")))
-        #except Exception as e:
-        #    self.print(Style.RED(f"Error uploading : {e}"))
-        #    return
+        except Exception as e:
+            self.print(Style.RED(f"Error uploading : {e}"))
+            return
 
     def download(self, input_):
         version_command = self.get_file_handler(self.keys["URL"])
@@ -288,7 +287,8 @@ class Tools(MainTool, FileHandler):
                     data = requests.get(url).json()["res"]
                     if str(data, "utf-8") == f"name not found {name}":
                         return False
-                    open("./mods/" + name, "a").write(str(data, "utf-8"))
+                    with open("./mods/" + name, "a") as f:
+                        f.write(str(data, "utf-8"))
                     self.print("saved file to: " + "./mods" + name)
                     return True
 
@@ -310,7 +310,9 @@ class Tools(MainTool, FileHandler):
         except FileNotFoundError:
             return f"name not found {filename}"
 
-        return open("./mods/" + filename, "rb").read()
+        with open("./mods/" + filename, "rb") as f:
+            d = f.read()
+        return d
 
     def add_url_con(self, command):
         """
@@ -324,6 +326,7 @@ class Tools(MainTool, FileHandler):
             url = "https://simeplm"
         self.print(Style.YELLOW(f"Adding url : {url}"))
         self.add_to_save_file_handler(self.keys["URL"], url)
+        return url
 
     def create_account(self):
         version_command = self.get_file_handler(self.keys["URL"])
@@ -337,6 +340,8 @@ class Tools(MainTool, FileHandler):
             webbrowser.open(url, new=0, autoraise=True)
         except Exception:
             print("error")
+            return False
+        return True
 
     def log_in(self, input_):
         version_command = self.get_file_handler(self.keys["URL"])
@@ -372,12 +377,16 @@ class Tools(MainTool, FileHandler):
 
                 self.print("Saved")
 
+                return True
+
             else:
                 self.print(Style.RED(f"ERROR: {error}"))
         else:
             self.print(Style.RED(f"ERROR: {input_} len {len(input_)} != 3 | login username password"))
 
-    def update_core(self, command, app: App):
+        return False
+
+    def update_core(self, _, app: App):
         self.print("Init Restarting..")
         os.system("git pull")
         app.reset()
@@ -393,7 +402,7 @@ class Tools(MainTool, FileHandler):
             exit(0)
 
     def create_user(self, command, app: App):
-        if "DB" not in list(app.MOD_LIST.keys()):
+        if "db" not in list(app.MOD_LIST.keys()):
             return "Server has no database module"
 
         data = command[0].data
@@ -404,7 +413,7 @@ class Tools(MainTool, FileHandler):
 
         uid = str(uuid.uuid4())
 
-        tb_token_jwt = app.MOD_LIST["DB"].tools["get"](["jwt-secret-cloudMService"], app)
+        tb_token_jwt = app.MOD_LIST["db"].tools["get"](["jwt-secret-cloudMService"], app)
 
         if not tb_token_jwt:
             return "jwt - not found pleas register one"
@@ -416,11 +425,11 @@ class Tools(MainTool, FileHandler):
             return "email already exists"
         jwt_key = crate_sing_key(username, email, password, uid, gen_token_time({"v": self.version}, 4380),
                                  tb_token_jwt, app)
-        app.MOD_LIST["DB"].tools["set"](["", f"user::{username}::{email}::{uid}", jwt_key])
+        app.MOD_LIST["db"].tools["set"](["", f"user::{username}::{email}::{uid}", jwt_key])
         return jwt_key
 
     def log_in_user(self, command, app: App):
-        if "DB" not in list(app.MOD_LIST.keys()):
+        if "db" not in list(app.MOD_LIST.keys()):
             return "Server has no database module"
 
         data = command[0].data
@@ -428,12 +437,12 @@ class Tools(MainTool, FileHandler):
         username = data["username"]
         password = data["password"]
 
-        tb_token_jwt = app.MOD_LIST["DB"].tools["get"](["jwt-secret-cloudMService"], app)
+        tb_token_jwt = app.MOD_LIST["db"].tools["get"](["jwt-secret-cloudMService"], app)
 
         if not tb_token_jwt:
             return "jwt - not found pleas register one"
 
-        user_data_token = app.MOD_LIST["DB"].tools["get"]([f"user::{username}::*"], app)
+        user_data_token = app.MOD_LIST["db"].tools["get"]([f"user::{username}::*"], app)
 
         user_data: dict = validate_jwt(user_data_token, str(tb_token_jwt, "utf-8"), app.id)
 
@@ -463,7 +472,7 @@ class Tools(MainTool, FileHandler):
 
     def validate_jwt(self, command, app: App):  # spec s -> validate token by server x ask max
         res = ''
-        if "DB" not in list(app.MOD_LIST.keys()):
+        if "db" not in list(app.MOD_LIST.keys()):
             if not ["passdb"] in command[0].data.keys():
                 return "Server has no database module"
             res = "no-db"
@@ -472,7 +481,7 @@ class Tools(MainTool, FileHandler):
         data = command[0].data
 
         if res != "no-db":
-            tb_token_jwt = app.MOD_LIST["DB"].tools["get"](["jwt-secret-cloudMService"], app)
+            tb_token_jwt = app.MOD_LIST["db"].tools["get"](["jwt-secret-cloudMService"], app)
             res = validate_jwt(token, tb_token_jwt, app.id)
         if type(res) != str:
             return res
@@ -500,10 +509,10 @@ class Tools(MainTool, FileHandler):
         return res
 
     def test_if_exists(self, name: str, app: App):
-        if "DB" not in list(app.MOD_LIST.keys()):
+        if "db" not in list(app.MOD_LIST.keys()):
             return "Server has no database module"
 
-        db: MainTool = app.MOD_LIST["DB"]
+        db: MainTool = app.MOD_LIST["db"]
 
         get_db = db.tools["get"]
 

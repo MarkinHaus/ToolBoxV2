@@ -4,7 +4,6 @@ from platform import system
 import requests
 
 from toolboxv2 import MainTool, FileHandler, App
-from toolboxv2.Style import Style
 
 
 class Tools(MainTool, FileHandler):  # FileHandler

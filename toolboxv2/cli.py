@@ -5,7 +5,6 @@ import sys
 import argparse
 import socketserver
 from platform import system
-from threading import Thread
 
 # Import public Pages
 from toolboxv2 import App, run_cli, AppServerHandler
@@ -19,6 +18,7 @@ def parse_args():
 
     parser.add_argument('-f', '--init-file',
                         type=str,
+                        default="init.config",
                         help="optional init flag init from config file or url")
 
     parser.add_argument("-update",

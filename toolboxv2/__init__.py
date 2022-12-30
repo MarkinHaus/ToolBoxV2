@@ -1,11 +1,8 @@
 """Top-level package for ToolBox."""
-from .toolbox import App, MainTool, FileHandler
-from .Style import Style
-from .readchar_buldin_style_cli import run_cli
-from .app.serve_app import AppServerHandler
-
-from .mods import *
-from .mods_dev import *
+from toolboxv2.toolbox import App, MainTool, FileHandler
+from toolboxv2.Style import Style
+from toolboxv2.readchar_buldin_style_cli import run_cli
+from toolboxv2.app.serve_app import AppServerHandler
 
 __author__ = """Markin Hausmanns"""
 __email__ = 'Markinhausmanns@gmail.com'

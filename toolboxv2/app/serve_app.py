@@ -5,7 +5,6 @@ import os
 
 import urllib.parse
 import http.server
-import threading
 import re
 from pathlib import Path
 
@@ -27,4 +26,3 @@ class AppServerHandler(http.server.SimpleHTTPRequestHandler):
             self.path = 'index.html'
         self.path = 'app/'+self.path
         return http.server.SimpleHTTPRequestHandler.do_GET(self)
-

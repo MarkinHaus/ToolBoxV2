@@ -198,16 +198,15 @@ class ApiOb:
 
 class App:
     def __init__(self, prefix: str = "", args=AppArgs().default()):
-
+        print("Starting Tool - Box from : ", end='')
         abspath = os.path.abspath(__file__)
         dname = os.path.dirname(abspath)
         os.chdir(dname)
-        print(Style.Bold(Style.CYAN(f"using local mods = {os.getcwd()}")))
+        print(Style.CYAN(f"{abspath}"))
+        print(Style.Bold(Style.CYAN(f"working dir : {os.getcwd()}")))
 
         if args.init:
-            if not args.init_file:
-                args.init_file = "init.config"
-            self._initialize_toolBox(args.init, args.init_file)
+            _initialize_toolBox(args.init, args.init_file)
 
         name = prefix + '-' + node()
         self.version = toolboxv2.__version__
@@ -224,7 +223,9 @@ class App:
             "st-load": "mute~load:",
             "module-load-mode": "load~mode:",
         }
-        self.MACRO = self._get_config_data("MACRO", [])
+        self.debug = False
+        self.debug = self._get_config_data("debug", args.live)
+        self.MACRO = self._get_config_data("MACRO", ["Exit"])
         self.MACRO_color = self._get_config_data("MACRO_C", {})
         self.HELPER = self._get_config_data("HELPER", {})
         self.id = self._get_config_data("id", [name])[0]
@@ -237,9 +238,8 @@ class App:
         self.SUPER_SET = []
         self.AC_MOD = None
         self.alive = True
-        self.debug = self._get_config_data("debug", args.live)
 
-        print("SYSTEM :: " + node())
+        print("SYSTEM :: " + node(), 'Version :', self.version)
 
         if args.update:
             self.run_any("cloudM", "#update-core", [])
@@ -252,56 +252,40 @@ class App:
             self.save_exit()
             self.exit()
 
-    def _initialize_toolBox(self, init_type, init_from):
-        data = ""
-        print("Initialing ToolBox: " + init_type)
-        if init_type.startswith("http"):
-            print("Download from url: " + init_from + "\n->temp_config.config")
-            try:
-                data = requests.get(init_from).json()["res"]
-            except Exception:
-                print(Style.RED("Error retrieving config information "))
-                exit(1)
-
-            init_type = "init_config"
-        else:
-            data = open(init_from, 'r+').read()
-
-        fh = FileHandler(init_type + '-' + node() + ".config")
-        fh.open_s_file_handler()
-        fh.file_handler_storage.write(str(data))
-        fh.file_handler_storage.close()
-
     def _test_repeat(self):
         if self.config_fh.file_handler_index_ == -1:
             self.debug_print("Config - Installation Don")
         if self.config_fh.file_handler_index_ == 0:
-            self.debug_print("Darten Wurden Wärend Runtim Entfernt")
+            self.debug_print("data missing")
         return self.config_fh.file_handler_index_ <= 0
 
     def _get_config_data(self, key, t):
+        self.debug_print(f"Loading config data data_key : {key} : val =", end=" ")
         data = self.config_fh.get_file_handler(self.keys[key])
         if data is not None:
             try:
+                print(data[:15])
                 return eval(data)
             except ValueError:
-                self.debug_print(f"Error Loading {key}")
+                self.debug_print(Style.RED(f"ValueError no data for key {key}"))
         return t
 
     def _coppy_mod(self, content, new_mod_dir, mod_name):
+        mode = 'xb'
+
         if not os.path.exists(new_mod_dir):
             os.makedirs(new_mod_dir)
-            open(f"{new_mod_dir}/__init__.py", "w").write(
-                f"__version__ = '{self.version}'")
+            with open(f"{new_mod_dir}/__init__.py", "w") as nmd:
+                nmd.write(f"__version__ = '{self.version}'")
+
         if os.path.exists(f"{new_mod_dir}/{mod_name}.py"):
             with open(f"{new_mod_dir}/{mod_name}.py", 'rb') as d:
                 runtime_mod = d.read()  # Testing version but not efficient
-                if len(content) != len(runtime_mod):
-                    with open(f"{new_mod_dir}/{mod_name}.py", 'wb') as f:
-                        f.write(content)
-        else:
-            with open(f"{new_mod_dir}/{mod_name}.py", 'xb') as f:
-                f.write(content)
+            if len(content) != len(runtime_mod):
+                mode = 'wb'
+
+        with open(f"{new_mod_dir}/{mod_name}.py", mode) as f:
+            f.write(content)
 
     def _pre_lib_mod(self, mod_name):
         working_dir = self.id.replace(".", "_")
@@ -311,7 +295,7 @@ class App:
         new_mod_dir = f"./runtime/{working_dir}/mod_lib"
         with open(mod_file_dir, "rb") as c:
             content = c.read()
-            self._coppy_mod(content, new_mod_dir, mod_name)
+        self._coppy_mod(content, new_mod_dir, mod_name)
         return lib_mod_dir
 
     def _copy_load(self, mod_name):
@@ -321,21 +305,18 @@ class App:
     def inplace_load(self, mod_name, loc="toolboxv2.mods."):
         if self.debug and loc == "toolboxv2.mods.":
             loc = "toolboxv2.mods_dev."
-        if mod_name.upper() in list(self.MOD_LIST.keys()):
+        if mod_name.lower() in list(self.MOD_LIST.keys()):
             print("Reloading mod from = ", loc)
             self.remove_mod(mod_name)
         mod = import_module(loc + mod_name)
         mod = getattr(mod, "Tools")
-        #
         mod = mod(app=self)
         mod_name = mod.name
-        self.MOD_LIST[mod_name.upper()] = mod
+        self.MOD_LIST[mod_name.lower()] = mod
         color = mod.color if mod.color else "WHITE"
-        self.MACRO.append(mod_name.upper())
-        self.MACRO_color[mod_name.upper()] = color
-        self.HELPER[mod_name.upper()] = mod.tools["all"]
-        # # for spec, _ in mod.tools["all"]:
-        # #     self.spec.append(mod_name.upper() + "-" + spec.upper())
+        self.MACRO.append(mod_name.lower())
+        self.MACRO_color[mod_name.lower()] = color
+        self.HELPER[mod_name.lower()] = mod.tools["all"]
 
         return mod
 
@@ -343,13 +324,16 @@ class App:
         if not self.AC_MOD:
             self.debug_print(Style.RED("No module Active"))
             return None
+
         if self.debug:
-            return self.AC_MOD.tools[self.AC_MOD.tools["all"][self.SUPER_SET.index(name.upper())][0]]
+            return self.AC_MOD.tools[self.AC_MOD.tools["all"][self.SUPER_SET.index(name.lower())][0]]
+
         try:
-            return self.AC_MOD.tools[self.AC_MOD.tools["all"][self.SUPER_SET.index(name.upper())][0]]
+            return self.AC_MOD.tools[self.AC_MOD.tools["all"][self.SUPER_SET.index(name.lower())][0]]
         except KeyError as e:
             print(Style.RED(f"KeyError: {e} function not found 404"))
-            return None
+
+        return None
 
     def save_exit(self):
 
@@ -375,7 +359,7 @@ class App:
         if self.AC_MOD.file_handler_index_ == -1:
             self.debug_print("Config - Installation Don")
         if self.AC_MOD.file_handler_index_ == 0:
-            self.debug_print("Darten Wurden Wärend Runtim Entfernt")
+            self.debug_print("data missing")
         return self.AC_MOD.file_handler_index_ <= 0
 
     def load_mod(self, mod_name):
@@ -385,9 +369,9 @@ class App:
         if self.mlm == "C":
             return self._copy_load(mod_name)
         else:
-            raise ValueError(f"config mlm must bee I or C is {self.mlm}")
+            raise ValueError(f"config mlm must bee I (inplace load) or C (coppy to runtime load) is {self.mlm=}")
 
-    def load_all_mods_in_file(self, working_dir="mods"):#
+    def load_all_mods_in_file(self, working_dir="mods"):
         w_dir = self.id.replace(".", "_")
         if self.mlm == "C":
             if os.path.exists(f"./runtime/{w_dir}/mod_lib"):
@@ -450,16 +434,16 @@ class App:
 
     def remove_mod(self, mod_name):
 
-        del self.MOD_LIST[mod_name.upper()]
-        del self.MACRO_color[mod_name.upper()]
-        del self.HELPER[mod_name.upper()]
-        self.MACRO.remove(mod_name.upper())
+        del self.MOD_LIST[mod_name.lower()]
+        del self.MACRO_color[mod_name.lower()]
+        del self.HELPER[mod_name.lower()]
+        self.MACRO.remove(mod_name.lower())
 
     def colorize(self, obj):
         for pos, o in enumerate(obj):
-            if o.upper() in self.MACRO:
-                if o.upper() in self.MACRO_color.keys():
-                    obj[pos] = f"{Style.style_dic[self.MACRO_color[o.upper()]]}{o}{Style.style_dic['END']}"
+            if o.lower() in self.MACRO:
+                if o.lower() in self.MACRO_color.keys():
+                    obj[pos] = f"{Style.style_dic[self.MACRO_color[o.lower()]]}{o}{Style.style_dic['END']}"
         return obj
 
     def pretty_print(self, obj: list):
@@ -475,7 +459,7 @@ class App:
         if command == "":
             return options
         for macro in self.MACRO + self.SUPER_SET:
-            if macro.startswith(command.upper()):
+            if macro.startswith(command.lower()):
                 options.append(macro)
 
         return options
@@ -505,9 +489,9 @@ class App:
             self.command_viewer(self.AC_MOD.tools["all"])
             return self.AC_MOD.tools["all"]
 
-        elif command.upper() in self.HELPER.keys():
-            helper = self.HELPER[command.upper()]
-            print(Style.Bold(command.upper()))
+        elif command.lower() in self.HELPER.keys():
+            helper = self.HELPER[command.lower()]
+            print(Style.Bold(command.lower()))
             self.command_viewer(helper)
             return helper
         else:
@@ -537,7 +521,7 @@ class App:
                 return self.AC_MOD.file_handler_filename
         except AttributeError as e:
             print(Style.RED(f"AttributeError: {e} has no file handler 404"))
-            return None
+        return None
 
     def run_function(self, name, command):
         # get function
@@ -589,14 +573,13 @@ class App:
             self.debug_print(Style.YELLOW(f"! to many args {args} def ...(u): | -> {str(sig)}"))
 
         self.debug_print(res)
-
         self.debug_print(f"Name: {self.id} : {__name__}")
 
         return res
 
     def run_any(self, module_name: str, function_name: str, command: list):
 
-        if module_name.upper() not in list(self.MOD_LIST.keys()):
+        if module_name.lower() not in list(self.MOD_LIST.keys()):
             print(f"Module : {module_name}.{function_name} not online")
             self.save_load(module_name)
 
@@ -618,15 +601,15 @@ class App:
     def set_spec(self):
         self.SUPER_SET = []
         for spec in self.AC_MOD.tools["all"]:
-            self.SUPER_SET.append(spec[0].upper())
+            self.SUPER_SET.append(spec[0].lower())
 
     def new_ac_mod(self, name):
-        if name.upper() not in self.MOD_LIST.keys():
+        if name.lower() not in self.MOD_LIST.keys():
             return f"valid mods ar : {self.MOD_LIST.keys()}"
-        self.AC_MOD = self.MOD_LIST[name.upper()]
+        self.AC_MOD = self.MOD_LIST[name.lower()]
         self.AC_MOD.stuf = self.stuf_load
         self.PREFIX = Style.CYAN(
-            f"~{node()}:{Style.Bold(self.pretty_print([name.upper()]).strip())}{Style.CYAN('@>')}")
+            f"~{node()}:{Style.Bold(self.pretty_print([name.lower()]).strip())}{Style.CYAN('@>')}")
         self.set_spec()
 
     def debug_print(self, message, *args, end="\n"):
@@ -653,3 +636,26 @@ class App:
             print("\n")
 
         return mod_command_names
+
+
+def _initialize_toolBox(init_type, init_from):
+    data = ""
+    print("Initialing ToolBox: " + init_type)
+    if init_type.startswith("http"):
+        print("Download from url: " + init_from + "\n->temp_config.config")
+        try:
+            data = requests.get(init_from).json()["res"]
+        except TimeoutError:
+            print(Style.RED("Error retrieving config information "))
+            exit(1)
+
+        init_type = "main"
+    else:
+        data = open(init_from, 'r+').read()
+
+    fh = FileHandler(init_type + '-' + node() + ".config")
+    fh.open_s_file_handler()
+    fh.file_handler_storage.write(str(data))
+    fh.file_handler_storage.close()
+
+    print("Done!")
