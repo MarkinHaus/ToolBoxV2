@@ -46,9 +46,9 @@ class TestCloudM(unittest.TestCase):
         comd = ["", "cloudM"]
         res = self.app.run_function("NEW", command=comd)
         self.assertFalse(res)
-        self.assertTrue(os.path.exists(f".\\mods_dev\\test_module.py"))
-        os.remove(".\\mods_dev\\test_module.py")
-        self.assertFalse(os.path.exists(f".\\mods_dev\\test_module.py"))
+        self.assertTrue(os.path.exists("./mods_dev/test_module.py"))
+        os.remove("./mods_dev/test_module.py")
+        self.assertFalse(os.path.exists("./mods_dev/test_module.py"))
 
     # def test_upload(self):
     #    comd = []
