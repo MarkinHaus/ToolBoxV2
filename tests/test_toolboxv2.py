@@ -27,7 +27,7 @@ class TestToolboxv2(unittest.TestCase):
         self.app = App("test")
         self.app.mlm = "I"
         self.app.debug = True
-        self.app.load_all_mods_in_file(".\\mods_dev\\")
+        self.app.load_all_mods_in_file("./mods_dev/")
         test_utilit()
 
 

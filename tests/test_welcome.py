@@ -19,7 +19,7 @@ class TestWelcome(unittest.TestCase):
 
         self.app = App("test")
         self.app.mlm = "I"
-        self.app.debug = False
+        self.app.debug = True
         self.app.load_mod("welcome")
         self.app.new_ac_mod("welcome")
         """Set up test fixtures, if any."""
