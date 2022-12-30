@@ -16,27 +16,16 @@
 Installation
 ------------
 
-~~~~~~~~~~~~~~~~~~~
-
-::
-
     pip install ToolBoxV2
 
 
-Github
-~~~~~~
+-  Github
 
-::
 
     pip install git+https://github.com/markinhaus/toolboxv2.git
 
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-
 Usage
 -----
-
-::
 
     $ toolboxv2 -h
     usage: toolboxv2 [-h] [-init INIT] [-f INIT_FILE] [-update] [--update-mod UPDATE_MOD] [--delete-ToolBoxV2 {allcli,dev,api,config,data,src,all} {allcli,dev,api,config,data,src,all}] [--delete-mod DELETE_MOD] [-v] [-mvn name]
@@ -67,7 +56,6 @@ Usage
       -l, --load-all-mod-in-files
 
 
-
 Setup
 ----------
 ~~~~~~~~~~~~~~~~~~~
@@ -79,19 +67,16 @@ Set up main
     ~DESKTOP-GIT@>y
     $ ToolBoxV2 || ToolBoxV2 -n main
 
-::
 
-Set up mod settings config / data
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+- Set up mod settings config / data
 ~~~~~~
 
     $ ToolBoxV2 -init {mod name} -n {name} -f {loc of init file}
     ~DESKTOP-GIT@>Exit
     ~DESKTOP-GIT@>y
 
-::
-
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
+~~~~~~~~~~~~~~~~~~~
 
 First Start
 ----------
@@ -99,26 +84,27 @@ First Start
     $ ToolBoxV2 || ToolBoxV2 -n {name}
     ~DESKTOP-GIT@>load-mod cloudM
     ~DESKTOP-GIT:CLOUDM@>create-account
-
-or
-
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+- enabling all mods in mods folder
+~~~~~~
     $ ToolBoxV2 -l || ToolBoxV2 -n {name} -l
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+in TB:
+~~~~~~
     ~DESKTOP-GIT@>cloudM create-account
-
-or
-
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+- or
+~~~~~~
     ~DESKTOP-GIT@>cloudM
     ~DESKTOP-GIT:CLOUDM@>cloudM create-account
-
-::
-
-    ~DESKTOP-GIT:CLOUDM@>login username password
-
-or (commig in v 0.0.2)
-
-    ~DESKTOP-GIT:CLOUDM@>login token
-
-
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+- Log in
+~~~~~~
+    ~DESKTOP-GIT:CLOUDM@>login {username} {password}
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+- or ( in v 0.0.2)
+~~~~~~
+    ~DESKTOP-GIT:CLOUDM@>login {token}
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ## Credits

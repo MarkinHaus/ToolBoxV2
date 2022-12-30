@@ -224,31 +224,9 @@ class App:
             "st-load": "mute~load:",
             "module-load-mode": "load~mode:",
         }
-
-        self.MACRO = self._get_config_data("MACRO",
-                                           [])  # 'HELP', 'LOAD-MOD', 'LOGS', 'EXIT', '_hr', '..', 'cls', 'mode'
-        self.MACRO_color = self._get_config_data("MACRO_C", {})  # 'HELP': 'GREEN', 'LOAD-MOD': 'BLUE', 'EXIT': 'RED',
-        # 'monit': 'YELLOW', '..': 'MAGENTA', 'LOGS': 'MAGENTA', 'cls': 'WHITE'
-
+        self.MACRO = self._get_config_data("MACRO", [])
+        self.MACRO_color = self._get_config_data("MACRO_C", {})
         self.HELPER = self._get_config_data("HELPER", {})
-        """
-            'HELP': [['Information', 'version : 0.1.0', 'color : GREEN', 'syntax : help [command]',
-                      'help is available in all subsets']],
-            'LOAD-MOD': [['Information', 'version : 0.1.0', 'color : BLUE', 'syntax : LOAD-MOD [filename]',
-                          'file must be in mods folder ']],
-            'EXIT': [['Information', 'version : 0.1.0', 'color : RED', 'syntax : EXIT',
-                      'The only way to exit in TOOL BOX']],
-            '..': [['Information', 'version : 0.1.0', 'color : MAGENTA', 'syntax : ..',
-                    'Brings u Back to Main']],
-            'LOGS': [['Information', 'version : 0.1.0', 'color : MAGENTA', 'syntax : LOGS',
-                      'show logs']],
-            '_hr': [['Information', 'version : ----', 'Hotreload all mods']],
-            'cls': [['Information', 'version : ----', 'Clear Screen']],
-            'mode': [['Information', 'version : ----', 'go in monit mode']],
-            'app-info': [['Information', 'version : ----', 'app - status - info']],
-            'mode:debug': [['Test Function', 'version : ----', Style.RED('Code can crash')]]
-        """
-
         self.id = self._get_config_data("id", [name])[0]
         self.stuf_load = self._get_config_data("st-load", False)
         self.mlm = self._get_config_data("module-load-mode", ["I"])[0]

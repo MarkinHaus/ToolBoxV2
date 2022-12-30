@@ -116,7 +116,6 @@ def main():
 
     tb_app = App(args.name, args=args)
 
-
     if args.load_all_mod_in_files:
         tb_app.load_all_mods_in_file()
 
