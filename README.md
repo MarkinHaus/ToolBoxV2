@@ -20,9 +20,9 @@ Installation
 
 
 -  Github
-
-
-    pip install git+https://github.com/markinhaus/toolboxv2.git
+```
+git clone git://github.com/MarkinHaus/ToolBoxV2
+```
 
 Usage
 -----
