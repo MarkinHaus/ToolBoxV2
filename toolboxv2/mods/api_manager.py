@@ -35,7 +35,9 @@ class Tools(MainTool, FileHandler):  # FileHandler
             "restart-api": self.restart_api,
 
         }
-        FileHandler.__init__(self, "api-m.data", app.id if app else __name__)
+        FileHandler.__init__(self, "api-m.data", app.id if app else __name__, self.keys,
+                             {"Apis": {'main': {"Name": 'main', "version": self.version,
+                                                "port": 5000, "host": '127.0.0.1'}}})
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                           name=self.name, logs=self.logs, color=self.color, on_exit=self.on_exit)
 
@@ -101,15 +103,9 @@ class Tools(MainTool, FileHandler):  # FileHandler
         self.start_api(command, app)
 
     def on_start(self):
-        self.open_l_file_handler()
         self.load_file_handler()
-        config = self.get_file_handler(self.keys["Apis"])
-        if config is not None:
-            self.api_config = eval(config)
+        self.api_config = self.get_file_handler(self.keys["Apis"])
 
     def on_exit(self):
         self.add_to_save_file_handler(self.keys["Apis"], str(self.api_config))
-
-        self.open_s_file_handler()
         self.save_file_handler()
-        self.file_handler_storage.close()

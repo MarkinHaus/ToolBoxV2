@@ -79,36 +79,44 @@ class Code:
 
 class FileHandler(Code):
 
-    def __init__(self, filename, name='mainTool'):
+    def __init__(self, filename, name='mainTool', keys=None, defaults=None):
+        if defaults is None:
+            defaults = {}
+        if keys is None:
+            keys = {}
         assert filename.endswith(".config") or filename.endswith(".data"), \
             f"filename must end with .config or .data {filename=}"
-        self.file_handler_save = []
+        self.file_handler_save = {}
         self.file_handler_load = []
-        self.file_handler_auto_save = {}
         self.file_handler_filename = filename
         self.file_handler_storage = None
-        self.file_handler_index_ = -1
+        self.file_handler_index_ = 0
         self.file_handler_file_prefix = f".{filename.split('.')[1]}/{name.replace('.', '-')}/"
+        self.load_file_handler()
+        self.set_defaults_keys_file_handler(keys, defaults)
 
     def _open_file_handler(self, mode: str, rdu):
         if self.file_handler_storage:
             self.file_handler_storage.close()
+            self.file_handler_storage = None
         try:
             self.file_handler_storage = open(self.file_handler_file_prefix + self.file_handler_filename, mode)
-            self.file_handler_index_ = -1
+            self.file_handler_index_ += 1
         except FileNotFoundError:
-            if self.file_handler_index_ >= 1000:
+            if self.file_handler_index_ >= 5:
                 print(Style.RED(f"pleas create this file to prosed : {self.file_handler_file_prefix}"
                                 f"{self.file_handler_filename}"))
                 exit(0)
+            self.file_handler_index_ += 1
             print(Style.YELLOW(f"Try Creating File: {self.file_handler_file_prefix}{self.file_handler_filename}"),
                   end=" ")
-            # if input("Do you want to create this path | file ? (y/n) ") in ['y', 'yes', 'Y']:
+
             if not os.path.exists(f"{self.file_handler_file_prefix}"):
                 os.makedirs(f"{self.file_handler_file_prefix}")
-            open(self.file_handler_file_prefix + self.file_handler_filename, 'a').close()
-            print(Style.GREEN("File created successfully"))
-            self.file_handler_index_ = 1000
+
+            with open(self.file_handler_file_prefix + self.file_handler_filename, 'a'):
+                print(Style.GREEN("File created successfully"))
+                self.file_handler_index_ = -1
             rdu()
 
     def open_s_file_handler(self):
@@ -120,15 +128,18 @@ class FileHandler(Code):
         return self
 
     def save_file_handler(self):
-        for pos, data in enumerate(self.file_handler_auto_save.keys()):
-            if self.file_handler_auto_save[data]:
-                self.add_to_save_file_handler(data, self.file_handler_load[pos][1])
-        if not self.file_handler_storage:
-            # self.open_s_file_handler()
-            print("WARNING pleas open storage")
-        for line in self.file_handler_save:
-            self.file_handler_storage.write(line)
+        if self.file_handler_storage:
+            print(f"WARNING file is already open (S): {self.file_handler_filename} {self.file_handler_storage}")
+
+        self.open_s_file_handler()
+
+        for key in self.file_handler_save.keys():
+            data = self.file_handler_save[key]
+            self.file_handler_storage.write(key+str(data))
             self.file_handler_storage.write('\n')
+
+        self.file_handler_storage.close()
+        self.file_handler_storage = None
 
         return self
 
@@ -136,36 +147,73 @@ class FileHandler(Code):
         if len(key) != 10:
             print('WARNING: key length is not 10 characters')
             return
-        try:
-            self._set_auto_save_file_handler(key)
-            self.file_handler_save.append(key + self.encode_code(value))
-        except ValueError:
-            print(Style.RED(f"{value=}\n\n{key=} was not saved.\n{type(value)=}!=str"))
+        if key not in self.file_handler_save.keys():
+            print(Style.YELLOW(f"{key} wos not found in file set new"))
+            w = 'None'
+        else:
+            w = self.file_handler_save[key]
+
+        self.file_handler_save[key] = self.encode_code(value)
+        return w, self.decode_code(w)
 
     def load_file_handler(self):
-        if not self.file_handler_storage:
-            # self.open_l_file_handler()
-            print("WARNING pleas open storage")
+
+        if self.file_handler_storage:
+            print(f"WARNING file is already open (L) {self.file_handler_filename} {self.file_handler_storage}")
+
+        self.open_l_file_handler()
+
         for line in self.file_handler_storage:
             line = line[:-1]
             heda = line[:10]
+            self.file_handler_save[heda] = line[10:]
             enc = self.decode_code(line[10:])
             append = [heda, enc]
-            self.file_handler_auto_save[heda] = True
             self.file_handler_load.append(append)
-        return self
 
-    def _set_auto_save_file_handler(self, key: str):
-        self.file_handler_auto_save[key] = False
+        self.file_handler_storage.close()
+        self.file_handler_storage = None
+
+        return self
 
     def get_file_handler(self, obj: str) -> str or None:
         self.file_handler_index_ = -1
+        f = []
         for objects in self.file_handler_load:
             self.file_handler_index_ += 1
-            # print(objects)
+            f.append(objects[0])
             if obj == objects[0]:
-                return objects[1]
+
+                try:
+                    return eval(objects[1])
+                except ValueError:
+                    print(Style.RED(f"Error Loading {obj} use default if provided"))
+                except SyntaxError:
+                    pass  # print(Style.YELLOW(f"Data frc : {obj} ; {objects[1]}"))
+                except NameError:
+                    return str(objects[1])
+
+        if obj in list(self.file_handler_save.keys()):
+            return self.decode_code(self.file_handler_save[obj])
+        if obj == '-all-f-data':
+            return f
+
         return None
+
+    def set_defaults_keys_file_handler(self, keys: dict, defaults: dict):
+        list_keys = iter(list(keys.keys()))
+        df_keys = defaults.keys()
+        file_keys = self.get_file_handler("-all-f-data")
+        for key in list_keys:
+
+            if key in file_keys:
+                continue
+
+            if key in df_keys:
+                self.file_handler_load.append([keys[key], str(defaults[key])])
+                self.file_handler_save[keys[key]] = self.encode_code(defaults[key])
+            else:
+                self.file_handler_load.append([keys[key], "None"])
 
 
 class AppArgs:
@@ -198,21 +246,16 @@ class ApiOb:
 
 class App:
     def __init__(self, prefix: str = "", args=AppArgs().default()):
-        print("Starting Tool - Box from : ", end='')
         abspath = os.path.abspath(__file__)
         dname = os.path.dirname(abspath)
         os.chdir(dname)
-        print(Style.CYAN(f"{abspath}"))
-        print(Style.Bold(Style.CYAN(f"working dir : {os.getcwd()}")))
+        print("Starting Tool - Box from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 
         if args.init:
             _initialize_toolBox(args.init, args.init_file)
 
         name = prefix + '-' + node()
         self.version = toolboxv2.__version__
-        self.config_fh = FileHandler(name + ".config")
-        self.config_fh.open_l_file_handler()
-        self.config_fh.load_file_handler()
 
         self.keys = {
             "MACRO": "macro~~~~:",
@@ -222,15 +265,34 @@ class App:
             "id": "name-spa~:",
             "st-load": "mute~load:",
             "module-load-mode": "load~mode:",
+            "comm-his": "comm-his~:",
         }
+
+        defaults = {
+            "MACRO": ['Exit'],
+            "MACRO_C": {},
+            "HELPER": {},
+            "debug": not args.live,
+            "id": name,
+            "st-load": False,
+            "module-load-mode": 'I',
+            "comm-his": [[]],
+        }
+
+        self.config_fh = FileHandler(name + ".config", keys=self.keys, defaults=defaults)
+        self.config_fh.load_file_handler()
+
         self.debug = False
-        self.debug = self._get_config_data("debug", args.live)
-        self.MACRO = self._get_config_data("MACRO", ["Exit"])
-        self.MACRO_color = self._get_config_data("MACRO_C", {})
-        self.HELPER = self._get_config_data("HELPER", {})
-        self.id = self._get_config_data("id", [name])[0]
-        self.stuf_load = self._get_config_data("st-load", False)
-        self.mlm = self._get_config_data("module-load-mode", ["I"])[0]
+
+        self.debug = self.config_fh.get_file_handler(self.keys["debug"])
+        self.command_history = self.config_fh.get_file_handler(self.keys["comm-his"])
+        self.MACRO = self.config_fh.get_file_handler(self.keys["MACRO"])
+        self.MACRO_color = self.config_fh.get_file_handler(self.keys["MACRO_C"])
+        self.HELPER = self.config_fh.get_file_handler(self.keys["HELPER"])
+        self.id = self.config_fh.get_file_handler(self.keys["id"])
+        self.stuf_load = self.config_fh.get_file_handler(self.keys["st-load"])
+        self.mlm = self.config_fh.get_file_handler(self.keys["module-load-mode"])
+
         self.auto_save = True
         self.PREFIX = Style.CYAN(f"~{node()}@>")
         self.MOD_LIST = {}
@@ -239,7 +301,7 @@ class App:
         self.AC_MOD = None
         self.alive = True
 
-        print("SYSTEM :: " + node(), 'Version :', self.version)
+        print(f"SYSTEM :: {node()}\nVersion -> {self.version},\nID -> {self.id},\nload_mode -> {'coppy' if self.mlm == 'C' else ('Inplace' if self.mlm == 'I' else 'pleas use I or C')}\n")
 
         if args.update:
             self.run_any("cloudM", "#update-core", [])
@@ -252,23 +314,13 @@ class App:
             self.save_exit()
             self.exit()
 
-    def _test_repeat(self):
+    def _save_data(self, key, data):
         if self.config_fh.file_handler_index_ == -1:
-            self.debug_print("Config - Installation Don")
-        if self.config_fh.file_handler_index_ == 0:
-            self.debug_print("data missing")
-        return self.config_fh.file_handler_index_ <= 0
+            self.debug_print(f"Config - Installation Don for {key}")
+        if self.config_fh.file_handler_index_ == 6:
+            self.debug_print(f"data missing : {key=}")
 
-    def _get_config_data(self, key, t):
-        self.debug_print(f"Loading config data data_key : {key} : val =", end=" ")
-        data = self.config_fh.get_file_handler(self.keys[key])
-        if data is not None:
-            try:
-                print(data[:15])
-                return eval(data)
-            except ValueError:
-                self.debug_print(Style.RED(f"ValueError no data for key {key}"))
-        return t
+        self.config_fh.add_to_save_file_handler(key, data)
 
     def _coppy_mod(self, content, new_mod_dir, mod_name):
         mode = 'xb'
@@ -279,13 +331,15 @@ class App:
                 nmd.write(f"__version__ = '{self.version}'")
 
         if os.path.exists(f"{new_mod_dir}/{mod_name}.py"):
+            mode = False
             with open(f"{new_mod_dir}/{mod_name}.py", 'rb') as d:
                 runtime_mod = d.read()  # Testing version but not efficient
             if len(content) != len(runtime_mod):
                 mode = 'wb'
 
-        with open(f"{new_mod_dir}/{mod_name}.py", mode) as f:
-            f.write(content)
+        if mode:
+            with open(f"{new_mod_dir}/{mod_name}.py", mode) as f:
+                f.write(content)
 
     def _pre_lib_mod(self, mod_name):
         working_dir = self.id.replace(".", "_")
@@ -306,7 +360,7 @@ class App:
         if self.debug and loc == "toolboxv2.mods.":
             loc = "toolboxv2.mods_dev."
         if mod_name.lower() in list(self.MOD_LIST.keys()):
-            print("Reloading mod from = ", loc)
+            print("Reloading mod from =", loc+mod_name)
             self.remove_mod(mod_name)
         mod = import_module(loc + mod_name)
         mod = getattr(mod, "Tools")
@@ -328,39 +382,16 @@ class App:
         if self.debug:
             return self.AC_MOD.tools[self.AC_MOD.tools["all"][self.SUPER_SET.index(name.lower())][0]]
 
-        try:
-            return self.AC_MOD.tools[self.AC_MOD.tools["all"][self.SUPER_SET.index(name.lower())][0]]
-        except KeyError as e:
-            print(Style.RED(f"KeyError: {e} function not found 404"))
+        if name.lower() not in self.SUPER_SET:
+            self.debug_print(Style.RED(f"KeyError: {name} function not found 404"))
+            return None
 
-        return None
+        return self.AC_MOD.tools[self.AC_MOD.tools["all"][self.SUPER_SET.index(name.lower())][0]]
 
     def save_exit(self):
-
-        if self._test_repeat():
-            self.config_fh.add_to_save_file_handler(self.keys["MACRO"], str(self.MACRO))
-
-        if self._test_repeat():
-            self.config_fh.add_to_save_file_handler(self.keys["MACRO_C"], str(self.MACRO_color))
-
-        if self._test_repeat():
-            self.config_fh.add_to_save_file_handler(self.keys["debug"], str(self.debug))
-
-        if self._test_repeat():
-            self.config_fh.add_to_save_file_handler(self.keys["st-load"], str(self.stuf_load))
-
-        if self._test_repeat():
-            self.config_fh.add_to_save_file_handler(self.keys["id"], str([self.id]))
-
-        if self._test_repeat():
-            self.config_fh.add_to_save_file_handler(self.keys["module-load-mode"], str([self.mlm]))
-
-    def test_repeat_ac_mod(self):
-        if self.AC_MOD.file_handler_index_ == -1:
-            self.debug_print("Config - Installation Don")
-        if self.AC_MOD.file_handler_index_ == 0:
-            self.debug_print("data missing")
-        return self.AC_MOD.file_handler_index_ <= 0
+        self._save_data(self.keys["debug"], str(self.debug))
+        self._save_data(self.keys["st-load"], str(self.stuf_load))
+        self._save_data(self.keys["module-load-mode"], self.mlm)
 
     def load_mod(self, mod_name):
 
@@ -392,12 +423,13 @@ class App:
             if mod.startswith("test_"):
                 return False
             return True
-
-        for mod in res:
+        iter_res = iter(res)
+        for mod in iter_res:
             if do_helper(mod):
                 print(f"Loading module : {mod[:-3]}", end=' ')
                 if self.debug:
                     self.load_mod(mod[:-3])
+                    continue
                 try:
                     self.load_mod(mod[:-3])
                 except Exception as e:
@@ -476,9 +508,7 @@ class App:
         print(Style.Bold(Style.CYAN("OK - EXIT ")))
         print('\033[?25h', end="")
         self.alive = False
-        self.config_fh.open_s_file_handler()
         self.config_fh.save_file_handler()
-        self.config_fh.file_handler_storage.close()
 
     def help(self, command: str):
         if not self.AC_MOD and command == "":

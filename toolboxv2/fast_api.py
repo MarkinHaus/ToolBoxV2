@@ -1,6 +1,6 @@
 import os
 
-from toolboxv2 import App
+from toolboxv2 import App, AppArgs
 from fastapi import FastAPI, Request, UploadFile
 from typing import Union
 import sys
@@ -89,8 +89,8 @@ def logs_app():
 @app.get("/test-exist/{name}")
 def test_mod_dow(name: str):
     res = "mod-404"
-    if name.upper() in tb_app.MOD_LIST:
-        tb_app.new_ac_mod(name.upper())
+    if name.lower() in tb_app.MOD_LIST:
+        tb_app.new_ac_mod(name.lower())
         res = f"{name}-mod-online"
     return {"res": res}
 
@@ -111,8 +111,8 @@ def get_mod_run(mod: str, name: str, command: Union[str, None] = None):
     res = {}
     if not command:
         command = ''
-    if tb_app.AC_MOD.name != mod.upper():
-        if mod.upper() in tb_app.MOD_LIST:
+    if tb_app.AC_MOD.name != mod.lower():
+        if mod.lower() in tb_app.MOD_LIST:
             tb_app.new_ac_mod(mod)
 
     if tb_app.AC_MOD:
@@ -130,8 +130,8 @@ async def post_mod_run(data: PostRequest, mod: str, name: str, command: Union[st
     res = {}
     if not command:
         command = ''
-    if tb_app.AC_MOD.name != mod.upper():
-        if mod.upper() in tb_app.MOD_LIST:
+    if tb_app.AC_MOD.name != mod.lower():
+        if mod.lower() in tb_app.MOD_LIST:
             tb_app.new_ac_mod(mod)
 
     if tb_app.AC_MOD:
@@ -182,9 +182,8 @@ if __name__ == 'fast_api':
             id_name = d[2]
 
     open(f"api_pid_{id_name}", "w").write(str(os.getpid()))
-
-    tb_app = App("api-")
+    tb_app = App("api")
     tb_app.load_all_mods_in_file()
-    tb_img = tb_app.MOD_LIST["WELCOME"].tools["printT"]
+    tb_img = tb_app.MOD_LIST["welcome"].tools["printT"]
     tb_img()
     tb_app.new_ac_mod("welcome")

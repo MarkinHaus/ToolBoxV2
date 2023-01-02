@@ -9,6 +9,7 @@ from importlib import import_module
 
 import jwt
 import requests
+from requests.exceptions import SSLError
 
 from toolboxv2 import MainTool, FileHandler, App
 from toolboxv2.Style import Style
@@ -60,20 +61,20 @@ class Tools(MainTool, FileHandler):
             "#update-core": self.update_core,
         }
 
-        FileHandler.__init__(self, "modules.config", app.id if app else __name__)
+        FileHandler.__init__(self, "modules.config", app.id if app else __name__, self.keys, {
+            "URL": 'https://simple.com',
+            "TOKEN": '~tok~',
+        })
 
         MainTool.__init__(self, load=self.load_open_file, v=self.version, tool=self.tools,
                           name=self.name, logs=self.logs, color=self.color, on_exit=self.on_exit)
 
     def load_open_file(self):
-        self.open_l_file_handler()
         self.load_file_handler()
         self.get_version()
 
     def on_exit(self):
-        self.open_s_file_handler()
         self.save_file_handler()
-        self.file_handler_storage.close()
 
     def show_version(self, c):
         self.print("Version: ", self.version, self.api_version, c)
@@ -83,16 +84,13 @@ class Tools(MainTool, FileHandler):
         version_command = self.get_file_handler(self.keys["URL"])
         url = f"http://127.0.0.1:5000/get/cloudm/run/Version?command=V:{self.version}"
         if version_command is not None:
-            url = version_command + "/get/cloudm/run/Version?command=V:" + f"{self.version=}"
-
-        self.print(url, *url)
+            url = version_command + "/get/cloudm/run/Version?command=V:" + self.version
 
         try:
             self.api_version = requests.get(url).json()["res"]
+            self.print(f"API-Version: {self.api_version}")
         except Exception:
-            self.print(Style.RED("Error retrieving version run : cloudM first-web-connection"))
-
-        self.print(f"API-Version: {self.api_version}")
+            self.print(Style.RED(f" Error retrieving version from {url}\n\t run : cloudM first-web-connection\n"))
 
     def load_mods(self, load_mod):
         default_modules = self.get_file_handler(self.keys["DM"])
@@ -186,7 +184,7 @@ class Tools(MainTool, FileHandler):
             "name": "NAME",
             "Version": self.show_version,
         }
-        # ~ FileHandler.__init__(self, "File name", app.id if app else __name__)
+        # ~ FileHandler.__init__(self, "File name", app.id if app else __name__, keys=self.keys, defaults={})
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                         name=self.name, logs=self.logs, color=self.color, on_exit=self.on_exit)
 
@@ -194,14 +192,11 @@ class Tools(MainTool, FileHandler):
         self.print("Version: ", self.version)
 
     def on_start(self):
-        # ~ self.open_l_file_handler()
         # ~ self.load_file_handler()
         pass
 
     def on_exit(self):
-        # ~ self.open_s_file_handler()
         # ~ self.save_file_handler()
-        # ~ self.file_handler_storage.close()
         pass
 
 """

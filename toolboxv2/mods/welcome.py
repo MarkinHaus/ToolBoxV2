@@ -1,3 +1,5 @@
+import sys
+
 from toolboxv2 import MainTool
 from time import sleep
 from platform import system
@@ -21,10 +23,11 @@ class Tools(MainTool):
             "Version": self.show_version,
             "printT": self.print_t}
 
-        MainTool.__init__(self, load=None, v=self.version, tool=self.tools,
+        MainTool.__init__(self, load=self.print_t, v=self.version, tool=self.tools,
                           name=self.name, logs=self.logs, color=self.color, on_exit=lambda: "")
 
     def print_t(self):
+        print()
         printc("**************************************************************************")
         printc("***████████╗*██████╗***██████╗**██╗*********██████╗***██████╗*██╗***██╗***")
         printc("***╚══██╔══╝██╔═══██╗*██╔═══██╗*██║*********██╔══██╗*██╔═══██╗*╚██╗██╔╝***")
@@ -597,11 +600,16 @@ class Tools(MainTool):
 
 
 def printc(str_):
+
+    if 'unittest' in sys.argv[0]:
+        print(f"{__name__=} {sys.argv=}")
+        print("unsupported chars unittest")
+        return
     try:
         print(Style.GREEN(str(str_, 'Utf-8')))
     except TypeError:
-        print('*********************************TypeError********************************')
         try:
             print(Style.GREEN(str(str_, 'ISO-88591')))
         except TypeError:
-            print('*********************************TypeError********************************', end='\r')
+            print(str_)
+

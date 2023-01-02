@@ -10,9 +10,6 @@ from .Style import Style
 import readchar
 from .toolbox import App
 
-session_history = [[]]
-
-
 def user_input(app: App):
     get_input = True
     command = ""
@@ -21,6 +18,8 @@ def user_input(app: App):
     helper_index = 0
     options = []
     sh_index = 0
+    session_history = [[]]
+    session_history += [c for c in app.command_history]
 
     while get_input:
 
@@ -92,124 +91,124 @@ def user_input(app: App):
 
     sys.stdout.write("\033[K")
     print(app.PREFIX + app.pretty_print(print_command) + "\n")
-    session_history.append(print_command)
+    app.command_history.append(print_command)
+
     return print_command
 
 
+def command_runner(app, command):
+    if command[0] == '':  # log(helper)
+        print("Pleas enter a command or help for mor information")
+
+    elif command[0].lower() == '_hr':
+        if len(command) == 2:
+            if input(f"Do you to hot-reloade {'alle mods' if len(command) <= 1 else command[1]}? (y/n): ") in \
+                ["y", "yes", "Y"]:
+
+                if command[1] in app.MOD_LIST.keys():
+                    app.reset()
+                    try:
+                        app.remove_mod(command[1])
+                    except Exception as e:
+                        print(Style.RED(f"Error removing module {command[1]}\nERROR:\n{e}"))
+
+                    try:
+                        app.save_load(command[1])
+                    except Exception as e:
+                        print(Style.RED(f"Error adding module {command[1]}\nERROR:\n{e}"))
+                elif command[1] == "-x":
+                    app.reset()
+                    app.remove_all_modules()
+                    while 1:
+                        try:
+                            com = " ".join(sys.orig_argv)
+                        except AttributeError:
+                            com = "python3 "
+                            com += " ".join(sys.argv)
+                        os.system(com)
+                        print("Restarting..")
+                        exit(0)
+                else:
+                    print(f"Module not found {command[1]} |  is case sensitive")
+        else:
+            app.reset()
+            app.remove_all_modules()
+            app.load_all_mods_in_file()
+
+    elif command[0].lower() == 'logs':
+        app.logs()
+
+    elif command[0].lower() == 'app-info':
+        print(f"{app.id = }\n{app.stuf_load = }\n{app.mlm = }\n{app.auto_save = }"
+              f"\n{app.AC_MOD = }\n{app.debug = }")
+
+    elif command[0].lower() == "exit":  # builtin events(exit)
+        if input("Do you want to exit? (y/n): ") in ["y", "yes", "Y"]:
+            app.save_exit()
+            app.exit()
+
+    elif command[0].lower() == "help":  # logs(event(helper))
+        n = command[1] if len(command) > 2 else ''
+        app.help(n)
+
+    elif command[0].lower() == 'load-mod':  # builtin events(event(cloudM(_)->event(Build)))
+        if len(command) == 2:
+            app.save_load(command[1])
+            app.new_ac_mod(command[1])
+        else:
+            p = "_dev" if app.debug else ""
+            res = os.listdir(f"./mods{p}/")
+            app.SUPER_SET += res
+            app.MACRO += res
+            if system() == "Windows":
+                os.system(f"dir .\mods{p}")
+            else:
+                os.system(f"ls ./mods{p}")
+
+    elif command[0] == '..':
+        app.reset()
+
+    elif command[0] == 'cls':
+        if system() == "Windows":
+            os.system("cls")
+        else:
+            os.system("clear")
+
+    elif command[0] == 'mode':
+        help_ = ['mode:live', 'mode:debug', 'mode', 'mode:stuf', 'app-info']
+        app.SUPER_SET += help_
+        app.MACRO += help_
+        print(f"{'debug' if app.debug else 'live'} \n{app.debug=}\n{app.id=}\n{app.stuf_load=}")
+
+    elif command[0] == 'mode:live':
+        app.debug = False
+
+    elif command[0] == 'mode:debug':
+        app.debug = True
+
+    elif command[0] == 'mode:stuf':
+        app.stuf_load = not app.stuf_load
+
+    elif command[0].lower() in app.MOD_LIST.keys():
+        app.new_ac_mod(command[0])
+
+        if len(command) > 1:
+            if command[1].lower() in app.SUPER_SET:
+                app.run_function(command[1], command[1:])
+
+    elif app.AC_MOD:  # builtin events(AC_MOD(MOD))
+        if command[0].lower() in app.SUPER_SET:
+            app.run_function(command[0], command)
+        else:
+            print(Style.RED("function could not be found"))
+
+    else:  # error(->)
+        print(Style.YELLOW("[-] Unknown command:") + app.pretty_print(command))
+
+
 def run_cli(app: App):
-    mode = "live"
     while app.alive:
         print("", end="" + "->>\r")
         command = user_input(app)
+        command_runner(app, command)
 
-        if command[0] == '':  # log(helper)
-            print("Pleas enter a command or help for mor information")
-
-        elif command[0].lower() == '_hr':
-            if len(command) == 2:
-                if input(f"Do you to hot-reloade {'alle mods' if len(command) <= 1 else command[1]}? (y/n): ") in \
-                    ["y", "yes", "Y"]:
-
-                    if command[1] in app.MOD_LIST.keys():
-                        app.reset()
-                        try:
-                            app.remove_mod(command[1])
-                        except Exception as e:
-                            print(Style.RED(f"Error removing module {command[1]}\nERROR:\n{e}"))
-
-                        try:
-                            app.save_load(command[1])
-                        except Exception as e:
-                            print(Style.RED(f"Error adding module {command[1]}\nERROR:\n{e}"))
-                    elif command[1] == "-x":
-                        app.reset()
-                        app.remove_all_modules()
-                        while 1:
-                            try:
-                                com = " ".join(sys.orig_argv)
-                            except AttributeError:
-                                com = "python3 "
-                                com += " ".join(sys.argv)
-                            os.system(com)
-                            print("Restarting..")
-                            exit(0)
-                    else:
-                        print(f"Module not found {command[1]} |  is case sensitive")
-            else:
-                app.reset()
-                app.remove_all_modules()
-                app.load_all_mods_in_file()
-                img = app.MOD_LIST["WELCOME"].tools["printT"]
-                img()
-
-        elif command[0].lower() == 'logs':
-            app.logs()
-
-        elif command[0].lower() == 'app-info':
-            print(f"{app.id = }\n{app.stuf_load = }\n{app.mlm = }\n{app.auto_save = }"
-                  f"\n{app.AC_MOD = }\n{app.debug = }")
-
-        elif command[0].lower() == "EXIT":  # builtin events(exit)
-            if input("Do you want to exit? (y/n): ") in ["y", "yes", "Y"]:
-                app.save_exit()
-                app.exit()
-
-        elif command[0].lower() == "help":  # logs(event(helper))
-            n = command[1] if len(command) > 2 else ''
-            app.help(n)
-
-        elif command[0].lower() == 'LOAD-MOD':  # builtin events(event(cloudM(_)->event(Build)))
-            if len(command) == 2:
-                app.save_load(command[1])
-                app.new_ac_mod(command[1])
-            else:
-                p = "_dev" if app.debug else ""
-                res = os.listdir(f"./mods{p}/")
-                app.SUPER_SET += res
-                app.MACRO += res
-                if system() == "Windows":
-                    os.system(f"dir .\mods{p}")
-                else:
-                    os.system(f"ls ./mods{p}")
-
-        elif command[0] == '..':
-            app.reset()
-
-        elif command[0] == 'cls':
-            if system() == "Windows":
-                os.system("cls")
-            else:
-                os.system("clear")
-
-        elif command[0] == 'mode':
-            help_ = ['mode:live', 'mode:debug', 'mode', 'mode:stuf', 'app-info']
-            app.SUPER_SET += help_
-            app.MACRO += help_
-            print(f"{mode=} \n{app.debug=}\n{app.id=}\n{app.stuf_load=}")
-
-        elif command[0] == 'mode:live':
-            mode = 'live'
-            app.debug = False
-
-        elif command[0] == 'mode:debug':
-            mode = 'debug'
-            app.debug = True
-
-        elif command[0] == 'mode:stuf':
-            app.stuf_load = not app.stuf_load
-
-        elif command[0].lower() in app.MOD_LIST.keys():
-            app.new_ac_mod(command[0])
-
-            if len(command) > 1:
-                if command[1].lower() in app.SUPER_SET:
-                    app.run_function(command[1], command[1:])
-
-        elif app.AC_MOD:  # builtin events(AC_MOD(MOD))
-            if command[0].lower() in app.SUPER_SET:
-                app.run_function(command[0], command)
-            else:
-                print(Style.RED("function could not be found"))
-
-        else:  # error(->)
-            print(Style.YELLOW("[-] Unknown command:") + app.pretty_print(command))

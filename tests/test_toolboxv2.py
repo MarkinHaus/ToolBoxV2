@@ -43,7 +43,7 @@ def test_main_tool():
 
 
 def get_app():
-    return App("test-")
+    return App("test")
 
 
 def app_clean_up(app):
@@ -56,7 +56,7 @@ def test_main():
 
     app = get_app()
 
-    f = app.load_all_mods_in_file('./mods/')
+    f = app.load_all_mods_in_file('./mods_dev/')
 
     assert f == app.alive
     app_clean_up(app)
@@ -68,7 +68,7 @@ def test_FileHandler():
 
     # Verify that the object was initialized correctly
     assert fh.file_handler_filename == "sample.config"
-    assert fh.file_handler_index_ == -1
+    assert fh.file_handler_index_ == 1
     assert fh.file_handler_file_prefix == ".config/mainTool/"
 
     # Open the storage file in write mode and verify that it was opened correctly
@@ -80,20 +80,19 @@ def test_FileHandler():
     fh.add_to_save_file_handler(key, value)
     fh.add_to_save_file_handler("key2~~~~~:", "value2")
     fh.add_to_save_file_handler("key3~~:", "value3")
-    assert fh.file_handler_save == ["key1~~~~~:value1", "key2~~~~~:value2"]
+    assert fh.file_handler_save == {"key1~~~~~:": "value1", "key2~~~~~:": "value2"}
 
     # Save the data to the storage file and verify that it was saved correctly
     fh.save_file_handler()
+    fh.file_handler_load = []
 
     # Open the storage file in read mode and verify that it was opened correctly
-
     fh.open_l_file_handler()
     fh.load_file_handler()
 
     assert fh.file_handler_load[0][0] == key
     assert fh.file_handler_load[0][1] == value
 
-    fh.file_handler_storage.close()
 
 
 def test_utilit():

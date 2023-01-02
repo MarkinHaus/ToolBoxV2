@@ -91,8 +91,6 @@ def main():
                    f" {(f'--server.port={args.port} --server.address={args.host}' if args.host != '0.0.0.0' else '')}"
         os.system(dev_args)
 
-    print("Arguments: ", args)
-
     # (init=None,
     # init_file=None,
     # update=False,

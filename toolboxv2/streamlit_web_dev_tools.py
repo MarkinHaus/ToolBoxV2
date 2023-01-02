@@ -3,12 +3,14 @@ from platform import system
 
 import requests
 import streamlit as st
+from pyparsing import col
 
 from toolboxv2 import App
 import sys
-from streamlit_option_menu import option_menu
+import time
 
 global app_tb_dv
+from streamlit_option_menu import option_menu
 
 
 def edit_config_entry(c, index):
@@ -74,7 +76,7 @@ def edit_config_entry(c, index):
                 # Update the config entry with the edited value
                 config_t[index] = [key, edited_value]
                 if conf_name == "mainTool":
-                    app_tb_dv.config_fh.add_to_save_file_handler(str(key), str(edited_value))
+                    app_tb_dv._save_data(str(key), str(edited_value))
                 else:
                     app_tb_dv.AC_MOD.add_to_save_file_handler(str(key), str(edited_value))
 
@@ -91,12 +93,12 @@ if "login" not in st.session_state:
         em.warning("Pleas enter Token to Continue if you dont have one jet go to https://simpel.com")
         em.caption("dev-tool-web-streamlit Welcomes you 😄")
         token = em.text_input("Token", type="password")
-        tbname = em.text_input("Name der app", value="dev")
+        tbname = em.text_input("Name der app", value="main")
         em.caption("Pleas dont char ur Token🔒")
         if em.form_submit_button("Submit-Token"):
             with st.spinner("Verifying Token..."):
                 print("Name: ", __name__)
-                app_tb_dv = App(tbname + "-")
+                app_tb_dv = App(tbname)
                 st.session_state.app = app_tb_dv
                 app_tb_dv.load_mod("cloudM")
                 app_tb_dv.new_ac_mod("cloudM")
@@ -124,7 +126,7 @@ if "app" not in st.session_state:
             d = i.split(':')
             config_file = d[1]
             id_name = d[2]
-    app_tb_dv = App("dev-")
+    app_tb_dv = App("dev")
     st.warning("ato go back to dev tools")
     st.session_state.app = app_tb_dv
 
@@ -258,7 +260,7 @@ with tabs[2]:
         st.write("File name : " + str(conf_name))
         config_t = app_tb_dv.AC_MOD.file_handler_load
 
-    list_conf = [c[0].replace('~', '') for c in config_t]
+    list_conf = [c[0] for c in config_t]
 
     if len(list_conf) == 0:
         list_conf = ["no configuration", "Default TB-CLI configuration", "Default TB-API configuration",
@@ -283,12 +285,15 @@ with tabs[2]:
             st.caption("Save Config-data:")
             st.caption(f"filename: {conf_name}")
             if st.button(f"Save {ac_mod}"):
-                if ac_mod.upper() == "mainTool".upper():
+                if ac_mod == "mainTool":
                     # app_tb_dv.config_fh.open_s_file_handler()
                     # app_tb_dv.config_fh.save_file_handler()
-                    app_tb_dv.save_exit()
+                    # app_tb_dv.save_exit()
                     app_tb_dv.exit_all_modules()
+                    id_ = app_tb_dv.id.split('-')[0]
                     app_tb_dv.exit()
+
+                    app_tb_dv = App(id_)
                     st.experimental_rerun()
                 else:
                     app_tb_dv.AC_MOD.open_s_file_handler()
