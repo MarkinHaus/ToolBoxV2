@@ -209,7 +209,7 @@ class Tools(MainTool, FileHandler):
                 self.print(Style.Bold(Style.RED("MODULE exists-on-api pleas use a other name")))
                 return False
         self.print("NEW MODULE: " + mod_name, end=" ")
-        if os.path.exists(f"mods_dev/" + mod_name + ".py"):
+        if os.path.exists(f"mods/" + mod_name + ".py") or os.path.exists(f"mods_dev/" + mod_name + ".py"):
             self.print(Style.Bold(Style.RED("MODULE exists pleas use a other name")))
             return False
 

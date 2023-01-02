@@ -266,6 +266,7 @@ class App:
             "st-load": "mute~load:",
             "module-load-mode": "load~mode:",
             "comm-his": "comm-his~:",
+            "develop-mode": "dev~mode~:",
         }
 
         defaults = {
@@ -277,6 +278,7 @@ class App:
             "st-load": False,
             "module-load-mode": 'I',
             "comm-his": [[]],
+            "develop-mode": False,
         }
 
         self.config_fh = FileHandler(name + ".config", keys=self.keys, defaults=defaults)
@@ -286,6 +288,7 @@ class App:
 
         self.debug = self.config_fh.get_file_handler(self.keys["debug"])
         self.command_history = self.config_fh.get_file_handler(self.keys["comm-his"])
+        self.dev_modi = self.config_fh.get_file_handler(self.keys["develop-mode"])
         self.MACRO = self.config_fh.get_file_handler(self.keys["MACRO"])
         self.MACRO_color = self.config_fh.get_file_handler(self.keys["MACRO_C"])
         self.HELPER = self.config_fh.get_file_handler(self.keys["HELPER"])
@@ -344,7 +347,7 @@ class App:
     def _pre_lib_mod(self, mod_name):
         working_dir = self.id.replace(".", "_")
         lib_mod_dir = f"toolboxv2.runtime.{working_dir}.mod_lib."
-        postfix = "_dev" if self.debug else ""
+        postfix = "_dev" if self.dev_modi else ""
         mod_file_dir = f"./mods{postfix}/{mod_name}.py"
         new_mod_dir = f"./runtime/{working_dir}/mod_lib"
         with open(mod_file_dir, "rb") as c:
@@ -357,7 +360,7 @@ class App:
         return self.inplace_load(mod_name, loc=loc)
 
     def inplace_load(self, mod_name, loc="toolboxv2.mods."):
-        if self.debug and loc == "toolboxv2.mods.":
+        if self.dev_modi and loc == "toolboxv2.mods.":
             loc = "toolboxv2.mods_dev."
         if mod_name.lower() in list(self.MOD_LIST.keys()):
             print("Reloading mod from =", loc+mod_name)
@@ -408,7 +411,7 @@ class App:
             if os.path.exists(f"./runtime/{w_dir}/mod_lib"):
                 working_dir = f"./runtime/{w_dir}/mod_lib/"
         if working_dir == "mods":
-            pr = "_dev" if self.debug else ""
+            pr = "_dev" if self.dev_modi else ""
             working_dir = f"./mods{pr}"
 
         res = os.listdir(working_dir)

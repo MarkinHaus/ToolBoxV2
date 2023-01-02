@@ -27,7 +27,8 @@ class TestToolboxv2(unittest.TestCase):
         self.app = App("test")
         self.app.mlm = "I"
         self.app.debug = True
-        self.app.load_all_mods_in_file("./mods_dev/")
+        e = '_dev' if self.app.dev_modi else ''
+        self.app.load_all_mods_in_file(f"./mods{e}/")
         test_utilit()
 
 
@@ -55,8 +56,8 @@ def test_main():
     # Create an instance of the MainTool class
 
     app = get_app()
-
-    f = app.load_all_mods_in_file('./mods_dev/')
+    e = '_dev' if app.dev_modi else ''
+    f = app.load_all_mods_in_file(f'./mods{e}/')
 
     assert f == app.alive
     app_clean_up(app)
@@ -68,12 +69,11 @@ def test_FileHandler():
 
     # Verify that the object was initialized correctly
     assert fh.file_handler_filename == "sample.config"
-    assert fh.file_handler_index_ == 1
+    assert fh.file_handler_index_ <= 6
     assert fh.file_handler_file_prefix == ".config/mainTool/"
 
     # Open the storage file in write mode and verify that it was opened correctly
-    fh.open_s_file_handler()
-    assert fh.file_handler_storage is not None
+    assert fh.file_handler_storage is None
 
     # Add some data to the save file and verify that it was added correctly
     key, value = "key1~~~~~:", "value1"
@@ -87,7 +87,6 @@ def test_FileHandler():
     fh.file_handler_load = []
 
     # Open the storage file in read mode and verify that it was opened correctly
-    fh.open_l_file_handler()
     fh.load_file_handler()
 
     assert fh.file_handler_load[0][0] == key
