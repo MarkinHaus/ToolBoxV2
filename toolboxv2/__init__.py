@@ -6,5 +6,5 @@ from toolboxv2.app.serve_app import AppServerHandler
 
 __author__ = """Markin Hausmanns"""
 __email__ = 'Markinhausmanns@gmail.com'
-__version__ = '0.0.1'
+__version__ = '0.0.2'
 __all__ = [App, MainTool, FileHandler, Style, run_cli, AppServerHandler, AppArgs]
