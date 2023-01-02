@@ -58,30 +58,25 @@ Usage
 
 Setup
 ----------
-~~~~~~~~~~~~~~~~~~~
-
 Set up main
+~~~~~~~~~~~~~~~~~~~
+ToolBoxV2 -init main -f init.config
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    $ ToolBoxV2 -init main -f init.config
     ~DESKTOP-GIT@>Exit
     ~DESKTOP-GIT@>y
-    $ ToolBoxV2 || ToolBoxV2 -n main
 
-
-~~~~~~~~~~~~~~~~~~~~~~~~~~
 - Set up mod settings config / data
 ~~~~~~
-
-    $ ToolBoxV2 -init {mod name} -n {name} -f {loc of init file}
-    ~DESKTOP-GIT@>Exit
-    ~DESKTOP-GIT@>y
-
+ToolBoxV2 -init {mod name} -n {name} -f {loc of init file}
 ~~~~~~~~~~~~~~~~~~~
 
 First Start
 ----------
 ~~~~~~~~~~~~~~~~~~~
     $ ToolBoxV2 || ToolBoxV2 -n {name}
+~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~
     ~DESKTOP-GIT@>load-mod cloudM
     ~DESKTOP-GIT:CLOUDM@>create-account
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -91,20 +86,20 @@ First Start
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 in TB:
 ~~~~~~
-    ~DESKTOP-GIT@>cloudM create-account
+cloudM create-account
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 - or
 ~~~~~~
-    ~DESKTOP-GIT@>cloudM
-    ~DESKTOP-GIT:CLOUDM@>cloudM create-account
+~DESKTOP-GIT@>cloudM
+~DESKTOP-GIT:CLOUDM@>create-account
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 - Log in
 ~~~~~~
-    ~DESKTOP-GIT:CLOUDM@>login {username} {password}
+~DESKTOP-GIT:CLOUDM@>login {username} {password}
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 - or ( in v 0.0.2)
 ~~~~~~
-    ~DESKTOP-GIT:CLOUDM@>login {token}
+~DESKTOP-GIT:CLOUDM@>login {token}
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ## Credits
