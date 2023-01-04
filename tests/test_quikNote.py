@@ -22,22 +22,7 @@ class TestCloudM(unittest.TestCase):
         self.app.mlm = "I"
         self.app.debug = True
         self.app.dev_modi = False
-        self.token = "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9" \
-                     ".eyJ2IjoiMC4yLjMiLCJleHAiOjE2ODY4OTI" \
-                     "yNTQsInVzZXJuYW1lIjoidCIsInBhc3N3b3J" \
-                     "kIjoiZGQ3OGYwMWMxYWJlNjE0OTlmNWQ5Y2Q" \
-                     "0NjA4NzliNGQyMjA0M2NiOWQ4ZjRkMmNlMTA" \
-                     "0OThiNWNkMTI5ZTg4NWY0MGM0OTgxNzkzMWN" \
-                     "mMGJhOGI5OGIzY2ZhM2Q3ODg5ZGExM2JjYmZ" \
-                     "hOGZiMjM5YzVkNmI0NzExMTFiODExMWYwY2N" \
-                     "iNWUyNmYzMGY2YmZmZGRjNDYxMGQwNmFlOWF" \
-                     "kMGZkYWI4NjdlOThiNjkwZDU1NjJiOTk1YjI" \
-                     "yYTE0MmIyIiwiZW1haWwiOiJ0IiwidWlkIjo" \
-                     "iYjI2N2NmMDItZTFhMi00M2YzLWFlZTgtMjB" \
-                     "jMzU1NzVlYTE3IiwiYXVkIjoiYXBpLURFU0t" \
-                     "UT1AtQ0k1N1YxTCJ9.d5O_ArM2lSN9pgPlsK" \
-                     "thq6_nPLDjfmnyBwYv1csUPif8UqUYglGU0L" \
-                     "X9NJgg30Elw8ePd0ocdlq0-mG7UN4fJg"
+        self.token = ""
 
         self.app.load_mod("quickNote")
         self.app.new_ac_mod("quickNote")
