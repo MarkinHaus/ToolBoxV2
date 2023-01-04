@@ -304,7 +304,7 @@ class App:
         self.AC_MOD = None
         self.alive = True
 
-        print(f"SYSTEM :: {node()}\nVersion -> {self.version},\nID -> {self.id},\nload_mode -> {'coppy' if self.mlm == 'C' else ('Inplace' if self.mlm == 'I' else 'pleas use I or C')}\n")
+        print(f"SYSTEM :: {node()}\nID -> {self.id},\nVersion -> {self.version},\nload_mode -> {'coppy' if self.mlm == 'C' else ('Inplace' if self.mlm == 'I' else 'pleas use I or C')}\n")
 
         if args.update:
             self.run_any("cloudM", "#update-core", [])

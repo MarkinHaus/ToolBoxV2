@@ -9,7 +9,6 @@ from importlib import import_module
 
 import jwt
 import requests
-from requests.exceptions import SSLError
 
 from toolboxv2 import MainTool, FileHandler, App
 from toolboxv2.Style import Style
@@ -407,8 +406,7 @@ class Tools(MainTool, FileHandler):
 
         uid = str(uuid.uuid4())
 
-        tb_token_jwt = app.MOD_LIST["db"].tools["get"](["jwt-secret-cloudMService"], app)
-
+        tb_token_jwt = app.run_any('db', 'get', ["jwt-secret-cloudMService"])
         if not tb_token_jwt:
             return "jwt - not found pleas register one"
 
@@ -431,14 +429,14 @@ class Tools(MainTool, FileHandler):
         username = data["username"]
         password = data["password"]
 
-        tb_token_jwt = app.MOD_LIST["db"].tools["get"](["jwt-secret-cloudMService"], app)
+        tb_token_jwt = app.run_any('db', 'get', ["jwt-secret-cloudMService"])
 
         if not tb_token_jwt:
             return "jwt - not found pleas register one"
 
-        user_data_token = app.MOD_LIST["db"].tools["get"]([f"user::{username}::*"], app)
+        user_data_token = app.run_any('db', 'get', ["user::{username}::*"])
 
-        user_data: dict = validate_jwt(user_data_token, str(tb_token_jwt, "utf-8"), app.id)
+        user_data: dict = validate_jwt(user_data_token, tb_token_jwt, app.id)
 
         if type(user_data) is str:
             return user_data
@@ -475,7 +473,7 @@ class Tools(MainTool, FileHandler):
         data = command[0].data
 
         if res != "no-db":
-            tb_token_jwt = app.MOD_LIST["db"].tools["get"](["jwt-secret-cloudMService"], app)
+            tb_token_jwt = app.run_any('db', 'get', ["jwt-secret-cloudMService"])
             res = validate_jwt(token, tb_token_jwt, app.id)
         if type(res) != str:
             return res

@@ -122,6 +122,7 @@ def main():
     if args.modi == 'dev':
         dev_helper()
     if args.modi == 'app':
+        print(args.host, args.port)
         httpd = socketserver.TCPServer((args.host, args.port), AppServerHandler)
         httpd.serve_forever()
 
