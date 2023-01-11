@@ -272,10 +272,10 @@ class Tools(MainTool, FileHandler):
         if version_command is not None:
             url = version_command + "/get/cloudm/run/download_api_files?command="
         try:
-            if len(input_) >= 2:
+            if len(input_) >= 1:
                 name = input_[1]
 
-                url += name + ".py"
+                url += name
 
                 try:
                     data = requests.get(url).json()["res"]
@@ -289,7 +289,7 @@ class Tools(MainTool, FileHandler):
                 except Exception as e:
                     self.print(Style.RED(f"Error download (connoting to server) : {e}"))
             else:
-                self.print((Style.YELLOW(f"SyntaxError : download [mod|aug|text] filename {input_}")))
+                self.print((Style.YELLOW(f"SyntaxError : download filename {input_}")))
         except Exception as e:
             self.print(Style.RED(f"Error download : {e}"))
         return False
