@@ -62,6 +62,9 @@ class Tools(MainTool, FileHandler):
 
     def get_keys(self, command_, app: App):
 
+        if self.rcon is None:
+            return 'Pleas run first-redis-connection'
+
         command = command_[0]
         if command == "get":
             command = command_[1]
@@ -81,7 +84,7 @@ class Tools(MainTool, FileHandler):
 
             # self.print(self.check(command, app), val, app.id)
             if self.check(command, app):
-                return val
+                return str(val, 'utf-8')
         return command
 
     def check(self, request, app: App):
@@ -90,7 +93,8 @@ class Tools(MainTool, FileHandler):
         return True  # not "secret".upper() in request.upper()
 
     def set_key(self, ind):
-
+        if self.rcon is None:
+            return 'Pleas run first-redis-connection'
         if len(ind) == 3:
             key = ind[1]
             val = ind[2]
@@ -102,7 +106,8 @@ class Tools(MainTool, FileHandler):
         return True
 
     def delete_key(self, ind):
-
+        if self.rcon is None:
+            return 'Pleas run first-redis-connection'
         del_list = []
 
         if len(ind) == 2:
