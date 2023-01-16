@@ -130,13 +130,9 @@ async def post_mod_run(data: PostRequest, mod: str, name: str, command: Union[st
     res = {}
     if not command:
         command = ''
-    if tb_app.AC_MOD.name != mod.lower():
-        if mod.lower() in tb_app.MOD_LIST:
-            tb_app.new_ac_mod(mod)
 
-    if tb_app.AC_MOD:
-        command = [data, command.split('|')]
-        res = tb_app.run_function(name, command)
+    command = [data, command.split('|')]
+    res = tb_app.run_any(mod, name, command)
 
     if type(res) == str:
         if (res.startswith('{') or res.startswith('[')) or res.startswith('"[') or res.startswith('"{') \
