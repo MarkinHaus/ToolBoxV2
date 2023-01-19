@@ -117,6 +117,11 @@ def main():
     if args.load_all_mod_in_files:
         tb_app.load_all_mods_in_file()
 
+        if args.get_version:
+
+            for mod in tb_app.MOD_LIST:
+                print(f"{mod.name} : {mod.version}")
+
     if args.modi == 'api':
         tb_app.run_any('api_manager', 'start-api', ['start-api', args.name])
     if args.modi == 'dev':

@@ -313,9 +313,7 @@ class App:
             v = self.version
             if args.mod_version_name != "mainTool":
                 v = self.run_any(args.mod_version_name, 'Version', [])
-            print(f"Version {args.mod_version_name} : {v}")
-            self.save_exit()
-            self.exit()
+            print(f"Version\n {args.mod_version_name} : {v}")
 
     def _save_data(self, key, data):
         if self.config_fh.file_handler_index_ == -1:
