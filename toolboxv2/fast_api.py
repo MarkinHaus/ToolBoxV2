@@ -1,6 +1,7 @@
 import os
 
-from toolboxv2 import App, AppArgs
+from toolboxv2 import App, AppArgs, ToolBox_ovner
+
 from fastapi import FastAPI, Request, UploadFile
 from typing import Union
 import sys
@@ -13,7 +14,10 @@ class PostRequest(BaseModel):
     token: str
     data: dict
 
+class PostRequest_t(BaseModel):
+    token: str
 
+ovner = ToolBox_ovner
 app = FastAPI()
 
 origins = [
@@ -52,12 +56,25 @@ def root():
     return {"res": result}
 
 
-@app.get("/api/exit/{pid}")  # TODO Validate
-def close(pid: int):
+@app.post("/api/exit/{pid}")
+def close(data: PostRequest_t, pid: int):
     if pid == os.getpid():
-        tb_app.save_exit()
-        tb_app.exit()
-        exit(0)
+        res = app.run_any('cloudm', "validate_jwt", command)
+        if isinstance(res, str):
+            return {"res": res}
+        if not isinstance(res, dict):
+            return {"res": str(res)}
+        if "res" in res.keys():
+            res = res["res"]
+        if "uid" not in res.keys():
+            return {"res": str(res)}
+
+        if isinstance(ovner, str):
+            ovner = [ovner]
+        if res["username"] in ovner:
+            tb_app.save_exit()
+            tb_app.exit()
+            exit(0)
     return {"res": "0"}
 
 
@@ -169,12 +186,13 @@ async def create_upload_file(file: UploadFile):
             return {"res": f"Successfully uploaded {file.filename}"}
     return {"res": "not avalable"}
 
-if __name__ == 'fast_api':
+if __name__ == 'fast_api': # do stuw withe ovner to secure ur self
 
     print("online")
 
     config_file = "api.config"
     id_name = ""
+
 
     for i in sys.argv[2:]:
         if i.startswith('data'):
