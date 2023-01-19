@@ -451,9 +451,9 @@ class Tools(MainTool, FileHandler):
         tb_token_jwt = app.run_any('db', 'get', ["jwt-secret-cloudMService"])
 
         if not tb_token_jwt:
-            return "jwt - not found pleas register one"
+            return "jwt scret - not found pleas register one"
 
-        user_data_token = app.run_any('db', 'get', ["user::{username}::*"])
+        user_data_token = app.run_any('db', 'get', [f"user::{username}::*"])
 
         user_data: dict = validate_jwt(user_data_token, tb_token_jwt, app.id)
 
@@ -468,7 +468,7 @@ class Tools(MainTool, FileHandler):
 
         t_username = user_data["username"]
         t_password = user_data["password"]
-        print(t_username)
+
         if t_username != username:
             return "username does not match"
 
@@ -584,6 +584,10 @@ def get_jwtdata(jwt_key: str, jwt_secret: str, aud):
 
 
 def validate_jwt(jwt_key: str, jwt_secret: str, aud) -> dict or str:
+
+    if not jwt_key:
+        return "No JWT Key provided"
+
     try:
         token = jwt.decode(jwt_key, jwt_secret, leeway=timedelta(seconds=10),
                            algorithms=["HS512"], audience=aud, do_time_check=True, verify=True)

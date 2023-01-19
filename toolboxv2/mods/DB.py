@@ -86,7 +86,8 @@ class Tools(MainTool, FileHandler):
             if self.check(command, app):
                 if isinstance(val, str):
                     return val
-                return str(val, 'utf-8')
+                else:
+                    return str(val, 'utf-8')
         return command
 
     def check(self, request, app: App):
