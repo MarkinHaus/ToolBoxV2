@@ -7,7 +7,7 @@ import socketserver
 from platform import system
 
 # Import public Pages
-from toolboxv2 import App, run_cli, AppServerHandler
+from toolboxv2 import App, run_cli, AppServerHandler, MainTool
 
 
 def parse_args():
@@ -119,8 +119,10 @@ def main():
 
         if args.get_version:
 
-            for mod in tb_app.MOD_LIST:
-                print(f"{mod.name} : {mod.version}")
+            for mod_name in tb_app.MACRO:
+                if mod_name in tb_app.MOD_LIST.keys():
+                    if isinstance(tb_app.MOD_LIST[mod_name], MainTool):
+                        print(f"{mod_name} : {tb_app.MOD_LIST[mod_name].version}")
 
     if args.modi == 'api':
         tb_app.run_any('api_manager', 'start-api', ['start-api', args.name])
