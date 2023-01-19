@@ -90,7 +90,7 @@ if "login" not in st.session_state:
         placeholder = st.empty()
         em = placeholder.container()
 
-        em.warning("Pleas enter Token to Continue if you dont have one jet go to https://simpel.com")
+        em.warning("Pleas enter Token to Continue if you dont have one jet go to https://simplem.com")
         em.caption("dev-tool-web-streamlit Welcomes you 😄")
         token = em.text_input("Token", type="password")
         tbname = em.text_input("Name der app", value="main")

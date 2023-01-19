@@ -145,8 +145,7 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())  # pragma: no cover
-
+    sys.exit(main())
     # init main : ToolBoxV2 -init main -f init.config
     # Exit
     # y

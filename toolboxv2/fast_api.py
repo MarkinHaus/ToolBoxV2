@@ -17,10 +17,14 @@ class PostRequest(BaseModel):
 app = FastAPI()
 
 origins = [
-    "http://194.233.168.22",
     "http://194.233.168.22:8000",
-    "http://127.0.0.1:8080",
-    "http://localhost:8080",
+    "http://127.0.0.1:8000",
+    "http://0.0.0.0:8000",
+    "http://localhost:8000",
+    "http://127.0.0.1",
+    "http://0.0.0.0",
+    "http://localhost",
+    "http://194.233.168.22",
     "https://simpelm.com",
 ]
 
@@ -42,41 +46,42 @@ async def add_process_time_header(request: Request, call_next):
     return response
 
 
-@app.get("/")
+@app.get("/api/")
 def root():
     result = tb_img()
     return {"res": result}
 
 
-@app.get("/exit")  # TODO Validate
-def close():
-    tb_app.save_exit()
-    tb_app.exit()
-    exit(0)
+@app.get("/api/exit/{pid}")  # TODO Validate
+def close(pid: int):
+    if pid == os.getpid():
+        tb_app.save_exit()
+        tb_app.exit()
+        exit(0)
     return {"res": "0"}
 
 
-@app.get("/id")
+@app.get("/api/id")
 def id_api():
     return {"res": str(tb_app.id)}
 
 
-@app.get("/mod-list")
+@app.get("/api/mod-list")
 def mod_list():
     return {"res": list(tb_app.MOD_LIST.keys())}
 
 
-@app.get("/SUPER_SET")
+@app.get("/api/SUPER_SET")
 def super_set():
     return {"res": tb_app.SUPER_SET}
 
 
-@app.get("/prefix")
+@app.get("/api/prefix")
 def prefix_working_dir():
     return {"res": tb_app.PREFIX}
 
 
-@app.get("/logs")
+@app.get("/api/logs")
 def logs_app():
     logs = {}
     for log in tb_app.logs_:
@@ -86,7 +91,7 @@ def logs_app():
     return {"res": logs}
 
 
-@app.get("/test-exist/{name}")
+@app.get("/api/test-exist/{name}")
 def test_mod_dow(name: str):
     res = "mod-404"
     if name.lower() in tb_app.MOD_LIST:
@@ -95,7 +100,7 @@ def test_mod_dow(name: str):
     return {"res": res}
 
 
-@app.get("/mod/index/{name}")
+@app.get("/api/mod/index/{name}")
 def get_mod_index(name: str):
     try:
         tb_app.new_ac_mod(name)
@@ -105,7 +110,7 @@ def get_mod_index(name: str):
     return {"res": result}
 
 
-@app.get("/get/{mod}/run/{name}")
+@app.get("/api/get/{mod}/run/{name}")
 def get_mod_run(mod: str, name: str, command: Union[str, None] = None):
     print("get_mod_run")
     res = {}
@@ -125,7 +130,7 @@ def get_mod_run(mod: str, name: str, command: Union[str, None] = None):
     return {"res": res}
 
 
-@app.post("/post/{mod}/run/{name}")
+@app.post("/api/post/{mod}/run/{name}")
 async def post_mod_run(data: PostRequest, mod: str, name: str, command: Union[str, None] = None):
     res = {}
     if not command:
@@ -142,7 +147,7 @@ async def post_mod_run(data: PostRequest, mod: str, name: str, command: Union[st
     return {"res": res}
 
 
-@app.post("/upload-file/")
+@app.post("/api/upload-file/")
 async def create_upload_file(file: UploadFile):
     if tb_app.debug:
         do = False

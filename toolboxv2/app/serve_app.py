@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 
 
-pattern = re.compile('.png|.jpg|.jpeg|.js|.css|.ico|.gif|.svg', re.IGNORECASE)
+pattern = re.compile('.png|.jpg|.jpeg|.js|.css|.ico|.gif|.svg|.wasm', re.IGNORECASE)
 
 abspath = os.path.abspath(__file__)
 dname = os.path.dirname(abspath)
@@ -23,6 +23,6 @@ class AppServerHandler(http.server.SimpleHTTPRequestHandler):
 
         ext = request_file_path.suffix
         if not request_file_path.is_file() and not pattern.match(ext):
-            self.path = 'index.html'
-        self.path = 'app/'+self.path
+            self.path = '/index.html'
+        self.path = 'app'+self.path
         return http.server.SimpleHTTPRequestHandler.do_GET(self)
