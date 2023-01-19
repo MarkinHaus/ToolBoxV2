@@ -379,20 +379,27 @@ class Tools(MainTool, FileHandler):
 
         return False
 
-    def update_core(self, _, app: App):
+    def update_core(self, command, app: App):
         self.print("Init Restarting..")
-        os.system("git pull")
+        if "save" in command:
+            os.system("git fetch --all")
+            d = f"git branch backup-master-{app.id}-{self.version}-{command[-1]}"
+            os.system(d)
+            os.system("git reset --hard origin/master")
+        out = os.system("git pull")
         app.reset()
         app.remove_all_modules()
-        while 1:
-            try:
-                com = " ".join(sys.orig_argv)
-            except AttributeError:
-                com = "python3 "
-                com += " ".join(sys.argv)
-            os.system(com)
-            print("Restarting..")
-            exit(0)
+        try:
+            com = " ".join(sys.orig_argv)
+        except AttributeError:
+            com = "python3 "
+            com += " ".join(sys.argv)
+        os.system(com)
+        print("Restarting..")
+        if out == -1:
+            os.system("git fetch --all")
+            os.system("git reset --hard origin/master")
+        exit(0)
 
     def create_user(self, command, app: App):
         if "db" not in list(app.MOD_LIST.keys()):
