@@ -394,7 +394,10 @@ class Tools(MainTool, FileHandler):
         except AttributeError:
             com = "python3 "
             com += " ".join(sys.argv)
-        os.system(com)
+
+        if "update" not in com:
+            os.system(com)
+
         print("Restarting..")
         if out == -1:
             os.system("git fetch --all")
