@@ -380,7 +380,7 @@ class Tools(MainTool, FileHandler):
         return False
 
     def update_core(self, command, app: App):
-        self.print("Init Restarting..")
+        self.print("Init Update..")
         if "save" in command:
             os.system("git fetch --all")
             d = f"git branch backup-master-{app.id}-{self.version}-{command[-1]}"
@@ -398,7 +398,14 @@ class Tools(MainTool, FileHandler):
         if "update" not in com:
             print("Restarting...")
             os.system(com)
-
+        if out == 0:
+            print("Don you ar up 2 date")
+        else:
+            print("ther was an errer updateing...\n\n")
+            print(Style.RED(f"Error-code: os.system -> {out}"))
+            print("if you changet local files type $ cloudM #update-core save {name}")
+            print("your changes will be saved to a branch named : backup-master-{app.id}-{self.version}-{name}")
+            print("you can apply yur changes after the update with:\ngit stash\ngit stash pop")
         print(out)
         if out == -1:
             os.system("git fetch --all")
