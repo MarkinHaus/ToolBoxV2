@@ -84,6 +84,8 @@ class Tools(MainTool, FileHandler):
 
             # self.print(self.check(command, app), val, app.id)
             if self.check(command, app):
+                if isinstance(val, str):
+                    return val
                 return str(val, 'utf-8')
         return command
 
