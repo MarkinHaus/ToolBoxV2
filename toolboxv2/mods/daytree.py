@@ -58,13 +58,11 @@ class Tools(MainTool, FileHandler):
         self.print("Version: ", self.version)
 
     def on_start(self):
-        self.open_l_file_handler()
         self.load_file_handler()
         self.config = self.get_file_handler(self.keys["Config"])
 
     def on_exit(self):
         self.add_to_save_file_handler(self.keys["Config"], str(self.config))
-        self.open_s_file_handler()
         self.save_file_handler()
         self.file_handler_storage.close()
 
@@ -144,14 +142,14 @@ class Tools(MainTool, FileHandler):
         # -> {name: "dings", }
 
         # Lambda-Funktion zum Hinzufügen von Eigenschaften zu einem Task-Objekt
-        add_properties = lambda task, vg_ob: {
+        add_properties = lambda task_, vg_ob: {
             'id': str(uuid.uuid4()).replace('-', ''),  # Zufällige UID generieren
 
             # Schleife über die Eigenschaften in vg_ob
-            **{prop: next(filter(lambda x: x['t'] in vg_ob[prop], task['att']), {'v': 0})['v']
+            **{prop: next(filter(lambda x: x['t'] in vg_ob[prop], task_['att']), {'v': 0})['v']
                for prop in vg_ob.keys()},
 
-            **task  # Restliche Eigenschaften aus task übernehmen
+            **task_  # Restliche Eigenschaften aus task übernehmen
         }
 
         return add_properties(task, self.config['vg_ob'])
@@ -239,14 +237,14 @@ class Tools(MainTool, FileHandler):
             _x = self._wx_format_task(_x)
 
         wx_now = self._sort_wx(wx, [x[0], x[1]])
-
-        if len(tx) > x[2] - 1:
-            ts.append(tx[:x[2]])
-            tx = tx[:x[2]]
-        else:
-            for t in tx:
-                ts.append(t)
-            tx = []
+        if x[0] != 0:
+            if len(tx) > x[2] - 1:
+                ts.append(tx[:x[2]])
+                tx = tx[:x[2]]
+            else:
+                for t in tx:
+                    ts.append(t)
+                tx = []
         print(f"{wx_now=} {wx=}")
         if len(wx_now) > x[2] - 1:
             # Get the IDs of the first x[2] elements in wx_now
@@ -312,6 +310,17 @@ class Tools(MainTool, FileHandler):
                     week[i - 1].append(t)
 
         return week
+
+    def get_day(self, command, app: App):
+
+        uid, err = self.get_uid(command, app)
+        if err:
+            return uid
+
+        day_date = command[0].data["date"]
+
+        wx, tx = self._dump_bucket(app, uid)
+        day, wx, tx = self._get_day_x(wx, tx, [int(day_date), 0, 10])
 
     def get_uid(self, command, app: App):
         if "cloudm" not in list(app.MOD_LIST.keys()):
