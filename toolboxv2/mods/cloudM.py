@@ -400,7 +400,7 @@ class Tools(MainTool, FileHandler):
             os.system(com)
 
         if out == 0:
-            print("ok")
+            app.print_ok()
         else:
             print("ther was an errer updateing...\n\n")
             print(Style.RED(f"Error-code: os.system -> {out}"))
