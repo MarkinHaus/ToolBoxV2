@@ -398,7 +398,7 @@ class Tools(MainTool, FileHandler):
         if "update" not in com:
             os.system(com)
 
-        print("Restarting..")
+        print("Restarting..", out)
         if out == -1:
             os.system("git fetch --all")
             os.system("git reset --hard origin/master")
