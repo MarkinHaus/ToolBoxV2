@@ -1,11 +1,12 @@
 import binascii
 import hashlib
+import logging
 import os
 import sys
 import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from importlib import import_module
 
 import jwt
 import requests
@@ -17,17 +18,16 @@ from toolboxv2.Style import Style
 class Tools(MainTool, FileHandler):
 
     def __init__(self, app=None):
+        t0 = time.time()
         self.version = "0.0.1"
         self.api_version = "404"
         self.name = "cloudM"
-        self.logs = app.logs_ if app else None
+        self.logger: logging.Logger or None = app.logger if app else None
         self.color = "CYAN"
         self.keys = {
             "URL": "comm-vcd~~",
             "TOKEN": "comm-tok~~",
         }
-
-        self.add = []
         self.tools = {
             "all": [["Version", "Shows current Version"],
                     ["NEW", "crate a boilerplate file to make a new mod", "add is case sensitive",
@@ -60,15 +60,24 @@ class Tools(MainTool, FileHandler):
             "#update-core": self.update_core,
         }
 
+        self.logger.info("init FileHandler cloudM")
+        t1 = time.time()
         FileHandler.__init__(self, "modules.config", app.id if app else __name__, self.keys, {
-            "URL": 'https://simple.com',
-            "TOKEN": '~tok~',
+            "URL": '"https://simpelm.com/api"',
+            "TOKEN": '"~tok~"',
         })
+        self.logger.info(f"Time to initialize FileHandler {time.time() - t1}")
 
+        t1 = time.time()
+        self.logger.info("init MainTool cloudM")
         MainTool.__init__(self, load=self.load_open_file, v=self.version, tool=self.tools,
-                          name=self.name, logs=self.logs, color=self.color, on_exit=self.on_exit)
+                          name=self.name, logs=self.logger, color=self.color, on_exit=self.on_exit)
+
+        self.logger.info(f"Time to initialize MainTool {time.time() - t1}")
+        self.logger.info(f"Time to initialize Tools {self.name} {time.time() - t0}")
 
     def load_open_file(self):
+        self.logger.info("Starting cloudM")
         self.load_file_handler()
         self.get_version()
 
@@ -81,92 +90,22 @@ class Tools(MainTool, FileHandler):
 
     def get_version(self):
         version_command = self.get_file_handler(self.keys["URL"])
-        url = f"http://127.0.0.1:5000/get/cloudm/run/Version?command=V:{self.version}"
-        if version_command is not None:
-            url = version_command + "/get/cloudm/run/Version?command=V:" + self.version
+
+        url = version_command + "/get/cloudm/run/Version?command=V:" + self.version
 
         try:
             self.api_version = requests.get(url).json()["res"]
             self.print(f"API-Version: {self.api_version}")
         except Exception:
             self.print(Style.RED(f" Error retrieving version from {url}\n\t run : cloudM first-web-connection\n"))
+            self.logger.error(f"Error retrieving version from {url}")
 
-    def load_mods(self, load_mod):
-        default_modules = self.get_file_handler(self.keys["DM"])
-
-        if default_modules:
-            self.print("oping modules")
-            try:
-                default_modules = eval(default_modules)
-
-            except SyntaxError and TypeError:
-                self.print("Data default modules is corrupted")
-
-        if type(default_modules) is list and len(default_modules) > 0:
-            for i in default_modules:
-                self.add.append(i)
-                self.print(f"Loading module : ", end='')
-                try:
-                    load_mod(i)
-                    self.log(f"Open mod {i}")
-                except Exception as e:
-                    self.print(Style.RED("Error") + f" loading modules : {e}")
-                    self.log(f"Error mod {i}")
-
-    def load_history(self):
-        history = self.get_file_handler(self.keys["HIS"])
-
-        if history:
-            try:
-                history = eval(history)
-                self.print("open history len : " + str(len(history)))
-
-                if type(history) is list and len(history) > 0:
-                    return history
-            except SyntaxError and TypeError:
-                self.print("Data default modules is corrupted")
-
-        return []
-
-    def save_history(self, history):
-        self.add_to_save_file_handler(self.keys["HIS"], str(history))
-
-    def add_module(self, module):
-        do = False
-        try:
-            if len(module) == 2:
-                import_module("mods." + module[1])
-                do = True
-            else:
-                self.print((Style.YELLOW("SyntaxError : add module_name=File name")))
-        except ModuleNotFoundError:
-            self.print(Style.RED(f"Module {module[1]} not found"))
-            return
-        if do:
-            self.add.append(module[1])
-            self.print(Style.GREEN(f"Module {module[1]} successfully added"))
-
-    def rem_module(self, module):
-        do = False
-        try:
-            if len(module) == 2:
-                import_module("mods." + module[1])
-                do = True
-            else:
-                self.print((Style.YELLOW("SyntaxError : add module_name=File name")))
-        except ModuleNotFoundError:
-            self.print(Style.RED(f"Module {module[1]} not found"))
-            return
-        if do:
-            self.add.remove(module[1])
-            self.print(Style.GREEN(f"Module {module[1]} successfully removed"))
-
-    def list_mods(self):
-        for i in self.add:
-            self.print("Module : " + i)
-
-    def new_module(self, command, app: App):
-        boilerplate = """from toolboxv2 import MainTool, FileHandler, App
+    def new_module(self, command):
+        if len(command) >= 1:
+            print(f"Command {command} invalid : syntax new module-name ?-fh ?-func")
+        self.logger.info(f"Crazing new module : {command[1]}")
+        boilerplate = """import logging
+from toolboxv2 import MainTool, FileHandler, App
 from toolboxv2.Style import Style
 
 
@@ -175,38 +114,68 @@ class Tools(MainTool, FileHandler):
     def __init__(self, app=None):
         self.version = "0.0.2"
         self.name = "NAME"
-        self.logs = app.logs_ if app else None
+        self.logger: logging.Logger or None = app.logger if app else None
         self.color = "WHITE"
         # ~ self.keys = {}
         self.tools = {
             "all": [["Version", "Shows current Version"]],
             "name": "NAME",
-            "Version": self.show_version,
+            "Version": self.show_version, # TODO if functional replace line with [            "Version": show_version,]
         }
         # ~ FileHandler.__init__(self, "File name", app.id if app else __name__, keys=self.keys, defaults={})
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
-                        name=self.name, logs=self.logs, color=self.color, on_exit=self.on_exit)
-
-    def show_version(self):
-        self.print("Version: ", self.version)
+                        name=self.name, logs=self.logger, color=self.color, on_exit=self.on_exit)
 
     def on_start(self):
+        self.logger.info(f"Starting NAME")
         # ~ self.load_file_handler()
         pass
 
     def on_exit(self):
+        self.logger.info(f"Closing NAME")
         # ~ self.save_file_handler()
         pass
 
 """
+        helper_functions_class = """
+    def show_version(self):
+        self.print("Version: ", self.version)
+        return self.version
+"""
+        helper_functions_func = """
+def get_tool(app: App):
+    return app.AC_MOD
+
+
+def show_version(_, app: App):
+    welcome_f: Tools = get_tool(app)
+    welcome_f.print(f"Version: {welcome_f.version}")
+    return welcome_f.version
+
+"""
+
+        self.logger.info(f"crating boilerplate")
         mod_name = command[1]
-        if len(command) == 2:
+        if command in ['-fh']:
             boilerplate = boilerplate.replace('pass', '').replace('# ~ ', '')
+
+            self.logger.info(f"adding FileHandler")
+        if command in ['-func']:
+            boilerplate += helper_functions_func
+            self.logger.info(f"adding functional based")
+        else:
+            boilerplate += helper_functions_class
+            self.logger.info(f"adding Class based")
         self.print(f"Test existing {self.api_version=} ", end='')
+
+        self.logger.info(f"Testing connection")
+        self.get_version()
+
         if self.api_version != '404':
             if self.download(["", mod_name]):
                 self.print(Style.Bold(Style.RED("MODULE exists-on-api pleas use a other name")))
                 return False
+
         self.print("NEW MODULE: " + mod_name, end=" ")
         if os.path.exists(f"mods/" + mod_name + ".py") or os.path.exists(f"mods_dev/" + mod_name + ".py"):
             self.print(Style.Bold(Style.RED("MODULE exists pleas use a other name")))
@@ -219,12 +188,12 @@ class Tools(MainTool, FileHandler):
                 bytes(boilerplate.replace('NAME', mod_name), 'ISO-8859-1')
             )
 
-        self.print("finished")
+        self.print("Successfully created new module")
         return True
 
     def upload(self, input_):
         version_command = self.get_file_handler(self.keys["URL"])
-        url = "http://127.0.0.1:5000/upload-file"
+        url = "http://127.0.0.1:5000/api/upload-file"
         if version_command is not None:
             url = version_command + "/upload-file"
         try:
@@ -260,7 +229,7 @@ class Tools(MainTool, FileHandler):
                         self.print(Style.RED(f"Error uploading (connoting to server) : {e}"))
 
             else:
-                self.print((Style.YELLOW(f"SyntaxError : upload filename {input_}")))
+                self.print((Style.YELLOW(f"SyntaxError : upload filename | {input_}")))
         except Exception as e:
             self.print(Style.RED(f"Error uploading : {e}"))
             return
@@ -298,14 +267,16 @@ class Tools(MainTool, FileHandler):
         if ".." in filename:
             return "invalid command"
         self.print("download_api_files : ", filename)
-        try:
-            app.inplace_load(filename)
-        except FileNotFoundError:
-            return f"name not found {filename}"
 
-        with open("./mods/" + filename, "rb") as f:
-            d = f.read()
-        return d
+        mds = app.get_all_mods()
+        if filename in mds:
+            self.logger.info(f"returning module {filename}")
+            with open("./mods/" + filename + ".py", "rb") as f:
+                d = f.read()
+            return d
+
+        self.logger.warning(f"Could not found module {filename}")
+        return False
 
     def add_url_con(self, command):
         """
@@ -314,9 +285,9 @@ class Tools(MainTool, FileHandler):
         if len(command) == 2:
             url = command[1]
         else:
-            url = input("Pleas enter URL of CloudM Backend default [https://simpelm] : ")
+            url = input("Pleas enter URL of CloudM Backend default [https://simpelm.com/api] : ")
         if url == "":
-            url = "https://simeplm"
+            url = "https://simeplm.com/api"
         self.print(Style.YELLOW(f"Adding url : {url}"))
         self.add_to_save_file_handler(self.keys["URL"], url)
         return url
@@ -429,10 +400,10 @@ class Tools(MainTool, FileHandler):
         if not tb_token_jwt:
             return "jwt - not found pleas register one"
 
-        if self.test_if_exists(username, app):
+        if test_if_exists(username, app):
             return "username already exists"
 
-        if self.test_if_exists(email, app):
+        if test_if_exists(email, app):
             return "email already exists"
         jwt_key = crate_sing_key(username, email, password, uid, gen_token_time({"v": self.version}, 4380),
                                  tb_token_jwt, app)
@@ -483,17 +454,14 @@ class Tools(MainTool, FileHandler):
 
     def validate_jwt(self, command, app: App):  # spec s -> validate token by server x ask max
         res = ''
-        if "db" not in list(app.MOD_LIST.keys()):
-            if not ["passdb"] in command[0].data.keys():
-                return "Server has no database module"
-            res = "no-db"
+        self.logger.debug(f'validate_ {type(command[0].data)} {command[0].data}')
 
         token = command[0].token
         data = command[0].data
 
-        if res != "no-db":
-            tb_token_jwt = app.run_any('db', 'get', ["jwt-secret-cloudMService"])
-            res = validate_jwt(token, tb_token_jwt, app.id)
+        tb_token_jwt = app.run_any('db', 'get', ["jwt-secret-cloudMService"])
+        res = validate_jwt(token, tb_token_jwt, app.id)
+
         if type(res) != str:
             return res
         if res in ["InvalidSignatureError", "InvalidAudienceError", "max-p", "no-db"]:
@@ -509,7 +477,7 @@ class Tools(MainTool, FileHandler):
                       "data": {
                           "server-x": app.id,
                           "pasted": data["pasted"] + 1 if 'pasted' in data.keys() else 0,
-                          "max-p": data["pasted"] - 1 if 'pasted' in data.keys() else 3
+                          "max-p": data["max-p"] - 1 if 'max-p' in data.keys() else 3
                       }
                       }
             if j_data['data']['pasted'] > j_data['data']['max-p']:
@@ -519,15 +487,16 @@ class Tools(MainTool, FileHandler):
 
         return res
 
-    def test_if_exists(self, name: str, app: App):
-        if "db" not in list(app.MOD_LIST.keys()):
-            return "Server has no database module"
 
-        db: MainTool = app.MOD_LIST["db"]
+def test_if_exists(self, name: str, app: App):
+    if "db" not in list(app.MOD_LIST.keys()):
+        return "Server has no database module"
 
-        get_db = db.tools["get"]
+    db: MainTool = app.MOD_LIST["db"]
 
-        return get_db([f"*::{name}"], app) != ""
+    get_db = db.tools["get"]
+
+    return get_db([f"*::{name}"], app) != ""
 
 
 # Create a hashed password
@@ -584,7 +553,6 @@ def get_jwtdata(jwt_key: str, jwt_secret: str, aud):
 
 
 def validate_jwt(jwt_key: str, jwt_secret: str, aud) -> dict or str:
-
     if not jwt_key:
         return "No JWT Key provided"
 

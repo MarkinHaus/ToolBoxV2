@@ -1,219 +1,18 @@
 """Main module."""
 import os
+import sys
+import time
 from platform import node
 from importlib import import_module
 from inspect import signature
 
 import requests
 
+from toolboxv2.file_handler import FileHandler
+from toolboxv2.util import Style, setup_logging, get_logger
 import toolboxv2
-from toolboxv2.Style import Style
 
-
-class MainTool:
-    def __init__(self, *args, **kwargs):
-        self.version = kwargs["v"]
-        self.tools = kwargs["tool"]
-        self.name = kwargs["name"]
-        self.logs = kwargs["logs"]
-        self.color = kwargs["color"]
-        self.todo = kwargs["load"]
-        self._on_exit = kwargs["on_exit"]
-        self.stuf = False
-        self.load()
-
-    def load(self):
-        if self.todo:
-            self.todo()
-            self.logs.append([self, "load successfully"])
-        else:
-            self.logs.append([self, "no load require"])
-        print(f"TOOL successfully loaded : {self.name}")
-        self.logs.append([self, "TOOL successfully loaded"])
-
-    def print(self, message, *args, end="\n"):
-        if self.stuf:
-            return
-
-        print(Style.style_dic[self.color] + self.name + Style.style_dic["END"] + ":", message, end=end)
-
-    def log(self, message):
-        self.logs.append([self, message])
-
-
-class Code:
-    @staticmethod
-    def decode_code(data):
-        # letters = string.ascii_letters + string.digits + string.punctuation
-        # decode_str = ''
-        # data_n = data.split('#')
-        # data = []
-        # for data_z in data_n[:-1]:
-        #    data.append(float(data_z))
-        # i = 0
-        # for data_z in data:
-        #    ascii_ = data_z * 2
-        #    decode_str += letters[int(ascii_)]
-        #    i += 1
-        # decode_str = decode_str.replace('-ou-', 'u')
-        # decode_str = decode_str.split('@')
-        # return decode_str
-        return data
-
-    @staticmethod
-    def encode_code(data):
-        # letters = string.ascii_letters + string.digits + string.punctuation
-        # encode_str = ''
-        # data = data.replace(' ', '@')
-        # leng = data.__len__()
-        # for data_st in range(leng):
-        #    i = -1
-        #    while data[data_st] != letters[i]:
-        #        i += 1
-        #        if data[data_st] == letters[i]:
-        #            encode_str += str(i / 2) + '#'
-        #    data_st += 1
-        # return encode_str
-        return str(data)
-
-
-class FileHandler(Code):
-
-    def __init__(self, filename, name='mainTool', keys=None, defaults=None):
-        if defaults is None:
-            defaults = {}
-        if keys is None:
-            keys = {}
-        assert filename.endswith(".config") or filename.endswith(".data"), \
-            f"filename must end with .config or .data {filename=}"
-        self.file_handler_save = {}
-        self.file_handler_load = []
-        self.file_handler_filename = filename
-        self.file_handler_storage = None
-        self.file_handler_index_ = 0
-        self.file_handler_file_prefix = f".{filename.split('.')[1]}/{name.replace('.', '-')}/"
-        self.load_file_handler()
-        self.set_defaults_keys_file_handler(keys, defaults)
-
-    def _open_file_handler(self, mode: str, rdu):
-        if self.file_handler_storage:
-            self.file_handler_storage.close()
-            self.file_handler_storage = None
-        try:
-            self.file_handler_storage = open(self.file_handler_file_prefix + self.file_handler_filename, mode)
-            self.file_handler_index_ += 1
-        except FileNotFoundError:
-            if self.file_handler_index_ >= 5:
-                print(Style.RED(f"pleas create this file to prosed : {self.file_handler_file_prefix}"
-                                f"{self.file_handler_filename}"))
-                exit(0)
-            self.file_handler_index_ += 1
-            print(Style.YELLOW(f"Try Creating File: {self.file_handler_file_prefix}{self.file_handler_filename}"),
-                  end=" ")
-
-            if not os.path.exists(f"{self.file_handler_file_prefix}"):
-                os.makedirs(f"{self.file_handler_file_prefix}")
-
-            with open(self.file_handler_file_prefix + self.file_handler_filename, 'a'):
-                print(Style.GREEN("File created successfully"))
-                self.file_handler_index_ = -1
-            rdu()
-
-    def open_s_file_handler(self):
-        self._open_file_handler('w+', self.open_s_file_handler)
-        return self
-
-    def open_l_file_handler(self):
-        self._open_file_handler('r+', self.open_l_file_handler)
-        return self
-
-    def save_file_handler(self):
-        if self.file_handler_storage:
-            print(f"WARNING file is already open (S): {self.file_handler_filename} {self.file_handler_storage}")
-
-        self.open_s_file_handler()
-
-        for key in self.file_handler_save.keys():
-            data = self.file_handler_save[key]
-            self.file_handler_storage.write(key+str(data))
-            self.file_handler_storage.write('\n')
-
-        self.file_handler_storage.close()
-        self.file_handler_storage = None
-
-        return self
-
-    def add_to_save_file_handler(self, key: str, value: str):
-        if len(key) != 10:
-            print('WARNING: key length is not 10 characters')
-            return
-        if key not in self.file_handler_save.keys():
-            print(Style.YELLOW(f"{key} wos not found in file set new"))
-            w = 'None'
-        else:
-            w = self.file_handler_save[key]
-
-        self.file_handler_save[key] = self.encode_code(value)
-        return w, self.decode_code(w)
-
-    def load_file_handler(self):
-
-        if self.file_handler_storage:
-            print(f"WARNING file is already open (L) {self.file_handler_filename} {self.file_handler_storage}")
-
-        self.open_l_file_handler()
-
-        for line in self.file_handler_storage:
-            line = line[:-1]
-            heda = line[:10]
-            self.file_handler_save[heda] = line[10:]
-            enc = self.decode_code(line[10:])
-            append = [heda, enc]
-            self.file_handler_load.append(append)
-
-        self.file_handler_storage.close()
-        self.file_handler_storage = None
-
-        return self
-
-    def get_file_handler(self, obj: str) -> str or None:
-        self.file_handler_index_ = -1
-        f = []
-        for objects in self.file_handler_load:
-            self.file_handler_index_ += 1
-            f.append(objects[0])
-            if obj == objects[0]:
-
-                try:
-                    return eval(objects[1])
-                except ValueError:
-                    print(Style.RED(f"Error Loading {obj} use default if provided"))
-                except SyntaxError:
-                    pass  # print(Style.YELLOW(f"Data frc : {obj} ; {objects[1]}"))
-                except NameError:
-                    return str(objects[1])
-
-        if obj in list(self.file_handler_save.keys()):
-            return self.decode_code(self.file_handler_save[obj])
-        if obj == '-all-f-data':
-            return f
-
-        return None
-
-    def set_defaults_keys_file_handler(self, keys: dict, defaults: dict):
-        list_keys = iter(list(keys.keys()))
-        df_keys = defaults.keys()
-        file_keys = self.get_file_handler("-all-f-data")
-        for key in list_keys:
-
-            if key in file_keys:
-                continue
-
-            if key in df_keys:
-                self.file_handler_load.append([keys[key], str(defaults[key])])
-                self.file_handler_save[keys[key]] = self.encode_code(defaults[key])
-            else:
-                self.file_handler_load.append([keys[key], "None"])
+import logging
 
 
 class AppArgs:
@@ -246,10 +45,24 @@ class ApiOb:
 
 class App:
     def __init__(self, prefix: str = "", args=AppArgs().default()):
+        t0 = time.time()
         abspath = os.path.abspath(__file__)
         dname = os.path.dirname(abspath)
         os.chdir(dname)
-        print("Starting Tool - Box from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
+        print("Starting2 Tool - Box from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
+
+        if prefix.endswith("test"):
+            setup_logging(logging.NOTSET, name="toolbox-test", interminal=True,
+                          file_level=logging.NOTSET).info("Logger initialized")
+        elif prefix.endswith("live"):
+            setup_logging(logging.WARNING, name="toolbox-live", is_online=True
+                          , online_level=logging.WARNING).info("Logger initialized")
+        elif prefix.endswith("debug"):
+            setup_logging(logging.DEBUG, name="toolbox-debug", interminal=True,
+                          file_level=logging.WARNING).info("Logger initialized")
+        else:
+            setup_logging(logging.ERROR, name=f"toolbox-{prefix}").info("Logger initialized")
+        get_logger().info(Style.GREEN("Starting Tool"))
 
         if args.init:
             _initialize_toolBox(args.init, args.init_file)
@@ -284,9 +97,9 @@ class App:
         self.config_fh = FileHandler(name + ".config", keys=self.keys, defaults=defaults)
         self.config_fh.load_file_handler()
 
-        self.debug = False
+        self._debug = False
 
-        self.debug = self.config_fh.get_file_handler(self.keys["debug"])
+        self._debug = self.config_fh.get_file_handler(self.keys["debug"])
         self.command_history = self.config_fh.get_file_handler(self.keys["comm-his"])
         self.dev_modi = self.config_fh.get_file_handler(self.keys["develop-mode"])
         self.MACRO = self.config_fh.get_file_handler(self.keys["MACRO"])
@@ -299,12 +112,14 @@ class App:
         self.auto_save = True
         self.PREFIX = Style.CYAN(f"~{node()}@>")
         self.MOD_LIST = {}
-        self.logs_ = []
+        self.logger: logging.Logger = get_logger()
         self.SUPER_SET = []
         self.AC_MOD = None
         self.alive = True
 
-        print(f"SYSTEM :: {node()}\nID -> {self.id},\nVersion -> {self.version},\nload_mode -> {'coppy' if self.mlm == 'C' else ('Inplace' if self.mlm == 'I' else 'pleas use I or C')}\n")
+        print(
+            f"SYSTEM :: {node()}\nID -> {self.id},\nVersion -> {self.version},\n"
+            f"load_mode -> {'coppy' if self.mlm == 'C' else ('Inplace' if self.mlm == 'I' else 'pleas use I or C')}\n")
 
         if args.update:
             self.run_any("cloudM", "#update-core", [])
@@ -313,18 +128,31 @@ class App:
             v = self.version
             if args.mod_version_name != "mainTool":
                 v = self.run_any(args.mod_version_name, 'Version', [])
-            print(f"Version\n {args.mod_version_name} : {v}")
+            print(f"Version {args.mod_version_name} : {v}")
 
-    def _save_data(self, key, data):
-        if self.config_fh.file_handler_index_ == -1:
-            self.debug_print(f"Config - Installation Don for {key}")
-        if self.config_fh.file_handler_index_ == 6:
-            self.debug_print(f"data missing : {key=}")
+        self.logger.info(
+            Style.GREEN(
+                f"Finish init up in t-{time.time() - t0}s"
+            )
+        )
 
-        self.config_fh.add_to_save_file_handler(key, data)
+    @property
+    def debug(self):
+        return self._debug
+
+    @debug.setter
+    def debug(self, value):
+        if not isinstance(value, bool):
+            self.logger.debug(f"Value must be an boolean. is : {value} type of {type(value)}")
+            raise ValueError("Value must be an boolean.")
+
+        self.logger.info(f"Setting debug {value}")
+        self._debug = value
 
     def _coppy_mod(self, content, new_mod_dir, mod_name):
         mode = 'xb'
+
+        self.logger.info(f" coppy mod {mod_name} to {new_mod_dir} size : {sys.getsizeof(content)/8388608:.3f} mb")
 
         if not os.path.exists(new_mod_dir):
             os.makedirs(new_mod_dir)
@@ -345,6 +173,9 @@ class App:
     def _pre_lib_mod(self, mod_name):
         working_dir = self.id.replace(".", "_")
         lib_mod_dir = f"toolboxv2.runtime.{working_dir}.mod_lib."
+
+        self.logger.info(f"pre_lib_mod {mod_name} from {lib_mod_dir}")
+
         postfix = "_dev" if self.dev_modi else ""
         mod_file_dir = f"./mods{postfix}/{mod_name}.py"
         new_mod_dir = f"./runtime/{working_dir}/mod_lib"
@@ -361,7 +192,7 @@ class App:
         if self.dev_modi and loc == "toolboxv2.mods.":
             loc = "toolboxv2.mods_dev."
         if mod_name.lower() in list(self.MOD_LIST.keys()):
-            print("Reloading mod from =", loc+mod_name)
+            self.logger.info(f"Reloading mod from : { loc + mod_name}")
             self.remove_mod(mod_name)
         mod = import_module(loc + mod_name)
         mod = getattr(mod, "Tools")
@@ -376,35 +207,67 @@ class App:
         return mod
 
     def _get_function(self, name):
+
+        self.logger.info(f"getting function : {name}")
+
         if not self.AC_MOD:
-            self.debug_print(Style.RED("No module Active"))
+            self.logger.debug(Style.RED("No module Active"))
             return None
 
-        if self.debug:
-            return self.AC_MOD.tools[self.AC_MOD.tools["all"][self.SUPER_SET.index(name.lower())][0]]
-
         if name.lower() not in self.SUPER_SET:
-            self.debug_print(Style.RED(f"KeyError: {name} function not found 404"))
+            self.logger.debug(Style.RED(f"KeyError: {name} function not found 404"))
             return None
 
         return self.AC_MOD.tools[self.AC_MOD.tools["all"][self.SUPER_SET.index(name.lower())][0]]
 
     def save_exit(self):
-        self._save_data(self.keys["debug"], str(self.debug))
-        self._save_data(self.keys["st-load"], str(self.stuf_load))
-        self._save_data(self.keys["module-load-mode"], self.mlm)
+        self.logger.info(f"save exiting saving data to {self.config_fh.file_handler_filename} states of {self.debug=}"
+                         f" {self.stuf_load=} {self.mlm=}")
+        self.config_fh.add_to_save_file_handler(self.keys["debug"], str(self.debug))
+        self.config_fh.add_to_save_file_handler(self.keys["st-load"], str(self.stuf_load))
+        self.config_fh.add_to_save_file_handler(self.keys["module-load-mode"], self.mlm)
+        self.config_fh.add_to_save_file_handler(self.keys["comm-his"], str(self.command_history))
 
     def load_mod(self, mod_name):
 
+        self.logger.info(f"try opening module {mod_name} in mode {self.mlm}")
+
         if self.mlm == "I":
             return self.inplace_load(mod_name)
-        if self.mlm == "C":
+        elif self.mlm == "C":
             return self._copy_load(mod_name)
         else:
+            self.logger.critical(f"config mlm must bee I (inplace load) or C (coppy to runtime load) is {self.mlm=}")
             raise ValueError(f"config mlm must bee I (inplace load) or C (coppy to runtime load) is {self.mlm=}")
 
     def load_all_mods_in_file(self, working_dir="mods"):
+
+        t0 = time.time()
+
+        iter_res = self.get_all_mods(working_dir)
+
+        opened = 0
+        for mod in iter_res:
+            opened += 1
+            self.logger.info(f"Loading module : {mod}")
+            if self.debug:
+                self.load_mod(mod)
+                continue
+            else:
+                try:
+                    self.load_mod(mod)
+                except Exception as e:
+                    self.logger.error(Style.RED("Error") + f" loading module {mod} {e}")
+
+        self.logger.info(f"opened  : {opened} modules in t-{time.time()-t0}s")
+
+        return True
+
+    def get_all_mods(self, working_dir="mods"):
+        self.logger.info(f"collating all mods in working directory {working_dir}")
+
         w_dir = self.id.replace(".", "_")
+
         if self.mlm == "C":
             if os.path.exists(f"./runtime/{w_dir}/mod_lib"):
                 working_dir = f"./runtime/{w_dir}/mod_lib/"
@@ -414,29 +277,23 @@ class App:
 
         res = os.listdir(working_dir)
 
+        self.logger.info(f"found : {len(res)} files")
+
         def do_helper(_mod):
-            if "mainTool" in mod:
+            if "mainTool" in _mod:
                 return False
-            if not mod.endswith(".py"):
+            if not _mod.endswith(".py"):
                 return False
-            if mod.startswith("__"):
+            if _mod.startswith("__"):
                 return False
-            if mod.startswith("test_"):
+            if _mod.startswith("test_"):
                 return False
             return True
-        iter_res = iter(res)
-        for mod in iter_res:
-            if do_helper(mod):
-                print(f"Loading module : {mod[:-3]}", end=' ')
-                if self.debug:
-                    self.load_mod(mod[:-3])
-                    continue
-                try:
-                    self.load_mod(mod[:-3])
-                except Exception as e:
-                    print(Style.RED("Error") + f" loading modules : {e}")
 
-        return True
+        def r_endings(word: str):
+            return word[:-3]
+
+        return list(map(r_endings, filter(do_helper, res)))
 
     def remove_all_modules(self):
         iter_list = self.MOD_LIST.copy()
@@ -444,29 +301,28 @@ class App:
         self.exit_all_modules()
 
         for mod_name in iter_list.keys():
+            self.logger.info(f"removing module : {mod_name}")
             try:
                 self.remove_mod(mod_name)
             except Exception as e:
-                self.debug_print(Style.RED("ERROR: %s %e" % mod_name % e))
+                self.logger.error(f"Error removing module {mod_name} {e}")
 
     def exit_all_modules(self):
         for mod in self.MOD_LIST.items():
-            print("closing:", mod[0], ": ", end="")
+            self.logger.info(f"closing: {mod[0]}")
             if mod[1]._on_exit:
                 try:
                     mod[1]._on_exit()
                     self.print_ok()
                 except Exception as e:
-                    self.debug_print(Style.YELLOW(Style.Bold(f"closing ERROR : {e}")))
+                    self.logger.debug(Style.YELLOW(Style.Bold(f"closing ERROR : {e}")))
 
     def print_ok(self):
-        if self.id.startswith("test"):
-            print("OK")
-            return
-        print(Style.GREEN(Style.Bold(f"🆗")))
+        self.logger.info("OK")
 
     def remove_mod(self, mod_name):
 
+        self.logger.info(f"Removing mod from sto")
         del self.MOD_LIST[mod_name.lower()]
         del self.MACRO_color[mod_name.lower()]
         del self.HELPER[mod_name.lower()]
@@ -474,6 +330,8 @@ class App:
 
     def colorize(self, obj):
         for pos, o in enumerate(obj):
+            if not isinstance(o, str):
+                o = str(o)
             if o.lower() in self.MACRO:
                 if o.lower() in self.MACRO_color.keys():
                     obj[pos] = f"{Style.style_dic[self.MACRO_color[o.lower()]]}{o}{Style.style_dic['END']}"
@@ -494,18 +352,12 @@ class App:
         for macro in self.MACRO + self.SUPER_SET:
             if macro.startswith(command.lower()):
                 options.append(macro)
-
+        self.logger.info(f"Autocompletion in {command} aut : {options}")
         return options
-
-    def logs(self):
-        print(f"PREFIX={self.PREFIX}"
-              f"\nMACRO={self.pretty_print(self.MACRO[:7])}"
-              f"\nMODS={self.pretty_print(self.MACRO[7:])}"
-              f"\nSUPER_SET={self.pretty_print(self.SUPER_SET)}")
-        self.command_viewer(self.logs_)
 
     def exit(self):
         self.exit_all_modules()
+        self.logger.info("Exiting ToolBox")
         print(Style.Bold(Style.CYAN("OK - EXIT ")))
         print('\033[?25h', end="")
         self.alive = False
@@ -531,12 +383,25 @@ class App:
             return "invalid commands"
 
     def save_load(self, filename):
+        self.logger.info(f"Save load module {filename}")
+        if not filename:
+            self.logger.warning("no filename specified")
+            return False
+        avalabel_mods = self.get_all_mods()
+        i = 0
+        fw = filename.lower()
+        for mod in list(map(lambda x: x.lower(), avalabel_mods)):
+            if fw == mod:
+                filename = avalabel_mods[i]
+            i += 1
         if self.debug:
             return self.load_mod(filename)
         try:
             return self.load_mod(filename)
         except ModuleNotFoundError:
-            print(Style.RED(f"Module {filename} not found"))
+            self.logger.error(Style.RED(f"Module {filename} not found"))
+
+        return False
 
     def reset(self):
         self.AC_MOD = None
@@ -545,26 +410,31 @@ class App:
 
     def get_file_handler_name(self):
         if not self.AC_MOD:
-            self.debug_print(Style.RED("No module Active"))
+            self.logger.debug(Style.RED("No module Active"))
             return None
         try:
             if self.AC_MOD.file_handler_filename:
                 return self.AC_MOD.file_handler_filename
         except AttributeError as e:
-            print(Style.RED(f"AttributeError: {e} has no file handler 404"))
+            self.logger.error(Style.RED(f"AttributeError: {e} has no file handler 404"))
         return None
 
     def run_function(self, name, command):
         # get function
+        self.logger.info(f"Start setup for : {name} function")
+
         function = self._get_function(name)
         res = {}
         if not function:
-            self.debug_print(Style.RED(f"Function {name} not found"))
+            self.logger.debug(Style.RED(f"Function {name} not found"))
             return False
         # signature function
+        self.logger.info(f"profiling function")
         sig = signature(function)
+        self.logger.info(f"signature : {sig}")
         args = len(sig.parameters)
-
+        self.logger.info(f"args-len : {args}")
+        self.logger.info(f"staring function")
         if args == 0:
             if self.debug:
                 res = function()
@@ -573,9 +443,9 @@ class App:
                     self.print_ok()
                     print("\nStart function\n")
                     res = function()
-                    self.debug_print(Style.GREEN(f"\n-"))
                 except Exception as e:
-                    self.debug_print(Style.YELLOW(Style.Bold(f"! function ERROR : {e}")))
+                    self.logger.error(Style.YELLOW(Style.Bold(f"! function ERROR : {e}")))
+                    return res
 
         elif args == 1:
             if self.debug:
@@ -585,9 +455,9 @@ class App:
                     self.print_ok()
                     print("\nStart function\n")
                     res = function(command)
-                    self.debug_print(Style.GREEN(f"\n-"))
                 except Exception as e:
-                    self.debug_print(Style.YELLOW(Style.Bold(f"! function ERROR : {e}")))
+                    self.logger.error(Style.YELLOW(Style.Bold(f"! function ERROR : {e}")))
+                    return res
 
         elif args == 2:
             if self.debug:
@@ -597,35 +467,37 @@ class App:
                     self.print_ok()
                     print("\nStart function\n")
                     res = function(command, self)
-                    self.debug_print(Style.GREEN(f"\n-"))
                 except Exception as e:
-                    self.debug_print(Style.YELLOW(Style.Bold(f"! function ERROR : {e}")))
+                    self.logger.error(Style.YELLOW(Style.Bold(f"! function ERROR : {e}")))
+                    return res
         else:
-            self.debug_print(Style.YELLOW(f"! to many args {args} def ...(u): | -> {str(sig)}"))
+            self.logger.error(Style.YELLOW(f"! to many args {args} def ...(u): | -> {str(sig)}"))
+            return res
 
-        self.debug_print(res)
-        self.debug_print(f"Name: {self.id} : {__name__}")
+        self.logger.info(f"Execution done")
+        if not res:
+            self.logger.debug("No return value")
+        else:
+            self.logger.debug(res)
 
         return res
 
     def run_any(self, module_name: str, function_name: str, command: list):
-
-        if module_name.lower() not in list(self.MOD_LIST.keys()):
-            print(f"Module : {module_name}.{function_name} not online")
-            self.save_load(module_name)
 
         do_sto = self.AC_MOD is not None
         ac_sto = ""
         if do_sto:
             ac_sto = self.AC_MOD.name
 
+        if module_name.lower() not in list(self.MOD_LIST.keys()):
+            self.logger.warning(f"Module : {module_name}.{function_name} not online")
+            self.save_load(module_name)
+
         self.new_ac_mod(module_name)
         res = self.run_function(function_name, command)
 
         if do_sto:
             self.new_ac_mod(ac_sto)
-        if self.debug:
-            print(res)
 
         return res
 
@@ -635,17 +507,15 @@ class App:
             self.SUPER_SET.append(spec[0].lower())
 
     def new_ac_mod(self, name):
+        self.logger.info(f"New ac mod : {name}")
         if name.lower() not in self.MOD_LIST.keys():
+            self.logger.warning(f"Could not find {name} in {self.MOD_LIST.keys()}")
             return f"valid mods ar : {self.MOD_LIST.keys()}"
         self.AC_MOD = self.MOD_LIST[name.lower()]
         self.AC_MOD.stuf = self.stuf_load
         self.PREFIX = Style.CYAN(
             f"~{node()}:{Style.Bold(self.pretty_print([name.lower()]).strip())}{Style.CYAN('@>')}")
         self.set_spec()
-
-    def debug_print(self, message, *args, end="\n"):
-        if self.debug:
-            print(message, *args, end=end)
 
     @staticmethod
     def command_viewer(mod_command):
@@ -668,16 +538,21 @@ class App:
 
         return mod_command_names
 
+    @debug.setter
+    def debug(self, value):
+        self._debug = value
+
 
 def _initialize_toolBox(init_type, init_from):
-    data = ""
-    print("Initialing ToolBox: " + init_type)
+    logger = get_logger()
+
+    logger.info("Initialing ToolBox: " + init_type)
     if init_type.startswith("http"):
-        print("Download from url: " + init_from + "\n->temp_config.config")
+        logger.info("Download from url: " + init_from + "\n->temp_config.config")
         try:
             data = requests.get(init_from).json()["res"]
         except TimeoutError:
-            print(Style.RED("Error retrieving config information "))
+            logger.error(Style.RED("Error retrieving config information "))
             exit(1)
 
         init_type = "main"
@@ -689,4 +564,4 @@ def _initialize_toolBox(init_type, init_from):
     fh.file_handler_storage.write(str(data))
     fh.file_handler_storage.close()
 
-    print("Done!")
+    logger.info("Done!")

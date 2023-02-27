@@ -12,7 +12,6 @@ class Tools(MainTool):
     def __init__(self, app=None):
         self.version = "0.0.1"
         self.name = "welcome"
-        self.logs = app.logs_ if app else None
         self.color = "YELLOW"
         self.tools = {
             "all": [["Version", "Shows current Version "], ["Animation", "TOOL BOX 0 8s"],
@@ -24,7 +23,7 @@ class Tools(MainTool):
             "printT": self.print_t}
 
         MainTool.__init__(self, load=self.print_t, v=self.version, tool=self.tools,
-                          name=self.name, logs=self.logs, color=self.color, on_exit=lambda: "")
+                          name=self.name, logs=None, color=self.color, on_exit=lambda: "")
 
     def print_t(self):
         print()

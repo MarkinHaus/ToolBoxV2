@@ -1,4 +1,5 @@
 """Console script for toolboxv2."""
+import logging
 # Import default Pages
 import os
 import sys
@@ -8,6 +9,7 @@ from platform import system
 
 # Import public Pages
 from toolboxv2 import App, run_cli, AppServerHandler, MainTool
+from toolboxv2.util import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
 
 
 def parse_args():
@@ -74,6 +76,10 @@ def parse_args():
                         help="yeah",
                         action="store_true")
 
+    parser.add_argument("--log-editor",
+                        help="yeah",
+                        action="store_true")
+
     parser.add_argument("--live",
                         help="yeah",
                         action="store_true")
@@ -81,8 +87,59 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
+def edit_logs():
 
+    name = input(f"Name of logger \ndefault {loggerNameOfToolboxv2} \n:")
+    name = name if name else loggerNameOfToolboxv2
+
+    def date_in_format(_date):
+        ymd = _date.split('-')
+        if len(ymd) != 3:
+            print("Not enough segments")
+            return False
+        if len(ymd[1]) != 2:
+            print("incorrect format")
+            return False
+        if len(ymd[2]) != 2:
+            print("incorrect format")
+            return False
+
+        return True
+
+    def level_in_format(_level):
+
+        if _level in ['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET']:
+            _level = [50, 40, 30, 20, 10, 0][['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'].index(_level)]
+            return True, _level
+        try:
+            _level = int(_level)
+        except ValueError:
+            print("incorrect format pleas enter integer 50, 40, 30, 20, 10, 0")
+            return False, -1
+        return _level in [50, 40, 30, 20, 10, 0], _level
+
+    date = input(f"Date of log format : YYYY-MM-DD replace M||D with xx for multiple editing\n:")
+
+    while not date_in_format(date):
+        date = input("Date of log format : YYYY-MM-DD :")
+
+    level = input(f"Level : {list(zip(['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'], [50, 40, 30, 20, 10, 0]))}"
+                  f" : enter number\n:")
+
+    while not level_in_format(level)[0]:
+        level = input("Level : ")
+
+    level = level_in_format(level)[1]
+
+    do = input("Do function : default remove (r) or uncoler (uc)")
+    if do == 'uc':
+        edit_log_files(name=name, date=date, level=level, n=0, do=unstyle_log_files)
+    else:
+        edit_log_files(name=name, date=date, level=level, n=0)
+
+
+
+def main():
     """Console script for toolboxv2."""
     args = parse_args()
 
@@ -113,6 +170,12 @@ def main():
     init_args = init_args.split(" ")
 
     tb_app = App(args.name, args=args)
+
+    if args.log_editor:
+        edit_logs()
+        tb_app.save_exit()
+        tb_app.exit()
+        exit(0)
 
     if args.load_all_mod_in_files:
         tb_app.load_all_mods_in_file()
@@ -145,9 +208,13 @@ def main():
         else:
             os.system(f"kill -9 {app_pid}")
 
+    if tb_app.alive:
+        tb_app.save_exit()
+        tb_app.exit()
+
     print("\n\tSee u")
     print(
-        f"commands: \nPython-loc: {init_args[0]}\nCli-loc: {init_args[1]}\nargs: {tb_app.pretty_print(init_args[2:])}\n{' '.join(init_args)}")
+        f"\n\nPython-loc: {init_args[0]}\nCli-loc: {init_args[1]}\nargs: {tb_app.pretty_print(init_args[2:])}")
     return 0
 
 

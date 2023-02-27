@@ -56,6 +56,7 @@ class Style:
     _WHITEBG2 = '\33[107m'
 
     style_dic = {
+        "END": _END,
         "BLACK": _BLACK,
         "RED": _RED,
         "GREEN": _GREEN,
@@ -64,7 +65,6 @@ class Style:
         "MAGENTA": _MAGENTA,
         "CYAN": _CYAN,
         "WHITE": _WHITE,
-        "END": _END,
         "Bold": _Bold,
         "Underline": _Underline,
         "Reversed": _Reversed,
@@ -290,4 +290,9 @@ class Style:
     def Underline2(self):
         return self._Underline
 
-# print(Style().color_demo())
+
+def remove_styles(text: str):
+    for key, style in Style.style_dic.items():
+        if style in text:
+            text = text.replace(style, '')
+    return text

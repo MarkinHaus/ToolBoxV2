@@ -290,10 +290,9 @@ with tabs[2]:
                     # app_tb_dv.config_fh.save_file_handler()
                     # app_tb_dv.save_exit()
                     app_tb_dv.exit_all_modules()
-                    id_ = app_tb_dv.id.split('-')[0]
                     app_tb_dv.exit()
 
-                    app_tb_dv = App(id_)
+                    app_tb_dv = App(tbname)
                     st.experimental_rerun()
                 else:
                     app_tb_dv.AC_MOD.open_s_file_handler()

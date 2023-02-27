@@ -7,7 +7,7 @@ class Tools(MainTool, FileHandler):
     def __init__(self, app=None):
         self.version = "0.0.1"
         self.name = "DB"
-        self.logs = app.logs_ if app else None
+        self.logs = app.logger if app else None
         self.color = "YELLOWBG"
         self.keys = {
             "url": "redis:url~"
@@ -33,7 +33,7 @@ class Tools(MainTool, FileHandler):
         }
 
         FileHandler.__init__(self, "db.data", app.id if app else __name__, keys=self.keys,
-                             defaults={"url": 'redis://default:{id}@{url}.com:{port}'})
+                             defaults={"url": 'redis://default:id@url.com:port'})
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                           name=self.name, logs=self.logs, color=self.color, on_exit=self.on_exit)
 
@@ -141,3 +141,5 @@ class Tools(MainTool, FileHandler):
 
         return del_list
 
+# TODO: new futon add + lode (+=) an array
+# BP in #addLodeFucktionBulprint

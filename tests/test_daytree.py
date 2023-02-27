@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Tests for `quickNote` package."""
+"""Tests for `daytree` package."""
 import requests
 from rich.traceback import install
 import os
@@ -24,10 +24,8 @@ class TestCloudM(unittest.TestCase):
         self.app.dev_modi = False
         self.token = ""
 
-        self.app.load_mod("quickNote")
-        self.app.new_ac_mod("quickNote")
-
-        """Set up test fixtures, if any."""
+        self.app.load_mod("daytree")
+        self.app.new_ac_mod("daytree")
 
     def tearDown(self):
         """Tear down test fixtures, if any."""

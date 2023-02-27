@@ -11,7 +11,7 @@ class Tools(MainTool, FileHandler):
     def __init__(self, app=None):
         self.version = "0.0.1"
         self.name = "daytree"
-        self.logs = app.logs_ if app else None
+        self.logs = app.logger if app else None
         self.color = "BEIGE2"
         self.keys = {"Config": "config~~~:",
                      "Bucket": "bucket~~~:"}
@@ -56,6 +56,7 @@ class Tools(MainTool, FileHandler):
 
     def show_version(self):
         self.print("Version: ", self.version)
+        return self.version
 
     def on_start(self):
         self.load_file_handler()
@@ -64,7 +65,6 @@ class Tools(MainTool, FileHandler):
     def on_exit(self):
         self.add_to_save_file_handler(self.keys["Config"], str(self.config))
         self.save_file_handler()
-        self.file_handler_storage.close()
 
     def designer_input(self, command, app: App):
         if "isaa" not in list(app.MOD_LIST.keys()):
@@ -95,7 +95,7 @@ class Tools(MainTool, FileHandler):
 
         return "Don"
 
-    def _load_save_db(self, app: App, db_key, data):
+    def _load_save_db(self, app: App, db_key, data): # TODO INFO: #addLodeFucktionBulprint
         bucket = app.run_any('db', 'get', [f"dayTree::{db_key}"])
         if bucket == "":
             bucket = []
@@ -237,7 +237,7 @@ class Tools(MainTool, FileHandler):
             _x = self._wx_format_task(_x)
 
         wx_now = self._sort_wx(wx, [x[0], x[1]])
-        if x[0] != 0:
+        if x[0] == 0:
             if len(tx) > x[2] - 1:
                 ts.append(tx[:x[2]])
                 tx = tx[:x[2]]
@@ -245,7 +245,7 @@ class Tools(MainTool, FileHandler):
                 for t in tx:
                     ts.append(t)
                 tx = []
-        print(f"{wx_now=} {wx=}")
+
         if len(wx_now) > x[2] - 1:
             # Get the IDs of the first x[2] elements in wx_now
             wx_now_x_ids = [item["index"] for item in wx_now[:x[2]]]
@@ -262,7 +262,6 @@ class Tools(MainTool, FileHandler):
                 task_x['att'].append({'t': 'cal', 'v': task_now['cal']})
 
             # Append the filtered tasks to ts
-            print(wx_x)
             ts.append(wx_x)
 
             # Remove the tasks in wx_x from wx
@@ -377,6 +376,18 @@ class Tools(MainTool, FileHandler):
 
         self.print(app.run_any('db', 'set', ["", f"dayTree::day::{uid}", str(day)]))
         return day
+
+    def get_day_date(self, command, app:App):
+
+        data = command[0].data
+        uid, err = self.get_uid(command, app)
+
+        if err:
+            return uid
+
+        date = data['date']
+
+
 
     def save_task_week(self, command, app: App):
 

@@ -14,10 +14,8 @@ class PostRequest(BaseModel):
     token: str
     data: dict
 
-class PostRequest_t(BaseModel):
-    token: str
 
-ovner = ToolBox_ovner
+owner = ToolBox_ovner
 app = FastAPI()
 
 origins = [
@@ -57,9 +55,9 @@ def root():
 
 
 @app.post("/api/exit/{pid}")
-def close(data: PostRequest_t, pid: int):
+def close(data: PostRequest, pid: int):
     if pid == os.getpid():
-        res = app.run_any('cloudm', "validate_jwt", command)
+        res = tb_app.run_any('cloudm', "validate_jwt", [data])
         if isinstance(res, str):
             return {"res": res}
         if not isinstance(res, dict):
@@ -69,9 +67,7 @@ def close(data: PostRequest_t, pid: int):
         if "uid" not in res.keys():
             return {"res": str(res)}
 
-        if isinstance(ovner, str):
-            ovner = [ovner]
-        if res["username"] in ovner:
+        if res["username"] in (owner if not isinstance(owner, str) else [owner]):
             tb_app.save_exit()
             tb_app.exit()
             exit(0)
@@ -101,7 +97,7 @@ def prefix_working_dir():
 @app.get("/api/logs")
 def logs_app():
     logs = {}
-    for log in tb_app.logs_:
+    for log in tb_app.logger:
         logs[log[0].name] = []
         logs[log[0].name].append(log[1:])
     print(logs)
@@ -142,7 +138,7 @@ def get_mod_run(mod: str, name: str, command: Union[str, None] = None):
 
     if type(res) == str:
         if (res.startswith('{') or res.startswith('[')) or res.startswith('"[') or res.startswith('"{') \
-                or res.startswith('\"[') or res.startswith('\"{') or res.startswith('b"[') or res.startswith('b"{'):
+            or res.startswith('\"[') or res.startswith('\"{') or res.startswith('b"[') or res.startswith('b"{'):
             res = eval(res)
     return {"res": res}
 
@@ -158,7 +154,7 @@ async def post_mod_run(data: PostRequest, mod: str, name: str, command: Union[st
 
     if type(res) == str:
         if (res.startswith('{') or res.startswith('[')) or res.startswith('"[') or res.startswith('"{') \
-                or res.startswith('\"[') or res.startswith('\"{') or res.startswith('b"[') or res.startswith('b"{'):
+            or res.startswith('\"[') or res.startswith('\"{') or res.startswith('b"[') or res.startswith('b"{'):
             res = eval(res)
 
     return {"res": res}
@@ -186,21 +182,22 @@ async def create_upload_file(file: UploadFile):
             return {"res": f"Successfully uploaded {file.filename}"}
     return {"res": "not avalable"}
 
-if __name__ == 'fast_api': # do stuw withe ovner to secure ur self
+
+if __name__ == 'fast_api':  # do stuw withe ovner to secure ur self
 
     print("online")
 
     config_file = "api.config"
     id_name = ""
 
-
     for i in sys.argv[2:]:
         if i.startswith('data'):
             d = i.split(':')
             config_file = d[1]
             id_name = d[2]
-
-    open(f"api_pid_{id_name}", "w").write(str(os.getpid()))
+    print(os.getcwd())
+    with open(f"api_pid_{id_name}", "w") as f:
+        f.write(str(os.getpid()))
     tb_app = App("api")
     tb_app.load_all_mods_in_file()
     tb_img = tb_app.MOD_LIST["welcome"].tools["printT"]

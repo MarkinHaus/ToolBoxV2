@@ -11,7 +11,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
     def __init__(self, app=None):
         self.version = "0.0.2"
         self.name = "api_manager"
-        self.logs = app.logs_ if app else None
+        self.logger = app.logger if app else None
         self.color = "WHITE"
         self.keys = {
             "Apis": "api~config"
@@ -39,7 +39,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
                              {"Apis": {'main': {"Name": 'main', "version": self.version,
                                                 "port": 5000, "host": '127.0.0.1'}}})
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
-                          name=self.name, logs=self.logs, color=self.color, on_exit=self.on_exit)
+                          name=self.name, logs=self.logger, color=self.color, on_exit=self.on_exit)
 
     def show_version(self):
         self.print("Version: ", self.version)
@@ -82,21 +82,25 @@ class Tools(MainTool, FileHandler):  # FileHandler
         self.print(api_data)
         g = f"uvicorn fast_api:app --host {api_data['host']}" \
             f" --port {api_data['port']} --header data:{api_name}.config:{api_name}"
-        os.system(g)
         print(g)
+        os.system(g)
 
     def stop_api(self, command):
         if command[1] in list(self.api_config.keys()):
             command.append(self.api_config[command[1]]['host'])
             command.append(self.api_config[command[1]]['port'])
-        requests.get(f"http://{command[2]}:{command[3]}/exit")
-        with int(open(f"api_pid_{command[1]}", "r").read()) as api_pid:
+        else:
+            if len(command) == 2:
+                command += ["127.0.0.1", 5000]
+        self.logger.info(command)
+        with open(f"app/api_pid_{command[1]}", "r") as f:
+            api_pid = f.read()
+            requests.get(f"http://{command[2]}:{command[3]}/api/exit/{api_pid}")
             if system() == "Windows":
-                os.system(f"taskkill /pid {api_pid}")
+                os.system(f"taskkill /pid {api_pid} /F")
             else:
                 os.system(f"kill -9 {api_pid}")
-            os.remove(f"api_pid_{command[1]}")
-            self.print("fin")
+            #os.remove(f"app/api_pid_{command[1]}")
 
     def restart_api(self, command, app: App):
         self.stop_api(command.copy())

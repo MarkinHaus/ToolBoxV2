@@ -10,6 +10,7 @@ from .Style import Style
 import readchar
 from .toolbox import App
 
+
 def user_input(app: App):
     get_input = True
     command = ""
@@ -91,6 +92,7 @@ def user_input(app: App):
 
     sys.stdout.write("\033[K")
     print(app.PREFIX + app.pretty_print(print_command) + "\n")
+
     app.command_history.append(print_command)
 
     return print_command
@@ -135,12 +137,13 @@ def command_runner(app, command):
             app.remove_all_modules()
             app.load_all_mods_in_file()
 
-    elif command[0].lower() == 'logs':
-        app.logs()
-
     elif command[0].lower() == 'app-info':
         print(f"{app.id = }\n{app.stuf_load = }\n{app.mlm = }\n{app.auto_save = }"
               f"\n{app.AC_MOD = }\n{app.debug = }")
+        print(f"PREFIX={app.PREFIX}"
+              f"\nMACRO={app.pretty_print(app.MACRO[:7])}"
+              f"\nMODS={app.pretty_print(app.MACRO[7:])}"
+              f"\nSUPER_SET={app.pretty_print(app.SUPER_SET)}")
 
     elif command[0].lower() == "exit":  # builtin events(exit)
         if input("Do you want to exit? (y/n): ") in ["y", "yes", "Y"]:
@@ -153,17 +156,28 @@ def command_runner(app, command):
 
     elif command[0].lower() == 'load-mod':  # builtin events(event(cloudM(_)->event(Build)))
         if len(command) == 2:
-            app.save_load(command[1])
-            app.new_ac_mod(command[1])
+            if app.save_load(command[1]):
+                app.new_ac_mod(command[1])
         else:
-            p = "_dev" if app.debug else ""
-            res = os.listdir(f"./mods{p}/")
-            app.SUPER_SET += res
-            app.MACRO += res
-            if system() == "Windows":
-                os.system(f"dir .\mods{p}")
-            else:
-                os.system(f"ls ./mods{p}")
+            p = "_dev" if app.dev_modi else ""
+
+            def do_helper(_mod):
+                if "mainTool" in _mod:
+                    return False
+                if not _mod.endswith(".py"):
+                    return False
+                if _mod.startswith("__"):
+                    return False
+                if _mod.startswith("test_"):
+                    return False
+                return True
+
+            res = list(filter(do_helper, os.listdir(f"./mods{p}/")))
+            for mod_name in res:
+                mod_name_refracted = mod_name.replace(".py", '')
+                print(f"Mod name : {mod_name_refracted}")
+                app.SUPER_SET += [mod_name_refracted]
+            print()
 
     elif command[0] == '..':
         app.reset()
@@ -182,9 +196,11 @@ def command_runner(app, command):
 
     elif command[0] == 'mode:live':
         app.debug = False
+        app.dev_modi = False
 
     elif command[0] == 'mode:debug':
         app.debug = True
+        app.dev_modi = True
 
     elif command[0] == 'mode:stuf':
         app.stuf_load = not app.stuf_load
@@ -211,4 +227,3 @@ def run_cli(app: App):
         print("", end="" + "->>\r")
         command = user_input(app)
         command_runner(app, command)
-

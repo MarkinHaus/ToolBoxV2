@@ -12,7 +12,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
         self.remove_note = None
         self.version = "0.0.1"
         self.name = "quickNote"
-        self.logs = app.logs_ if app else None
+        self.logs = app.logger if app else None
         self.color = "GREEN"
         self.keys = {
             "inbox": "INBOX@ADD~",
@@ -136,21 +136,6 @@ class Tools(MainTool, FileHandler):  # FileHandler
         else:
             print(f"No token found in modules.config")
 
-    def get_uid(self, command, app: App):
-
-        if "cloudm" not in list(app.MOD_LIST.keys()):
-            return f"Server has no cloudM module", True
-
-        if "db" not in list(app.MOD_LIST.keys()):
-            return "Server has no database module", True
-
-        res = app.run_any('cloudm', "validate_jwt", command)
-
-        if type(res) is str:
-            return res, True
-
-        return res["uid"], False
-
     def save_inbox_api(self, command, app: App):
 
         data = command[0].data
@@ -159,7 +144,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
         if err:
             return uid
 
-        return app.run_any('db', 'set', ["", f"quickNote::inbox::{uid}", str(data["notes"])])
+        return app.run_any('db', 'set', ["", f"quickNote::inbox::{uid}", str(data["notes"])]) # TODO: DB new fuckton add loade for singel save task
 
     def get_inbox_api(self, command, app: App):
         self.print(command)
@@ -167,6 +152,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         if err:
             return uid
+
         inbox = app.run_any('db', 'get', [f"quickNote::inbox::{uid}"])
         if len(str(inbox)) > 2:
             return inbox
@@ -174,8 +160,8 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
     def save_types_api(self, command, app: App):
 
-        data = command[0].data
         uid, err = self.get_uid(command, app)
+        data = command[0].data
 
         if err:
             return uid

@@ -1,36 +1,49 @@
 #!/usr/bin/env python
+import time
+
 from rich.traceback import install
 import os
-
+import threading
 
 install(show_locals=True)
 
 """Tests for `cloudM` package."""
 from coverage.annotate import os
 
-from toolboxv2 import App
+from toolboxv2 import App, Style
 
 import unittest
 
 
 class TestCloudM(unittest.TestCase):
+    t0 = None
+    api = None
+    app = None
 
-    def setUp(self):
-        self.name = "cloudM"
-        self.app = App("test")
+    @classmethod
+    def setUpClass(cls):
+        # Code, der einmal vor allen Tests ausgeführt wird
+        cls.t0 = time.time()
+        cls.app = App("test")
+        api = threading.Thread(target=cls.app.run_any, args=('api_manager', 'start-api', ['start-api', 'test-api']))
+        cls.app.mlm = "I"
+        cls.app.debug = True
+        cls.app.load_mod("cloudM")
+        cls.app.run_function("first-web-connection", command=['first-web-connection', 'http://127.0.0.1:5000/api'])
+        api.start()
+        time.sleep(3)
+        cls.app.new_ac_mod("cloudM")
 
-        self.app.mlm = "I"
-        self.app.debug = True
-        self.app.load_mod("cloudM")
-        self.app.new_ac_mod("cloudM")
-        self.app.run_function("first-web-connection", command=['first-web-connection', 'http://127.0.0.1:5000'])
-        """Set up test fixtures, if any."""
+    @classmethod
+    def tearDownClass(cls):
+        cls.app.logger.info('Closing API')
+        cls.app.AC_MOD.delete_file()
+        cls.app.run_any('api_manager', 'stop-api', ['start-api', 'test-api'])
+        cls.app.remove_all_modules()
+        cls.app.save_exit()
+        cls.app.exit()
 
-    def tearDown(self):
-        """Tear down test fixtures, if any."""
-        self.app.remove_all_modules()
-        self.app.save_exit()
-        self.app.exit()
+        cls.app.logger.info(f"Accomplished in {time.time() - cls.t0}")
 
     def test_show_version(self):
         comd = []
@@ -50,21 +63,22 @@ class TestCloudM(unittest.TestCase):
         os.remove("./mods_dev/test_module.py")
         self.assertFalse(os.path.exists("./mods_dev/test_module.py"))
 
-    # def test_upload(self):
-    #    comd = []
-    #    res = self.app.run_function("upload", command=comd)
-    #    self.assertIsNone(res)
+# def test_upload(self):
+#   comd = ["", "test_module"]
+#   res = self.app.run_function("NEW", command=comd)
+#   self.assertTrue(res)
+#   res = self.app.run_function("upload", command=comd)
+#   self.assertIsNone(res)
+#   self.assertTrue(os.path.exists("./mods_dev/test_module.py"))
+#   os.remove("./mods_dev/test_module.py")
+#   self.assertFalse(os.path.exists("./mods_dev/test_module.py"))
 #
 # def test_download(self):
 #    comd = []
 #    res = self.app.run_function("download", command=comd)
 #    self.assertFalse(res)
 #
-# def test_add_url_con(self):
-#    pass
-#    # comd = []
-#    # res = self.app.run_function("first-web-connection", command=comd)
-#    # self.assertIsNone(res)
+
 #
 # def test_create_account(self):
 #    pass

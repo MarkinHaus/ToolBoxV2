@@ -5,7 +5,7 @@ class Tools(MainTool):
     def __init__(self, app=None):
         self.version = "0.3.2"
         self.name = "welcome"
-        self.logs = app.logs_ if app else None
+        self.logs = app.logger if app else None
         self.color = "YELLOW"
         self.tools = {
             "all": [["Version", "Shows current Version "]],
