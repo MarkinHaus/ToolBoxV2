@@ -196,9 +196,9 @@ if __name__ == 'fast_api':  # do stuw withe ovner to secure ur self
             config_file = d[1]
             id_name = d[2]
     print(os.getcwd())
+    tb_app = App("api")
     with open(f"api_pid_{id_name}", "w") as f:
         f.write(str(os.getpid()))
-    tb_app = App("api")
     tb_app.load_all_mods_in_file()
     tb_img = tb_app.MOD_LIST["welcome"].tools["printT"]
     tb_img()

@@ -93,7 +93,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
             if len(command) == 2:
                 command += ["127.0.0.1", 5000]
         self.logger.info(command)
-        with open(f"app/api_pid_{command[1]}", "r") as f:
+        with open(f"api_pid_{command[1]}", "r") as f:
             api_pid = f.read()
             requests.get(f"http://{command[2]}:{command[3]}/api/exit/{api_pid}")
             if system() == "Windows":
