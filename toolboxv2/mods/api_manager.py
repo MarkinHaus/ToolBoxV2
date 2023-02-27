@@ -1,3 +1,4 @@
+import logging
 import os
 from platform import system
 
@@ -11,7 +12,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
     def __init__(self, app=None):
         self.version = "0.0.2"
         self.name = "api_manager"
-        self.logger = app.logger if app else None
+        self.logger: logging.Logger = app.logger if app else None
         self.color = "WHITE"
         self.keys = {
             "Apis": "api~config"
@@ -92,7 +93,10 @@ class Tools(MainTool, FileHandler):  # FileHandler
         else:
             if len(command) == 2:
                 command += ["127.0.0.1", 5000]
-        self.logger.info(command)
+
+        if not os.path.exists(f"api_pid_{command[1]}"):
+            self.logger.warning("no api_pid file found ")
+            return
         with open(f"api_pid_{command[1]}", "r") as f:
             api_pid = f.read()
             requests.get(f"http://{command[2]}:{command[3]}/api/exit/{api_pid}")
