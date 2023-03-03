@@ -26,7 +26,6 @@ class MainTool:
         else:
             get_logger().info(f"{self.name} no load require")
 
-        get_logger().info(f"{self.name} TOOL successfully loaded")
         print(f"TOOL : {self.name} online")
 
     def print(self, message, *args, end="\n"):
