@@ -5,4 +5,4 @@ from .toolbox import App
 
 
 def run_isaa_verb(app: App, c=3.5, awake=True):
-    print("Not implemented ..")
+    print("Not implemented ...")
