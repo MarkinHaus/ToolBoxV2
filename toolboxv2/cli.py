@@ -282,7 +282,7 @@ def main():
         # workers = 4
         # gunicorn -c gunicorn_config.py app:serve_app
 
-        subprocess.run(["sudo", "gunicorn", "--bind", f"{args.host}:{args.port}", "app:serve_app"])
+        subprocess.run(["sudo", "gunicorn", "--bind", f"{args.host}:{args.port}", "serve_app:app"])
 
     if args.modi == 'cli':
         run_cli(tb_app)
