@@ -95,17 +95,27 @@ class Tools(MainTool, FileHandler):
             return True
         return True  # not "secret".upper() in request.upper()
 
-    def set_key(self, ind):
+    def set_key(self, command):
         if self.rcon is None:
-            return 'Pleas run first-redis-connection'
-        if len(ind) == 3:
-            key = ind[1]
-            val = ind[2]
-            self.rcon.set(key, val)
+            return 'Please run first-redis-connection'
 
-            self.print(f"key: {key} value: {val} DON")
-        else:
+        if len(command) != 3:
             self.print("set {key} {value}")
+            return False
+
+        key = command[1]
+        val = command[2]
+
+        if isinstance(val, str):
+            # If the value is a string, store it as a Redis string
+            self.rcon.set(key, val)
+        else:
+            # Raise an error if the value is of an unsupported type
+            raise TypeError("Unsupported value type")
+
+        self.print(f"key: {key} value: {val} stored in Redis")
+
+
         return True
 
     def delete_key(self, ind):

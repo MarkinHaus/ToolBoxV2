@@ -142,7 +142,7 @@ def parse_args():
                         metavar="port",
                         type=int,
                         help="Specify a port for dev | api",
-                        default=12689)  # 1268945
+                        default=8000)  # 1268945
 
     parser.add_argument("-w", "--host",
                         metavar="host",
