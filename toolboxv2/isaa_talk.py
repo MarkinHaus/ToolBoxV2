@@ -1,6 +1,7 @@
 """Console script for toolboxv2. Isaa Talk Tool"""
 import datetime
 # Import default Pages
+from .toolbox import App
 try:
     import time
     import pyttsx3
@@ -15,7 +16,6 @@ try:
     from playsound import playsound
 
     from .mods_dev.isaa import image_genrating_tool
-    from .toolbox import App
     import sounddevice as sd
 
     import whisper
