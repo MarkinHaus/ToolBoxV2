@@ -9,8 +9,14 @@ from platform import system
 
 # Import public Pages
 from toolboxv2 import App, run_cli, MainTool
-from toolboxv2.app.serve_app import serve_app_change_dir
-from toolboxv2.isaa_talk import run_isaa_verb
+try:
+    from toolboxv2.app.serve_app import serve_app_change_dir
+except ModuleNotFoundError:
+    print("Please install the toolboxv2 app")
+try:
+    from toolboxv2.isaa_talk import run_isaa_verb
+except ModuleNotFoundError:
+    print("Please install the toolboxv2 isaa")
 from toolboxv2.util import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
 import os
 import subprocess
