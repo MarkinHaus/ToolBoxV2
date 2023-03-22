@@ -49,7 +49,7 @@ class App:
         abspath = os.path.abspath(__file__)
         dname = os.path.dirname(abspath)
         os.chdir(dname)
-        print("Starting2 Tool - Box from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
+        print("Starting Tool - Box from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 
         if prefix.endswith("test"):
             setup_logging(logging.NOTSET, name="toolbox-test", interminal=True,
@@ -516,6 +516,7 @@ class App:
         self.PREFIX = Style.CYAN(
             f"~{node()}:{Style.Bold(self.pretty_print([name.lower()]).strip())}{Style.CYAN('@>')}")
         self.set_spec()
+        return True
 
     @staticmethod
     def command_viewer(mod_command):

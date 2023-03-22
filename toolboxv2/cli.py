@@ -8,8 +8,80 @@ import socketserver
 from platform import system
 
 # Import public Pages
-from toolboxv2 import App, run_cli, AppServerHandler, MainTool
+from toolboxv2 import App, run_cli, MainTool
+from toolboxv2.app.serve_app import serve_app_change_dir
+from toolboxv2.isaa_talk import run_isaa_verb
 from toolboxv2.util import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
+import os
+import subprocess
+
+
+def create_service_file(user, group, working_dir):
+    service_content = f"""[Unit]
+Description=My Python App
+After=network.target
+
+[Service]
+User={user}
+Group={group}
+WorkingDirectory={working_dir}
+ExecStart=toolboxv2 -m app -n app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+"""
+    with open("myapp.service", "w") as f:
+        f.write(service_content)
+
+
+def init_service():
+    user = input("Enter the user name: ")
+    group = input("Enter the group name: ")
+    working_dir = input("Enter the working directory path (/path/to/your/app): ")
+
+    create_service_file(user, group, working_dir)
+
+    subprocess.run(["sudo", "mv", "myapp.service", "/etc/systemd/system/"])
+    subprocess.run(["sudo", "systemctl", "daemon-reload"])
+
+
+def manage_service(action):
+    subprocess.run(["sudo", "systemctl", action, "myapp.service"])
+
+
+def show_service_status():
+    subprocess.run(["sudo", "systemctl", "status", "myapp.service"])
+
+
+def uninstall_service():
+    subprocess.run(["sudo", "systemctl", "disable", "myapp.service"])
+    subprocess.run(["sudo", "systemctl", "stop", "myapp.service"])
+    subprocess.run(["sudo", "rm", "/etc/systemd/system/myapp.service"])
+    subprocess.run(["sudo", "systemctl", "daemon-reload"])
+
+
+def setup_app():
+    print("Select mode:")
+    print("1. Init (first-time setup)")
+    print("2. Start / Stop / Restart")
+    print("3. Status")
+    print("4. Uninstall")
+
+    mode = int(input("Enter the mode number: "))
+
+    if mode == 1:
+        init_service()
+    elif mode == 2:
+        action = input("Enter 'start', 'stop', or 'restart': ")
+        manage_service(action)
+    elif mode == 3:
+        show_service_status()
+    elif mode == 4:
+        uninstall_service()
+    else:
+        print("Invalid mode")
 
 
 def parse_args():
@@ -57,7 +129,7 @@ def parse_args():
     parser.add_argument("-m", "--modi",
                         type=str,
                         help="Start ToolBox in different modes",
-                        choices=["cli", "dev", "api", "app"],
+                        choices=["cli", "dev", "api", "app", "kill-app", "set-up", "isaa"],
                         default="cli")
 
     parser.add_argument("-p", "--port",
@@ -88,7 +160,6 @@ def parse_args():
 
 
 def edit_logs():
-
     name = input(f"Name of logger \ndefault {loggerNameOfToolboxv2} \n:")
     name = name if name else loggerNameOfToolboxv2
 
@@ -123,8 +194,9 @@ def edit_logs():
     while not date_in_format(date):
         date = input("Date of log format : YYYY-MM-DD :")
 
-    level = input(f"Level : {list(zip(['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'], [50, 40, 30, 20, 10, 0]))}"
-                  f" : enter number\n:")
+    level = input(
+        f"Level : {list(zip(['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'], [50, 40, 30, 20, 10, 0]))}"
+        f" : enter number\n:")
 
     while not level_in_format(level)[0]:
         level = input("Level : ")
@@ -136,7 +208,6 @@ def edit_logs():
         edit_log_files(name=name, date=date, level=level, n=0, do=unstyle_log_files)
     else:
         edit_log_files(name=name, date=date, level=level, n=0)
-
 
 
 def main():
@@ -187,19 +258,33 @@ def main():
                     if isinstance(tb_app.MOD_LIST[mod_name], MainTool):
                         print(f"{mod_name} : {tb_app.MOD_LIST[mod_name].version}")
 
+    if args.modi == 'set-up':
+        print("1. App")
+        setup = input("Set up for :")
+        if setup == "1":
+            setup_app()
+
     if args.modi == 'api':
         tb_app.run_any('api_manager', 'start-api', ['start-api', args.name])
     if args.modi == 'dev':
         dev_helper()
     if args.modi == 'app':
         print(args.host, args.port)
-        httpd = socketserver.TCPServer((args.host, args.port), AppServerHandler)
-        httpd.serve_forever()
+        serve_app_change_dir()
+        # gunicorn_config.py
+        # bind = "0.0.0.0:8080"
+        # workers = 4
+        # gunicorn -c gunicorn_config.py app:serve_app
+
+        subprocess.run(["sudo", "gunicorn", "--bind", f"{args.host}:{args.port}", "app:serve_app"])
 
     if args.modi == 'cli':
         run_cli(tb_app)
 
-    if args.modi == "app" and args.name == "kill":
+    if args.modi == 'isaa':
+        run_isaa_verb(tb_app)
+
+    if args.modi == "kill-app":
 
         app_pid = str(os.getpid())
         print(f"Exit app {app_pid}")

@@ -61,6 +61,9 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
             if len(log_info_data_str):
                 print(Style.RED(Style.Bold("Could not parse log")))
 
+        if filename not in log_info_data.keys():
+            log_info_data[filename] = 0
+
         if not os.path.exists(f"logs/{filename}.log"):
             log_info_data[filename] = 0
             print("new log file")
