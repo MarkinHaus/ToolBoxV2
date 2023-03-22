@@ -22,7 +22,7 @@ logger = get_logger()
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
-def serve_app(path):
+def serve_app_func(path):
     try:
         request_file_path = Path(path)
         ext = request_file_path.suffix
@@ -30,8 +30,7 @@ def serve_app(path):
             path = 'index.html'
 
         logger.info(f"Sending : {path} ")
-
-        return send_from_directory('app', path)
+        return send_from_directory('./', path)
     except Exception as e:
         logger.error("Error processing request: %s", e)
 
