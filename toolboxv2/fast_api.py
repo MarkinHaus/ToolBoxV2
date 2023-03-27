@@ -1,60 +1,21 @@
 import os
-
-from toolboxv2 import App, AppArgs, ToolBox_ovner
-
-from fastapi import FastAPI, Request, UploadFile
 from typing import Union
-import sys
-import time
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+
+from fastapi import APIRouter, UploadFile
+
+from fast_api_main import tb_app, PostRequest
+from toolboxv2 import ToolBox_ovner
+
+router = APIRouter()
 
 
-class PostRequest(BaseModel):
-    token: str
-    data: dict
-
-
-owner = ToolBox_ovner
-app = FastAPI()
-
-origins = [
-    "http://194.233.168.22:8000",
-    "http://127.0.0.1:8000",
-    "http://0.0.0.0:8000",
-    "http://localhost:8000",
-    "http://127.0.0.1",
-    "http://0.0.0.0",
-    "http://localhost",
-    "http://194.233.168.22",
-    "https://simpelm.com",
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-@app.middleware("http")
-async def add_process_time_header(request: Request, call_next):
-    start_time = time.time()
-    response = await call_next(request)
-    process_time = time.time() - start_time
-    response.headers["X-Process-Time"] = str(process_time)
-    return response
-
-
-@app.get("/api/")
+@router.get("/api/")
 def root():
-    result = tb_img()
+    result = "ToolBoxV2"
     return {"res": result}
 
 
-@app.post("/api/exit/{pid}")
+@router.post("/api/exit/{pid}")
 def close(data: PostRequest, pid: int):
     if pid == os.getpid():
         res = tb_app.run_any('cloudm', "validate_jwt", [data])
@@ -67,34 +28,34 @@ def close(data: PostRequest, pid: int):
         if "uid" not in res.keys():
             return {"res": str(res)}
 
-        if res["username"] in (owner if not isinstance(owner, str) else [owner]):
+        if res["username"] in (ToolBox_ovner if not isinstance(ToolBox_ovner, str) else [ToolBox_ovner]):
             tb_app.save_exit()
             tb_app.exit()
             exit(0)
     return {"res": "0"}
 
 
-@app.get("/api/id")
+@router.get("/api/id")
 def id_api():
     return {"res": str(tb_app.id)}
 
 
-@app.get("/api/mod-list")
+@router.get("/api/mod-list")
 def mod_list():
     return {"res": list(tb_app.MOD_LIST.keys())}
 
 
-@app.get("/api/SUPER_SET")
+@router.get("/api/SUPER_SET")
 def super_set():
     return {"res": tb_app.SUPER_SET}
 
 
-@app.get("/api/prefix")
+@router.get("/api/prefix")
 def prefix_working_dir():
     return {"res": tb_app.PREFIX}
 
 
-@app.get("/api/logs")
+@router.get("/api/logs")
 def logs_app():
     logs = {}
     for log in tb_app.logger:
@@ -104,7 +65,7 @@ def logs_app():
     return {"res": logs}
 
 
-@app.get("/api/test-exist/{name}")
+@router.get("/api/test-exist/{name}")
 def test_mod_dow(name: str):
     res = "mod-404"
     if name.lower() in tb_app.MOD_LIST:
@@ -113,7 +74,7 @@ def test_mod_dow(name: str):
     return {"res": res}
 
 
-@app.get("/api/mod/index/{name}")
+@router.get("/api/mod/index/{name}")
 def get_mod_index(name: str):
     try:
         tb_app.new_ac_mod(name)
@@ -123,7 +84,7 @@ def get_mod_index(name: str):
     return {"res": result}
 
 
-@app.get("/api/get/{mod}/run/{name}")
+@router.get("/api/get/{mod}/run/{name}")
 def get_mod_run(mod: str, name: str, command: Union[str, None] = None):
     print("get_mod_run")
     res = {}
@@ -143,7 +104,7 @@ def get_mod_run(mod: str, name: str, command: Union[str, None] = None):
     return {"res": res}
 
 
-@app.post("/api/post/{mod}/run/{name}")
+@router.post("/api/post/{mod}/run/{name}")
 async def post_mod_run(data: PostRequest, mod: str, name: str, command: Union[str, None] = None):
     res = {}
     if not command:
@@ -160,7 +121,7 @@ async def post_mod_run(data: PostRequest, mod: str, name: str, command: Union[st
     return {"res": res}
 
 
-@app.post("/api/upload-file/")
+@router.post("/api/upload-file/")
 async def create_upload_file(file: UploadFile):
     if tb_app.debug:
         do = False
@@ -181,25 +142,3 @@ async def create_upload_file(file: UploadFile):
 
             return {"res": f"Successfully uploaded {file.filename}"}
     return {"res": "not avalable"}
-
-
-if __name__ == 'fast_api':  # do stuw withe ovner to secure ur self
-
-    print("online")
-
-    config_file = "api.config"
-    id_name = ""
-
-    for i in sys.argv[2:]:
-        if i.startswith('data'):
-            d = i.split(':')
-            config_file = d[1]
-            id_name = d[2]
-    print(os.getcwd())
-    tb_app = App("api")
-    with open(f"api_pid_{id_name}", "w") as f:
-        f.write(str(os.getpid()))
-    tb_app.load_all_mods_in_file()
-    tb_img = tb_app.MOD_LIST["welcome"].tools["printT"]
-    tb_img()
-    tb_app.new_ac_mod("welcome")
