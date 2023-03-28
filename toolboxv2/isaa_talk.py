@@ -548,12 +548,9 @@ def set_up_app_for_isaa_talk(app, mem):
         "I want to talk",
     ], 't': 'stf'}
 
-    app.AC_MOD.add_str_to_config(["", 'WOLFRAM_ALPHA_APPID', "JLQ8U8-"])
-    app.AC_MOD.add_str_to_config(["", 'HUGGINGFACEHUB_API_TOKEN', ""])
-    app.AC_MOD.add_str_to_config(["", 'OPENAI_API_KEY', "sk-"])
-    app.AC_MOD.add_str_to_config(["", 'REPLICATE_API_TOKEN', ""])
-    app.AC_MOD.add_str_to_config(["", 'IFTTTKey', ""])
-    app.AC_MOD.add_str_to_config(["", 'SERP_API_KEY', ""])
+    # dev
+    from isaa_data.api_keys import api_keys
+    api_keys(app)
 
     app.AC_MOD.lode_models()
     app.AC_MOD.speed_construct_Interpret_agent("", app=app, memory=mem)
