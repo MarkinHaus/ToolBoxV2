@@ -8,8 +8,9 @@ from inspect import signature
 
 import requests
 
-from toolboxv2.file_handler import FileHandler
-from toolboxv2.util import Style, setup_logging, get_logger
+from toolboxv2.util.file_handler import FileHandler
+from toolboxv2.util.tb_logger import setup_logging, get_logger
+from toolboxv2.util.Style import Style
 import toolboxv2
 
 import logging
@@ -47,17 +48,17 @@ class App:
     def __init__(self, prefix: str = "", args=AppArgs().default()):
         t0 = time.time()
         abspath = os.path.abspath(__file__)
-        dname = os.path.dirname(abspath)
+        dname = os.path.dirname(abspath).replace("\\util", "")
         os.chdir(dname)
         print("Starting Tool - Box from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 
-        if prefix.endswith("test"):
+        if "test" in prefix:
             setup_logging(logging.NOTSET, name="toolbox-test", interminal=True,
                           file_level=logging.NOTSET).info("Logger initialized")
-        elif prefix.endswith("live"):
+        elif "live" in prefix:
             setup_logging(logging.WARNING, name="toolbox-live", is_online=True
                           , online_level=logging.WARNING).info("Logger initialized")
-        elif prefix.endswith("debug"):
+        elif "debug" in prefix:
             setup_logging(logging.DEBUG, name="toolbox-debug", interminal=True,
                           file_level=logging.WARNING).info("Logger initialized")
         else:

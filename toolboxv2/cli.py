@@ -1,23 +1,22 @@
 """Console script for toolboxv2."""
-import logging
 # Import default Pages
-import os
 import sys
 import argparse
-import socketserver
 from platform import system
 
 # Import public Pages
 from toolboxv2 import App, run_cli, MainTool
+from toolboxv2.util.agent.scripts.main import start_auto_gpt
+
 try:
     from toolboxv2.app.serve_app import serve_app_change_dir
 except ModuleNotFoundError:
     print("Please install the toolboxv2 app")
 try:
-    from toolboxv2.isaa_talk import run_isaa_verb
+    from toolboxv2.util.agent.isaa_talk import run_isaa_verb
 except ModuleNotFoundError:
     print("Please install the toolboxv2 isaa")
-from toolboxv2.util import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
+from toolboxv2.util.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
 import os
 import subprocess
 
@@ -135,7 +134,7 @@ def parse_args():
     parser.add_argument("-m", "--modi",
                         type=str,
                         help="Start ToolBox in different modes",
-                        choices=["cli", "dev", "api", "app", "kill-app", "set-up", "isaa"],
+                        choices=["cli", "dev", "api", "app", "kill-app", "set-up", "isaa", "auto-gpt"],
                         default="cli")
 
     parser.add_argument("-p", "--port",
@@ -289,6 +288,9 @@ def main():
 
     if args.modi == 'isaa':
         run_isaa_verb(tb_app)
+
+    if args.modi == 'auto-gpt':
+        start_auto_gpt()
 
     if args.modi == "kill-app":
 

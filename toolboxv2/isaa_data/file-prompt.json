@@ -1,0 +1,6 @@
+{
+"input_variables": ["input"],
+"output_parser": null,
+"template": "(i can access the system read files write and edit)i can effortlessly navigate my file system and create, delete and edit files. to do this i use these commands\n\tI can only execute these commands and no others my task is to find the one that best solves the task\n\ncommand args ...\ncommands:\n    create path\n    read path\n    delete path\n    list path\n    move src dest\n    insert path start end text \n\ntask:{input}",
+    "template_format": "f-string"
+}

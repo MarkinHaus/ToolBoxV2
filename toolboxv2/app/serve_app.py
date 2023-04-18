@@ -38,3 +38,13 @@ def serve_app(path):
 
 if __name__ == '__main__':
     app.run()
+
+#  @app.route('/', defaults={'path': ''})
+#  def serve_app(path)
+#      pattern_ = re.compile('.png|.jpg|.jpeg|.js|.css|.ico|.gif|.svg|.wasm', re.IGNORECASE)
+#      request_file_path = path
+#      ext = request_file_path.suffix
+#      if not request_file_path.is_file() and pattern_.match(ext):
+#          path = 'index.html'
+#      logger.info({path}")
+#      return send_from_directory('app', path)

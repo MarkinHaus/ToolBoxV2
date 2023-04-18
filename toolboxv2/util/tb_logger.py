@@ -5,7 +5,7 @@ import os
 from logging.handlers import SocketHandler
 from math import inf as infinity
 
-from toolboxv2.Style import Style, remove_styles
+from toolboxv2.util.Style import Style, remove_styles
 
 loggerNameOfToolboxv2 = 'toolboxV2'
 
@@ -20,9 +20,9 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
     if not file_level:
         file_level = level
 
-    if not os.path.exists(f"./logs"):
-        os.makedirs(f"./logs")
-        open(f"logs/Logs.info", "a").close()
+    if not os.path.exists(f"../logs"):
+        os.makedirs(f"../logs")
+        open(f"../logs/Logs.info", "a").close()
 
     loggerNameOfToolboxv2 = name
 
@@ -53,7 +53,7 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
         "P": 62435
     }
 
-    with open(f"logs/Logs.info", "r") as li:
+    with open(f"../logs/Logs.info", "r") as li:
         log_info_data_str = li.read()
         try:
             log_info_data = eval(log_info_data_str)
@@ -80,7 +80,7 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
             except PermissionError:
                 print(Style.RED(Style.Bold(f"Could not rename log file appending on {filename}")))
 
-    with open(f"logs/Logs.info", "w") as li:
+    with open(f"../logs/Logs.info", "w") as li:
         if len(log_info_data.keys()) >= 7:
             log_info_data = {
                 filename: log_info_data[filename],

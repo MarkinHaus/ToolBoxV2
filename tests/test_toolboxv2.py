@@ -9,7 +9,7 @@ from rich.traceback import install
 from toolboxv2.cryp import Code
 import time
 
-from toolboxv2.toolbox import ApiOb
+from toolboxv2.util.toolbox import ApiOb
 
 install(show_locals=True)
 

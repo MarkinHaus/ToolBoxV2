@@ -1,7 +1,18 @@
 """Console script for toolboxv2. Isaa Talk Tool"""
 import datetime
+
+import openai
+from colorama import Fore
+
+from toolboxv2.isaa_data.api_keys import api_keys
+from toolboxv2.util.agent.scripts.autoconfig import AUTOConfig
+from toolboxv2.util.agent.scripts.commands import get_command
+from toolboxv2.util.agent.scripts.main import construct_prompt, print_assistant_thoughts, print_to_console
+from toolboxv2.util.agent.scripts.memory import PineconeMemory
+from toolboxv2.util.agent.scripts.spinner import Spinner
+from toolboxv2.util.agent.util import PromptConfig, create_chat_message
 # Import default Pages
-from .toolbox import App
+from toolboxv2.util.toolbox import App
 
 import time
 import pyttsx3
@@ -15,7 +26,7 @@ from langchain.memory import ConversationBufferMemory
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from playsound import playsound
 
-from .mods_dev.isaa import image_genrating_tool
+from toolboxv2.mods_dev.isaa import image_genrating_tool
 import sounddevice as sd
 
 import whisper
@@ -23,7 +34,6 @@ import pyaudio
 import wave
 import os
 import winsound
-
 
 
 class Ability:
@@ -293,7 +303,7 @@ def block_till_isaa_awake(noice=51):
 
     user_text = ""
 
-    filename = f"./isaa_data/output_wakeup.mp3"
+    filename = f"../../isaa_data/output_wakeup.mp3"
     filepath = os.path.join(os.getcwd(), filename)
 
     rate = 44100
@@ -478,7 +488,6 @@ def compute_response(user_text, functions, app: App, tools=7):
     return response0
 
 
-
 def doc_summary(docs):
     print(f'You have {len(docs)} document(s)')
 
@@ -520,13 +529,15 @@ def summary_conversation(functions, app, n=0):
         return history
     return ""
 
-def set_up_app_for_isaa_talk(app, mem):
-    functions = {}
+
+def set_up_app_for_isaa_talk(app, mem, functions=None):
+    if functions is None:
+        functions = {}
+
     app.logger.info("Setting up")
     # init setup
     # app.save_load("isaa")
     app.inplace_load("isaa", "toolboxv2.mods_dev.")
-    app.inplace_load("isaa_audio", "toolboxv2.mods_dev.")
     app.logger.info("Isaa is running")
 
     # init interpret_input
@@ -548,20 +559,66 @@ def set_up_app_for_isaa_talk(app, mem):
         "I want to talk",
     ], 't': 'stf'}
 
-    # dev
-    from isaa_data.api_keys import api_keys
-    api_keys(app)
-
+    api_keys(app)  # TODO use .env
+    # openai.organization =
+    # print(openai.Model.list())
     app.AC_MOD.lode_models()
-    app.AC_MOD.speed_construct_Interpret_agent("", app=app, memory=mem)
+    # app.AC_MOD.speed_construct_Interpret_agent("", app=app, memory=mem)
     functions["speed-con"] = app.AC_MOD.speed_construct_Interpret_agent
     functions["agents"] = app.AC_MOD.agent_tools
     functions["image"] = app.AC_MOD.genrate_image
     functions["ia"] = app.AC_MOD.interpret_agent
 
+    setup_audio(app)
+
     return functions
 
-def run_isaa_verb(app: App, c=3.5, awake=True):
+
+def setup_template_g_prompt(app: App):
+    app.new_ac_mod("isaa")
+
+    app.AC_MOD.config['generator-prompt'] = {
+        "input_variables": ["input"],
+        "output_parser": None,
+        "template": "Prompt: Erstelle eine maßgeschneiderte und ansprechende Prompt für folgende Anfrage:"
+                    "\n\nAnfrage: {input}"
+                    "\n\nNimm dir einen Moment Zeit, um die Anfrage sorgfältig zu analysieren"
+                    " und zu verstehen. Erstelle eine Prompt basierend auf den angegebenen Informationen und dem"
+                    " Fachgebiet. Achte darauf, dass die Prompt klar, präzise und für den Benutzer leicht verständlich"
+                    " ist. Nutze gegebenenfalls eine freundliche und einladende Sprache,"
+                    " um den Benutzer dazu zu ermutigen, mehr Informationen zu teilen oder weitere Fragen zu stellen."
+                    " Wenn du Genügend informationen hast antworte mit :Final-Prompt: und gebe die finale prompt aus."
+                    " \n\nVorgeschlagene Prompt:",
+        "template_format": "f-string"
+    }
+
+
+def setup_audio(app):
+    app.logger.info("Setting up audio")
+    # init setup
+    # app.save_load("isaa_audio")
+    app.inplace_load("isaa_audio", "toolboxv2.mods_dev.")
+    app.logger.info("Isaa audio is running")
+
+
+def setup_alpaca(app, functions=None):
+    if functions is None:
+        functions = {}
+
+    app.logger.info("Setting up: alpaca")
+    # init setup
+    # app.save_load("isaa")
+    app.inplace_load("isaa_alpaca", "toolboxv2.mods_dev.")
+    app.logger.info("Isaa alpaca is running")
+    app.new_ac_mod("isaa_alpaca")
+    # init interpret_input
+    functions["alpaca-ez"] = app.AC_MOD.run_ez
+    functions["alpaca-cov"] = app.AC_MOD.run_cov
+
+    return functions
+
+
+def run_isaa_verb(app: App, c=-1, awake=True):
     # c = complexity https://colab.research.google.com/drive/1V-Bt5Hm2kjaDb4P1RyMSswsDKyrzc2-3?usp=sharing#scrollTo
     # =DiE3hs3jnTlf
     from transformers import pipeline
@@ -588,44 +645,90 @@ def run_isaa_verb(app: App, c=3.5, awake=True):
         memory.load_memory_variables(eval(mem))
 
     functions = set_up_app_for_isaa_talk(app, memory)
+    setup_template_g_prompt(app)
 
-    history = summary_conversation(functions, app)
-    user_text += history
+    # history = summary_conversation(functions, app)
+    # user_text += history
 
     if not os.path.exists(fi):
         with open(fi, "a") as f:
             f.write("Nichts Hier")
 
-    engine = text_to_speech3("")
-    engine.setProperty('rate', 155)  # setting up new voice rate
-    engine.setProperty('volume', .6)
+    # engine = text_to_speech3("")
+    # engine.setProperty('rate', 155)  # setting up new voice rate
+    # engine.setProperty('volume', .6)
+    asdf = True
+    app.new_ac_mod("isaa")
+    fet = app.AC_MOD.bugfix()
+
+    first_agent_config = app.AC_MOD.get_agent_config_class("self")
+    first_agent_config.task_list = ["1. Think about steps to create a Short and Long -term memory system"]
+    print(app.AC_MOD.run_agent("isaa", "User: welche systeme architecture fallen dir ein?", first_agent_config), "###")
+    print(first_agent_config.prompt)
+    app.alive = False
     while app.alive:
         print("", end="" + "->>\r")
 
+        if c == -2:  # prompt generator
+            if asdf:
+                asdf = False
+                user_text = """Verbesssere dien code :
+
+    def insert_edit(self, command):
+        "x3
+        writes or edit text in a file starting at the specified line.
+        "x3
+        if len(command) < 4:
+            return "Invalid command"
+        if len(command) == 5:
+            command = command[1:]
+        file_, start, end, text = command
+        file = self.scope + list_s_str_f(file_)
+        self.print("insert_edit "+file)
+        if not os.path.exists(file):
+            self.create(list_s_str_f(file_))
+
+        with open(file, 'r') as f:
+            lines = f.readlines()
+
+        lines[start:end + 1] = [text + "\\n"]
+
+        with open(file, 'w') as f:
+            f.writelines(lines)
+
+        return f"File content updated"
+und schriebe ihn in out.py"""
+            else:
+                user_text = input("Please enter:")
+            # app.new_ac_mod("isaa")
+            response = fet(user_text)  # functions['speed-con'](user_text, app, 5)
+            if isinstance(response, dict):
+                response = response['output']
+            print("Isaa:", response)
+
         if c == -1:
             user_text = 'Isaa Generire mir ein Bild von Mr Crab'
-
-            response = functions['ia']("Suche mit hilfe vom Kontext den Vergangen Kontext\n"+user_text + "\nBenutze am ende Talk um Für den Nutzer Eine Antwort zu erstellen",
-                                       app, 0)
+            response = app.AC_MOD.run_agent("isaa", "Print results")
             # data = json.dumps(response["intermediate_steps"], indent=2)
             # print(data)
-            response = response['output']
-            print(response, "#")
+            response = str(response)
+            print("#", response, "#")
             # text_to_speech3(response, engine)
             app.alive = False
 
         if c == 0:  # mini Isaa
+            setup_alpaca(app, functions)
             # tts_pipeline = pipeline("automatic-speech-recognition")  # model="ttskit/glow-tts-ljs-300epochs"
             # Get user input audio max 6 seconds.
             # user_text = get_audio_text_c0(app)
-            user_text = "hallo das ist ein kleiner Test ob sich deine Stimme verbessert hat also sag was Schönes."
-            # was " \ "sind deine ersten worte? ps : (falls es beim erstenmal Klapt) versuch nur 3" prompt base
-            # compute response
-            # response = functions["speed-con"](user_text, app, 2)
-            # # synthesise audio
-            # # play response
-            # print(f"Me:{user_text}\nIsaa:{response}")
-            text_to_speech2(user_text)
+            user_text = "Hallo alpaka das ist ein test was kannst du alles ?"
+            print(user_text)
+            # response1 = functions["alpaca-ez"](["",user_text])
+            # print(response1)
+            response2 = functions["alpaca-cov"](["", user_text])
+
+            print(f"Me:{user_text}\nalpaca1:{user_text}\nalpaca2:{response2}")
+            text_to_speech2(response2)
 
             if "stop" in user_text.lower():
                 app.alive = False
@@ -709,8 +812,13 @@ Das erste was Leo bemerkte, als er aufwachte, war der Gestank. Es stank schlimme
             print("Isaa:", response, "#2")
 
         if c == 3.5:
-            user_text = input("User: ")
-            response = functions['ia'](user_text, app, 0)['output']
+            if asdf:
+                asdf = False
+                user_text = "überarbeite die tkScript.py in dem du sie zu erst liest und dann verbesserst und" \
+                            " anschließend wieder in die tkScript.py"
+            else:
+                user_text = input("User: ")
+            response = functions['ia'](user_text, app, 1)['output']
             print("Isaa:", response, "#2")
 
         if c == 4:
@@ -723,6 +831,8 @@ Das erste was Leo bemerkte, als er aufwachte, war der Gestank. Es stank schlimme
                 block_till_isaa_awake()
                 awake = True
 
+            input("pause;")
+
             user_text = get_audio_transcribe()
 
             print("User:", user_text)
@@ -732,7 +842,7 @@ Das erste was Leo bemerkte, als er aufwachte, war der Gestank. Es stank schlimme
 
             if "Ruhemodus" in user_text.lower():
                 user_text += " Gute nacht und bis Bald "
-                awake = False
+                #awake = False
 
             if "exit" in user_text.lower():
                 app.alive = False
@@ -740,21 +850,22 @@ Das erste was Leo bemerkte, als er aufwachte, war der Gestank. Es stank schlimme
             try:
                 response = "Gute Nacht"
                 if awake:
-                    response = functions['ia'](user_text, app, 0)
-                    response = response['output']
+
+                    response = image_genrating_tool(user_text, app)#functions['ia'](user_text, app, 0)
+                    #response = response['output']
             except Exception as e:
                 response = str(e)
 
             print(response)
 
-            if "-sleep" in response or 'Ruhemodus' in response:
-                user_text += " Gute nacht und bis Bald "
-                awake = False
+            #if "-sleep" in response or 'Ruhemodus' in response:
+            #    user_text += " Gute nacht und bis Bald "
+            #    #awake = False
 
-            if ("Wiedersehen" in response or 'bis dann' in response) and (not 'Ruhemodus' in response):
-                app.alive = False
+            #if ("Wiedersehen" in response or 'bis dann' in response) and (not 'Ruhemodus' in response):
+            #    app.alive = False
 
-            text_to_speech3(response.replace("Isaa:", "").split("[Tool")[0])
+            #text_to_speech3(response.replace("Isaa:", "").split("[Tool")[0])
 
         compleat_conversation.append("\nUser: " + user_text)
         compleat_conversation.append("\nIsaa: " + response)
@@ -790,6 +901,9 @@ Das erste was Leo bemerkte, als er aufwachte, war der Gestank. Es stank schlimme
             f.write(str(memory.dict()))
         except UnicodeEncodeError:
             print("Memory not encoded properly")
+
+
+
 
 # x = "Gedanke: Mit Gedanke können innere Prozesse simuliert werden.\n\nVerfügbare Prozesse:\nTool 0: Mit requests
 # können Sie mit Webseiten kommunizieren und mit \"terminal\" mit Ihrem Terminal interagieren.\nTool 1: Mit

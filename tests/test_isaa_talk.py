@@ -3,14 +3,12 @@
 """Tests for `isaa_talk` cli."""
 import unittest
 
-from toolboxv2 import App, MainTool, FileHandler, Style
+from toolboxv2 import App, Style
 from rich.traceback import install
 
-from toolboxv2.cryp import Code
 import time
 
-from toolboxv2.isaa_talk import set_up_app_for_isaa_talk, combine_sentences
-from toolboxv2.toolbox import ApiOb
+from toolboxv2.util.agent.isaa_talk import set_up_app_for_isaa_talk, combine_sentences
 
 install(show_locals=True)
 

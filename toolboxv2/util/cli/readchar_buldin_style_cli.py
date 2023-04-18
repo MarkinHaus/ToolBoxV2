@@ -4,11 +4,11 @@
 import sys
 import os
 from platform import system
-from .Style import Style
+from toolboxv2.util.Style import Style
 
 # Import public Pages
 import readchar
-from .toolbox import App
+from toolboxv2.util.toolbox import App
 
 
 def user_input(app: App):
