@@ -119,6 +119,10 @@ def parse_args():
                         help="get version of ToolBox | ToolBoxV2 -v -n (mod-name)",
                         action="store_true")
 
+    parser.add_argument("--speak",
+                        help="Isaa speak mode",
+                        action="store_true")
+
     parser.add_argument('-mvn', '--mod-version-name',
                         metavar="name",
                         type=str,
@@ -287,7 +291,7 @@ def main():
         run_cli(tb_app)
 
     if args.modi == 'isaa':
-        run_isaa_verb(tb_app)
+        run_isaa_verb(tb_app, args.speak)
 
     if args.modi == 'auto-gpt':
         start_auto_gpt()

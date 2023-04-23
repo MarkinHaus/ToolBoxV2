@@ -28,11 +28,11 @@ class MainTool:
 
         print(f"TOOL : {self.name} online")
 
-    def print(self, message, *args, end="\n"):
+    def print(self, message, end="\n", **kwargs):
         if self.stuf:
             return
 
-        print(Style.style_dic[self.color] + self.name + Style.style_dic["END"] + ":", message, end=end)
+        print(Style.style_dic[self.color] + self.name + Style.style_dic["END"] + ":", message, end=end, **kwargs)
 
     def get_uid(self, command, app: App):
 
