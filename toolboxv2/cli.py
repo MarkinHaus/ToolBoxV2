@@ -10,7 +10,8 @@ from toolboxv2 import App, run_cli, MainTool
 try:
     from toolboxv2.app.serve_app import serve_app_change_dir
 except ModuleNotFoundError:
-    from .app.serve_app import serve_app_change_dir
+    #from .app.serve_app import serve_app_change_dir
+    pass
 try:
     from toolboxv2.util.agent.isaa_talk import run_isaa_verb
 except ModuleNotFoundError:
