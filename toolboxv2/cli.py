@@ -16,7 +16,10 @@ try:
     from toolboxv2.util.agent.isaa_talk import run_isaa_verb
 except ModuleNotFoundError:
     from .util.agent.isaa_talk import run_isaa_verb
-from toolboxv2.util.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
+try:
+    from toolboxv2.util.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
+except ModuleNotFoundError:
+    from .util.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
 import os
 import subprocess
 
