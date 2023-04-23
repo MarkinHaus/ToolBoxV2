@@ -84,6 +84,12 @@ class Tools(MainTool, FileHandler):  # FileHandler
             if note:
                 self.inbox.append({"note": note, "type": "quickNote/inbox", "id": id_})
 
+    def add_note_llm(self, note, type_):
+        id_ = sum([ord(c) for c in note])
+        self.inbox.append({"note": note, "type": type_, "id": id_})
+
+        return "Note Added"
+
     def view_note(self):
 
         for pos, note in enumerate(self.inbox):
