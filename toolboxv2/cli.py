@@ -10,11 +10,11 @@ from toolboxv2 import App, run_cli, MainTool
 try:
     from toolboxv2.app.serve_app import serve_app_change_dir
 except ModuleNotFoundError:
-    print("Please install the toolboxv2 app")
+    from .app.serve_app import serve_app_change_dir
 try:
     from toolboxv2.util.agent.isaa_talk import run_isaa_verb
 except ModuleNotFoundError:
-    print("Please install the toolboxv2 isaa")
+    from .util.agent.isaa_talk import run_isaa_verb
 from toolboxv2.util.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
 import os
 import subprocess
