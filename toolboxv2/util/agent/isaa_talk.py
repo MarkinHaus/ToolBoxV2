@@ -8,13 +8,6 @@ from transformers import pipeline
 import sys
 
 from toolboxv2 import Style
-from toolboxv2.util.agent.scripts import speak
-from toolboxv2.util.agent.scripts.autoconfig import AUTOConfig
-from toolboxv2.util.agent.scripts.commands import get_command
-from toolboxv2.util.agent.scripts.main import construct_prompt, print_assistant_thoughts, print_to_console
-from toolboxv2.util.agent.scripts.memory import PineconeMemory
-from toolboxv2.util.agent.scripts.speak import eleven_labs_speech
-from toolboxv2.util.agent.scripts.spinner import Spinner
 from toolboxv2.util.agent.util import PromptConfig, create_chat_message
 # Import default Pages
 from toolboxv2.util.toolbox import App

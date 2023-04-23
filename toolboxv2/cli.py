@@ -6,7 +6,6 @@ from platform import system
 
 # Import public Pages
 from toolboxv2 import App, run_cli, MainTool
-# from toolboxv2.util.agent.scripts.main import start_auto_gpt
 
 try:
     from toolboxv2.app.serve_app import serve_app_change_dir
