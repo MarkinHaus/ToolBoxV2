@@ -6,7 +6,7 @@ from platform import system
 
 # Import public Pages
 from toolboxv2 import App, run_cli, MainTool
-from toolboxv2.util.agent.scripts.main import start_auto_gpt
+# from toolboxv2.util.agent.scripts.main import start_auto_gpt
 
 try:
     from toolboxv2.app.serve_app import serve_app_change_dir
@@ -293,8 +293,8 @@ def main():
     if args.modi == 'isaa':
         run_isaa_verb(tb_app, args.speak)
 
-    if args.modi == 'auto-gpt':
-        start_auto_gpt()
+    # if args.modi == 'auto-gpt':
+    #     start_auto_gpt()
 
     if args.modi == "kill-app":
 
