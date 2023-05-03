@@ -6,6 +6,7 @@ from platform import system
 
 # Import public Pages
 from toolboxv2 import App, run_cli, MainTool
+from toolboxv2.runabel.isaa_clip import run_clipy_isaa
 
 try:
     from toolboxv2.app.serve_app import serve_app_change_dir
@@ -13,9 +14,9 @@ except ModuleNotFoundError:
     #from .app.serve_app import serve_app_change_dir
     pass
 try:
-    from toolboxv2.util.agent.isaa_talk import run_isaa_verb
+    from toolboxv2.runabel.isaa_cmd import run_isaa_verb
 except ModuleNotFoundError:
-    from .util.agent.isaa_talk import run_isaa_verb
+    from toolboxv2.runabel.isaa_cmd import run_isaa_verb
 try:
     from toolboxv2.util.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
 except ModuleNotFoundError:
@@ -141,7 +142,7 @@ def parse_args():
     parser.add_argument("-m", "--modi",
                         type=str,
                         help="Start ToolBox in different modes",
-                        choices=["cli", "dev", "api", "app", "kill-app", "set-up", "isaa", "auto-gpt"],
+                        choices=["cli", "dev", "api", "app", "kill-app", "set-up", "isaa", "isaa-clipy"],
                         default="cli")
 
     parser.add_argument("-p", "--port",
@@ -296,11 +297,10 @@ def main():
     if args.modi == 'isaa':
         run_isaa_verb(tb_app, args.speak)
 
-    # if args.modi == 'auto-gpt':
-    #     start_auto_gpt()
+    if args.modi == 'isaa-clipy':
+        run_clipy_isaa(tb_app, args.speak)
 
     if args.modi == "kill-app":
-
         app_pid = str(os.getpid())
         print(f"Exit app {app_pid}")
         if system() == "Windows":
@@ -319,7 +319,8 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    print("Starting")
+    # main()
     # init main : ToolBoxV2 -init main -f init.config
     # Exit
     # y

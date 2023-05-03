@@ -1,11 +1,9 @@
 import sys
 
-from toolboxv2 import MainTool
+from toolboxv2 import MainTool, Style
 from time import sleep
 from platform import system
 import os
-
-from toolboxv2.Style import Style
 
 
 class Tools(MainTool):

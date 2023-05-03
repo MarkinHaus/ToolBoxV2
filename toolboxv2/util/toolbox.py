@@ -14,7 +14,8 @@ from toolboxv2.util.Style import Style
 import toolboxv2
 
 import logging
-
+from dotenv import load_dotenv
+load_dotenv()
 
 class AppArgs:
     init = None
@@ -44,13 +45,28 @@ class ApiOb:
         return self
 
 
-class App:
+class Singleton(type):
+    """
+    Singleton metaclass for ensuring only one instance of a class.
+    """
+
+    _instances = {}
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(
+                Singleton, cls).__call__(
+                *args, **kwargs)
+        return cls._instances[cls]
+
+
+class App(metaclass=Singleton):
     def __init__(self, prefix: str = "", args=AppArgs().default()):
         t0 = time.time()
         abspath = os.path.abspath(__file__)
         dname = os.path.dirname(abspath).replace("\\util", "")
         os.chdir(dname)
-        print("Starting Tool - Box from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
+        print(f"Starting ToolBox as {prefix} from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 
         if "test" in prefix:
             setup_logging(logging.NOTSET, name="toolbox-test", interminal=True,

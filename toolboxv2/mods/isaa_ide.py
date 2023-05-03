@@ -24,13 +24,13 @@ class Tools(MainTool):
         self.color = "YELLOW"
         self.tools = {
             "all": [
-                ["create", ":Beschreibung:"],
-                ["delete", ":Beschreibung:"],
-                ["list", ":Beschreibung:"],
-                ["move", ":Beschreibung:"],
-                ["insert-edit", ":Beschreibung:"],
-                ["search", ":Beschreibung:"],
-                ["copy", ":Beschreibung:"],
+                ["create", "Erstellt ein neues Element oder Objekt"],
+                ["delete", "Löscht ein vorhandenes Element oder Objekt."],
+                ["list", "Zeigt eine Liste aller verfügbaren Elemente oder Objekte an."],
+                ["move", "Verschiebt ein Element oder Objekt von einer Position oder einem Ort zu einem anderen."],
+                ["insert-edit", "Fügt ein neues Element an einer bestimmten Position ein oder bearbeitet ein vorhandenes Element."],
+                ["search", "Sucht nach einem bestimmten Element oder Objekt in der Liste oder Sammlung."],
+                ["copy", "Erstellt eine Kopie eines vorhandenen Elements oder Objekts."],
             ],
             "create": ["create(path)", "Create a file or directory at the specified path."],
             "delete": ["delete(path)", "Delete the file or directory at the specified path."],
@@ -42,7 +42,7 @@ class Tools(MainTool):
             "copy": ["copy(src, dest)", "Copy a file from the source path to the destination path."]
         }
 
-        self.scope = "./isaa-directory"
+        self.scope = "isaa-directory/"
 
         self.open_file = ""
 
@@ -55,19 +55,16 @@ class Tools(MainTool):
         """
         p = list_s_str_f(path)
         path = self.scope + p
-        if p[0] != '/':
-            path = self.scope + '/' + p
         self.print("create " + path)
 
         # Überprüfen, ob path bereits existiert
-        if os.path.exists(path):
+        if os.path.exists(path) and not (path.endswith("/") or path.endswith("\\")):
             return f"Error: {path} already exists."
 
         # path in Verzeichnisse aufteilen
         dirs, filename = os.path.split(path)
-        if not filename:  # Wenn path endet mit "/"
+        if not filename and not (path.endswith("/") or path.endswith("\\")):  # Wenn path endet mit "/"
             dirs, filename = os.path.split(dirs)
-
         # Baumstruktur erstellen
         curdir = ""
         for d in dirs.split(os.path.sep):
@@ -87,7 +84,8 @@ class Tools(MainTool):
         """
         Delete the file or directory at the specified path.
         """
-        path = self.scope + list_s_str_f(path)
+        p = list_s_str_f(path)
+        path = self.scope + p
         self.print("delete "+path)
         if not os.path.exists(path):
             return f"Error: {path} does not exist."
@@ -145,9 +143,9 @@ class Tools(MainTool):
         """
         writes or edit text in a file starting at the specified line.
         """
-        if len(command) < 4:
+        if len(command) < 1:
             return "Invalid command"
-        if len(command) == 5:
+        if len(command) == 3:
             command = command[1:]
         file_, text = command
         file = self.scope + list_s_str_f(file_)
@@ -236,7 +234,7 @@ class Tools(MainTool):
             return f"Error: {dest_path} already exists."
 
         shutil.copy(source_path, dest_path)
-        return f"File copied from {source_path} to {dest_path}."
+        return f"File copied from {source_path} to {dest_path}"
 
     def process_input(self, input_str: str):
         """

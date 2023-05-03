@@ -15,11 +15,11 @@ class TestIsaaIDE(unittest.TestCase):
         cls.app = App("test")
         cls.app.mlm = "I"
         cls.app.debug = True
-        cls.app.inplace_load("isaa_ide", "toolboxv2.mods_dev.")
+        cls.app.inplace_load("isaa_ide", "toolboxv2.mods.")
         cls.app.new_ac_mod("isaa_ide")
         cls.fm = cls.app.AC_MOD
         cls.file_name = "test_file.txt"
-        cls.folder_name = "test_folder"
+        cls.folder_name = "test_folder/"
 
     @classmethod
     def tearDownClass(cls):
@@ -33,7 +33,9 @@ class TestIsaaIDE(unittest.TestCase):
         self.assertIsNotNone(self.fm.create([self.file_name]))
 
         # Test folder creation
-        self.assertIsNotNone(self.fm.create([self.folder_name]))
+        c = self.fm.create([self.folder_name])
+        print(c)
+        self.assertIsNotNone(c)
 
     def test_delete(self):
         # Test file deletion
@@ -47,7 +49,9 @@ class TestIsaaIDE(unittest.TestCase):
     def test_list(self):
         self.fm.create([self.file_name])
         # Test listing of current directory
-        self.assertIn(self.file_name, self.fm.list([""]))
+        c = self.fm.list(["."])
+        print(c)
+        self.assertIn(self.file_name, c)
 
     def test_move(self):
         # Test file move
@@ -67,22 +71,24 @@ class TestIsaaIDE(unittest.TestCase):
     def test_insert_edit(self):
         # Test file insert-edit
         self.fm.create(self.file_name)
-        self.assertEqual(self.fm.insert_edit([self.file_name, 0, 1, "Hello, World!"]), "File content updated")
-        self.assertEqual(self.fm.read([self.file_name]), "Hello, World!\n")
+        self.assertEqual(self.fm.insert_edit([self.file_name, "Hello, World!"]), "File content updated")
+        self.assertEqual(self.fm.read([self.file_name]), "Hello, World!")
         self.fm.delete(self.file_name)
 
     def test_search(self):
         # Test file search
-        self.fm.create(self.file_name)
-        self.fm.insert_edit([self.file_name, 0, 1, "Hello, World!"])
-        print("<||>", self.fm.search([self.file_name, "Hel"]))
-        self.assertIn("Found", self.fm.search([self.file_name, "Hel"]))
-        self.fm.delete([self.file_name])
+        self.fm.create(self.folder_name+self.file_name)
+        self.fm.insert_edit([self.folder_name+self.file_name, "Hello, World!"])
+        print("<||>", self.fm.search(["/", "Hel"]))
+        self.assertIn("Found", self.fm.search([self.folder_name, "Hel"]))
+        self.fm.delete([self.folder_name+self.file_name])
 
     def test_copy(self):
         # Test file copy
         new_path = "new_folder/" + self.file_name
         self.fm.create(self.file_name)
-        self.assertEqual(self.fm.copy([self.file_name, new_path]), f"Copied {self.file_name} to {new_path}")
+        self.fm.create("new_folder/")
+        self.assertEqual(self.fm.copy([self.file_name, new_path]), f"File copied from isaa-directory//test_file.txt to isaa-directory//new_folder/test_file.txt")
         self.fm.delete([self.file_name])
-        self.fm.delete([new_path])
+        self.fm.delete(["new_folder/"])
+        self.fm.delete([self.folder_name])

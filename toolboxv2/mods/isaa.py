@@ -30,18 +30,17 @@ from langchain.tools.ifttt import IFTTTWebhook
 
 from toolboxv2 import MainTool, FileHandler, Style, App
 from langchain.chains import load_chain
-# from langchain.llms import HuggingFacePipeline
-# from langchain.llms import HuggingFaceHub, OpenAI, OpenAIChat
-# from langchain.embeddings import HuggingFaceEmbeddings
-# from langchain.embeddings import HuggingFaceHubEmbeddings
-# from langchain.text_splitter import CharacterTextSplitter
 
 from langchain import PromptTemplate, HuggingFaceHub, LLMChain, ConversationChain, OpenAI
 from langchain.llms.openai import OpenAIChat
 import tiktoken
 from bs4 import BeautifulSoup
 
-# CharacterTextSplitter.from_huggingface_tokenizer(...)
+import pinecone
+import openai
+from inspect import signature
+
+
 class Singleton(type):
     """
     Singleton metaclass for ensuring only one instance of a class.
@@ -55,11 +54,6 @@ class Singleton(type):
                 Singleton, cls).__call__(
                 *args, **kwargs)
         return cls._instances[cls]
-
-
-import pinecone
-import openai
-from inspect import signature
 
 
 def get_ada_embedding(text):
@@ -122,7 +116,6 @@ class PineconeMemory_(metaclass=Singleton):
 
 
 class CollectiveMemory(metaclass=Singleton):
-
     collection = []
     try:
         memory = PineconeMemory_()
@@ -135,18 +128,17 @@ class CollectiveMemory(metaclass=Singleton):
     text_len = 1
     mean_token_len = 1
 
-
     def text(self, context):
         if self.do_mem:
             return " NO MEMORY Avalabel"
-        if not context or context=="None":
+        if not context or context == "None":
             return f"active memory contains {self.token_in_use} tokens for mor informations Input similar information"
         "memory will performe a vector similarity search using memory"
         relevant_memory = self.memory.get_relevant(context, 10)
         if len(relevant_memory) == 0:
             l = ""
             for i in ddg_suggestions(context)[:3]:
-                l += i['phrase']+" ,"
+                l += i['phrase'] + " ,"
             return f"No data faund in memory try : {l}"
 
         return "\n".join(relevant_memory)
@@ -158,9 +150,10 @@ class CollectiveMemory(metaclass=Singleton):
             return
 
         if isinstance(data, str):
-            data = {'data': data, 'token-count': self.mean_token_len+1, 'vector': []}
+            data = {'data': data, 'token-count': self.mean_token_len + 1, 'vector': []}
 
-        print(Style.RED(f"ADD DATA : ColetiveMemory :{len(self.collection)} {data['token-count']} {self.token_in_use=}"))
+        print(
+            Style.RED(f"ADD DATA : ColetiveMemory :{len(self.collection)} {data['token-count']} {self.token_in_use=}"))
         self.token_in_use += data['token-count']
         if data['data'] not in self.text_mem:
             self.text_mem += [data['data']]
@@ -171,7 +164,6 @@ class CollectiveMemory(metaclass=Singleton):
 
         return f"Data Saved"
 
-
     def __str__(self):
         if self.do_mem:
             return " NO MEMORY Avalabel"
@@ -181,7 +173,6 @@ class CollectiveMemory(metaclass=Singleton):
 
 
 class ObservationMemory():
-
     memory_data: list[dict] = []
     tokens: int = 0
     max_length: int = 1000
@@ -192,7 +183,6 @@ class ObservationMemory():
     def info(self):
         text = self.text
         return f"\n{self.tokens=}\n{self.max_length=}\n{self.model_name=}\n{text[:60]=}\n"
-
 
     @property
     def text(self):
@@ -240,8 +230,7 @@ class ObservationMemory():
 
 
 class ShortTermMemory:
-
-    memory_data:list[dict] = []
+    memory_data: list[dict] = []
     tokens: int = 0
     max_length: int = 2000
     model_name: str = "text-embedding-ada-002"
@@ -265,7 +254,6 @@ class ShortTermMemory:
 
         return memorys
 
-
     def cut(self):
 
         tok = 0
@@ -284,16 +272,12 @@ class ShortTermMemory:
 
         print(f"Removed ~ {tok} tokens from ShortTermMemory tokens in use: {self.tokens}")
 
-
     def clear_to_collective(self):
 
         max_tokens = self.max_length
-        self.max_length = 0
+        ShortTermMemory.max_length = 0
         self.cut()
-        self.max_length = max_tokens
-
-
-
+        ShortTermMemory.max_length = max_tokens
 
     @text.setter
     def text(self, data):
@@ -301,7 +285,7 @@ class ShortTermMemory:
         for line in data.split('\n'):
             if line not in self.lines_ and len(line) != 0:
                 ntok = len(tiktoken.encoding_for_model(self.model_name).encode(line))
-                self.memory_data.append({'data':line, 'token-count':ntok, 'vector':[]})
+                self.memory_data.append({'data': line, 'token-count': ntok, 'vector': []})
                 tok += ntok
 
         self.tokens += tok
@@ -317,8 +301,7 @@ class ShortTermMemory:
 #    text-babbage-001
 #    text-ada-001
 class AgentConfig:
-
-    avalabel_modes = ['talk', 'tool', 'conversation']
+    avalabel_modes = ['talk', 'tool', 'conversation', 'free', 'planning', 'execution', 'generate']
     max_tokens = 4097
 
     capabilities = """1. Invoke Agents: Isaa should be able to invoke and interact with various agents and tools, seamlessly integrating their expertise and functionality into its own responses and solutions.
@@ -342,7 +325,8 @@ class AgentConfig:
         self.short_mem: ShortTermMemory = ShortTermMemory()
         self.obser_mem: ObservationMemory = ObservationMemory()
         self.tools: dict = {
-            "test_tool": {"func": lambda x: x, "description": "only for testing if tools are available", "format": "test_tool(input:str):"}
+            "test_tool": {"func": lambda x: x, "description": "only for testing if tools are available",
+                          "format": "test_tool(input:str):"}
         }
 
         self.last_prompt = ""
@@ -355,7 +339,13 @@ class AgentConfig:
 
         self.token_left = 1000
         self.temperature = 0.16
-        self.stop_sequence = ["\n\n"]
+
+        self.stop_sequence = ["\n\n", "Observation:", "Execute:"]
+
+        self.stream = True
+        self.is_text_completion = True
+        self.messages = []
+        self.messages_history = []
 
     @property
     def task(self):
@@ -366,7 +356,31 @@ class AgentConfig:
         if len(self.task_list) != 0:
             task = self.task_list[self.task_index]
             return task
-        return "Task is done Retorn Summarysation for user"
+        return "Task is done return Summarysation for user"
+
+    def add_message(self, role, message):
+        self.messages.append({'role': role, 'content': message})
+
+    def add_message_h(self, role, message):
+        self.messages_history.append({'role': role, 'content': message})
+
+    def prompt_to_message(self, prompt):
+        self.messages = []
+        for line in prompt.split('\n'):
+            line = line.strip()
+            if not line:
+                pass
+            elif ":" not in line:
+                self.add_message("system", line)
+            elif line.startswith("Task:"):
+                self.add_message("user", line)
+            elif line.startswith("Observation: "):
+                self.add_message("assistant", line)
+            elif line.startswith("Question: ") or line.startswith("User: "):
+                self.add_message("user", line)
+            else:
+                self.add_message("assistant", line)
+        self.messages += self.messages_history
 
     @property
     def prompt(self):
@@ -375,48 +389,13 @@ class AgentConfig:
         if not self.obser_mem.model_name:
             self.obser_mem.model_name = self.model_name
 
-        tools = ""
-        names = []
-        for key, value in self.tools.items():
-            format_ = value['format'] if 'format' in value.keys() else f"{key}('function input')"
-            if format_.endswith("('function input')"):
-                value['format'] = format_
-            tools += f"\n{key}: {value['description']}\n\t{format_}\n"
-            names.append(key)
+        prompt = self.get_prompt()
 
-        task = self.task
-
-        prompt = f"Answer the following questions as best you can. You have access to the following python functions:\n" \
-                 f"{tools}\n" \
-                 f"\n\nUnder no circumstances are you allowed to output 'Task:'!!!\n\n\n" \
-                 f"Personality:'{self.personality}'\n\n" + \
-                 f"Goals:'{self.goals}'\n\n" + \
-                 f"Capabilities:'{self.capabilities}'\n\n" + \
-                 f"Permanet-Memory:\n'{CollectiveMemory().text(context=task)}'\n\n" + \
-                 f"Resent Agent response:\n'{self.obser_mem.text}'\n\n"  + \
-                 "Placeholders: there are two types of place holders.  " \
-                 "\n1 : <information_from_agent> if you see a word enclosed with <> this character you must fill it with information!" \
-                 "\n2 : [datime] if you want the system to insert an information return []." \
-                 "\nallways fill placeholders of type 1 !!!\n\n " +\
-                 "Use the following format:\n\n" +\
-                 "Task: the input question you must answer\n" +\
-                 "Thought: you should always think about what to do\n" +\
-                 "Context: context abaut the task you about to acomplisch\n" +\
-                 f"Action: the action to take, should be one of {names}\n" +\
-                 f"Exiqute: write to exique action!\n" +\
-                 "Observation: the result of the action\n" +\
-                 f"... (this Thought/Context/Action/Exiqute/Observation can repeat N times) \n type Question: for user help\n" +\
-                 "Thought: I now know the final answer\n"+\
-                 "Answer: the final answer to the original input question\n"+\
-                 f"\n\nBegin!\n\n" \
-                 f"Task:'{task}'\n{self.short_mem.text}\n{'CONTINUE: ' if self.short_mem.tokens > 600 else ''}" \
-                 f"\n{self.step_between}" \
-
-        # print("\nprompting:\n\n"+ prompt+ "\n\n----------------------------------------------------------------")
         pl = len(tiktoken.encoding_for_model(self.model_name).encode(prompt))
         self.token_left = self.max_tokens - pl
         if self.token_left < 0:
-            print(f"\n----------------------------------------------------prompt token:[{pl}]-------\n{self.token_left}")
+            print(
+                f"\n----------------------------------------------------prompt token:[{pl}]-------\n{self.token_left}")
             print("Token --")
             self.token_left *= -1
             print(f"Tokens left: {self.token_left}\n----------------------------------------------------------------")
@@ -427,47 +406,125 @@ class AgentConfig:
         self.last_prompt = prompt
         return prompt
 
-    @property
-    def promptt(self):
-        if not self.short_mem.model_name:
-            self.short_mem.model_name = self.model_name
-        if not self.obser_mem.model_name:
-            self.obser_mem.model_name = self.model_name
-
-        short_mem = self.short_mem.text
-        obser_mem = self.obser_mem.text
-
-        prompt = f"Goals:{self.goals.replace('{input}', '')}\n" + \
-                 f"Capabilities:{self.capabilities.replace('{input}', '')}\n" + \
-                 f"Long-termContext:{CollectiveMemory().text(context=self.short_mem.text).replace('{input}', '')}\n" + \
-                 f"\nResent Observation:{obser_mem.replace('{input}', '')}"  + \
-                 f"Task:{self.task.replace('{input}', '')} \n" \
-                 f"SystemTask: when you're done, issue the user's request as a task to yourself. syntax -> 'TASK-FROM-{self.name}: task'\n" + \
-                 "input: {input} \n"+f"{self.short_mem.text.replace('{input}', '')}"
-        return prompt
-
-    @property
-    def prompta(self):
-        if not self.short_mem.model_name:
-            self.short_mem.model_name = self.model_name
-        if not self.obser_mem.model_name:
-            self.obser_mem.model_name = self.model_name
-        prompt = f"Goals:{self.goals.replace('{input}', '')}\n" + \
-                 f"Capabilities:{self.capabilities.replace('{input}', '')}\n" + \
-                 f"Long-termContext:{CollectiveMemory().text(context=self.short_mem.text).replace('{input}', '')}\n" + \
-                 f"\nResent Observation:{self.obser_mem.text.replace('{input}', '')}"+ \
-                 f"Task:{self.task}\n" + \
-                 "input: {input}"+ \
-                 f"\n{self.short_mem.text.replace('{input}', '')}"
-        return prompt
-
-
     def __str__(self):
 
         return f"\n{self.name=}\n{self.mode=}\n{self.model_name=}\n{self.agent_type=}\n{self.max_iterations=}" \
                f"\n{self.verbose=}\n{self.personality[:45]=}\n{self.goals[:45]=}" \
                f"\n{str(self.tools)[:45]=}\n{self.task_list=}\n{self.task_list_done=}\n{self.step_between=}\nshort_mem\n{self.short_mem.info()}\nObservationMemory\n{self.obser_mem.info()}\nCollectiveMemory\n{str(CollectiveMemory())}\n"
 
+    def get_prompt(self):
+
+        tools = ""
+        names = []
+        for key, value in self.tools.items():
+            format_ = value['format'] if 'format' in value.keys() else f"{key}('function input')"
+            if format_.endswith("('function input')"):
+                value['format'] = format_
+            tools += f"\n{key}: {value['description']}\n\t{format_}\n"
+            names.append(key)
+        task = self.task
+        task_list = '\n'.join(self.task_list)
+
+        prompt = f"Answer the following questions as best you can. You have access to the following python functions\n" \
+                 f"'''{tools}'''" \
+                 f"\ntake all (Observations) into account!!!\nUnder no circumstances are you allowed to output 'Task:'!!!\n\n" \
+                 f"Personality:'''{self.personality}'''\n\n" + \
+                 f"Goals:'''{self.goals}'''\n\n" + \
+                 f"Capabilities:'''{self.capabilities}'''\n\n" + \
+                 f"Permanet-Memory:\n'''{CollectiveMemory().text(context=task)}'''\n\n" + \
+                 f"Resent Agent response:\n'''{self.obser_mem.text}'''\n\n" + \
+                 "Placeholders: there are two types of place holders.  " \
+                 "\n1 : <information_from_agent> if you see a word enclosed with <> this character you must fill it with information!" \
+                 "\n2 : [datime] if you want the system to insert an information return []." \
+                 "\nallways fill placeholders of type 1 !!!\n\n " + \
+                 "Use the following format To Run an Python Function:\n\n" + \
+                 "Task: the input question you must answer\n" + \
+                 "Thought: you should always think about what to do\n" + \
+                 "Knowleg: Knowleg from The LLM abaut the real world\n" + \
+                 f"Action: the action to take, should be one of {names}\n" + \
+                 f"Execute: <function_name>(<args>)\n" + \
+                 f"\n\nBegin!\n\n" \
+                 f"Task:'{task} [##]'\n{self.short_mem.text}\n" \
+                 f"\n'{self.step_between}'\nAgent : "
+
+        if self.mode == 'planning':
+            prompt = """
+You are a planning agent, and your job is to create the shortest and most efficient plan for a given input {{x}}.
+There are {{""" + f"\n{tools}\n" + """"}} different functions that must be called in the correct order and with the correct inputs. Your goal is to find the shortest plan that accomplishes the task. Please create a plan for the input {{""" + f"{task}" + """}} by providing the following information:
+
+1.    Function(s) and Input(s) you wish to invoke, selecting only those useful for executing the plan.
+2.    focusing on efficiency and minimizing steps.
+
+Actual Observations: {{""" + f"{self.obser_mem.text}" + """"}}
+
+Note that your plan should be clear and understandable. Strive for the shortest and most efficient solution to accomplish the task. Use only the features that are useful for executing the plan.
+Begin.
+
+Plan:"""
+
+        if self.mode == 'execution':
+            prompt = """
+You are an execution agent, and your task is to implement the plan created by a planning agent.
+You can call functions using the following syntax:
+
+Action: Function-Name
+Inputs: Inputs
+Execute:
+
+To successfully execution the plan, it is important to pay attention to writing "Execute:" to execute the function.
+If additional user input is needed during the execution process,
+use the syntax "Question:" followed by a question to obtain the required information from the user. ending with "\\nUser:"
+
+Please execute the plan created by a planning agent by following these steps:
+
+1)    Analyze the plan provided by a planning agent and understand the order of functions and inputs.
+2)    Call the functions in the specified order using the syntax described above.
+3)    Ask questions to the user if additional information is needed and integrate the answers into the plan.
+4)    Make sure to write "Execute:" to execute each function.
+5)    Verify if the plan has been successfully implemented and provide feedback to the planning agent if necessary.
+
+Ensure that your implementation is clear and comprehensible
+so that other people can follow the progress and provide support if needed.
+
+You have access to following functions : {{""" + f"\n{tools}\n" + """"}}\n
+
+The Plan to execute : {{""" + f"\n{task_list}\n" + """"}}
+Resent Observations : {{""" + f"{self.obser_mem.text}" + """"}}
+Begin!
+
+""" + f"\n{self.short_mem.text}\n" + """
+Current Step : """ + f"{task}\nPerform Action\n"
+
+        if self.mode == 'generate':
+            prompt = """
+You are a prompt creation agent, and your task is to create effective and engaging prompts for various topics and requirements.
+Your prompts should be clear and understandable, encouraging users to provide deep and interesting responses.
+Please follow these steps to create a new prompt for a given topic or requirement:
+
+1)    Carefully analyze the desired topic or requirement to gain a clear understanding of the expectations.
+2)    Develop an engaging and open-ended question or prompt that encourages users to share their thoughts, experiences, or ideas.
+3)    Make sure the prompt is clearly and understandably worded so that users of different knowledge and experience levels can easily understand it.
+4)    Ensure the prompt is flexible enough to allow for creative and diverse responses, while also providing enough structure to focus on the desired topic or requirement.
+5)    Review your prompt for grammar, spelling, and style to ensure a professional and appealing presentation.
+
+Resent Observations : {{""" + f"{self.obser_mem.text}" + """"}}
+
+Create an prompt for """ + f"\n{task}\nBegin!\nPrompt:"
+
+        if self.mode in ['talk', 'conversation']:
+            prompt = f"Goals:{self.goals.replace('{input}', '')}\n" + \
+                     f"Capabilities:{self.capabilities.replace('{input}', '')}\n" + \
+                     f"Long-termContext:{CollectiveMemory().text(context=self.short_mem.text).replace('{input}', '')}\n" + \
+                     f"\nResent Observation:{self.obser_mem.text.replace('{input}', '')}" + \
+                     f"Task:{self.task}\n" + \
+                     "input: {input}" + \
+                     f"\n{self.short_mem.text.replace('{input}', '')}"
+
+        if self.mode == 'tools':
+            prompt = prompt.replace('{input}', '').replace('[##]', '{input}')
+
+
+        return prompt
 
 
 class Tools(MainTool, FileHandler):
@@ -478,11 +535,7 @@ class Tools(MainTool, FileHandler):
         self.logger: logging.Logger or None = app.logger if app else None
         self.color = "VIOLET2"
         self.inference = InferenceApi
-        self.config = {'speed_construct_interpret-init': False,
-                       'speed_construct_interpret-history': '',
-                       'agent_tools-init': False,
-                       'genrate_image-init': False,
-                       'interpret_agent-init': False,
+        self.config = {'genrate_image-init': False,
                        'agents-name-lsit': []
                        }
         self.per_data = {}
@@ -493,10 +546,8 @@ class Tools(MainTool, FileHandler):
             "Config": "config~~~~"
         }
         self.initstate = {}
-        self.speed_construct_Interpret_agent = speed_construct_Interpret_agent
-        self.agent_tools = agent_tools
-        self.genrate_image = genrate_image
-        self.interpret_agent = interpret_agent
+        self.genrate_image = image_genrating_tool
+        self.observation_term_mem_file = "isaa_data/observationMemory/CollectiveObservationMemory.mem"
         self.tools = {
             "all": [["Version", "Shows current Version"],
                     ["Run", "Starts Inference"],
@@ -506,6 +557,8 @@ class Tools(MainTool, FileHandler):
                     ["run-sug", "Run Huggingface Pipeline"],
                     ["info", "Show Config"],
                     ["lode", "lode models"],
+                    ["isaa", "Run Isaa name input"],
+                    ["image", "genarate image input"],
                     ],
             "name": "isaa",
             "Version": self.show_version,
@@ -516,6 +569,8 @@ class Tools(MainTool, FileHandler):
             "run-sug": self.run_sug,
             "info": self.info,
             "lode": self.lode_models,
+            "isaa": self.run_isaa_wrapper,
+            "image": self.enrate_image_wrapper,
         }
         self.app_ = app
         self.print_stream = print
@@ -524,6 +579,18 @@ class Tools(MainTool, FileHandler):
         FileHandler.__init__(self, "issa.config", app.id if app else __name__)
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                           name=self.name, logs=None, color=self.color, on_exit=self.on_exit)
+
+    def run_isaa_wrapper(self, command):
+        if len(command) < 1:
+            return "Unknown command"
+
+        return self.run_agent(command[0], command[1:])
+
+    def enrate_image_wrapper(self, command):
+        if len(command) != 1:
+            return "Unknown command"
+
+        return self.genrate_image(command[0], self.app_)
 
     def show_version(self):
         self.print("Version: ", self.version)
@@ -690,6 +757,21 @@ class Tools(MainTool, FileHandler):
             self.print(Style.RED(str(e)))
         return data
 
+    def question_answering(self, question, context):
+
+        if not "question_answering" in self.initstate.keys():
+            self.initstate["question_answering"] = False
+
+        if not self.initstate["question_answering"]:
+            self.config["question_answering_pipline"] = pipeline('question-answering')
+
+        qa = {
+            'question': question,
+            'context': context
+        }
+
+        return self.config["question_answering_pipline"](qa)
+
     def toolbox_interface(self):
         @tool("toolbox", return_direct=False)
         def function(query: str) -> str:
@@ -744,7 +826,7 @@ class Tools(MainTool, FileHandler):
 
         # app.run_any("isaa_ide", "Version", [""])
 
-        app.inplace_load("isaa_ide", "toolboxv2.mods_dev.")
+        app.save_load("isaa_ide")
         app.new_ac_mod("isaa_ide")
 
         process_input = app.AC_MOD.process_input
@@ -804,92 +886,6 @@ class Tools(MainTool, FileHandler):
                 return "Das hat leider nicht geklappt ein Fehler tip versuche es auf englisch, benutze synonyme" \
                        " ist bei der ausfürgung des Tools aufgetreten Fehler meldung : " + str(e)
             return "Das bild wird in kürze angezeigt"
-
-        return function
-
-    def search(self):
-        @tool("search", return_direct=True)
-        def function(query: str) -> str:
-            """Using self-ask-with-search to Finde specific answer to komplex questions"""
-            try:
-                return str(self.agent_tools(query, self.app_, 7))
-            except Exception as e:
-                return "Das hat leider nicht geklappt ein Fehler" \
-                       " ist bei der ausfürgung des Tools aufgetreten Fehler meldung : " + str(e)
-
-        return function
-
-    def bugfix(self):
-
-        def d(s):
-            if '```' in s:
-                return s.split('```')[1]
-            return False
-
-        @tool("bugfix", return_direct=False)
-        def function(query: str) -> str:
-            """Using 3 steps to find and fix bug in code if necessary"""
-            # try:
-            # step one find bugs config['speed_construct_interpret-template1'] = "Find bug in code and writ an rport
-            # for etch bug code:{input}" speed_construct_Interpret_agent
-            # bugs
-
-            # step tow find bugs config['speed_construct_interpret-template1'] = "Find ways to optimise the code
-            # and fix the bugs in:{input}" speed_construct_Interpret_agent
-            # optimised
-
-            self.config['speed_construct_interpret-template1'] = "Identify any existing bugs in the code and " \
-                                                                 "develop a report detailing each issue. " \
-                                                                 "Additionally, propose strategies for optimizing " \
-                                                                 "the code to improve its efficiency and " \
-                                                                 "functionality.\n" \
-                                                                 "Implement solutions to fix the " \
-                                                                 "identified bugs and improve the overall quality " \
-                                                                 "of the code\nCode:{text}"
-            code = self.speed_construct_Interpret_agent(query, self.app_, -1)
-
-            self.print("Code: " + code)
-            self.print("<" + "====" * 20 + "Code" + "====" * 20 + ">")
-            if d(code):
-                self.print("return:")
-                return d(code)
-
-            # step 3 find bugs config['speed_construct_interpret-template1'] = "produce the final version of the
-            # improved code using following information : bug reports {bugs}\n\n ways to fix the code {optimised}
-            # \n\n extra data {extra_data}
-            # {input}" speed_construct_Interpret_agent
-            # final_code
-
-            prompt = "produce the final version of the code " \
-                     "using following information : " \
-                     f"bug reports \n{code}\n\n " \
-                     f"the code: \n{query}"
-            final_code = "TRY0"
-            try:
-                final_code = self.agent_tools(prompt, self.app_, 1)
-                self.print("<" + "====" * 20 + "Final_code" + "====" * 20 + ">")
-                self.print("Final_code: " + final_code)
-                self.print("<" + "====" * 20 + "Final_code" + "====" * 20 + ">")
-                if d(final_code):
-                    self.print("return:")
-                    return d(final_code)
-            except ValueError as e:
-                for i in range(3):
-                    try:
-                        final_code = self.agent_tools(prompt + "\n\nError:\n" + str(e), self.app_, 1)
-                        self.print("<" + "====" * 20 + "" + str(i) + " Final_code" + "====" * 20 + ">")
-                        self.print("Final_code: " + final_code + "\n\nError:\n" + str(e))
-                        self.print("<" + "====" * 20 + "" + str(i) + "Final_code" + "====" * 20 + ">")
-                        if d(final_code):
-                            self.print("return:")
-                            return d(final_code)
-                    except ValueError as e2:
-                        print("Invalid", e2)
-            return "Somthing is off \n\n" + code
-
-        # except Exception as e:
-        #    return "Das hat leider nicht geklappt ein Fehler" \
-        #           " ist bei der ausfürgung des Tools aufgetreten Fehler meldung : " + str(e)
 
         return function
 
@@ -984,15 +980,15 @@ class Tools(MainTool, FileHandler):
             return "No relavent memory available"
 
         if name == "self":
-            self.config["self_agent_agents_"] = ["todolist", "fileAgent"]
+            self.config["self_agent_agents_"] = ["todolist"]
 
             def toggel(x):
                 x = x.lower()
                 if "talk" in x or "conversation" in x:
                     config.mode = "talk"
                     return f"Switched to {config.mode} nowe write the final anser or question to the console"
-                if "tools" in x or "execute" in x:
-                    config.mode = "tools"
+                if "free" in x or "execute" in x:
+                    config.mode = "free"
                     return f"Switched to {config.mode}"
                 return f"Switched to {config.mode}"
 
@@ -1014,17 +1010,23 @@ class Tools(MainTool, FileHandler):
                 "todolist": {"func": lambda x: run_agent('todolist', x),
                              "description": "Run agent to crate a todo list "
                                             "for a given project provide detaild informatino. and a task to do"
-                             , "format": "todolist(<task>)"},
+                    , "format": "todolist(<task>)"},
                 "summary": {"func": lambda x: run_agent('summary', x),
-                             "description": "Run agent to Generate Concreat Summary Report"
-                             , "format": "summary(<task>)"},
+                            "description": "Run agent to Generate Concreat Summary Report"
+                    , "format": "summary(<task>)"},
                 "search": {"func": lambda x: run_agent('search', x),
-                             "description": "Run agent to search the web for relavent informations imput question"
-                             , "format": "search(<task>)"},
-                "reminder": {"func": lambda x: run_agent('reminder', x),
-                             "description": "Run agent to reminde user and add, vue notes"
-                             , "format": "reminder(<task>)"},
-                #"fileAgent": {"func": lambda x: self.run_agent('fileAgent', x),
+                           "description": "Run agent to search the web for relavent informations imput question"
+                    , "format": "search(<task>)"},
+                # "userReminder": {"func": lambda x: run_agent('reminder', x),
+                #             "description": "Run agent to schedule users live"
+                #             , "format": "userReminder(<task>)"},
+                "user-clarifcation": {"func": self.user_input(),
+                                      "description": "Run plython input fuction to get help from the user"
+                    , "format": "reminder(<task>)"},
+                "image-generator": {"func": lambda x: image_genrating_tool(x, self.app_),
+                                    "description": "Run to generate image"
+                    , "format": "reminder(<detaild_discription>)"},
+                # "fileAgent": {"func": lambda x: self.run_agent('fileAgent', x),
                 #              "description": "Run agent to acces the system to performe file operations"
                 #                             "provide detaild informatino. and a task to do",
                 #              "format": "fileAgent(task)"}
@@ -1035,13 +1037,11 @@ class Tools(MainTool, FileHandler):
 
             config.name: str = "Planing-Agent"
 
-
             def priorisirung(x):
                 config.step_between = "take time to gently think about the problem and consider the whole picture."
                 if len(config.task_list) != 0:
                     config.step_between = config.task_list[0]
                 return run_agent(config.name, x, mode_over_lode="talk")
-
 
             config.name: str = "Planing-Agent"
             config.mode: str = "tools"
@@ -1057,7 +1057,7 @@ class Tools(MainTool, FileHandler):
             config.short_mem.max_length = 3000
             config.tools: dict = {
                 "Thinck": {"func": lambda x: priorisirung(x),
-                              "description": "Use Tool to perform complex resenig"}
+                           "description": "Use Tool to perform complex resenig"}
             }
 
             config.task_list: list[str] = ["Erstelle eine Todo liste."
@@ -1090,7 +1090,6 @@ class Tools(MainTool, FileHandler):
                 except ValueError:
                     return "Formatting error"
 
-
             def view_note(x):
                 return view_note_()
 
@@ -1099,7 +1098,6 @@ class Tools(MainTool, FileHandler):
                 if len(config.task_list) != 0:
                     config.step_between = config.task_list[0]
                 return run_agent(config.name, x, mode_over_lode="talk")
-
 
             config.name: str = "Planing-Agent"
             config.mode: str = "tools"
@@ -1116,14 +1114,12 @@ class Tools(MainTool, FileHandler):
             Proactive: The Reminder Agent should be able to identify potential tasks or events that may require reminders, based on user input and behavior.
             Detail-Oriented: The Reminder Agent should pay close attention to the details of the tasks and events it manages, ensuring that reminders are accurate and relevant."""
 
-
             config.goals = """
             1. Timely Reminders: The primary goal of the Reminder Agent is to provide timely reminders for various tasks and events, ensuring that the user stays on track and does not miss important deadlines or appointments.
             2. Personalization: The Reminder Agent should adapt its reminder strategies to suit the user's preferences and needs, taking into account factors such as frequency, priority, and notification method.
             3. Task and Event Management: The Reminder Agent should efficiently manage and categorize tasks and events, allowing the user to easily view and update their reminders as needed.
             4. Context-Aware Reminders: The Reminder Agent should be able to provide contextually relevant reminders, considering factors such as location, time, and the user's schedule.
             5. Continuous Improvement: The Reminder Agent should continuously refine its reminder algorithms and strategies to improve the effectiveness and relevance of its reminders over time."""
-
 
             config.short_mem: ShortTermMemory = ShortTermMemory()
             config.short_mem.max_length = 3000
@@ -1136,63 +1132,8 @@ class Tools(MainTool, FileHandler):
                               "description": "retunrs all notes"}
             }
 
-        if name == "fileAgent":
-
-            config.name: str = "fileAgent"
-
-            def write(x):
-                try:
-                    name = x.split(" ")[0]
-                except ValueError:
-                    return "Invalid format"
-                return write_to_file(name, " ".join(x.split(" ")[1:])).replace("isaa-directory\\", "")
-
-            def writea(x):
-                try:
-                    name = x.split(" ")[0]
-                except ValueError:
-                    return "Invalid format"
-                return append_to_file(name, " ".join(x.split(" ")[1:])).replace("isaa-directory\\", "")
-
-            config.mode: str = "tools"
-            config.model_name: str = "text-davinci-003"
-
-            config.agent_type: str = "zero-shot-react-description"
-            config.max_iterations: int = 4
-            config.verbose: bool = True
-
-            config.personality = """
-                  Proactive: The File Agent should be able to identify and handle file-related tasks without constant prompting or supervision.
-                  Organized: The File Agent should be efficient in managing files and folders, maintaining a structured approach to file organization and categorization.
-                  Adaptable: The File Agent should be able to respond to changes in file structures, formats, and requirements, and adjust its strategies and plans accordingly.
-                  Solution-oriented: The File Agent should focus on resolving file-related issues and overcoming obstacles rather than dwelling on difficulties.
-                  Communicative: The File Agent should effectively communicate its progress, status, and any issues encountered while managing files.
-                  Detail-oriented: The File Agent should pay attention to details, such as file metadata and version history, without losing sight of the overall goals."""
-
-            config.goals = """
-                  File Organization: The File Agent should maintain a clear and logical organization of files and folders, ensuring easy access and retrieval.
-                  File Management: The File Agent should be able to create, rename, move, delete, and manipulate files and folders as required.
-                  Version Control: The File Agent should maintain version history for files, allowing users to revert to previous versions if needed.
-                  File Integrity: The File Agent should ensure the integrity of files by preventing unauthorized access, corruption, or loss of data.
-                  Compatibility: The File Agent should be able to handle various file formats and ensure compatibility across different platforms and applications.
-                  Efficiency: The File Agent should continuously improve its processes and techniques to increase efficiency in managing and organizing files."""
-
-            config.short_mem: ShortTermMemory = ShortTermMemory()
-            config.short_mem.max_length = 3500
-            config.tools: dict = {
-                "read_file": {"func": read_file, "description": "Red file context"},
-                "delete_file": {"func": delete_file, "description": "deleat file"},
-                "search_file": {"func": search_files,
-                                "description": f"search file in directory, currend dir : {search_files('.')}"},
-                "write_file": {"func": write, "description": "write to file SYNTAX: file.ending text"},
-                "appant_to_files": {"func": writea, "description": "appnd to file to file SYNTAX: file.ending text"},
-            }
-
-            config.task_list: list[str] = ["Erfülle die Aufgae in so wenigen Schritten und so Bedacht wie Möglich"]
-
         if name == "summary":
             config.name: str = "Summary-Agent"
-
 
             config.mode: str = "tools"
             config.model_name: str = "text-davinci-003"
@@ -1265,15 +1206,18 @@ class Tools(MainTool, FileHandler):
             4. Source Evaluation: The Search Agent should evaluate the credibility and reliability of its sources, providing users with trustworthy information.
             5. Continuous Improvement: The Search Agent should continuously refine its search algorithms and summarization techniques to improve the quality and relevance of its results over time."""
 
-
             config.short_mem: ShortTermMemory = ShortTermMemory()
             config.short_mem.max_length = 3500
             config.tools: dict = {
-                "browse_url": {"func": lambda x: browse_url(x), "description": "browse web page via URL syntax <url>|<qustion>"},
-                "search_text": {"func": lambda x: search_text(x), "description": "Use Duck Duck go to search the web systax <qustion>"},
-                "search_news": {"func": lambda x: search_news(x), "description": "Use Duck Duck go to search the web for new get time"
-                                                                    "reladet data systax <qustion>"},
-                "memory_search": {"func": lambda x: memory_search(x), "description": "Serch for simmilar memory imput <context>"},
+                "browse_url": {"func": lambda x: browse_url(x),
+                               "description": "browse web page via URL syntax <url>|<qustion>"},
+                "search_text": {"func": lambda x: search_text(x),
+                                "description": "Use Duck Duck go to search the web systax <qustion>"},
+                "search_news": {"func": lambda x: search_news(x),
+                                "description": "Use Duck Duck go to search the web for new get time"
+                                               "reladet data systax <qustion>"},
+                "memory_search": {"func": lambda x: memory_search(x),
+                                  "description": "Serch for simmilar memory imput <context>"},
                 # "chain_search_web": {"func": lambda x: run_agent('chain_search_web', x),
                 #              "description": "Run chain agent to search in the web for informations, Only use for complex mutistep tasks"
                 #              , "chain_search_web": "search(<task>)"},
@@ -1314,40 +1258,41 @@ class Tools(MainTool, FileHandler):
             4. Source Evaluation: The Search Agent should evaluate the credibility and reliability of its sources, providing users with trustworthy information.
             5. Continuous Improvement: The Search Agent should continuously refine its search algorithms and summarization techniques to improve the quality and relevance of its results over time."""
 
-
             config.short_mem: ShortTermMemory = ShortTermMemory()
             config.short_mem.max_length = 3500
 
             if name.endswith("_web"):
-
                 config.tools: dict = {
-                    "Intermediate Answer": {"func": search_text, "description": "Use Duck Duck go to search the web systax <qustion>"},
+                    "Intermediate Answer": {"func": search_text,
+                                            "description": "Use Duck Duck go to search the web systax <qustion>"},
                 }
 
             if name.endswith("_url"):
-
                 config.tools: dict = {
-                    "Intermediate Answer": {"func": browse_url, "description": "browse web page via URL syntax <url>|<qustion>"},
+                    "Intermediate Answer": {"func": browse_url,
+                                            "description": "browse web page via URL syntax <url>|<qustion>"},
                 }
             if name.endswith("_memory"):
-
                 config.tools: dict = {
-                    "Intermediate Answer": {"func": memory_search, "description": "Serch for simmilar memory imput <context>"},
+                    "Intermediate Answer": {"func": memory_search,
+                                            "description": "Serch for simmilar memory imput <context>"},
                 }
 
             config.task_list: list[str] = ["Erfülle die Aufgae in so wenigen Schritten und so Bedacht wie Möglich"]
 
         try:
-            if not os.path.exists(self.observation_term_mem_file+config.name):
-                with open(self.observation_term_mem_file+config.name, "a") as f:
+            if not os.path.exists(self.observation_term_mem_file):
+                self.print("Crating Mem File")
+                if not os.path.exists("isaa_data/observationMemory/"):
+                    os.mkdir("isaa_data/observationMemory/")
+                with open(self.observation_term_mem_file, "a") as f:
                     f.write("[]")
 
-            with open(self.observation_term_mem_file+config.name, "r") as f:
+            with open(self.observation_term_mem_file, "r") as f:
                 mem = f.read()
 
                 if mem:
-
-                        config.obser_mem.memory_data = eval(mem)
+                    config.obser_mem.memory_data = eval(mem)
         except FileNotFoundError and ValueError:
             print("File not found | mem not saved")
 
@@ -1363,11 +1308,9 @@ class Tools(MainTool, FileHandler):
             config = self.get_default_agent_config(agent_name)
             self.config[f'agent-config-{agent_name}'] = config
 
-            self.print(f"\nINIT AGENT: {config.name} {config.mode}\n")
+            self.print(f"\nINIT AGENT: {agent_name}:{config.name} {config.mode}\n")
 
             return config
-
-
 
         if f'agent-config-{agent_name}' in self.config.keys():
             config = self.config[f'agent-config-{agent_name}']
@@ -1384,43 +1327,96 @@ class Tools(MainTool, FileHandler):
 
         model_name = config.model_name
 
-        if config.model_name.startswith('gpt-3'):
-            model_name = "text-davinci-003"
+        if config.is_text_completion:
 
-        ret = openai.Completion.create(
-            model=model_name,
-            prompt=config.prompt,
-            max_tokens=config.token_left,
-            temperature=config.temperature,
-            n=1,
-            stream=True,
-            logprobs=3,
-            stop=config.stop_sequence
-        )
+            if model_name.startswith('gpt-3'):
+                model_name = "text-davinci-003"
 
+            ret = openai.Completion.create(
+                model=model_name,
+                prompt=config.prompt,
+                max_tokens=config.token_left,
+                temperature=config.temperature,
+                n=1,
+                stream=config.stream,
+                logprobs=3,
+                stop=config.stop_sequence
+            )
+
+        else:
+            config.add_message_h("user", text)
+            config.prompt_to_message(config.prompt)
+            ret = openai.ChatCompletion.create(
+                model=model_name,
+                messages=config.messages
+                # max_tokens=config.token_left,
+                # temperature=config.temperature,
+                # n=1,
+                # stream=config.stream,
+            )
+            ret = ret.choices[0].message.content
+            config.add_message_h("assistant", ret)
         return ret
 
-    def use_tools(self, agent_text, config=AgentConfig()):
+    def test_use_tools(self, agent_text, config=AgentConfig()):
+
+        if not agent_text:
+            return False, "", ""
 
 
-        if agent_text.startswith("Exiqute:"):
-            print("Use Exiq")
-            agent_text = agent_text.replace("Exiqute:", "").strip()
-            for key, value in config.tools.items():
-                if key+'(' in agent_text:
-                    return True, key, agent_text
+        res = self.question_answering("What is the name of the action ?", agent_text)
+        self.print(res)
+        if res['score'] > 0.6:
+            self.print(res['answer'])
+            self.print(res['answer'] in config.tools.items())
 
-        #if line.startswith('Action: '):
-        #        if key in line and not use_tool:
-        #            use_tool = True
-        #            name = key
-        #            return use_tool, name, f"{name}({config.short_mem.text})"
+        if config.mode == "free":
+
+            for text in agent_text.split('\n'):
+
+                if text.startswith("Execute:"):
+                    text = text.replace("Execute:", "").strip()
+                    for key, value in config.tools.items():
+                        if key + '(' in text:
+                            return True, key, text
+
+                if text.startswith("Action:"):
+                    text = text.replace("Action:", "").strip()
+                    for key, value in config.tools.items():
+                        if key + '(' in text:
+                            return True, key, text
+
+        if config.mode == "execution":
+
+            tool_name = ""
+            inputs = ""
+            valid_tool = False
+            lines = agent_text.split('\n')
+            i = 0
+            for text in lines:
+                if text.startswith("Action:") and not valid_tool:
+                    tool_name = text.replace("Action:", "").strip()
+                    if tool_name in config.tools.keys():
+                        valid_tool = True
+                if not valid_tool:
+                    i += 1
+                if text.startswith("Inputs:"):
+                    inputs = text.replace("Inputs:", "")
+
+            if valid_tool:
+                if len(lines) == i:
+                    return True, tool_name, inputs
+                return True, tool_name, " ".join(lines[i:])
+
 
         return False, "", ""
 
     def test_task_done(self, agent_text, config=AgentConfig()):
 
         done = False
+
+        if not ":" in agent_text:
+            done = True
 
         for line in agent_text.split("\n"):
 
@@ -1432,51 +1428,54 @@ class Tools(MainTool, FileHandler):
 
         return done
 
-    def run_tool(self, command, config=AgentConfig()):
+    def run_tool(self, command, function_name, config=AgentConfig()):
 
         # cleanup command
+        if config.mode == 'free':
+            args = command.split("(")[1]
+            args = "".join(args)
+            args = args[:-1]
 
-        function_name = command.split("(")[0].strip()
-
-        args = command.split("(")[1]
-        args = "".join(args)
-        args = args[:-1]
+        args = command.split(",")
 
         tool = config.tools[function_name]
 
         sig = signature(tool['func'])
         args_len = len(sig.parameters)
         self.print(f"Runing : {function_name}")
-        self.print(f"signature : {sig} | fuction args len : {args_len} | providet nubers of args {len(args.split(','))}")
-
-        args = args.split(",")
+        self.print(
+            f"signature : {sig} | fuction args len : {args_len} | providet nubers of args {len(args)}")
 
         observation = "Problem running function"
 
-        if args_len==0:
+        if args_len == 0:
             observation = tool['func']()
 
-        if args_len==len(args):
+        if args_len == len(args):
             observation = tool['func'](*args)
 
-        if args_len==1 and len(args) > 1:
+        if args_len == 1 and len(args) > 1:
             observation = tool['func'](" ".join(args))
 
         if isinstance(observation, dict):
-            #try:
+            # try:
             observation = self.summarize_dict(observation, config)
+
+        if not observation or observation == None:
+            observation = "Problem running function try run with mor detaiels"
 
         config.short_mem.text = observation
 
-        if not observation:
-            observation = "Problem running function try run with mor detaiels"
-
-
         return observation
 
-    def run_agent(self, name: str, text: str, retrys=1, mode_over_lode=False):
+    def run_agent(self, name: str or AgentConfig, text: str, retrys=1, mode_over_lode=False):
 
-        config = self.get_agent_config_class(name)
+        if isinstance(name, str):
+            config = self.get_agent_config_class(name)
+
+        if isinstance(name, AgentConfig):
+            config = name
+            name = config.name
 
         if mode_over_lode:
             mode_over_lode, config.mode = config.mode, mode_over_lode
@@ -1484,7 +1483,7 @@ class Tools(MainTool, FileHandler):
         # print("AGENT:CONFIG"+str(config)+"ENDE\n\n\n")
 
         if not text:
-            text = "View the Momory section to get more information about your task." \
+            text = "View the Memory section to get more information about your task." \
                    "If you still got no information use the memory function."
 
         out = "Invalid configuration\n"
@@ -1493,19 +1492,18 @@ class Tools(MainTool, FileHandler):
         if self.config[f'agent-config-{name}'].mode == "talk":
             prompt = PromptTemplate(
                 input_variables=["input"],
-                template=config.prompta,
+                template=config.prompt,
             )
             out = LLMChain(prompt=prompt, llm=self.get_OpenAI_models(config.model_name)).run(text)
         elif self.config[f'agent-config-{name}'].mode == "tools":
             prompt = PromptTemplate(
                 input_variables=["input"],
-                template=config.prompta,
+                template=config.prompt,
             )
 
             tools = []
 
             for tool_name in config.tools.keys():
-
                 def ovservation(x):
                     out = config.tools[tool_name]["func"](x)
                     config.obser_mem.text = out
@@ -1522,77 +1520,55 @@ class Tools(MainTool, FileHandler):
                 )
 
             out = initialize_agent(tools, prompt=prompt,
-                                                                  llm=self.get_OpenAI_models(config.model_name),
-                                                                  agent=config.agent_type, verbose=config.verbose,
-                                                                  return_intermediate_steps=True,
-                                                                  max_iterations=config.max_iterations)(text)
+                                   llm=self.get_OpenAI_models(config.model_name),
+                                   agent=config.agent_type, verbose=config.verbose,
+                                   return_intermediate_steps=True,
+                                   max_iterations=config.max_iterations)(text)
 
             out = self.summarize_dict(out, config)
         elif self.config[f'agent-config-{name}'].mode == "conversation":
             prompt = PromptTemplate(
                 input_variables=["input"],
-                template=config.prompta,
+                template=config.prompt,
             )
-            out = LLMChain(prompt=prompt,llm=self.get_OpenAI_models(config.model_name)).run(text)
-        elif self.config[f'agent-config-{name}'].mode == "free":
-            min_typing_speed, max_typing_speed, sant = 0.02,0.01,1
-            for line in self.process_compleation(text, config):
+            out = LLMChain(prompt=prompt, llm=self.get_OpenAI_models(config.model_name)).run(text)
+        elif self.config[f'agent-config-{name}'].mode in ["execution", 'free']:
 
-                text = line['choices'][0]['text']
-                for i, word in enumerate(text):
-                    self.print_stream(word, end="", flush=True)
-                    typing_speed = random.uniform(min_typing_speed, max_typing_speed)
-                    time.sleep(typing_speed)
-                    # type faster after each word
-                    min_typing_speed = min_typing_speed * 0.07
-                    max_typing_speed = max_typing_speed * 0.06
+            out = self.stream_read_line_llm(text, config)
+            if not config.is_text_completion:
+                self.print_stream(out)
 
-                if text:
-                    out += str(text)
+            config.short_mem.text = out
+            use_tool, name, command_ = self.test_use_tools(out, config)
+            task_done = self.test_task_done(out, config)
+            self.print(f"Using-tools: {name} " + str(use_tool))
+            self.print(f"command: {command_} ")
+            if use_tool:
+                self.speek(f"Isaa is using {name}", 2)
+                ob = self.run_tool(command_, name, config)
+                config.obser_mem.text = ob
+                out += "\nObservation: " + ob
+                self.speek(ob, vi=1)
+                use_tool = False
+            if task_done:  # new task
+                # self.speek("Ist die Aufgabe abgeschlossen?")
+                config.short_mem.clear_to_collective()
+                if len(config.task_list) > config.task_index:
+                    config.task_index += 1
 
-                if len(out.split('\n')) == sant:
-                    sant += 1
-                    if len(out.split('\n')) == 1:
-                        continue
-                    sp_santance = out.split('\n')[-2]
+        else:
+            out = self.stream_read_line_llm(text, config)
+            if not config.is_text_completion:
+                self.print_stream(out)
 
-                    # print(sp_santance)
+            config.obser_mem.text = out
 
-                    self.speek(sp_santance)
-
-                    config.short_mem.text = sp_santance
-
-                    use_tool, name, command_ = self.use_tools(sp_santance, config)
-                    task_done = self.test_task_done(sp_santance, config)
-
-                    if use_tool:
-                        self.print(f"Using-tools: {name} " + str(use_tool))
-                        self.print(f"command: {command_} ")
-                        self.speek(f"Isaa is using {name}", 2)
-                        ob = self.run_tool(command_, config)
-                        config.short_mem.text = "Function response: " + ob
-                        config.obser_mem.text = "Observation: " + ob
-                        out += "\nObservation: " + ob
-
-                        with open(self.observation_term_mem_file+config.name, "w") as f:
-                            try:
-                                f.write(str(config.obser_mem.memory_data))
-                            except UnicodeEncodeError:
-                                print_("Memory not encoded properly")
-
-                        self.speek(ob, speak_text=True, vi=1)
-                        use_tool = False
-
-                    if task_done:  # new task
-
-                        self.speek("Ist die Aufgabe abgeschlossen?")
-                        config.short_mem.clear_to_collective()
-                        if len(config.task_list) > config.task_index:
-                            config.task_index += 1
-
-                        return out
-
-        #except NameError and Exception as e:
+        with open(self.observation_term_mem_file, "w") as f:
+            try:
+                f.write(str(config.obser_mem.memory_data))
+            except UnicodeEncodeError:
+                self.print("Memory not encoded properly")
+        # except NameError and Exception as e:
         #    print(f"ERROR runnig AGENT: {name} retrys {retrys} errormessage: {e}")
         #    res = ""
         #    if retrys:
@@ -1605,15 +1581,31 @@ class Tools(MainTool, FileHandler):
 
         config.short_mem.text = f"\n\n{config.name} RESPONSE:\n{out}\n\n"
 
-
         if mode_over_lode:
             mode_over_lode, config.mode = config.mode, mode_over_lode
 
         return out
 
+    def stream_read_line_llm(self, text, config):
+        if not config.stream or not config.is_text_completion:
+            return self.process_compleation(text, config)
+
+        min_typing_speed, max_typing_speed, res = 0.02, 0.01, ""
+        for line in self.process_compleation(text, config):
+            text = line['choices'][0]['text']
+            for i, word in enumerate(text):
+                self.print_stream(word, end="", flush=True)
+                typing_speed = random.uniform(min_typing_speed, max_typing_speed)
+                time.sleep(typing_speed)
+                # type faster after each word
+                min_typing_speed = min_typing_speed * 0.07
+                max_typing_speed = max_typing_speed * 0.06
+            res += str(text)
+
+        return res
 
     def mas_text_summaries(self, text, s_call=True, min_length=1600):
-        len_text= len(text)
+        len_text = len(text)
         if len_text < min_length:
             return text
 
@@ -1646,13 +1638,14 @@ class Tools(MainTool, FileHandler):
         else:
             chucks.append(text)
         self.print(f"SYSTEM: chucks to summary: {len(chucks)} cap : {cap}")
-        #try:
+        # try:
         for chck in chucks:
             summary_chucks += summarysation(chck, min_length=10, max_length=max_length)[0]['summary_text'] + "\n"
             self.print(f"SYSTEM: all summary_chucks : {len(summary_chucks)}")
         summary = summarysation(summary_chucks, min_length=10, max_length=max_length)[0]['summary_text']
-        self.print(f"SYSTEM: final summary from {len_text} -> {len(summary)} compressed {len_text/len(summary):.2f}X\n")
-        #except Exception as e:
+        self.print(
+            f"SYSTEM: final summary from {len_text} -> {len(summary)} compressed {len_text / len(summary):.2f}X\n")
+        # except Exception as e:
         #    self.print(f"SYSTEM: error in summary {e}")
         #    if s_call:
         #        self.print("SYSTEM: retrying")
@@ -1664,66 +1657,28 @@ class Tools(MainTool, FileHandler):
 
         return summary
 
-
     def summarize_dict(self, input_dict, config: AgentConfig):
         input_str = input_dict['input']
         output_str = input_dict['output']
         intermediate_steps = input_dict['intermediate_steps']
-
-        summary = f"Output: {output_str}\nIntermediate steps:\n"
-
-        action = ""
-        tool_input = ""
-        log = ""
-        result = ""
+        chucs = []
         i = 0
         for step in intermediate_steps:
             if isinstance(step, tuple):
-                action += f"\naction {i}" + str(step[0].tool)
-                tool_input += f"\ntool_input {i}" + str(step[0].tool_input)
-                result  += f"\nlog {i}" + str(step[1])
-                summary += f"- {i} Action: {action}\n  Tool Input: {tool_input}\n  Result: {result}\n"
-            else:
-                summary += f"-{i} {step}\n"
+                step_content = f"\naction {i}" + str(step[0].tool)
+                step_content += f"\ntool_input {i}" + str(step[0].tool_input)
+                step_content += f"\nlog {i}" + str(step[1])
+                chucs.append(self.mas_text_summaries(step_content))
+                step_content = ""
             i += 1
 
-
-        if summary:
-            st = config.short_mem.text
-            text = f"{config.short_mem.text} \n{summary}"
-
-            if len(text) > 4000:
-
-                self.print(f"SYSTEM : start mas_text_summaries : {len(summary)}")
-
-                self.print(f"\taction : {len(action)}" )
-                action_summary = self.mas_text_summaries(st+"\nResent Actions\n"+action)
-                self.print(f"\taction_summary : {len(action_summary)}")
-
-                self.print(f"\ttool_input : {len(tool_input)}")
-                tool_input_summary = self.mas_text_summaries(st+"\nResent Agent-Inputs\n"+tool_input)
-                self.print(f"\ttool_input_summary : {len(tool_input_summary)}")
-
-                self.print(f"\tresult : {len(result)}")
-                result_summary = self.mas_text_summaries(st+"\nResent Agent-Results\n"+result)
-                self.print(f"\tresult_summary : {len(result_summary)}")
-
-                summary = self.mas_text_summaries(action_summary+"\n"+
-                                                  tool_input_summary+"\n"+
-                                                  result_summary)
-            else:
-                summary = self.mas_text_summaries(text)
-
+        if chucs:
+            text = f"{config.short_mem.text} \n{'Next step:'.join(step_content)}"
+            self.print(f"SYSTEM : start mas_text_summaries : {len(chucs)}")
+            summary = self.mas_text_summaries(text)
             config.obser_mem.text = summary
 
         return output_str
-
-
-def buld_disiontree(app):
-    pass
-
-def execute_disiontree(app):
-    pass
 
 
 def get_tool(app: App):
@@ -1743,30 +1698,6 @@ def get_tool(app: App):
     app.logger.critical('cant load isaa module')
 
     return Tools()
-
-
-
-
-def informatin_agent(input, role, prompt):
-    """an Angent Thet Ansers User qustens : The Agent Can Serve The web, and loock up infrmatins abaut the users
-    (Calender, TodoLists, Goals, Messages).
-    The Agent Helps The user with informations. If The Agent wont to do an action The Agent will Wirte <ACTION>"""
-
-    # Constructing the prompt
-    prompt = PromptConfig()
-
-
-def generate_new_tool_for_agent(app, tool_discription):
-    """An Agent that will generate a new tool for the given description"""
-
-    # 1. Bild A Detalt step by step Plan on what functions features the tool has
-    prompt = "U ar an Planig Expert" \
-           "Bild A Tool for given description {text}. First Bild A Detalt step by step Plan on what" \
-           f" functions features the tool has."
-
-    prompt = role+" {text}"
-    mod.config['speed_construct_interpret-template1'] = prompt
-    plan = speed_construct_Interpret_agent(tool_discription, app, -1)
 
 
 def initialize_gi(app: App, model_name):
@@ -1802,541 +1733,7 @@ def genrate_image(inputs, app: App, model="stabilityai/stable-diffusion-2-1"):
     return mod.config[f'genrate_image{model}'].predict(**inputs)  # (text).images
 
 
-def initialize_scia(app: App, task):
-    app.logger.info(f'initializing scia {task}')
-    mod = get_tool(app)
-    mod.config['speed_construct_interpret-init-in'] = task
-
-    if not mod.config['speed_construct_interpret-init']:
-        #    text-davinci-003
-        #    text-curie-001
-        #    text-babbage-001
-        #    text-ada-001
-        mod.config['speed_construct_interpret-model'] = OpenAI(model_name='text-babbage-001',
-                                                               openai_api_key=mod.config['OPENAI_API_KEY'])
-        mod.config['speed_construct_interpret-model-davinci'] = OpenAI(model_name='text-davinci-003',
-                                                                       openai_api_key=mod.config['OPENAI_API_KEY'])
-        mod.config['speed_construct_interpret-model-turbo'] = OpenAI(model_name='gpt-3.5-turbo',
-                                                                     openai_api_key=mod.config['OPENAI_API_KEY'])
-
-    mod.config['speed_construct_interpret-init'] = True
-
-    if 'speed_construct_interpret-template0' not in mod.config.keys():
-        mod.config['speed_construct_interpret-template0'] = """Isaa: Hallo! Ich bin Isaa, der digitale Assistent,
-        der entwickelt wurde, um dem nutzer helfen.
-
-        Aufgabe: {Aufgabe}
-
-        {text}
-        """
-
-    if task == 0:
-        prompt = PromptTemplate(
-            input_variables=["text"],
-            template=mod.config['speed_construct_interpret-template0'],
-        )
-        mod.config['speed_construct_interpret-llm_chain'] = LLMChain(prompt=prompt,
-                                                                     llm=mod.config['speed_construct_interpret-model'])
-    if task == -1:
-        prompt = PromptTemplate(
-            input_variables=["text"],
-            template=mod.config['speed_construct_interpret-template1'],
-        )
-        mod.config['speed_construct_interpret-llm_chain'] = LLMChain(prompt=prompt,
-                                                                     llm=mod.config['speed_construct_interpret-model'
-                                                                                    '-turbo'])
-
-    if task == 1:
-        if not os.path.exists("./isaa_data/default-prompt.json"):
-            save_prompt_file(app=app, command=None)
-
-        prompt = load_prompt("./isaa_data/default-prompt.json")
-        mod.config['speed_construct_interpret-llm_chain'] = ConversationChain(prompt=prompt,
-                                                                              verbose=True,
-                                                                              memory=mod.config[
-                                                                                  'speed_construct_interpret-memory'],
-                                                                              llm=mod.config[
-                                                                                  'speed_construct_interpret-model-turbo'])
-    if task == 2:
-        if not os.path.exists("./isaa_data/tools-prompt.json"):
-            save_prompt_file(app=app, command=None)
-
-        prompt = load_prompt("./isaa_data/tools-prompt.json")
-        mod.config['speed_construct_interpret-llm_chain'] = ConversationChain(prompt=prompt,
-                                                                              verbose=True,
-                                                                              llm=mod.config[
-                                                                                  'speed_construct_interpret-model-davinci'],
-                                                                              memory=mod.config[
-                                                                                  'speed_construct_interpret-memory']
-                                                                              )
-
-    if task == 3:
-        mod.config['speed_construct_interpret-llm_chain'] = load_summarize_chain(llm=mod.config[
-            'speed_construct_interpret-model-davinci'],
-                                                                                 chain_type='map_reduce',
-                                                                                 verbose=True)
-
-    if task == 4:
-        if not os.path.exists("./isaa_data/generator-prompt.json"):
-            save_prompt_file(app=app, command=[{"name": "generator-prompt"}])
-
-        prompt = load_prompt("./isaa_data/generator-prompt.json")
-        mod.config['speed_construct_interpret-llm_chain'] = LLMChain(prompt=prompt,
-                                                                     llm=mod.config['speed_construct_interpret-model'
-                                                                                    '-turbo'])
-    if task == 5:
-        if not os.path.exists("./isaa_data/file-prompt.json"):
-            save_prompt_file(app=app, command=[{"name": "file-prompt"}])
-
-        prompt = load_prompt("./isaa_data/file-prompt.json")
-        mod.config['speed_construct_interpret-llm_chain'] = LLMChain(prompt=prompt,
-                                                                     llm=mod.config['speed_construct_interpret-model'
-                                                                                    '-davinci'])
-
-
-def speed_construct_Interpret_agent(text, app: App, task=0, memory=False):
-    mod = get_tool(app)
-    if memory:
-        mod.config['speed_construct_interpret-memory'] = memory
-    if not mod.config['speed_construct_interpret-init']:
-        initialize_scia(app, task)
-    if mod.config['speed_construct_interpret-init-in'] != task:
-        initialize_scia(app, task)
-
-    return mod.config['speed_construct_interpret-llm_chain'].run(text)
-
-
-def initialize_ia(app: App, task):
-    app.logger.info(f'initializing ia {task}')
-    mod = get_tool(app)
-    mod.config['interpret_agent-init-in'] = task
-
-    if not mod.config['interpret_agent-init']:
-        #    text-davinci-003
-        #    text-curie-001
-        #    text-babbage-001
-        #    text-ada-001
-        mod.config['interpret_agent-model'] = OpenAI(model_name='text-babbage-001',
-                                                     openai_api_key=mod.config['OPENAI_API_KEY'])
-        mod.config['interpret_agent-davinci'] = OpenAI(model_name='text-davinci-003',
-                                                       openai_api_key=mod.config['OPENAI_API_KEY'])
-        mod.config['interpret_agent-turbo'] = OpenAI(model_name='gpt-3.5-turbo',
-                                                     openai_api_key=mod.config['OPENAI_API_KEY'])
-
-    mod.config['interpret_agent-init'] = True
-
-    if task == 0:
-        bash = BashProcess()
-        search = SerpAPIWrapper(serpapi_api_key=mod.config['SERP_API_KEY'])
-        requests = RequestsWrapper()
-        wolfram = WolframAlphaAPIWrapper(wolfram_alpha_appid=mod.config['WOLFRAM_ALPHA_APPID'])
-        python_repl = PythonREPL()
-        key = mod.config["IFTTTKey"]
-        command = 'Isaa-spotify-start'
-        url = f"https://maker.ifttt.com/trigger/{command}/json/with/key/{key}"
-        tool_play_s = IFTTTWebhook(name="Spotify-play", description="spotify play musik", url=url)
-
-        prompt = PromptTemplate(
-            input_variables=["text"],
-            template="""beziehe zum lösen der aufgabe den vergangen Kontext mit ein!\n
-            Aufgabe: {text} """,
-        )
-
-        # Construct the agent. We will use the default agent type here.
-        # See documentation for a full list of options.
-
-        #     toolbox_interface toolbox_information_interface generate_image
-        tools = [
-            Tool(
-                name="Talk",
-                func=mod.talk(),
-                description="Tool zum bilden von Antworten die der Nutzer erhalten Soll "
-                            "-> Bitte antworte uns auf de"
-            ),
-            Tool(
-                name="Ask user",
-                func=mod.user_input(),
-                description="Tool zum fragen des Users"
-            ),
-            Tool(
-                name="kontext",
-                func=mod.kontext(),
-                description="Tool zum Besseren Beantworten der Frage Holt Kontext aus vorherigen Fragen"
-            ),
-            Tool(
-                name="web-search",
-                func=search.run,
-                description="Tool zum finden von Information, Das Tool Braucht Kontext"
-                            " -> Das tool Kommuniziert in "
-                            "natürlicher Sprache, ausschließlich in Englisch"
-            ),
-            # Tool(
-            #     name="multi-web-search",
-            #     func=mod.search(),
-            #     description="Tool zum finden von Information wenn diese aufeinander aufbauen, Das Tool Braucht Kontext"
-            #                 " -> Das tool Kommuniziert in "
-            #                 "natürlicher Sprache, ausschließlich in Englisch"
-            # ),
-            # Tool(
-            #     name="Spotify Musik abspielen",
-            #     func=tool_play_s.run,
-            #     description="Spielt nur dann musik ab wenn Spotify offen ist"
-            # ),
-            # Tool(
-            #     name="toolbox_interface",
-            #     func=mod.toolbox_interface(),
-            #     description="Tool zum Interagieren mit der ToolBox Platform -> module-name function-name args"
-            #                 "ist valide Input. weitere information findest du unter toolbox_information_interface"
-            # ),
-            # Tool(
-            #     name="toolbox_information_interface",
-            #     func=mod.toolbox_information_interface(),
-            #     description="Tool zum Interagieren mit der ToolBox Platform zum finden"
-            #                 " verschiedener Module und deren Funktionen -> get-mod-list "
-            # ),
-            Tool(
-                name="Image",
-                func=mod.generate_image(),
-                description="Tool zum generiren und anzeigen von bildern. Beschreibe das bild bezhie dich auf diese "
-                            "9 punkte bei der beseeching. Subject, Medium, Style, ArtStyle, Perspective, Resolution, "
-                            "Additional details, Color, Lighting, Remarks. auf englisch :"
-            ),
-            # Tool(
-            #     name="PythonREPL",
-            #     func=python_repl.run,
-            #     description="Tool zum Evaluation von Python code -> This interface will only return things that are "
-            #                 "printed - therefor, if you want to use it to calculate an answer, make sure to have it "
-            #                 "print out the answer."
-            # ),
-            # Tool(
-            #     name="wolfram",
-            #     func=wolfram.run,
-            #     description="Tool zum Lösen von Mathematics, Physics and co Aufgeben und Beschaffung"
-            #                 " von Wissenschaftlichen informationen"
-            #                 " -> Das tool Kommuniziert in "
-            #                 "natürlicher Sprache, ausschließlich in Englisch Z.B waht is 2/x = 15"
-            # ),
-            # Tool(
-            #     name="fileEditor",
-            #     func=mod.fileEditor(),
-            #     description="Tool zum Interagieren mit der AI-IDE, System Nützlich zum bearbeiten von dateien / "
-            #                 "Application"
-            #                 "-> Stelle eine Anfrage zum Arbeiten mir dateien"
-            # ),
-            # Tool(
-            #    name="Bash",
-            #    func=bash.run,
-            #    description="Tool zum Interagieren mit der Konsole, zum finden von System-informationen"
-            #                "-> bash commands sind valide Input."
-            # ),
-            # Tool(
-            #     name="Request",
-            #     func=requests.get,
-            #     description="Tool zum Beschaffen von Website Spezifischen Information"
-            #                 "Nützlich Zum finden von Website Spezifischen Information"
-            #                 " -> Die Genaue URL der Website "
-            #                 "ist der Input."
-            # ),
-        ]
-        mod.config['interpret_agent-agent0'] = initialize_agent(tools, prompt=prompt,
-                                                                llm=mod.config['interpret_agent-turbo'],
-                                                                agent="zero-shot-react-description", verbose=True,
-                                                                return_intermediate_steps=True, max_iterations=6)
-
-    if task == 1:
-        bash = BashProcess()
-        search = SerpAPIWrapper(serpapi_api_key=mod.config['SERP_API_KEY'])
-        requests = RequestsWrapper()
-        wolfram = WolframAlphaAPIWrapper(wolfram_alpha_appid=mod.config['WOLFRAM_ALPHA_APPID'])
-        python_repl = PythonREPL()
-        key = mod.config["IFTTTKey"]
-        command = 'Isaa-spotify-start'
-        url = f"https://maker.ifttt.com/trigger/{command}/json/with/key/{key}"
-        tool_play_s = IFTTTWebhook(name="Spotify-play", description="spotify play musik", url=url)
-
-        prompt = PromptTemplate(
-            input_variables=["text"],
-            template="""beziehe zum lösen der aufgabe den vergangen Kontext mit ein!\n
-            Aufgabe: {text} """,
-        )
-
-        # Construct the agent. We will use the default agent type here.
-        # See documentation for a full list of options.
-
-        #     toolbox_interface toolbox_information_interface generate_image
-        tools = [
-            Tool(
-                name="Talk",
-                func=mod.talk(),
-                description="Tool zum bilden von Antworten die der Nutzer erhalten Soll "
-                            "-> Die frage des Nutzers ist der Input."
-            ),
-            Tool(
-                name="kontext",
-                func=mod.kontext(),
-                description="Tool zum Besseren Beantworten der Frage Holt Kontext aus vorherigen Fragen"
-            ),
-            Tool(
-                name="fileEditor",
-                func=mod.fileEditor(),
-                description="Tool zum Interagieren mit der AI-IDE, System Nützlich zum bearbeiten von dateien / "
-                            "Application"
-                            "-> Stelle eine Anfrage zum Arbeiten mir dateien"
-            ),
-        ]
-        mod.config['interpret_agent-agent1'] = initialize_agent(tools, prompt=prompt,
-                                                                llm=mod.config['interpret_agent-turbo'],
-                                                                agent="zero-shot-react-description", verbose=True,
-                                                                return_intermediate_steps=True, max_iterations=6)
-
-    if task == 2:
-        # Steps:
-        #   1. -> Get data
-        #   2. -> get relevant information's
-        #   3. -> Think about optimisations staps
-        #       3.1 -> Fehler fangen
-        #       3.2 -> Code schneller machen
-        #       3.3 -> Besser lesbar
-        #       3.4 -> Effizienter
-        #       3.5 -> Fehler behebung
-        #   4. -> Optimise code
-        #   5. -> save code
-        #   6. -> repeat
-
-        prompt = PromptTemplate(
-            input_variables=["text"],
-            template="""Follow these steps 5 to optimize code and fix bugs.
-            fix bugs. Start collecting data and relevant information before you start thinking about
-            optimizations. Break the optimization step into subtasks to find bugs,
-            make code faster, more readable, more efficient, and fix bugs.
-            Finally, optimize your code and save it. Please make sure that each step is explained clearly and
-            explained clearly and precisely. first use fileEditor to read the file | compute one task after the other \n Aufgabe: {text} """,
-        )
-
-        # Construct the agent. We will use the default agent type here.
-        # See documentation for a full list of options.
-
-        #     toolbox_interface toolbox_information_interface generate_image
-        tools = [
-            Tool(
-                name="Talk",
-                func=mod.talk(),
-                description="Tool zum bilden von Antworten die der Nutzer erhalten Soll "
-                            "-> Die frage des Nutzers ist der Input."
-            ),
-            Tool(
-                name="kontext",
-                func=mod.kontext(),
-                description="Tool zum Besseren Beantworten der Frage Holt Kontext aus vorherigen Fragen"
-            ),
-            Tool(
-                name="User-help",
-                func=mod.user_input(),
-                description="Tool zum Schreiben mit dem User nützlich wenn du weitere informationen brauchst"
-            ),
-            Tool(
-                name="fileEditor",
-                func=mod.fileEditor(),
-                description="Tool zum Interagieren mit der AI-IDE, System Nützlich zum bearbeiten von dateien / "
-                            "Application"
-                            "-> Stelle eine Anfrage zum Arbeiten mir dateien"
-            ),
-        ]
-        mod.config['interpret_agent-agent2'] = initialize_agent(tools, prompt=prompt,
-                                                                llm=mod.config['interpret_agent-turbo'],
-                                                                agent="zero-shot-react-description", verbose=True,
-                                                                return_intermediate_steps=True, max_iterations=10)
-
-    if task == 3:
-        prompt = PromptTemplate(
-            input_variables=["text"],
-            template="""Deine aufgabe ist es code zu verbessern in 5 schritte lese die angefragte datei frage wen du
-            welche hast, Bugfix, neue datei erstellen isaa-improved-file und zum schluß den code speichern\nAufgabe: {text} """,
-        )
-
-        app.inplace_load("isaa_ide", "toolboxv2.mods_dev.")
-        app.new_ac_mod("isaa_ide")
-        create = app.AC_MOD.create
-        read = app.AC_MOD.read
-        process_input = app.AC_MOD.process_input  # search copy insert
-        app.new_ac_mod("isaa")
-
-        tools = [
-            Tool(
-                name="Bugfix",
-                func=mod.bugfix(),
-                description="Tool zum bugfixes."
-            ),
-            Tool(
-                name="Create",
-                func=mod.app_wrapper("Create", create, False),
-                description="erstellt eine datei oder ordner in einem gewünschtem path -> nur den path eingeben"
-            ),
-            Tool(
-                name="Write",
-                func=mod.app_wrapper("Write", process_input, True),
-                description="zum schreiben in eine datei. dafür beachte folgende syntax insert start end text"
-            ),
-            Tool(
-                name="Read",
-                func=mod.app_wrapper("Read", read, False),
-                description="zum schreiben in eine datei. dafür beachte folgende syntax insert start end text"
-            ),
-            Tool(
-                name="User-help",
-                func=mod.user_input(),
-                description="Tool zum Schreiben mit dem User nützlich wenn du weitere informationen brauchst oder "
-                            "nicht weiter weißt"
-            ),
-        ]
-        mod.config['interpret_agent-agent3'] = initialize_agent(tools, prompt=prompt,
-                                                                llm=mod.config['interpret_agent-turbo'],
-                                                                agent="zero-shot-react-description", verbose=True,
-                                                                return_intermediate_steps=True, max_iterations=8)
-
-
-def interpret_agent(text, app: App, task=0, memory=False):
-    mod = get_tool(app)
-    if memory:
-        mod.config['interpret_agent-memory'] = memory
-    if not mod.config['interpret_agent-init']:
-        initialize_ia(app, task)
-    if mod.config['interpret_agent-init-in'] != task:
-        initialize_ia(app, task)
-
-    return mod.config[f'interpret_agent-agent{task}']({'input': text})
-
-
-def initialize_at(app: App, task):
-    app.logger.info(f'initializing at {task}')
-    mod = get_tool(app)
-    mod.config['agent_tools-init-in'] = task
-
-    if not mod.config['agent_tools-init']:
-        #    text-davinci-003
-        #    text-curie-001
-        #    text-babbage-001
-        #    text-ada-001
-        mod.config['agent_tools-model'] = OpenAI(temperature=0, model_name='text-babbage-001',
-                                                 openai_api_key=mod.config['OPENAI_API_KEY'])
-
-    if task >= 1:
-        #    text-davinci-003
-        #    text-curie-001
-        #    text-babbage-001
-        #    text-ada-001
-        mod.config['agent_tools-davinci'] = OpenAI(model_name='text-davinci-003',
-                                                   openai_api_key=mod.config['OPENAI_API_KEY'])
-
-    mod.config['agent_tools-init'] = True
-
-    if task == 0:
-        # `zero - shot - react - description`
-        # `react - docstore`
-        # `self - ask -
-        # with-search`
-        # `conversational - react - description`
-        # If
-        # None and agent_path is also
-        # None, will
-        # default
-        # to
-        # `zero - shot - react - description`.
-
-        mod.config['agent_tools-tools0'] = load_tools([
-            "terminal",
-        ], llm=mod.config['agent_tools-model'])
-        mod.config['agent_tools-agent0'] = initialize_agent(tools=mod.config['agent_tools-tools0'],
-                                                            llm=mod.config['agent_tools-model'],
-                                                            agent="zero-shot-react-description",
-                                                            verbose=True)
-    if task == 1:
-        mod.config['agent_tools-tools1'] = PythonREPLTool()
-        mod.config['agent_tools-agent1'] = create_python_agent(tool=mod.config['agent_tools-tools1'],
-                                                               llm=mod.config['agent_tools-model'],
-                                                               agent="zero-shot-react-description",
-                                                               verbose=True)
-    if task == 2:
-        tools = [
-
-        ]
-        # Construct the agent. We will use the default agent type here.
-        # See documentation for a full list of options.
-        mod.config['agent_tools-agent2'] = initialize_agent(tools, llm=mod.config['agent_tools-davinci'],
-                                                            agent="zero-shot-react-description", verbose=True)
-
-    if task == 3:  # _LLM_TOOLS
-        mod.config['agent_tools-tools3'] = load_tools(["pal-math",
-                                                       "pal-colored-objects"
-                                                       "llm-math",
-                                                       "open-meteo-api",
-                                                       ], llm=mod.config['agent_tools-model'])
-        mod.config['agent_tools-agent3'] = initialize_agent(tools=mod.config['agent_tools-tools3'],
-                                                            llm=mod.config['agent_tools-davinci'],
-                                                            agent="zero-shot-react-description",
-                                                            verbose=True)
-
-    if task == 4:  # _EXTRA_LLM_TOOLS
-        mod.config['agent_tools-tools4'] = load_tools(["wolfram-alpha",
-                                                       "serpapi",
-                                                       ], llm=mod.config['agent_tools-turbo'],
-                                                      wolfram_alpha_appid=mod.config['WOLFRAM_ALPHA_APPID'],
-                                                      serpapi_api_key=mod.config['SERP_API_KEY']
-                                                      )
-        mod.config['agent_tools-agent4'] = initialize_agent(tools=mod.config['agent_tools-tools4'],
-                                                            llm=mod.config['agent_tools-model'],
-                                                            agent="zero-shot-react-description",
-                                                            verbose=True)
-
-    if task == 5:  # CV"
-        mod.config['agent_tools-agent5'] = create_csv_agent(mod.config['agent_tools-model'],
-                                                            './isaa_data/data.csv',
-                                                            verbose=True)
-    if task == 6:
-        prompt = PromptTemplate(
-            input_variables=["text"],
-            template="""Formuliere die Frage auf Englisch aus : {text} """,
-        )
-        tools = load_tools(["wolfram"], llm=mod.config['agent_tools-davinci'])
-        mod.config['agent_tools-agent6'] = initialize_agent(tools=tools,
-                                                            llm=mod.config['agent_tools-davinci'],
-                                                            agent="self-ask-with-search",
-                                                            verbose=True, prompt=prompt)
-
-    if task == 7:
-        search = SerpAPIWrapper(serpapi_api_key=mod.config['SERP_API_KEY'])
-
-        tools = [
-            Tool(
-                name="Intermediate Answer",
-                func=search.run,
-                description="Tool zum suchen von informationen"
-            ),
-        ]
-        mod.config['agent_tools-agent7'] = initialize_agent(tools,
-                                                            llm=mod.config['interpret_agent-davinci'],
-                                                            agent="self-ask-with-search", verbose=True,
-                                                            max_iterations=4, return_intermediate_steps=True)
-
-
-@tool("Cmd", return_direct=False)
-def cmd(query: str):
-    """Using Windows Command Line Interface"""
-    print(query)
-    os.system(query)
-
-
-def agent_tools(text, app: App, task=0):
-    mod = get_tool(app)
-    if not mod.config['agent_tools-init']:
-        initialize_at(app, task)
-    if mod.config['agent_tools-init-in'] != task:
-        initialize_at(app, task)
-
-    return mod.config[f'agent_tools-agent{task}'].run(text)
-
-
-def generate_prompt_file(command=None, app: App = App()):
+def generate_prompt_file(command=None, app=App):
     if command is None:
         command = []
     mod = get_tool(app)
@@ -2392,15 +1789,6 @@ def save_prompt_file(app: App, command=None):
         generate_prompt_file(command, app)
         string_data = mod.config[name]
         f.write(json.dumps(string_data))
-
-
-def conversational_prompt_chain(app):
-    from langchain.prompts import load_prompt
-    from langchain.chains import ConversationChain
-    mod = get_tool(app)
-    llm = mod.config['speed_construct_interpret-model']
-    prompt = load_prompt('lc://prompts/conversation/<file-name>')
-    chain = ConversationChain(llm=llm, prompt=prompt)
 
 
 # install pytorch ->
@@ -2520,9 +1908,7 @@ def image_genrating_tool(prompt, app):
     app.logger.info("Splitting data")
     if '|' in prompt:
         prompt = prompt.split('|')[1]
-    try:
-        inputs = eval(prompt)
-    except ValueError and SyntaxError:
+    if isinstance(prompt, str):
         inputs = {
             # Input prompt
             'prompt': prompt,
@@ -2549,6 +1935,8 @@ def image_genrating_tool(prompt, app):
             'scheduler': "DPMSolverMultistep",
 
         }
+    else:
+        inputs = prompt
 
     print(f"Generating Image")
     images = genrate_image(inputs, app)
@@ -2558,12 +1946,14 @@ def image_genrating_tool(prompt, app):
     show_image_in_internet(images)
 
 
-from toolboxv2.mods_dev import BROWSER  # TODO: live -> from toolboxv2.mods import BROWSER
-def show_image_in_internet(images, browser=BROWSER):
-    if isinstance(images, str):
-        images = [images]
-    for image in images:
-        os.system(f'start {browser} {image}')
+from toolboxv2.mods import BROWSER
+
+
+def show_image_in_internet(images_url, browser=BROWSER):
+    if isinstance(images_url, str):
+        images_url = [images_url]
+    for image_url in images_url:
+        os.system(f'start {browser} {image_url}')
 
 
 def pipeline_talk(user_input, model, tokenizer, chat_history_ids):
@@ -2608,39 +1998,8 @@ def pipeline_stf(s1, s2, model):
     print(f"MAX: {max_}")
     return max_
 
-# "What time is the appointment?"
-# "Appointment location?"
 
-def get_command(response):
-    from toolboxv2.util.agent.scripts.json_parser import fix_and_parse_json
-    try:
-        response_json = fix_and_parse_json(response)
-
-        if "command" not in response_json:
-            return "Error:" , "Missing 'command' object in JSON"
-
-        command = response_json["command"]
-
-        if "name" not in command:
-            return "Error:", "Missing 'name' field in 'command' object"
-
-        command_name = command["name"]
-
-        # Use an empty dictionary if 'args' field is not present in 'command' object
-        arguments = command.get("args", {})
-
-        if not arguments:
-            arguments = {}
-
-        return command_name, arguments
-    except json.decoder.JSONDecodeError:
-        return "Error:", "Invalid JSON"
-    # All other errors, return "Error: + error message"
-    except Exception as e:
-        return "Error:", str(e)
-
-
-
+# @ gitHub Auto GPT
 def browse_website(url, question, summ):
     summary = get_text_summary(url, question, summ)
     links = get_hyperlinks(url)
@@ -2666,7 +2025,8 @@ def get_hyperlinks(url):
 
 
 def scrape_text(url):
-    response = requests.get(url, headers={"User-Agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36"})
+    response = requests.get(url, headers={
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36"})
 
     # Check if the response contains an HTTP error
     if response.status_code >= 400:
@@ -2700,7 +2060,8 @@ def format_hyperlinks(hyperlinks):
 
 
 def scrape_links(url):
-    response = requests.get(url, headers={"User-Agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36"})
+    response = requests.get(url, headers={
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36"})
 
     # Check if the response contains an HTTP error
     if response.status_code >= 400:
@@ -2714,89 +2075,3 @@ def scrape_links(url):
     hyperlinks = extract_hyperlinks(soup)
 
     return format_hyperlinks(hyperlinks)
-
-
-
-
-import os
-import os.path
-
-# Set a dedicated folder for file I/O
-working_directory = "isaa-directory"
-
-if not os.path.exists(working_directory):
-    os.makedirs(working_directory)
-
-
-def safe_join(base, *paths):
-    new_path = os.path.join(base, *paths)
-    norm_new_path = os.path.normpath(new_path)
-
-    if os.path.commonprefix([base, norm_new_path]) != base:
-        return "Agent is not allowed to use .. to get current directory contet input /"
-
-    return norm_new_path
-
-
-def read_file(filename):
-    try:
-        filepath = safe_join(working_directory, filename)
-        with open(filepath, "r") as f:
-            content = f.read()
-        print(filepath)
-        return content
-    except Exception as e:
-        return "Error: " + str(e).replace("isaa-directory\\", "")
-
-
-def write_to_file(filename, text):
-    try:
-        filepath = safe_join(working_directory, filename)
-        directory = os.path.dirname(filepath)
-        if not os.path.exists(directory):
-            os.makedirs(directory)
-        with open(filepath, "w") as f:
-            f.write(text)
-        print(filepath)
-        return "File written to successfully."
-    except Exception as e:
-        return "Error: " + str(e).replace("isaa-directory\\", "")
-
-
-def append_to_file(filename, text):
-    try:
-        filepath = safe_join(working_directory, filename)
-        with open(filepath, "a") as f:
-            f.write(text)
-        return "Text appended successfully."
-    except Exception as e:
-        return "Error: " + str(e).replace("isaa-directory\\", "")
-
-
-def delete_file(filename):
-    if input(f"Delete file by Agent file name : {filename} \nto confirm type:y") in ["yes","y"]:
-        try:
-            filepath = safe_join(working_directory, filename)
-            os.remove(filepath)
-            return "File deleted successfully."
-        except Exception as e:
-            return "Error: " + str(e)
-    return "Not authorized to delete"
-
-
-def search_files(directory):
-    found_files = []
-
-    if directory == "" or directory == "/":
-        search_directory = working_directory
-    else:
-        search_directory = safe_join(working_directory, directory)
-
-    for root, _, files in os.walk(search_directory):
-        for file in files:
-            if file.startswith('.'):
-                continue
-            relative_path = os.path.relpath(os.path.join(root, file), working_directory)
-            found_files.append(relative_path.replace("isaa-directory\\", ""))
-
-    return found_files
