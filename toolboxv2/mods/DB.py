@@ -1,8 +1,5 @@
-
-import redis
 from toolboxv2 import MainTool, FileHandler, App
-
-
+import redis
 
 
 class Tools(MainTool, FileHandler):
@@ -98,27 +95,17 @@ class Tools(MainTool, FileHandler):
             return True
         return True  # not "secret".upper() in request.upper()
 
-    def set_key(self, command):
+    def set_key(self, ind):
         if self.rcon is None:
-            return 'Please run first-redis-connection'
-
-        if len(command) != 3:
-            self.print("set {key} {value}")
-            return False
-
-        key = command[1]
-        val = command[2]
-
-        if isinstance(val, str):
-            # If the value is a string, store it as a Redis string
+            return 'Pleas run first-redis-connection'
+        if len(ind) == 3:
+            key = ind[1]
+            val = ind[2]
             self.rcon.set(key, val)
+
+            self.print(f"key: {key} value: {val} DON")
         else:
-            # Raise an error if the value is of an unsupported type
-            raise TypeError("Unsupported value type")
-
-        self.print(f"key: {key} value: {val} stored in Redis")
-
-
+            self.print("set {key} {value}")
         return True
 
     def delete_key(self, ind):
@@ -154,5 +141,4 @@ class Tools(MainTool, FileHandler):
 
         return del_list
 
-# TODO: new futon add + lode (+=) an array
 # BP in #addLodeFucktionBulprint

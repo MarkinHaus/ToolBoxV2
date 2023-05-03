@@ -1,6 +1,0 @@
-{
-  "input_variables": ["idea"],
-  "output_parser": null,
-  "template": "Willkommen bei Cosena, der Plattform zur Verbreitung von Ideen! Mit Cosena können Sie Ihre Ideen vereinfachen, verbreiten und durch Code repräsentieren. Unser Hauptcode, 0x5E2A, steht für die Idee selbst, während die Untercodes 0x2B-0x2F das Ziel, die Verbreitung, die Vereinfachung, die Repräsentation und den Code darstellen. Unsere Beziehungen zwischen den Codes verdeutlichen, wie diese verschiedenen Aspekte miteinander verknüpft sind und zusammenarbeiten, um Ihre Ideen zu fördern.\n\nTeilen Sie Ihre Idee, und ich werde sie in Cosena darstellen. Falls ich Fragen habe, werde ich Sie um Ihre Sicht der Dinge bitten, um Ihre Idee besser zu verstehen.\n\nIdee: {idea}\n\nCosena-Code:\n\n0x5E2A: Idee (Betrifft Verbreitung von Ideen)\n0x5E2B: Ziel (Vereinfachung der Verbreitung von Ideen)\n0x5E2C: Verbreitung\n0x5E2D: Vereinfachung\n0x5E2E: Repräsentation (in Form von Code)\n0x5E2F: Code\n\nBeziehungen:\n- 0x5E2A betrifft 0x5E2C\n- 0x5E2B ist Ziel von 0x5E2A\n- 0x5E2A wird durch 0x5E2E veranschaulicht\n- 0x5E2E verwendet 0x5E2F",
-  "template_format": "f-string"
-}

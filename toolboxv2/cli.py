@@ -5,22 +5,18 @@ import argparse
 from platform import system
 
 # Import public Pages
-from toolboxv2 import App, run_cli, MainTool
-from toolboxv2.runabel.isaa_clip import run_clipy_isaa
+from toolboxv2 import App, MainTool, runnable_dict
 
 try:
     from toolboxv2.app.serve_app import serve_app_change_dir
 except ModuleNotFoundError:
-    #from .app.serve_app import serve_app_change_dir
     pass
-try:
-    from toolboxv2.runabel.isaa_cmd import run_isaa_verb
-except ModuleNotFoundError:
-    from toolboxv2.runabel.isaa_cmd import run_isaa_verb
+
 try:
     from toolboxv2.util.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
 except ModuleNotFoundError:
     from .util.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
+
 import os
 import subprocess
 
@@ -142,7 +138,6 @@ def parse_args():
     parser.add_argument("-m", "--modi",
                         type=str,
                         help="Start ToolBox in different modes",
-                        choices=["cli", "dev", "api", "app", "kill-app", "set-up", "isaa", "isaa-clipy"],
                         default="cli")
 
     parser.add_argument("-p", "--port",
@@ -271,34 +266,25 @@ def main():
                     if isinstance(tb_app.MOD_LIST[mod_name], MainTool):
                         print(f"{mod_name} : {tb_app.MOD_LIST[mod_name].version}")
 
-    if args.modi == 'set-up':
+    if args.modi == 'set-up-service':
         print("1. App")
         setup = input("Set up for :")
         if setup == "1":
             setup_app()
 
-    if args.modi == 'api':
-        tb_app.run_any('api_manager', 'start-api', ['start-api', args.name])
-    if args.modi == 'dev':
-        dev_helper()
-    if args.modi == 'app':
+    # if args.modi == 'api':
+    #     tb_app.run_any('api_manager', 'start-api', ['start-api', args.name])
+
+    elif args.modi == 'app':
         print(args.host, args.port)
         serve_app_change_dir()
-        # gunicorn_config.py
-        # bind = "0.0.0.0:8080"
-        # workers = 4
-        # gunicorn -c gunicorn_config.py app:serve_app
 
         subprocess.run(["sudo", "gunicorn", "--bind", f"{args.host}:{args.port}", "app:serve_app"])
 
-    if args.modi == 'cli':
-        run_cli(tb_app)
-
-    if args.modi == 'isaa':
-        run_isaa_verb(tb_app, args.speak)
-
-    if args.modi == 'isaa-clipy':
-        run_clipy_isaa(tb_app, args.speak)
+    elif args.modi.lower() in runnable_dict.keys():
+        runnable_dict[args.modi.lower()](tb_app, args)
+    else:
+        print(f"Modi : {args.modi} not found on device")
 
     if args.modi == "kill-app":
         app_pid = str(os.getpid())

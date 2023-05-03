@@ -11,8 +11,7 @@ from datetime import datetime, timedelta, timezone
 import jwt
 import requests
 
-from toolboxv2 import MainTool, FileHandler, App
-from toolboxv2.Style import Style
+from toolboxv2 import MainTool, FileHandler, App, Style
 
 
 class Tools(MainTool, FileHandler):
@@ -85,7 +84,7 @@ class Tools(MainTool, FileHandler):
         self.save_file_handler()
 
     def show_version(self, c):
-        self.print("Version: ", self.version, self.api_version, c)
+        self.print(f"Version: , {self.version}, {self.api_version}, {c}")
         return self.version
 
     def get_version(self):

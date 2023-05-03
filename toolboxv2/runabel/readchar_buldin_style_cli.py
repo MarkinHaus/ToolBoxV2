@@ -10,6 +10,7 @@ from toolboxv2.util.Style import Style
 import readchar
 from toolboxv2.util.toolbox import App
 
+NAME = "cli"
 
 def user_input(app: App):
     get_input = True
@@ -222,7 +223,7 @@ def command_runner(app, command):
         print(Style.YELLOW("[-] Unknown command:") + app.pretty_print(command))
 
 
-def run_cli(app: App):
+def run(app: App, *args):
     while app.alive:
         print("", end="" + "->>\r")
         command = user_input(app)

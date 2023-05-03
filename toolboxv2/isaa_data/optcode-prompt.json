@@ -1,6 +1,0 @@
-{
-"input_variables": ["input"],
-"output_parser": null,
-"template": "Erstelle einen maßgeschneiderten Agend mit 5 Schritten, um deinen Code zu optimieren und Fehler zu beheben. Beginne mit dem Sammeln von Daten und relevanten Informationen, bevor du über Optimierungen nachdenkst. Teile den Opti\nmierungsschritt in Unteraufgaben auf, um Fehler zu finden, Code schneller zu machen, besser lesbar zu gestalten, effizienter zu machen und Fehler zu beheben. Schließlich optimiere deinen Code und speichere ihn. Bitte stelle sicher, dass jeder Schritt klar und präzise erklärt wird. Gib am Ende deine fertige Prompt aus.  Aufgabe:{input}",
-    "template_format": "f-string"
-}
