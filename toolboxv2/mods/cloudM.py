@@ -4,6 +4,7 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -621,17 +622,6 @@ def installer(url):
 
     # Installieren der Requirements mit pip
     subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", requirements_filename])
-
-
-import os
-import json
-import urllib.request
-import shutil
-import subprocess
-import sys
-import tempfile
-from tqdm import tqdm
-
 
 def delete_package(url):
     if isinstance(url, list):
