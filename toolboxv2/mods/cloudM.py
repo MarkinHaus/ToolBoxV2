@@ -2,16 +2,26 @@ import binascii
 import hashlib
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+import json
+import urllib.request
+import shutil
+from json import JSONDecoder
+from urllib import request
+
+from bs4 import BeautifulSoup
+from tqdm import tqdm
 
 import jwt
 import requests
-
+import re
 from toolboxv2 import MainTool, FileHandler, App, Style
+from toolboxv2.util.Style import extract_json_strings
 
 
 class Tools(MainTool, FileHandler):
@@ -43,6 +53,8 @@ class Tools(MainTool, FileHandler):
                     ["log_in_user", "log_in user - api instance"],
                     ["download_api_files", "download mods"],
                     ["get-init-config", "get-init-config mods"],
+                    ["mod-installer", "installing mods via json url"],
+                    ["mod-remover", "remover mods via json url"],
                     ],
             "name": "cloudM",
             "Version": self.show_version,
@@ -57,6 +69,8 @@ class Tools(MainTool, FileHandler):
             "validate_jwt": self.validate_jwt,
             "download_api_files": self.download_api_files,
             "#update-core": self.update_core,
+            "mod-installer": installer,
+            "mod-remover": delete_package,
         }
 
         self.logger.info("init FileHandler cloudM")
@@ -570,5 +584,98 @@ def validate_jwt(jwt_key: str, jwt_secret: str, aud) -> dict or str:
     except Exception as e:
         return str(e)
 
+
 # CLOUDM #update-core
 # API_MANAGER start-api main a
+
+def installer(url):
+    if isinstance(url, list):
+        for i in url:
+            if i.strip().startswith('http'):
+                url = i
+                break
+    with urllib.request.urlopen(url) as response:
+        res = response \
+            .read()
+        soup = BeautifulSoup(res, 'html.parser')
+        data = json.loads(extract_json_strings(soup.text)[0].replace('\n', ''))
+
+    # os.mkdir(prfix)
+    os.makedirs("mods", exist_ok=True)
+    os.makedirs("runable", exist_ok=True)
+
+    for mod_url in tqdm(data["mods"], desc="Mods herunterladen"):
+        filename = os.path.basename(mod_url)
+        urllib.request.urlretrieve(mod_url, f"mods/{filename}")
+
+    for runnable_url in tqdm(data["runnable"], desc="Runnables herunterladen"):
+        filename = os.path.basename(runnable_url)
+        urllib.request.urlretrieve(runnable_url,  f"runable/{filename}")
+
+    shutil.unpack_archive(data["additional-dirs"],  "./")
+
+    # Herunterladen der Requirements-Datei
+    requirements_url = data["requirements"]
+    requirements_filename = f"{data['Name']}-requirements.txt"
+    urllib.request.urlretrieve(requirements_url, requirements_filename)
+
+    # Installieren der Requirements mit pip
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", requirements_filename])
+
+
+import os
+import json
+import urllib.request
+import shutil
+import subprocess
+import sys
+import tempfile
+from tqdm import tqdm
+
+
+def delete_package(url):
+    if isinstance(url, list):
+        for i in url:
+            if i.strip().startswith('http'):
+                url = i
+                break
+    with urllib.request.urlopen(url) as response:
+        res = response \
+            .read()
+        soup = BeautifulSoup(res, 'html.parser')
+        data = json.loads(extract_json_strings(soup.text)[0].replace('\n', ''))
+
+    for mod_url in tqdm(data["mods"], desc="Mods löschen"):
+        filename = os.path.basename(mod_url)
+        file_path = os.path.join("mods", filename)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+    for runnable_url in tqdm(data["runnable"], desc="Runnables löschen"):
+        filename = os.path.basename(runnable_url)
+        file_path = os.path.join("runnable", filename)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+    additional_dir_path = os.path.join("mods", os.path.basename(data["additional-dirs"]))
+    if os.path.exists(additional_dir_path):
+        shutil.rmtree(additional_dir_path)
+
+    # Herunterladen der Requirements-Datei
+    requirements_url = data["requirements"]
+    requirements_filename = f"{data['Name']}-requirements.txt"
+    urllib.request.urlretrieve(requirements_url, requirements_filename)
+
+    # Deinstallieren der Requirements mit pip
+    with tempfile.NamedTemporaryFile(mode="w", delete=False) as temp_requirements_file:
+        with open(requirements_filename) as original_requirements_file:
+            for line in original_requirements_file:
+                package_name = line.strip().split("==")[0]
+                temp_requirements_file.write(f"{package_name}\n")
+
+        temp_requirements_file.flush()
+        subprocess.check_call([sys.executable, "-m", "pip", "uninstall", "-y", "-r", temp_requirements_file.name])
+
+    # Löschen der heruntergeladenen Requirements-Datei
+    os.remove(requirements_filename)
+    os.remove(temp_requirements_file.name)

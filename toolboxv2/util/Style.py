@@ -1,6 +1,8 @@
 import os
 import random
+import re
 import time
+from json import JSONDecoder
 from platform import system
 from time import sleep
 
@@ -324,3 +326,52 @@ def print_to_console(
             min_typing_speed = min_typing_speed * 0.95
             max_typing_speed = max_typing_speed * 0.95
     print()
+
+
+class JSONExtractor(JSONDecoder):
+    def decode(self, s):
+        self.raw_decode(s)
+        return s
+
+    def raw_decode(self, s):
+        try:
+            obj, end = super().raw_decode(s)
+            return obj, end
+        except ValueError as e:
+            return None, 0
+
+def extract_json_strings(text):
+    json_strings = []
+    extractor = JSONExtractor()
+
+    # Ersetzt einfache Anführungszeichen durch doppelte Anführungszeichen
+    text = re.sub(r"(?<!\\)'", "\"", text)
+
+    start = 0
+    while True:
+        match = re.search(r'\{', text[start:])
+        if not match:
+            break
+
+        start += match.start()
+        decoded, end = extractor.raw_decode(text[start:])
+        if decoded is not None:
+            json_strings.append(text[start:start + end])
+            start += end
+        else:
+            start += 1
+
+    return json_strings
+
+def extract_python_code(text):
+    python_code_blocks = []
+
+    # Finden Sie alle Codeblöcke, die mit ```python beginnen und mit ``` enden
+    code_blocks = re.findall(r'```python(.*?)```', text, re.DOTALL)
+
+    for block in code_blocks:
+        # Entfernen Sie führende und nachfolgende Leerzeichen
+        block = block.strip()
+        python_code_blocks.append(block)
+
+    return python_code_blocks
