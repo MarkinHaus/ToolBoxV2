@@ -21,7 +21,7 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
         file_level = level
 
     if not os.path.exists(f"../logs"):
-        os.makedirs(f"../logs")
+        os.mkdir(f"../logs")
         open(f"../logs/Logs.info", "a").close()
 
     loggerNameOfToolboxv2 = name
@@ -64,19 +64,19 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
         if filename not in log_info_data.keys():
             log_info_data[filename] = 0
 
-        if not os.path.exists(f"logs/{filename}.log"):
+        if not os.path.exists(f"../logs/{filename}.log"):
             log_info_data[filename] = 0
             print("new log file")
 
-        if os.path.exists(f"logs/{filename}.log"):
+        if os.path.exists(f"../logs/{filename}.log"):
             log_info_data[filename] += 1
 
-            while os.path.exists(f"logs/{filename}#{log_info_data[filename]}.log"):
+            while os.path.exists(f"../logs/{filename}#{log_info_data[filename]}.log"):
                 log_info_data[filename] += 1
 
             try:
-                os.rename(f"logs/{filename}.log",
-                          f"logs/{filename}#{log_info_data[filename]}.log")
+                os.rename(f"../logs/{filename}.log",
+                          f"../logs/{filename}#{log_info_data[filename]}.log")
             except PermissionError:
                 print(Style.RED(Style.Bold(f"Could not rename log file appending on {filename}")))
 
@@ -90,13 +90,13 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
 
         li.write(str(log_info_data))
 
-    with open(f"logs/{filename}.log", "a"):
+    with open(f"../logs/{filename}.log", "a"):
         pass
 
     if interminal:
         logging.basicConfig(level=level, format=f"%(asctime)s %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     else:
-        logging.basicConfig(level=level, filename=f"logs/{filename}.log",
+        logging.basicConfig(level=level, filename=f"../logs/{filename}.log",
                             format='%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
                             datefmt="%Y-%m-%d %H:%M:%S"
                             )
@@ -107,7 +107,7 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
                                   '%(message)s')
 
     if interminal:
-        handler = logging.FileHandler(f"logs/{filename}.log")
+        handler = logging.FileHandler(f"../logs/{filename}.log")
         handler.setFormatter(formatter)
         handler.setLevel(file_level)
         logger.addHandler(handler)
