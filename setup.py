@@ -3,16 +3,18 @@
 """The setup script."""
 
 import io
-from os import path as op
+from os import path
+
 from setuptools import setup, find_packages
+
 
 with open('README.md') as readme_file:
     readme = readme_file.read()
 
-here = op.abspath(op.dirname(__file__))
+here = path.abspath(path.dirname(__file__))
 
 # get the dependencies and installs
-with io.open(op.join(here, "requirements.txt"), encoding="utf-8") as f:
+with io.open(path.join(here, "requirements.txt"), encoding="utf-8") as f:
     all_reqs = f.read().split("\n")
 
 install_requires = [x.strip() for x in all_reqs if "git+" not in x]
@@ -57,6 +59,7 @@ setup(
     keywords='toolboxv2',
     name='ToolBoxV2',
     packages=find_packages(include=['toolboxv2', 'toolboxv2.mods.*',  'toolboxv2.mods_dev.*', 'toolboxv2.*']),
+    package_data={"toolboxv2": ["toolboxv2/init.config"]},
     setup_requires=setup_requirements,
     test_suite='tests',
     tests_require=test_requirements,

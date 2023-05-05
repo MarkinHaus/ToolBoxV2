@@ -1,22 +1,27 @@
 import os
 from typing import Union
-
 from fastapi import APIRouter, UploadFile
+from starlette.staticfiles import StaticFiles
 
-from fast_api_main import tb_app, PostRequest
-from toolboxv2 import ToolBox_ovner
+from toolboxv2 import ToolBox_ovner, App
+from .util import PostRequest
+from ..util.toolbox import get_app
 
-router = APIRouter()
+router = APIRouter(
+    prefix="/api",
+    # responses={404: {"description": "Not found"}},
+)
 
 
-@router.get("/api/")
+@router.get("")
 def root():
     result = "ToolBoxV2"
     return {"res": result}
 
 
-@router.post("/api/exit/{pid}")
+@router.post("/exit/{pid}")
 def close(data: PostRequest, pid: int):
+    tb_app: App = get_app()
     if pid == os.getpid():
         res = tb_app.run_any('cloudm', "validate_jwt", [data])
         if isinstance(res, str):
@@ -35,38 +40,33 @@ def close(data: PostRequest, pid: int):
     return {"res": "0"}
 
 
-@router.get("/api/id")
+@router.get("/id")
 def id_api():
+    tb_app: App = get_app()
     return {"res": str(tb_app.id)}
 
 
-@router.get("/api/mod-list")
+@router.get("/mod-list")
 def mod_list():
+    tb_app: App = get_app()
     return {"res": list(tb_app.MOD_LIST.keys())}
 
 
-@router.get("/api/SUPER_SET")
+@router.get("/SUPER_SET")
 def super_set():
+    tb_app: App = get_app()
     return {"res": tb_app.SUPER_SET}
 
 
-@router.get("/api/prefix")
+@router.get("/prefix")
 def prefix_working_dir():
+    tb_app: App = get_app()
     return {"res": tb_app.PREFIX}
 
 
-@router.get("/api/logs")
-def logs_app():
-    logs = {}
-    for log in tb_app.logger:
-        logs[log[0].name] = []
-        logs[log[0].name].append(log[1:])
-    print(logs)
-    return {"res": logs}
-
-
-@router.get("/api/test-exist/{name}")
+@router.get("/test-exist/{name}")
 def test_mod_dow(name: str):
+    tb_app: App = get_app()
     res = "mod-404"
     if name.lower() in tb_app.MOD_LIST:
         tb_app.new_ac_mod(name.lower())
@@ -74,8 +74,9 @@ def test_mod_dow(name: str):
     return {"res": res}
 
 
-@router.get("/api/mod/index/{name}")
+@router.get("/mod/index/{name}")
 def get_mod_index(name: str):
+    tb_app: App = get_app()
     try:
         tb_app.new_ac_mod(name)
         result = tb_app.help('')
@@ -84,8 +85,9 @@ def get_mod_index(name: str):
     return {"res": result}
 
 
-@router.get("/api/get/{mod}/run/{name}")
+@router.get("/get/{mod}/run/{name}")
 def get_mod_run(mod: str, name: str, command: Union[str, None] = None):
+    tb_app: App = get_app()
     print("get_mod_run")
     res = {}
     if not command:
@@ -104,8 +106,9 @@ def get_mod_run(mod: str, name: str, command: Union[str, None] = None):
     return {"res": res}
 
 
-@router.post("/api/post/{mod}/run/{name}")
+@router.post("/post/{mod}/run/{name}")
 async def post_mod_run(data: PostRequest, mod: str, name: str, command: Union[str, None] = None):
+    tb_app: App = get_app()
     res = {}
     if not command:
         command = ''
@@ -121,8 +124,9 @@ async def post_mod_run(data: PostRequest, mod: str, name: str, command: Union[st
     return {"res": res}
 
 
-@router.post("/api/upload-file/")
+@router.post("/upload-file/")
 async def create_upload_file(file: UploadFile):
+    tb_app: App = get_app()
     if tb_app.debug:
         do = False
         try:

@@ -6,11 +6,7 @@ from platform import system
 
 # Import public Pages
 from toolboxv2 import App, MainTool, runnable_dict
-
-try:
-    from toolboxv2.app.serve_app import serve_app_change_dir
-except ModuleNotFoundError:
-    pass
+from toolboxv2.util.toolbox import get_app
 
 try:
     from toolboxv2.util.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
@@ -248,7 +244,7 @@ def main():
         init_args += " ".join(sys.argv)
     init_args = init_args.split(" ")
 
-    tb_app = App(args.name, args=args)
+    tb_app = App(args.modi+'-'+args.name, args=args)
 
     if args.log_editor:
         edit_logs()
@@ -272,14 +268,8 @@ def main():
         if setup == "1":
             setup_app()
 
-    # if args.modi == 'api':
-    #     tb_app.run_any('api_manager', 'start-api', ['start-api', args.name])
-
-    elif args.modi == 'app':
-        print(args.host, args.port)
-        serve_app_change_dir()
-
-        subprocess.run(["sudo", "gunicorn", "--bind", f"{args.host}:{args.port}", "app:serve_app"])
+    if args.modi == 'api':
+        tb_app.run_any('api_manager', 'start-api', ['start-api', args.name])
 
     elif args.modi.lower() in runnable_dict.keys():
         runnable_dict[args.modi.lower()](tb_app, args)

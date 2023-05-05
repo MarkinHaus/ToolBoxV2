@@ -1,22 +1,16 @@
 import os
 
-from toolboxv2 import App, AppArgs
+from fastapi.staticfiles import StaticFiles
 
-from fastapi import FastAPI, Request, UploadFile
-from typing import Union
+from toolboxv2 import App
+
+from fastapi import FastAPI, Request
 import sys
 import time
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from .fast_app import router as app_router
-from .fast_api import router as api_router
-
-
-class PostRequest(BaseModel):
-    token: str
-    data: dict
-
+from ..util.toolbox import get_app
 
 app = FastAPI()
 
@@ -40,17 +34,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(app_router.routes)
-app.include_router(api_router.routes)
-
-#router = APIRouter(
-#    prefix="/items",
-#    tags=["items"],
-#    dependencies=[Depends(get_token_header)],
-#    responses={404: {"description": "Not found"}},
-#)
-
-
 
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
@@ -61,9 +44,21 @@ async def add_process_time_header(request: Request, call_next):
     return response
 
 
-if __name__ == 'fast_api':  # do stuw withe ovner to secure ur self
+@app.get("/")
+async def index():
+    # return RedirectResponse(url="/app")
+    return "Willkommen bei Simple V0 powered by ToolBoxV2-0.0.3"
 
-    print("online")
+
+@app.get("/exit")
+async def exit_code():
+    exit(0)
+
+
+
+
+print("API: ", __name__)
+if __name__ == 'toolboxv2.api.fast_api_main':  # do stuw withe ovner to secure ur self
 
     config_file = "api.config"
     id_name = ""
@@ -73,11 +68,25 @@ if __name__ == 'fast_api':  # do stuw withe ovner to secure ur self
             d = i.split(':')
             config_file = d[1]
             id_name = d[2]
-    print(os.getcwd())
-    tb_app = App("api")
+
+    tb_app = get_app(id_name)
+    if id_name == tb_app.id:
+        print("🟢 START")
     with open(f"api_pid_{id_name}", "w") as f:
         f.write(str(os.getpid()))
-    tb_app.load_all_mods_in_file()
+    # tb_app.load_all_mods_in_file()
+    tb_app.save_load("welcome")
     tb_img = tb_app.MOD_LIST["welcome"].tools["printT"]
     tb_img()
-    tb_app.new_ac_mod("welcome")
+
+    from .fast_api_install import router as install_router
+    from .fast_app import router as app_router
+    from .fast_api import router as api_router
+
+    if "modInstaller" in tb_app.id:
+        print("ModInstaller Init")
+        api_router.include_router(install_router)
+
+    app.include_router(app_router)
+    app.include_router(api_router)
+

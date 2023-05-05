@@ -24,4 +24,4 @@ __all__ = [
     "runnable_dict",
     ]
 
-ToolBox_ovner = "root"
+ToolBox_ovner: str = "root"

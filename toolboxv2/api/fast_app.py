@@ -1,16 +1,20 @@
-import os
 import re
 from pathlib import Path
-from fastapi import FastAPI, Request, HTTPException, Depends, APIRouter
+from fastapi import Request, HTTPException, Depends, APIRouter
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer
-from pydantic import BaseModel
-import jwt
-import datetime
 
-from fast_api_main import tb_app
+from toolboxv2 import App
+from toolboxv2.util.toolbox import get_app
 
 router = APIRouter()
+
+router = APIRouter(
+    prefix="/app",
+    tags=["token"],
+    # dependencies=[Depends(get_token_header)],
+    # responses={404: {"description": "Not found"}},
+)
 
 level = 0  # Setzen Sie den Level-Wert, um verschiedene Routen zu aktivieren oder zu deaktivieren
 pattern = re.compile('.png|.jpg|.jpeg|.js|.css|.ico|.gif|.svg|.wasm', re.IGNORECASE)
@@ -18,6 +22,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 
 async def get_current_user(token: str = Depends(oauth2_scheme)):
+    tb_app: App = get_app()
     return tb_app.run_any("cloudM", "validate_jwt", ["token", token, {}])
 
 
@@ -27,7 +32,7 @@ def check_access_level(required_level: int):
     return True
 
 
-@router.get("/")
+@router.get("")
 async def index(access_allowed: bool = Depends(lambda: check_access_level(0))):
     return serve_app_func('index.html')
 
@@ -66,8 +71,8 @@ async def serve_files(path: str, request: Request, access_allowed: bool = Depend
     return serve_app_func(path)
 
 
-def serve_app_func(path: str):
-    request_file_path = Path(path)
+def serve_app_func(path: str, prefix: str = "../app/"):
+    request_file_path = Path(prefix+path)
     ext = request_file_path.suffix
     if not request_file_path.is_file() and not pattern.match(ext):
         path = 'test.html'

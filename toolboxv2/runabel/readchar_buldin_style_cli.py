@@ -4,11 +4,10 @@
 import sys
 import os
 from platform import system
-from toolboxv2.util.Style import Style
 
 # Import public Pages
 import readchar
-from toolboxv2.util.toolbox import App
+from toolboxv2 import App, Style
 
 NAME = "cli"
 

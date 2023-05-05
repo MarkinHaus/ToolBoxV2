@@ -15,7 +15,9 @@ import toolboxv2
 
 import logging
 from dotenv import load_dotenv
+
 load_dotenv()
+
 
 class AppArgs:
     init = None
@@ -51,22 +53,36 @@ class Singleton(type):
     """
 
     _instances = {}
+    _kwargs = {}
+    _args = {}
 
     def __call__(cls, *args, **kwargs):
         if cls not in cls._instances:
-            cls._instances[cls] = super(
-                Singleton, cls).__call__(
-                *args, **kwargs)
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+            cls._args[cls] = args
+            cls._kwargs[cls] = kwargs
         return cls._instances[cls]
 
 
 class App(metaclass=Singleton):
     def __init__(self, prefix: str = "", args=AppArgs().default()):
+        if not prefix:
+            if not os.path.exists("last-app-prefix"):
+                open("last-app-prefix", "a").close()
+            with open("last-app-prefix", "r") as prefix_file:
+                cont = prefix_file.read()
+                if cont:
+                    prefix = cont
+        else:
+            with open("last-app-prefix", "w") as prefix_file:
+                prefix_file.write(prefix)
         t0 = time.time()
         abspath = os.path.abspath(__file__)
         dname = os.path.dirname(abspath).replace("\\util", "")
         os.chdir(dname)
         print(f"Starting ToolBox as {prefix} from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
+
+        debug = False
 
         if "test" in prefix:
             setup_logging(logging.NOTSET, name="toolbox-test", interminal=True,
@@ -77,6 +93,7 @@ class App(metaclass=Singleton):
         elif "debug" in prefix:
             setup_logging(logging.DEBUG, name="toolbox-debug", interminal=True,
                           file_level=logging.WARNING).info("Logger initialized")
+            debug = True
         else:
             setup_logging(logging.ERROR, name=f"toolbox-{prefix}").info("Logger initialized")
         get_logger().info(Style.GREEN("Starting Tool"))
@@ -114,7 +131,7 @@ class App(metaclass=Singleton):
         self.config_fh = FileHandler(name + ".config", keys=self.keys, defaults=defaults)
         self.config_fh.load_file_handler()
 
-        self._debug = False
+        self._debug = debug
 
         self._debug = self.config_fh.get_file_handler(self.keys["debug"])
         self.command_history = self.config_fh.get_file_handler(self.keys["comm-his"])
@@ -122,7 +139,7 @@ class App(metaclass=Singleton):
         self.MACRO = self.config_fh.get_file_handler(self.keys["MACRO"])
         self.MACRO_color = self.config_fh.get_file_handler(self.keys["MACRO_C"])
         self.HELPER = self.config_fh.get_file_handler(self.keys["HELPER"])
-        self.id = self.config_fh.get_file_handler(self.keys["id"])
+        self.id = name  # self.config_fh.get_file_handler(self.keys["id"])
         self.stuf_load = self.config_fh.get_file_handler(self.keys["st-load"])
         self.mlm = self.config_fh.get_file_handler(self.keys["module-load-mode"])
 
@@ -169,7 +186,7 @@ class App(metaclass=Singleton):
     def _coppy_mod(self, content, new_mod_dir, mod_name):
         mode = 'xb'
 
-        self.logger.info(f" coppy mod {mod_name} to {new_mod_dir} size : {sys.getsizeof(content)/8388608:.3f} mb")
+        self.logger.info(f" coppy mod {mod_name} to {new_mod_dir} size : {sys.getsizeof(content) / 8388608:.3f} mb")
 
         if not os.path.exists(new_mod_dir):
             os.makedirs(new_mod_dir)
@@ -209,7 +226,7 @@ class App(metaclass=Singleton):
         if self.dev_modi and loc == "toolboxv2.mods.":
             loc = "toolboxv2.mods_dev."
         if mod_name.lower() in list(self.MOD_LIST.keys()):
-            self.logger.info(f"Reloading mod from : { loc + mod_name}")
+            self.logger.info(f"Reloading mod from : {loc + mod_name}")
             self.remove_mod(mod_name)
         mod = import_module(loc + mod_name)
         mod = getattr(mod, "Tools")
@@ -276,7 +293,7 @@ class App(metaclass=Singleton):
                 except Exception as e:
                     self.logger.error(Style.RED("Error") + f" loading module {mod} {e}")
 
-        self.logger.info(f"opened  : {opened} modules in t-{time.time()-t0}s")
+        self.logger.info(f"opened  : {opened} modules in t-{time.time() - t0}s")
 
         return True
 
@@ -583,3 +600,14 @@ def _initialize_toolBox(init_type, init_from):
     fh.file_handler_storage.close()
 
     logger.info("Done!")
+
+
+def get_app(name=None) -> App:
+    logger = get_logger()
+    logger.info(Style.GREYBG(f"get app requested name: {name}"))
+    if name:
+        app = App(name)
+    else:
+        app = App()
+    logger.info(Style.Bold(f"App instance, returned ID: {app.id}"))
+    return app
