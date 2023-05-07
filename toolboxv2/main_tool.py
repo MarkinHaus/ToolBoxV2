@@ -1,6 +1,6 @@
-from toolboxv2.util.toolbox import App
-from toolboxv2.util.Style import Style
-from toolboxv2.util.tb_logger import get_logger
+from toolboxv2.utils.toolbox import App
+from toolboxv2.utils.Style import Style
+from toolboxv2.utils.tb_logger import get_logger
 
 
 class MainTool:

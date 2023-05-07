@@ -1,0 +1,6 @@
+{
+  "input_variables": ["cosena_code"],
+  "output_parser": null,
+  "template": "Sie haben folgenden Cosena-Code eingegeben: {cosena_code}\n\nIch werde diesen Code nun in Klartext umwandeln und die Bedeutung der einzelnen Codes und ihre Beziehungen erläutern.\n\nCosena-Code:\n\n0x5E2A: Idee (Betrifft Verbreitung von Ideen)\n0x5E2B: Ziel (Vereinfachung der Verbreitung von Ideen)\n0x5E2C: Verbreitung\n0x5E2D: Vereinfachung\n0x5E2E: Repräsentation (in Form von Code)\n0x5E2F: Code\n\nBeziehungen:\n- 0x5E2A betrifft 0x5E2C\n- 0x5E2B ist Ziel von 0x5E2A\n- 0x5E2A wird durch 0x5E2E veranschaulicht\n- 0x5E2E verwendet 0x5E2F\n\nKlartext:\n\nDie Idee (0x5E2A) betrifft die Verbreitung von Ideen (0x5E2C). Das Ziel der Idee (0x5E2B) ist die Vereinfachung der Verbreitung von Ideen (0x5E2D). Die Idee wird durch eine Repräsentation in Form von Code (0x5E2E) veranschaulicht, der den spezifischen Code (0x5E2F) verwendet. text:",
+  "template_format": "f-string"
+}

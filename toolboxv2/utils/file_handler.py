@@ -1,8 +1,8 @@
 import os
 
-from toolboxv2.util.tb_logger import get_logger
-from toolboxv2.util.Style import Style
-from toolboxv2.util.cryp import Code
+from toolboxv2.utils.tb_logger import get_logger
+from toolboxv2.utils.Style import Style
+from toolboxv2.utils.cryp import Code
 
 
 class FileHandler(Code):

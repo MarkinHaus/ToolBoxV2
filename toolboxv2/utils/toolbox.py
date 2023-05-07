@@ -8,9 +8,9 @@ from inspect import signature
 
 import requests
 
-from toolboxv2.util.file_handler import FileHandler
-from toolboxv2.util.tb_logger import setup_logging, get_logger
-from toolboxv2.util.Style import Style
+from toolboxv2.utils.file_handler import FileHandler
+from toolboxv2.utils.tb_logger import setup_logging, get_logger
+from toolboxv2.utils.Style import Style
 import toolboxv2
 
 import logging
@@ -78,7 +78,7 @@ class App(metaclass=Singleton):
                 prefix_file.write(prefix)
         t0 = time.time()
         abspath = os.path.abspath(__file__)
-        dname = os.path.dirname(abspath).replace("\\util", "")
+        dname = os.path.dirname(abspath).replace("\\utils", "")
         os.chdir(dname)
         print(f"Starting ToolBox as {prefix} from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 

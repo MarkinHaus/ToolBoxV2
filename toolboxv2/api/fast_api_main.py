@@ -10,7 +10,7 @@ import time
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from ..util.toolbox import get_app
+from ..utils.toolbox import get_app
 
 app = FastAPI()
 

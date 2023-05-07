@@ -13,6 +13,7 @@ import json
 import urllib.request
 import shutil
 from json import JSONDecoder
+from pathlib import Path
 from urllib import request
 
 from bs4 import BeautifulSoup
@@ -22,7 +23,7 @@ import jwt
 import requests
 import re
 from toolboxv2 import MainTool, FileHandler, App, Style
-from toolboxv2.util.Style import extract_json_strings
+from toolboxv2.utils.Style import extract_json_strings
 
 
 class Tools(MainTool, FileHandler):
@@ -108,19 +109,18 @@ class Tools(MainTool, FileHandler):
         url = version_command + "/get/cloudm/run/Version?command=V:" + self.version
 
         try:
-            self.api_version = requests.get(url).json()["res"]
+            self.api_version = requests.get(url, timeout=5).json()["res"]
             self.print(f"API-Version: {self.api_version}")
         except Exception:
             self.print(Style.RED(f" Error retrieving version from {url}\n\t run : cloudM first-web-connection\n"))
             self.logger.error(f"Error retrieving version from {url}")
 
     def new_module(self, command):
-        if len(command) >= 1:
+        if len(command) < 3:
             print(f"Command {command} invalid : syntax new module-name ?-fh ?-func")
         self.logger.info(f"Crazing new module : {command[1]}")
         boilerplate = """import logging
-from toolboxv2 import MainTool, FileHandler, App
-from toolboxv2.Style import Style
+from toolboxv2 import MainTool, FileHandler, App, Style
 
 
 class Tools(MainTool, FileHandler):
@@ -180,10 +180,11 @@ def show_version(_, app: App):
         else:
             boilerplate += helper_functions_class
             self.logger.info(f"adding Class based")
-        self.print(f"Test existing {self.api_version=} ", end='')
+        self.print(f"Test existing {self.api_version=} ")
 
         self.logger.info(f"Testing connection")
-        self.get_version()
+
+        # self.get_version()
 
         if self.api_version != '404':
             if self.download(["", mod_name]):
@@ -195,8 +196,8 @@ def show_version(_, app: App):
             self.print(Style.Bold(Style.RED("MODULE exists pleas use a other name")))
             return False
 
-        # fle = Path("mods_dev/" + mod_name + ".py")
-        # fle.touch(exist_ok=True)
+        fle = Path("mods_dev/" + mod_name + ".py")
+        fle.touch(exist_ok=True)
         with open(f"mods_dev/" + mod_name + ".py", "wb") as mod_file:
             mod_file.write(
                 bytes(boilerplate.replace('NAME', mod_name), 'ISO-8859-1')
@@ -611,9 +612,9 @@ def installer(url):
 
     for runnable_url in tqdm(data["runnable"], desc="Runnables herunterladen"):
         filename = os.path.basename(runnable_url)
-        urllib.request.urlretrieve(runnable_url,  f"runable/{filename}")
+        urllib.request.urlretrieve(runnable_url, f"runable/{filename}")
 
-    shutil.unpack_archive(data["additional-dirs"],  "./")
+    shutil.unpack_archive(data["additional-dirs"], "./")
 
     # Herunterladen der Requirements-Datei
     requirements_url = data["requirements"]
@@ -622,6 +623,7 @@ def installer(url):
 
     # Installieren der Requirements mit pip
     subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", requirements_filename])
+
 
 def delete_package(url):
     if isinstance(url, list):

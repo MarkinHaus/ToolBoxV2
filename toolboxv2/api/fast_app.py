@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer
 
 from toolboxv2 import App
-from toolboxv2.util.toolbox import get_app
+from toolboxv2.utils.toolbox import get_app
 
 router = APIRouter()
 

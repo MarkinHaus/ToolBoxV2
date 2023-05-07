@@ -5,7 +5,7 @@ import os
 from logging.handlers import SocketHandler
 from math import inf as infinity
 
-from toolboxv2.util.Style import Style, remove_styles
+from toolboxv2.utils.Style import Style, remove_styles
 
 loggerNameOfToolboxv2 = 'toolboxV2'
 

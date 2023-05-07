@@ -26,7 +26,7 @@ def download_file(file_name: str):
     if len(directory) > 1:
         directory = directory[0]
 
-        if directory not in ["mods", "runnable", "tests", "data", "requirements", "pconfig"]:
+        if directory not in ["mods", "runnable", "tests", "data", "requirements", "pconfig", "utils"]:
             get_logger().warning(f"{file_path} not public")
             return JSONResponse(content={"message": f"directory not public {directory}"}, status_code=100)
 

@@ -116,6 +116,4 @@ ENV/
 /toolboxv2/.config
 *.config
 
-# API Keys
-/toolboxv2/isaa_data/api_keys.py
-/toolboxv2/isaa_data/api_keys
+

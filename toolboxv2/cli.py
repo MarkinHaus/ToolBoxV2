@@ -6,12 +6,12 @@ from platform import system
 
 # Import public Pages
 from toolboxv2 import App, MainTool, runnable_dict
-from toolboxv2.util.toolbox import get_app
+from toolboxv2.utils.toolbox import get_app
 
 try:
-    from toolboxv2.util.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
+    from toolboxv2.utils.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
 except ModuleNotFoundError:
-    from .util.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
+    from .utils.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
 
 import os
 import subprocess
@@ -244,7 +244,7 @@ def main():
         init_args += " ".join(sys.argv)
     init_args = init_args.split(" ")
 
-    tb_app = App(args.modi+'-'+args.name, args=args)
+    tb_app = App(args.name, args=args)
 
     if args.log_editor:
         edit_logs()
@@ -274,7 +274,7 @@ def main():
     elif args.modi.lower() in runnable_dict.keys():
         runnable_dict[args.modi.lower()](tb_app, args)
     else:
-        print(f"Modi : {args.modi} not found on device")
+        print(f"Modi : [{args.modi}] not found on device installed modi : {runnable_dict.keys()}")
 
     if args.modi == "kill-app":
         app_pid = str(os.getpid())

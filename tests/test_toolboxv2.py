@@ -6,10 +6,10 @@ import unittest
 from toolboxv2 import App, MainTool, FileHandler, Style
 from rich.traceback import install
 
-from toolboxv2.util.cryp import Code
+from toolboxv2.utils.cryp import Code
 import time
 
-from toolboxv2.util.toolbox import ApiOb
+from toolboxv2.utils.toolbox import ApiOb
 
 install(show_locals=True)
 

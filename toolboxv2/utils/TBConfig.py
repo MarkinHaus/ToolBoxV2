@@ -2,25 +2,10 @@ import os
 from dotenv import load_dotenv
 
 from toolboxv2 import get_logger
+from toolboxv2.utils.toolbox import Singleton
 
 # Load environment variables from .env file
 load_dotenv()
-
-
-class Singleton(type):
-    """
-    Singleton metaclass for ensuring only one instance of a class.
-    """
-
-    _instances = {}
-
-    def __call__(cls, *args, **kwargs):
-        if cls not in cls._instances:
-            cls._instances[cls] = super(
-                Singleton, cls).__call__(
-                *args, **kwargs)
-        return cls._instances[cls]
-
 
 class ConfigIsaa:
     name: str = "isaa"
