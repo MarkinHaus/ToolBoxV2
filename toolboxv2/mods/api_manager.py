@@ -81,8 +81,8 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         self.print(app.pretty_print(api_data))
         self.print(api_data)
-        g = f"uvicorn fast_api:app --host {api_data['host']}" \
-            f" --port {api_data['port']} --header data:{api_name}.config:{api_name}"
+        g = f"uvicorn toolboxv2.api.fast_api_main:app --host {api_data['host']}" \
+            f" --port {api_data['port']} --header data:{api_name}.config:{api_name} {'--reload' if app.debug else ''}"
         print(g)
         os.system(g)
 

@@ -1,23 +1,18 @@
 """Console script for toolboxv2."""
-import logging
 # Import default Pages
-import os
 import sys
 import argparse
-import socketserver
 from platform import system
 
 # Import public Pages
-from toolboxv2 import App, run_cli, MainTool
+from toolboxv2 import App, MainTool, runnable_dict
+from toolboxv2.util.toolbox import get_app
+
 try:
-    from toolboxv2.app.serve_app import serve_app_change_dir
+    from toolboxv2.util.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
 except ModuleNotFoundError:
-    print("Please install the toolboxv2 app")
-try:
-    from toolboxv2.isaa_talk import run_isaa_verb
-except ModuleNotFoundError:
-    print("Please install the toolboxv2 isaa")
-from toolboxv2.util import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
+    from .util.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
+
 import os
 import subprocess
 
@@ -120,6 +115,10 @@ def parse_args():
                         help="get version of ToolBox | ToolBoxV2 -v -n (mod-name)",
                         action="store_true")
 
+    parser.add_argument("--speak",
+                        help="Isaa speak mode",
+                        action="store_true")
+
     parser.add_argument('-mvn', '--mod-version-name',
                         metavar="name",
                         type=str,
@@ -135,7 +134,6 @@ def parse_args():
     parser.add_argument("-m", "--modi",
                         type=str,
                         help="Start ToolBox in different modes",
-                        choices=["cli", "dev", "api", "app", "kill-app", "set-up", "isaa"],
                         default="cli")
 
     parser.add_argument("-p", "--port",
@@ -264,7 +262,7 @@ def main():
                     if isinstance(tb_app.MOD_LIST[mod_name], MainTool):
                         print(f"{mod_name} : {tb_app.MOD_LIST[mod_name].version}")
 
-    if args.modi == 'set-up':
+    if args.modi == 'set-up-service':
         print("1. App")
         setup = input("Set up for :")
         if setup == "1":
@@ -272,26 +270,13 @@ def main():
 
     if args.modi == 'api':
         tb_app.run_any('api_manager', 'start-api', ['start-api', args.name])
-    if args.modi == 'dev':
-        dev_helper()
-    if args.modi == 'app':
-        print(args.host, args.port)
-        serve_app_change_dir()
-        # gunicorn_config.py
-        # bind = "0.0.0.0:8080"
-        # workers = 4
-        # gunicorn -c gunicorn_config.py app:serve_app
 
-        subprocess.run(["sudo", "gunicorn", "--bind", f"{args.host}:{args.port}", "serve_app:app"])
-
-    if args.modi == 'cli':
-        run_cli(tb_app)
-
-    if args.modi == 'isaa':
-        run_isaa_verb(tb_app)
+    elif args.modi.lower() in runnable_dict.keys():
+        runnable_dict[args.modi.lower()](tb_app, args)
+    else:
+        print(f"Modi : {args.modi} not found on device")
 
     if args.modi == "kill-app":
-
         app_pid = str(os.getpid())
         print(f"Exit app {app_pid}")
         if system() == "Windows":

@@ -5,7 +5,7 @@ import os
 from logging.handlers import SocketHandler
 from math import inf as infinity
 
-from toolboxv2.Style import Style, remove_styles
+from toolboxv2.util.Style import Style, remove_styles
 
 loggerNameOfToolboxv2 = 'toolboxV2'
 
@@ -20,9 +20,9 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
     if not file_level:
         file_level = level
 
-    if not os.path.exists(f"./logs"):
-        os.makedirs(f"./logs")
-        open(f"logs/Logs.info", "a").close()
+    if not os.path.exists(f"../logs"):
+        os.mkdir(f"../logs")
+        open(f"../logs/Logs.info", "a").close()
 
     loggerNameOfToolboxv2 = name
 
@@ -53,7 +53,7 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
         "P": 62435
     }
 
-    with open(f"logs/Logs.info", "r") as li:
+    with open(f"../logs/Logs.info", "r") as li:
         log_info_data_str = li.read()
         try:
             log_info_data = eval(log_info_data_str)
@@ -64,23 +64,23 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
         if filename not in log_info_data.keys():
             log_info_data[filename] = 0
 
-        if not os.path.exists(f"logs/{filename}.log"):
+        if not os.path.exists(f"../logs/{filename}.log"):
             log_info_data[filename] = 0
             print("new log file")
 
-        if os.path.exists(f"logs/{filename}.log"):
+        if os.path.exists(f"../logs/{filename}.log"):
             log_info_data[filename] += 1
 
-            while os.path.exists(f"logs/{filename}#{log_info_data[filename]}.log"):
+            while os.path.exists(f"../logs/{filename}#{log_info_data[filename]}.log"):
                 log_info_data[filename] += 1
 
             try:
-                os.rename(f"logs/{filename}.log",
-                          f"logs/{filename}#{log_info_data[filename]}.log")
+                os.rename(f"../logs/{filename}.log",
+                          f"../logs/{filename}#{log_info_data[filename]}.log")
             except PermissionError:
-                print(Style.RED(Style.Bold(f"Could not rename log file appending on {filename}")))
+                print(Style.YELLOW(Style.Bold(f"Could not rename log file appending on {filename}")))
 
-    with open(f"logs/Logs.info", "w") as li:
+    with open(f"../logs/Logs.info", "w") as li:
         if len(log_info_data.keys()) >= 7:
             log_info_data = {
                 filename: log_info_data[filename],
@@ -90,13 +90,13 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
 
         li.write(str(log_info_data))
 
-    with open(f"logs/{filename}.log", "a"):
+    with open(f"../logs/{filename}.log", "a"):
         pass
 
     if interminal:
         logging.basicConfig(level=level, format=f"%(asctime)s %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     else:
-        logging.basicConfig(level=level, filename=f"logs/{filename}.log",
+        logging.basicConfig(level=level, filename=f"../logs/{filename}.log",
                             format='%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
                             datefmt="%Y-%m-%d %H:%M:%S"
                             )
@@ -107,7 +107,7 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
                                   '%(message)s')
 
     if interminal:
-        handler = logging.FileHandler(f"logs/{filename}.log")
+        handler = logging.FileHandler(f"../logs/{filename}.log")
         handler.setFormatter(formatter)
         handler.setLevel(file_level)
         logger.addHandler(handler)

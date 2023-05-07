@@ -1,4 +1,8 @@
 import os
+import random
+import re
+import time
+from json import JSONDecoder
 from platform import system
 from time import sleep
 
@@ -296,3 +300,78 @@ def remove_styles(text: str):
         if style in text:
             text = text.replace(style, '')
     return text
+
+def print_to_console(
+    title,
+    title_color,
+    content,
+    min_typing_speed=0.05,
+    max_typing_speed=0.01):
+    print(title_color + title + " " + Style.BLUE(""), end="")
+    if content:
+        if isinstance(content, list):
+            content = " ".join(content)
+        if not isinstance(content, str):
+            print(f"SYSTEM NO STR type : {type(content)}")
+            print(content)
+            return
+        words = content.split()
+        for i, word in enumerate(words):
+            print(word, end="", flush=True)
+            if i < len(words) - 1:
+                print(" ", end="", flush=True)
+            typing_speed = random.uniform(min_typing_speed, max_typing_speed)
+            time.sleep(typing_speed)
+            # type faster after each word
+            min_typing_speed = min_typing_speed * 0.95
+            max_typing_speed = max_typing_speed * 0.95
+    print()
+
+
+class JSONExtractor(JSONDecoder):
+    def decode(self, s):
+        self.raw_decode(s)
+        return s
+
+    def raw_decode(self, s):
+        try:
+            obj, end = super().raw_decode(s)
+            return obj, end
+        except ValueError as e:
+            return None, 0
+
+def extract_json_strings(text):
+    json_strings = []
+    extractor = JSONExtractor()
+
+    # Ersetzt einfache Anführungszeichen durch doppelte Anführungszeichen
+    text = re.sub(r"(?<!\\)'", "\"", text)
+
+    start = 0
+    while True:
+        match = re.search(r'\{', text[start:])
+        if not match:
+            break
+
+        start += match.start()
+        decoded, end = extractor.raw_decode(text[start:])
+        if decoded is not None:
+            json_strings.append(text[start:start + end])
+            start += end
+        else:
+            start += 1
+
+    return json_strings
+
+def extract_python_code(text):
+    python_code_blocks = []
+
+    # Finden Sie alle Codeblöcke, die mit ```python beginnen und mit ``` enden
+    code_blocks = re.findall(r'```python(.*?)```', text, re.DOTALL)
+
+    for block in code_blocks:
+        # Entfernen Sie führende und nachfolgende Leerzeichen
+        block = block.strip()
+        python_code_blocks.append(block)
+
+    return python_code_blocks

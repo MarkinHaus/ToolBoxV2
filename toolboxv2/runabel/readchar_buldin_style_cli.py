@@ -4,12 +4,12 @@
 import sys
 import os
 from platform import system
-from .Style import Style
 
 # Import public Pages
 import readchar
-from .toolbox import App
+from toolboxv2 import App, Style
 
+NAME = "cli"
 
 def user_input(app: App):
     get_input = True
@@ -222,7 +222,7 @@ def command_runner(app, command):
         print(Style.YELLOW("[-] Unknown command:") + app.pretty_print(command))
 
 
-def run_cli(app: App):
+def run(app: App, *args):
     while app.alive:
         print("", end="" + "->>\r")
         command = user_input(app)

@@ -141,5 +141,4 @@ class Tools(MainTool, FileHandler):
 
         return del_list
 
-# TODO: new futon add + lode (+=) an array
 # BP in #addLodeFucktionBulprint

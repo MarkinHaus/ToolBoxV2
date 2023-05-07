@@ -1,0 +1,14 @@
+fastapi~=0.86.0
+pyjwt~=2.6.0
+pydantic~=1.10.7
+flask~=2.2.5
+redis~=4.3.6
+requests~=2.28.2
+beautifulsoup4~=4.12.2
+tqdm~=4.64.1
+python-dotenv~=0.21.1
+readchar~=4.0.5
+rich~=12.6.0
+coverage~=7.0.5
+setuptools~=67.6.1
+starlette~=0.20.4

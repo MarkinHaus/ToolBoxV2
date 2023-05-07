@@ -1,8 +1,8 @@
 import os
 
-from toolboxv2.util import get_logger
-from toolboxv2.Style import Style
-from toolboxv2.cryp import Code
+from toolboxv2.util.tb_logger import get_logger
+from toolboxv2.util.Style import Style
+from toolboxv2.util.cryp import Code
 
 
 class FileHandler(Code):
@@ -203,3 +203,35 @@ class FileHandler(Code):
     def delete_file(self):
         os.remove(self.file_handler_file_prefix + self.file_handler_filename)
         get_logger().warning(Style.GREEN(f"File deleted {self.file_handler_file_prefix + self.file_handler_filename}"))
+
+
+
+"""
+Klasse: FileHandler
+Die FileHandler Klasse ist ein Werkzeug zum Verwalten von Dateien, insbesondere zum Speichern, Laden und Verwalten von Schlüssel-Wert-Paaren in Konfigurationsdateien. Sie erbt von der Code Klasse und verfügt über Funktionen zum Öffnen, Schließen, Speichern, Laden und Löschen von Dateien. Es gibt auch Funktionen, um Werte basierend auf ihren Schlüsseln hinzuzufügen, abzurufen oder Standardwerte festzulegen.
+
+Funktionen:
+
+    __init__(self, filename, name='mainTool', keys=None, defaults=None): Initialisiert die FileHandler-Klasse mit dem angegebenen Dateinamen, Namen und optionalen Schlüsseln und Standardwerten.
+
+    _open_file_handler(self, mode: str, rdu): Eine interne Funktion, die zum Öffnen einer Datei in einem bestimmten Modus verwendet wird. Diese Funktion sollte nicht von außen aufgerufen werden.
+
+    open_s_file_handler(self): Öffnet die Datei im Schreibmodus.
+
+    open_l_file_handler(self): Öffnet die Datei im Lesemodus.
+
+    save_file_handler(self): Speichert die in der Klasse gespeicherten Schlüssel-Wert-Paare in der Datei.
+
+    add_to_save_file_handler(self, key: str, value: str): Fügt ein neues Schlüssel-Wert-Paar hinzu, das in der Datei gespeichert werden soll.
+
+    load_file_handler(self): Lädt die Schlüssel-Wert-Paare aus der Datei in die Klasse.
+
+    get_file_handler(self, obj: str) -> str or None: Gibt den Wert für den angegebenen Schlüssel zurück, falls vorhanden.
+
+    set_defaults_keys_file_handler(self, keys: dict, defaults: dict): Setzt die Standardwerte und Schlüssel für die Klasse.
+
+    delete_file(self): Löscht die Datei, auf die sich die Klasse bezieht.
+
+Die Funktionen, die von außen aufgerufen werden sollten, sind __init__, open_s_file_handler, open_l_file_handler, save_file_handler, add_to_save_file_handler, load_file_handler, get_file_handler, set_defaults_keys_file_handler und delete_file. Die Funktion _open_file_handler sollte nicht direkt aufgerufen werden, da sie eine interne Hilfsfunktion ist.
+
+"""
