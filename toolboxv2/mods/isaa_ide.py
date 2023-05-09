@@ -42,7 +42,7 @@ class Tools(MainTool):
             "copy": ["copy(src, dest)", "Copy a file from the source path to the destination path."]
         }
 
-        self.scope = "isaa-directory/"
+        self.scope = "data/isaa_data/work/"
 
         self.open_file = ""
 
@@ -199,8 +199,9 @@ class Tools(MainTool):
         """
         Read the contents of the file at the specified path.
         """
+        self.print(f"read0 {path}")
         path = self.scope + list_s_str_f(path)
-        self.print("read")
+        self.print(f"read {path}")
         if not os.path.exists(path):
             return f"Error: {path} does not exist."
 
@@ -259,6 +260,7 @@ class Tools(MainTool):
             return self.list([path])
 
         elif command == "read":
+            print(input_list)
             path = input_list[1]
             return self.read([path])
 
@@ -269,14 +271,8 @@ class Tools(MainTool):
 
         elif command in "write":
             path = input_list[1]
-            if isinstance(input_list[2], str):
-                input_list[2] = 0
-            if isinstance(input_list[3], str):
-                input_list[3] = -1
-            start_line = int(input_list[2])
-            end_line = int(input_list[3])
-            text = " ".join(input_list[4:])
-            return self.insert_edit([path, start_line, end_line, text])
+            text = " ".join(input_list[2:])
+            return self.insert_edit([path, text])
 
         elif command == "search":
             path = input_list[1]

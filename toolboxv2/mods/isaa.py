@@ -39,8 +39,32 @@ from langchain.utilities import BashProcess
 from langchain.utilities.wolfram_alpha import WolframAlphaAPIWrapper
 from langchain.tools.ifttt import IFTTTWebhook
 
+from langchain.vectorstores import Chroma
+
 from toolboxv2.utils.Style import print_to_console
-from toolboxv2.utils.toolbox import Singleton
+from toolboxv2.utils.toolbox import Singleton, get_app
+
+from langchain.document_loaders import PyPDFLoader
+
+# Loaders
+from langchain.schema import Document
+
+# Splitters
+from langchain.text_splitter import RecursiveCharacterTextSplitter, CharacterTextSplitter
+
+# Model
+from langchain.chat_models import ChatOpenAI
+
+# Embedding Support
+from langchain.vectorstores import FAISS
+from langchain.embeddings import OpenAIEmbeddings, HuggingFaceEmbeddings
+
+# Summarizer we'll use for Map Reduce
+from langchain.chains.summarize import load_summarize_chain
+
+# Data Science
+import numpy as np
+from sklearn.cluster import KMeans, AgglomerativeClustering
 
 
 def get_ada_embedding(text):
@@ -111,20 +135,6 @@ class AgentChain(metaclass=Singleton):
                 if "args" not in task:
                     print(f"Die Aufgabe {task_idx} in der Chain '{chain_name}' hat keinen 'args'-Schlüssel.")
 
-    def load_json(self, file_path):
-        try:
-            with open(file_path, "r") as file:
-                data = json.load(file)
-
-            for chain_name, chain_tasks in data.items():
-                self.add(chain_name, chain_tasks)
-        except FileNotFoundError:
-            print(f"Die Datei '{file_path}' wurde nicht gefunden.")
-        except json.JSONDecodeError:
-            print(f"Die Datei '{file_path}' hat ein ungültiges JSON-Format.")
-        except Exception as e:
-            print(f"Beim Laden der JSON-Datei '{file_path}' ist ein Fehler aufgetreten: {e}")
-
     def load_from_file(self, chain_name=None):
         directory = "data/isaa_data/chains"
 
@@ -145,8 +155,9 @@ class AgentChain(metaclass=Singleton):
             if not file.endswith(".json"):
                 continue
             try:
-                with open(file_path, "r") as f:
-                    chain_data = json.load(f)
+                with open(file_path, "r", encoding='utf-8') as f:
+                    dat = f.read()
+                    chain_data = json.loads(dat)
                 chain_name = os.path.splitext(file)[0]
                 print(f"Loading : {chain_name}")
                 self.add(chain_name, chain_data["tasks"])
@@ -175,7 +186,7 @@ class AgentChain(metaclass=Singleton):
             chain_data = {"name": name, "tasks": tasks}
 
             try:
-                with open(file_path, "w") as f:
+                with open(file_path, "w", encoding='utf-8') as f:
                     print(f"Saving : {name}")
                     json.dump(chain_data, f, ensure_ascii=False, indent=2)
             except Exception as e:
@@ -236,6 +247,255 @@ class PineconeMemory(metaclass=Singleton):
 
     def get_stats(self):
         return self.index.describe_index_stats()
+
+
+class AIContextMemory(metaclass=Singleton):
+    def __init__(self, model_name='sentence-transformers/all-MiniLM-L6-v2'):  # "MetaIX/GPT4-X-Alpaca-30B-4bit"):
+        self.memory = {
+            'rep': []
+        }
+        self.embedding = HuggingFaceEmbeddings(model_name=model_name)
+        self.vector_store = {}
+
+    def split_text(self, name, text, chunks=0, overlap_percentage=7.5, separators=None,
+                   chunk_size=None):  # ["class", "def"]
+        docs = []
+        if not chunk_size:
+            chunk_size = int(len(text) / (chunks + 1))
+
+        chunk_overlap = int(chunk_size * (overlap_percentage / 100))
+
+        if isinstance(separators, str):
+            if separators == 'code':
+                separators = ["class", "def", "\n\n"]
+            if separators == '':
+                docs = CharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap).split_text(
+                    text)
+
+        if not docs:
+            docs = RecursiveCharacterTextSplitter(separators=separators,
+                                                  chunk_size=chunk_size,
+                                                  chunk_overlap=chunk_overlap).split_text(text)
+
+        if not name in self.vector_store.keys():
+            self.vector_store[name] = self.get_sto_bo(name)
+
+        self.vector_store[name]['text'] = docs
+
+    @staticmethod
+    def get_sto_bo(name):
+        return {'text': [],
+                'full-text-len': 0,
+                'vectors': [],
+                'db': None,
+                'len-represent': 0,
+                'db-path': f'data/isaa_data/Memory/{name}/',
+                'represent': []}
+
+    def hydatate_vectors(self, name):
+
+        Chroma(collection_name=name,
+               embedding_function=self.embedding,
+               persist_directory=self.vector_store[name][
+                   'db-path']).search()
+
+        # .delete_collection()
+
+    def init_store(self, name):
+        if not name in self.vector_store.keys():
+            self.vector_store[name] = self.get_sto_bo(name)
+        lo = False
+        if not os.path.exists(self.vector_store[name]['db-path']):
+            os.makedirs(f"data/isaa_data/Memory/{name}/")
+        else:
+            lo = True
+        self.vector_store[name]['db'] = Chroma(collection_name=name,
+                                               embedding_function=self.embedding,
+                                               persist_directory=self.vector_store[name][
+                                                   'db-path'])
+
+        if lo:
+            self.vector_store[name]['db'].get()
+            p = self.vector_store[name]['db-path'] + "represent.vec"
+            if os.path.exists(p):
+                with open(p, "r") as f:
+                    res = f.read()
+                self.vector_store[name]['represent'] = eval(res)
+
+    def load_all(self):
+        def list_folders_on_same_level(path):
+            """
+            List all folders on the same level in the directory at the specified path.
+            """
+            if not os.path.exists(path):
+                return f"Error: {path} does not exist."
+
+            folders = []
+            parent_dir = os.path.dirname(path)
+            for dir in os.listdir(parent_dir):
+                if os.path.isdir(os.path.join(parent_dir, dir)) and os.path.join(parent_dir, dir) != path:
+                    folders.append(dir)
+
+            return folders
+
+        for folder in list_folders_on_same_level("data/isaa_data/Memory/"):
+            self.init_store(folder)
+
+    def add_data(self, name, data=None):
+
+        if not name in self.vector_store.keys():
+            self.init_store(name)
+        if data is None:
+            data = []
+
+        if data:
+            self.vector_store[name]['text'] = data
+        if not name in self.vector_store.keys():
+            self.vector_store[name] = self.get_sto_bo(name)
+
+        if not self.vector_store[name]['db']:
+            self.init_store(name)
+
+        if isinstance(self.vector_store[name]['text'], str):
+            vec = self.embedding.embed_query(self.vector_store[name]['text'])
+            self.vector_store[name]['db'].add_texts([self.vector_store[name]['text']])
+            self.vector_store[name]['vectors'].append(vec)
+
+        if isinstance(self.vector_store[name]['text'], list):
+            self.vector_store[name]['db'].add_texts(self.vector_store[name]['text'])
+            for vec in self.embedding.embed_documents(self.vector_store[name]['text']):
+                self.vector_store[name]['vectors'].append(vec)
+
+        data = self.vector_store[name]['text']
+        if isinstance(data, str):
+            data = [data]
+
+        for text_c in data:
+            self.vector_store[name]['full-text-len'] += len(text_c)
+
+        self.vector_store[name]['db'].persist()
+
+    def stor_rep(self, name):
+        if not name in self.vector_store.keys():
+            return
+
+        p = self.vector_store[name]['db-path'] + "represent.vec"
+
+        if not os.path.exists(p):
+            open(p, "a").close()
+        with open(p, "w") as f:
+            f.write(str(self.vector_store[name]['represent']))
+
+    def crate_live_context(self, name, algorithm='KMeans', num_clusters=None):
+        if not name in self.vector_store.keys():
+            self.vector_store[name] = self.get_sto_bo(name)
+
+        if not self.vector_store[name]['vectors']:
+            print("vector_store empty")
+            return
+
+        if num_clusters is None:
+            def f(x):
+                if not x:
+                    return 0
+                if x <= 48275:
+                    return 2
+                elif x <= 139472:
+                    slope = (10 - 2) / (139472 - 48275)
+                    return int(2 + slope * (x - 48275))
+                else:
+                    slope = (15 - 10) / (939472 - 139472)
+                    return int(10 + slope * (x - 139472))
+
+            num_clusters = f(self.vector_store[name]['full-text-len'])
+        if algorithm == 'AgglomerativeClustering':
+
+            cluster = AgglomerativeClustering(n_clusters=num_clusters).fit(self.vector_store[name]['vectors'])
+        elif algorithm == 'KMeans':
+            cluster = KMeans(n_clusters=num_clusters, random_state=42).fit(self.vector_store[name]['vectors'])
+        else:
+            print("No algorithm found")
+            return
+
+        closest_indices = []
+
+        # Loop through the number of clusters you have
+        for i in range(num_clusters):
+            # Get the list of distances from that particular cluster center
+            distances = np.linalg.norm(self.vector_store[name]['vectors'] - cluster.cluster_centers_[i], axis=1)
+
+            # Find the list position of the closest one (using argmin to find the smallest distance)
+            closest_index = np.argmin(distances)
+
+            # Append that position to your closest indices list
+            closest_indices.append(closest_index)
+        for index_ in sorted(closest_indices):
+            self.vector_store[name]['represent'].append(self.vector_store[name]['vectors'][index_])
+        self.vector_store[name]['len-represent'] = len(self.vector_store[name]['represent'])
+        self.memory[name + '-tl'] = self.vector_store[name]['full-text-len']
+        self.stor_rep(name)
+
+    def get_best_fit_memory(self, text):
+
+        request_vector = self.embedding.embed_query(text)
+
+        self.memory = {
+            "max": 0,
+            "min": 0,
+            "key": ""
+        }
+
+        for key, memory in self.vector_store.items():
+            if not memory['represent']:
+                self.memory[key + '-tl'] = memory['full-text-len']
+                self.crate_live_context(key)
+            if not key + '-tl' in memory.keys():
+                self.crate_live_context(key)
+            if self.memory[key + '-tl'] < memory['full-text-len']:
+                self.crate_live_context(key)
+            # get vectors
+            self.memory[key] = []
+            do = False
+            for representation in memory['represent']:
+                do = True
+                self.memory[key].append(np.dot(representation, request_vector))
+
+            if do:
+                local_max = max(self.memory[key])
+                local_min = min(self.memory[key])
+                if self.memory['min'] == 0:
+                    self.memory['min'] = local_min + 0.000001
+                if local_max > self.memory['max'] and local_min < self.memory['min']:
+                    self.memory['key'] = key
+                    self.memory['min'] = local_min
+                    self.memory['max'] = local_max
+            else:
+                self.memory['key'] = key
+
+        return self.memory['key']
+
+    def search(self, name, text, marginal=False):
+        if not name in self.vector_store.keys():
+            self.vector_store[name] = self.get_sto_bo(name)
+
+        if not self.vector_store[name]['db']:
+            self.init_store(name)
+            return []
+
+        if marginal:
+            return self.vector_store[name]['db'].max_marginal_relevance_search(text)
+
+        return self.vector_store[name]['db'].similarity_search_with_score(text)
+
+    def get_context_for(self, text, marginal=False):
+        mem_name = self.get_best_fit_memory(text)
+
+        print("mem_name", self.memory)
+
+        data = self.search(mem_name, text, marginal=False)
+
+        return data
+
 
 
 class CollectiveMemory(metaclass=Singleton):
@@ -326,7 +586,7 @@ class ObservationMemory():
         tok = 0
         for line in data.split('\n'):
             if line:
-                ntok = len(tiktoken.encoding_for_model(self.model_name).encode(line))
+                ntok = get_tool(get_app()).get_OpenAI_models(self.model_name).get_num_tokens(line)
                 self.memory_data.append({'data': line, 'token-count': ntok, 'vector': []})
                 tok += ntok
 
@@ -339,16 +599,20 @@ class ObservationMemory():
     def cut(self):
 
         tok = 0
-
+        all_mem = ""
         while self.tokens > self.max_length:
+            if len(self.memory_data) == 0:
+                break
             # print("Tokens in ShortTermMemory:", self.tokens, end=" | ")
             memory = self.memory_data[-1]
             self.add_to_static.append(memory)
             tok += memory['token-count']
             self.tokens -= memory['token-count']
-            CollectiveMemory().text_add(memory)
+            all_mem += memory['data'] + '\n'
             self.memory_data.remove(memory)
             # print("Removed Tokens", memory['token-count'])
+
+        get_tool(get_app()).get_context_memory().add_data('main', all_mem)
 
         print(f"Removed ~ {tok} tokens from ObservationMemory tokens in use: {self.tokens} ")
 
@@ -389,17 +653,20 @@ class ShortTermMemory:
 
         tok = 0
 
+        all_mem = ""
         while self.tokens > self.max_length:
-            # print("Tokens in ShortTermMemory:", self.tokens, end=" | ")
             if len(self.memory_data) == 0:
                 break
+            # print("Tokens in ShortTermMemory:", self.tokens, end=" | ")
             memory = self.memory_data[-1]
             self.add_to_static.append(memory)
             tok += memory['token-count']
             self.tokens -= memory['token-count']
-            CollectiveMemory().text_add(memory)
+            all_mem += memory['data'] + '\n'
             self.memory_data.remove(memory)
             # print("Removed Tokens", memory['token-count'])
+
+        get_tool(get_app()).get_context_memory().add_data('main', all_mem)
 
         print(f"\nRemoved ~ {tok} tokens from {self.name} tokens in use: {self.tokens} max : {self.max_length}")
 
@@ -428,21 +695,22 @@ class ShortTermMemory:
 
         # print("Tokens add to ShortTermMemory:", tok, " max is:", self.max_length)
 
+    #    text-davinci-003
+    #    text-curie-001
+    #    text-babbage-001
+    #    text-ada-001
 
-#    text-davinci-003
-#    text-curie-001
-#    text-babbage-001
-#    text-ada-001
+
 class AgentConfig:
-    available_modes = ['talk', 'tool', 'conversation', 'free', 'planning', 'execution', 'generate']
+    available_modes = ['talk', 'tools', 'conversation', 'free', 'planning', 'execution', 'generate']
     max_tokens = 4097
 
     capabilities = """1. Invoke Agents: Isaa should be able to invoke and interact with various agents and tools, seamlessly integrating their expertise and functionality into its own responses and solutions.
-2. Context Switching: Isaa should be capable of switching between different agents or tools depending on the user's needs and the requirements of the task at hand.
-3. Agent Coordination: Isaa should effectively coordinate the actions and outputs of multiple agents and tools, ensuring a cohesive and unified response to the user's requests.
-4. Error Handling: Isaa should be able to detect and handle errors or issues that may arise while working with agents and tools, providing alternative solutions or gracefully recovering from failures.
-5. Agent Learning: Isaa should continuously learn from its interactions with various agents and tools, refining its understanding of their capabilities and improving its ability to utilize them effectively.
-6. Performance Evaluation: Isaa should regularly evaluate the performance of the agents and tools it interacts with, identifying areas for improvement and optimizing their use in future tasks."""
+    2. Context Switching: Isaa should be capable of switching between different agents or tools depending on the user's needs and the requirements of the task at hand.
+    3. Agent Coordination: Isaa should effectively coordinate the actions and outputs of multiple agents and tools, ensuring a cohesive and unified response to the user's requests.
+    4. Error Handling: Isaa should be able to detect and handle errors or issues that may arise while working with agents and tools, providing alternative solutions or gracefully recovering from failures.
+    5. Agent Learning: Isaa should continuously learn from its interactions with various agents and tools, refining its understanding of their capabilities and improving its ability to utilize them effectively.
+    6. Performance Evaluation: Isaa should regularly evaluate the performance of the agents and tools it interacts with, identifying areas for improvement and optimizing their use in future tasks."""
 
     def __init__(self):
         self.name: str = 'agentConfig'
@@ -550,7 +818,7 @@ class AgentConfig:
 
         prompt = self.get_prompt()
 
-        pl = len(tiktoken.encoding_for_model(self.model_name).encode(prompt))
+        pl = get_tool(get_app()).get_OpenAI_models(self.model_name).get_num_tokens(str(prompt)) + 200
         self.token_left = self.max_tokens - pl
         if self.token_left < 0:
             print(f"No tokens left cut short_mem mem to {self.token_left * -1}")
@@ -1273,6 +1541,9 @@ class Tools(MainTool, FileHandler):
                 "search": {"func": lambda x: run_agent('search', x),
                            "description": "Run agent to search the web for relavent informations imput question"
                     , "format": "search(<task>)"},
+                "programming": {"func": lambda x: run_agent('code', x),
+                                "description": "Run agent to generate code input Task"
+                    , "format": "programming(<task>)"},
                 # "userReminder": {"func": lambda x: run_agent('reminder', x),
                 #             "description": "Run agent to schedule users live"
                 #             , "format": "userReminder(<task>)"},
@@ -1494,6 +1765,14 @@ class Tools(MainTool, FileHandler):
 
             config.stop_sequence = ["\n\n\n"]
 
+        if name == "code":
+            config. \
+                set_mode("free") \
+                .set_model_name("code-davinci-edit-001") \
+                .set_max_iterations(3) \
+                .set_completion_mode("edit") \
+                .stream = True
+
         if name.startswith("chain_search"):
 
             config.mode: str = "tools"
@@ -1563,6 +1842,10 @@ class Tools(MainTool, FileHandler):
 
         return config
 
+    def remove_agent_config(self, name):
+        del self.config[f'agent-config-{name}']
+        self.config["agents-name-lsit"].remove(name)
+
     def get_agent_config_class(self, agent_name="Normal") -> AgentConfig():
 
         if "agents-name-lsit" not in self.config.keys():
@@ -1629,7 +1912,7 @@ class Tools(MainTool, FileHandler):
                     ret = ret.choices[0].message.content
 
             elif config.completion_mode == 'edit':
-
+                config.edit_text.text = config.short_mem.text
                 ret = openai.Edit.create(
                     model=model_name,
                     input=config.edit_text.text,
@@ -1686,12 +1969,20 @@ class Tools(MainTool, FileHandler):
         if res['score'] > 0.3:
             pos_actions: list[str] = res['answer'].replace("\n", "").split(' ')
             items = set(config.tools.keys())
-            text: str = agent_text[res['end']:].split('\n')[0]
+            print(agent_text[res['end']:].split('\n'))
+            text_list = agent_text[res['end']:].split('\n')
+            text = text_list[0]
+            if len(text_list) > 1:
+                text = text_list[1]
+            for i in text_list:
+                if i:
+                    text = i
+
             for p_ac in pos_actions:
                 if p_ac in items:
                     print()
-                    self.print(f"AI Execute Action {p_ac}")
-                    return True, p_ac, text
+                    self.print(f"AI Execute Action {p_ac} {text}|")
+                    return True, p_ac, text.replace('Inputs:', '')
 
         if config.mode == "free":
 
@@ -1718,6 +2009,7 @@ class Tools(MainTool, FileHandler):
             lines = agent_text.split('\n')
             i = 0
             for text in lines:
+                print('testing line', text, text.startswith("Action:"), valid_tool)
                 if text.startswith("Action:") and not valid_tool:
                     tool_name = text.replace("Action:", "").strip()
                     self.print(Style.GREYBG(f"{tool_name}, {config.tools.keys()}, {valid_tool}"))
@@ -1728,6 +2020,7 @@ class Tools(MainTool, FileHandler):
                 if not valid_tool:
                     i += 1
                 if text.startswith("Inputs:"):
+                    print('Get inputs', text)
                     inputs = text.replace("Inputs:", "")
 
             if valid_tool:
@@ -1782,6 +2075,27 @@ class Tools(MainTool, FileHandler):
         if args_len == 1 and len(args) > 1:
             observation = tool['func'](",".join(args))
 
+        path = self.observation_term_mem_file
+        if not self.agent_collective_senses:
+            path = "data/isaa_data/observationMemory/" + config.name + ".mem"
+
+        try:
+            if not os.path.exists(path):
+                self.print("Crating Mem File")
+                if not os.path.exists("data/isaa_data/observationMemory/"):
+                    os.mkdir("data/isaa_data/observationMemory/")
+                with open(path, "a") as f:
+                    f.write(str(observation))
+
+        except FileNotFoundError and ValueError:
+            print("File not found | mem not saved")
+
+        with open(self.observation_term_mem_file, "w") as f:
+            try:
+                f.write(str(observation))
+            except UnicodeEncodeError:
+                self.print("Memory not encoded properly")
+
         if isinstance(observation, dict):
             # try:
             observation = self.summarize_dict(observation, config)
@@ -1819,11 +2133,19 @@ class Tools(MainTool, FileHandler):
             )
             out = LLMChain(prompt=prompt, llm=self.get_OpenAI_models(config.model_name)).run(text)
         elif self.config[f'agent-config-{name}'].mode == "tools":
-            prompt = PromptTemplate(
-                input_variables=["input"],
-                template=config.prompt,
-            )
 
+            try:
+                prompt = PromptTemplate(
+                    input_variables=["input"],
+                    template=config.prompt,
+                )
+            except Exception:
+                print(config.prompt)
+                self.config[f'agent-config-{name}'].mode = 'execution'
+                prompt = PromptTemplate(
+                    input_variables=["input"],
+                    template=config.prompt,
+                )
             tools = []
 
             for tool_name in config.tools.keys():
@@ -1864,7 +2186,7 @@ class Tools(MainTool, FileHandler):
             use_tool, name, command_ = self.test_use_tools(out, config)
             task_done = self.test_task_done(out, config)
             user_imp, question = self.test_use_user_input(out, config)
-            self.print(f"Using-tools: {name} " + str(use_tool))
+            self.print(f"Using-tools: {name} {command_}")
             if use_tool:
                 self.speak(f"Isaa is using {name}", 2)
                 ob = self.run_tool(command_, name, config)
@@ -1890,11 +2212,6 @@ class Tools(MainTool, FileHandler):
 
             config.obser_mem.text = out
 
-        with open(self.observation_term_mem_file, "w") as f:
-            try:
-                f.write(str(config.obser_mem.memory_data))
-            except UnicodeEncodeError:
-                self.print("Memory not encoded properly")
         # except NameError and Exception as e:
         #    print(f"ERROR runnig AGENT: {name} retrys {retrys} errormessage: {e}")
         #    res = ""
@@ -1913,11 +2230,16 @@ class Tools(MainTool, FileHandler):
 
         return out
 
-    def execute_thought_chain(self, user_text, agent_tasks, config, speak=lambda x: x):
+    def execute_thought_chain(self, user_text: str, agent_tasks, config: AgentConfig, speak=lambda x: x):
         chain_ret = []
         chain_data = {}
         ret = ""
         steps = 0
+        pipe = pipeline("text-classification", model="distilbert-base-uncased-finetuned-sst-2-english")
+
+        default_mode = config.mode
+        default_completion_mode = config.completion_mode
+
         for task in agent_tasks:
             keys = list(task.keys())
 
@@ -1927,34 +2249,84 @@ class Tools(MainTool, FileHandler):
 
             self.print(f"Running task {args}")
 
-            for c_key in chain_data.keys():
-                if c_key in args:
-                    args = args.replace(c_key, chain_data[c_key])
+            config.mode = default_mode
+            config.completion_mode = default_completion_mode
+
+            if 'mode' in keys:
+                config.mode = task['mode']
+            if 'completion-mode' in keys:
+                config.completion_mode = task['completion-mode']
 
             if "infos" in keys:
                 config.short_mem.text += task['infos']
 
             speak(f"Chain running {task_name} at step {steps} with the task {args}")
 
-            if use == "tool":
-                ret = self.run_tool(args, task_name, config)
+            if 'chuck-run' in keys:
 
-            if use == "agent":
-                ret = self.run_agent(task_name, args)
+                for chunk in chain_data[task['chuck-run']]:
+
+                    print("ru")
+                    if not chunk:
+                        continue
+
+                    print(chunk, '#')
+                    args = args.replace(task['chuck-run'], str(chunk))
+
+                    if use == "tool":
+                        ret = self.run_tool(args, task_name, config)
+
+                    if use == "agent":
+                        ret = self.run_agent(task_name, args, mode_over_lode=config.mode)
+            else:
+
+                for c_key in chain_data.keys():
+                    if c_key in args:
+                        args = args.replace(c_key, chain_data[c_key])
+
+                if use == "tool":
+                    ret = self.run_tool(args, task_name, config)
+
+                if use == "agent":
+                    ret = self.run_agent(task_name, args) + " Answer: Let's work this out in a step by step " \
+                                                            "way to be sure we have the right answer"
+
+            if 'validate' in keys:
+                self.print("Validate task")
+                pipe_res = pipe(ret)
+                self.print(f"Validation :  {pipe_res[0]}")
+                if pipe_res[0]['score'] > 0.8:
+                    if pipe_res[0]['label'] == "NEGATIVE":
+                        print('🟡')
+                        chain_ret.append([task, ret])
+                        if 'on-error' in keys:
+                            if task['on-error'] == 'inject':
+                                task['inject'](ret)
+                        return "an error occurred", chain_ret
+
+                print(f'🟢')
 
             speak(f"Step {steps} with response {ret}")
 
             if "return" in keys:
-                chain_data[task['return']] = ret
+                if 'text-splitter' in keys:
+                    split = []
+                    while len(ret) > task['text-splitter']:
+                        split.append(ret[:task['text-splitter']])
+                        ret = ret[task['text-splitter']:]
+                    else:
+                        split.append(ret)
+                    chain_data[task['return']] = split
+                    ret = '\n'.join(split)
+                else:
+                    chain_data[task['return']] = ret
 
-            print_to_console("Chain:", Style.style_dic['VIOLETBG2'], ret, max_typing_speed=0.01, min_typing_speed=0.02)
+            print_to_console("Chain:", Style.style_dic['VIOLETBG2'], str(ret), max_typing_speed=0.01,
+                             min_typing_speed=0.02)
 
             chain_ret.append([task, ret])
 
             steps += 1
-
-        if "$return" in chain_data.keys():
-            ret = chain_data["$return"]
 
         return self.run_agent(self.get_agent_config_class("think"),
                               f"Produce The Final output for the user using the given information {chain_ret}"
@@ -1995,7 +2367,7 @@ class Tools(MainTool, FileHandler):
 
         return res
 
-    def mas_text_summaries(self, text, s_call=True, min_length=1600):
+    def mas_text_summaries(self, text, min_length=1600):
         len_text = len(text)
         if len_text < min_length:
             return text
@@ -2051,7 +2423,9 @@ class Tools(MainTool, FileHandler):
             summary_chucks += chuck_summary[0]['summary_text'] + "\n"
             self.print(f"SYSTEM: all summary_chucks : {len(summary_chucks)}")
 
-        summary = summary(summary_chucks)[0]['summary_text']
+        summary = summary_chucks
+        if len(summaries) > 6:
+            summary = summary(summary_chucks)[0]['summary_text']
         self.print(
             f"SYSTEM: final summary from {len_text} -> {len(summary)} compressed {len_text / len(summary):.2f}X\n")
 
@@ -2081,15 +2455,26 @@ class Tools(MainTool, FileHandler):
         return output_str
 
     @staticmethod
-    def get_chain(name=None) -> AgentChain:
+    def get_chain(hydrate=None) -> AgentChain:
         logger = get_logger()
-        logger.info(Style.GREYBG(f"chain app requested"))
-        if name:
-            agent_chain = AgentChain(name)
+        logger.info(Style.GREYBG(f"AgentChainrequested"))
+        if hydrate:
+            agent_chain = AgentChain(hydrate)
         else:
             agent_chain = AgentChain()
-        logger.info(Style.Bold(f"chain instance, returned"))
+        logger.info(Style.Bold(f"AgentChain instance, returned"))
         return agent_chain
+
+    @staticmethod
+    def get_context_memory(model_name=None) -> AIContextMemory:
+        logger = get_logger()
+        logger.info(Style.GREYBG(f"AIContextMemory requested"))
+        if model_name:
+            cm = AIContextMemory(model_name)
+        else:
+            cm = AIContextMemory()
+        logger.info(Style.Bold(f"AIContextMemory instance, returned"))
+        return cm
 
 
 def get_tool(app: App):

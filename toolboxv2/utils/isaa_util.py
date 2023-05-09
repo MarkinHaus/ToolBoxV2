@@ -10,14 +10,23 @@ from toolboxv2.mods.isaa import Tools as Isaa
 
 try:
     from toolboxv2.mods.isaa_audio import s30sek_mean, text_to_speech3, speech_stream, get_audio_transcribe
+
     SPEAK = True
 except ImportError:
     SPEAK = False
 
 from toolboxv2.utils.Style import print_to_console, Style, Spinner
+from langchain.utilities import PythonREPL
 
 
 def speak(x, speak_text=SPEAK, vi=0, **kwargs):
+    if len(x) > 2401:
+        print(f"text len to log : {len(x)}")
+        return
+
+    if len(x) > 1200:
+        speak(x[:1200])
+        x = x[1200:]
 
     cls_lang = pipeline("text-classification", model="papluca/xlm-roberta-base-language-detection")
     ln = cls_lang(x)
@@ -42,7 +51,7 @@ def sys_print(x, **kwargs):
 
 def run_agent_cmd(isaa, user_text, self_agent_config, step, spek):
     print("\nAGENT section\n")
-    response = isaa.run_agent(self_agent_config, user_text) ##code
+    response = isaa.run_agent(self_agent_config, user_text)  ##code
     print("\nAGENT section END\n")
 
     task_done = isaa.test_task_done(response, self_agent_config)
@@ -79,8 +88,7 @@ def test_amplitude_for_talk_mode(sek=10):
     return mean_0
 
 
-def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False, isaa_print=False):
-
+def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False, isaa_print=False, python_test=False):
     if calendar:
         app.save_load("isaa_calendar")
         app.logger.info("Isaa audio is running")
@@ -90,8 +98,8 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False, is
         append_calender_agent = app.AC_MOD.append_agent
 
     if speak_mode:
-        #min_ = test_amplitude_for_talk_mode(sek=5)
-        #print("Done Testing : " + str(min_)) ##chad
+        # min_ = test_amplitude_for_talk_mode(sek=5)
+        # print("Done Testing : " + str(min_)) ##chad
         min_ = 0
         app.logger.info("Init calendar")
         # init setup
@@ -124,7 +132,7 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False, is
     self_agent_config: AgentConfig = isaa.get_agent_config_class("self")
 
     if isaa_print:
-        #def helper(x):
+        # def helper(x):
         #    print_to_console("ISAA", x, max_typing_speed=0.06, min_typing_speed=0.12)
         isaa.print_stream = lambda x: print_to_console("ISAA:", title_color=Style.style_dic['_MAGENTA'], content=x,
                                                        max_typing_speed=0.06, min_typing_speed=0.12)
@@ -236,27 +244,48 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False, is
 
     if ide:
         file_functions_dis = """
-        witch file_functions you have access to 8 file reladead functions
-        format for singel input functions [create, delete, list, read] arguments is <path>
-        format for 2 input functions [move, copy] arguments ar <source> <destination>
-        format for 2 input functions [search] arguments ar <path> <keyword>
-        format for 2 input functions [write] arguments ar <path> <text>
+function for file operation
+syntax for function call : <function_name> <arguments>
 
-        syntax for function call : <function_name> <arguments>
-            """
+"""
 
-        def file_functions(x):
+        def file_functions(x, from_="list"):
             try:
                 if input(x + " - ACCEPT? :").lower() in ["y", "yes"]:
-                    return file_functions_(x)
+                    return file_functions_(from_ + ' ' + x.strip())
                 return "Not authorised by user"
             except Exception as e:
                 return "Error in file_functions : " + str(e)
 
-        isaa.add_tool("file_functions", file_functions, file_functions_dis,
-                      " ",
+        isaa.add_tool("create", lambda x: file_functions(x, from_='create'), "format for singel input functions ["
+                                                                             "create] arguments is <path>",
+                      file_functions_dis, self_agent_config)
+        isaa.add_tool("delete", lambda x: file_functions(x, from_='delete'), "format for singel input functions ["
+                                                                             "delete] arguments is <path>",
+                      file_functions_dis, self_agent_config)
+        isaa.add_tool("list", lambda x: file_functions(x, from_='list'), "format for singel input functions list] "
+                                                                         "arguments is <path>", file_functions_dis,
                       self_agent_config)
+        isaa.add_tool("read", lambda x: file_functions(x, from_='read'), "format for singel input functions [read] "
+                                                                         "arguments is <path>", file_functions_dis,
+                      self_agent_config)
+        isaa.add_tool("move", lambda x: file_functions(x, from_='move'), "format for 2 input functions [move] "
+                                                                         "arguments ar <source> <destination>",
+                      file_functions_dis, self_agent_config)
+        isaa.add_tool("insert_edit", lambda x: file_functions(x, from_='insert_edit'), "format for 2 input functions "
+                                                                                       "[copy] arguments ar <source> "
+                                                                                       "<destination>",
+                      file_functions_dis, self_agent_config)
+        isaa.add_tool("search", lambda x: file_functions(x, from_='search'), "format for 2 input functions [search] "
+                                                                             "arguments ar <path> <keyword>",
+                      file_functions_dis, self_agent_config)
+        isaa.add_tool("copy", lambda x: file_functions(x, from_='copy'), "format for 2 input functions [copy] "
+                                                                         "arguments ar <source> <destination>",
+                      file_functions_dis, self_agent_config)
 
+    if python_test:
+        python_repl = PythonREPL()
+        isaa.add_tool("eval-python-code", python_repl.run, "PythonREPL to eval python code", '', self_agent_config)
     if speak_mode:
         isaa.speak = speak
 
@@ -266,15 +295,41 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False, is
             return "No data found, Try entering other data related to your task"
         return momoey_
 
-    isaa.add_tool("memory", momory_wraper, "a tool to get similar information from your memories."
+    mem = isaa.get_context_memory()
+
+    def get_relevant_informations(x):
+        ress = mem.get_context_for(x)
+
+        last = []
+        final = ''
+        for res in ress:
+            if last != res[1]:
+                final += res[0].page_content + '\n\n'
+            else:
+                print("WARNING- same")
+
+        task = f"Act as an summary expert your specialties are writing summary. you are known to think in small and " \
+               f"detailed steps to get the right result. Your task : write a summary reladet to {x}\n\n{final}"
+        res = isaa.run_agent(isaa.get_default_agent_config('think').set_model_name('gpt-3.5-turbo'), task)
+
+        if res:
+            return res
+
+        return final
+
+    def ad_data(x):
+        mem.add_data('main', x)
+
+        return 'added to memory'
+
+    isaa.add_tool("memory", get_relevant_informations, "a tool to get similar information from your memories."
                                            " useful to get similar data. ", "memory(<related_information>)",
                   self_agent_config)
 
-    isaa.add_tool("save_data_to_memory", CollectiveMemory().text_add, "tool to save data to memory,"
+    isaa.add_tool("save_data_to_memory", ad_data, "tool to save data to memory,"
                                                                       " write the data as specific"
                                                                       " and accurate as possible.",
                   "save_data_to_memory(<store_information>)",
                   self_agent_config)
-
 
     return isaa, self_agent_config

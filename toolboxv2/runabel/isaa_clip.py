@@ -133,7 +133,7 @@ def run_chad(isaa: Isaa, user_text, self_agent_config):
     response = ""
     sys_print("\n================================Starting-Agent================================")
     step = 0
-    task_done = False
+    task_done = True
 
     chain_instance: AgentChain = isaa.get_chain()
     chain_instance.load_from_file()
@@ -167,35 +167,38 @@ def run_chad(isaa: Isaa, user_text, self_agent_config):
 
     sys_print("USER0: " + user_text)
 
-    res = isaa.run_agent(agent_categorize_config, f"What chain '{str(chain_instance)}'"
-                                                  f" \nis fitting for this input '{user_text}'")
-    chain = ''
-    for chain_key in chain_instance.chains.keys():
-        if res in chain_key:
-            chain = chain_key
-            break
-    print("chain: ", chain)
+    #res = isaa.run_agent(agent_categorize_config, f"What chain '{str(chain_instance)}'"
+    #                                              f" \nis fitting for this input '{user_text}'")
+    #chain = ''
+    #print(res)
+    #for chain_key in chain_instance.chains.keys():
+    #    if res in chain_key:
+    #        chain = chain_key
+    #        break
+    #print("chain: ", chain)
     user_vlidation = input(
         f"if its the chain is wrong type the corresponding number {list(zip(chain_instance.chains.keys(), range(len(chain_instance.chains.keys()))))} :")
     if user_vlidation:
-        user_vlidation = int(user_vlidation) - 1
+        user_vlidation = int(user_vlidation)
         chain = list(chain_instance.chains.keys())[user_vlidation]
+        task_done = False
 
     pipe = pipeline("text-classification", model="distilbert-base-uncased-finetuned-sst-2-english")
 
+    # self_agent_config.short_mem.max_length = 2676*4.3
 
     while not task_done:
-        try:
-            evauation, chain_ret = isaa.execute_thought_chain(user_text, chain_instance.get(chain),
-                                                              self_agent_config.set_model_name("gpt-4"), speak=speak)
-        except Exception as e:
-            print(e, '🔴')
-            return "ERROR"
-
-        pipe_res = pipe("evauation")
-        speak(f"The evaluation of the chain is {evauation} i am {int(pipe_res[0]['score'])*10} Peasant sure")
-
-        print(pipe_res[0]['score'])
+        #try:
+        evaluation, chain_ret = isaa.execute_thought_chain(user_text, chain_instance.get(chain),
+                                                              self_agent_config)
+        #except Exception as e:
+        #    print(e, '🔴')
+        #    return "ERROR"
+        evaluation = evaluation[::-1][:300][::-1]
+        pipe_res = pipe(evaluation)
+        #aweeeewedspeak(f"The evaluation of the chain is {evaluation} i am {int(pipe_res[0]['score'])*10} Peasant sure")
+        print(chain_ret)
+        print(pipe_res)
         if pipe_res[0]['label'] == "NEGATIVE":
             print('🟡')
             task_done = True
@@ -216,11 +219,12 @@ def run(app, args):
     # Trigger word to process the text
     trigger_word = '##isaa'
     trigger_word_editor = '##code'
-    trigger_word_chad = '##chad'
+    trigger_word_chad = '#c'
 
     print(f"Script running in the background")
 
     isaa, self_agent_config = init_isaa(app, speak_mode=speak_mode, calendar=True, ide=True, create=True)
+    CollectiveMemory().memory.clear()
     print("init completed waiting for trigger word: ")
     buffer = ' ' * 8
     alive = True

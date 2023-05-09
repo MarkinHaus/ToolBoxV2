@@ -320,6 +320,8 @@ def print_to_console(
             print(content)
             return
         words = content.split()
+        if len(words) > 5000:
+            words = words[:5000]
         for i, word in enumerate(words):
             print(word, end="", flush=True)
             if i < len(words) - 1:
