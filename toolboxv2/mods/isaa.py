@@ -2,10 +2,13 @@ import json
 import logging
 import math
 import random
+import threading
 from datetime import datetime
 from typing import Tuple, Any
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+
+import keyboard
 import requests
 from duckduckgo_search import ddg, ddg_answers, ddg_suggestions, ddg_news
 import replicate
@@ -20,6 +23,7 @@ from huggingface_hub import InferenceApi
 import time
 from langchain.agents import initialize_agent, tool, Tool as AgentTool
 import torch
+from transformers.tools import TextClassificationTool
 
 from toolboxv2 import MainTool, FileHandler, Style, App, Spinner, get_logger
 
@@ -734,6 +738,7 @@ class AIContextMemory(metaclass=Singleton):
         return context_data_fit
 
     def search(self, name, text, marginal=False):
+
         if not name in self.vector_store.keys():
             self.vector_store[name] = self.get_sto_bo(name)
 
@@ -1646,6 +1651,7 @@ class Tools(MainTool, FileHandler):
             return response
 
         def browse_url(text):
+
             text = text.replace("'", "").replace('"', '')
             if text.startswith("http:") or text.startswith("https:"):
                 url = text.split("|")[0]
@@ -1783,7 +1789,6 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         if name == "think":
             config. \
                 set_mode("free") \
-                .set_model_name("gpt-4") \
                 .set_max_iterations(1) \
                 .set_completion_mode("chat")
 
@@ -2200,6 +2205,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             out = self.stream_read_line_llm(text, config)
             if not config.stream:
                 self.print_stream(out)
+            else:
+                print("\n------stream-end------")
 
             config.observe_mem.text = out
 
@@ -2900,3 +2907,5 @@ def scrape_links(url):
     hyperlinks = extract_hyperlinks(soup)
 
     return format_hyperlinks(hyperlinks)
+
+# print(get_tool(get_app('debug')).get_context_memory().get_context_for("Hallo das ist ein Test")) Fridrich

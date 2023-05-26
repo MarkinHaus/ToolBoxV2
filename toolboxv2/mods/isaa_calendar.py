@@ -1,3 +1,4 @@
+import os
 import types
 from datetime import datetime, timedelta, time
 
@@ -380,7 +381,6 @@ def format_llm_output(output):
         formatted_output = "Sorry, I couldn't format the output. Please try again." + "\n" + str(output)
 
     return formatted_output
-
 
 
 def append_agent(calender_agent_config, calender_run, thinc):

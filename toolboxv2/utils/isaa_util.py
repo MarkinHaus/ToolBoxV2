@@ -1,12 +1,15 @@
+import os
 import sys
+import threading
 import time
-
+import fnmatch
+import requests
+import subprocess
 from transformers import pipeline
 
 from toolboxv2 import App
-from toolboxv2.mods.isaa import CollectiveMemory, AgentConfig
 from toolboxv2.utils.toolbox import get_app
-from toolboxv2.mods.isaa import Tools as Isaa
+from toolboxv2.mods.isaa import CollectiveMemory, AgentConfig, Tools as Isaa, AgentChain
 
 try:
     from toolboxv2.mods.isaa_audio import s30sek_mean, text_to_speech3, speech_stream, get_audio_transcribe
@@ -17,6 +20,32 @@ except ImportError:
 
 from toolboxv2.utils.Style import print_to_console, Style, Spinner
 from langchain.utilities import PythonREPL
+
+import networkx as nx
+import matplotlib.pyplot as plt
+
+
+def visualize_tree(tree, graph=None, parent_name=None, node_name=''):
+    if graph is None:
+        graph = nx.DiGraph()
+
+    if 'start' in tree:
+        if parent_name:
+            graph.add_edge(parent_name, tree['start'])
+        parent_name = tree['start']
+
+    if 'tree' in tree:
+        for sub_key in tree['tree']:
+            visualize_tree(tree['tree'][sub_key], graph, parent_name, node_name + sub_key)
+
+    return graph
+
+
+def hydrate(params):
+    def helper(name):
+        return params[name]
+
+    return helper
 
 
 def speak(x, speak_text=SPEAK, vi=0, **kwargs):
@@ -60,7 +89,7 @@ def run_agent_cmd(isaa, user_text, self_agent_config, step, spek):
     sys_print(f"\tMODE               : {self_agent_config.mode}\n")
     sys_print(f"\tCollectiveMemory   : {CollectiveMemory().token_in_use} | total vec num : "
               f"{CollectiveMemory().memory.get_stats()['total_vector_count']}\n")
-    sys_print(f"\tObservationMemory  : {self_agent_config.obser_mem.tokens}\n")
+    sys_print(f"\tObservationMemory  : {self_agent_config.observe_mem.tokens}\n")
     sys_print(f"\tShortTermMemory    : {self_agent_config.short_mem.tokens}\n\n")
     if "Answer: " in response:
         sys_print("AGENT: " + response.split('Answer:')[1] + "\n")
@@ -88,13 +117,51 @@ def test_amplitude_for_talk_mode(sek=10):
     return mean_0
 
 
-def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False, isaa_print=False, python_test=False):
+def get_code_and_md_files(git_project_dir, code_extensions: None or list = None):
+    result = []
+    if code_extensions is None:
+        code_extensions = ['*.py', '*.js', '*.java', '*.c', '*.cpp', '*.cs', '*.rb', '*.go', '*.php', '*.md']
+
+    for root, _, files in os.walk(git_project_dir):
+        for file in files:
+            for ext in code_extensions:
+                if fnmatch.fnmatch(file, ext):
+                    result.append(os.path.join(root, file).replace('isaa_work/', ''))
+                    break
+
+    return result
+
+
+def download_github_project(repo_url, branch, destination_folder):
+    if not os.path.exists(destination_folder):
+        os.makedirs(destination_folder)
+
+    command = f"git clone --branch {branch} {repo_url} {destination_folder}"
+    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = process.communicate()
+
+    if process.returncode != 0:
+        print(f"Error occurred while downloading the project: {stderr.decode('utf-8')}")
+        return False
+
+    print(f"Project downloaded successfully to {destination_folder}")
+    return True
+
+
+def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
+              isaa_print=False, python_test=False, init_mem=False, init_pipe=False, join_now=False,
+              override_file_functions_user_input=False, global_stream_override=False, chain_runner=False):
+    chain_h = {}
+
     if calendar:
         app.save_load("isaa_calendar")
         app.logger.info("Isaa audio is running")
         app.new_ac_mod("isaa_calendar")
-
-        calender_run = app.AC_MOD.get_llm_tool("markinhausmanns@gmail.com")
+        try:
+            calender_run = app.AC_MOD.get_llm_tool("markinhausmanns@gmail.com")
+        except Exception:
+            os.remove("token.pickle")
+            calender_run = app.AC_MOD.get_llm_tool("markinhausmanns@gmail.com")
         append_calender_agent = app.AC_MOD.append_agent
 
     if speak_mode:
@@ -127,7 +194,18 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False, is
 
     app.new_ac_mod('isaa')
     isaa: Isaa = app.AC_MOD
-    isaa.loade_keys_from_env()
+    isaa.load_keys_from_env()
+
+    if global_stream_override:
+        isaa.global_stream_override = True
+
+    if init_pipe:
+        qu_init_t = threading.Thread(target=isaa.init_all_pipes_default)
+        qu_init_t.start()
+
+    if init_mem:
+        mem_init_t = threading.Thread(target=isaa.get_context_memory().load_all)
+        mem_init_t.start()
 
     self_agent_config: AgentConfig = isaa.get_agent_config_class("self")
 
@@ -241,16 +319,52 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False, is
 
            The function then creates an AgentConfig object with the specified name and sets its personality, goals, and capabilities attributes to the values associated with the corresponding keys, if those keys were present in the input string.""",
                       self_agent_config)
+        isaa.add_tool("talk_to_agent", create_agent,
+                      "The talk_to_agent function takes a single string argument x, which is expected to contain a set of key-value pairs separated by colons (:). These pairs specify various attributes of an agent that is to be created and run. use agent to divde taskes"
+                      , """The function parses the input string x and extracts the values associated with the following keys:
+
+               Name: The name of the agent to be created. This key is required and must be present in the input string.
+               Mode: The mode in which the agent is to be run. This is an optional key. available ar [free, tools, talk]
+               Task: The task that the agent is to perform. This is an optional key.
+
+           The function then runs the Agent with the specified name.""",
+                      self_agent_config)
 
     if ide:
+        def extract_code(x):
+            data = x.split('```')
+            if len(data) == 3:
+                text = data[1].split('\n')
+                code_type = text[0]
+                code = '\n'.join(text[1:])
+                return code, code_type
+            if len(data) > 3:
+                print(x)
+            return '', ''
+
+        def save_file(name, text):
+            open('./data/isaa_data/work/' + name, 'a').close()
+            with open('./data/isaa_data/work/' + name, 'w') as f:
+                f.write(text)
+
+        def helper(x):
+            code, type_ = extract_code(x)
+
+            if code:
+                save_file("test." + type_, code)
+
+        chain_h['save_code'] = helper
+
         file_functions_dis = """
 function for file operation
 syntax for function call : <function_name> <arguments>
 
 """
 
-        def file_functions(x, from_="list"):
+        def file_functions(x, from_="list", do_so=override_file_functions_user_input):
             try:
+                if do_so:
+                    return file_functions_(from_ + ' ' + x.strip())
                 if input(x + " - ACCEPT? :").lower() in ["y", "yes"]:
                     return file_functions_(from_ + ' ' + x.strip())
                 return "Not authorised by user"
@@ -272,16 +386,61 @@ syntax for function call : <function_name> <arguments>
         isaa.add_tool("move", lambda x: file_functions(x, from_='move'), "format for 2 input functions [move] "
                                                                          "arguments ar <source> <destination>",
                       file_functions_dis, self_agent_config)
-        isaa.add_tool("insert_edit", lambda x: file_functions(x, from_='insert_edit'), "format for 2 input functions "
-                                                                                       "[copy] arguments ar <source> "
-                                                                                       "<destination>",
+        isaa.add_tool("write", lambda x: file_functions(x, from_='write'), "format for 2 input functions "
+                                                                                       "[write] arguments ar <file_name> "
+                                                                                       "<content>",
                       file_functions_dis, self_agent_config)
-        isaa.add_tool("search", lambda x: file_functions(x, from_='search'), "format for 2 input functions [search] "
-                                                                             "arguments ar <path> <keyword>",
+        isaa.add_tool("search_file_content", lambda x: file_functions(x, from_='search'),
+                      "format for 2 input functions [search] "
+                      "arguments ar <path> <keyword>",
                       file_functions_dis, self_agent_config)
         isaa.add_tool("copy", lambda x: file_functions(x, from_='copy'), "format for 2 input functions [copy] "
                                                                          "arguments ar <source> <destination>",
                       file_functions_dis, self_agent_config)
+
+    if chain_runner:
+        chain_instance: AgentChain = isaa.get_chain()
+        agent_categorize_config: AgentConfig = isaa.get_agent_config_class("categorize")
+        agent_categorize_config \
+            .set_mode('free') \
+            .set_completion_mode('text') \
+            .set_model_name('gpt-3.5-turbo') \
+            .stream = False
+        def chain_helper(x):
+            chain_instance.load_from_file()
+
+            res = isaa.run_agent(agent_categorize_config, f"What chain '{str(chain_instance)}'"
+                                                            f" \nis fitting for this input '{x}'\n"
+                                                          f"Only return the correct name or None\nName: ")
+            if res.lower() == 'none':
+                res = "I cant find a fitting chain"
+
+            infos = '\n'.join([f'{item[0]} ID: {item[1]}' for item in list(zip(chain_instance.chains.keys(),
+                                                                               range(len(chain_instance.chains.keys()))))])
+            user_vlidation = input(f"Isaa whats tu use : '{res}'\n"
+                                   f"if its the chain is wrong type the corresponding number {infos}\n"
+                                   f"other wise live black\nInput: ")
+            do_task = False
+            chain = ''
+            evaluation = 'evaluation error'
+            if user_vlidation in ['y', '']:
+                do_task = True
+                chain = res
+            elif user_vlidation in [str(z) for z in range(len(chain_instance.chains.keys()))]:
+                user_vlidation = int(user_vlidation)
+                chain = list(chain_instance.chains.keys())[user_vlidation]
+                do_task = True
+            else:
+                do_task = False
+                evaluation = "Invalid user input"
+
+            if do_task:
+                evaluation, chain_ret = isaa.execute_thought_chain(
+                    x, chain_instance.get(chain), self_agent_config)
+
+            return evaluation
+
+        isaa.add_tool("execute-chain", chain_helper, "input and details for the chain", '', self_agent_config)
 
     if python_test:
         python_repl = PythonREPL()
@@ -289,33 +448,20 @@ syntax for function call : <function_name> <arguments>
     if speak_mode:
         isaa.speak = speak
 
-    def momory_wraper(x):
-        momoey_ = CollectiveMemory().text(context=x)
-        if momoey_ == "[]":
-            return "No data found, Try entering other data related to your task"
-        return momoey_
 
     mem = isaa.get_context_memory()
 
     def get_relevant_informations(x):
         ress = mem.get_context_for(x)
 
-        last = []
-        final = ''
-        for res in ress:
-            if last != res[1]:
-                final += res[0].page_content + '\n\n'
-            else:
-                print("WARNING- same")
-
         task = f"Act as an summary expert your specialties are writing summary. you are known to think in small and " \
-               f"detailed steps to get the right result. Your task : write a summary reladet to {x}\n\n{final}"
+               f"detailed steps to get the right result. Your task : write a summary reladet to {x}\n\n{ress}"
         res = isaa.run_agent(isaa.get_default_agent_config('think').set_model_name('gpt-3.5-turbo'), task)
 
         if res:
             return res
 
-        return final
+        return ress
 
     def ad_data(x):
         mem.add_data('main', x)
@@ -323,13 +469,21 @@ syntax for function call : <function_name> <arguments>
         return 'added to memory'
 
     isaa.add_tool("memory", get_relevant_informations, "a tool to get similar information from your memories."
-                                           " useful to get similar data. ", "memory(<related_information>)",
+                                                       " useful to get similar data. ", "memory(<related_information>)",
                   self_agent_config)
 
     isaa.add_tool("save_data_to_memory", ad_data, "tool to save data to memory,"
-                                                                      " write the data as specific"
-                                                                      " and accurate as possible.",
+                                                  " write the data as specific"
+                                                  " and accurate as possible.",
                   "save_data_to_memory(<store_information>)",
                   self_agent_config)
 
-    return isaa, self_agent_config
+    chains = isaa.get_chain(None, hydrate(chain_h)).load_from_file()
+
+    if join_now:
+        if init_pipe:
+            qu_init_t.join()
+        if init_mem:
+            mem_init_t.join()
+
+    return isaa, self_agent_config, chains
