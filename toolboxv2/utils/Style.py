@@ -384,7 +384,6 @@ def extract_python_code(text):
 
     return python_code_blocks
 
-
 class Spinner:
     """A simple spinner class"""
 
@@ -442,15 +441,3 @@ class Spinner:
             sys.stdout.write(f"\r{next(self.spinner)} {self.message}")
             sys.stdout.flush()
             time.sleep(self.delay)
-            sys.stdout.write(f"\r{' ' * (len(self.message) + 2)}\r")
-
-    def update_message(self, new_message: str, delay: float = 0.1) -> None:
-        """Update the spinner message
-        Args:
-            new_message (str): New message to display.
-            delay (float): The delay in seconds between each spinner update.
-        """
-        self.message = new_message
-        time.sleep(delay)
-        sys.stdout.write(f"\r{' ' * len(self.message)}\r")
-        sys.stdout.flush()

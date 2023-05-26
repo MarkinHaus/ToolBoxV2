@@ -1,11 +1,11 @@
-from toolboxv2.utils.isaa_util import sys_print, speak, run_agent_cmd, init_isaa
+from toolboxv2.utils.isaa_util import sys_print, run_agent_cmd, init_isaa
 
 NAME = "isaa-init-chains"
 
 
 def run(app, args):
 
-    isaa, self_agent_config = init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False)
+    isaa, self_agent_config, chains = init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False)
 
     cahins = isaa.get_chain()
 
