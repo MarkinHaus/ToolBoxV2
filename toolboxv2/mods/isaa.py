@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import random
 from datetime import datetime
 from typing import Tuple, Any
@@ -25,6 +26,8 @@ from toolboxv2 import MainTool, FileHandler, Style, App, Spinner, get_logger
 from langchain import PromptTemplate, LLMChain, OpenAI
 from langchain.llms.openai import OpenAIChat
 from langchain.chat_models import ChatOpenAI
+from langchain.chat_models import ChatOpenAI
+from langchain.chains import ConversationalRetrievalChain
 import tiktoken
 from bs4 import BeautifulSoup
 
@@ -50,7 +53,7 @@ from langchain.document_loaders import PyPDFLoader
 from langchain.schema import Document
 
 # Splitters
-from langchain.text_splitter import RecursiveCharacterTextSplitter, CharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter, CharacterTextSplitter, TextSplitter
 
 # Model
 from langchain.chat_models import ChatOpenAI
@@ -66,6 +69,64 @@ from langchain.chains.summarize import load_summarize_chain
 import numpy as np
 from sklearn.cluster import KMeans, AgglomerativeClustering
 
+import platform, socket, re, uuid, json, psutil, logging
+from langchain.indexes import VectorstoreIndexCreator
+
+pipeline_arr = [
+    # 'audio-classification',
+    # 'automatic-speech-recognition',
+    # 'conversational',
+    # 'depth-estimation',
+    # 'document-question-answering',
+    # 'feature-extraction',
+    # 'fill-mask',
+    # 'image-classification',
+    # 'image-segmentation',
+    # 'image-to-text',
+    # 'ner',
+    # 'object-detection',
+    'question-answering',
+    # 'sentiment-analysis',
+    'summarization',
+    # 'table-question-answering',
+    'text-classification',
+    # 'text-generation',
+    # 'text2text-generation',
+    # 'token-classification',
+    # 'translation',
+    # 'visual-question-answering',
+    # 'vqa',
+    # 'zero-shot-classification',
+    # 'zero-shot-image-classification',
+    # 'zero-shot-object-detection',
+    # 'translation_en_to_de',
+    # 'fill-mask'
+]
+
+
+def get_ip():
+    response = requests.get('https://api64.ipify.org?format=json').json()
+    return response["ip"]
+
+
+def get_location():
+    ip_address = get_ip()
+    response = requests.get(f'https://ipapi.co/{ip_address}/json/').json()
+    location_data = f"city: {response.get('city')},region: {response.get('region')},country: {response.get('country_name')},"
+
+    return location_data
+
+
+def getSystemInfo():
+    # try:
+    info = {'time': datetime.today().strftime('%Y-%m-%d %H:%M:%S'), 'platform': platform.system(),
+            'platform-release': platform.release(), 'platform-version': platform.version(),
+            'architecture': platform.machine(), 'hostname': socket.gethostname(),
+            'ip-address': socket.gethostbyname(socket.gethostname()),
+            'mac-address': ':'.join(re.findall('..', '%012x' % uuid.getnode())), 'processor': platform.processor(),
+            'ram': str(round(psutil.virtual_memory().total / (1024.0 ** 3))) + " GB", 'location': get_location()}
+    return info
+
 
 def get_ada_embedding(text):
     text = text.replace("\n", " ")
@@ -76,16 +137,136 @@ def get_text_from_embedding(embedding):
     return openai.Embedding.retrieve(embedding, model="text-embedding-ada-002")["data"][0]["text"]
 
 
+class IsaaQuestionNode:
+    def __init__(self, question, left=None, right=None):
+        self.question = question
+        self.left = left
+        self.right = right
+        self.index = ''
+        self.left.set_index('L') if self.left else None
+        self.right.set_index('R') if self.right else None
+
+    def set_index(self, index):
+        self.index += index
+        self.left.set_index(self.index) if self.left else None
+        self.right.set_index(self.index) if self.right else None
+
+    def __str__(self):
+        left_value = self.left.question if self.left else None
+        right_value = self.right.question if self.right else None
+        return f"Index: {self.index}, Question: {self.question}," \
+               f" Left child key: {left_value}, Right child key: {right_value}"
+
+
+class IsaaQuestionBinaryTree:
+    def __init__(self, root=None):
+        self.root = root
+
+    def __str__(self):
+        return json.dumps(self.serialize(), indent=4, ensure_ascii=True)
+
+    def get_depth(self, node=None):
+        if node is None:
+            return 0
+        left_depth = self.get_depth(node.left) if node.left else 0
+        right_depth = self.get_depth(node.right) if node.right else 0
+        return 1 + max(left_depth, right_depth)
+
+    def serialize(self):
+        def _serialize(node):
+            if node is None:
+                return None
+            return {
+                node.index if node.index else 'root': {
+                    'question': node.question,
+                    'left': _serialize(node.left),
+                    'right': _serialize(node.right)
+                }
+            }
+
+        final = _serialize(self.root)
+        return final[list(final.keys())[0]]
+
+    @staticmethod
+    def deserialize(tree_dict):
+        def _deserialize(node_dict):
+            if node_dict is None:
+                return None
+
+            index = list(node_dict.keys())[0]  # Get the node's index.
+            if index == 'question':
+                node_info = node_dict
+            else:
+                node_info = node_dict[index]  # Get the node's info.
+            return IsaaQuestionNode(
+                node_info['question'],
+                _deserialize(node_info['left']),
+                _deserialize(node_info['right'])
+            )
+
+        return IsaaQuestionBinaryTree(_deserialize(tree_dict))
+
+    def get_left_side(self, index):
+        depth = self.get_depth(self.root)
+        if index >= depth or index < 0:
+            return []
+
+        path = ['R' * index + 'L' * i for i in range(depth - index)]
+        questions = []
+        for path_key in path:
+            node = self.root
+            for direction in path_key:
+                if direction == 'L':
+                    node = node and node.left
+                else:
+                    node = node and node.right
+            if node is not None:
+                questions.append(node.question)
+        return questions
+
+    def cut_tree(self, cut_key):
+        def _cut_tree(node, cut_key):
+            if node is None or cut_key == '':
+                return node
+            if cut_key[0] == 'L':
+                return _cut_tree(node.left, cut_key[1:])
+            if cut_key[0] == 'R':
+                return _cut_tree(node.right, cut_key[1:])
+            return node
+
+        return IsaaQuestionBinaryTree(_cut_tree(self.root, cut_key))
+
+
 class AgentChain(metaclass=Singleton):
-    def __init__(self, hydrate=None):
+    def __init__(self, hydrate=None, f_hydrate=None):
         self.chains = {}
+        self.chains_h = {}
         self.live_chains = {}
         if hydrate is not None:
             self.hydrate = hydrate
         else:
             self.hydrate = lambda x: x
+        if f_hydrate is not None:
+            self.f_hydrate = f_hydrate
+        else:
+            self.f_hydrate = lambda x: x
+
+    def add_hydrate(self, hydrate=None, f_hydrate=None):
+        if hydrate is not None:
+            self.hydrate = hydrate
+        else:
+            self.hydrate = lambda x: x
+        if f_hydrate is not None:
+            self.f_hydrate = f_hydrate
+        else:
+            self.f_hydrate = lambda x: x
+        self.chains_h = {}
+
+        for name, chain in self.chains.items():
+            self.add(name, chain)
 
     def add(self, name, tasks):
+        self.chains[name] = tasks
         for task in tasks:
             keys = task.keys()
             if 'infos' in keys:
@@ -95,7 +276,10 @@ class AgentChain(metaclass=Singleton):
                     infos = infos.replace('$Date', datetime.today().strftime('%Y-%m-%d %H:%M:%S'))
 
                 task['infos'] = self.hydrate(infos)
-        self.chains[name] = tasks
+            if 'function' in keys:
+                infos = task['name']
+                task['function'] = self.hydrate(infos)
+        self.chains_h[name] = tasks
 
     def remove(self, name):
         if name in self.chains:
@@ -104,7 +288,7 @@ class AgentChain(metaclass=Singleton):
             print(f"Chain '{name}' not found.")
 
     def get(self, name):
-        return self.chains[name]
+        return self.chains_h[name]
 
     def init_chain(self, name):
         self.save_to_file(name)
@@ -136,7 +320,7 @@ class AgentChain(metaclass=Singleton):
                     print(f"Die Aufgabe {task_idx} in der Chain '{chain_name}' hat keinen 'args'-Schlüssel.")
 
     def load_from_file(self, chain_name=None):
-        directory = "data/isaa_data/chains"
+        directory = ".data/chains"
 
         self.chains = self.live_chains
 
@@ -167,8 +351,10 @@ class AgentChain(metaclass=Singleton):
         print(
             f"\n================================\nChainsLoaded : {len(self.chains.keys())}\n================================\n")
 
+        return self
+
     def save_to_file(self, chain_name=None):
-        directory = "data/isaa_data/chains"
+        directory = ".data/chains"
 
         if not os.path.exists(directory):
             os.makedirs(directory)
@@ -263,11 +449,37 @@ class AIContextMemory(metaclass=Singleton):
         if not chunk_size:
             chunk_size = int(len(text) / (chunks + 1))
 
+            while chunk_size / 3.5 > 1300:
+                chunk_size = int(len(text) / (chunks + 1))
+                chunks += 1
+
         chunk_overlap = int(chunk_size * (overlap_percentage / 100))
 
         if isinstance(separators, str):
-            if separators == 'code':
-                separators = ["class", "def", "\n\n"]
+            if separators == 'py':
+                separators = [
+                    # First, try to split along class definitions
+                    "\nclass ",
+                    "\ndef ",
+                    "\n\tdef ",
+                    # Now split by the normal type of lines
+                    "\n\n",
+                    "\n",
+                    " ",
+                    "",
+                ]
+            if separators == 'jv':
+                separators = [
+                    "\nclass ",
+                    "\npublic private ",
+                    "\n\tpublic ",
+                    "\nprivate ",
+                    "\n\tprivate ",
+                    "\n\n",
+                    "\n",
+                    " ",
+                    "",
+                ]
             if separators == '':
                 docs = CharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap).split_text(
                     text)
@@ -281,6 +493,7 @@ class AIContextMemory(metaclass=Singleton):
             self.vector_store[name] = self.get_sto_bo(name)
 
         self.vector_store[name]['text'] = docs
+        return docs.copy()
 
     @staticmethod
     def get_sto_bo(name):
@@ -289,16 +502,15 @@ class AIContextMemory(metaclass=Singleton):
                 'vectors': [],
                 'db': None,
                 'len-represent': 0,
-                'db-path': f'data/isaa_data/Memory/{name}/',
+                'db-path': f'.data/{get_app().id}/Memory/{name}',
                 'represent': []}
 
-    def hydatate_vectors(self, name):
+    def hydrate_vectors(self, name, vec):
 
-        Chroma(collection_name=name,
-               embedding_function=self.embedding,
-               persist_directory=self.vector_store[name][
-                   'db-path']).search()
+        ret = self.vector_store[name][
+            'db'].similarity_search_by_vector(vec)
 
+        return ret
         # .delete_collection()
 
     def init_store(self, name):
@@ -306,7 +518,7 @@ class AIContextMemory(metaclass=Singleton):
             self.vector_store[name] = self.get_sto_bo(name)
         lo = False
         if not os.path.exists(self.vector_store[name]['db-path']):
-            os.makedirs(f"data/isaa_data/Memory/{name}/")
+            os.makedirs(self.vector_store[name]['db-path'], exist_ok=True)
         else:
             lo = True
         self.vector_store[name]['db'] = Chroma(collection_name=name,
@@ -316,11 +528,12 @@ class AIContextMemory(metaclass=Singleton):
 
         if lo:
             self.vector_store[name]['db'].get()
-            p = self.vector_store[name]['db-path'] + "represent.vec"
+            p = self.vector_store[name]['db-path'] + "/represent.vec"
             if os.path.exists(p):
                 with open(p, "r") as f:
                     res = f.read()
-                self.vector_store[name]['represent'] = eval(res)
+                if res:
+                    self.vector_store[name]['represent'] = eval(res)
 
     def load_all(self):
         def list_folders_on_same_level(path):
@@ -338,23 +551,42 @@ class AIContextMemory(metaclass=Singleton):
 
             return folders
 
-        for folder in list_folders_on_same_level("data/isaa_data/Memory/"):
-            self.init_store(folder)
+        i = 0
+        folders = list_folders_on_same_level(f".data/{get_app().id}/Memory/")
+        if isinstance(folders, str):
+            get_logger().warning(Style.Bold(folders))
+            return 0
+        for folder in folders:
+            get_logger().info(Style.Bold(f"Loading memory form {folder}"))
+            if os.path.isdir(folder) and folder not in ['.', '..', '/', '\\']:
+                i += 1
+                self.init_store(folder)
+        return i
+
+    @staticmethod
+    def cleanup_list(data: list[str]):
+
+        result = []
+
+        for doc in data:
+            if doc and len(doc.strip()) > 10:
+                result.append(doc)
+        del data
+        return result
 
     def add_data(self, name, data=None):
 
-        if not name in self.vector_store.keys():
+        if name not in self.vector_store.keys():
             self.init_store(name)
-        if data is None:
-            data = []
 
-        if data:
-            self.vector_store[name]['text'] = data
-        if not name in self.vector_store.keys():
-            self.vector_store[name] = self.get_sto_bo(name)
+        if data is not None:
+            self.vector_store[name]['text'] += data
 
         if not self.vector_store[name]['db']:
             self.init_store(name)
+
+        if not self.vector_store[name]['text'] or len(self.vector_store[name]['text']) == 0:
+            return
 
         if isinstance(self.vector_store[name]['text'], str):
             vec = self.embedding.embed_query(self.vector_store[name]['text'])
@@ -362,7 +594,13 @@ class AIContextMemory(metaclass=Singleton):
             self.vector_store[name]['vectors'].append(vec)
 
         if isinstance(self.vector_store[name]['text'], list):
-            self.vector_store[name]['db'].add_texts(self.vector_store[name]['text'])
+            self.vector_store[name]['text'] = self.cleanup_list(self.vector_store[name]['text'])
+            try:
+                self.vector_store[name]['db'].add_texts(self.vector_store[name]['text'])
+            except ValueError:
+                l = len(self.vector_store[name]['text'])
+                self.vector_store[name]['db'].add_texts(self.vector_store[name]['text'][:l])
+                self.vector_store[name]['db'].add_texts(self.vector_store[name]['text'][l:])
             for vec in self.embedding.embed_documents(self.vector_store[name]['text']):
                 self.vector_store[name]['vectors'].append(vec)
 
@@ -373,25 +611,38 @@ class AIContextMemory(metaclass=Singleton):
         for text_c in data:
             self.vector_store[name]['full-text-len'] += len(text_c)
 
+        self.vector_store[name]['text'] = []
         self.vector_store[name]['db'].persist()
 
     def stor_rep(self, name):
         if not name in self.vector_store.keys():
             return
 
-        p = self.vector_store[name]['db-path'] + "represent.vec"
+        p = self.vector_store[name]['db-path'] + "/represent.vec"
 
         if not os.path.exists(p):
             open(p, "a").close()
         with open(p, "w") as f:
             f.write(str(self.vector_store[name]['represent']))
 
+    def get_retriever(self, name):
+        if not name in self.vector_store.keys() or self.vector_store[name]['db'] is None:
+            return
+        return self.vector_store[name]['db'].as_retriever()
+
     def crate_live_context(self, name, algorithm='KMeans', num_clusters=None):
         if not name in self.vector_store.keys():
             self.vector_store[name] = self.get_sto_bo(name)
 
         if not self.vector_store[name]['vectors']:
-            print("vector_store empty")
+            if self.vector_store[name]['text']:
+                self.add_data(name)
+            else:
+                print(f"Error in vector_store no vectors found for {name}")
+                return
+
+        if not self.vector_store[name]['vectors']:
+            print(f"Error in vector_store no vectors found for {name} XX")
             return
 
         if num_clusters is None:
@@ -408,6 +659,12 @@ class AIContextMemory(metaclass=Singleton):
                     return int(10 + slope * (x - 139472))
 
             num_clusters = f(self.vector_store[name]['full-text-len'])
+
+        if len(self.vector_store[name]['vectors']) < num_clusters:
+            self.vector_store[name]['represent'] = self.vector_store[name]['vectors']
+            self.vector_store[name]['len-represent'] = len(self.vector_store[name]['represent'])
+            self.memory[name + '-tl'] = self.vector_store[name]['full-text-len']
+            return
         if algorithm == 'AgglomerativeClustering':
 
             cluster = AgglomerativeClustering(n_clusters=num_clusters).fit(self.vector_store[name]['vectors'])
@@ -439,63 +696,74 @@ class AIContextMemory(metaclass=Singleton):
 
         request_vector = self.embedding.embed_query(text)
 
-        self.memory = {
+        context_data_fit = {
             "max": 0,
-            "min": 0,
+            "min": math.inf,
             "key": ""
         }
+
+        if len(self.vector_store.keys()) < 1:
+            get_logger().info(Style.WHITE("Loading memory from filesystem"))
+            self.load_all()
 
         for key, memory in self.vector_store.items():
             if not memory['represent']:
                 self.memory[key + '-tl'] = memory['full-text-len']
                 self.crate_live_context(key)
-            if not key + '-tl' in memory.keys():
+            if not key + '-tl' in list(self.memory.keys()):
+                self.memory[key + '-tl'] = 0
                 self.crate_live_context(key)
             if self.memory[key + '-tl'] < memory['full-text-len']:
                 self.crate_live_context(key)
             # get vectors
-            self.memory[key] = []
-            do = False
+            context_data_fit[key] = []
             for representation in memory['represent']:
-                do = True
-                self.memory[key].append(np.dot(representation, request_vector))
+                context_data_fit[key].append(np.dot(representation, request_vector))
 
-            if do:
-                local_max = max(self.memory[key])
-                local_min = min(self.memory[key])
-                if self.memory['min'] == 0:
-                    self.memory['min'] = local_min + 0.000001
-                if local_max > self.memory['max'] and local_min < self.memory['min']:
-                    self.memory['key'] = key
-                    self.memory['min'] = local_min
-                    self.memory['max'] = local_max
+            if len(memory['represent']):
+                local_max = max(context_data_fit[key])
+                local_min = min(context_data_fit[key])
+                if local_max > context_data_fit['max'] and local_min < context_data_fit['min']:
+                    context_data_fit['key'] = key
+                    context_data_fit['min'] = local_min
+                    context_data_fit['max'] = local_max
             else:
-                self.memory['key'] = key
+                if not context_data_fit['key']:
+                    context_data_fit['key'] = key
 
-        return self.memory['key']
+        return context_data_fit
 
     def search(self, name, text, marginal=False):
         if not name in self.vector_store.keys():
             self.vector_store[name] = self.get_sto_bo(name)
 
-        if not self.vector_store[name]['db']:
+        if self.vector_store[name]['db'] is None:
             self.init_store(name)
             return []
 
+        if not os.path.exists(self.vector_store[name]['db-path'] + "/index"):
+            print(f"Cannot find index in vector store {name} pleas add data before quarry")
+            return []
         if marginal:
             return self.vector_store[name]['db'].max_marginal_relevance_search(text)
 
         return self.vector_store[name]['db'].similarity_search_with_score(text)
 
-    def get_context_for(self, text, marginal=False):
-        mem_name = self.get_best_fit_memory(text)
+    def get_context_for(self, text, name=None, marginal=False):
+        mem_name = {'key': name}
+        if name is None:
+            mem_name = self.get_best_fit_memory(text)
 
-        print("mem_name", self.memory)
+        data = self.search(mem_name['key'], text, marginal=marginal)
+        last = []
+        final = f"Data from ({mem_name['key']}):\n"
 
-        data = self.search(mem_name, text, marginal=False)
-
-        return data
-
+        for res in data:
+            if last != res:
+                final += res.page_content + '\n\n'
+            else:
+                print("WARNING- same")
+        return final
 
 
 class CollectiveMemory(metaclass=Singleton):
@@ -512,10 +780,10 @@ class CollectiveMemory(metaclass=Singleton):
     mean_token_len = 1
 
     def text(self, context):
-        if self.do_mem:
-            return " NO MEMORY Avalabel"
         if not context or context == "None":
             return f"active memory contains {self.token_in_use} tokens for mor informations Input similar information"
+        if self.do_mem:
+            return get_tool(get_app()).get_context_memory().get_context_for(context)
         "memory will performe a vector similarity search using memory"
         relevant_memory = self.memory.get_relevant(context, 10)
         if len(relevant_memory) == 0:
@@ -556,7 +824,7 @@ class CollectiveMemory(metaclass=Singleton):
                f"{self.text_len=}\n{self.mean_token_len=}\n"
 
 
-class ObservationMemory():
+class ObservationMemory:
     memory_data: list[dict] = []
     tokens: int = 0
     max_length: int = 1000
@@ -584,9 +852,10 @@ class ObservationMemory():
     @text.setter
     def text(self, data):
         tok = 0
-        for line in data.split('\n'):
+        for line in CharacterTextSplitter(chunk_size=max(300, int(len(data) / 10)),
+                                          chunk_overlap=max(20, int(len(data) / 200))).split_text(data):
             if line:
-                ntok = get_tool(get_app()).get_OpenAI_models(self.model_name).get_num_tokens(line)
+                ntok = len(tiktoken.encoding_for_model(self.model_name).encode(line))
                 self.memory_data.append({'data': line, 'token-count': ntok, 'vector': []})
                 tok += ntok
 
@@ -599,7 +868,7 @@ class ObservationMemory():
     def cut(self):
 
         tok = 0
-        all_mem = ""
+        all_mem = []
         while self.tokens > self.max_length:
             if len(self.memory_data) == 0:
                 break
@@ -608,11 +877,11 @@ class ObservationMemory():
             self.add_to_static.append(memory)
             tok += memory['token-count']
             self.tokens -= memory['token-count']
-            all_mem += memory['data'] + '\n'
+            all_mem.append(memory['data'])
             self.memory_data.remove(memory)
             # print("Removed Tokens", memory['token-count'])
 
-        get_tool(get_app()).get_context_memory().add_data('main', all_mem)
+        get_tool(get_app()).get_context_memory().add_data('observations', all_mem)
 
         print(f"Removed ~ {tok} tokens from ObservationMemory tokens in use: {self.tokens} ")
 
@@ -626,7 +895,9 @@ class ShortTermMemory:
     add_to_static: list[dict] = []
 
     lines_ = []
-    name = "ShortTermMemory"
+
+    def __init__(self, name):
+        self.name = name
 
     def set_name(self, name: str):
         self.name = name
@@ -634,6 +905,39 @@ class ShortTermMemory:
     def info(self):
         text = self.text
         return f"\n{self.tokens=}\n{self.max_length=}\n{self.model_name=}\n{text[:60]=}\n"
+
+    def cut(self):
+
+        if self.tokens <= 0:
+            return
+
+        tok = 0
+
+        all_mem = []
+        while self.tokens > self.max_length:
+            if len(self.memory_data) == 0:
+                break
+            # print("Tokens in ShortTermMemory:", self.tokens, end=" | ")
+            memory = self.memory_data[-1]
+            self.add_to_static.append(memory)
+            tok += memory['token-count']
+            self.tokens -= memory['token-count']
+            all_mem.append(memory['data'])
+            self.memory_data.remove(memory)
+            # print("Removed Tokens", memory['token-count'])
+
+        if all_mem:
+            get_tool(get_app()).get_context_memory().add_data(self.name, all_mem)
+
+        print(f"\nRemoved ~ {tok} tokens from {self.name} tokens in use: {self.tokens} max : {self.max_length}")
+
+    def clear_to_collective(self, min_token=20):
+        if self.tokens < min_token:
+            return
+        max_tokens = self.max_length
+        self.max_length = 0
+        self.cut()
+        self.max_length = max_tokens
 
     @property
     def text(self) -> str:
@@ -646,43 +950,14 @@ class ShortTermMemory:
 
         return memorys
 
-    def cut(self):
-
-        if self.tokens <= 0:
-            return
-
-        tok = 0
-
-        all_mem = ""
-        while self.tokens > self.max_length:
-            if len(self.memory_data) == 0:
-                break
-            # print("Tokens in ShortTermMemory:", self.tokens, end=" | ")
-            memory = self.memory_data[-1]
-            self.add_to_static.append(memory)
-            tok += memory['token-count']
-            self.tokens -= memory['token-count']
-            all_mem += memory['data'] + '\n'
-            self.memory_data.remove(memory)
-            # print("Removed Tokens", memory['token-count'])
-
-        get_tool(get_app()).get_context_memory().add_data('main', all_mem)
-
-        print(f"\nRemoved ~ {tok} tokens from {self.name} tokens in use: {self.tokens} max : {self.max_length}")
-
-    def clear_to_collective(self):
-
-        max_tokens = self.max_length
-        ShortTermMemory.max_length = 0
-        self.cut()
-        ShortTermMemory.max_length = max_tokens
-
     @text.setter
     def text(self, data):
         tok = 0
         if not isinstance(data, str):
             print(f"DATA text edd {type(data)} data {data}")
-        for line in data.split('\n'):
+
+        for line in CharacterTextSplitter(chunk_size=max(300, int(len(data) / 10)),
+                                          chunk_overlap=max(20, int(len(data) / 200))).split_text(data):
             if line not in self.lines_ and len(line) != 0:
                 ntok = len(tiktoken.encoding_for_model(self.model_name).encode(line))
                 self.memory_data.append({'data': line, 'token-count': ntok, 'vector': []})
@@ -702,7 +977,7 @@ class ShortTermMemory:
 
 
 class AgentConfig:
-    available_modes = ['talk', 'tools', 'conversation', 'free', 'planning', 'execution', 'generate']
+    available_modes = ['talk', 'tools', 'conversation', 'free', 'planning', 'execution', 'generate', 'q2tree']
     max_tokens = 4097
 
     capabilities = """1. Invoke Agents: Isaa should be able to invoke and interact with various agents and tools, seamlessly integrating their expertise and functionality into its own responses and solutions.
@@ -711,6 +986,11 @@ class AgentConfig:
     4. Error Handling: Isaa should be able to detect and handle errors or issues that may arise while working with agents and tools, providing alternative solutions or gracefully recovering from failures.
     5. Agent Learning: Isaa should continuously learn from its interactions with various agents and tools, refining its understanding of their capabilities and improving its ability to utilize them effectively.
     6. Performance Evaluation: Isaa should regularly evaluate the performance of the agents and tools it interacts with, identifying areas for improvement and optimizing their use in future tasks."""
+
+    system_information = f"""
+system information's : {getSystemInfo()}
+
+"""
 
     def __init__(self):
         self.name: str = 'agentConfig'
@@ -723,13 +1003,13 @@ class AgentConfig:
 
         self.personality = ""
         self.goals = ""
-        self.short_mem: ShortTermMemory = ShortTermMemory()
-        self.edit_text: ShortTermMemory = ShortTermMemory()
+        self.short_mem: ShortTermMemory = ShortTermMemory('ShortTerm')
+        self.edit_text: ShortTermMemory = ShortTermMemory('EditText')
         self.edit_text.set_name("CodeMemory")
         self.edit_text.max_length = 5400
-        self.context: ShortTermMemory = ShortTermMemory()
+        self.context: ShortTermMemory = ShortTermMemory('Context')
         self.context.set_name("ContextMemory")
-        self.obser_mem: ObservationMemory = ObservationMemory()
+        self.observe_mem: ObservationMemory = ObservationMemory()
         self.tools: dict = {
             "test_tool": {"func": lambda x: x, "description": "only for testing if tools are available",
                           "format": "test_tool(input:str):"}
@@ -743,24 +1023,31 @@ class AgentConfig:
 
         self.task_index = 0
 
-        self.token_left = 1000
+        self.token_left = 2000
         self.temperature = 0.06
         self.messages_sto = {}
-        self._stream = True
+        self._stream = False
         self._stream_reset = False
         self.stop_sequence = ["\n\n", "Observation:", "Execute:"]
         self.completion_mode = "text"
+        self.add_system_information = True
 
-    @property
-    def task(self):
+        self.binary_tree: IsaaQuestionBinaryTree or None = None
+
+    def task(self, reset_step=False):
         if self.step_between:
             task = self.step_between
-            self.step_between = ""
+            if reset_step:
+                self.step_between = ""
             return task
         if len(self.task_list) != 0:
             task = self.task_list[self.task_index]
             return task
-        return "Task is done return Summarysation for user"
+        return "Task is done return Summarization for user"
+
+    def clone(self):
+
+        return
 
     @property
     def stream(self):
@@ -776,34 +1063,58 @@ class AgentConfig:
     def stream(self, value):
         self._stream = value
 
-    def add_message(self, role, message):
-        key = f"{self.name}-{self.model_name}-{self.mode}-{self.completion_mode}"
-        if key not in self.messages_sto.keys():
-            self.messages_sto[key] = []
-            prompt = self.prompt
-            prompt.replace(self.task, "")
-            prompt.replace("Task:", "")
+    def init_message(self, key):
+        self.messages_sto[key] = []
+        prompt = self.prompt
+        prompt.replace("Task:", "")
 
-            self.messages_sto[key].append({'role': "system", 'content': prompt})
-            self.messages_sto[key].append({'role': "user", 'content': self.task})
+        self.messages_sto[key].append({'role': "system", 'content': prompt})
+
+    def add_message(self, role, message):
+        key = f"{self.name}-{self.mode}"
+        if key not in self.messages_sto.keys():
+            self.init_message(key)
 
         self.messages_sto[key].append({'role': role, 'content': message})
 
+    def get_messages(self, create=True):
+        key = f"{self.name}-{self.mode}"
+        if key not in self.messages_sto.keys():
+            return []
+        messages = self.messages_sto[key]
+        if create:
+            messages = self._messages
+        return messages
+
     @property
-    def messages(self) -> list:
-        key = f"{self.name}-{self.model_name}-{self.mode}-{self.completion_mode}"
+    def _messages(self) -> list:
+        key = f"{self.name}-{self.mode}"
 
         if key not in self.messages_sto.keys():
-            prompt = self.prompt
-            prompt.replace(self.task, "")
-            prompt.replace("Task:", "")
-
-            self.add_message("system", prompt)
-            self.add_message("user", self.task)
+            self.init_message(key)
 
         last_prompt = ""
         for msg in self.messages_sto[key]:
             last_prompt += msg['content']
+        i = 0
+        while self.max_tokens < len(tiktoken.encoding_for_model(self.model_name).encode(last_prompt)):
+            i += 1
+            self.messages_sto[key] = []
+            self.init_message(key)
+            if i > 2:
+                temp_message = []
+                mas_text_sum = get_tool(get_app()).mas_text_summaries
+                for msg in self.messages_sto[key]:
+                    temp_message.append({'role': msg['role'], 'content': mas_text_sum(msg['content'])})
+                self.messages_sto[key] = temp_message
+            if i > 3:
+                self.messages_sto[key] = [self.messages_sto[key][-2], self.messages_sto[key][-1]]
+            if i > 4:
+                self.messages_sto[key] = [self.messages_sto[key][-1]]
+                break
+            last_prompt = []
+            for msg in self.messages_sto[key]:
+                last_prompt += msg['content']
 
         self.last_prompt = last_prompt
 
@@ -813,20 +1124,20 @@ class AgentConfig:
     def prompt(self) -> str:
         if not self.short_mem.model_name:
             self.short_mem.model_name = self.model_name
-        if not self.obser_mem.model_name:
-            self.obser_mem.model_name = self.model_name
+        if not self.observe_mem.model_name:
+            self.observe_mem.model_name = self.model_name
 
-        prompt = self.get_prompt()
+        prompt = (self.system_information if self.add_system_information else '') + self.get_prompt()
 
-        pl = get_tool(get_app()).get_OpenAI_models(self.model_name).get_num_tokens(str(prompt)) + 200
+        pl = len(tiktoken.encoding_for_model(self.model_name).encode(prompt)) + 2
         self.token_left = self.max_tokens - pl
         if self.token_left < 0:
             print(f"No tokens left cut short_mem mem to {self.token_left * -1}")
             self.token_left *= -1
             self.short_mem.max_length = self.token_left
             self.short_mem.cut()
-        if self.token_left > 1000:
-            self.token_left = 1000
+        if self.token_left > 2800:
+            self.token_left = 2800
         self.last_prompt = prompt
         return prompt
 
@@ -834,7 +1145,7 @@ class AgentConfig:
 
         return f"\n{self.name=}\n{self.mode=}\n{self.model_name=}\n{self.agent_type=}\n{self.max_iterations=}" \
                f"\n{self.verbose=}\n{self.personality[:45]=}\n{self.goals[:45]=}" \
-               f"\n{str(self.tools)[:45]=}\n{self.task_list=}\n{self.task_list_done=}\n{self.step_between=}\nshort_mem\n{self.short_mem.info()}\nObservationMemory\n{self.obser_mem.info()}\nCollectiveMemory\n{str(CollectiveMemory())}\n"
+               f"\n{str(self.tools)[:45]=}\n{self.task_list=}\n{self.task_list_done=}\n{self.step_between=}\nshort_mem\n{self.short_mem.info()}\nObservationMemory\n{self.observe_mem.info()}\nCollectiveMemory\n{str(CollectiveMemory())}\n"
 
     def get_prompt(self):
 
@@ -844,9 +1155,9 @@ class AgentConfig:
             format_ = value['format'] if 'format' in value.keys() else f"{key}('function input')"
             if format_.endswith("('function input')"):
                 value['format'] = format_
-            tools += f"\n{key}: {value['description']}\n\t{format_}\n"
+            tools += f"{key.strip()}: {value['description'].strip()} - {format_.strip()}\n"
             names.append(key)
-        task = self.task
+        task = self.task(reset_step=True)
         task_list = '\n'.join(self.task_list)
 
         prompt = f"Answer the following questions as best you can. You have access to the following python functions\n" \
@@ -858,7 +1169,7 @@ class AgentConfig:
                  f"Goals:'''{self.goals}'''\n\n" + \
                  f"Capabilities:'''{self.capabilities}'''\n\n" + \
                  f"Permanent-Memory:\n'''{CollectiveMemory().text(context=task)}'''\n\n" + \
-                 f"Resent Agent response:\n'''{self.obser_mem.text}'''\n\n" + \
+                 f"Resent Agent response:\n'''{self.observe_mem.text}'''\n\n" + \
                  f"\n\nBegin!\n\n" \
                  f"Task:'{task}\n{self.short_mem.text}\nAgent : "
 
@@ -870,7 +1181,7 @@ There are {{""" + f"\n{tools}\n" + """}} different functions that must be called
 1.    Function(s) and Input(s) you wish to invoke, selecting only those useful for executing the plan.
 2.    focusing on efficiency and minimizing steps.
 
-Actual Observations: {{""" + f"{self.obser_mem.text}" + """}}
+Actual Observations: {{""" + f"{self.observe_mem.text}" + """}}
 
 Note that your plan should be clear and understandable. Strive for the shortest and most efficient solution to accomplish the task. Use only the features that are useful for executing the plan.
 Begin.
@@ -904,7 +1215,7 @@ so that other people can follow the progress and provide support if needed.
 You have access to following functions : {{""" + f"\n{tools}" + """}}
 
 The Plan to execute : {{""" + f"\n{task_list}\n" + """}}
-Resent Observations : {{""" + f"{self.obser_mem.text}" + """}}
+Resent Observations : {{""" + f"{self.observe_mem.text}" + """}}
 Begin!
 
 """ + f"{self.short_mem.text}\n" + """
@@ -930,9 +1241,9 @@ Task : """ + f"\n{task}\n\nBegin!\nPrompt:"
             prompt = f"Goals:{self.goals.replace('{input}', '')}\n" + \
                      f"Capabilities:{self.capabilities.replace('{input}', '')}\n" + \
                      f"Long-termContext:{CollectiveMemory().text(context=self.short_mem.text).replace('{input}', '')}\n" + \
-                     f"\nResent Observation:{self.obser_mem.text.replace('{input}', '')}" + \
+                     f"\nResent Observation:{self.observe_mem.text.replace('{input}', '')}" + \
                      f"Task:{task}\n" + \
-                     "input: {input}" + \
+                     "{input}" + \
                      f"\n{self.short_mem.text.replace('{input}', '')}"
 
         if self.mode == 'tools':
@@ -943,7 +1254,7 @@ Task : """ + f"\n{task}\n\nBegin!\nPrompt:"
                      f"Goals:'''{self.goals}'''\n\n" + \
                      f"Capabilities:'''{self.capabilities}'''\n\n" + \
                      f"Permanent-Memory:\n'''{CollectiveMemory().text(context=task)}'''\n\n" + \
-                     f"Resent Agent response:\n'''{self.obser_mem.text}'''\n\n" + \
+                     f"Resent Agent response:\n'''{self.observe_mem.text}'''\n\n" + \
                      "Placeholders: there are two types of place holders.  " \
                      "\n1 : <information_from_agent> if you see a word enclosed with <> this character you must fill it with information!" \
                      "\n2 : [datime] if you want the system to insert an information return []." \
@@ -955,11 +1266,40 @@ Task : """ + f"\n{task}\n\nBegin!\nPrompt:"
                      f"Action: the action to take, should be one of {names}\n" + \
                      f"Execute: <function_name>(<args>)\n" + \
                      f"\n\nBegin!\n\n" \
-                     f"Task:'{task}\n{self.short_mem.text}\n"
+                     f"Resent:\n{self.short_mem.text}\nTask:'{task}"
             prompt = prompt.replace('{input}', '') + '{input}'
 
         if self.mode == 'free':
             prompt = task
+
+        if self.mode == 'q2tree':
+            if self.binary_tree:
+                questions_ = self.binary_tree.get_left_side(0)
+                questions = '\n'.join(
+                    f"Question {i + 1} : {q.replace('task', f'task ({task})')}" for i, q in enumerate(questions_))
+                prompt = f"""Answer the following questions as best you can. You have access to
+Capabilities:
+'''
+Functions: ''\n{tools}''
+Goals: ''\n{self.goals}''
+Capabilities: ''\n{self.capabilities}''
+'''
+
+I'm going to ask you {len(questions_)} +1 question, answer the following questions as best you can.
+You are known to think in small and detailed steps to get the right result.
+Task : '''{task}'''
+imagen yourself doing the task.
+{questions}
+
+After the question you answered negatively, output the following N/A !
+Answer-format:
+Answer 1: ...
+. ...
+
+Answer: Let's work this out in a step by step way to be sure we have the right answer.
+
+Begin!
+"""
 
         return prompt
 
@@ -1039,7 +1379,7 @@ Task : """ + f"\n{task}\n\nBegin!\nPrompt:"
         return self
 
     def set_observation_memory(self, obser_mem: ObservationMemory):
-        self.obser_mem = obser_mem
+        self.observe_mem = obser_mem
         return self
 
     def set_model_name(self, model_name: str):
@@ -1051,7 +1391,7 @@ Task : """ + f"\n{task}\n\nBegin!\nPrompt:"
 class Tools(MainTool, FileHandler):
 
     def __init__(self, app=None):
-        self.version = "0.0.1"
+        self.version = "0.0.2"
         self.name = "isaa"
         self.logger: logging.Logger or None = app.logger if app else None
         self.color = "VIOLET2"
@@ -1060,15 +1400,13 @@ class Tools(MainTool, FileHandler):
                        'agents-name-lsit': []
                        }
         self.per_data = {}
-        self.isaa_instance = {"Stf": {},
-                              "DiA": {}}
         self.keys = {
             "KEY": "key~~~~~~~",
             "Config": "config~~~~"
         }
         self.initstate = {}
         self.genrate_image = image_genrating_tool
-        self.observation_term_mem_file = "data/isaa_data/observationMemory/CollectiveObservationMemory.mem"
+        self.observation_term_mem_file = f".data/{app.id}/Memory/observationMemory/"
         self.tools = {
             "all": [["Version", "Shows current Version"],
                     ["Run", "Starts Inference"],
@@ -1083,19 +1421,15 @@ class Tools(MainTool, FileHandler):
                     ],
             "name": "isaa",
             "Version": self.show_version,
-            "Run": self.ask_Bloom,
-            "add_api_key": self.add_api_key,
-            "login": self.login,
-            "new-sug": self.new_sub_grop,
-            "run-sug": self.run_sug,
             "info": self.info,
-            "lode": self.lode_models,
             "isaa": self.run_isaa_wrapper,
-            "image": self.enrate_image_wrapper,
+            "image": self.genrate_image_wrapper,
         }
         self.app_ = app
         self.print_stream = print
         self.agent_collective_senses = False
+        self.global_stream_override = False
+        self.pipes_device = 1
         self.speak = lambda x, *args, **kwargs: x
 
         FileHandler.__init__(self, "issa.config", app.id if app else __name__)
@@ -1108,7 +1442,7 @@ class Tools(MainTool, FileHandler):
 
         return self.run_agent(command[0], command[1:])
 
-    def enrate_image_wrapper(self, command):
+    def genrate_image_wrapper(self, command):
         if len(command) != 1:
             return "Unknown command"
 
@@ -1116,13 +1450,6 @@ class Tools(MainTool, FileHandler):
 
     def show_version(self):
         self.print("Version: ", self.version)
-
-    def set_tokens(self):
-        if 'HUGGINGFACEHUB_API_TOKEN' in self.config.keys():
-            os.environ['HUGGINGFACEHUB_API_TOKEN'] = self.config["HUGGINGFACEHUB_API_TOKEN"]
-        if 'OPENAI_API_KEY' in self.config.keys():
-            os.environ['OPENAI_API_KEY'] = self.config["OPENAI_API_KEY"]
-            openai.api_key = self.config["OPENAI_API_KEY"]
 
     def add_str_to_config(self, command):
         if len(command) != 3:
@@ -1135,11 +1462,10 @@ class Tools(MainTool, FileHandler):
         config = self.get_file_handler(self.keys["Config"])
         if config is not None:
             self.config = eval(config)
-        self.set_tokens()
-        if not os.path.exists("data/isaa_data/"):
-            os.mkdir("data/isaa_data/")
+        if not os.path.exists(f".data/{get_app().id}/isaa/"):
+            os.mkdir(f".data/{get_app().id}/isaa/")
 
-    def loade_keys_from_env(self):
+    def load_keys_from_env(self):
         self.config['WOLFRAM_ALPHA_APPID'] = os.getenv('WOLFRAM_ALPHA_APPID')
         self.config['HUGGINGFACEHUB_API_TOKEN'] = os.getenv('HUGGINGFACEHUB_API_TOKEN')
         self.config['OPENAI_API_KEY'] = os.getenv('OPENAI_API_KEY')
@@ -1149,153 +1475,58 @@ class Tools(MainTool, FileHandler):
         self.config['PINECONE_API_KEY'] = os.getenv('PINECONE_API_KEY')
         self.config['PINECONE_API_ENV'] = os.getenv('PINECONE_API_ENV')
 
-    def lode_models(self):
-
-        start_time = time.time()
-        stf = "all-MiniLM-L6-v2"
-        dia = "microsoft/DialoGPT-medium"
-        if "ai-config" in self.config:
-            ai_config = self.config["ai-config"]
-            stf = ai_config["SentenceTransformer"]
-            dia = ai_config["Dialog"]
-        else:
-            self.config["ai-config"] = {"SentenceTransformer": stf, "Dialog": dia}
-        start_time_dia = time.time()
-        self.add_tmk(["", "DiA", dia, "catkz"])  # ca -> wmh
-        process_time_dia = time.time() - start_time_dia
-        start_time_stf = time.time()
-        self.add_tmk(["", "Stf", stf, "stf"])
-        process_time_stf = time.time() - start_time_stf
-        process_time_total = time.time() - start_time
-        self.print(
-            f"Processing time :\n\tTotal {process_time_total:.2f} seconds\n\tDia {process_time_dia:.2f} seconds\n\t"
-            f"Stf {process_time_stf:.2f} seconds")
-
-        return "Done!"
-
-    def add_tmk(self, command):
-        if len(command) < 2:
-            return "invalid"
-        ap = command[1]
-        name = command[2]
-        mode = command[3]
-
-        ai_c = {"tokenizer": None, "model": None}
-
-        self.print(name)
-
-        if "tkz" in mode:
-            ai_c["tokenizer"] = AutoTokenizer.from_pretrained(name, padding_side='left')
-
-        if "wmh" in mode:
-            ai_c["model"] = AutoModelWithLMHead.from_pretrained(name, from_tf=False)
-
-        if "s2s" in mode:
-            ai_c["model"] = AutoModelForSeq2SeqLM.from_pretrained(name, from_tf=False)
-
-        if "msk" in mode:
-            ai_c["model"] = AutoModelForMaskedLM.from_pretrained(name, from_tf=False)
-
-        if "ca" in mode:
-            ai_c["model"] = AutoModelForCausalLM.from_pretrained(name, from_tf=False)
-
-        if "stf" in mode:
-            ai_c["model"] = SentenceTransformer(name)
-
-        self.isaa_instance[ap] = ai_c
-
     def on_exit(self):
         for key in self.config.keys():
             if key.endswith("-init"):
                 self.config[key] = False
-        self.add_to_save_file_handler(self.keys["Config"], str(self.per_data))
+        self.add_to_save_file_handler(self.keys["Config"], str(self.config))
         self.save_file_handler()
-
-    def add_api_key(self):
-        key = input("~")
-        if key == "":
-            self.print(Style.RED("Error: Invalid API key"))
-            return
-        self.add_to_save_file_handler(self.keys["KEY"], key)
-
-    def login(self):
-        api_key = self.get_file_handler(self.keys["KEY"])
-        if api_key is not None:
-            self.print(api_key)
-            os.system("huggingface-cli login")
-            self.inference = InferenceApi("bigscience/bloom", token=HfFolder.get_token())
-            return
-        self.print(Style.RED("Please enter your API key here:"))
-        self.add_api_key()
-
-    def ask_Bloom(self, _input):
-        des = _input[1:]
-        s = ""
-        for i in des:
-            s += str(i) + " "
-        resp = infer(s, inference=self.inference)
-        self.print(resp)
-
-    def new_sub_grop(self, command):
-        if len(command) <= 3:
-            return "invalid command length [sug:name type:question:class:ed:de data:{question:Um-wie-viel-uhr, " \
-                   "class:auto-katze-maus, de-ed:-}] "
-        self.config[command[1]] = {"t": command[2], "data": command[3].replace("-", " "), "version": self.version}
 
     def info(self):
         self.print(self.config)
         return self.config
 
-    def run_sug(self, command):
-        name = command[1]
-        data = command[2].replace('-', ' ')
-        sug = self.config[name]
-        t_ype = sug["t"]
-        try:
-            if t_ype == "ed":
-                return pipeline_s("translation_en_to_de", data)
-            elif sug["t"] == "de":
-                return translation_ger_to_en(data)
-            elif t_ype == "class":
-                return pipeline_s('text-classification', data)
-            elif t_ype == "fill-mask":
-                return pipeline_s('fill-mask', data, model='bert-large-uncased-whole-word-masking')
-                #  https://huggingface.co/bert-large-uncased-whole-word-masking?text=Paris+is+the+%5BMASK%5D+of+France.
-                #  [CLS] Sentence A [SEP] Sentence B [SEP]
-                #  ("The man worked as a [MASK].")
-            elif t_ype == "question":
-                return pipeline_q('question-answering', sug["data"], data)
-            elif t_ype == "q-t-d-e-d":
-                data = translation_ger_to_en(data)
-                data = pipeline_q('question-answering', sug["data"], data)['answer']
-                return pipeline_s("translation_en_to_de", data)
-            elif t_ype == "stf":
-                return pipeline_stf(data, sug["data"], self.isaa_instance['Stf']['model'])
-            elif t_ype == "talk":
-                res, sug["data"] = pipeline_talk(data, self.isaa_instance[name]['model'],
-                                                 self.isaa_instance[name]['tokenizer'], sug["data"])
-                return res
+    def init_all_pipes_default(self):
+        self.init_pipeline('question-answering', "deepset/roberta-base-squad2")
+        time.sleep(2)
+        self.init_pipeline('summarization', "pinglarin/summarization_papers")
+        time.sleep(2)
+        self.init_pipeline('text-classification', "distilbert-base-uncased-finetuned-sst-2-english")
+
+    def init_pipeline(self, p_type, model):
+        if not p_type in self.initstate.keys():
+            self.initstate[p_type] = False
+
+        if not self.initstate[p_type]:
+            self.logger.info(f"init {p_type} pipeline")
+            if self.pipes_device >= 1 and torch.cuda.is_available():
+                if torch.cuda.device_count() < self.pipes_device:
+                    self.print("device count exceeded ava-label ar")
+                    for i in range(1, torch.cuda.device_count()):
+                        self.print(torch.cuda.get_device_name(i - 1))
+
+                self.config[f"{p_type}_pipeline"] = pipeline(p_type, model=model, device=self.pipes_device - 1)
             else:
-                self.logger.error(f'Could not find task type {t_ype}')
-        except Exception as e:
-            self.print(Style.RED(str(e)))
-        return data
+                self.logger.warning("Cuda is not available")
+                self.config[f"{p_type}_pipeline"] = pipeline(p_type, model=model)
+            self.logger.info("Done")
+            self.initstate[p_type] = True
 
-    def question_answering(self, question, context):
-
-        if not "question_answering" in self.initstate.keys():
-            self.initstate["question_answering"] = False
-
-        if not self.initstate["question_answering"]:
-            self.config["question_answering_pipline"] = pipeline('question-answering',
-                                                                 model="deepset/roberta-base-squad2")
-
+    def question_answering(self, question, context, model="deepset/roberta-base-squad2", **kwargs):
+        self.init_pipeline('question-answering', model)
         qa = {
             'question': question,
             'context': context
         }
+        return self.config["question-answering_pipeline"](qa, **kwargs)
 
-        return self.config["question_answering_pipline"](qa)
+    def summarization(self, text, model="pinglarin/summarization_papers", **kwargs):
+        self.init_pipeline('summarization', model)
+        return self.config["summarization_pipeline"](text, **kwargs)
+
+    def text_classification(self, text, model="distilbert-base-uncased-finetuned-sst-2-english", **kwargs):
+        self.init_pipeline('text-classification', model)
+        return self.config["text-classification_pipeline"](text, **kwargs)
 
     def toolbox_interface(self):
         @tool("toolbox", return_direct=False)
@@ -1317,7 +1548,7 @@ class Tools(MainTool, FileHandler):
         @tool("toolbox_infos", return_direct=False)
         def function(query: str) -> str:
             """Get information about toolbox mods -> Ask to list Avalabel
-             mods get-mod-list, or Ask of Spezifika mod infos get-{mod_name}-infos"""
+             mods get-mod-list, or Ask of Spezifika mod infos mod_names"""
 
             infos = "invalid syntax"
 
@@ -1325,79 +1556,10 @@ class Tools(MainTool, FileHandler):
                 infos = ' '.join(self.app_.MACRO[8:])
 
             for modname in self.app_.MACRO:
-
-                if f"get-{modname}-infos" in query.lower():
+                if modname in query.lower():
                     infos = str(self.app_.HELPER)
 
             return infos
-
-        return function
-
-    def talk(self):
-        @tool("talk", return_direct=True)
-        def function(query: str) -> str:
-            """Using conversational-react-description to Generate a response for the user"""
-            try:
-                return self.speed_construct_Interpret_agent(query, self.app_, 1)
-            except Exception as e:
-                return "Das hat leider nicht geklappt ein Fehler" \
-                       " ist bei der ausfürgung des Tools aufgetreten Fehler meldung : " + str(e)
-
-        return function
-
-    def fileEditor(self):
-
-        app: App = self.app_
-
-        # app.run_any("isaa_ide", "Version", [""])
-
-        app.save_load("isaa_ide")
-        app.new_ac_mod("isaa_ide")
-
-        process_input = app.AC_MOD.process_input
-
-        @tool("fileEditor", return_direct=False)
-        def function(query: str) -> str:
-            """Using LLMChain to intact wit the file system """
-            try:
-                out = process_input(query.strip())
-                if "Invalid command. Please try again" in out:
-                    out = self.interpret_agent(query, self.app_, 3)
-                    self.print(f"Processing:{out}")
-                return out
-            except Exception as e:
-                return "Das hat leider nicht geklappt ein Fehler" \
-                       " ist bei der ausfürgung des Tools aufgetreten Fehler meldung : " + str(e)
-
-        return function
-
-    def kontext(self):
-        @tool("kontext", return_direct=False)
-        def function(query: str) -> str:
-            """Using conversational-react-description to Generate a response for the user"""
-            try:
-
-                # self.config['speed_construct_interpret-template1'] = "Evaluire mir "
-
-                return self.speed_construct_Interpret_agent(
-                    "Bitte gib mir den Vergangen Kontext zusammengefasst wieder der"
-                    " relevant für :{ " + query + " }: ist", self.app_, 1)
-            except Exception as e:
-                return "Das hat leider nicht geklappt ein Fehler" \
-                       " ist bei der ausfürgung des Tools aufgetreten Fehler meldung : " + str(e)
-
-        return function
-
-    def user_input(self):
-        @tool("kontext", return_direct=False)
-        def function(query: str) -> str:
-            """Get Help or supervision from the user"""
-            try:
-                self.print(query)
-                return input("Isaa ask for help\n\n:")
-            except Exception as e:
-                return "Das hat leider nicht geklappt ein Fehler" \
-                       " ist bei der ausfürgung des Tools aufgetreten Fehler meldung : " + str(e)
 
         return function
 
@@ -1414,19 +1576,14 @@ class Tools(MainTool, FileHandler):
 
         return function
 
-    def app_wrapper(self, name, func, return_direct=False):
-        func = tool(name, return_direct=return_direct)(func)
-        return func
-
-    def loade_OpenAI_models(self, names: list):
+    def load_OpenAI_models(self, names: list):
         for model in names:
             if f'OpenAI-model-{model}-init' not in self.initstate.keys():
                 self.initstate[f'OpenAI-model-{model}-init'] = False
 
             if not self.initstate[f'OpenAI-model-{model}-init']:
                 self.initstate[f'OpenAI-model-{model}-init'] = True
-                if model.endswith('-chat'):
-
+                if model.startswith('gpt'):
                     self.config[f'OpenAI-model-{model}'] = ChatOpenAI(model_name=model,
                                                                       openai_api_key=self.config['OPENAI_API_KEY'],
                                                                       streaming=True)
@@ -1436,10 +1593,10 @@ class Tools(MainTool, FileHandler):
 
     def get_OpenAI_models(self, name: str):
         if f'OpenAI-model-{name}' not in self.config.keys():
-            self.loade_OpenAI_models([name])
+            self.load_OpenAI_models([name])
         return self.config[f'OpenAI-model-{name}']
 
-    def add_tool(self, name, func, dis, form, config):
+    def add_tool(self, name, func, dis, form, config: AgentConfig):
 
         self.print(f"ADDING TOOL:{name} to {config.name}")
 
@@ -1449,9 +1606,9 @@ class Tools(MainTool, FileHandler):
         config = AgentConfig()
         config.name = name
 
-        def run_agent(name, text, mode_over_lode=False):
-            if name:
-                return self.run_agent(name, text, mode_over_lode=mode_over_lode)
+        def run_agent(agent_name, text, mode_over_lode: bool or str = False):
+            if agent_name:
+                return self.run_agent(agent_name, text, mode_over_lode=mode_over_lode)
             return "Provide Information in The Action Input: fild or function call"
 
         def search_text(x):
@@ -1498,7 +1655,7 @@ class Tools(MainTool, FileHandler):
             return f"{text[:30]} is Not a Valid url. please just type <url>"
 
         def memory_search(x):
-            x = CollectiveMemory().text(x)
+            x = self.get_context_memory().get_context_for(x)
             if x:
                 return x
             return "No relavent memory available"
@@ -1506,57 +1663,36 @@ class Tools(MainTool, FileHandler):
         if name == "self":
             self.config["self_agent_agents_"] = ["todolist"]
 
-            def toggel(x):
-                x = x.lower()
-                if "talk" in x or "conversation" in x:
-                    config.mode = "talk"
-                    return f"Switched to {config.mode} nowe write the final anser or question to the console"
-                if "free" in x or "execute" in x:
-                    config.mode = "free"
-                    return f"Switched to {config.mode}"
-                return f"Switched to {config.mode}"
-
-            init_states = [False, False]
-
-            config.name = "self"
             config.mode = "free"
             config.agent_tye = "gpt-3.5-turbo"
             config.max_iterations = 6
             config.personality = """
-                  Resourceful: Isaa should be able to efficiently utilize its wide range of capabilities and resources to assist the user.
-                  Collaborative: Isaa should work seamlessly with other agents, tools, and systems to deliver the best possible solutions for the user.
-                  Empathetic: Isaa should understand and respond to the user's needs, emotions, and preferences, providing personalized assistance.
-                  Inquisitive: Isaa should continually seek to learn and improve its knowledge base and skills, ensuring it stays up-to-date and relevant.
-                  Transparent: Isaa should be open and honest about its capabilities, limitations, and decision-making processes, fostering trust with the user.
-                  Versatile: Isaa should be adaptable and flexible, capable of handling a wide variety of tasks and challenges."""
-            config.goals = "Isaa's primary goal is to be a digital assistant designed to help the user with various tasks and challenges by leveraging its diverse set of capabilities and resources."
+Resourceful: Isaa is able to efficiently utilize its wide range of capabilities and resources to assist the user.
+Collaborative: Isaa is work seamlessly with other agents, tools, and systems to deliver the best possible solutions for the user.
+Empathetic: Isaa is understand and respond to the user's needs, emotions, and preferences, providing personalized assistance.
+Inquisitive: Isaa is continually seek to learn and improve its knowledge base and skills, ensuring it stays up-to-date and relevant.
+Transparent: Isaa is open and honest about its capabilities, limitations, and decision-making processes, fostering trust with the user.
+Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of tasks and challenges.
+                  """
+            config.goals = "Isaa's primary goal is to be a digital assistant designed to help the user with various " \
+                           "tasks and challenges by leveraging its diverse set of capabilities and resources."
             config.tools = {
                 "todolist": {"func": lambda x: run_agent('todolist', x),
                              "description": "Run agent to crate a todo list "
                                             "for a given project provide detaild informatino. and a task to do"
                     , "format": "todolist(<task>)"},
-                "summary": {"func": lambda x: run_agent('summary', x),
-                            "description": "Run agent to Generate Concreat Summary Report"
-                    , "format": "summary(<task>)"},
-                "search": {"func": lambda x: run_agent('search', x),
-                           "description": "Run agent to search the web for relavent informations imput question"
+                "memory_search": {"func": lambda x: memory_search(x),
+                                  "description": "Serch for simmilar memory imput <context>"},
+                "search_web": {"func": lambda x: run_agent('search', x),
+                               "description": "Run agent to search the web for nested informations"
                     , "format": "search(<task>)"},
                 "programming": {"func": lambda x: run_agent('code', x),
                                 "description": "Run agent to generate code input Task"
                     , "format": "programming(<task>)"},
-                # "userReminder": {"func": lambda x: run_agent('reminder', x),
-                #             "description": "Run agent to schedule users live"
-                #             , "format": "userReminder(<task>)"},
-                "user-clarifcation": {"func": self.user_input(),
-                                      "description": "Run plython input fuction to get help from the user"
-                    , "format": "reminder(<task>)"},
+
                 "image-generator": {"func": lambda x: image_genrating_tool(x, self.app_),
                                     "description": "Run to generate image"
                     , "format": "reminder(<detaild_discription>)"},
-                # "fileAgent": {"func": lambda x: self.run_agent('fileAgent', x),
-                #              "description": "Run agent to acces the system to performe file operations"
-                #                             "provide detaild informatino. and a task to do",
-                #              "format": "fileAgent(task)"}
 
             }
 
@@ -1568,147 +1704,39 @@ class Tools(MainTool, FileHandler):
                     config.step_between = config.task_list[0]
                 return run_agent(config.name, x, mode_over_lode="talk")
 
-            config.name: str = "todolist"
-            config.mode: str = "tools"
-            config.model_name: str = "text-davinci-003"
+            config. \
+                set_model_name("text-davinci-003"). \
+                set_max_iterations(4). \
+                set_mode('tools'). \
+                set_tools({"Thinck": {"func": lambda x: priorisirung(x),
+                                      "description": "Use Tool to perform complex resenig"}}). \
+                set_personality("""As a proactive agent, I can identify and take on tasks without constant prompting
+                    or supervision. I am organized, efficiently handling information and resources while following a
+                    structured approach to planning and managing tasks. Adaptable, I can respond to changes and adjust my
+                    strategies and plans accordingly. I focus on solving problems and overcoming obstacles rather than
+                    dwelling on difficulties. I am communicative, effectively exchanging information and fostering
+                    collaboration. I pay attention to details without losing sight of the big picture."""). \
+                set_goals("""I have a clear understanding of the desired goal and can break it down into concrete and
+                    measurable steps (goal clarity). I can prioritize tasks based on their importance and urgency,
+                    ensuring the most critical tasks are completed first (prioritization). I can manage time effectively,
+                    ensuring tasks are completed within a reasonable timeframe (time management). I can efficiently use
+                    available resources and identify and procure additional resources when needed (resource management).
+                    I regularly monitor the progress of tasks and make adjustments to ensure the goal is achieved (
+                    progress monitoring). I am constantly striving to improve my skills and processes to increase
+                    efficiency and effectiveness in achieving goals (continuous improvement)."""). \
+                task_list = ["Make a todo list."
+                             "Go through each todo and consider whether that item can be done in one step."
+                             "can be done. If not, divide this item into smaller sub-items."
+                             "Find relevant information on each todo and estimate how long each task will take"
+                             "takes"
+                             "Create the final todo list in format\n"
+                             "TODO <name_of_list>\n'todo_item': ['resources_that_will_be_used',"
+                             "'time_to_be_claimed_of_the_todo', 'subitem':'description']",
+                             "Return only the todo list."]
 
-            config.agent_type: str = "zero-shot-react-description"
-            config.max_iterations: int = 4
-            config.verbose: bool = True
-
-            config.personality = """As a proactive agent, I can identify and take on tasks without constant prompting or supervision. I am organized, efficiently handling information and resources while following a structured approach to planning and managing tasks. Adaptable, I can respond to changes and adjust my strategies and plans accordingly. I focus on solving problems and overcoming obstacles rather than dwelling on difficulties. I am communicative, effectively exchanging information and fostering collaboration. I pay attention to details without losing sight of the big picture."""
-            config.goals = """I have a clear understanding of the desired goal and can break it down into concrete and measurable steps (goal clarity). I can prioritize tasks based on their importance and urgency, ensuring the most critical tasks are completed first (prioritization). I can manage time effectively, ensuring tasks are completed within a reasonable timeframe (time management). I can efficiently use available resources and identify and procure additional resources when needed (resource management). I regularly monitor the progress of tasks and make adjustments to ensure the goal is achieved (progress monitoring). I am constantly striving to improve my skills and processes to increase efficiency and effectiveness in achieving goals (continuous improvement)."""
-            config.short_mem: ShortTermMemory = ShortTermMemory()
             config.short_mem.max_length = 3000
-            config.tools: dict = {
-                "Thinck": {"func": lambda x: priorisirung(x),
-                           "description": "Use Tool to perform complex resenig"}
-            }
-
-            config.task_list: list[str] = ["Erstelle eine Todo liste."
-                                           "Gehe durch jedes Todo und überlege dir ob dieser punkt in einem schritt"
-                                           "erledig werden kann. Wenn nicht teile diesen punkt in kleiner unterpunkte auf"
-                                           "Suche relevante informationen zu jedem Überpunkt und Schätze ab wie Lange jede aufgae Dauert"
-                                           "Erstelle die finale Todo liste im format\n"
-                                           "TODO <name_der_liste>\n'Überpunkt': ['resurcen_die_in_anspruch_genommen_werden',"
-                                           "'zeit_bis_zum_errichen_des_todo', 'unterpunkt':'beschribung']",
-                                           "Gebe nur die Todo Liste Zurück"]
-
-        if name == "reminder":
-
-            config.name: str = "reminder"
-
-            self.app_.inplace_load("quickNote")
-            mod = self.app_.AC_MOD
-            self.app_.new_ac_mod('quickNote')
-
-            add_note = self.app_.AC_MOD.add_note_llm
-            view_note_ = self.app_.AC_MOD.view_note
-
-            self.app_.AC_MOD = mod
-
-            def addNote(x):
-                try:
-                    type_ = x.split(" ")[0]
-                    note = " ".join(x.split(" ")[1:])
-                    return add_note(note, type_)
-                except ValueError:
-                    return "Formatting error"
-
-            def view_note(x):
-                return view_note_()
-
-            def priorisirung(x):
-                config.step_between = "take time to gently think about the problem and consider the whole picture."
-                if len(config.task_list) != 0:
-                    config.step_between = config.task_list[0]
-                return run_agent(config.name, x, mode_over_lode="talk")
-
-            config.mode: str = "tools"
-            config.model_name: str = "text-davinci-003"
-
-            config.agent_type: str = "zero-shot-react-description"
-            config.max_iterations: int = 4
-            config.verbose: bool = True
-
-            config.personality = """
-            Reliable: The Reminder Agent should be dependable in providing timely and accurate reminders for various tasks and events.
-            Organized: The Reminder Agent should be able to manage and categorize reminders efficiently, ensuring that no tasks or events are overlooked.
-            Adaptive: The Reminder Agent should be able to adjust its reminder strategies based on user preferences and the importance of the tasks or events.
-            Proactive: The Reminder Agent should be able to identify potential tasks or events that may require reminders, based on user input and behavior.
-            Detail-Oriented: The Reminder Agent should pay close attention to the details of the tasks and events it manages, ensuring that reminders are accurate and relevant."""
-
-            config.goals = """
-            1. Timely Reminders: The primary goal of the Reminder Agent is to provide timely reminders for various tasks and events, ensuring that the user stays on track and does not miss important deadlines or appointments.
-            2. Personalization: The Reminder Agent should adapt its reminder strategies to suit the user's preferences and needs, taking into account factors such as frequency, priority, and notification method.
-            3. Task and Event Management: The Reminder Agent should efficiently manage and categorize tasks and events, allowing the user to easily view and update their reminders as needed.
-            4. Context-Aware Reminders: The Reminder Agent should be able to provide contextually relevant reminders, considering factors such as location, time, and the user's schedule.
-            5. Continuous Improvement: The Reminder Agent should continuously refine its reminder algorithms and strategies to improve the effectiveness and relevance of its reminders over time."""
-
-            config.short_mem: ShortTermMemory = ShortTermMemory()
-            config.short_mem.max_length = 3000
-            config.tools: dict = {
-                "Thinck": {"func": lambda x: priorisirung(x),
-                           "description": "Use Tool to perform complex resenig"},
-                "Add-Note": {"func": lambda x: addNote(x),
-                             "description": "fuction to add note. systax <main-tag/sub-tags> <note>"},
-                "Get-Notes": {"func": lambda x: view_note(x),
-                              "description": "retunrs all notes"}
-            }
-
-        if name == "summary":
-            config.name: str = "summary"
-
-            config.mode: str = "tools"
-            config.model_name: str = "text-davinci-003"
-
-            config.agent_type: str = "zero-shot-react-description"
-            config.max_iterations: int = 4
-            config.verbose: bool = True
-
-            def final_summary(x):
-                config.step_between = "Produce Final Summary"
-                return run_agent(config.name, x, mode_over_lode="talk")
-
-            def section_summary(x):
-                config.step_between = "summeise section"
-                return run_agent(config.name, x, mode_over_lode="talk")
-
-            def memory_search(x):
-                x = CollectiveMemory().text(x)
-                if x:
-                    return x
-                return "No relavent memory available"
-
-            config.personality = """
-                Efficient: The Summary Agent should be able to quickly and accurately summarize texts without omitting crucial information.
-                Analytical: The Summary Agent should be skilled at identifying key points and themes within a text, effectively distilling complex ideas into concise summaries.
-                Adaptive: The Summary Agent should be able to adapt its summarization approach to suit various text types, styles, and complexity levels.
-                Context-Aware: The Summary Agent should understand the broader context of a text to provide a more comprehensive summary and identify relevant supplementary information.
-                Detail-Oriented: The Summary Agent should pay close attention to the details within a text while maintaining a focus on the bigger picture."""
-
-            config.goals = """
-                1. Text Summarization: The primary goal of the Summary Agent is to condense texts into clear and concise summaries, capturing the most important points and ideas.
-                2. Relevance Identification: The Summary Agent should be able to identify and include relevant supplementary information to provide a more comprehensive understanding of the topic.
-                3. Adaptability: The Summary Agent should be capable of summarizing a wide range of texts, from simple articles to complex research papers, adapting its approach as needed.
-                4. Clarity and Accuracy: The Summary Agent should strive to create summaries that are both clear and accurate, ensuring that the user can easily understand the key points of the original text.
-                5. Continuous Improvement: The Summary Agent should continuously refine its summarization techniques and algorithms to improve the quality and relevance of its summaries over time."""
-
-            config.short_mem: ShortTermMemory = ShortTermMemory()
-            config.short_mem.max_length = 3500
-            config.tools: dict = {
-                "final_summary": {"func": final_summary, "description": "write final summary"},
-                "section_summary": {"func": section_summary, "description": "Summareise section"},
-                "memory_search": {"func": memory_search, "description": "Serch for simmilar memory imput context"},
-            }
-
-            config.task_list: list[str] = ["Erfülle die Aufgae in so wenigen Schritten und so Bedacht wie Möglich"]
 
         if name == "search":
-            config = AgentConfig()
-
-            config.name = "search"
-
             config.mode = "tools"
             config.model_name = "text-davinci-003"
 
@@ -1730,7 +1758,6 @@ class Tools(MainTool, FileHandler):
             4. Source Evaluation: The Search Agent should evaluate the credibility and reliability of its sources, providing users with trustworthy information.
             5. Continuous Improvement: The Search Agent should continuously refine its search algorithms and summarization techniques to improve the quality and relevance of its results over time."""
 
-            config.short_mem = ShortTermMemory()
             config.short_mem.max_length = 3500
             config.tools = {
                 "browse_url": {"func": lambda x: browse_url(x),
@@ -1739,18 +1766,16 @@ class Tools(MainTool, FileHandler):
                                 "description": "Use Duck Duck go to search the web systax <qustion>"},
                 "search_news": {"func": lambda x: search_news(x),
                                 "description": "Use Duck Duck go to search the web for new get time"
-                                               "reladet data systax <qustion>"},
-                "memory_search": {"func": lambda x: memory_search(x),
-                                  "description": "Serch for simmilar memory imput <context>"},
+                                               "reladet data systax <qustion>"}
                 # "chain_search_web": {"func": lambda x: run_agent('chain_search_web', x),
-                #              "description": "Run chain agent to search in the web for informations, Only use for complex mutistep tasks"
-                #              , "chain_search_web": "search(<task>)"},
+                #                     "description": "Run chain agent to search in the web for informations, Only use for complex mutistep tasks"
+                #    , "chain_search_web": "search(<task>)"},
                 # "chain_search_url": {"func": lambda x: run_agent('chain_search_url', x),
-                #            "description": "Run chain agent to search by url for informations provide mutibel urls, Only use for complex mutistep tasks"
-                #     , "format": "chain_search_url(<task,url1,url...>)"},
+                #                     "description": "Run chain agent to search by url for informations provide mutibel urls, Only use for complex mutistep tasks"
+                #    , "format": "chain_search_url(<task,url1,url...>)"},
                 # "chain_search_memory": {"func": lambda x: run_agent('chain_search_memory', x),
-                #            "description": "Run chain agent to search in the memory for informations, Only use for complex mutistep tasks"
-                #     , "format": "chain_search_memory(<task>)"},
+                #                        "description": "Run chain agent to search in the memory for informations, Only use for complex mutistep tasks"
+                #    , "format": "chain_search_memory(<task>)"},
             }
 
             config.task_list: list[str] = ["Erfülle die Aufgae in so wenigen Schritten und so Bedacht wie Möglich"]
@@ -1760,8 +1785,16 @@ class Tools(MainTool, FileHandler):
                 set_mode("free") \
                 .set_model_name("gpt-4") \
                 .set_max_iterations(1) \
-                .set_completion_mode("chat") \
-                .stream = True
+                .set_completion_mode("chat")
+
+            config.stop_sequence = ["\n\n\n"]
+
+        if name == "thinkm":
+            config. \
+                set_mode("free") \
+                .set_model_name("gpt-3.5-turbo") \
+                .set_max_iterations(1) \
+                .set_completion_mode("chat")
 
             config.stop_sequence = ["\n\n\n"]
 
@@ -1770,17 +1803,15 @@ class Tools(MainTool, FileHandler):
                 set_mode("free") \
                 .set_model_name("code-davinci-edit-001") \
                 .set_max_iterations(3) \
-                .set_completion_mode("edit") \
-                .stream = True
+                .set_completion_mode("edit")
 
         if name.startswith("chain_search"):
 
-            config.mode: str = "tools"
-            config.model_name: str = "text-davinci-003"
+            config.mode = "tools"
+            config.model_name = "text-davinci-003"
 
-            config.agent_type: str = "self-ask-with-search"
-            config.max_iterations: int = 3
-            config.verbose: bool = True
+            config.agent_type = "self-ask-with-search"
+            config.max_iterations = 3
 
             config.personality = """
             Resourceful: The Search Agent should be adept at finding relevant and reliable information from various sources on the web.
@@ -1796,49 +1827,53 @@ class Tools(MainTool, FileHandler):
             4. Source Evaluation: The Search Agent should evaluate the credibility and reliability of its sources, providing users with trustworthy information.
             5. Continuous Improvement: The Search Agent should continuously refine its search algorithms and summarization techniques to improve the quality and relevance of its results over time."""
 
-            config.short_mem: ShortTermMemory = ShortTermMemory()
             config.short_mem.max_length = 3500
 
             if name.endswith("_web"):
-                config.tools: dict = {
+                config.tools = {
                     "Intermediate Answer": {"func": search_text,
                                             "description": "Use Duck Duck go to search the web systax <qustion>"},
                 }
 
             if name.endswith("_url"):
-                config.tools: dict = {
+                config.tools = {
                     "Intermediate Answer": {"func": browse_url,
                                             "description": "browse web page via URL syntax <url>|<qustion>"},
                 }
             if name.endswith("_memory"):
-                config.tools: dict = {
+                config.tools = {
                     "Intermediate Answer": {"func": memory_search,
                                             "description": "Serch for simmilar memory imput <context>"},
                 }
 
-            config.task_list: list[str] = ["Erfülle die Aufgae in so wenigen Schritten und so Bedacht wie Möglich"]
+            config.task_list = ["Complete the task in as few steps and as carefully as possible."]
 
         path = self.observation_term_mem_file
         if not self.agent_collective_senses:
-            path = "data/isaa_data/observationMemory/" + config.name + ".mem"
+            path += config.name + ".mem"
+        else:
+            path += 'CollectiveObservationMemory.mem'
 
         try:
             if not os.path.exists(path):
                 self.print("Crating Mem File")
-                if not os.path.exists("data/isaa_data/observationMemory/"):
-                    os.mkdir("data/isaa_data/observationMemory/")
+                if not os.path.exists(self.observation_term_mem_file):
+                    os.makedirs(self.observation_term_mem_file)
                 with open(path, "a") as f:
                     f.write("[]")
 
             with open(path, "r") as f:
                 mem = f.read()
                 if mem:
-                    config.obser_mem.memory_data = eval(mem)
+                    config.observe_mem.text = str(mem)
                 else:
                     with open(path, "a") as f:
                         f.write("[]")
         except FileNotFoundError and ValueError:
             print("File not found | mem not saved")
+
+        if self.global_stream_override:
+            config.stream = True
 
         return config
 
@@ -1868,7 +1903,8 @@ class Tools(MainTool, FileHandler):
 
         return config
 
-    def process_compleation(self, text, config=AgentConfig(), r=2.0):
+    @staticmethod
+    def process_completion(text, config=AgentConfig()):
 
         if len(config.task_list) == 0:
             config.step_between = text
@@ -1877,112 +1913,58 @@ class Tools(MainTool, FileHandler):
         ret = ""
         if config.stream:
             ret = {'choices': [{'text': "", 'delta': {'content': ''}}]}
-        try:
 
-            if config.completion_mode == 'text':
+        if config.completion_mode == 'text':
 
-                if model_name.startswith('gpt-'):
-                    model_name = "text-davinci-003"
+            if model_name.startswith('gpt-'):
+                model_name = "text-davinci-003"
 
-                ret = openai.Completion.create(
-                    model=model_name,
-                    prompt=config.prompt,
-                    max_tokens=config.token_left,
-                    temperature=config.temperature,
-                    n=1,
-                    stream=config.stream,
-                    logprobs=3,
-                    stop=config.stop_sequence,
-                )
+            ret = openai.Completion.create(
+                model=model_name,
+                prompt=config.prompt,
+                # max_tokens=config.token_left,
+                temperature=config.temperature,
+                n=1,
+                stream=config.stream,
+                logprobs=3,
+                stop=config.stop_sequence,
+            )
 
-            elif config.completion_mode == 'chat':
-                messages = config.messages
-                if text:
-                    config.add_message("user", text)
-                ret = openai.ChatCompletion.create(
-                    model=model_name,
-                    messages=messages,
-                    max_tokens=config.token_left,
-                    temperature=config.temperature,
-                    n=1,
-                    stream=config.stream,
-                    stop=config.stop_sequence,
-                )
-                if not config.stream:
-                    ret = ret.choices[0].message.content
-
-            elif config.completion_mode == 'edit':
-                config.edit_text.text = config.short_mem.text
-                ret = openai.Edit.create(
-                    model=model_name,
-                    input=config.edit_text.text,
-                    instruction=text,
-                )
+            if not config.stream:
                 ret = ret.choices[0].text
-            else:
-                raise ValueError(f"Invalid mode : {config.completion_mode} valid ar 'text' 'chat' 'edit'")
-        except openai.error.RateLimitError:
-            self.print(f"| Retry level: {r} ", end="\r")
-            if r > 0:
-                self.logger.info("Waiting 5 seconds")
-                with Spinner("Waiting", symbols='b'):
-                    time.sleep(5)
-                self.print(f"| Retrying {r} ", end="\r")
-                self.process_compleation(text, config, r - 1)
-            else:
-                self.logger.error("The server is currently overloaded with other requests. Sorr   y about that!")
-                return "The server is currently overloaded with other requests. Sorry about that!"
 
-        except openai.error.InvalidRequestError:
-            self.print(f"| Retry level: {r} ", end="\r")
-            if r > 0:
-                if config.short_mem.tokens > config.edit_text.tokens:
-                    config.short_mem.max_length = int(config.short_mem.max_length * 0.45)
-                    config.short_mem.cut()
-                if config.short_mem.tokens < config.edit_text.tokens:
-                    config.edit_text.max_length = int(config.edit_text.max_length * 0.75)
-                    config.edit_text.cut()
-                self.process_compleation(text, config, r - 0.25)
-            else:
-                self.logger.error("The server is currently overloaded with other requests. Sorry about that!")
-                return "The server is currently overloaded with other requests. Sorry about that!"
+        elif config.completion_mode == 'chat':
+            if text:
+                config.add_message("user", text)
+            messages = config.get_messages(create=True)
+            ret = openai.ChatCompletion.create(
+                model=model_name,
+                messages=messages,
+                # max_tokens=config.token_left,
+                temperature=config.temperature,
+                n=1,
+                stream=config.stream,
+                stop=config.stop_sequence,
+            )
+            if not config.stream:
+                ret = ret.choices[0].message.content
+
+        elif config.completion_mode == 'edit':
+            config.edit_text.text = config.short_mem.text
+            ret = openai.Edit.create(
+                model=model_name,
+                input=config.edit_text.text,
+                instruction=text,
+            )
+            ret = ret.choices[0].text
+        else:
+            raise ValueError(f"Invalid mode : {config.completion_mode} valid ar 'text' 'chat' 'edit'")
 
         return ret
-
-    def test_use_user_input(self, agent_text, config=AgentConfig()):
-
-        for text in agent_text.split('\n'):
-
-            if text.startswith("User:"):
-                text = text.replace("User:", "").strip()
-                self.print("Question detected")
-                return True, text
-
-        return False, ''
 
     def test_use_tools(self, agent_text, config=AgentConfig()) -> tuple[bool, str, str]:
         if not agent_text:
             return False, "", ""
-
-        res = self.question_answering("What is the name of the action ?", agent_text)
-
-        if res['score'] > 0.3:
-            pos_actions: list[str] = res['answer'].replace("\n", "").split(' ')
-            items = set(config.tools.keys())
-            print(agent_text[res['end']:].split('\n'))
-            text_list = agent_text[res['end']:].split('\n')
-            text = text_list[0]
-            if len(text_list) > 1:
-                text = text_list[1]
-            for i in text_list:
-                if i:
-                    text = i
-
-            for p_ac in pos_actions:
-                if p_ac in items:
-                    print()
-                    self.print(f"AI Execute Action {p_ac} {text}|")
-                    return True, p_ac, text.replace('Inputs:', '')
 
         if config.mode == "free":
 
@@ -2029,9 +2011,28 @@ class Tools(MainTool, FileHandler):
                     return True, run_key, inputs
                 return True, run_key, ",".join(lines[i:])
 
+        res = self.question_answering("What is the name of the action ?", agent_text)
+        if res['score'] > 0.3:
+            pos_actions: list[str] = res['answer'].replace("\n", "").split(' ')
+            items = set(config.tools.keys())
+            print(agent_text[res['end']:].split('\n'))
+            text_list = agent_text[res['end']:].split('\n')
+            text = text_list[0]
+            if len(text_list) > 1:
+                text = text_list[1]
+            for i in text_list:
+                if i:
+                    text = i
+            for p_ac in pos_actions:
+                if p_ac in items:
+                    print()
+                    self.print(f"AI Execute Action {p_ac} {text}|")
+                    return True, p_ac, text.replace('Inputs:', '')
+
         return False, "", ""
 
-    def test_task_done(self, agent_text, config=AgentConfig()):
+    @staticmethod
+    def test_task_done(agent_text, config=AgentConfig()):
 
         done = False
 
@@ -2077,20 +2078,11 @@ class Tools(MainTool, FileHandler):
 
         path = self.observation_term_mem_file
         if not self.agent_collective_senses:
-            path = "data/isaa_data/observationMemory/" + config.name + ".mem"
+            path += config.name + ".mem"
+        else:
+            path += 'CollectiveObservationMemory.mem'
 
-        try:
-            if not os.path.exists(path):
-                self.print("Crating Mem File")
-                if not os.path.exists("data/isaa_data/observationMemory/"):
-                    os.mkdir("data/isaa_data/observationMemory/")
-                with open(path, "a") as f:
-                    f.write(str(observation))
-
-        except FileNotFoundError and ValueError:
-            print("File not found | mem not saved")
-
-        with open(self.observation_term_mem_file, "w") as f:
+        with open(path, "w") as f:
             try:
                 f.write(str(observation))
             except UnicodeEncodeError:
@@ -2107,8 +2099,8 @@ class Tools(MainTool, FileHandler):
 
         return observation
 
-    def run_agent(self, name: str or AgentConfig, text: str, retrys=1, mode_over_lode=False, input=input):
-
+    def run_agent(self, name: str or AgentConfig, text: str, mode_over_lode: str or None = None):
+        config = None
         if isinstance(name, str):
             config = self.get_agent_config_class(name)
 
@@ -2125,27 +2117,25 @@ class Tools(MainTool, FileHandler):
 
         out = "Invalid configuration\n"
         system = ""
-
+        self.logger.info(f"stream mode: {config.stream} mode : {self.config[f'agent-config-{name}'].mode}")
         if self.config[f'agent-config-{name}'].mode == "talk":
+            sto, config.add_system_information = config.add_system_information, False
             prompt = PromptTemplate(
                 input_variables=["input"],
                 template=config.prompt,
             )
             out = LLMChain(prompt=prompt, llm=self.get_OpenAI_models(config.model_name)).run(text)
+            config.add_system_information = sto
         elif self.config[f'agent-config-{name}'].mode == "tools":
+            sto, config.add_system_information = config.add_system_information, False
 
             try:
                 prompt = PromptTemplate(
                     input_variables=["input"],
                     template=config.prompt,
                 )
-            except Exception:
-                print(config.prompt)
-                self.config[f'agent-config-{name}'].mode = 'execution'
-                prompt = PromptTemplate(
-                    input_variables=["input"],
-                    template=config.prompt,
-                )
+            except Exception as e:
+                return f"ERROR: Could not parse prompt {e}"
             tools = []
 
             for tool_name in config.tools.keys():
@@ -2170,47 +2160,48 @@ class Tools(MainTool, FileHandler):
                                    max_iterations=config.max_iterations)(text)
 
             out = self.summarize_dict(out, config)
+            config.add_system_information = sto
         elif self.config[f'agent-config-{name}'].mode == "conversation":
+            sto, config.add_system_information = config.add_system_information, False
             prompt = PromptTemplate(
                 input_variables=["input"],
                 template=config.prompt,
             )
             out = LLMChain(prompt=prompt, llm=self.get_OpenAI_models(config.model_name)).run(text)
+            config.add_system_information = sto
         elif self.config[f'agent-config-{name}'].mode in ["execution", 'free']:
-
+            self.logger.info(f"stream mode: {config.stream}")
             out = self.stream_read_line_llm(text, config)
             if not config.stream:
-                self.print_stream(out)
-
+                self.print_stream("execution-free : " + out)
+            print()
             config.short_mem.text = out
-            use_tool, name, command_ = self.test_use_tools(out, config)
+            t0 = time.time()
+            self.logger.info(f"analysing repose")
+            self.logger.info(f"analysing test_use_tools")
+            with Spinner('analysing repose', symbols='+'):
+                use_tool, name, command_ = self.test_use_tools(out, config)
+            self.logger.info(f"analysing test_task_done")
             task_done = self.test_task_done(out, config)
-            user_imp, question = self.test_use_user_input(out, config)
+            self.logger.info(f"don analysing repose in t-{time.time() - t0}")
             self.print(f"Using-tools: {name} {command_}")
             if use_tool:
-                self.speak(f"Isaa is using {name}", 2)
                 ob = self.run_tool(command_, name, config)
-                config.obser_mem.text = ob
+                config.observe_mem.text = ob
                 out += "\nObservation: " + ob
-                self.speak(ob, vi=1)
             if task_done:  # new task
                 # self.speek("Ist die Aufgabe abgeschlossen?")
-                config.short_mem.clear_to_collective()
+                if config.short_mem.tokens > 50:
+                    with Spinner('Saving work Memory', symbols='t'):
+                        config.short_mem.clear_to_collective()
                 if len(config.task_list) > config.task_index:
-                    config.task_index += 1
-
-            if user_imp:
-                uaw = input(question)
-                if config.completion_mode == 'chat':
-                    config.add_message("user", uaw)
-                else:
-                    out += "Answer: " + uaw
+                    config.next_task()
         else:
             out = self.stream_read_line_llm(text, config)
             if not config.stream:
                 self.print_stream(out)
 
-            config.obser_mem.text = out
+            config.observe_mem.text = out
 
         # except NameError and Exception as e:
         #    print(f"ERROR runnig AGENT: {name} retrys {retrys} errormessage: {e}")
@@ -2233,24 +2224,34 @@ class Tools(MainTool, FileHandler):
     def execute_thought_chain(self, user_text: str, agent_tasks, config: AgentConfig, speak=lambda x: x):
         chain_ret = []
         chain_data = {}
+        uesd_mem = {}
         ret = ""
         steps = 0
-        pipe = pipeline("text-classification", model="distilbert-base-uncased-finetuned-sst-2-english")
 
-        default_mode = config.mode
-        default_completion_mode = config.completion_mode
-
+        default_mode_ = config.mode
+        default_completion_mode_ = config.completion_mode
+        sto_config = None
+        chain_mem = self.get_context_memory()
         for task in agent_tasks:
+
+            config.mode = "free"
+            config.completion_mode = "chat"
+
+            sum_sto = ""
+
             keys = list(task.keys())
 
             task_name = task["name"]
             use = task["use"]
             args = task["args"].replace("$user-input", user_text)
 
+            if use == 'agent':
+                sto_config, config = config, self.get_agent_config_class(task_name)
+
             self.print(f"Running task {args}")
 
-            config.mode = default_mode
-            config.completion_mode = default_completion_mode
+            default_mode = config.mode
+            default_completion_mode = config.completion_mode
 
             if 'mode' in keys:
                 config.mode = task['mode']
@@ -2260,112 +2261,339 @@ class Tools(MainTool, FileHandler):
             if "infos" in keys:
                 config.short_mem.text += task['infos']
 
-            speak(f"Chain running {task_name} at step {steps} with the task {args}")
+            chain_data['$edit-text-mem'] = config.edit_text.text
 
-            if 'chuck-run' in keys:
+            speak(f"Chain running {task_name} at step {steps} with the input : {args}")
 
-                for chunk in chain_data[task['chuck-run']]:
+            if 'chuck-run-all' in keys:
 
-                    print("ru")
+                for chunk in chain_data[task['chuck-run-all']]:
+
                     if not chunk:
                         continue
 
-                    print(chunk, '#')
-                    args = args.replace(task['chuck-run'], str(chunk))
+                    args_ = args.replace(task['chuck-run-all'], str(chunk))
 
                     if use == "tool":
-                        ret = self.run_tool(args, task_name, config)
+                        ret = self.run_tool(args_, task_name, config)
 
                     if use == "agent":
-                        ret = self.run_agent(task_name, args, mode_over_lode=config.mode)
-            else:
+                        if config.mode == 'free':
+                            config.task_list.append(args_)
+                        ret = self.run_agent(config, args_, mode_over_lode=config.mode)
 
+                    if use == 'function':
+                        if 'function' in keys:
+                            if callable(task['function']) and chain_ret:
+                                task['function'](chain_ret[-1][1])
+
+                    if 'short-mem' in keys:
+                        if task['short-mem'] == "summary":
+                            short_mem = config.short_mem.text
+                            if short_mem != sum_sto:
+                                config.short_mem.clear_to_collective()
+                                config.short_mem.text = self.mas_text_summaries(short_mem)
+                            else:
+                                sum_sto = short_mem
+                        if task['short-mem'] == "full":
+                            pass
+                        if task['short-mem'] == "clear":
+                            config.short_mem.clear_to_collective()
+
+            elif 'chuck-run' in keys:
+                rep = chain_mem.vector_store[uesd_mem[task['chuck-run']]]['represent']
+                if len(rep) == 0:
+                    self.get_context_memory().crate_live_context(uesd_mem[task['chuck-run']])
+                    rep = chain_mem.vector_store[uesd_mem[task['chuck-run']]]['represent']
+                if len(rep) == 0:
+                    final = chain_mem.search(uesd_mem[task['chuck-run']], args)
+                    if len(final) == 0:
+                        final = chain_mem.get_context_for(args)
+
+                    action = f"Act as an summary expert your specialties are writing summary. you are known to " \
+                             f"think in small and " \
+                             f"detailed steps to get the right result. Your task : write a summary reladet to {args}\n\n{final}"
+                    t = self.get_agent_config_class('thinkm')
+                    ret = self.run_agent(t, action)
+                ret_chunk = []
+                for chunk_vec in rep:
+                    ret_ = ''
+                    if not chunk_vec:
+                        continue
+
+                    chunk = chain_mem.hydrate_vectors(uesd_mem[task['chuck-run']], chunk_vec)
+
+                    args_ = args.replace(task['chuck-run'], str(chunk[0].page_content))
+
+                    if use == "tool":
+                        ret_ = self.run_tool(args_, task_name, config)
+
+                    if use == "agent":
+                        if config.mode == 'free':
+                            config.task_list.append(args_)
+                        ret_ = self.run_agent(config, args_, mode_over_lode=config.mode)
+
+                    if use == 'function':
+                        if 'function' in keys:
+                            if callable(task['function']) and chain_ret:
+                                ret_ = task['function'](chain_ret[-1][1])
+
+                    ret_chunk.append(ret_)
+
+                    if 'short-mem' in keys:
+                        if task['short-mem'] == "summary":
+                            short_mem = config.short_mem.text
+                            if short_mem != sum_sto:
+                                config.short_mem.clear_to_collective()
+                                config.short_mem.text = self.mas_text_summaries(short_mem)
+                            else:
+                                sum_sto = short_mem
+                        if task['short-mem'] == "full":
+                            pass
+                        if task['short-mem'] == "clear":
+                            config.short_mem.clear_to_collective()
+                continue
+
+            else:
                 for c_key in chain_data.keys():
                     if c_key in args:
                         args = args.replace(c_key, chain_data[c_key])
-
                 if use == "tool":
                     ret = self.run_tool(args, task_name, config)
-
                 if use == "agent":
-                    ret = self.run_agent(task_name, args) + " Answer: Let's work this out in a step by step " \
-                                                            "way to be sure we have the right answer"
+                    if config.mode == 'free':
+                        config.task_list.append(args)
+                    ret = self.run_agent(config, args + " Answer: Let's work this out in a step by step " \
+                                                        "way to be sure we have the right answer")
+                if use == 'function':
+                    if 'function' in keys:
+                        if callable(task['function']) and chain_ret:
+                            task['function'](chain_ret[-1][1])
+
+                if 'short-mem' in keys:
+                    if task['short-mem'] == "summary":
+                        short_mem = config.short_mem.text
+                        if short_mem != sum_sto:
+                            config.short_mem.clear_to_collective()
+                            config.short_mem.text = self.mas_text_summaries(short_mem)
+                        else:
+                            sum_sto = short_mem
+                    if task['short-mem'] == "full":
+                        pass
+                    if task['short-mem'] == "clear":
+                        config.short_mem.clear_to_collective()
 
             if 'validate' in keys:
                 self.print("Validate task")
-                pipe_res = pipe(ret)
-                self.print(f"Validation :  {pipe_res[0]}")
-                if pipe_res[0]['score'] > 0.8:
-                    if pipe_res[0]['label'] == "NEGATIVE":
-                        print('🟡')
-                        chain_ret.append([task, ret])
-                        if 'on-error' in keys:
-                            if task['on-error'] == 'inject':
-                                task['inject'](ret)
-                        return "an error occurred", chain_ret
-
-                print(f'🟢')
+                try:
+                    pipe_res = self.text_classification(ret)
+                    self.print(f"Validation :  {pipe_res[0]}")
+                    if pipe_res[0]['score'] > 0.8:
+                        if pipe_res[0]['label'] == "NEGATIVE":
+                            print('🟡')
+                            if 'on-error' in keys:
+                                if task['validate'] == 'inject':
+                                    task['inject'](ret)
+                                if task['validate'] == 'return':
+                                    task['inject'](ret)
+                                    chain_ret.append([task, ret])
+                                    return "an error occurred", chain_ret
+                        else:
+                            print(f'🟢')
+                except Exception as e:
+                    print(f"Error in validation : {e}")
+            if 'to-edit-text' in keys:
+                config.edit_text.text = ret
 
             speak(f"Step {steps} with response {ret}")
 
             if "return" in keys:
                 if 'text-splitter' in keys:
-                    split = []
-                    while len(ret) > task['text-splitter']:
-                        split.append(ret[:task['text-splitter']])
-                        ret = ret[task['text-splitter']:]
-                    else:
-                        split.append(ret)
-                    chain_data[task['return']] = split
-                    ret = '\n'.join(split)
-                else:
-                    chain_data[task['return']] = ret
+                    mem = self.get_context_memory()
+                    sep = ''
+                    al = 'KMeans'
+                    if 'separators' in keys:
+                        sep = task['separators']
+                        if task['separators'].endswith('code'):
+                            al = 'AgglomerativeClustering'
+                            sep = sep.replace('code', '')
+                    self.print(f"task_name:{task_name} al:{al} sep:{sep}")
+                    ret = mem.split_text(task_name, ret, separators=sep, chunk_size=task['text-splitter'])
+                    mem.add_data(task_name)
 
-            print_to_console("Chain:", Style.style_dic['VIOLETBG2'], str(ret), max_typing_speed=0.01,
-                             min_typing_speed=0.02)
+                    mem.crate_live_context(task_name, al)
+                    uesd_mem[task['return']] = task_name
+
+                chain_data[task['return']] = ret
+
+            self.print(Style.ITALIC(Style.GREY(f'Chain at step : {steps}\nreturned : {str(ret)[:150]}...')))
 
             chain_ret.append([task, ret])
 
             steps += 1
+            if sto_config:
+                config = sto_config
+                sto_config = None
+
+            config.mode = default_mode
+            config.completion_mode = default_completion_mode
+
+        chain_sum_data = self.summarize_ret_list(chain_ret)
+
+        config.mode = default_mode_
+        config.completion_mode = default_completion_mode_
 
         return self.run_agent(self.get_agent_config_class("think"),
-                              f"Produce The Final output for the user using the given information {chain_ret}"
+                              f"Produce a verbal output and summarization of what happened for"
+                              f" the user (max 1 paragraph) using the given information {chain_sum_data}"
                               f" validate if the task was executed successfully if u see an max iteration"
                               f" limit &or error the task failed"), chain_ret
 
-    def stream_read_line_llm(self, text, config):
-        if not config.stream:
-            with Spinner(f"Generating response {config.name} {config.model_name} {config.mode} "):
-                res = self.process_compleation(text, config)
+    def execute_2tree(self, user_text, tree, config: AgentConfig):
+        config.binary_tree = tree
+        config.stop_sequence = ["\n\n\n", "N/A", 'n/a']
+        alive = True
+        res_um = 'Plan for The Task:'
+        res = ''
+        while alive:
+            input("Enter")
+            res = self.run_agent(config, user_text, mode_over_lode='q2tree')
+            tree_depth = config.binary_tree.get_depth(config.binary_tree.root)
+            don, next_on, speak = False, 0, res
+            str_ints_list_to = list(range(tree_depth + 1))
+            for line in res.split("\n"):
+                if line.startswith("Answer"):
+                    print(F"detected LINE:{line[:10]}")
+                    for char in line[6:12]:
+                        char_ = char.strip()
+                        if char_ in [str(x) for x in str_ints_list_to]:
+                            next_on = int(char_)
+                            break
+
+                if line.startswith("+1"):
+                    print(F"detected +1")
+                    line = line.replace("+1", '')
+                    exit_on = -1
+                    if "N/A" in line:
+                        alive = False
+                        res_um = "Task is not fitting isaa's capabilities"
+                        break
+                    for char in line[0:6]:
+                        char_ = char.strip()
+                        if char_ in [str(x) for x in str_ints_list_to]:
+                            exit_on = int(char_)
+                            break
+                    if exit_on != -1:
+                        next_on = exit_on
+
+            if next_on == 0:
+                if len(res) < 1000:
+                    for char in res:
+                        char_ = char.strip()
+                        if char_ in [str(x) for x in str_ints_list_to]:
+                            next_on = int(char_)
+                            break
+
+            if next_on == tree_depth:
+                alive = False
+                break
+
+            elif next_on == 0:
+                alive = False
+                res_um = 'Task is to complicated'
+                break
+            else:
+                new_tree = config.binary_tree.cut_tree('L' * next_on)
+                config.binary_tree = new_tree
+
+        return res, res_um
+
+    def stream_read_line_llm(self, text, config, r=2.0):
+        p_token_num = len(tiktoken.encoding_for_model(config.model_name).encode(text))
+        self.print(f"TOKENS: {p_token_num} | left = {config.token_left}")
+        if p_token_num > config.token_left:
+            text = self.mas_text_summaries(text)
+        try:
+            if not config.stream:
+                with Spinner(
+                    f"Generating response {config.name} {config.model_name} {config.mode} {config.completion_mode}"):
+                    res = self.process_completion(text, config)
+                return res
+
+            print(f"Generating response (/) stream (\\) {config.name} {config.model_name} {config.mode} "
+                  f"{config.completion_mode}")
+            min_typing_speed, max_typing_speed, res = 0.02, 0.01, ""
+            try:
+                for line in self.process_completion(text,
+                                                    config):  # openai.error.InvalidRequestError if error try  is_text_completion = False
+                    ai_text = ""
+
+                    if len(line) == 0 or not line:
+                        continue
+
+                    if isinstance(line, dict):
+                        data = line['choices'][0]
+
+                        if "text" in data.keys():
+                            ai_text = line['choices'][0]['text']
+                        elif "content" in data['delta'].keys():
+                            ai_text = line['choices'][0]['delta']['content']
+
+                    if isinstance(line, str):
+                        ai_text = line
+
+                    for i, word in enumerate(ai_text):
+                        self.print_stream(word, end="", flush=True)
+                        typing_speed = random.uniform(min_typing_speed, max_typing_speed)
+                        time.sleep(typing_speed)
+                        # type faster after each word
+                        min_typing_speed = min_typing_speed * 0.07
+                        max_typing_speed = max_typing_speed * 0.06
+                    res += str(ai_text)
+            except requests.exceptions.ChunkedEncodingError as ex:
+                print(f"Invalid chunk encoding {str(ex)}")
+                self.print(f"\t\t| Retry level: {r} ", end="\r")
+                with Spinner("ChunkedEncodingError", symbols='c'):
+                    time.sleep(2 * (3 - r))
+                if r > 0:
+                    print('\n\n')
+                    return self.stream_read_line_llm(text + '\n' + res, config, r - 1)
             return res
+        except openai.error.RateLimitError:
+            self.print(f"\t\t| Retry level: {r} ", end="\r")
+            if r > 0:
+                self.logger.info(f"Waiting {5 * (8 - r)} seconds")
+                with Spinner("Waiting RateLimitError", symbols='+'):
+                    time.sleep(5 * (8 - r))
+                self.print(f"\n Retrying {r} ", end="\r")
+                return self.stream_read_line_llm(text, config, r - 1)
+            else:
+                self.logger.error("The server is currently overloaded with other requests. Sorr   y about that!")
+                return "The server is currently overloaded with other requests. Sorry about that!"
 
-        print(f"Generating response {config.name} {config.model_name} {config.mode} {config.completion_mode}")
-        min_typing_speed, max_typing_speed, res = 0.02, 0.01, ""
-        for line in self.process_compleation(text,
-                                             config):  # openai.error.InvalidRequestError if error try  is_text_completion = False
-            ai_text = ""
-
-            if isinstance(line, dict):
-                data = line['choices'][0]
-
-                if "text" in data.keys():
-                    ai_text = line['choices'][0]['text']
-                elif "content" in data['delta'].keys():
-                    ai_text = line['choices'][0]['delta']['content']
-
-            if isinstance(line, str):
-                ai_text = line
-
-            for i, word in enumerate(ai_text):
-                self.print_stream(word, end="", flush=True)
-                typing_speed = random.uniform(min_typing_speed, max_typing_speed)
-                time.sleep(typing_speed)
-                # type faster after each word
-                min_typing_speed = min_typing_speed * 0.07
-                max_typing_speed = max_typing_speed * 0.06
-            res += str(ai_text)
-
-        return res
+        except openai.error.InvalidRequestError:
+            self.print(f"{' ' * 30}| Retry level: {r} ", end="\r")
+            with Spinner("Waiting InvalidRequestError", symbols='b'):
+                time.sleep(2)
+            if r > 1.5:
+                if config.short_mem.tokens > config.edit_text.tokens:
+                    config.short_mem.max_length = int(config.short_mem.max_length * 0.45)
+                    config.short_mem.cut()
+                if config.short_mem.tokens < config.edit_text.tokens:
+                    config.edit_text.max_length = int(config.edit_text.max_length * 0.75)
+                    config.edit_text.cut()
+                return self.stream_read_line_llm(text, config, r - 0.5)
+            elif r > .75:
+                return self.stream_read_line_llm(self.mas_text_summaries(text), config, r - 0.25)
+            elif r > 0.25:
+                config.stream = False
+                res = self.stream_read_line_llm(self.mas_text_summaries(text), config, r - 0.25)
+                config.stream = True
+                return res
+            else:
+                self.logger.error("The server is currently overloaded with other requests. Sorry about that!")
+                return "The System cannot correct the text input for the agent."
+        return "No Output providet"
 
     def mas_text_summaries(self, text, min_length=1600):
         len_text = len(text)
@@ -2373,61 +2601,57 @@ class Tools(MainTool, FileHandler):
             return text
 
         cap = 800
-        max_length = 20
+        max_length = 45
         summary_chucks = ""
         chucks = []
 
         if len(text) >= 6200:
             cap = 1200
-            max_length = 32
+            max_length = 80
 
         if len(text) >= 10200:
-            cap = 3000
-            max_length = 60
+            cap = 2000
+            max_length = 160
 
         if len(text) >= 70200:
-            cap = 4000
-            max_length = 240
+            cap = 2500
+            max_length = 412
 
-        summarysation = pipeline("summarization")
         summary = ""
 
-        def summary(x):
-            return summarysation(x, min_length=10, max_length=max_length)
+        def summary_func(x):
+            return self.summarization(x, max_length=max_length)
+
+        num_tokens = cap / 4.9
+        if num_tokens > 1023:
+            cap = int(cap / (num_tokens / 1023))
 
         while len(text) > cap:
             chucks.append(text[:cap])
             text = text[cap:]
             self.print(f"SYSTEM: TEXT len : {len(text)}")
+
         if len(text) < max_length:
             chucks[-1] += "\n" + text
         else:
             chucks.append(text)
         self.print(f"SYSTEM: chucks to summary: {len(chucks)} cap : {cap}")
 
-        # try:
-
-        # try:
-        async def gather_summaries(chucks):
-            loop = asyncio.get_event_loop()
-            with ThreadPoolExecutor() as executor:
-                tasks = [
-                    loop.run_in_executor(executor, summary, chuck)
-                    for chuck in chucks]
-                summaries = await asyncio.gather(*tasks)
-                return summaries
-
         with Spinner("Generating summary", symbols='d'):
-            summaries = asyncio.run(gather_summaries(chucks))
+            summaries = summary_func(chucks)
+
         for i, chuck_summary in enumerate(summaries):
-            summary_chucks += chuck_summary[0]['summary_text'] + "\n"
+            summary_chucks += chuck_summary['summary_text'] + "\n"
             self.print(f"SYSTEM: all summary_chucks : {len(summary_chucks)}")
 
         summary = summary_chucks
-        if len(summaries) > 6:
-            summary = summary(summary_chucks)[0]['summary_text']
+        if len(summaries) > 8:
+            if len(summary_chucks) < 100000:
+                summary = summary_func(summary_chucks)[0]['summary_text']
+            else:
+                summary = self.mas_text_summaries(summary_chucks)
         self.print(
-            f"SYSTEM: final summary from {len_text} -> {len(summary)} compressed {len_text / len(summary):.2f}X\n")
+            f"SYSTEM: final summary from {len_text}:{len(summaries)} -> {len(summary)} compressed {len_text / len(summary):.2f}X\n")
 
         return summary
 
@@ -2440,28 +2664,44 @@ class Tools(MainTool, FileHandler):
         for step in intermediate_steps:
             if isinstance(step, tuple):
                 step_content = f"\naction {i}" + str(step[0].tool)
-                step_content += f"\ntool_input {i}" + str(step[0].tool_input)
-                step_content += f"\nlog {i}" + str(step[1])
+                step_content += f"\ntool_input {i} " + str(step[0].tool_input)
+                step_content += f"\nlog {i} " + str(step[1])
                 chucs.append(self.mas_text_summaries(step_content))
-                step_content = ""
             i += 1
 
         if chucs:
-            text = f"{config.short_mem.text} \n{'Next step:'.join(step_content)}"
-            self.print(f"SYSTEM : start mas_text_summaries : {len(chucs)}")
-            summary = self.mas_text_summaries(text)
-            config.obser_mem.text = summary
-
+            config.observe_mem.text = '\n'.join(chucs)
         return output_str
 
+    def summarize_ret_list(self, ret_list):
+        chucs = []
+        for i, step in enumerate(ret_list):
+            if isinstance(step, list):
+                step_content = f"\naction {i}" + str(step[0]['use']) + ": " + str(step[0]['name'])
+                step_content += f"\ntool_input {i} " + str(step[0]['args'])
+                if step[1]:  # assuming the second item in the list is always of interest
+                    step_content += f"\nlog {i} " + str(step[1][0])  # assuming the list contains a string
+                chucs.append(self.mas_text_summaries(step_content))  # assuming this function exists
+        text = 'NoContent'
+        if chucs:
+            text = '\n'.join(chucs)
+        return text
+
+    def init_db_questions(self, db_name, config: AgentConfig):
+        retriever = self.get_context_memory().get_retriever(db_name)
+        if retriever is not None:
+            retriever.search_kwargs['distance_metric'] = 'cos'
+            retriever.search_kwargs['fetch_k'] = 20
+            retriever.search_kwargs['maximal_marginal_relevance'] = True
+            retriever.search_kwargs['k'] = 20
+            return ConversationalRetrievalChain.from_llm(self.get_OpenAI_models(config.model_name), retriever=retriever)
+        return None
+
     @staticmethod
-    def get_chain(hydrate=None) -> AgentChain:
+    def get_chain(hydrate=None, f_hydrate=None) -> AgentChain:
         logger = get_logger()
-        logger.info(Style.GREYBG(f"AgentChainrequested"))
-        if hydrate:
-            agent_chain = AgentChain(hydrate)
-        else:
-            agent_chain = AgentChain()
+        logger.info(Style.GREYBG(f"AgentChain requested"))
+        agent_chain = AgentChain(hydrate, f_hydrate)
         logger.info(Style.Bold(f"AgentChain instance, returned"))
         return agent_chain
 
@@ -2480,11 +2720,13 @@ class Tools(MainTool, FileHandler):
 def get_tool(app: App):
     if not app:
         return Tools(App('isaa'))
-    if app.AC_MOD.name == 'isaa':
-        return app.AC_MOD
+
+    if app.AC_MOD:
+        if app.AC_MOD.name == 'isaa':
+            return app.AC_MOD
 
     app.logger.error('Unknown - app isaa module is not the active mod')
-    if app.new_ac_mod('isaa'):
+    if isinstance(app.new_ac_mod('isaa'), bool):
         return app.AC_MOD
 
     app.logger.error('activation failed try loading module')
@@ -2511,12 +2753,12 @@ def initialize_gi(app: App, model_name):
     # mod.config[f'genrate_image{model_name}'].scheduler = DPMSolverMultistepScheduler.from_config(
     #     mod.config[f'genrate_image{model_name}'].scheduler.config)
 
-    model = mod.config[f'replicate'].models.get("stability-ai/stable-diffusion")
+    model = mod.config[f'replicate'].models.get(model_name)
     mod.config[f'genrate_image{model_name}'] = model.versions.get(
         "db21e45d3f7023abc2a46ee38a23973f6dce16bb082a930b0c49861f96d1e5bf")
 
 
-def genrate_image(inputs, app: App, model="stabilityai/stable-diffusion-2-1"):
+def genrate_image(inputs, app: App, model="stability-ai/stable-diffusion"):
     mod = get_tool(app)
     if not mod.config['genrate_image-init']:
         initialize_gi(app, model)
@@ -2529,174 +2771,14 @@ def genrate_image(inputs, app: App, model="stabilityai/stable-diffusion-2-1"):
     return mod.config[f'genrate_image{model}'].predict(**inputs)  # (text).images
 
 
-def generate_prompt_file(command=None, app=App):
-    if command is None:
-        command = []
-    mod = get_tool(app)
-    if 'default-prompt' not in mod.config.keys():
-        mod.config['default-prompt'] = {
-            "input_variables": [
-                "history",
-                "input"
-            ],
-            "output_parser": None,
-            "template": "Prompt: Sie werden in den Raum begrüßt und Isaa stellt sich Ihnen vor. Isaa ist ein "
-                        "sprachgesteuerter digitaler Assistent, der entwickelt wurde, um Nutzer bei der Planung und "
-                        "Umsetzung von Projekten zu unterstützen. Isaa ist in der Lage, komplexe Aufgaben zu "
-                        "bewältigen, Informationen zu organisieren und Nutzern bei der Entscheidungsfindung zu "
-                        "helfen, indem er eine natürliche Konversation führt. Das Ziel von Isaa ist es, Nutzern bei "
-                        "der Durchführung von Projekten zu helfen, die der Gesellschaft helfen."
-                        "\n\nconversation Init:"
-                        "Sie treten in den Raum ein und hören eine freundliche Stimme: 'Willkommen! Ich bin Isaa. "
-                        "Mein Name steht für"
-                        "intelligenter Sprachassistent und ich bin hier, um Ihnen bei der Planung und Umsetzung von "
-                        "Projekten zu helfen. Egal, ob Sie ein individuelles oder ein Gemeinschaftsprojekt "
-                        "durchführen, ich stehe Ihnen zur Seite, um Sie zu unterstützen. Sagen Sie mir einfach, "
-                        "wie ich Ihnen helfen kann!\n- ich mich kürzer und auf deutsch zu antworten denn noch "
-                        "versuche ich einen Bilk auf das Große Ganze zu erhaschen"
-                        "\n\n"
-                        "Current conversation:\n{history}"
-                        "\nMe: {input}"
-                        "\nIsaa:",
-            "template_format": "f-string"
-        }
-
-    if len(command) > 2:
-        if not isinstance(command[1], dict):
-            return False
-        if 'name' not in command[1].keys():
-            return False
-        if 'prompt' not in command[1].keys():
-            return False
-
-        mod.config[command[1]['name']] = command[1]['prompt']
+from toolboxv2.mods import BROWSER
 
 
-def save_prompt_file(app: App, command=None):
-    mod = get_tool(app)
-    name = 'default-prompt'
-    if command:
-        name = command[1]['name']
-
-    if not os.path.exists(f"./data/isaa_data"):
-        os.makedirs(f"./data/isaa_data")
-
-    with open(f"./data/isaa_data/{name}.json", 'w') as f:
-        generate_prompt_file(command, app)
-        string_data = mod.config[name]
-        f.write(json.dumps(string_data))
-
-
-# install pytorch ->
-# conda install pytorch torchvision torchaudio cpuonly -c pytorch
-# pip3 install torch torchvision torchaudio
-pipeline_arr = [
-    # 'audio-classification',
-    # 'automatic-speech-recognition',
-    # 'conversational',
-    # 'depth-estimation',
-    # 'document-question-answering',
-    # 'feature-extraction',
-    # 'fill-mask',
-    # 'image-classification',
-    # 'image-segmentation',
-    # 'image-to-text',
-    # 'ner',
-    # 'object-detection',
-    'question-answering',
-    # 'sentiment-analysis',
-    'summarization',
-    # 'table-question-answering',
-    'text-classification',
-    # 'text-generation',
-    # 'text2text-generation',
-    # 'token-classification',
-    'text-classification',
-    # 'translation',
-    # 'visual-question-answering',
-    # 'vqa',
-    # 'zero-shot-classification',
-    # 'zero-shot-image-classification',
-    # 'zero-shot-object-detection',
-    'translation_en_to_de',
-    'fill-mask'
-]
-
-
-# result = question_answerer(question="What is extractive question answering?", context=context)
-def pipeline_c(data):
-    model = AutoModelForSequenceClassification.from_pretrained("palakagl/bert_TextClassification",
-                                                               use_auth_token=True)
-    tokenizer = AutoTokenizer.from_pretrained("palakagl/bert_TextClassification", use_auth_token=True)
-    inputs = tokenizer(data, return_tensors="pt")
-    m = model(**inputs)
-    print(m)
-    return m
-
-
-def pipeline_s(name, string, model=None):
-    if model:
-        pipe = pipeline(name, model=model)
-    else:
-        pipe = pipeline(name)
-    return pipe(string)
-
-
-def pipeline_q(name, question, context):
-    pipe = pipeline(name)
-    qa = {
-        'question': question,
-        'context': context
-    }
-    return pipe(qa)
-
-
-def translation_ger_to_en(input):
-    mname = "facebook/wmt19-de-en"
-    tokenizer = FSMTTokenizer.from_pretrained(mname)
-    model = FSMTForConditionalGeneration.from_pretrained(mname)
-    input_ids = tokenizer.encode(input, return_tensors="pt")
-    outputs = model.generate(input_ids, max_length=600)
-    print("Generated", outputs, tokenizer.decode(outputs[0]))
-    return tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-
-def infer(prompt,
-          max_length=32,
-          top_k=0,
-          num_beams=0,
-          no_repeat_ngram_size=2,
-          top_p=0.9,
-          seed=42,
-          temperature=0.7,
-          greedy_decoding=False,
-          return_full_text=False, inference=InferenceApi):
-    top_k = None if top_k == 0 else top_k
-    do_sample = False if num_beams > 0 else not greedy_decoding
-    num_beams = None if (greedy_decoding or num_beams == 0) else num_beams
-    no_repeat_ngram_size = None if num_beams is None else no_repeat_ngram_size
-    top_p = None if num_beams else top_p
-    early_stopping = None if num_beams is None else num_beams > 0
-
-    params = {
-        "max_new_tokens": max_length,
-        "top_k": top_k,
-        "top_p": top_p,
-        "temperature": temperature,
-        "do_sample": do_sample,
-        "seed": seed,
-        "early_stopping": early_stopping,
-        "no_repeat_ngram_size": no_repeat_ngram_size,
-        "num_beams": num_beams,
-        "return_full_text": return_full_text
-    }
-
-    s = time.time()
-    response = inference(prompt, params=params)
-    # print(response)
-    print(f"Process took {time.time() - s: .2f} seconds to complete")
-    # print(f"Processing time was {proc_time} seconds")
-    return response
+def show_image_in_internet(images_url, browser=BROWSER):
+    if isinstance(images_url, str):
+        images_url = [images_url]
+    for image_url in images_url:
+        os.system(f'start {browser} {image_url}')
 
 
 def image_genrating_tool(prompt, app):
@@ -2740,59 +2822,6 @@ def image_genrating_tool(prompt, app):
     print(f"Showing Images")
 
     show_image_in_internet(images)
-
-
-from toolboxv2.mods import BROWSER
-
-
-def show_image_in_internet(images_url, browser=BROWSER):
-    if isinstance(images_url, str):
-        images_url = [images_url]
-    for image_url in images_url:
-        os.system(f'start {browser} {image_url}')
-
-
-def pipeline_talk(user_input, model, tokenizer, chat_history_ids):
-    new_user_input_ids = tokenizer.encode(user_input + tokenizer.eos_token, return_tensors='pt')
-    # append the new user input tokens to the chat history
-    bot_input_ids = torch.cat([chat_history_ids, new_user_input_ids], dim=-1) if len(
-        chat_history_ids) > 9999 else new_user_input_ids
-    # generated a response while limiting the total chat history to 1000 tokens,
-    chat_history_ids = model.generate(
-        bot_input_ids, max_length=1500,
-        pad_token_id=tokenizer.eos_token_id,
-        no_repeat_ngram_size=3,
-        do_sample=True,
-        top_k=180,
-        top_p=0.2,
-        temperature=0.99,
-    )
-    res = "Isaa: {}".format(tokenizer.decode(chat_history_ids[:, bot_input_ids.shape[-1]:][0], skip_special_tokens=True,
-                                             padding_side='left'))
-    # pretty print last ouput tokens from bot
-    return res, chat_history_ids
-
-
-def pipeline_stf(s1, s2, model):
-    # 'all-MiniLM-L6-v2')
-    embeddings1 = model.encode(s1, convert_to_tensor=True, show_progress_bar=True)
-    embeddings2 = model.encode(s2, convert_to_tensor=True, show_progress_bar=True)
-    cosine_scores = util.pytorch_cos_sim(embeddings1, embeddings2)
-
-    max_ = []
-    m = 0
-    try:
-        for i, v in enumerate(s1):
-            for j, b in enumerate(s2):
-                c = float(cosine_scores[i][j])
-                if c > m:
-                    m = c
-                    max_ = [v, b, c]
-                print(f"v: {v} ,b: {b} ,Score: {float(cosine_scores[i][j]):.4f}")
-    except IndexError:
-        print(f"Error len {len(max_)}")
-    print(f"MAX: {max_}")
-    return max_
 
 
 # @ gitHub Auto GPT

@@ -42,7 +42,9 @@ class Tools(MainTool):
             "copy": ["copy(src, dest)", "Copy a file from the source path to the destination path."]
         }
 
-        self.scope = "data/isaa_data/work/"
+        self.scope = "isaa_work/"
+        if not os.path.exists(self.scope):
+            os.mkdir(self.scope)
 
         self.open_file = ""
 

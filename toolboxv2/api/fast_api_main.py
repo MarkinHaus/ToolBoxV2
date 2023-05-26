@@ -58,7 +58,7 @@ async def exit_code():
 
 
 print("API: ", __name__)
-if __name__ == 'toolboxv2.api.fast_api_main':  # do stuw withe ovner to secure ur self
+if __name__ == 'toolboxv2.api.fast_api_main':
 
     config_file = "api.config"
     id_name = ""
@@ -89,4 +89,3 @@ if __name__ == 'toolboxv2.api.fast_api_main':  # do stuw withe ovner to secure u
 
     app.include_router(app_router)
     app.include_router(api_router)
-

@@ -1,19 +1,22 @@
-import sys
+import keyboard
 
 # pyperclip.copy('The text to be copied to the clipboard.')
 # pyperclip.paste()
 
-import keyboard
 import pyperclip
 
 from transformers import pipeline
 
 from toolboxv2 import Style, Spinner
 from toolboxv2.mods.isaa import CollectiveMemory, AgentConfig, AgentChain, Tools as Isaa
-from toolboxv2.mods.isaa_audio import text_to_speech3, get_audio_transcribe, get_speak_input
-from toolboxv2.utils.isaa_util import init_isaa, sys_print, speak, run_agent_cmd, stop_helper
+from toolboxv2.mods.isaa_audio import text_to_speech3, get_audio_transcribe
+from toolboxv2.utils.isaa_util import init_isaa, sys_print, run_agent_cmd, stop_helper
 
 NAME = "isaa-clip"
+
+
+def get_speak_input():
+    pass
 
 
 def get_input(speek_mode=False, min_=30):
@@ -31,6 +34,7 @@ def run_agent_clip(app, user_text, self_agent_config, print_, spek, get_input, s
 
     self_agent_config.model_name = "gpt-4"
     self_agent_config.mode = "free"
+    self_agent_config.stream = True
     self_agent_config.completion_mode = "chat"
     self_agent_config.stop_sequence = ["\n\n\n", "Observation:", "Execute:"]
 
@@ -45,7 +49,7 @@ def run_agent_clip(app, user_text, self_agent_config, print_, spek, get_input, s
         print_(f"\tMODE               : {self_agent_config.mode}\n")
         print_(f"\tCollectiveMemory   : {CollectiveMemory().token_in_use} | total vec num : "
                f"{CollectiveMemory().memory.get_stats()['total_vector_count']}\n")
-        print_(f"\tObservationMemory  : {self_agent_config.obser_mem.tokens}\n")
+        print_(f"\tObservationMemory  : {self_agent_config.observe_mem.tokens}\n")
         print_(f"\tShortTermMemory    : {self_agent_config.short_mem.tokens}\n\n")
         if "Answer: " in response:
             print_("AGENT: " + response.split('Answer:')[1] + "\n")
@@ -110,7 +114,7 @@ def run_editor(isaa, user_text, self_agent_config):
 
     while not task_done:
         try:
-            response, task_done = run_agent_cmd(isaa, user_text, self_agent_config, step, speak)
+            response, task_done = run_agent_cmd(isaa, user_text, self_agent_config, step, isaa.speak)
         except Exception as e:
             print(e, '🔴')
 
@@ -163,25 +167,33 @@ def run_chad(isaa: Isaa, user_text, self_agent_config):
         .set_mode('free') \
         .set_completion_mode('text') \
         .set_model_name('gpt-3.5-turbo') \
-        .stream = True
-
+        .stream = False
+    #user_text = 'cloudM.py'
     sys_print("USER0: " + user_text)
 
-    #res = isaa.run_agent(agent_categorize_config, f"What chain '{str(chain_instance)}'"
-    #                                              f" \nis fitting for this input '{user_text}'")
-    #chain = ''
-    #print(res)
-    #for chain_key in chain_instance.chains.keys():
-    #    if res in chain_key:
-    #        chain = chain_key
-    #        break
-    #print("chain: ", chain)
+    isaa.get_agent_config_class("think").set_model_name('gpt-4').stream = True
+
+    res = isaa.run_agent(agent_categorize_config, f"What chain '{str(chain_instance)}'"
+                                                  f" \nis fitting for this input '{user_text}'\n")
+    chain = ''
+    if res in list(chain_instance.chains.keys()):
+        chain = res
+
+    print("chain: ", chain)
+    print()
+    infos = '\n'.join([f'{item[0]} ID: {item[1]}' for item in list(zip(chain_instance.chains.keys(),
+                                                                       range(len(chain_instance.chains.keys()))))])
     user_vlidation = input(
-        f"if its the chain is wrong type the corresponding number {list(zip(chain_instance.chains.keys(), range(len(chain_instance.chains.keys()))))} :")
-    if user_vlidation:
-        user_vlidation = int(user_vlidation)
-        chain = list(chain_instance.chains.keys())[user_vlidation]
+        f"if its the chain is wrong type the corresponding number {infos}\nInput: ")
+    if user_vlidation in ['y']:
         task_done = False
+    elif user_vlidation:
+        try:
+            user_vlidation = int(user_vlidation)
+            chain = list(chain_instance.chains.keys())[user_vlidation]
+            task_done = False
+        except ValueError:
+            print("Invalid user input please type y or the chain number")
 
     pipe = pipeline("text-classification", model="distilbert-base-uncased-finetuned-sst-2-english")
 
@@ -217,13 +229,13 @@ def run_chad(isaa: Isaa, user_text, self_agent_config):
 def run(app, args):
     speak_mode = args.speak
     # Trigger word to process the text
-    trigger_word = '##isaa'
-    trigger_word_editor = '##code'
-    trigger_word_chad = '#c'
+    trigger_word = '##i'
+    trigger_word_editor = '##e'
+    trigger_word_chad = '##c'
 
     print(f"Script running in the background")
 
-    isaa, self_agent_config = init_isaa(app, speak_mode=speak_mode, calendar=True, ide=True, create=True)
+    isaa, self_agent_config, chains = init_isaa(app, speak_mode=speak_mode, calendar=True, ide=True, create=True)
     CollectiveMemory().memory.clear()
     print("init completed waiting for trigger word: ")
     buffer = ' ' * 8
@@ -246,7 +258,7 @@ def run(app, args):
 
             if buffer.endswith("isaa-clear"):
                 self_agent_config.short_mem.memory_data = []
-                self_agent_config.obser_mem.memory_data = []
+                self_agent_config.observe_mem.memory_data = []
                 self_agent_config.edit_text.memory_data = []
                 isaa.get_chain().load_from_file()
                 print("Memory cleared")
@@ -260,7 +272,7 @@ def run(app, args):
 
                 user_text = get_input(speek_mode=speak_mode)
 
-                res = run_agent_clip(app, user_text, self_agent_config, sys_print, speak, get_input, speak_mode)
+                res = run_agent_clip(app, user_text, self_agent_config, sys_print, isaa.speak, get_input, speak_mode)
 
                 if res:
                     print("Agent:", res)
@@ -301,7 +313,7 @@ def run(app, args):
                 res = run_chad(isaa, user_text, self_agent_config)
 
                 if res:
-                    speak(res)
+                    isaa.speak(res)
                     print("Agent:", res)
                     pyperclip.copy(res)
 

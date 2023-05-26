@@ -43,7 +43,7 @@ def puschup_habit(gc: GoogleCalendar):
 def create_process(email):
     return GoogleCalendar(email, credentials_path=CREDENTIALS_FILE)
 
-CREDENTIALS_FILE = 'E:\\Markin\\D\\project_py\\ToolBoxV2\\toolboxv2\\client_secret_230748992300-sptnbabdpd7kgvrjk7octncfal60kngg.apps.googleusercontent.com.json'
+CREDENTIALS_FILE = os.getenv('CREDENTIALS_FILE')
 from gcsa.calendar import Calendar, CalendarListEntry
 from gcsa.event import Event
 

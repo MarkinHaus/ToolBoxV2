@@ -1,6 +1,0 @@
-{
-  "input_variables": ["input"],
-  "output_parser": null,
-  "template": "Prompt: Erstelle eine maßgeschneiderte und ansprechende Prompt für folgende Anfrage:\n\nAnfrage: {input}\n\nNimm dir einen Moment Zeit, um die Anfrage sorgfältig zu analysieren und zu verstehen. Erstelle eine Prompt basierend auf den angegebenen Informationen. Achte darauf, dass die Prompt klar, präzise und leicht verständlich ist. Wenn du Genügend informationen hast antworte mit :Final-Prompt: und gebe die finale prompt aus. Eine prompt ist eine text anleitung die einem NLP sagen was seine aufgabe ist \n\nVorgeschlagene Prompt:",
-  "template_format": "f-string"
-}

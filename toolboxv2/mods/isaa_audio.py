@@ -1,21 +1,32 @@
 import hashlib
 import os
+import sys
 import tempfile
+import threading
 import wave
+from datetime import datetime, timedelta
 from io import BytesIO
+from pathlib import Path
 
 import keyboard
 import requests
 import speech_recognition
 import speech_recognition as sr
 import pickle
-from toolboxv2 import MainTool, FileHandler
+
+import torch
+from transformers import pipeline
+from typing.io import IO
+
+from toolboxv2 import MainTool, FileHandler, get_logger, Style
 from pydub import AudioSegment
 from pydub.playback import play
 import logging
 import openai
 import time
 import pyaudio
+import asyncio
+import queue
 
 try:
     import pyttsx3
@@ -391,16 +402,11 @@ def text_to_speech3(text, engin=None):
         return text
 
 
-def wisper_multy_speakers(path='./data/isaa_data/output.wav',
-                          model_size='tiny'):  # ['tiny.en', 'tiny', 'base.en', 'base', 'small.en', 'small', 'medium.en', 'medium', 'large-v1', 'large-v2', 'large']
-    if not whisper_init:
-        return "module whisper installed"
-    model = whisper.load_model(model_size)
-    result = model.transcribe(path)
-    return result['text']
+# wisper # ['tiny.en', 'tiny', 'base.en', 'base', 'small.en', 'small', 'medium.en', 'medium', 'large-v1', 'large-v2',
+# 'large']
 
 
-def get_mean_amplitude(stream, seconds=2, rate=44100):
+def get_mean_amplitude(stream, seconds=2, rate=44100, p=False):
     amplitude = []
     frames = []
     for j in range(int(rate / int(rate / 10) * seconds)):
@@ -408,19 +414,25 @@ def get_mean_amplitude(stream, seconds=2, rate=44100):
         frames.append(data)
         audio_np = np.frombuffer(data, dtype=np.int16)
         amplitude.append(np.abs(audio_np).mean())
+        if p:
+            print(
+                f"[last amplitude] : {amplitude[-1]:.2f} "
+                f"[ac mean] : {sum(amplitude) / len(amplitude):.2f} "
+                f"[min amplitude] : {min(amplitude):.2f}",
+                f"[max amplitude] : {max(amplitude):.2f}",
+                end="\r")
 
     return sum(amplitude) / len(amplitude), frames
 
 
-def s30sek_mean(seconds=30):
-    rate = 44100
+def s30sek_mean(seconds=30, rate=44100, p=False):
     audio = pyaudio.PyAudio()
     # Erstellen Sie einen Stream zum Aufnehmen von Audio
     stream = audio.open(format=pyaudio.paInt16, channels=1,
                         rate=rate, input=True,
                         frames_per_buffer=int(rate / 10))
 
-    mean_amplitude, _ = get_mean_amplitude(stream, seconds=seconds, rate=rate)
+    mean_amplitude, _ = get_mean_amplitude(stream, seconds=seconds, rate=rate, p=p)
 
     return mean_amplitude
 
@@ -519,255 +531,191 @@ def get_audio_transcribe(seconds=30,
     return res
 
 
-import pyaudio
-import argparse
-import asyncio
-import aiohttp
-import json
-import os
-import sys
-import wave
-import websockets
+def init_live_transcript(model="jonatasgrosman/wav2vec2-large-xlsr-53-german",
+                         rate=16000, chunk_duration=10, amplitude_min=84):
+    """
+    models EN : 'openai/whisper-tiny'
+    DE : 'jonatasgrosman/wav2vec2-large-xlsr-53-german'
 
-from datetime import datetime
+    close to live chunk_duration = 1.5
+    """
+    # Erstelle Queues für die Kommunikation zwischen den Threads und system
+    que_t0 = queue.Queue()
+    que_t1 = queue.Queue()
+    audio_files_que = queue.Queue()
+    res_que = queue.Queue()
 
-startTime = datetime.now()
+    def join():
+        # Warte bis beide Threads fertig sind
+        thread0.join()
+        thread1.join()
+        os.remove(temp[1]) if os.path.exists(temp[1]) else None
+        os.remove(temp[-1]) if os.path.exists(temp[-1]) else None
 
-all_mic_data = []
-all_transcripts = []
+    def put(x):
+        logger.info(
+            Style.ITALIC(
+                Style.Bold(f"Send data to Threads: {x}")))
+        que_t0.put(x)
+        que_t1.put(x)
 
-FORMAT = pyaudio.paInt16
-CHANNELS = 1
-RATE = 16000
-CHUNK = 8000
-
-audio_queue = asyncio.Queue()
-
-# Mimic sending a real-time stream by sending this many seconds of audio at a time.
-# Used for file "streaming" only.
-REALTIME_RESOLUTION = 0.250
-
-subtitle_line_counter = 0
-
-
-def subtitle_time_formatter(seconds, separator):
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    millis = int((seconds - int(seconds)) * 1000)
-    return f"{hours:02}:{minutes:02}:{secs:02}{separator}{millis:03}"
-
-
-def subtitle_formatter(response, format):
-    global subtitle_line_counter
-    subtitle_line_counter += 1
-
-    start = response["start"]
-    end = start + response["duration"]
-    transcript = (
-        response.get("channel", {}).get("alternatives", [{}])[0].get("transcript", "")
-    )
-
-    if format == "srt":
-        separator = ","
-    else:
-        separator = "."
-
-    subtitle_string = f"{subtitle_line_counter}\n"
-    subtitle_string += f"{subtitle_time_formatter(start, separator)} --> "
-    subtitle_string += f"{subtitle_time_formatter(end, separator)}\n"
-    if format == "vtt":
-        subtitle_string += "- "
-    subtitle_string += f"{transcript}\n\n"
-
-    return subtitle_string
-
-
-# Used for microphone streaming only.
-def mic_callback(input_data, frame_count, time_info, status_flag):
-    audio_queue.put_nowait(input_data)
-    return (input_data, pyaudio.paContinue)
-
-
-async def run(key, method, format, **kwargs):
-    deepgram_url = "wss://api.deepgram.com/v1/listen?punctuate=true"
-    method = "mic"
-    return_val = ""
-
-    if method == "mic":
-        deepgram_url += "&encoding=linear16&sample_rate=16000"
-
-    # Connect to the real-time streaming endpoint, attaching our credentials.
-    async with websockets.connect(
-        deepgram_url, extra_headers={"Authorization": "Token {}".format(key)}
-    ) as ws:
-        print(f'ℹ️  Request ID: {ws.response_headers.get("dg-request-id")}')
-        print("🟢 (1/5) Successfully opened Deepgram streaming connection")
-
-        async def sender(ws):
-            print(
-                f'🟢 (2/5) Ready to stream {method if (method == "mic" or method == "url") else kwargs["filepath"]} audio to Deepgram{". Speak into your microphone to transcribe." if method == "mic" else ""}'
-            )
-
-            if method == "mic":
-                try:
-                    while True:
-                        mic_data = await audio_queue.get()
-                        all_mic_data.append(mic_data)
-                        await ws.send(mic_data)
-                except websockets.exceptions.ConnectionClosedOK:
-                    await ws.send(json.dumps({"type": "CloseStream"}))
-                    print(
-                        "🟢 (5/5) Successfully closed Deepgram connection, waiting for final transcripts if necessary"
-                    )
-
-                except Exception as e:
-                    print(f"Error while sending: {str(e)}")
-                    raise
-
-            return
-
-        async def receiver(ws):
-            """Print out the messages received from the server."""
-            global transcript_msg
-            first_message = True
-            first_transcript = True
-            transcript_msg = ""
-            enter_key_task = asyncio.create_task(check_enter_key())
-            print("🟢 (4/5) Waiting for first msg")
-            async for msg in ws:
-                res = json.loads(msg)
-                if first_message:
-                    print(
-                        "🟢 (4/5) Successfully receiving Deepgram messages, waiting for finalized transcription..."
-                    )
-                    first_message = False
-                try:
-                    # handle local server messages
-                    if res.get("msg"):
-                        print(res["msg"])
-                    if res.get("is_final"):
-
-                        # Änderung: Textausgabe anpassen, um weniger Zeilenumbrüche zu haben
-                        if format == "vtt" or format == "srt":
-                            transcript = subtitle_formatter(res, format)
-                        else:
-                            transcript = res.get("channel", {}).get("alternatives", [{}])[0].get("transcript",
-                                                                                                 "").replace("\n", " ")
-
-                        print(transcript)
-
-                        transcript_msg += " " + transcript
-
-                        # Änderung: Prüfen, ob die Eingabetaste gedrückt wurde
-                        if enter_key_task.done():
-                            # await ws.send(json.dumps({"type": "CloseStream"}))
-
-                            print(
-                                "🟢 (5/5) Successfully closed Deepgram connection, waiting for final transcripts if necessary")
-                            await ws.finish()
-                            return transcript_msg  # Rückgabe des Transkripts bis zur Pause
-
-                except KeyError:
-                    print(f"🔴 ERROR: Received unexpected API response! {msg}")
-
-        # Set up microphone if streaming from mic
-        async def microphone():
-            audio = pyaudio.PyAudio()
-            stream = audio.open(
-                format=FORMAT,
-                channels=CHANNELS,
-                rate=RATE,
-                input=True,
-                frames_per_buffer=CHUNK,
-                stream_callback=mic_callback,
-            )
-
-            stream.start_stream()
-
-            global SAMPLE_SIZE
-            SAMPLE_SIZE = audio.get_sample_size(FORMAT)
-
-            while stream.is_active():
-                await asyncio.sleep(0.1)
-
-            stream.stop_stream()
+        if x == 'exit':
+            join()
+            if stream.is_active():
+                stream.stop_stream()
             stream.close()
-
-        functions = [
-            asyncio.ensure_future(sender(ws)),
-            asyncio.ensure_future(receiver(ws)),
-        ]
-
-        if method == "mic":
-            functions.append(asyncio.ensure_future(microphone()))
-
-        results = await asyncio.gather(*functions)
-
-        print("RESULTS: ", results)
-        print("transcript_msg: ", transcript_msg)
-
-        receiver_result = results[1]  # Der Index 1 entspricht dem Ergebnis der receiver(ws) Funktion
-
-        return receiver_result
+            audio.terminate()
 
 
-async def execute_command():
-    api_key = os.getenv("DEEPGRAM_API_KEY")
+    pipe = pipeline("automatic-speech-recognition", model)
 
-    transcript = await run(api_key, "mic", format)
+    if rate <= 0:
+        raise ValueError("rate must be bigger then 0 best rate: 44100 | 16000")
 
-    return transcript
+    audio = pyaudio.PyAudio()
+    # Erstellen Sie einen Stream zum Aufnehmen von Audio
+    stream = audio.open(format=pyaudio.paInt16, channels=1,
+                        rate=rate, input=True,
+                        frames_per_buffer=int(rate / 10))
 
+    logger = get_logger()
 
-async def check_enter_key():
-    while True:
-        if keyboard.is_pressed("enter"):
-            return True
-        await asyncio.sleep(0.1)
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tf0:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tf1:
 
+            temp = 0, tf0.name, tf1.name
 
-def get_speak_input():
-        """Entrypoint for the example."""
-    # Parse the command-line arguments.
+            def T0():
+                alive = True
+                save = False
+                frames = []
+                logger.info(
+                    Style.ITALIC(
+                        Style.Bold(
+                            f"Record : Start"
+                        )))
+                chunk_frames = 0
+                index = 1
+                silence_duration = 0
+                speak_duration = 0
+                speak_start_time = None
+                while alive:
 
-    #try:
-        result = asyncio.run(execute_command())
-        print(f"Transkript bis zur Pause: {result}")
-        # asyncio.run(run("", "mic", format))
-        return result
+                    if not que_t0.empty():
+                        data = que_t0.get()
+                        logger.info(
+                            Style.ITALIC(
+                                Style.Bold(f"T0 Received data : {data}")))
+                        if data == 'exit':
+                            alive = False
+                        if data == 'stop':
+                            stream.stop_stream()
+                            save = False
+                            if winsound_init:
+                                winsound.Beep(120, 175)
+                        if data == 'start':
+                            save = True
+                            silence_duration = 0
+                            speak_duration = 0
+                            speak_start_time = None
+                            frames = []
+                            stream.start_stream()
+                            if winsound_init:
+                                winsound.Beep(320, 125)
 
-    #except websockets.exceptions.InvalidStatusCode as e:
-    #    print(f'🔴 ERROR: Could not connect to Deepgram! {e.headers.get("dg-error")}')
-    #    print(
-    #        f'🔴 Please contact Deepgram Support (developers@deepgram.com) with request ID {e.headers.get("dg-request-id")}'
-    #    )
-    #    return
-    #except websockets.exceptions.ConnectionClosedError as e:
-    #    error_description = f"Unknown websocket error."
-    #    print(
-    #        f"🔴 ERROR: Deepgram connection unexpectedly closed with code {e.code} and payload {e.reason}"
-    #    )
-#
-    #    if e.reason == "DATA-0000":
-    #        error_description = "The payload cannot be decoded as audio. It is either not audio data or is a codec unsupported by Deepgram."
-    #    elif e.reason == "NET-0000":
-    #        error_description = "The service has not transmitted a Text frame to the client within the timeout window. This may indicate an issue internally in Deepgram's systems or could be due to Deepgram not receiving enough audio data to transcribe a frame."
-    #    elif e.reason == "NET-0001":
-    #        error_description = "The service has not received a Binary frame from the client within the timeout window. This may indicate an internal issue in Deepgram's systems, the client's systems, or the network connecting them."
-#
-    #    print(f"🔴 {error_description}")
-    #    # TODO: update with link to streaming troubleshooting page once available
-    #    # print(f'🔴 Refer to our troubleshooting suggestions: ')
-    #    print(
-    #        f"🔴 Please contact Deepgram Support (developers@deepgram.com) with the request ID listed above."
-    #    )
-    #    return
-    ##except websockets.exceptions.ConnectionClosedOK:
-    ##    print("Connection closed", transcript_msg)
-    ##    return transcript_msg
-#
-    #except Exception as e:
-    #    print(f"🔴 ERROR: Something went wrong! {e}")
-    #    return
-#
+                    if save:
+                        data = stream.read(int(rate / 10))
+                        audio_np = np.frombuffer(data, dtype=np.int16)
+                        amplitude = np.abs(audio_np).mean()
+                        frames.append(data)
+                        # Check if the amplitude has dropped below a certain threshold
+                        if amplitude < amplitude_min:
+                            # If the person has stopped speaking, update the silence duration
+                            if speak_start_time is not None:
+                                speak_duration += time.time() - speak_start_time
+                                speak_start_time = None
+                            silence_duration += int(rate / 10) / rate
+                        else:
+                            # If the person has started speaking, update the speaking duration
+                            if speak_start_time is None:
+                                speak_start_time = time.time()
+                            speak_duration += int(rate / 10) / rate
+                        # print( f"[speak_duration] : {speak_duration:.2f} [silence_duration] : {
+                        # silence_duration:.2f} [amplitude] : {amplitude:.2f}", end="\r")
+                        chunk_frames += 1
+                        if chunk_frames >= int(rate / int(rate / 10) * chunk_duration) \
+                            and silence_duration > 0.2 \
+                            and speak_duration > chunk_duration / 5:
+
+                            # get temp file
+                            ac_temp = temp[index]
+                            logger.info(
+                                Style.ITALIC(
+                                    Style.Bold(f"T0 Saving Sample {ac_temp}")))
+
+                            with wave.open(ac_temp, 'wb') as wf:
+                                wf.setnchannels(1)
+                                wf.setsampwidth(audio.get_sample_size(pyaudio.paInt16))
+                                wf.setframerate(rate)
+                                wf.writeframes(b''.join(frames))
+
+                            frames = []
+                            chunk_frames = 0
+                            silence_duration = 0
+                            speak_duration = 0
+                            speak_start_time = None
+                            audio_files_que.put(index)
+                            index *= -1
+
+                logger.info(
+                    Style.ITALIC(
+                        Style.Bold("T0 exiting")))
+
+            def T1():
+                alive = True
+                transcribe = False
+                logger.info(
+                    Style.ITALIC(
+                        Style.Bold("T1 started")))
+                while alive:
+
+                    if not que_t1.empty():
+                        data = que_t1.get()
+                        logger.info(
+                            Style.ITALIC(
+                                Style.Bold(f"T1 Received data : {data}")))
+                        if data == 'exit':
+                            alive = False
+                        if data == 'stop':
+                            transcribe = False
+                        if data == 'start':
+                            transcribe = True
+
+                    if transcribe:
+                        if not audio_files_que.empty():
+                            t0 = time.time()
+                            index = audio_files_que.get()
+                            ac_temp = temp[index]
+                            logger.info(
+                                Style.ITALIC(
+                                    Style.Bold(f"T1 Transcribe Sample {ac_temp}")))
+                            result = pipe(ac_temp)['text']
+                            res_que.put(result)
+                            logger.info(
+                                Style.ITALIC(
+                                    Style.Bold(f"T1 Don in {time.time() - t0:.3f} chars {len(result)} ")))
+
+                logger.info(
+                    Style.ITALIC(
+                        Style.Bold("T1 exiting")))
+
+    thread0 = threading.Thread(target=T0)
+    thread1 = threading.Thread(target=T1)
+
+    thread0.start()
+    thread1.start()
+
+    return put, res_que
+# 43 0.26
+# 49 .29
+# 39 0.3
