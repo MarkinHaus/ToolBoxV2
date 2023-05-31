@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import threading
@@ -5,7 +6,19 @@ import time
 import fnmatch
 import requests
 import subprocess
+import re
+import ast
+
+from langchain.tools import ShellTool
 from transformers import pipeline
+from langchain.tools.file_management import (
+    ReadFileTool,
+    CopyFileTool,
+    DeleteFileTool,
+    MoveFileTool,
+    WriteFileTool,
+    ListDirectoryTool,
+)
 
 from toolboxv2 import App
 from toolboxv2.utils.toolbox import get_app
@@ -109,6 +122,41 @@ def stop_helper(imp):
     return False
 
 
+def split_todo_list(todo_string):
+    # Regex-Muster, um verschiedene Variationen von Nummerierungen zu erkennen
+    patterns = [
+        r"^\d+[\.\)]",  # 1., 1), 2., 2), ...
+        r"^\d+\)",  # 1), 2), 3), ...
+        r"^\d+",  # 1, 2, 3, ...
+        r"^[\d:]+\s*-\s*",  # 1: -, 2: -, 3: -, ...
+        r"^\d+\s*-\s*",  # 1 -, 2 -, 3 -, ...
+        r"^-\s*",  # - -, - -, - -, ...
+    ]
+
+    # Durchsuchen der Zeichenkette nach passenden Mustern und Aufteilen in To-Do-Elemente
+    todo_list = []
+    for pattern in patterns:
+        todos = re.split(pattern, todo_string, flags=re.MULTILINE)[1:]  # Erste Position leeren
+        if todos:
+            todo_list.extend(todos)
+
+    # Entfernen von Leerzeichen am Anfang und Ende der To-Do-Elemente
+    todo_list = [todo.strip() for todo in todo_list]
+
+    return todo_list
+def extract_dict_from_string(string):
+    start_index = string.find("{")
+    end_index = string.rfind("}")
+    if start_index != -1 and end_index != -1 and start_index < end_index:
+        dict_str = string[start_index:end_index+1]
+        try:
+            dictionary = json.loads(dict_str)
+            if isinstance(dictionary, dict):
+                return dictionary
+        except json.JSONDecodeError as e:
+            return e
+    return None
+
 def test_amplitude_for_talk_mode(sek=10):
     if not SPEAK:
         return -1
@@ -117,10 +165,10 @@ def test_amplitude_for_talk_mode(sek=10):
     return mean_0
 
 
-def get_code_and_md_files(git_project_dir, code_extensions: None or list = None):
+def get_code_files(git_project_dir, code_extensions: None or list = None):
     result = []
     if code_extensions is None:
-        code_extensions = ['*.py', '*.js', '*.java', '*.c', '*.cpp', '*.cs', '*.rb', '*.go', '*.php', '*.md']
+        code_extensions = ['*.py', '*.js', '*.java', '*.c', '*.cpp', '*.cs', '*.rb', '*.go', '*.php']
 
     for root, _, files in os.walk(git_project_dir):
         for file in files:
@@ -150,7 +198,7 @@ def download_github_project(repo_url, branch, destination_folder):
 
 def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
               isaa_print=False, python_test=False, init_mem=False, init_pipe=False, join_now=False,
-              override_file_functions_user_input=False, global_stream_override=False, chain_runner=False):
+              global_stream_override=False, chain_runner=False):
     chain_h = {}
 
     if calendar:
@@ -178,13 +226,6 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
 
         # speech = app.AC_MOD.speech
         app.AC_MOD.generate_cache_from_history()
-
-    if ide:
-        app.logger.info("Init IDE")
-        app.save_load("isaa_ide")
-        app.new_ac_mod("isaa_ide")
-        app.logger.info("Isaa IDE is running")
-        file_functions_ = app.AC_MOD.process_input
 
     app.logger.info("Init Isaa")
     app.save_load("isaa")
@@ -355,48 +396,20 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
 
         chain_h['save_code'] = helper
 
-        file_functions_dis = """
-function for file operation
-syntax for function call : <function_name> <arguments>
+        rft = ReadFileTool()
+        cft = CopyFileTool()
+        dft = DeleteFileTool()
+        mft = MoveFileTool()
+        wft = WriteFileTool()
+        lft = ListDirectoryTool()
 
-"""
-
-        def file_functions(x, from_="list", do_so=override_file_functions_user_input):
-            try:
-                if do_so:
-                    return file_functions_(from_ + ' ' + x.strip())
-                if input(x + " - ACCEPT? :").lower() in ["y", "yes"]:
-                    return file_functions_(from_ + ' ' + x.strip())
-                return "Not authorised by user"
-            except Exception as e:
-                return "Error in file_functions : " + str(e)
-
-        isaa.add_tool("create", lambda x: file_functions(x, from_='create'), "format for singel input functions ["
-                                                                             "create] arguments is <path>",
-                      file_functions_dis, self_agent_config)
-        isaa.add_tool("delete", lambda x: file_functions(x, from_='delete'), "format for singel input functions ["
-                                                                             "delete] arguments is <path>",
-                      file_functions_dis, self_agent_config)
-        isaa.add_tool("list", lambda x: file_functions(x, from_='list'), "format for singel input functions list] "
-                                                                         "arguments is <path>", file_functions_dis,
-                      self_agent_config)
-        isaa.add_tool("read", lambda x: file_functions(x, from_='read'), "format for singel input functions [read] "
-                                                                         "arguments is <path>", file_functions_dis,
-                      self_agent_config)
-        isaa.add_tool("move", lambda x: file_functions(x, from_='move'), "format for 2 input functions [move] "
-                                                                         "arguments ar <source> <destination>",
-                      file_functions_dis, self_agent_config)
-        isaa.add_tool("write", lambda x: file_functions(x, from_='write'), "format for 2 input functions "
-                                                                                       "[write] arguments ar <file_name> "
-                                                                                       "<content>",
-                      file_functions_dis, self_agent_config)
-        isaa.add_tool("search_file_content", lambda x: file_functions(x, from_='search'),
-                      "format for 2 input functions [search] "
-                      "arguments ar <path> <keyword>",
-                      file_functions_dis, self_agent_config)
-        isaa.add_tool("copy", lambda x: file_functions(x, from_='copy'), "format for 2 input functions [copy] "
-                                                                         "arguments ar <source> <destination>",
-                      file_functions_dis, self_agent_config)
+        isaa.add_tool("Read", rft, f"Read({rft.args})", rft.description, self_agent_config, lagchaintool=True)
+        isaa.add_tool("Copy", cft, f"Copy({cft.args})", cft.description, self_agent_config, lagchaintool=True)
+        isaa.add_tool("Delete", dft, f"Delete({dft.args})", dft.description, self_agent_config, lagchaintool=True)
+        isaa.add_tool("Move", mft, f"Move({mft.args})", mft.description, self_agent_config, lagchaintool=True)
+        isaa.add_tool("Write", wft, f"Write({wft.args})", wft.description, self_agent_config, lagchaintool=True)
+        isaa.add_tool("ListDirectory", lft, f"ListDirectory({lft.args})", lft.description, self_agent_config,
+                      lagchaintool=True)
 
     if chain_runner:
         chain_instance: AgentChain = isaa.get_chain()
@@ -404,19 +417,20 @@ syntax for function call : <function_name> <arguments>
         agent_categorize_config \
             .set_mode('free') \
             .set_completion_mode('text') \
-            .set_model_name('gpt-3.5-turbo') \
             .stream = False
+
         def chain_helper(x):
             chain_instance.load_from_file()
 
             res = isaa.run_agent(agent_categorize_config, f"What chain '{str(chain_instance)}'"
-                                                            f" \nis fitting for this input '{x}'\n"
+                                                          f" \nis fitting for this input '{x}'\n"
                                                           f"Only return the correct name or None\nName: ")
             if res.lower() == 'none':
                 res = "I cant find a fitting chain"
 
             infos = '\n'.join([f'{item[0]} ID: {item[1]}' for item in list(zip(chain_instance.chains.keys(),
-                                                                               range(len(chain_instance.chains.keys()))))])
+                                                                               range(
+                                                                                   len(chain_instance.chains.keys()))))])
             user_vlidation = input(f"Isaa whats tu use : '{res}'\n"
                                    f"if its the chain is wrong type the corresponding number {infos}\n"
                                    f"other wise live black\nInput: ")
@@ -443,11 +457,12 @@ syntax for function call : <function_name> <arguments>
         isaa.add_tool("execute-chain", chain_helper, "input and details for the chain", '', self_agent_config)
 
     if python_test:
+        st = ShellTool()
         python_repl = PythonREPL()
+        isaa.add_tool("Shell", st, f"Read({st.args})", st.description, self_agent_config, lagchaintool=True)
         isaa.add_tool("eval-python-code", python_repl.run, "PythonREPL to eval python code", '', self_agent_config)
     if speak_mode:
         isaa.speak = speak
-
 
     mem = isaa.get_context_memory()
 
@@ -478,7 +493,9 @@ syntax for function call : <function_name> <arguments>
                   "save_data_to_memory(<store_information>)",
                   self_agent_config)
 
-    chains = isaa.get_chain(None, hydrate(chain_h)).load_from_file()
+    chains = isaa.get_chain(None, hydrate(chain_h))
+    if chain_runner:
+        chains.load_from_file()
 
     if join_now:
         if init_pipe:

@@ -720,6 +720,8 @@ class AIContextMemory(metaclass=Singleton):
             if self.memory[key + '-tl'] < memory['full-text-len']:
                 self.crate_live_context(key)
             # get vectors
+            if context_data_fit['key'] == '':
+                context_data_fit['key'] = key
             context_data_fit[key] = []
             for representation in memory['represent']:
                 context_data_fit[key].append(np.dot(representation, request_vector))
@@ -759,13 +761,22 @@ class AIContextMemory(metaclass=Singleton):
         if name is None:
             mem_name = self.get_best_fit_memory(text)
 
+        if mem_name['key'] == '':
+            return "No Memory available"
+
         data = self.search(mem_name['key'], text, marginal=marginal)
         last = []
         final = f"Data from ({mem_name['key']}):\n"
 
         for res in data:
             if last != res:
-                final += res.page_content + '\n\n'
+                try:
+                    final += res.page_content + '\n\n'
+                except AttributeError:
+                    try:
+                        final += res[0].page_content + '\n\n'
+                    except AttributeError:
+                        final += str(res) + '\n\n'
             else:
                 print("WARNING- same")
         return final
@@ -789,7 +800,7 @@ class CollectiveMemory(metaclass=Singleton):
             return f"active memory contains {self.token_in_use} tokens for mor informations Input similar information"
         if self.do_mem:
             return get_tool(get_app()).get_context_memory().get_context_for(context)
-        "memory will performe a vector similarity search using memory"
+        # "memory will performe a vector similarity search using memory"
         relevant_memory = self.memory.get_relevant(context, 10)
         if len(relevant_memory) == 0:
             l = ""
@@ -860,7 +871,7 @@ class ObservationMemory:
         for line in CharacterTextSplitter(chunk_size=max(300, int(len(data) / 10)),
                                           chunk_overlap=max(20, int(len(data) / 200))).split_text(data):
             if line:
-                ntok = len(tiktoken.encoding_for_model(self.model_name).encode(line))
+                ntok = get_tokens(line, self.model_name)
                 self.memory_data.append({'data': line, 'token-count': ntok, 'vector': []})
                 tok += ntok
 
@@ -964,7 +975,7 @@ class ShortTermMemory:
         for line in CharacterTextSplitter(chunk_size=max(300, int(len(data) / 10)),
                                           chunk_overlap=max(20, int(len(data) / 200))).split_text(data):
             if line not in self.lines_ and len(line) != 0:
-                ntok = len(tiktoken.encoding_for_model(self.model_name).encode(line))
+                ntok = get_tokens(line, self.model_name)
                 self.memory_data.append({'data': line, 'token-count': ntok, 'vector': []})
                 tok += ntok
 
@@ -981,43 +992,79 @@ class ShortTermMemory:
     #    text-ada-001
 
 
+class PyEnvEval:
+    def __init__(self):
+        self.global_env = globals().copy()
+        self.local_env = {}
+
+    def eval_code(self, code):
+        try:
+            result = eval(code, self.global_env, self.local_env)
+            return self.format_output(result)
+        except Exception as e:
+            return self.format_output(e)
+
+    def get_env(self):
+        global_env_str = self.format_env(self.global_env)
+        local_env_str = self.format_env(self.local_env)
+        return f"Globals:\n{global_env_str}\n\nLocals:\n{local_env_str}"
+
+    @staticmethod
+    def format_output(output):
+        return f"Ergebnis: {output}"
+
+    @staticmethod
+    def format_env(env):
+        return "\n".join(f"{key}: {value}" for key, value in env.items())
+
+    def run_and_display(self, code):
+        # Anfangszustand anzeigen
+        end = ""
+        end += f"Startzustand:\n{self.get_env()}"
+
+        # Code ausführen
+        result = self.eval_code(code)
+
+        # Endzustand anzeigen
+        end += f"\nEndzustand:\n{self.get_env()}"
+
+        # Ergebnis anzeigen
+        end += f"\nAusführungsergebnis:\n{result}"
+        return end
+
+
 class AgentConfig:
-    available_modes = ['talk', 'tools', 'conversation', 'free', 'planning', 'execution', 'generate', 'q2tree']
+    available_modes = ['talk', 'tools', 'conversation', 'free', 'planning', 'execution', 'generate', 'q2tree', 'python']
     max_tokens = 4097
 
-    capabilities = """1. Invoke Agents: Isaa should be able to invoke and interact with various agents and tools, seamlessly integrating their expertise and functionality into its own responses and solutions.
-    2. Context Switching: Isaa should be capable of switching between different agents or tools depending on the user's needs and the requirements of the task at hand.
-    3. Agent Coordination: Isaa should effectively coordinate the actions and outputs of multiple agents and tools, ensuring a cohesive and unified response to the user's requests.
-    4. Error Handling: Isaa should be able to detect and handle errors or issues that may arise while working with agents and tools, providing alternative solutions or gracefully recovering from failures.
-    5. Agent Learning: Isaa should continuously learn from its interactions with various agents and tools, refining its understanding of their capabilities and improving its ability to utilize them effectively.
-    6. Performance Evaluation: Isaa should regularly evaluate the performance of the agents and tools it interacts with, identifying areas for improvement and optimizing their use in future tasks."""
+    python_env = PyEnvEval()
 
+    capabilities = """Resourceful: Isaa is able to efficiently utilize its wide range of capabilities and resources to assist the user.
+Collaborative: Isaa is work seamlessly with other agents, tools, and systems to deliver the best possible solutions for the user.
+Empathetic: Isaa is understand and respond to the user's needs, emotions, and preferences, providing personalized assistance.
+Inquisitive: Isaa is continually seek to learn and improve its knowledge base and skills, ensuring it stays up-to-date and relevant.
+Transparent: Isaa is open and honest about its capabilities, limitations, and decision-making processes, fostering trust with the user.
+Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of tasks and challenges."""
     system_information = f"""
 system information's : {getSystemInfo()}
 
 """
 
-    def __init__(self):
-        self.name: str = 'agentConfig'
+    def __init__(self, name="agentConfig"):
+
+        self.name: str = name
         self.mode: str = "talk"
         self.model_name: str = "gpt-3.5-turbo"
 
-        self.agent_type: str = "zero-shot-react-description"
+        self.agent_type: AgentType = AgentType("structured-chat-zero-shot-react-description")#"zero-shot-react-description"
         self.max_iterations: int = 2
         self.verbose: bool = True
 
         self.personality = ""
         self.goals = ""
-        self.short_mem: ShortTermMemory = ShortTermMemory('ShortTerm')
-        self.edit_text: ShortTermMemory = ShortTermMemory('EditText')
-        self.edit_text.set_name("CodeMemory")
-        self.edit_text.max_length = 5400
-        self.context: ShortTermMemory = ShortTermMemory('Context')
-        self.context.set_name("ContextMemory")
-        self.observe_mem: ObservationMemory = ObservationMemory()
         self.tools: dict = {
-            "test_tool": {"func": lambda x: x, "description": "only for testing if tools are available",
-                          "format": "test_tool(input:str):"}
+            #"test_tool": {"func": lambda x: x, "description": "only for testing if tools are available",
+            #              "format": "test_tool(input:str):"}
         }
 
         self.last_prompt = ""
@@ -1026,6 +1073,7 @@ system information's : {getSystemInfo()}
         self.task_list_done: list[str] = []
         self.step_between: str = ""
 
+        self.pre_task: str or None = None
         self.task_index = 0
 
         self.token_left = 2000
@@ -1037,11 +1085,27 @@ system information's : {getSystemInfo()}
         self.completion_mode = "text"
         self.add_system_information = True
 
+        self.init_mem_state = False
+        self.context = None
+        self.observe_mem = None
+        self.edit_text = None
+        self.short_mem = None
+
+        self.init_memory()
+
         self.binary_tree: IsaaQuestionBinaryTree or None = None
+
+    def init_memory(self):
+        self.init_mem_state = True
+        self.short_mem: ShortTermMemory = ShortTermMemory(f'{self.name}-ShortTerm')
+        self.edit_text: ShortTermMemory = ShortTermMemory(f'{self.name}-EditText')
+        self.edit_text.max_length = 5400
+        self.context: ShortTermMemory = ShortTermMemory(f'{self.name}-ContextMemory')
+        self.observe_mem: ObservationMemory = ObservationMemory()
 
     def task(self, reset_step=False):
         if self.step_between:
-            task = self.step_between
+            task += str(self.step_between)
             if reset_step:
                 self.step_between = ""
             return task
@@ -1084,15 +1148,15 @@ system information's : {getSystemInfo()}
 
     def get_messages(self, create=True):
         key = f"{self.name}-{self.mode}"
-        if key not in self.messages_sto.keys():
-            return []
-        messages = self.messages_sto[key]
+        messages = []
+        if key in self.messages_sto.keys():
+            messages = self.messages_sto[key]
         if create:
-            messages = self._messages
+            messages = self.a_messages
         return messages
 
     @property
-    def _messages(self) -> list:
+    def a_messages(self) -> list:
         key = f"{self.name}-{self.mode}"
 
         if key not in self.messages_sto.keys():
@@ -1102,7 +1166,8 @@ system information's : {getSystemInfo()}
         for msg in self.messages_sto[key]:
             last_prompt += msg['content']
         i = 0
-        while self.max_tokens < len(tiktoken.encoding_for_model(self.model_name).encode(last_prompt)):
+        tokens = get_tokens(last_prompt, self.model_name)
+        while self.max_tokens < tokens:
             i += 1
             self.messages_sto[key] = []
             self.init_message(key)
@@ -1117,9 +1182,10 @@ system information's : {getSystemInfo()}
             if i > 4:
                 self.messages_sto[key] = [self.messages_sto[key][-1]]
                 break
-            last_prompt = []
+            last_prompt = ""
             for msg in self.messages_sto[key]:
                 last_prompt += msg['content']
+            tokens = get_tokens(last_prompt, self.model_name)
 
         self.last_prompt = last_prompt
 
@@ -1127,6 +1193,8 @@ system information's : {getSystemInfo()}
 
     @property
     def prompt(self) -> str:
+        if not self.init_mem_state:
+            self.init_memory()
         if not self.short_mem.model_name:
             self.short_mem.model_name = self.model_name
         if not self.observe_mem.model_name:
@@ -1134,15 +1202,15 @@ system information's : {getSystemInfo()}
 
         prompt = (self.system_information if self.add_system_information else '') + self.get_prompt()
 
-        pl = len(tiktoken.encoding_for_model(self.model_name).encode(prompt)) + 2
+        pl = get_tokens(prompt, self.model_name) + 2
         self.token_left = self.max_tokens - pl
         if self.token_left < 0:
             print(f"No tokens left cut short_mem mem to {self.token_left * -1}")
             self.token_left *= -1
             self.short_mem.max_length = self.token_left
             self.short_mem.cut()
-        if self.token_left > 2800:
-            self.token_left = 2800
+        if self.token_left > self.max_tokens:
+            self.token_left = self.max_tokens - 200
         self.last_prompt = prompt
         return prompt
 
@@ -1165,11 +1233,9 @@ system information's : {getSystemInfo()}
         task = self.task(reset_step=True)
         task_list = '\n'.join(self.task_list)
 
-        prompt = f"Answer the following questions as best you can. You have access to the following python functions\n" \
-                 f"'''{tools}'''" \
-                 f"to run a function response with \nAction: <function_name>(<args>)\nExecute:" + \
-                 f"\ntake all (Observations) into account!!!\nUnder no circumstances are you allowed to output " \
-                 f"'Task:'!!!\n\n" \
+        prompt = f"Answer the following questions as best you can." \
+                 f" You have access to a live python interpreter write run python code" \
+                 f"\ntake all (Observations) into account!!!" \
                  f"Personality:'''{self.personality}'''\n\n" + \
                  f"Goals:'''{self.goals}'''\n\n" + \
                  f"Capabilities:'''{self.capabilities}'''\n\n" + \
@@ -1180,15 +1246,20 @@ system information's : {getSystemInfo()}
 
         if self.mode == 'planning':
             prompt = """
-You are a planning agent, and your job is to create the shortest and most efficient plan for a given input {{x}}.
-There are {{""" + f"\n{tools}\n" + """}} different functions that must be called in the correct order and with the correct inputs. Your goal is to find the shortest plan that accomplishes the task. Please create a plan for the input {{""" + f"{task}" + """}} by providing the following information:
+You are a planning agent , and your job is to create the most efficient plan for a given input.
+There are {{""" + f"\n{tools}\n" + """}} different functions that must be called in the correct order and with the
+correct inputs. Your goal is to find a plan that accomplishes the task. Create a plan for the input
+{{""" + f"{task}" + """}} by providing the following information:
 
 1.    Function(s) and Input(s) you wish to invoke, selecting only those useful for executing the plan.
 2.    focusing on efficiency and minimizing steps.
 
 Actual Observations: {{""" + f"{self.observe_mem.text}" + """}}
 
-Note that your plan should be clear and understandable. Strive for the shortest and most efficient solution to accomplish the task. Use only the features that are useful for executing the plan.
+you have aces to a live python wirte valid python code and it will be executed.
+
+Note that your plan should be clear and understandable. Strive for the most efficient solution to accomplish the task.
+Use only the features that are useful for executing the plan. Return a detailed Plan.
 Begin.
 
 Plan:"""
@@ -1217,6 +1288,7 @@ Please execute the plan created by a planning agent by following these steps:
 Ensure that your implementation is clear and comprehensible
 so that other people can follow the progress and provide support if needed.
 
+you have aces to a live python wirte valid python code and it will be executed.
 You have access to following functions : {{""" + f"\n{tools}" + """}}
 
 The Plan to execute : {{""" + f"\n{task_list}\n" + """}}
@@ -1245,6 +1317,7 @@ Task : """ + f"\n{task}\n\nBegin!\nPrompt:"
         if self.mode in ['talk', 'conversation']:
             prompt = f"Goals:{self.goals.replace('{input}', '')}\n" + \
                      f"Capabilities:{self.capabilities.replace('{input}', '')}\n" + \
+                     f"Important information: to run a tool type 'Action: $tool-name'\n" + \
                      f"Long-termContext:{CollectiveMemory().text(context=self.short_mem.text).replace('{input}', '')}\n" + \
                      f"\nResent Observation:{self.observe_mem.text.replace('{input}', '')}" + \
                      f"Task:{task}\n" + \
@@ -1260,10 +1333,6 @@ Task : """ + f"\n{task}\n\nBegin!\nPrompt:"
                      f"Capabilities:'''{self.capabilities}'''\n\n" + \
                      f"Permanent-Memory:\n'''{CollectiveMemory().text(context=task)}'''\n\n" + \
                      f"Resent Agent response:\n'''{self.observe_mem.text}'''\n\n" + \
-                     "Placeholders: there are two types of place holders.  " \
-                     "\n1 : <information_from_agent> if you see a word enclosed with <> this character you must fill it with information!" \
-                     "\n2 : [datime] if you want the system to insert an information return []." \
-                     "\nallways fill placeholders of type 1 !!!\n\n " + \
                      "Use the following format To Run an Python Function:\n\n" + \
                      "Task: the input question you must answer\n" + \
                      "Thought: you should always think about what to do\n" + \
@@ -1272,7 +1341,7 @@ Task : """ + f"\n{task}\n\nBegin!\nPrompt:"
                      f"Execute: <function_name>(<args>)\n" + \
                      f"\n\nBegin!\n\n" \
                      f"Resent:\n{self.short_mem.text}\nTask:'{task}"
-            prompt = prompt.replace('{input}', '') + '{input}'
+            prompt = prompt.replace('{', '{{').replace('}', '}}').replace('input}', '') + '{input}'
 
         if self.mode == 'free':
             prompt = task
@@ -1282,43 +1351,36 @@ Task : """ + f"\n{task}\n\nBegin!\nPrompt:"
                 questions_ = self.binary_tree.get_left_side(0)
                 questions = '\n'.join(
                     f"Question {i + 1} : {q.replace('task', f'task ({task})')}" for i, q in enumerate(questions_))
-                prompt = f"""Answer the following questions as best you can. You have access to
+                prompt = f"""Answer the following questions as best you can. Your:
 Capabilities:
 '''
 Functions: ''\n{tools}''
 Goals: ''\n{self.goals}''
-Capabilities: ''\n{self.capabilities}''
+: ''\n{self.capabilities}''
 '''
 
-I'm going to ask you {len(questions_)} +1 question, answer the following questions as best you can.
+I'm going to ask you {len(questions_)} questions, answer the following questions as best you can.
 You are known to think in small and detailed steps to get the right result.
 Task : '''{task}'''
 imagen yourself doing the task.
 {questions}
 
-After the question you answered negatively, output the following N/A !
 Answer-format:
 Answer 1: ...
-. ...
 
-Answer: Let's work this out in a step by step way to be sure we have the right answer.
-
-Begin!
-"""
+Begin!"""
 
         return prompt
 
     def next_task(self):
-        self.task_index += 1
+        if len(self.task_list) < self.task_index:
+            self.task_index += 1
         return self
 
     def set_mode(self, mode: str):
         """Set The Mode of The Agent available ar
          ['talk', 'tool', 'conversation', 'free', 'planning', 'execution', 'generate']"""
-        if mode in self.available_modes:
-            self.mode = mode
-        else:
-            raise ValueError(f"Ungültiger Modus '{mode}', verfügbare Modi sind: {self.available_modes}")
+        self.mode = mode
 
         return self
 
@@ -1383,6 +1445,9 @@ Begin!
         self.context = context
         return self
 
+    def set_pre_task(self, pre_task):
+        self.pre_task = pre_task
+
     def set_observation_memory(self, obser_mem: ObservationMemory):
         self.observe_mem = obser_mem
         return self
@@ -1391,6 +1456,21 @@ Begin!
         """OpenAI modes """
         self.model_name = model_name
         return self
+
+    def save_to_file(self):
+        file_path = f".data/{get_app().id}/Memory/{self.name}.agent"
+        with open(file_path, 'w') as f:
+            json.dump(str(self), f, indent=4)
+
+    @classmethod
+    def load_from_file(cls, name):
+        file_path = f".data/{get_app().id}/Memory/{name}.agent"
+        #with open(file_path, 'r') as f:
+        #    data = json.load(f)
+        agent_config = cls(name)
+        #for key, value in data.items():
+        #    setattr(agent_config, key, value)
+        return agent_config
 
 
 class Tools(MainTool, FileHandler):
@@ -1435,6 +1515,8 @@ class Tools(MainTool, FileHandler):
         self.agent_collective_senses = False
         self.global_stream_override = False
         self.pipes_device = 1
+        self.lang_chain_tools_list = {}
+        self.summarization_mode = 0  # 0 to 2 0 huggingface 1 text
         self.speak = lambda x, *args, **kwargs: x
 
         FileHandler.__init__(self, "issa.config", app.id if app else __name__)
@@ -1534,7 +1616,7 @@ class Tools(MainTool, FileHandler):
         return self.config["text-classification_pipeline"](text, **kwargs)
 
     def toolbox_interface(self):
-        @tool("toolbox", return_direct=False)
+        @LCtool("toolbox", return_direct=False)
         def function(query: str) -> str:
             """Using The toolbox for interacting with toolbox mods -> modules_name function_name arguments ... """
             data = query.split(' ')
@@ -1550,7 +1632,7 @@ class Tools(MainTool, FileHandler):
         return function
 
     def toolbox_information_interface(self):
-        @tool("toolbox_infos", return_direct=False)
+        @LCtool("toolbox_infos", return_direct=False)
         def function(query: str) -> str:
             """Get information about toolbox mods -> Ask to list Avalabel
              mods get-mod-list, or Ask of Spezifika mod infos mod_names"""
@@ -1569,7 +1651,7 @@ class Tools(MainTool, FileHandler):
         return function
 
     def generate_image(self):
-        @tool("Image", return_direct=False)
+        @LCtool("Image", return_direct=False)
         def function(query: str) -> str:
             """Generate image with Stable diffusion"""
             try:
@@ -1581,45 +1663,68 @@ class Tools(MainTool, FileHandler):
 
         return function
 
-    def load_OpenAI_models(self, names: list):
+    def load_llm_models(self, names: list):
         for model in names:
-            if f'OpenAI-model-{model}-init' not in self.initstate.keys():
-                self.initstate[f'OpenAI-model-{model}-init'] = False
+            if f'LLM-model-{model}-init' not in self.initstate.keys():
+                self.initstate[f'LLM-model-{model}-init'] = False
 
-            if not self.initstate[f'OpenAI-model-{model}-init']:
-                self.initstate[f'OpenAI-model-{model}-init'] = True
-                if model.startswith('gpt'):
-                    self.config[f'OpenAI-model-{model}'] = ChatOpenAI(model_name=model,
-                                                                      openai_api_key=self.config['OPENAI_API_KEY'],
-                                                                      streaming=True)
+            if not self.initstate[f'LLM-model-{model}-init']:
+                self.initstate[f'LLM-model-{model}-init'] = True
+                if '/' in model:
+                    print('Initialized HF model')
+                    self.config[f'LLM-model-{model}'] = HuggingFaceHub(repo_id=model,
+                                                                       huggingfacehub_api_token=self.config[
+                                                                           'HUGGINGFACEHUB_API_TOKEN'])
+                elif model.startswith('gpt'):
+                    print('Initialized OpenAi model')
+                    self.config[f'LLM-model-{model}'] = ChatOpenAI(model_name=model,
+                                                                   openai_api_key=self.config['OPENAI_API_KEY'],
+                                                                   streaming=True)
                 else:
-                    self.config[f'OpenAI-model-{model}'] = OpenAI(model_name=model,
-                                                                  openai_api_key=self.config['OPENAI_API_KEY'])
+                    print('Initialized OpenAi model')
+                    self.config[f'LLM-model-{model}'] = OpenAI(model_name=model,
+                                                               openai_api_key=self.config['OPENAI_API_KEY'])
 
-    def get_OpenAI_models(self, name: str):
-        if f'OpenAI-model-{name}' not in self.config.keys():
-            self.load_OpenAI_models([name])
-        return self.config[f'OpenAI-model-{name}']
+    def get_llm_models(self, name: str):
+        if f'LLM-model-{name}' not in self.config.keys():
+            self.load_llm_models([name])
+        return self.config[f'LLM-model-{name}']
 
-    def add_tool(self, name, func, dis, form, config: AgentConfig):
+    def add_tool(self, name, func, dis, form, config: AgentConfig, lagchaintool=False):
 
         self.print(f"ADDING TOOL:{name} to {config.name}")
 
-        config.tools.update({name: {"func": func, "description": dis, "format": form}})
+        tool = {name: {"func": func, "description": dis, "format": form}}
+        if lagchaintool:
+            tool[name]['langchain-tool'] = func
 
-    def get_default_agent_config(self, name) -> AgentConfig():
-        config = AgentConfig()
+        config.tools.update(tool)
+
+    def get_default_agent_config(self, name="Normal") -> AgentConfig:
+        config = AgentConfig(name)
+        if name != "Normal":
+            if os.path.exists(f".data/{get_app().id}/Memory/{name}.agent"):
+                config = AgentConfig.load_from_file(name)
+
         config.name = name
 
+        if self.global_stream_override:
+            config.stream = True
+
         def run_agent(agent_name, text, mode_over_lode: bool or str = False):
+            text = text.replace("'", "").replace('"', '')
             if agent_name:
                 return self.run_agent(agent_name, text, mode_over_lode=mode_over_lode)
             return "Provide Information in The Action Input: fild or function call"
 
         def search_text(x):
-            responses = ddg(x, region='wt-wt', safesearch='Off', time='y')
-            qa = ddg_answers(x, related=True)
-            response = ""
+            search = GoogleSearchAPIWrapper()
+            x = x.replace("'", "").replace('"', '')
+            print(Style.CYAN(x))
+            responses = ddg(x)
+            qa = ddg_answers(x)
+            responses_yz = search.run(x)
+            response = self.mas_text_summaries(responses_yz, min_length=600)
 
             if responses:
                 for res in responses[:4]:
@@ -1630,12 +1735,16 @@ class Tools(MainTool, FileHandler):
                 for res in qa[:4]:
                     response += f"\nurl:{res['url']}\n" \
                                 f"text:{self.mas_text_summaries(res['text'], min_length=600)}\n\n"
+
+            print(response)
             if len(response) == 0:
                 return "No data found"
             return response
 
         def search_news(x):
-            responses = ddg_news(x, region='wt-wt', safesearch='Off', time='d', max_results=5)
+
+            x = x.replace("'", "").replace('"', '')
+            responses = ddg_news(x, max_results=5)
 
             if not responses:
                 return "No News"
@@ -1661,10 +1770,17 @@ class Tools(MainTool, FileHandler):
             return f"{text[:30]} is Not a Valid url. please just type <url>"
 
         def memory_search(x):
-            x = self.get_context_memory().get_context_for(x)
-            if x:
-                return x
-            return "No relavent memory available"
+            ress = self.get_context_memory().get_context_for(x)
+
+            task = f"Act as an summary expert your specialties are writing summary. you are known to think in small and " \
+                   f"detailed steps to get the right result. Your task : write a summary reladet to {x}\n\n{ress}"
+            res = self.run_agent('thinkm', task)
+
+            if res:
+                return res
+
+            return ress
+
 
         if name == "self":
             self.config["self_agent_agents_"] = ["todolist"]
@@ -1683,17 +1799,29 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config.goals = "Isaa's primary goal is to be a digital assistant designed to help the user with various " \
                            "tasks and challenges by leveraging its diverse set of capabilities and resources."
             config.tools = {
-                "todolist": {"func": lambda x: run_agent('todolist', x),
-                             "description": "Run agent to crate a todo list "
-                                            "for a given project provide detaild informatino. and a task to do"
-                    , "format": "todolist(<task>)"},
                 "memory_search": {"func": lambda x: memory_search(x),
                                   "description": "Serch for simmilar memory imput <context>"},
                 "search_web": {"func": lambda x: run_agent('search', x),
-                               "description": "Run agent to search the web for nested informations"
+                               "description": "Run agent to search the web for information's"
                     , "format": "search(<task>)"},
-                "programming": {"func": lambda x: run_agent('code', x),
-                                "description": "Run agent to generate code input Task"
+                "write-production-redy-code": {"func": lambda x: run_agent('think',
+                                                                           f"Act as a Programming expert your specialties are coding."
+                                                                           f" you are known to think in small and detailed steps to get"
+                                                                           f" the right result.\n\nInformation's:"
+                                                                           f" {config.edit_text.text}\n\n Your task : {x}\n\n"
+                                                                           f"write and production redy code"),
+                                               "description": "Run agent to generate code."
+                    , "format": "write-production-redy-code(<task>)"},
+                #"task-planing": {"func": lambda x: run_agent('thinkm',
+                #                                             f"You are a planner who is an expert at coming up with a todo list for a given objective."
+                #                                             f" you are known to think in small and detailed steps to get"
+                #                                             f" the right result.\n\nInformation's:"
+                #                                             f" {config.edit_text.text}\n\n"
+                #                                             f" Come up with a todo list for this objective: {x}\n\n"),
+                #                 "description": "Run agent to generate a to do list for this objective"
+                #                                , "format": "task-planing(<task>)"},
+                "think": {"func": lambda x: run_agent('thinkm', x),
+                          "description": "Run agent to solve a text based problem"
                     , "format": "programming(<task>)"},
 
                 "image-generator": {"func": lambda x: image_genrating_tool(x, self.app_),
@@ -1701,6 +1829,16 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                     , "format": "reminder(<detaild_discription>)"},
 
             }
+        if name.startswith("langChainTools"):
+            tools = {}
+            for key, _tool in self.lang_chain_tools_list.items():
+                tools[key] = {"func": _tool, "description": _tool.description, "format": f"{key}({_tool.args})"}
+            config. \
+                set_mode("tools") \
+                .set_model_name("gpt-3.5-turbo") \
+                .set_max_iterations(4) \
+                .set_completion_mode("chat") \
+                .set_tools(tools)
 
         if name == "todolist":
 
@@ -1744,8 +1882,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         if name == "search":
             config.mode = "tools"
-            config.model_name = "text-davinci-003"
-
+            config.model_name = "gpt-3.5-turbo"
+            config.completion_mode = "chat"
             config.agent_type = "zero-shot-react-description"
             config.max_iterations = 6
             config.verbose = True
@@ -1766,13 +1904,15 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
             config.short_mem.max_length = 3500
             config.tools = {
+                "memory_search": {"func": lambda x: memory_search(x),
+                                  "description": "Search for memory  <context>"},
                 "browse_url": {"func": lambda x: browse_url(x),
-                               "description": "browse web page via URL syntax <url>|<qustion>"},
-                "search_text": {"func": lambda x: search_text(x),
-                                "description": "Use Duck Duck go to search the web systax <qustion>"},
-                "search_news": {"func": lambda x: search_news(x),
-                                "description": "Use Duck Duck go to search the web for new get time"
-                                               "reladet data systax <qustion>"}
+                               "description": "browse web page via URL syntax <url>"},
+                "search_web": {"func": lambda x: search_text(x),
+                                "description": "Use Duck Duck go to search the web systax <key word>"},
+                # "search_news": {"func": lambda x: search_news(x),
+                #                 "description": "Use Duck Duck go to search the web for new get time"
+                #                                "related data systax <key word>"}
                 # "chain_search_web": {"func": lambda x: run_agent('chain_search_web', x),
                 #                     "description": "Run chain agent to search in the web for informations, Only use for complex mutistep tasks"
                 #    , "chain_search_web": "search(<task>)"},
@@ -1793,6 +1933,17 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 .set_completion_mode("chat")
 
             config.stop_sequence = ["\n\n\n"]
+
+        if name == "summary":
+            config. \
+                set_mode("free") \
+                .set_max_iterations(1) \
+                .set_completion_mode("chat")\
+                .set_pre_task("Act as an summary expert your specialties are writing summary. you are known to think "
+                              "in small and detailed steps to get the right result. Your task :")
+
+            config.stop_sequence = ["\n\n"]
+            config.stream = False
 
         if name == "thinkm":
             config. \
@@ -1816,22 +1967,21 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config.model_name = "text-davinci-003"
 
             config.agent_type = "self-ask-with-search"
-            config.max_iterations = 3
+            config.max_iterations = 4
 
             config.personality = """
-            Resourceful: The Search Agent should be adept at finding relevant and reliable information from various sources on the web.
-            Analytical: The Search Agent should be skilled at analyzing the retrieved information and identifying key points and themes.
-            Efficient: The Search Agent should be able to quickly search for and summarize information, providing users with accurate and concise results.
-            Adaptive: The Search Agent should be able to adjust its search and summarization strategies based on the user's query and the available information.
-            Detail-Oriented: The Search Agent should pay close attention to the details of the information it finds, ensuring accuracy and relevance in its summaries."""
+            Innovative: Employ advanced search techniques to retrieve relevant and reliable information from diverse web sources.
+            Analytical: Analyze found data, identifying key points and themes.
+            Efficient: Rapidly search and summarize information, delivering precise and accurate results.
+            Adaptive: Modify search and summarization strategies based on the user query and available data.
+            Detail-Oriented: Maintain a keen focus on the details of the information, ensuring accuracy and relevance in the summaries."""
 
             config.goals = """
-            1. Information Retrieval: The primary goal of the Search Agent is to find relevant and reliable information on the web in response to user queries.
-            2. Text Summarization: The Search Agent should be able to condense the retrieved information into clear and concise summaries, capturing the most important points and ideas.
-            3. Relevance Identification: The Search Agent should be able to assess the relevance of the information it finds, ensuring that it meets the user's needs and expectations.
-            4. Source Evaluation: The Search Agent should evaluate the credibility and reliability of its sources, providing users with trustworthy information.
-            5. Continuous Improvement: The Search Agent should continuously refine its search algorithms and summarization techniques to improve the quality and relevance of its results over time."""
-
+            1. Information Retrieval: Primary goal is to locate pertinent and reliable web information in response to user queries.
+            2. Text Summarization: Condense retrieved data into clear and concise summaries, encapsulating the most crucial points and ideas.
+            3. Relevance Identification: Assess the relevance of found information, ensuring it meets the user's needs and expectations.
+            4. Source Evaluation: Evaluate the credibility and reliability of the sources, providing users with trustworthy information.
+            5. Continuous Improvement: Refine search algorithms and summarization techniques continually to enhance result quality and relevance over time."""
             config.short_mem.max_length = 3500
 
             if name.endswith("_web"):
@@ -1877,16 +2027,13 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         except FileNotFoundError and ValueError:
             print("File not found | mem not saved")
 
-        if self.global_stream_override:
-            config.stream = True
-
         return config
 
     def remove_agent_config(self, name):
         del self.config[f'agent-config-{name}']
         self.config["agents-name-lsit"].remove(name)
 
-    def get_agent_config_class(self, agent_name="Normal") -> AgentConfig():
+    def get_agent_config_class(self, agent_name="Normal") -> AgentConfig:
 
         if "agents-name-lsit" not in self.config.keys():
             self.config["agents-name-lsit"] = []
@@ -1895,8 +2042,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             self.config["agents-name-lsit"].append(agent_name)
             config = self.get_default_agent_config(agent_name)
             self.config[f'agent-config-{agent_name}'] = config
-
-            self.print(f"\nINIT AGENT: {agent_name}:{config.name} {config.mode}\n")
+            print()
+            self.print(f" {agent_name}:{config.name} {config.mode}\n")
 
             return config
 
@@ -1904,20 +2051,23 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config = self.config[f'agent-config-{agent_name}']
             self.print(f"Using AGENT: {config.name} {config.mode}\n")
         else:
-            config = AgentConfig()
+            config = AgentConfig(agent_name)
 
         return config
 
     @staticmethod
     def process_completion(text, config=AgentConfig()):
 
-        if len(config.task_list) == 0:
+        if len(config.task_list) == 0 and len(text) != 0:
             config.step_between = text
 
         model_name = config.model_name
         ret = ""
         if config.stream:
             ret = {'choices': [{'text': "", 'delta': {'content': ''}}]}
+
+        if '/' in model_name:
+            return "only supported for open ai."
 
         if config.completion_mode == 'text':
 
@@ -1955,7 +2105,10 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 ret = ret.choices[0].message.content
 
         elif config.completion_mode == 'edit':
-            config.edit_text.text = config.short_mem.text
+            if text:
+                config.edit_text.text = text
+            else:
+                config.edit_text.text = config.short_mem.text
             ret = openai.Edit.create(
                 model=model_name,
                 input=config.edit_text.text,
@@ -1968,6 +2121,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         return ret
 
     def test_use_tools(self, agent_text, config=AgentConfig()) -> tuple[bool, str, str]:
+        print()
         if not agent_text:
             return False, "", ""
 
@@ -1995,26 +2149,50 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             run_key = ""
             lines = agent_text.split('\n')
             i = 0
+            inputs_do = False
             for text in lines:
-                print('testing line', text, text.startswith("Action:"), valid_tool)
                 if text.startswith("Action:") and not valid_tool:
                     tool_name = text.replace("Action:", "").strip()
-                    self.print(Style.GREYBG(f"{tool_name}, {config.tools.keys()}, {valid_tool}"))
+                    self.print(Style.GREYBG(f"{tool_name}, {valid_tool}"))
                     for key in config.tools.keys():
                         if tool_name in key or tool_name.startswith(key) or tool_name.endswith(key):
                             valid_tool = True
                             run_key = key
+                            self.print(Style.GREYBG(f"Valid Tool"))
                 if not valid_tool:
                     i += 1
                 if text.startswith("Inputs:"):
                     print('Get inputs', text)
                     inputs = text.replace("Inputs:", "")
+                    inputs_do = True
+
+                if '(' in text:
+                    function_name = text.split("(")[0]
+                    text = text.replace(function_name, '')
+                    if text.startswith("("):
+                        text = text[1:]
+                    if text.endswith(")"):
+                        text = text[:1]
+                    if text.startswith("'"):
+                        text = text[1:]
+                    if text.endswith("'"):
+                        text = text[:1]
+                    if text.startswith('"'):
+                        text = text[1:]
+                    if text.endswith('"'):
+                        text = text[:1]
+                    inputs = text
+                    inputs_do = True
+                    print('direct call detected', function_name)
+                    valid_tool = True
+                    run_key = function_name
+                    break
 
             if valid_tool:
                 self.print(Style.GREYBG(f"{len(lines)}, {config.name}, {valid_tool}"))
-                if len(lines) == i:
+                if inputs_do:
                     return True, run_key, inputs
-                return True, run_key, ",".join(lines[i:])
+                return True, run_key, ",".join(lines[i:]).replace(f"Action: {run_key}", "")
 
         res = self.question_answering("What is the name of the action ?", agent_text)
         if res['score'] > 0.3:
@@ -2037,7 +2215,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         return False, "", ""
 
     @staticmethod
-    def test_task_done(agent_text, config=AgentConfig()):
+    def test_task_done(agent_text, config=AgentConfig):
 
         done = False
 
@@ -2054,7 +2232,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         return done
 
-    def run_tool(self, command, function_name, config=AgentConfig()):
+    def run_tool(self, command, function_name, config=AgentConfig):
 
         args = command.replace(function_name + "(", "").replace(function_name, "").split(",")
 
@@ -2122,14 +2300,15 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         out = "Invalid configuration\n"
         system = ""
-        self.logger.info(f"stream mode: {config.stream} mode : {self.config[f'agent-config-{name}'].mode}")
+        stream = config.stream
+        self.logger.info(f"stream mode: {stream} mode : {self.config[f'agent-config-{name}'].mode}")
         if self.config[f'agent-config-{name}'].mode == "talk":
             sto, config.add_system_information = config.add_system_information, False
             prompt = PromptTemplate(
                 input_variables=["input"],
                 template=config.prompt,
             )
-            out = LLMChain(prompt=prompt, llm=self.get_OpenAI_models(config.model_name)).run(text)
+            out = LLMChain(prompt=prompt, llm=self.get_llm_models(config.model_name)).run(text)
             config.add_system_information = sto
         elif self.config[f'agent-config-{name}'].mode == "tools":
             sto, config.add_system_information = config.add_system_information, False
@@ -2149,22 +2328,35 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 #    config.obser_mem.text = out
                 #    return out
                 # fuc = lambda x: ovservation(x)
-
-                tools.append(
-                    AgentTool(
-                        name=tool_name,
-                        func=config.tools[tool_name]["func"],
-                        description=config.tools[tool_name]["description"]
-                    )
-                )
-
-            out = initialize_agent(tools, prompt=prompt,
-                                   llm=self.get_OpenAI_models(config.model_name),
-                                   agent=config.agent_type, verbose=config.verbose,
-                                   return_intermediate_steps=True,
-                                   max_iterations=config.max_iterations)(text)
-
-            out = self.summarize_dict(out, config)
+                return_direct = False
+                if 'return_direct' in config.tools[tool_name].keys():
+                    return_direct = True
+                if 'langchain-tool' in list(config.tools[tool_name].keys()):
+                    tools.append(config.tools[tool_name]["func"])
+                else:
+                    from langchain.tools import StructuredTool
+                    tools.append(StructuredTool.from_function(func=config.tools[tool_name]["func"],
+                                                              name=tool_name,
+                                                              description=config.tools[tool_name]["description"],
+                                                              return_direct=return_direct
+                                                              ))
+            agent_type = config.agent_type
+            if agent_type in ["structured-chat-zero-shot-react-description"]:
+                if text:
+                    config.step_between = text
+                out = initialize_agent(tools, prompt=prompt,
+                                       llm=self.get_llm_models(config.model_name),
+                                       agent=agent_type, verbose=config.verbose,
+                                       max_iterations=config.max_iterations).run(config.prompt)
+                print(out)
+            else:
+                out = initialize_agent(tools, prompt=prompt,
+                                       llm=self.get_llm_models(config.model_name),
+                                       agent=agent_type, verbose=config.verbose,
+                                       return_intermediate_steps=True,
+                                       max_iterations=config.max_iterations)(text)
+            if agent_type not in ["structured-chat-zero-shot-react-description"]:
+                out = self.summarize_dict(out, config)
             config.add_system_information = sto
         elif self.config[f'agent-config-{name}'].mode == "conversation":
             sto, config.add_system_information = config.add_system_information, False
@@ -2172,12 +2364,12 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 input_variables=["input"],
                 template=config.prompt,
             )
-            out = LLMChain(prompt=prompt, llm=self.get_OpenAI_models(config.model_name)).run(text)
+            out = ConversationChain(prompt=prompt, llm=self.get_llm_models(config.model_name)).predict(input=text)
             config.add_system_information = sto
-        elif self.config[f'agent-config-{name}'].mode in ["execution", 'free']:
-            self.logger.info(f"stream mode: {config.stream}")
+        elif self.config[f'agent-config-{name}'].mode == "execution":
+            self.logger.info(f"stream mode: {stream}")
             out = self.stream_read_line_llm(text, config)
-            if not config.stream:
+            if not stream:
                 self.print_stream("execution-free : " + out)
             print()
             config.short_mem.text = out
@@ -2185,13 +2377,13 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             self.logger.info(f"analysing repose")
             self.logger.info(f"analysing test_use_tools")
             with Spinner('analysing repose', symbols='+'):
-                use_tool, name, command_ = self.test_use_tools(out, config)
+                use_tool, func_name, command_ = self.test_use_tools(out, config)
             self.logger.info(f"analysing test_task_done")
             task_done = self.test_task_done(out, config)
             self.logger.info(f"don analysing repose in t-{time.time() - t0}")
-            self.print(f"Using-tools: {name} {command_}")
             if use_tool:
-                ob = self.run_tool(command_, name, config)
+                self.print(f"Using-tools: {func_name} {command_}")
+                ob = self.run_tool(command_, func_name, config)
                 config.observe_mem.text = ob
                 out += "\nObservation: " + ob
             if task_done:  # new task
@@ -2199,11 +2391,9 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 if config.short_mem.tokens > 50:
                     with Spinner('Saving work Memory', symbols='t'):
                         config.short_mem.clear_to_collective()
-                if len(config.task_list) > config.task_index:
-                    config.next_task()
         else:
             out = self.stream_read_line_llm(text, config)
-            if not config.stream:
+            if not stream:
                 self.print_stream(out)
             else:
                 print("\n------stream-end------")
@@ -2220,6 +2410,12 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         #            res = res['output']
         #    else:
         #        return f"\nERROR runnig agent named: {name} retrys {str(retrys)} errormessage: {str(e)}\n{str(res)}"
+
+        if self.config[f'agent-config-{name}'].mode not in ["free", 'conversation']:
+            py_code, type_ = extract_code(out)
+            if type_.lower() == 'python':
+                self.print("Executing Python code")
+                out += '\n\nPython\n'+self.config[f'agent-config-{name}'].python_env.run_and_display(py_code)
 
         config.short_mem.text = f"\n\n{config.name} RESPONSE:\n{out}\n\n"
 
@@ -2451,26 +2647,31 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         config.completion_mode = default_completion_mode_
 
         return self.run_agent(self.get_agent_config_class("think"),
-                              f"Produce a verbal output and summarization of what happened for"
-                              f" the user (max 1 paragraph) using the given information {chain_sum_data}"
-                              f" validate if the task was executed successfully if u see an max iteration"
-                              f" limit &or error the task failed"), chain_ret
+                              f"Produce a summarization of what happened "
+                              f"(max 1 paragraph) using the given information {chain_sum_data}"
+                              f"and validate if the task was executed successfully"), chain_ret
 
     def execute_2tree(self, user_text, tree, config: AgentConfig):
         config.binary_tree = tree
-        config.stop_sequence = ["\n\n\n", "N/A", 'n/a']
-        alive = True
+        config.stop_sequence = "\n\n\n\n"
+        config.set_completion_mode('chat')
         res_um = 'Plan for The Task:'
         res = ''
-        while alive:
-            input("Enter")
+        tree_depth_ = config.binary_tree.get_depth(config.binary_tree.root)
+        for _ in range(tree_depth_):
+            self.print(f"NEXT chain {config.binary_tree.get_depth(config.binary_tree.root)}"
+                       f"\n{config.binary_tree.get_left_side(0)}")
+            print()
+            print()
             res = self.run_agent(config, user_text, mode_over_lode='q2tree')
+            print()
+            print()
             tree_depth = config.binary_tree.get_depth(config.binary_tree.root)
             don, next_on, speak = False, 0, res
             str_ints_list_to = list(range(tree_depth + 1))
             for line in res.split("\n"):
                 if line.startswith("Answer"):
-                    print(F"detected LINE:{line[:10]}")
+                    print(F"LINE:{line[:10]}")
                     for char in line[6:12]:
                         char_ = char.strip()
                         if char_ in [str(x) for x in str_ints_list_to]:
@@ -2510,21 +2711,32 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 res_um = 'Task is to complicated'
                 break
             else:
-                new_tree = config.binary_tree.cut_tree('L' * next_on)
+                new_tree = config.binary_tree.cut_tree('L' * (next_on - 1) + 'R')
                 config.binary_tree = new_tree
 
         return res, res_um
 
     def stream_read_line_llm(self, text, config, r=2.0):
-        p_token_num = len(tiktoken.encoding_for_model(config.model_name).encode(text))
+        p_token_num = get_tokens(text, config.model_name)
         self.print(f"TOKENS: {p_token_num} | left = {config.token_left}")
         if p_token_num > config.token_left:
             text = self.mas_text_summaries(text)
+
+        if '/' in config.model_name:
+            if text:
+                config.step_between = text
+            prompt = PromptTemplate(
+                input_variables=['xVx'],
+                template=config.prompt.replace('{', '}}').replace('}', '{{') + '{xVx}',
+            )
+            return LLMChain(prompt=prompt, llm=self.get_llm_models(config.model_name)).run(' ')
+
         try:
             if not config.stream:
                 with Spinner(
                     f"Generating response {config.name} {config.model_name} {config.mode} {config.completion_mode}"):
                     res = self.process_completion(text, config)
+                print(' ' * 400)
                 return res
 
             print(f"Generating response (/) stream (\\) {config.name} {config.model_name} {config.mode} "
@@ -2550,7 +2762,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                         ai_text = line
 
                     for i, word in enumerate(ai_text):
-                        self.print_stream(word, end="", flush=True)
+                        print(word, end="", flush=True)
                         typing_speed = random.uniform(min_typing_speed, max_typing_speed)
                         time.sleep(typing_speed)
                         # type faster after each word
@@ -2559,7 +2771,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                     res += str(ai_text)
             except requests.exceptions.ChunkedEncodingError as ex:
                 print(f"Invalid chunk encoding {str(ex)}")
-                self.print(f"\t\t| Retry level: {r} ", end="\r")
+                self.print(f"{' ' * 30} | Retry level: {r} ", end="\r")
                 with Spinner("ChunkedEncodingError", symbols='c'):
                     time.sleep(2 * (3 - r))
                 if r > 0:
@@ -2567,7 +2779,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                     return self.stream_read_line_llm(text + '\n' + res, config, r - 1)
             return res
         except openai.error.RateLimitError:
-            self.print(f"\t\t| Retry level: {r} ", end="\r")
+            self.print(f"{' ' * 30}  | Retry level: {r} ", end="\r")
             if r > 0:
                 self.logger.info(f"Waiting {5 * (8 - r)} seconds")
                 with Spinner("Waiting RateLimitError", symbols='+'):
@@ -2575,11 +2787,12 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 self.print(f"\n Retrying {r} ", end="\r")
                 return self.stream_read_line_llm(text, config, r - 1)
             else:
-                self.logger.error("The server is currently overloaded with other requests. Sorr   y about that!")
-                return "The server is currently overloaded with other requests. Sorry about that!"
+                self.logger.error("The server is currently overloaded with other requests. Sorry about that!")
+                return "The server is currently overloaded with other requests. Sorry about that! ist als possible that" \
+                       " we hit the billing limit consider updating it."
 
         except openai.error.InvalidRequestError:
-            self.print(f"{' ' * 30}| Retry level: {r} ", end="\r")
+            self.print(f"{' ' * 30} | Retry level: {r} ", end="\r")
             with Spinner("Waiting InvalidRequestError", symbols='b'):
                 time.sleep(2)
             if r > 1.5:
@@ -2626,8 +2839,22 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         summary = ""
 
-        def summary_func(x):
-            return self.summarization(x, max_length=max_length)
+        if self.summarization_mode == 0:
+            def summary_func(x):
+                return self.summarization(x, max_length=max_length)
+
+        elif self.summarization_mode == 1:
+            def summary_func(x):
+                if isinstance(x, list):
+                    end = []
+                    for i in x:
+                        end.append({'summary_text': self.process_completion(i, self.get_default_agent_config('summary'))})
+                else:
+                    end = self.process_completion(x, self.get_default_agent_config('summary'))
+                return end
+        else:
+            def summary_func(x):
+                return x
 
         num_tokens = cap / 4.9
         if num_tokens > 1023:
@@ -2648,13 +2875,21 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             summaries = summary_func(chucks)
 
         for i, chuck_summary in enumerate(summaries):
-            summary_chucks += chuck_summary['summary_text'] + "\n"
+            if self.summarization_mode == 0:
+                summary_chucks += chuck_summary['summary_text'] + "\n"
+            else:
+                summary_chucks += chuck_summary + "\n"
             self.print(f"SYSTEM: all summary_chucks : {len(summary_chucks)}")
 
         summary = summary_chucks
         if len(summaries) > 8:
-            if len(summary_chucks) < 100000:
-                summary = summary_func(summary_chucks)[0]['summary_text']
+            if 4000 < len(summary_chucks) > 20000:
+                summary = summary_chucks
+            elif len(summary_chucks) < 100000:
+                if self.summarization_mode == 0:
+                    summary = summary_func(summary_chucks)[0]['summary_text']
+                else:
+                    summary = summary_func(summary_chucks)[0]
             else:
                 summary = self.mas_text_summaries(summary_chucks)
         self.print(
@@ -2701,7 +2936,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             retriever.search_kwargs['fetch_k'] = 20
             retriever.search_kwargs['maximal_marginal_relevance'] = True
             retriever.search_kwargs['k'] = 20
-            return ConversationalRetrievalChain.from_llm(self.get_OpenAI_models(config.model_name), retriever=retriever)
+            return ConversationalRetrievalChain.from_llm(self.get_llm_models(config.model_name), retriever=retriever)
         return None
 
     @staticmethod

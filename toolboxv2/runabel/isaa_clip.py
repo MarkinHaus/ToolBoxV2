@@ -8,7 +8,9 @@ import pyperclip
 from transformers import pipeline
 
 from toolboxv2 import Style, Spinner
-from toolboxv2.mods.isaa import CollectiveMemory, AgentConfig, AgentChain, Tools as Isaa
+from toolboxv2.mods.isaa import AgentConfig
+from toolboxv2.mods.isaa import AgentChain
+from toolboxv2.mods.isaa import Tools as Isaa
 from toolboxv2.mods.isaa_audio import text_to_speech3, get_audio_transcribe
 from toolboxv2.utils.isaa_util import init_isaa, sys_print, run_agent_cmd, stop_helper
 
@@ -47,8 +49,6 @@ def run_agent_clip(app, user_text, self_agent_config, print_, spek, get_input, s
 
         print_(f"\n{'=' * 20}STEP:{step}{'=' * 20}\n")
         print_(f"\tMODE               : {self_agent_config.mode}\n")
-        print_(f"\tCollectiveMemory   : {CollectiveMemory().token_in_use} | total vec num : "
-               f"{CollectiveMemory().memory.get_stats()['total_vector_count']}\n")
         print_(f"\tObservationMemory  : {self_agent_config.observe_mem.tokens}\n")
         print_(f"\tShortTermMemory    : {self_agent_config.short_mem.tokens}\n\n")
         if "Answer: " in response:
@@ -236,7 +236,7 @@ def run(app, args):
     print(f"Script running in the background")
 
     isaa, self_agent_config, chains = init_isaa(app, speak_mode=speak_mode, calendar=True, ide=True, create=True)
-    CollectiveMemory().memory.clear()
+
     print("init completed waiting for trigger word: ")
     buffer = ' ' * 8
     alive = True

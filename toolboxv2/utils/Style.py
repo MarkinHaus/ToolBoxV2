@@ -322,6 +322,9 @@ def print_to_console(
         words = content.split()
         if len(words) > 5000:
             words = words[:5000]
+
+        min_typing_speed = min_typing_speed * 0.01
+        max_typing_speed = max_typing_speed * 0.01
         for i, word in enumerate(words):
             print(word, end="", flush=True)
             if i < len(words) - 1:

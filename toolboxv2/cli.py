@@ -5,7 +5,7 @@ import argparse
 from platform import system
 
 # Import public Pages
-from toolboxv2 import App, MainTool, runnable_dict
+from toolboxv2 import App, MainTool, runnable_dict as runnable_dict_func
 from toolboxv2.utils.toolbox import get_app
 
 try:
@@ -267,7 +267,7 @@ def main():
         setup = input("Set up for :")
         if setup == "1":
             setup_app()
-
+    runnable_dict = runnable_dict_func()
     if args.modi == 'api':
         tb_app.run_any('api_manager', 'start-api', ['start-api', args.name])
 
