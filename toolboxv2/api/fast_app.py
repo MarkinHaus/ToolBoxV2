@@ -7,8 +7,6 @@ from fastapi.security import OAuth2PasswordBearer
 from toolboxv2 import App
 from toolboxv2.utils.toolbox import get_app
 
-router = APIRouter()
-
 router = APIRouter(
     prefix="/app",
     tags=["token"],
@@ -17,7 +15,7 @@ router = APIRouter(
 )
 
 level = 0  # Setzen Sie den Level-Wert, um verschiedene Routen zu aktivieren oder zu deaktivieren
-pattern = re.compile('.png|.jpg|.jpeg|.js|.css|.ico|.gif|.svg|.wasm', re.IGNORECASE)
+pattern = ['.png', '.jpg', '.jpeg', '.js', '.css', '.ico', '.gif', '.svg', '.wasm']
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 
@@ -27,7 +25,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
 
 
 def check_access_level(required_level: int):
-    if level != required_level:
+    if level < required_level:
         raise HTTPException(status_code=403, detail="Access forbidden")
     return True
 
@@ -71,10 +69,11 @@ async def serve_files(path: str, request: Request, access_allowed: bool = Depend
     return serve_app_func(path)
 
 
-def serve_app_func(path: str, prefix: str = "../app/"):
-    request_file_path = Path(prefix+path)
+def serve_app_func(path: str, prefix: str = "../app/"): # test location
+    request_file_path = Path(prefix + path)
     ext = request_file_path.suffix
-    if not request_file_path.is_file() and not pattern.match(ext):
-        path = 'test.html'
+
+    if ext in pattern:
+        path = 'main.html'
 
     return FileResponse(path)

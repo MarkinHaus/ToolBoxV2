@@ -1540,6 +1540,7 @@ class Tools(MainTool, FileHandler):
         self.pipes_device = 1
         self.lang_chain_tools_list = {}
         self.summarization_mode = 0  # 0 to 2 0 huggingface 1 text
+        self.summarization_limiter = 10200  # 0 to 2 0 huggingface 1 text
         self.speak = lambda x, *args, **kwargs: x
 
         FileHandler.__init__(self, "issa.config", app.id if app else __name__)
@@ -1962,6 +1963,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 set_mode("free") \
                 .set_max_iterations(1) \
                 .set_completion_mode("chat")\
+                .set_model_name('gpt-3.5-turbo')\
                 .set_pre_task("Act as an summary expert your specialties are writing summary. you are known to think "
                               "in small and detailed steps to get the right result. Your task :")
 
@@ -2860,63 +2862,67 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             cap = 2500
             max_length = 412
 
-        summary = ""
+        summarization_mode_sto = 0
+        if len(text) > self.summarization_limiter and self.summarization_mode:
+            self.summarization_mode, summarization_mode_sto = 0, self.summarization_mode
 
-        if self.summarization_mode == 0:
-            def summary_func(x):
-                return self.summarization(x, max_length=max_length)
+        def summary_func(x):
+            return self.summarization(x, max_length=max_length)
 
-        elif self.summarization_mode == 1:
-            def summary_func(x):
-                if isinstance(x, list):
-                    end = []
-                    for i in x:
-                        end.append({'summary_text': self.process_completion(i, self.get_default_agent_config('summary'))})
-                else:
-                    end = self.process_completion(x, self.get_default_agent_config('summary'))
-                return end
-        else:
-            def summary_func(x):
-                return x
+        def summary_func2(x):
+            if isinstance(x, list):
+                end = []
+                for i in x:
+                    end.append({'summary_text': self.process_completion(i, self.get_default_agent_config('summary'))})
+            else:
+                end = {'summary_text': self.process_completion(x, self.get_default_agent_config('summary'))}
+            return end
 
-        num_tokens = cap / 4.9
+        num_tokens = cap / 1.9
         if num_tokens > 1023:
             cap = int(cap / (num_tokens / 1023))
 
         while len(text) > cap:
             chucks.append(text[:cap])
             text = text[cap:]
-            self.print(f"SYSTEM: TEXT len : {len(text)}")
 
         if len(text) < max_length:
             chucks[-1] += "\n" + text
         else:
             chucks.append(text)
+
         self.print(f"SYSTEM: chucks to summary: {len(chucks)} cap : {cap}")
 
         with Spinner("Generating summary", symbols='d'):
-            summaries = summary_func(chucks)
+            if self.summarization_mode == 0:
+                summaries = summary_func(chucks)
+            elif self.summarization_mode == 2:
+                summaries = summary_func2(chucks)
+            else:
+                summaries = summary_func(chucks)
 
         for i, chuck_summary in enumerate(summaries):
-            if self.summarization_mode == 0:
-                summary_chucks += chuck_summary['summary_text'] + "\n"
-            else:
-                summary_chucks += chuck_summary + "\n"
-            self.print(f"SYSTEM: all summary_chucks : {len(summary_chucks)}")
+            summary_chucks += chuck_summary['summary_text'] + "\n"
+
+        self.print(f"SYSTEM: all summary_chucks : {len(summary_chucks)}")
 
         summary = summary_chucks
         if len(summaries) > 8:
             if 4000 < len(summary_chucks) > 20000:
                 summary = summary_chucks
-            elif len(summary_chucks) < 100000:
+            elif len(summary_chucks) < 20000:
                 if self.summarization_mode == 0:
                     summary = summary_func(summary_chucks)[0]['summary_text']
                 else:
-                    summary = summary_func(summary_chucks)[0]
+                    summary = summary_func2(summary_chucks)[0]['summary_text']
             else:
                 summary = self.mas_text_summaries(summary_chucks)
         self.print(
-            f"SYSTEM: final summary from {len_text}:{len(summaries)} -> {len(summary)} compressed {len_text / len(summary):.2f}X\n")
+            f"SYSTEM: final summary from {len_text}:{len(summaries)} ->"
+            f" {len(summary)} compressed {len_text / len(summary):.2f}X\n")
+
+        if summarization_mode_sto:
+            self.summarization_mode = summarization_mode_sto
 
         return summary
 

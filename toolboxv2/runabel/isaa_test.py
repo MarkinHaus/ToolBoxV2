@@ -7,13 +7,14 @@ from toolboxv2.utils.isaa_util import init_isaa, extract_dict_from_string, split
 NAME = "isaa-test"
 
 
-def run(app, args):
+def run_(app, args):
     isaa, self_agent_config, chains = init_isaa(app, speak_mode=args.speak, calendar=False, ide=True, create=True,
-                                                isaa_print=False, python_test=True, init_mem=False, init_pipe=False,
+                                                isaa_print=False, python_test=True, init_mem=True, init_pipe=True,
                                                 join_now=False,
-                                                global_stream_override=False, chain_runner=False)
+                                                global_stream_override=False, chain_runner=True)
 
     isaa.get_context_memory().load_all()
+    isaa.summarization_mode = 2
 
     self_agent_config.stream = True
     self_agent_config.max_tokens = 4012
@@ -29,36 +30,8 @@ def run(app, args):
     print(isaa.config["agents-name-lsit"])
     skills = []
     agents = isaa.config["agents-name-lsit"]
-    task = """To create a comprehensive life plan for the next two years, including a gap year in Berlin, we need to consider several factors such as academic goals, personal development, and financial planning. Here is a suggested life plan:
-
-1. Academic Goals:
-- Research and identify the specific computer science courses and programs offered at TU Berlin or other universities in Berlin.
-- Determine the prerequisites and admission requirements for these programs.
-- Plan to complete any necessary prerequisite courses or exams during the first year.
-- Apply for the chosen computer science program at TU Berlin or another university in Berlin during the second year.
-
-2. Personal Development:
-- Utilize the gap year to gain practical experience in the field of computer science through internships, part-time jobs, or volunteering.
-- Attend workshops, conferences, and networking events related to computer science to expand your knowledge and connections in the industry.
-- Develop soft skills such as communication, teamwork, and problem-solving through participation in clubs, organizations, or online courses.
-- Learn German to enhance your cultural experience in Berlin and improve your chances of securing internships or job opportunities.
-
-3. Financial Planning:
-- Research and apply for scholarships, grants, or financial aid programs available for international students studying in Berlin.
-- Create a budget for living expenses, tuition fees, and other costs associated with studying and living in Berlin.
-- Explore part-time job opportunities or freelance work to supplement your income during your gap year and while studying.
-- Save money during the first year to cover expenses during the second year of the life plan.
-
-4. Travel Plans:
-- Research and plan trips to explore Germany and other European countries during your gap year and study breaks.
-- Consider joining a travel group or connecting with other students to share travel experiences and reduce costs.
-
-5. Health and Well-being:
-- Maintain a balanced lifestyle by incorporating regular exercise, a healthy diet, and sufficient sleep.
-- Seek out social opportunities to make friends and build a support network in Berlin.
-- Utilize university resources such as counseling services or mental health support if needed.
-
-By following this life plan, you can make the most of your gap year in Berlin and set yourself up for success in your computer science studies at TU Berlin or another university in the city."""
+    task = """
+Create a beautiful html index page thats welcoms the user wit an cool animation to simple"""
     alive = True
     new_agent = isaa.config["agents-name-lsit"][-1]
     if len(agents) != 3:
@@ -66,7 +39,7 @@ By following this life plan, you can make the most of your gap year in Berlin an
             isaa.get_agent_config_class(agent_name)
     while alive:
         env_text = f"""Welcome, you are in a hostile environment, your name is isaa.
-you have several basic skills 1. creating agents 2. creating some agents 3. knowing agnts tools and functions to learn skills 4. using skills.
+you have several basic skills 1. creating agents 2. creating some agents 3. using skills, agents and tools
 
 you have created {len(agents)}agents so far these are : {agents}.
 you have learned {len(skills)}skills so far these are : {skills}.
@@ -93,11 +66,11 @@ Task : {task}"""
             isaa.get_agent_config_class(new_agent).save_to_file()
 
         print(split_todo_list(sim))
-
-        if input(""):
+        user_val = input("")
+        if user_val == "n":
             alive = False
-
-
+        elif len(user_val) > 3:
+            task += "User: " + user_val
 
 
 def run_(app, args):

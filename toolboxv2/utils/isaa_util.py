@@ -315,7 +315,7 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
     The function parses the input string x and extracts the values associated with the following keys:
 
         Name: The name of the agent to be created. This key is required and must be present in the input string.
-        Mode: The mode in which the agent is to be run. This is an optional key. available ar [free, tools, talk]
+        Mode: The mode in which the agent is to be run. This is an optional key. available ar [free, execution]
         Task: The task that the agent is to perform. This is an optional key.
         Personal: The personality of the agent. This is an optional key.
         Goals: The goals of the agent. This is an optional key.

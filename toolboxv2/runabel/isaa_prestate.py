@@ -2,9 +2,9 @@
 
 from toolboxv2 import Style, Spinner
 from toolboxv2.mods.isaa import AgentChain, IsaaQuestionBinaryTree, AgentConfig
-from toolboxv2.utils.isaa_util import init_isaa, extract_dict_from_string
+from toolboxv2.utils.isaa_util import init_isaa, extract_dict_from_string, split_todo_list
 
-NAME = "isaa-plan"
+NAME = "isaa-s-auto"
 
 
 def run(app, args):
@@ -23,7 +23,7 @@ def run(app, args):
     isaa.get_agent_config_class("think").stream = True
     isaa.get_agent_config_class("thinkm").stream = True
 
-    task = """Hello Isaa main name is Markin Hausmanns I have been working on you for the last 6 years to keep you in
+    task_ = """Hello Isaa main name is Markin Hausmanns I have been working on you for the last 6 years to keep you in
     this state. I need your help. At the moment I am 20 years old and I graduated from high school a year ago. Now
     it's 2023 and I've been studying MINT green for a year, which is an Orinetirungsstudium. in this mine an hamen
     computer science studiren confirmed but also disproved. Because I have found out that the TU Berlin my university
@@ -32,14 +32,20 @@ def run(app, args):
     in Berlin the rents are too expensive I would like to make many maybe a Auslans study or year. Help me with the
     decision and with the following necessary organization. Crate a live plan for the next 2 years with all nessesery infortion """
 
+    task = """
+Create a plan to create an agent development lab. what fetures should this lab have. how should it look like.
+Create a detailed pan to create this virtual agent lab. the lab should also have the function to create tools for the agents. the agents should be able to be loaded and saved. the environment should be intuitive and user friendly.
+    """
+
     construct_context = isaa.run_agent("thinkm",
                                        f"Based on the task entered by the user, I will now gather additional context and collect "
                                        f"relevant information from my memory. and I will finde information that could help"
-                                       f" complete the task. Task: {task}", mode_over_lode='construct_context')
+                                       f" complete the task. Task: {task} Helpfully information's:", mode_over_lode='construct_context')
 
     sim = isaa.run_agent("search",
                          f"Find out how similar the task is to the task you have already completed. if so, create a "
-                         f"outline to successfully complete this task.{task} , Context : {construct_context}")
+                         f"outline to successfully complete this task.{task} , Context : {construct_context}",
+                         mode_over_lode='execution')
 
     komplex = isaa.run_agent("think",
                              f"Find out how komplex the task is. Task:{task} , Context : {construct_context},"
@@ -66,7 +72,9 @@ def run(app, args):
 
     validation = ''
     extracted_dict = {}
-    for _ in range(3):
+    free_run = False
+    coordination = ''
+    for _ in range(2):
         coordination = isaa.run_agent(self_agent_config,
                                       """ I now coordinate the work of the various task handlers to ensure that the right tasks are routed to the right handlers. This ensures that the tasks are executed efficiently and effectively.
 For this I return a valid python dict with the individual steps to be taken.
@@ -140,22 +148,105 @@ Example Tasks :
             validation = 'Validation: The dictionary is not valid ' + str(extracted_dict)
         print(extracted_dict)
     self_agent_config.stop_sequence = sto
+    task = coordination
     if not extracted_dict:
-        return
-    if not ('name' in extracted_dict.keys() and 'tasks' in extracted_dict.keys()):
-        return
+        free_run = True
 
-    chain_instance: AgentChain = isaa.get_chain()
-    chain_instance.load_from_file()
+    if not free_run:
 
-    chain_instance.add(extracted_dict['name'], extracted_dict['tasks'])
+        if 'name' in extracted_dict.keys() and 'tasks' in extracted_dict.keys():
 
-    evaluation, chain_ret = isaa.execute_thought_chain(task, chain_instance.get(extracted_dict['name']),
-                                                       self_agent_config)
+            chains.add(extracted_dict['name'], extracted_dict['tasks'])
 
-    print(evaluation, len(chain_ret), len(extracted_dict['tasks']) == len(chain_ret))
+            evaluation, chain_ret = isaa.execute_thought_chain(task, chains.get(extracted_dict['name']),
+                                                               self_agent_config)
 
-    for task in chain_ret:
-        print(task[1])
+            print(evaluation, len(chain_ret), len(extracted_dict['tasks']) == len(chain_ret))
+
+            for task in chain_ret:
+                print(task[1])
+
+            task = chain_ret[int(input("Chuse outut to work on :"))][1]
+
+    isaa.summarization_mode = 2
+    self_agent_config.stream = True
+    self_agent_config.max_tokens = 4012
+    self_agent_config.set_completion_mode('chat')
+    self_agent_config.set_model_name('gpt-4')
+    self_agent_config.stop_sequence = ['\n\n\n', "Execute:", "Observation:", "User:"]
+    isaa.get_agent_config_class("think").stream = True
+    isaa.get_agent_config_class("thinkm").stream = True
+    self_agent_config.short_mem.memory_data = []
+    self_agent_config.observe_mem.memory_data = []
+    self_agent_config.edit_text.memory_data = []
+    chains.load_from_file()
+    # new env isaa withs chains
+
+    agents = isaa.config["agents-name-lsit"]
+    task = """
+    Create a beautiful html index page thats welcoms the user wit an cool animation to simple"""
+    alive = True
+    new_agent = isaa.config["agents-name-lsit"][-1]
+    if len(agents) != 3:
+        for agent_name in agents[3:]:
+            isaa.get_agent_config_class(agent_name)
+    while alive:
+        env_text = f"""Welcome, you are in a hostile environment, your name is isaa.
+    you have several basic skills 1. creating agents 2. creating some agents 3. using skills, agents and tools
+
+    you have created {len(agents)}agents so far these are : {agents}.
+    you have learned {len(chains.chains.keys())}skills so far these are : {str(chains)}.
+
+    use your basic functions with the agent and skills to complete a task.
+
+    for your further support you have a python environment at your disposal. write python code to access it.
+    if you have no ather wy then to ask for help write Question: 'your question'\nUser:
+
+    Task : {task}"""
+
+        sim = isaa.run_agent(self_agent_config, env_text, mode_over_lode='execution')
+        task += str(sim)
+        if "user:" in sim.lower():
+            print("USER QUESTION")
+            task += input()
+        print(isaa.config["agents-name-lsit"])
+        agents = isaa.config["agents-name-lsit"]
+        if new_agent != isaa.config["agents-name-lsit"][-1]:
+            new_agent = isaa.config["agents-name-lsit"][-1]
+            isaa.get_agent_config_class(new_agent).save_to_file()
+        print(split_todo_list(sim))
+        user_val = input("")
+        if user_val == "n":
+            alive = False
+        elif len(user_val) > 3:
+            task += "User: " + user_val
+
+"""
+It seems like you're looking for information on creating a virtual agent development lab and developing tools for agent testing. Here's a summary of the process and the features needed for a virtual agent development lab:
+
+1. Integrated Development Environment (IDE): The lab should have an IDE that allows developers to write, test, and debug code for their virtual agents.
+2. Agent Creation Tools: The lab should have tools that allow developers to create and customize virtual agents, including their appearance, behavior, and communication capabilities.
+3. Agent Testing and Debugging Tools: The lab should have tools that allow developers to test and debug their virtual agents, including simulating different scenarios and environments.
+4. Agent Deployment and Management Tools: The lab should have tools that allow developers to deploy and manage their virtual agents, including loading and saving agents, and monitoring their performance.
+5. Collaboration and Sharing Tools: The lab should have tools that allow developers to collaborate and share their virtual agents with others, including version control and sharing features.
+6. User-Friendly Interface: The lab should have a user-friendly interface that is easy to navigate and use, even for non-technical users.
+7. Documentation and Support: The lab should have comprehensive documentation and support resources, including tutorials, FAQs, and user forums.
+
+To create a virtual agent development lab, follow these steps:
+
+1. Define the purpose and scope of the lab.
+2. Choose the development platform.
+3. Develop the IDE.
+4. Create agent creation tools.
+5. Develop agent testing and debugging tools.
+6. Create agent deployment and management tools.
+7. Develop collaboration and sharing tools.
+8. Design a user-friendly interface.
+9. Develop documentation and support resources.
+10. Test and refine the lab.
+
+Developing tools for agent testing involves creating a system that can simulate different scenarios and environments, identify and fix errors and bugs, and provide feedback to developers. This will help ensure that the virtual agents are functioning correctly and efficiently.
+"""
+
 
 
