@@ -21,16 +21,12 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from huggingface_hub import HfFolder
 from huggingface_hub import InferenceApi
 import time
-from langchain.agents import initialize_agent, tool, Tool as AgentTool
 import torch
 from transformers.tools import TextClassificationTool
 
 from toolboxv2 import MainTool, FileHandler, Style, App, Spinner, get_logger
 
-from langchain import PromptTemplate, LLMChain, OpenAI
-from langchain.llms.openai import OpenAIChat
-from langchain.chat_models import ChatOpenAI
-from langchain.chat_models import ChatOpenAI
+from langchain import PromptTemplate, LLMChain, OpenAI, HuggingFaceHub, ConversationChain, GoogleSearchAPIWrapper
 from langchain.chains import ConversationalRetrievalChain
 import tiktoken
 from bs4 import BeautifulSoup
@@ -42,10 +38,10 @@ from inspect import signature
 from langchain.python import PythonREPL
 from langchain.tools.python.tool import PythonREPLTool
 from langchain import LLMMathChain, SerpAPIWrapper, GoogleSerperAPIWrapper
-from langchain.utilities import BashProcess
+from langchain.utilities import BashProcess, BingSearchAPIWrapper
 from langchain.utilities.wolfram_alpha import WolframAlphaAPIWrapper
 from langchain.tools.ifttt import IFTTTWebhook
-
+from langchain.agents import initialize_agent, tool as LCtool, AgentType
 from langchain.vectorstores import Chroma
 
 from toolboxv2.utils.Style import print_to_console
@@ -108,6 +104,18 @@ pipeline_arr = [
 ]
 
 
+def get_tokens(text, model_name, only_len=True):
+    if '/' in model_name:
+        model_name = 'gpt2'
+
+    tokens = tiktoken.encoding_for_model(model_name).encode(text)
+
+    if only_len:
+        return len(tokens)
+    else:
+        return tokens
+
+
 def get_ip():
     response = requests.get('https://api64.ipify.org?format=json').json()
     return response["ip"]
@@ -139,6 +147,18 @@ def get_ada_embedding(text):
 
 def get_text_from_embedding(embedding):
     return openai.Embedding.retrieve(embedding, model="text-embedding-ada-002")["data"][0]["text"]
+
+
+def extract_code(x):
+    data = x.split('```')
+    if len(data) == 3:
+        text = data[1].split('\n')
+        code_type = text[0]
+        code = '\n'.join(text[1:])
+        return code, code_type
+    if len(data) > 3:
+        print(x)
+    return '', ''
 
 
 class IsaaQuestionNode:
@@ -767,7 +787,7 @@ class AIContextMemory(metaclass=Singleton):
         data = self.search(mem_name['key'], text, marginal=marginal)
         last = []
         final = f"Data from ({mem_name['key']}):\n"
-
+        print(data)
         for res in data:
             if last != res:
                 try:
@@ -1104,6 +1124,9 @@ system information's : {getSystemInfo()}
         self.observe_mem: ObservationMemory = ObservationMemory()
 
     def task(self, reset_step=False):
+        task = ''
+        if self.pre_task is not None:
+            task = self.pre_task + ' '
         if self.step_between:
             task += str(self.step_between)
             if reset_step:
