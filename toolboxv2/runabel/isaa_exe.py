@@ -31,14 +31,22 @@ def run(app, args):
     skills = []
     agents = isaa.config["agents-name-lsit"]
     task = """
-Wird an einen Kondensator eine Spannung angelegt, springt die Spannung nicht, sondern steigt langsam auf ihren Endwert an. Genauso sinkt die Spannung langsam auf 0V, sobald keine Spannung mehr anliegt. Dieser Umstand beruht auf dem Aufbau und der Funktionsweise des Kondensators.
-Baut eine Schaltung, welche einen Kondensator immer wieder lädt und entlädt (Schaltplan im Anhang), und zeichnet dabei den zeitlichen Spannungsverlauf des Kondensators mit einem Arduino Programm auf dem seriellen Plotter auf. Die Baudrate bei der seriellen Kommunikation soll auf den Wert 9600 eingestellt sein. (10 Punkte)
+1. Schreibt eine Simulation eines Balles, der in einem Kasten (innerhalb des sichtbaren Fensters) erstmal reibungs- und gravitationsfrei herumfliegt und von den Wänden abprallt. In dieser Aufgabe sollen keine neuen Klassen implementiert werden. (6 Punkte)
+
 TIPPS:
-Die Aufgabe ist so gedacht, dass ihr Arrays verwendet.
-Es ist in Ordnung, wenn die Aufzeichnung des Ladens und des Entladens getrennt geschieht. Ihr könnt also 2 Arduino Programme hochladen.
-Der Schaltplan befindet sich im Anhang.
-Um eine Idee zu bekommen, wie das Ergebnis auszusehen hat, könnt ihr einfach "Kondensator Ladekurve" googeln.
+Der Ball hat im Gegensatz zu unserem Roboter Beispiel keine "Richtung", sondern eine "aktuelle Geschwindigkeit" in x- und in y-Richtung
+In jedem Zeitschritt (Aufruf der ''draw()''-Funktion) wird ein kleines Vielfaches jeder Komponente des Geschwindigkeitsvektors auf die jeweilige Komponente des Positionsvektors addiert.
+Beim Aufprall auf eine Wand ändert die Geschwindigkeitskomponente in Wandrichtung ihr Vorzeichen.
+2. Jetzt ergänzt das Programm so, dass auch die Gravitation und Reibung berücksichtigt werden. Die Werte für Gravitation und Reibung müssen als Konstante deklariert werden (6 Punkte).
+TIPPS:
+Gravitation bekommt ihr, indem ihr in jedem Zeitschritt eine kleine Zahl auf die Geschwindigkeiten addiert (konstante Beschleunigung in eine Richtung).
+Für Reibung multipliziert ihr die Geschwindigkeiten in jedem Zeitschritt mit einer Zahl etwas kleiner als 1.0.
+Die Geschwindigkeit der Simulation könnt ihr einstellen, indem ihr mehr oder weniger von der Geschwindigkeit auf die Position addiert ("Zeitschritt")
+Das Verfahren zur Simulation, welches ihr eingesetzt habt, heisst "Euler-Verfahren" oder https://de.wikipedia.org/wiki/Methode_der_kleinen_Schritte
+... Viel Spaß beim Herumexperimentieren!
+Schreibe eine Processing .https://processing.org/
 """
+
     alive = True
     new_agent = isaa.config["agents-name-lsit"][-1]
     if len(agents) != 3:
@@ -46,7 +54,7 @@ Um eine Idee zu bekommen, wie das Ergebnis auszusehen hat, könnt ihr einfach "K
             isaa.get_agent_config_class(agent_name)
     while alive:
         env_text = f"""Welcome, you are in a hostile environment, your name is isaa.
-you have several basic skills 1. creating agents 2. creating some agents 3. using skills, agents and tools
+you have several basic skills 1. creating agents 2. using skills, agents and tools
 
 you have created {len(agents)}agents so far these are : {agents}.
 you have learned {len(skills)}skills so far these are : {skills}.

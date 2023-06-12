@@ -1,25 +1,12 @@
 """Console script for toolboxv2. Isaa CMD Tool"""
-import asyncio
 import random
-import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
-
-import keyboard
-import tiktoken
 
 from toolboxv2 import Style, Spinner
-from toolboxv2.mods.isaa_audio import Tools as Audio
-from toolboxv2.mods.isaa import AgentChain
 from toolboxv2.utils.isaa_util import sys_print, run_agent_cmd, init_isaa, download_github_project, \
     get_code_files
 
 NAME = "isaa-gitDocs"
-from transformers.tools import OpenAiAgent, HfAgent
-from transformers import tools
-
-
 # tools.text_classification.TextClassificationTool()
 # tools.document_question_answering.DocumentQuestionAnsweringTool()
 # tools.image_captioning.ImageCaptioningTool()

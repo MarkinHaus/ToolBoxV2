@@ -22,7 +22,6 @@ from huggingface_hub import HfFolder
 from huggingface_hub import InferenceApi
 import time
 import torch
-from transformers.tools import TextClassificationTool
 
 from toolboxv2 import MainTool, FileHandler, Style, App, Spinner, get_logger
 
@@ -131,10 +130,15 @@ def get_location():
 
 def getSystemInfo():
     # try:
+    ip = '0.0.0.0'
+    try:
+        socket.gethostbyname(socket.gethostname())
+    except Exception:
+        pass
     info = {'time': datetime.today().strftime('%Y-%m-%d %H:%M:%S'), 'platform': platform.system(),
             'platform-release': platform.release(), 'platform-version': platform.version(),
             'architecture': platform.machine(), 'hostname': socket.gethostname(),
-            'ip-address': socket.gethostbyname(socket.gethostname()),
+            'ip-address': ip,
             'mac-address': ':'.join(re.findall('..', '%012x' % uuid.getnode())), 'processor': platform.processor(),
             'ram': str(round(psutil.virtual_memory().total / (1024.0 ** 3))) + " GB", 'location': get_location()}
     return info
@@ -261,7 +265,7 @@ class IsaaQuestionBinaryTree:
         return IsaaQuestionBinaryTree(_cut_tree(self.root, cut_key))
 
 
-class AgentChain(metaclass=Singleton):
+class AgentChain:
     def __init__(self, hydrate=None, f_hydrate=None):
         self.chains = {}
         self.chains_h = {}
@@ -409,7 +413,7 @@ class AgentChain(metaclass=Singleton):
         return str(self.chains.keys())
 
 
-class PineconeMemory(metaclass=Singleton):
+class PineconeMemory:
     def __init__(self):
         pinecone_api_key = os.getenv("PINECONE_API_KEY")
         pinecone_region = os.getenv("PINECONE_ENV")
@@ -459,7 +463,7 @@ class PineconeMemory(metaclass=Singleton):
         return self.index.describe_index_stats()
 
 
-class AIContextMemory(metaclass=Singleton):
+class AIContextMemory:
     def __init__(self, model_name='sentence-transformers/all-MiniLM-L6-v2'):  # "MetaIX/GPT4-X-Alpaca-30B-4bit"):
         self.memory = {
             'rep': []
@@ -802,14 +806,11 @@ class AIContextMemory(metaclass=Singleton):
         return final
 
 
-class CollectiveMemory(metaclass=Singleton):
+class CollectiveMemory:
     collection = []
-    try:
-        memory = PineconeMemory()
-        do_mem = False
-    except Exception:
-        do_mem = True
-        memory = None
+
+    do_mem = True
+    memory = None
     token_in_use = 1
     text_mem = []
     text_len = 1
@@ -1503,7 +1504,6 @@ class Tools(MainTool, FileHandler):
         self.name = "isaa"
         self.logger: logging.Logger or None = app.logger if app else None
         self.color = "VIOLET2"
-        self.inference = InferenceApi
         self.config = {'genrate_image-init': False,
                        'agents-name-lsit': []
                        }
@@ -1517,20 +1517,19 @@ class Tools(MainTool, FileHandler):
         self.observation_term_mem_file = f".data/{app.id}/Memory/observationMemory/"
         self.tools = {
             "all": [["Version", "Shows current Version"],
-                    ["Run", "Starts Inference"],
+                    ["api_run", "name inputs"],
                     ["add_api_key", "Adds API Key"],
                     ["login", "Login"],
                     ["new-sug", "Add New Question or Class to Config"],
                     ["run-sug", "Run Huggingface Pipeline"],
                     ["info", "Show Config"],
                     ["lode", "lode models"],
-                    ["isaa", "Run Isaa name input"],
                     ["image", "genarate image input"],
                     ],
             "name": "isaa",
             "Version": self.show_version,
             "info": self.info,
-            "isaa": self.run_isaa_wrapper,
+            "api_run": self.run_isaa_wrapper,
             "image": self.genrate_image_wrapper,
         }
         self.app_ = app
@@ -1539,6 +1538,8 @@ class Tools(MainTool, FileHandler):
         self.global_stream_override = False
         self.pipes_device = 1
         self.lang_chain_tools_list = {}
+        self.agent_chain = AgentChain()
+        self.agent_memory = AIContextMemory()
         self.summarization_mode = 0  # 0 to 2 0 huggingface 1 text
         self.summarization_limiter = 10200  # 0 to 2 0 huggingface 1 text
         self.speak = lambda x, *args, **kwargs: x
@@ -1548,10 +1549,11 @@ class Tools(MainTool, FileHandler):
                           name=self.name, logs=None, color=self.color, on_exit=self.on_exit)
 
     def run_isaa_wrapper(self, command):
+        self.print(f"Running isaa wrapper {command}")
         if len(command) < 1:
             return "Unknown command"
 
-        return self.run_agent(command[0], command[1:])
+        return self.run_agent(command[0].data['name'], command[0].data['text'])
 
     def genrate_image_wrapper(self, command):
         if len(command) != 1:
@@ -1569,7 +1571,9 @@ class Tools(MainTool, FileHandler):
         self.config[command[1]] = command[2]
 
     def on_start(self):
+        self.print("Isaa starting init fh, env, config")
         self.load_file_handler()
+        self.load_keys_from_env()
         config = self.get_file_handler(self.keys["Config"])
         if config is not None:
             self.config = eval(config)
@@ -1957,6 +1961,12 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 .set_completion_mode("chat")
 
             config.stop_sequence = ["\n\n\n"]
+
+        if name == "isaa-chat-web":
+            config. \
+                set_mode("talk") \
+                .set_max_iterations(1) \
+                .set_completion_mode("chat")
 
         if name == "summary":
             config. \
@@ -2393,7 +2403,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config.add_system_information = sto
         elif self.config[f'agent-config-{name}'].mode == "execution":
             self.logger.info(f"stream mode: {stream}")
-            out = self.stream_read_line_llm(text, config)
+            out = self.stream_read_llm(text, config)
             if not stream:
                 self.print_stream("execution-free : " + out)
             print()
@@ -2417,7 +2427,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                     with Spinner('Saving work Memory', symbols='t'):
                         config.short_mem.clear_to_collective()
         else:
-            out = self.stream_read_line_llm(text, config)
+            out = self.stream_read_llm(text, config)
             if not stream:
                 self.print_stream(out)
             else:
@@ -2741,7 +2751,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         return res, res_um
 
-    def stream_read_line_llm(self, text, config, r=2.0):
+    def stream_read_llm(self, text, config, r=2.0):
         p_token_num = get_tokens(text, config.model_name)
         self.print(f"TOKENS: {p_token_num} | left = {config.token_left}")
         if p_token_num > config.token_left:
@@ -2801,7 +2811,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                     time.sleep(2 * (3 - r))
                 if r > 0:
                     print('\n\n')
-                    return self.stream_read_line_llm(text + '\n' + res, config, r - 1)
+                    return self.stream_read_llm(text + '\n' + res, config, r - 1)
             return res
         except openai.error.RateLimitError:
             self.print(f"{' ' * 30}  | Retry level: {r} ", end="\r")
@@ -2810,7 +2820,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 with Spinner("Waiting RateLimitError", symbols='+'):
                     time.sleep(5 * (8 - r))
                 self.print(f"\n Retrying {r} ", end="\r")
-                return self.stream_read_line_llm(text, config, r - 1)
+                return self.stream_read_llm(text, config, r - 1)
             else:
                 self.logger.error("The server is currently overloaded with other requests. Sorry about that!")
                 return "The server is currently overloaded with other requests. Sorry about that! ist als possible that" \
@@ -2827,12 +2837,12 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 if config.short_mem.tokens < config.edit_text.tokens:
                     config.edit_text.max_length = int(config.edit_text.max_length * 0.75)
                     config.edit_text.cut()
-                return self.stream_read_line_llm(text, config, r - 0.5)
+                return self.stream_read_llm(text, config, r - 0.5)
             elif r > .75:
-                return self.stream_read_line_llm(self.mas_text_summaries(text), config, r - 0.25)
+                return self.stream_read_llm(self.mas_text_summaries(text), config, r - 0.25)
             elif r > 0.25:
                 config.stream = False
-                res = self.stream_read_line_llm(self.mas_text_summaries(text), config, r - 0.25)
+                res = self.stream_read_llm(self.mas_text_summaries(text), config, r - 0.25)
                 config.stream = True
                 return res
             else:
@@ -2968,22 +2978,19 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             return ConversationalRetrievalChain.from_llm(self.get_llm_models(config.model_name), retriever=retriever)
         return None
 
-    @staticmethod
-    def get_chain(hydrate=None, f_hydrate=None) -> AgentChain:
+    def get_chain(self, hydrate=None, f_hydrate=None) -> AgentChain:
         logger = get_logger()
         logger.info(Style.GREYBG(f"AgentChain requested"))
-        agent_chain = AgentChain(hydrate, f_hydrate)
+        agent_chain = self.agent_chain
+        if hydrate is not None or f_hydrate is not None:
+            self.agent_chain.add_hydrate(hydrate, f_hydrate)
         logger.info(Style.Bold(f"AgentChain instance, returned"))
         return agent_chain
 
-    @staticmethod
-    def get_context_memory(model_name=None) -> AIContextMemory:
+    def get_context_memory(self) -> AIContextMemory:
         logger = get_logger()
         logger.info(Style.GREYBG(f"AIContextMemory requested"))
-        if model_name:
-            cm = AIContextMemory(model_name)
-        else:
-            cm = AIContextMemory()
+        cm = self.agent_memory
         logger.info(Style.Bold(f"AIContextMemory instance, returned"))
         return cm
 

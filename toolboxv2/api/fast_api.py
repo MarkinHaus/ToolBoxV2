@@ -3,7 +3,7 @@ from typing import Union
 from fastapi import APIRouter, UploadFile
 from starlette.staticfiles import StaticFiles
 
-from toolboxv2 import ToolBox_ovner, App
+from toolboxv2 import ToolBox_over, App
 from .util import PostRequest
 from ..utils.toolbox import get_app
 
@@ -33,7 +33,7 @@ def close(data: PostRequest, pid: int):
         if "uid" not in res.keys():
             return {"res": str(res)}
 
-        if res["username"] in (ToolBox_ovner if not isinstance(ToolBox_ovner, str) else [ToolBox_ovner]):
+        if res["username"] in (ToolBox_over if not isinstance(ToolBox_over, str) else [ToolBox_over]):
             tb_app.save_exit()
             tb_app.exit()
             exit(0)

@@ -1,3 +1,4 @@
+import os
 import re
 from pathlib import Path
 from fastapi import Request, HTTPException, Depends, APIRouter
@@ -69,11 +70,11 @@ async def serve_files(path: str, request: Request, access_allowed: bool = Depend
     return serve_app_func(path)
 
 
-def serve_app_func(path: str, prefix: str = "../app/"): # test location
+def serve_app_func(path: str, prefix: str = os.getcwd()+"/app/"): # test location
     request_file_path = Path(prefix + path)
     ext = request_file_path.suffix
-
+    print(request_file_path, ext)
     if ext in pattern:
-        path = 'main.html'
-
+        request_file_path = Path(prefix + 'main.html')
+    path = request_file_path
     return FileResponse(path)

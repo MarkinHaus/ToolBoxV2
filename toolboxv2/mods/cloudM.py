@@ -143,12 +143,10 @@ class Tools(MainTool, FileHandler):
     def on_start(self):
         self.logger.info(f"Starting NAME")
         # ~ self.load_file_handler()
-        pass
 
     def on_exit(self):
         self.logger.info(f"Closing NAME")
         # ~ self.save_file_handler()
-        pass
 
 """
         helper_functions_class = """
@@ -170,11 +168,10 @@ def show_version(_, app: App):
 
         self.logger.info(f"crating boilerplate")
         mod_name = command[1]
-        if command in ['-fh']:
+        if '-fh' in command:
             boilerplate = boilerplate.replace('pass', '').replace('# ~ ', '')
-
             self.logger.info(f"adding FileHandler")
-        if command in ['-func']:
+        if '-func'in command:
             boilerplate += helper_functions_func
             self.logger.info(f"adding functional based")
         else:
@@ -503,7 +500,7 @@ def show_version(_, app: App):
         return res
 
 
-def test_if_exists(self, name: str, app: App):
+def test_if_exists(name: str, app: App):
     if "db" not in list(app.MOD_LIST.keys()):
         return "Server has no database module"
 

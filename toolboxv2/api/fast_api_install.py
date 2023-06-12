@@ -1,4 +1,5 @@
 import os
+import platform
 
 from fastapi import APIRouter
 from fastapi.responses import FileResponse, JSONResponse
@@ -14,7 +15,10 @@ TB_DIR = os.getcwd()
 
 @router.get("/{file_name}")
 def download_file(file_name: str):
-    directory = file_name.split("\\")
+    if platform.system() == "Darwin":
+        directory = file_name.split("/")
+    else:
+        directory = file_name.split("\\")
     if len(directory) == 1:
         directory = file_name.split("%5")
     get_logger().info(f"Request file {file_name}")
@@ -22,7 +26,10 @@ def download_file(file_name: str):
     if ".." in file_name:
         return {"message": f"unsupported operation .. "}
 
-    file_path = TB_DIR + "\\" + file_name
+    if platform.system() == "Darwin":
+        file_path = TB_DIR + "/" + file_name
+    else:
+        file_path = TB_DIR + "\\" + file_name
     if len(directory) > 1:
         directory = directory[0]
 
@@ -31,7 +38,11 @@ def download_file(file_name: str):
             return JSONResponse(content={"message": f"directory not public {directory}"}, status_code=100)
 
         if directory == "tests":
-            file_path = "\\".join(TB_DIR.split("\\")[:-1]) + "\\" + file_name
+
+            if platform.system() == "Darwin":
+                file_path = "/".join(TB_DIR.split("/")[:-1]) + "/" + file_name
+            else:
+                file_path = "\\".join(TB_DIR.split("\\")[:-1]) + "\\" + file_name
 
     if os.path.exists(file_path):
         get_logger().info(f"Downloading from {file_path}")

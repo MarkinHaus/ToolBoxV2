@@ -1,7 +1,4 @@
 """Console script for toolboxv2. Isaa CMD Tool"""
-from transformers import TextClassificationPipeline
-from transformers.tools import TextClassificationTool
-
 from toolboxv2.mods.isaa import IsaaQuestionBinaryTree
 from toolboxv2.utils.isaa_util import sys_print, init_isaa
 from toolboxv2.utils.toolbox import get_app

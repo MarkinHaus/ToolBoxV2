@@ -33,9 +33,8 @@ def run(app, args):
     decision and with the following necessary organization. Crate a live plan for the next 2 years with all nessesery infortion """
 
     task = """
-Create a plan to create an agent development lab. what fetures should this lab have. how should it look like.
-Create a detailed pan to create this virtual agent lab. the lab should also have the function to create tools for the agents. the agents should be able to be loaded and saved. the environment should be intuitive and user friendly.
-    """
+Create a plan for a fully automatic cigarette rolling machine that uses a standerd draher as the core. Create a functional and explanatory plan
+"""
 
     construct_context = isaa.run_agent("thinkm",
                                        f"Based on the task entered by the user, I will now gather additional context and collect "

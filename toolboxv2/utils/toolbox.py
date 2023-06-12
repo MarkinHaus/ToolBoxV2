@@ -2,7 +2,7 @@
 import os
 import sys
 import time
-from platform import node
+from platform import node, system
 from importlib import import_module
 from inspect import signature
 
@@ -78,7 +78,11 @@ class App(metaclass=Singleton):
                 prefix_file.write(prefix)
         t0 = time.time()
         abspath = os.path.abspath(__file__)
-        dname = os.path.dirname(abspath).replace("\\utils", "")
+        self.system_flag = system() #Linux: Linux Mac: Darwin Windows: Windows
+        if self.system_flag == "Darwin":
+            dname = os.path.dirname(abspath).replace("/utils", "")
+        else:
+            dname = os.path.dirname(abspath).replace("\\utils", "")
         os.chdir(dname)
         print(f"Starting ToolBox as {prefix} from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 
@@ -527,7 +531,8 @@ class App(metaclass=Singleton):
             self.logger.warning(f"Module : {module_name}.{function_name} not online")
             self.save_load(module_name)
 
-        self.new_ac_mod(module_name)
+        if ac_sto == module_name:
+            self.new_ac_mod(module_name)
         res = self.run_function(function_name, command)
 
         if do_sto:

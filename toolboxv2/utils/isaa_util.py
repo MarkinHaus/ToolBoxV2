@@ -2,12 +2,9 @@ import json
 import os
 import sys
 import threading
-import time
 import fnmatch
-import requests
 import subprocess
 import re
-import ast
 
 from langchain.tools import ShellTool
 from transformers import pipeline
@@ -35,7 +32,6 @@ from toolboxv2.utils.Style import print_to_console, Style, Spinner
 from langchain.utilities import PythonREPL
 
 import networkx as nx
-import matplotlib.pyplot as plt
 
 
 def visualize_tree(tree, graph=None, parent_name=None, node_name=''):

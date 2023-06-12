@@ -1,8 +1,3 @@
-import msvcrt
-import queue
-import threading
-
-import keyboard
 import pyperclip
 
 from toolboxv2 import Spinner
@@ -13,7 +8,6 @@ from toolboxv2.utils.toolbox import get_app
 from toolboxv2.mods.isaa_audio import init_live_transcript, s30sek_mean, speech_stream
 from toolboxv2.utils.isaa_util import sys_print, init_isaa, speak
 
-from transformers.tools.text_classification import TextClassificationTool
 
 NAME = "isaa-talk"
 

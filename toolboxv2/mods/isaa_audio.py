@@ -1,5 +1,6 @@
 import hashlib
 import os
+import platform
 import sys
 import tempfile
 import threading
@@ -381,7 +382,10 @@ def get_audio_text_c0(app, phrase_time_limit=6):
 
 def text_to_speech(text, lang='de'):
     tts = gTTS(text=text, lang=lang)
-    filename = '.\\data/isaa_data\\speech.mp3'
+    if platform.system() == "Darwin":
+        filename = './data/isaa_data/speech.mp3'
+    else:
+        filename = '.\\data/isaa_data\\speech.mp3'
     tts.save(filename)
     playsound(filename)
     os.remove(filename)
