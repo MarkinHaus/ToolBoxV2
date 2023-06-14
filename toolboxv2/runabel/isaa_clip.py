@@ -12,7 +12,7 @@ from toolboxv2.mods.isaa import AgentConfig
 from toolboxv2.mods.isaa import AgentChain
 from toolboxv2.mods.isaa import Tools as Isaa
 from toolboxv2.mods.isaa_audio import text_to_speech3, get_audio_transcribe
-from toolboxv2.utils.isaa_util import init_isaa, sys_print, run_agent_cmd, stop_helper
+from toolboxv2.utils.isaa_util import init_isaa, sys_print, run_agent_cmd, stop_helper, idea_enhancer, generate_exi_dict
 
 NAME = "isaa-clip"
 
@@ -45,7 +45,7 @@ def run_agent_clip(app, user_text, self_agent_config, print_, spek, get_input, s
         response = app.AC_MOD.run_agent("self", user_text)
         print("\nAGENT section END\n")
 
-        task_done = app.AC_MOD.test_task_done(response, self_agent_config)
+        task_done = app.AC_MOD.test_task_done(response)
 
         print_(f"\n{'=' * 20}STEP:{step}{'=' * 20}\n")
         print_(f"\tMODE               : {self_agent_config.mode}\n")
@@ -226,17 +226,35 @@ def run_chad(isaa: Isaa, user_text, self_agent_config):
     return response
 
 
+def run_idea_development(isaa: Isaa, user_text, chains, self_agent_config):
+    sys_print("\n================================Starting-Agent================================")
+    res = idea_enhancer(isaa, user_text, self_agent_config, chains, create_agent=True)
+    sys_print("\n================================Exit-Agent================================")
+    return res
+
+
+def run_generate_exi_dict(isaa: Isaa, user_text, self_agent_config):
+    sys_print("\n================================Starting-Agent================================")
+    res = generate_exi_dict(isaa, user_text, create_agent=False, tools=list(self_agent_config.tools.keys()), retrys=3)
+    sys_print("\n================================Exit-Agent================================")
+    return res
+
+
 def run(app, args):
     speak_mode = args.speak
     # Trigger word to process the text
     trigger_word = '##i'
     trigger_word_editor = '##e'
     trigger_word_chad = '##c'
+    trigger_idea_dev = '##h'
+    trigger_gen_dic = '##g'
 
     print(f"Script running in the background")
 
     isaa, self_agent_config, chains = init_isaa(app, speak_mode=speak_mode, calendar=True, ide=True, create=True)
 
+    idea_enhancer(isaa, '', self_agent_config, chains, create_agent=True)
+    generate_exi_dict(isaa, '', create_agent=True, tools=None, retrys=0)
     print("init completed waiting for trigger word: ")
     buffer = ' ' * 8
     alive = True
@@ -316,6 +334,46 @@ def run(app, args):
                     isaa.speak(res)
                     print("Agent:", res)
                     pyperclip.copy(res)
+
+                buffer = ' ' * 8
+                print("waiting for trigger word:: ")
+
+            if buffer.endswith(trigger_idea_dev):
+
+                print("Isaa Running C\n")
+                context = pyperclip.paste()
+
+                if context:
+                    self_agent_config.edit_text.text = context
+
+                user_text = get_input(speek_mode=speak_mode)
+
+                res = run_idea_development(isaa, user_text, chains, self_agent_config)
+
+                if res:
+                    isaa.speak(res)
+                    print("Agent:", res)
+                    pyperclip.copy(res)
+
+                buffer = ' ' * 8
+                print("waiting for trigger word:: ")
+
+            if buffer.endswith(trigger_gen_dic):
+
+                print("Isaa Running C\n")
+                context = pyperclip.paste()
+
+                if context:
+                    self_agent_config.edit_text.text = context
+
+                user_text = get_input(speek_mode=speak_mode)
+
+                res = run_generate_exi_dict(isaa, context+'\n'+user_text, self_agent_config)
+
+                if res:
+                    isaa.speak(res)
+                    print("Agent:", res)
+                    pyperclip.copy(str(res))
 
                 buffer = ' ' * 8
                 print("waiting for trigger word:: ")

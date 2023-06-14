@@ -19,6 +19,7 @@ def run(app, args):
     self_agent_config.stream = True
     self_agent_config.max_tokens = 4012
     self_agent_config.set_completion_mode('chat')
+    self_agent_config.short_mem.max_length = 3000
     self_agent_config.set_model_name('gpt-4')
 
     self_agent_config.stop_sequence = ['\n\n\n', "Execute:", "Observation:", "User:"]
@@ -27,28 +28,14 @@ def run(app, args):
     isaa.get_agent_config_class("thinkm").stream = True
 
     # new env isaa withs chains
-    print(isaa.config["agents-name-lsit"])
+    print(isaa.config["agents-name-list"])
     skills = []
-    agents = isaa.config["agents-name-lsit"]
+    agents = isaa.config["agents-name-list"]
     task = """
-1. Schreibt eine Simulation eines Balles, der in einem Kasten (innerhalb des sichtbaren Fensters) erstmal reibungs- und gravitationsfrei herumfliegt und von den Wänden abprallt. In dieser Aufgabe sollen keine neuen Klassen implementiert werden. (6 Punkte)
-
-TIPPS:
-Der Ball hat im Gegensatz zu unserem Roboter Beispiel keine "Richtung", sondern eine "aktuelle Geschwindigkeit" in x- und in y-Richtung
-In jedem Zeitschritt (Aufruf der ''draw()''-Funktion) wird ein kleines Vielfaches jeder Komponente des Geschwindigkeitsvektors auf die jeweilige Komponente des Positionsvektors addiert.
-Beim Aufprall auf eine Wand ändert die Geschwindigkeitskomponente in Wandrichtung ihr Vorzeichen.
-2. Jetzt ergänzt das Programm so, dass auch die Gravitation und Reibung berücksichtigt werden. Die Werte für Gravitation und Reibung müssen als Konstante deklariert werden (6 Punkte).
-TIPPS:
-Gravitation bekommt ihr, indem ihr in jedem Zeitschritt eine kleine Zahl auf die Geschwindigkeiten addiert (konstante Beschleunigung in eine Richtung).
-Für Reibung multipliziert ihr die Geschwindigkeiten in jedem Zeitschritt mit einer Zahl etwas kleiner als 1.0.
-Die Geschwindigkeit der Simulation könnt ihr einstellen, indem ihr mehr oder weniger von der Geschwindigkeit auf die Position addiert ("Zeitschritt")
-Das Verfahren zur Simulation, welches ihr eingesetzt habt, heisst "Euler-Verfahren" oder https://de.wikipedia.org/wiki/Methode_der_kleinen_Schritte
-... Viel Spaß beim Herumexperimentieren!
-Schreibe eine Processing .https://processing.org/
 """
 
     alive = True
-    new_agent = isaa.config["agents-name-lsit"][-1]
+    new_agent = isaa.config["agents-name-list"][-1]
     if len(agents) != 3:
         for agent_name in agents[3:]:
             isaa.get_agent_config_class(agent_name)
@@ -73,11 +60,11 @@ Task : {task}"""
             print("USER QUESTION")
             task += input()
 
-        print(isaa.config["agents-name-lsit"])
-        agents = isaa.config["agents-name-lsit"]
+        print(isaa.config["agents-name-list"])
+        agents = isaa.config["agents-name-list"]
 
-        if new_agent != isaa.config["agents-name-lsit"][-1]:
-            new_agent = isaa.config["agents-name-lsit"][-1]
+        if new_agent != isaa.config["agents-name-list"][-1]:
+            new_agent = isaa.config["agents-name-list"][-1]
             isaa.get_agent_config_class(new_agent).save_to_file()
 
         print(split_todo_list(sim))

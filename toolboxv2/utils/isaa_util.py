@@ -92,7 +92,7 @@ def run_agent_cmd(isaa, user_text, self_agent_config, step, spek):
     response = isaa.run_agent(self_agent_config, user_text)  ##code
     print("\nAGENT section END\n")
 
-    task_done = isaa.test_task_done(response, self_agent_config)
+    task_done = isaa.test_task_done(response)
 
     sys_print(f"\n{'=' * 20}STEP:{step}{'=' * 20}\n")
     sys_print(f"\tMODE               : {self_agent_config.mode}\n")
@@ -140,11 +140,13 @@ def split_todo_list(todo_string):
     todo_list = [todo.strip() for todo in todo_list]
 
     return todo_list
+
+
 def extract_dict_from_string(string):
     start_index = string.find("{")
     end_index = string.rfind("}")
     if start_index != -1 and end_index != -1 and start_index < end_index:
-        dict_str = string[start_index:end_index+1]
+        dict_str = string[start_index:end_index + 1]
         try:
             dictionary = json.loads(dict_str)
             if isinstance(dictionary, dict):
@@ -152,6 +154,7 @@ def extract_dict_from_string(string):
         except json.JSONDecodeError as e:
             return e
     return None
+
 
 def test_amplitude_for_talk_mode(sek=10):
     if not SPEAK:
@@ -164,7 +167,7 @@ def test_amplitude_for_talk_mode(sek=10):
 def get_code_files(git_project_dir, code_extensions: None or list = None):
     result = []
     if code_extensions is None:
-        code_extensions = ['*.py', '*.js', '*.java', '*.c', '*.cpp', '*.cs', '*.rb', '*.go', '*.php']
+        code_extensions = ['*.py', '*.js', '*.java', '*.c', '*.cpp', '*.css', '*.rb', '*.go', '*.php', '*.html', '*.json']
 
     for root, _, files in os.walk(git_project_dir):
         for file in files:
@@ -190,6 +193,352 @@ def download_github_project(repo_url, branch, destination_folder):
 
     print(f"Project downloaded successfully to {destination_folder}")
     return True
+
+
+def validate_dictionary(dictionary, valid_agents, valid_tools, valid_functions, valid_chians):
+    errors = []
+
+    if not isinstance(dictionary, dict):
+        errors.append("The provided object is not a dictionary.")
+    elif "name" not in dictionary or "tasks" not in dictionary:
+        errors.append("The dictionary does not have the required keys 'name' and 'tasks'.")
+    elif not isinstance(dictionary["name"], str):
+        errors.append("The value of the 'name' key must be a string.")
+    elif not isinstance(dictionary["tasks"], list):
+        errors.append("The value of the 'tasks' key must be a list.")
+
+    if "The dictionary does not have the required keys 'name' and 'tasks'." not in errors:
+        i = 0
+        for task in dictionary["tasks"]:
+            i += 1
+            if not isinstance(task, dict):
+                errors.append(f"An entry in the tasks list is not a valid dictionary. in task : {i}")
+                continue
+            if "use" not in task or "name" not in task or "args" not in task or "return" not in task:
+                errors.append(
+                    f"A task entry is missing the required keys 'use', 'name', 'args', or 'return'. in task : {i}")
+                continue
+            use_type = task["use"]
+            if use_type == "agent":
+                if task["name"] not in valid_agents:
+                    errors.append(f"The agent name '{task['name']}' is not valid. in task : {i}")
+            elif use_type == "tool":
+                if task["name"] not in valid_tools:
+                    errors.append(f"The tool name '{task['name']}' is not valid. in task : {i}")
+            elif use_type == "function":
+                if task["name"] not in valid_functions:
+                    errors.append(f"The function name '{task['name']}' is not valid. in task :  {i}")
+            elif use_type == "expyd" or use_type == "chain":
+                if task["name"] not in valid_chians:
+                    errors.append(f"The chain name '{task['name']}' is not valid. in task :  {i}")
+            else:
+                errors.append(
+                    f"Invalid 'use' type '{use_type}' in a task. It should be 'agent', 'chain', 'tool', or 'function'. {i}")
+            if not isinstance(task["args"], str):
+                errors.append(f"The value of the 'args' key in a task must be a string. in task : {i}")
+            if not isinstance(task["return"], str):
+                errors.append(f"The value of the 'return' key in a task must be a string. in task : {i}")
+
+    return errors
+
+
+def generate_exi_dict(isaa, task, create_agent=False, tools=None, retrys=3):
+    if tools is None:
+        tools = []
+    if create_agent:
+        agent_config = isaa.get_agent_config_class("generate_exi_dict") \
+            .set_completion_mode('chat') \
+            .set_model_name('gpt-4').set_mode('free')
+        agent_config.stop_sequence = ['\n\n\n', "Execute:", "Observation:", "User:"]
+        agent_config.stream = True
+        if not task:
+            return
+    else:
+        agent_config = isaa.get_agent_config_class("generate_exi_dict")
+
+    infos_c = f"List of Avalabel Agents : {isaa.config['agents-name-list']}\n Tools : {tools}\n" \
+              f" Functions : {isaa.scripts.get_scripts_list()}\n executable python dicts : {str(isaa.get_chain())} "
+
+    extracted_dict = {}
+
+    agent_config.get_messages(create=True)
+    agent_config.add_message("user", task)
+    agent_config.add_message("system", infos_c)
+    agent_config.add_message("assistant",
+                             "I now coordinate the work of the various task handlers to ensure that the "
+                             "right tasks are routed to the right handlers. This ensures that the tasks "
+                             "are executed efficiently and effectively. For this I return a valid executable python "
+                             "dict with the individual steps to be taken.")
+    agent_config.add_message("system", """Stricht Syntax for an executable python dict :
+
+        {
+        "name": "<title of the task>",
+        "tasks": [
+        {
+        "use": "<type of usage>", // tool, agent, expyd, or function
+        "name": "<name of the tool, agent, or function>",
+        "args": "<arguments>", // or including previous return value
+        "return": "<return value>"
+
+        // Optional
+        "infos": "<additional-infos>"
+        "short-mem": "<way-to-use-memory>" // 'summary' 'full' 'clear'
+        "to-edit-text": True
+
+        // Optional keys when dealing with large amounts of text
+        "text-splitter": <maximum text size>,
+        "chunk-run": "<operation on return value>"
+
+        },
+        // Additional tasks can be added here...
+
+        ]
+        }
+
+        Example Tasks :
+
+        { # I want to search for information's so i use the search agent, the information is stored in the $infos variable
+               "use": "tool",
+              "name": "search",
+              "args": "search information on $user-input",
+              "return":"$infos"
+            },
+
+        { # I want to call other task chain
+             "use": "expyd",
+              "name": "ai_assisted_task_processing",
+              "args": "write_python : $requirements",
+              "return":"$infos"
+                },
+
+
+        { # I want to do an action
+          "use": "agent",
+          "name": "execution",
+          "args": "action-description $infos",
+          "return": "$valur"
+        }
+
+        Examples Dictionary :
+
+        {
+            "name": "Generate_docs",
+            "tasks": [
+              {
+                "use": "tool",
+                "name": "read",
+                "args": "$user-input",
+                "return": "$file-content",
+                "separators": "py",
+                "text-splitter": 4000
+              },
+              {
+                "use": "agent",
+                "name": "thinkm",
+                "args": "Act as a Programming expert your specialties are writing documentation. Your task : write an compleat documentation about '''\n $file-content \n'''",
+                "return": "$docs",
+                "chuck-run-all": "$file-content",
+                "short-mem": "summary",
+                "text-splitter": 16000
+              },
+              {
+                "use": "agent",
+                "name": "execution",
+                "args": "Speichere die informationen in einer datei $docs",
+                "return": "$file-name"
+              }
+            ]
+        }
+
+        {
+            "name": "search_infos",
+            "tasks": [
+              {
+                "use": "tool",
+                "name": "search",
+                "args": "Suche Information zu $user-input",
+                "return": "$infos0"
+              },
+              {
+                "use": "agent",
+                "name": "think",
+                "args": "Gebe einen Kompletten und diversen überblick der information zu Thema $infos0",
+                "return": "$infos1"
+              }
+              {
+                "use": "agent",
+                "name": "execution",
+                "args": "Speichere die informationen in einer datei infos0 $infos1",
+                "return": "$file-name"
+              }
+            ]
+        }
+""")
+
+    valid_dict = False
+    coordination = "NO Data"
+    for _ in range(retrys):
+        coordination = isaa.run_agent(agent_config, f"Generate an executable python dict for "
+                                                    f"{task}\n"
+                                                    f" Brain storm deep and detailed about the conversion then start.")
+
+        agent_config.add_message("assistant", coordination)
+        extracted_dict = extract_dict_from_string(coordination)
+        if isinstance(extracted_dict, dict):
+            print("Extracted")
+            errors = validate_dictionary(extracted_dict, isaa.config['agents-name-list'], tools,
+                                         list(isaa.scripts.scripts.keys()), list(isaa.get_chain().chains.keys()))
+            if errors:
+                agent_config.add_message("system",
+                                         "Errors : " + ', '.join(errors) + f" Fix them by using {infos_c}")
+            else:
+                keys_d = list(extracted_dict.keys())
+                if 'name' in keys_d and 'tasks' in keys_d:
+                    print("Valid")
+                    isaa.get_chain().add(extracted_dict['name'], extracted_dict["tasks"])
+                    valid_dict = True
+                    break
+        if extracted_dict is not None:
+            agent_config.add_message("system", 'Validation: The dictionary is not valid ' + str(extracted_dict))
+
+    input(f"VALIDATION: {valid_dict=}")
+    if valid_dict:
+        isaa.get_chain().init_chain(extracted_dict['name'])
+        return extracted_dict
+    return coordination
+
+
+def run_chain_in_cmd(isaa, task, chains, extracted_dict, self_agent_config):
+    response = ''
+    task_done = False
+    while not task_done:
+        try:
+            evaluation, chain_ret = isaa.execute_thought_chain(task, chains.get(extracted_dict['name']),
+                                                               self_agent_config)
+        except Exception as e:
+            print(e, '🔴')
+            return "ERROR"
+        evaluation = evaluation[::-1][:300][::-1]
+        pipe_res = isaa.text_classification(evaluation)
+        print(chain_ret)
+        print(pipe_res)
+        if pipe_res[0]['label'] == "NEGATIVE":
+            print('🟡')
+            task_done = True
+            if "y" in input("retry ? : "):
+                task_done = False
+            response = chain_ret[-1][1]
+        else:
+            print(pipe_res[0]['score'])
+            print(f'🟢')
+            task_done = True
+            response = chain_ret[-1][1]
+
+    return response
+
+
+def free_run_in_cmd(isaa, task, agents, self_agent_config):
+    new_agent = isaa.config["agents-name-list"][-1]
+    if len(agents) != 3:
+        for agent_name in agents[3:]:
+            isaa.get_agent_config_class(agent_name)
+    free_run = True
+    while free_run:
+        env_text = f"""Welcome, you are in a hostile environment, your name is isaa.
+    you have several basic skills 1. creating agents 2. creating some agents 3. using skills, agents and tools
+
+    you have created {len(agents)}agents so far these are : {agents}.
+
+    use your basic functions with the agent and skills to complete a task.
+
+    for your further support you have a python environment at your disposal. write python code to access it.
+    if you have no ather wy then to ask for help write Question: 'your question'\nUser:
+
+    Task : {task}"""
+
+        sim = isaa.run_agent(self_agent_config, env_text, mode_over_lode='execution')
+        task += str(sim)
+
+        if "user:" in sim.lower():
+            print("USER QUESTION")
+            task += input()
+
+        print(isaa.config["agents-name-list"])
+        agents = isaa.config["agents-name-list"]
+
+        if new_agent != isaa.config["agents-name-list"][-1]:
+            new_agent = isaa.config["agents-name-list"][-1]
+            isaa.get_agent_config_class(new_agent).save_to_file()
+
+        print(split_todo_list(sim))
+        user_val = input("")
+        if user_val == "n":
+            free_run = False
+        elif len(user_val) > 3:
+            task += "User: " + user_val
+
+
+def idea_enhancer(isaa, task, self_agent_config, chains, create_agent=False):
+
+    sto_agent_ = isaa.agent_collective_senses
+    sto_summar = isaa.summarization_mode
+
+    if create_agent:
+        isaa.get_context_memory().load_all()
+        isaa.agent_collective_senses = True
+        isaa.summarization_mode = 2
+        isaa.get_chain().save_to_file()
+
+        clarification_agent = isaa.get_agent_config_class("user_input_helper") \
+            .set_completion_mode('chat') \
+            .set_model_name('gpt-4').set_mode('free')
+        clarification_agent.stop_sequence = ['\n\n\n']
+        clarification_agent.stream = True
+        if not task:
+            return
+        # new env isaa withs chains
+    else:
+        clarification_agent = isaa.get_agent_config_class("user_input_helper")
+
+    # new env isaa withs chains
+    agents = isaa.config["agents-name-list"]
+    infos_c = f"List of Avalabel Agents : {agents}\n Tools : {list(self_agent_config.tools.keys())}\n" \
+              f" Functions : {isaa.scripts.get_scripts_list()}\n Chains : {str(chains)} " \
+              f"chains can be run withe the execute-chain tool "
+    clarification_agent.get_messages(create=True)
+    clarification_agent.add_message("user", task)
+    clarification_agent.add_message("system", infos_c)
+    clarification_agent.add_message("system", "Reproduce the task four times in your own words and"
+                                              " think about Possible Solution approaches ."
+                                              " with which you can understand this problem better."
+                                              " For each variant you should specify a Understanding from 0% to 100%."
+                                              " For each variant you should specify a Complexity"
+                                              "  approximate the numbers of step taken to compleat"
+                                              "For each variant you should specify a deviation from the task probability "
+                                              "from 100% to 0%. -> 0 = no deviation is in perfect alignment to the task."
+                                              " 100 = full deviation not related to the task ")
+    clarification_agent.add_message("assistant", "After long and detailed step by step thinking and evaluating,"
+                                                 " brainstormen of the task I have created the following variant."
+                                                 "variant :")
+    perfact = False
+    new_task = ""
+    while not perfact:
+        new_task = isaa.run_agent(clarification_agent, '')
+        clarification_agent.add_message("assistant", new_task)
+        u = input(":")
+        if u == 'x':
+            exit(0)
+        if u == 'y':
+            clarification_agent.add_message("system", "Return an Elaborate task for the next agent"
+                                                      " consider what the user ask and the best variant.")
+            new_task = isaa.run_agent(clarification_agent, '')
+            perfact = True
+        clarification_agent.add_message("user", u)
+
+    isaa.agent_collective_senses = sto_agent_
+    isaa.summarization_mode = sto_summar
+
+    return new_task
 
 
 def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
@@ -272,7 +621,7 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
                       self_agent_config)
 
     if create:
-        def text_to_dict(text: str) -> dict:
+        def text_to_dict(text: str or dict) -> dict:
             data_dict = {
                 'Personal': None,
                 'Goals': None,
@@ -281,13 +630,16 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
                 'Capabilities': None,
                 'Mode': None,
             }
-            text = text.split('\n')
-            for line_ in text:
-                line_ = line_.split(',')
-                for line in line_:
-                    key_value = line.strip().split(':')
-                    if len(key_value) >= 2:
-                        key = key_value[-2].strip()
+            if isinstance(text, dict):
+                data_dict = dict(data_dict, **text)
+            else:
+                text = text.split('\n')
+                for line_ in text:
+                    line_ = line_.split(',')
+                    for line in line_:
+                        key_value = line.strip().split(':')
+                        if len(key_value) >= 2:
+                            key = key_value[-2].strip()
                         value = key_value[-1].strip()
                         if key in 'Name' or key.endswith("Name") or key.startswith("Name"):
                             data_dict['Name'] = value
@@ -301,9 +653,10 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
                             data_dict['Goals'] = value
                         elif key == 'Capabilities':
                             data_dict['Capabilities'] = value
+
             return data_dict
 
-        def create_agent(x: str) -> str:
+        def create_agent(x: str or dict) -> str:
 
             """
     The create_agent function takes a single string argument x, which is expected to contain a set of key-value pairs separated by colons (:). These pairs specify various attributes of an agent that is to be created and run.
@@ -341,7 +694,11 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
             if data['Capabilities'] is not None:
                 agent_config.capabilities = data['Capabilities']
 
-            return isaa.run_agent(agent_config, data['Task'], mode_over_lode=data['Mode'])
+            if data['Task'] is not None:
+
+                return isaa.run_agent(agent_config, data['Task'], mode_over_lode=data['Mode'])
+
+            return f"Agent {data['Name']} created."
 
         isaa.add_tool("spawn_agent", create_agent,
                       "The create_agent function takes a single string argument x, which is expected to contain a set of key-value pairs separated by colons (:). These pairs specify various attributes of an agent that is to be created and run. use agent to divde taskes"
@@ -356,8 +713,8 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
 
            The function then creates an AgentConfig object with the specified name and sets its personality, goals, and capabilities attributes to the values associated with the corresponding keys, if those keys were present in the input string.""",
                       self_agent_config)
-        isaa.add_tool("talk_to_agent", create_agent,
-                      "The talk_to_agent function takes a single string argument x, which is expected to contain a set of key-value pairs separated by colons (:). These pairs specify various attributes of an agent that is to be created and run. use agent to divde taskes"
+        isaa.add_tool("use_agent", create_agent,
+                      "The use_agent function takes a single string argument x, which is expected to contain a set of key-value pairs separated by colons (:). These pairs specify various attributes of an agent. use agent to divde taskes and iter act with an agent the key Task is needed!"
                       , """The function parses the input string x and extracts the values associated with the following keys:
 
                Name: The name of the agent to be created. This key is required and must be present in the input string.
@@ -421,13 +778,14 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
             res = isaa.run_agent(agent_categorize_config, f"What chain '{str(chain_instance)}'"
                                                           f" \nis fitting for this input '{x}'\n"
                                                           f"Only return the correct name or None\nName: ")
+            res = res.strip()
             if res.lower() == 'none':
                 res = "I cant find a fitting chain"
 
             infos = '\n'.join([f'{item[0]} ID: {item[1]}' for item in list(zip(chain_instance.chains.keys(),
                                                                                range(
                                                                                    len(chain_instance.chains.keys()))))])
-            user_vlidation = input(f"Isaa whats tu use : '{res}'\n"
+            user_vlidation = input(f"Isaa whats to use : '{res}'\n"
                                    f"if its the chain is wrong type the corresponding number {infos}\n"
                                    f"other wise live black\nInput: ")
             do_task = False

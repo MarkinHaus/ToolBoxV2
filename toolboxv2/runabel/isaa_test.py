@@ -2,19 +2,63 @@
 
 from toolboxv2 import Style, Spinner
 from toolboxv2.mods.isaa import AgentChain, IsaaQuestionBinaryTree, AgentConfig
-from toolboxv2.utils.isaa_util import init_isaa, extract_dict_from_string, split_todo_list
+from toolboxv2.utils.isaa_util import init_isaa, extract_dict_from_string, split_todo_list, generate_exi_dict, \
+    run_chain_in_cmd, free_run_in_cmd, validate_dictionary, idea_enhancer
 
 NAME = "isaa-test"
 
 
-def run_(app, args):
+def run(app, args):
     isaa, self_agent_config, chains = init_isaa(app, speak_mode=args.speak, calendar=False, ide=True, create=True,
                                                 isaa_print=False, python_test=True, init_mem=True, init_pipe=True,
                                                 join_now=False,
                                                 global_stream_override=False, chain_runner=True)
 
     isaa.get_context_memory().load_all()
-    isaa.summarization_mode = 2
+    isaa.agent_collective_senses = True
+    isaa.summarization_mode = 1
+
+    self_agent_config.stream = True
+    self_agent_config.max_tokens = 4012
+    self_agent_config.set_completion_mode('chat').set_mode('execution')
+    self_agent_config.set_model_name('gpt-4')
+
+    self_agent_config.stop_sequence = ['\n\n\n', "Execute:", "Observation:", "User:"]
+
+    # new env isaa withs chains
+    agents = isaa.config["agents-name-list"]
+    task = """Crate an File operating agent. and read the ai_collaboration_extension directory return all files."""
+
+    infos_c = f"List of Avalabel Agents : {isaa.config['agents-name-list']}\n Tools : {list(self_agent_config.tools.keys())}\n" \
+              f" Functions : {isaa.scripts.get_scripts_list()}\n executable python dicts : {str(isaa.get_chain())} "
+
+    self_agent_config.get_messages(create=True)
+    self_agent_config.add_message("user", task)
+    self_agent_config.add_message("system", infos_c)
+
+    self_agent_config.add_message("system", """Use Spawn agent and talk to agent to crat a
+     agent for the task with te right specification""")
+
+    coordination = "NO Data"
+    for _ in range(3):
+        coordination = isaa.run_agent(self_agent_config, '', mode_over_lode='execution')
+
+        print(self_agent_config.last_prompt)
+
+        self_agent_config.add_message("assistant", coordination)
+        self_agent_config.add_message("user", input(":"))
+
+    return coordination
+
+def run__(app, args):
+    isaa, self_agent_config, chains = init_isaa(app, speak_mode=args.speak, calendar=False, ide=True, create=True,
+                                                isaa_print=False, python_test=True, init_mem=True, init_pipe=True,
+                                                join_now=False,
+                                                global_stream_override=False, chain_runner=True)
+
+    isaa.get_context_memory().load_all()
+    isaa.agent_collective_senses = True
+    isaa.summarization_mode = 1
 
     self_agent_config.stream = True
     self_agent_config.max_tokens = 4012
@@ -23,54 +67,39 @@ def run_(app, args):
 
     self_agent_config.stop_sequence = ['\n\n\n', "Execute:", "Observation:", "User:"]
 
-    isaa.get_agent_config_class("think").stream = True
-    isaa.get_agent_config_class("thinkm").stream = True
+    think_agent = isaa.get_agent_config_class("think").set_completion_mode('chat')  # .set_model_name('gpt-4')
+    thinkm_agent = isaa.get_agent_config_class("thinkm").set_completion_mode('chat')
+    execution_agent = isaa.get_agent_config_class("execution").set_completion_mode('chat')
+
+    execution_agent.stop_sequence = ['\n\n\n', "Execute:", "Observation:", "User:"]
+
+    think_agent.stream = True
+    thinkm_agent.stream = True
+    execution_agent.stream = True
 
     # new env isaa withs chains
-    print(isaa.config["agents-name-lsit"])
-    skills = []
-    agents = isaa.config["agents-name-lsit"]
-    task = """
-Create a beautiful html index page thats welcoms the user wit an cool animation to simple"""
-    alive = True
-    new_agent = isaa.config["agents-name-lsit"][-1]
-    if len(agents) != 3:
-        for agent_name in agents[3:]:
-            isaa.get_agent_config_class(agent_name)
-    while alive:
-        env_text = f"""Welcome, you are in a hostile environment, your name is isaa.
-you have several basic skills 1. creating agents 2. creating some agents 3. using skills, agents and tools
+    agents = isaa.config["agents-name-list"]
+    task = """Vervollständige die ai_collaboration_extension in dem du ein chat fester hinzufügst."""
 
-you have created {len(agents)}agents so far these are : {agents}.
-you have learned {len(skills)}skills so far these are : {skills}.
+    task = idea_enhancer(isaa, task, self_agent_config, chains, True)
 
-use your basic functions with the agent and skills to complete a task.
+    think_agent.get_messages(create=True)
+    think_agent.add_message("assistant", "Final Strategie:\n" + task)
 
-for your further support you have a python environment at your disposal. write python code to access it.
-if you have no ather wy then to ask for help write Question: 'your question'\nUser:
+    plan = isaa.run_agent(think_agent, '', mode_over_lode='planing')
 
-Task : {task}"""
+    think_agent.add_message("assistant", plan)
+    think_agent.add_message("system", "Break the plan into smaller steps if necessary. write the plan and the steps "
+                                      "so that it can be solved")
 
-        sim = isaa.run_agent(self_agent_config, env_text, mode_over_lode='execution')
-        task += str(sim)
+    step_step_plan = isaa.run_agent(think_agent, '')
 
-        if "user:" in sim.lower():
-            print("USER QUESTION")
-            task += input()
+    extracted_dict = generate_exi_dict(isaa, step_step_plan, True, list(self_agent_config.tools.keys()))
 
-        print(isaa.config["agents-name-lsit"])
-        agents = isaa.config["agents-name-lsit"]
+    print("Creating:", extracted_dict)
 
-        if new_agent != isaa.config["agents-name-lsit"][-1]:
-            new_agent = isaa.config["agents-name-lsit"][-1]
-            isaa.get_agent_config_class(new_agent).save_to_file()
-
-        print(split_todo_list(sim))
-        user_val = input("")
-        if user_val == "n":
-            alive = False
-        elif len(user_val) > 3:
-            task += "User: " + user_val
+    if extracted_dict:
+        run_chain_in_cmd(isaa, task, chains, extracted_dict, self_agent_config)
 
 
 def run_(app, args):
@@ -346,9 +375,3 @@ To overcome these obstacles, it may be necessary to prioritize tasks and allocat
 #     except ValueError and SyntaxError:
 #         self_agent_config.task_list = [user_imp + medium_plan]
 #     for_ex = medium_plan
-
-
-"""
-
-The task was to create a user-friendly web app with an interesting email box page. The agent was instructed to consider design, functionality, security, compatibility, and user feedback. The agent followed a step-by-step approach to design a visually appealing and easy-to-navigate email box page, implement functionality for composing, sending, and receiving emails, ensure security using encryption, test the page on different browsers and devices, and gather user feedback to improve the user experience. It is unclear from the given information whether the task was executed successfully. [[{'use': 'agent', 'name': 'think', 'args': 'Design a visually appealing and easy to navigate email box page with a color scheme that is easy on the eyes and a clean, organized layout.', 'return': '$design'}, "Sure, let's break it down into steps to design a visually appealing and easy to navigate email box page:\n\n1. Choose a color scheme that is easy on the eyes: Select colors that are not too bright or too dark, and that complement each other well. For example, a light blue background with dark blue text and white accents can be a good choice.\n\n2. Create a clean and organized layout: Use a grid system to organize the different elements of the email box page, such as the inbox, sent messages, and compose button. Make sure there is enough white space between elements to avoid clutter.\n\n3. Use clear and easy-to-read fonts: Choose a font that is easy to read, such as Arial or Helvetica, and use a consistent font size throughout the page.\n\n4. Add visual elements to enhance the design: Use icons or images to help users quickly identify different sections of the email box page, such as the inbox or compose button.\n\n5. Make sure the page is easy to navigate: Use clear and descriptive labels for buttons and links, and make sure the navigation is intuitive and easy to use.\n\nBy following these steps, you can design a visually appealing and easy to navigate email box page that is easy on the eyes and has a clean, organized layout."], [{'use': 'agent', 'name': 'think', 'args': 'Implement functionality for composing, sending, and receiving emails, as well as features such as search, filters, and labels to help users organize their emails.', 'return': '$functionality'}, 'Sure, here are some steps to implement the functionality for composing, sending, and receiving emails, as well as search, filters, and labels:\n\n1. Create a form for composing emails that includes fields for the recipient, subject, and message body.\n2. Implement a send button that sends the email to the recipient.\n3. Create a page for displaying received emails, with a list of emails and a preview of each email.\n4. Implement a feature to filter emails by sender, recipient, subject, or date.\n5. Create a system for adding labels to emails, such as "important" or "unread", and allow users to filter emails by label.\n6. Implement a search feature that allows users to search for emails by keyword or phrase.\n\nThese steps should help you implement the necessary functionality for a user-friendly email box page.'], [{'use': 'agent', 'name': 'think', 'args': 'Ensure the email box page is secure by using encryption to protect user data and implementing measures to prevent unauthorized access.', 'return': '$security'}, "Here are the steps to ensure the email box page is secure:\n\n1. Use HTTPS: Use HTTPS instead of HTTP to encrypt data in transit between the user's browser and the server.\n\n2. Use encryption: Use encryption to protect user data at rest on the server. This can be achieved by encrypting the database or using file-level encryption.\n\n3. Implement authentication: Implement authentication to ensure that only authorized users can access the email box page. This can be achieved by requiring users to log in with a username and password.\n\n4. Implement access controls: Implement access controls to ensure that users can only access the emails they are authorized to see. This can be achieved by assigning roles and permissions to users.\n\n5. Implement logging and monitoring: Implement logging and monitoring to detect and respond to security incidents. This can be achieved by logging user activity and monitoring the system for suspicious behavior.\n\n6. Regularly update software: Regularly update the software used to run the email box page to ensure that security vulnerabilities are patched."], [{'use': 'agent', 'name': 'think', 'args': 'Test the email box page on different browsers and devices to ensure compatibility and a smooth user experience for all users.', 'return': '$compatibility'}, '1. Identify the different browsers and devices that the email box page needs to be tested on.\n2. Set up testing environments for each of the identified browsers and devices.\n3. Test the email box page on each of the identified browsers and devices to ensure compatibility and a smooth user experience.\n4. Record any issues or bugs encountered during testing.\n5. Address any issues or bugs found during testing to ensure the email box page works well for all users.'], [{'use': 'agent', 'name': 'think', 'args': 'Gather user feedback and make changes based on their suggestions to create a better user experience.', 'return': '$user_feedback'}, 'Sure, here are the step-by-step instructions for gathering user feedback and making changes based on their suggestions to create a better user experience:\n\n1. Provide a feedback form: Create a feedback form that users can fill out to provide their suggestions and feedback. The form should be easy to use and accessible from the email box page.\n\n2. Encourage feedback: Encourage users to provide feedback by promoting the feedback form on the email box page and through other channels such as social media or email newsletters.\n\n3. Analyze feedback: Review the feedback received and identify common themes or issues that users are experiencing. Categorize the feedback into different areas such as design, functionality, or security.\n\n4. Prioritize changes: Prioritize the changes that need to be made based on the feedback received. Focus on the most critical issues first and work your way down the list.\n\n5. Implement changes: Make the necessary changes to the email box page based on the feedback received. Test the changes thoroughly to ensure they are working as intended.\n\n6. Communicate changes: Communicate the changes made to the email box page to users. Let them know that their feedback was heard and that changes were made based on their suggestions.\n\n7. Continue to gather feedback: Keep the feedback form accessible and continue to encourage users to provide feedback. Use the feedback received to make ongoing improvements to the email box page.']]
-"""

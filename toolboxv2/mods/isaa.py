@@ -8,6 +8,8 @@ from typing import Tuple, Any
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
+import subprocess
+import pickle
 import keyboard
 import requests
 from duckduckgo_search import ddg, ddg_answers, ddg_suggestions, ddg_news
@@ -165,6 +167,42 @@ def extract_code(x):
     return '', ''
 
 
+class Scripts:
+    def __init__(self, filename):
+        self.scripts = {}
+        self.filename = filename
+
+    def create_script(self, name, description, content, script_type="python"):
+        self.scripts[name] = {"description": description, "content": content, "type": script_type}
+
+    def run_script(self, name):
+        if name not in self.scripts:
+            return "Script not found!"
+        script = self.scripts[name]
+        with open(f"{name}.{script['type']}", "w") as f:
+            f.write(script["content"])
+        if script["type"] == "python":
+            result = subprocess.run(["python", f"{name}.py"], capture_output=True, text=True)
+        elif script["type"] == "bash":
+            result = subprocess.run(["bash", f"{name}.sh"], capture_output=True, text=True)
+        else:
+            os.remove(f"{name}.{script['type']}")
+            return "Not valid type valid ar python and bash"
+        os.remove(f"{name}.{script['type']}")
+        return result.stdout
+
+    def get_scripts_list(self):
+        return {name: script["description"] for name, script in self.scripts.items()}
+
+    def save_scripts(self):
+        with open(self.filename + '.pkl', "wb") as f:
+            pickle.dump(self.scripts, f)
+
+    def load_scripts(self):
+        with open(self.filename + '.pkl', "rb") as f:
+            self.scripts = pickle.load(f)
+
+
 class IsaaQuestionNode:
     def __init__(self, question, left=None, right=None):
         self.question = question
@@ -294,6 +332,8 @@ class AgentChain:
             self.add(name, chain)
 
     def add(self, name, tasks):
+        if '/' in name or '\\' in name:
+            name = name.replace('/', '-').replace('\\', '-')
         self.chains[name] = tasks
         for task in tasks:
             keys = task.keys()
@@ -316,7 +356,9 @@ class AgentChain:
             print(f"Chain '{name}' not found.")
 
     def get(self, name):
-        return self.chains_h[name]
+        if name in self.chains_h.keys():
+            return self.chains_h[name]
+        return {'name': 'unknown', 'tasks': []}
 
     def init_chain(self, name):
         self.save_to_file(name)
@@ -1026,9 +1068,9 @@ class PyEnvEval:
             return self.format_output(e)
 
     def get_env(self):
-        global_env_str = self.format_env(self.global_env)
+        # global_env_str = self.format_env(self.global_env)
         local_env_str = self.format_env(self.local_env)
-        return f"Globals:\n{global_env_str}\n\nLocals:\n{local_env_str}"
+        return f"Locals:\n{local_env_str}"
 
     @staticmethod
     def format_output(output):
@@ -1077,14 +1119,15 @@ system information's : {getSystemInfo()}
         self.mode: str = "talk"
         self.model_name: str = "gpt-3.5-turbo"
 
-        self.agent_type: AgentType = AgentType("structured-chat-zero-shot-react-description")#"zero-shot-react-description"
+        self.agent_type: AgentType = AgentType(
+            "structured-chat-zero-shot-react-description")  # "zero-shot-react-description"
         self.max_iterations: int = 2
         self.verbose: bool = True
 
         self.personality = ""
         self.goals = ""
         self.tools: dict = {
-            #"test_tool": {"func": lambda x: x, "description": "only for testing if tools are available",
+            # "test_tool": {"func": lambda x: x, "description": "only for testing if tools are available",
             #              "format": "test_tool(input:str):"}
         }
 
@@ -1136,7 +1179,7 @@ system information's : {getSystemInfo()}
         if len(self.task_list) != 0:
             task = self.task_list[self.task_index]
             return task
-        return "Task is done return Summarization for user"
+        return ""
 
     def clone(self):
 
@@ -1489,23 +1532,25 @@ Begin!"""
     @classmethod
     def load_from_file(cls, name):
         file_path = f".data/{get_app().id}/Memory/{name}.agent"
-        #with open(file_path, 'r') as f:
-        #    data = json.load(f)
+        with open(file_path, 'r') as f:
+            data = json.load(f)
         agent_config = cls(name)
-        #for key, value in data.items():
-        #    setattr(agent_config, key, value)
+        for key, value in data.items():
+            setattr(agent_config, key, value)
         return agent_config
 
 
 class Tools(MainTool, FileHandler):
 
     def __init__(self, app=None):
+        if app is None:
+            app = get_app()
         self.version = "0.0.2"
         self.name = "isaa"
         self.logger: logging.Logger or None = app.logger if app else None
         self.color = "VIOLET2"
         self.config = {'genrate_image-init': False,
-                       'agents-name-lsit': []
+                       'agents-name-list': []
                        }
         self.per_data = {}
         self.keys = {
@@ -1543,6 +1588,7 @@ class Tools(MainTool, FileHandler):
         self.summarization_mode = 0  # 0 to 2 0 huggingface 1 text
         self.summarization_limiter = 10200  # 0 to 2 0 huggingface 1 text
         self.speak = lambda x, *args, **kwargs: x
+        self.scripts = Scripts(app.id)
 
         FileHandler.__init__(self, "issa.config", app.id if app else __name__)
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
@@ -1574,6 +1620,7 @@ class Tools(MainTool, FileHandler):
         self.print("Isaa starting init fh, env, config")
         self.load_file_handler()
         self.load_keys_from_env()
+        self.scripts.load_scripts()
         config = self.get_file_handler(self.keys["Config"])
         if config is not None:
             self.config = eval(config)
@@ -1596,6 +1643,7 @@ class Tools(MainTool, FileHandler):
                 self.config[key] = False
         self.add_to_save_file_handler(self.keys["Config"], str(self.config))
         self.save_file_handler()
+        self.scripts.save_scripts()
 
     def info(self):
         self.print(self.config)
@@ -1734,6 +1782,14 @@ class Tools(MainTool, FileHandler):
             if os.path.exists(f".data/{get_app().id}/Memory/{name}.agent"):
                 config = AgentConfig.load_from_file(name)
 
+        def toggel(x):
+            x = x.lower()
+            if x in config.available_modes:
+                config.mode = x
+                return f"Switched to {config.mode}"
+
+            return f"Switched to {config.mode}"
+
         config.name = name
 
         if self.global_stream_override:
@@ -1809,7 +1865,6 @@ class Tools(MainTool, FileHandler):
 
             return ress
 
-
         if name == "self":
             self.config["self_agent_agents_"] = ["todolist"]
 
@@ -1837,17 +1892,12 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                                                                            f" you are known to think in small and detailed steps to get"
                                                                            f" the right result.\n\nInformation's:"
                                                                            f" {config.edit_text.text}\n\n Your task : {x}\n\n"
-                                                                           f"write and production redy code"),
+                                                                           f"write an production redy code"),
                                                "description": "Run agent to generate code."
                     , "format": "write-production-redy-code(<task>)"},
-                #"task-planing": {"func": lambda x: run_agent('thinkm',
-                #                                             f"You are a planner who is an expert at coming up with a todo list for a given objective."
-                #                                             f" you are known to think in small and detailed steps to get"
-                #                                             f" the right result.\n\nInformation's:"
-                #                                             f" {config.edit_text.text}\n\n"
-                #                                             f" Come up with a todo list for this objective: {x}\n\n"),
-                #                 "description": "Run agent to generate a to do list for this objective"
-                #                                , "format": "task-planing(<task>)"},
+                "mode_switch": {"func": lambda x: toggel(x),
+                                "description": f"switch the mode of the agent avalabel ar : {config.available_modes}"
+                    , "format": "mode_switch(<mode>)"},
                 "think": {"func": lambda x: run_agent('thinkm', x),
                           "description": "Run agent to solve a text based problem"
                     , "format": "programming(<task>)"},
@@ -1857,6 +1907,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                     , "format": "reminder(<detaild_discription>)"},
 
             }
+
         if name.startswith("langChainTools"):
             tools = {}
             for key, _tool in self.lang_chain_tools_list.items():
@@ -1937,7 +1988,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 "browse_url": {"func": lambda x: browse_url(x),
                                "description": "browse web page via URL syntax <url>"},
                 "search_web": {"func": lambda x: search_text(x),
-                                "description": "Use Duck Duck go to search the web systax <key word>"},
+                               "description": "Use Duck Duck go to search the web systax <key word>"},
                 # "search_news": {"func": lambda x: search_news(x),
                 #                 "description": "Use Duck Duck go to search the web for new get time"
                 #                                "related data systax <key word>"}
@@ -1962,6 +2013,12 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
             config.stop_sequence = ["\n\n\n"]
 
+        if name == "execution":
+            config. \
+                set_mode("execution") \
+                .set_max_iterations(4) \
+                .set_completion_mode("chat")
+
         if name == "isaa-chat-web":
             config. \
                 set_mode("talk") \
@@ -1972,8 +2029,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config. \
                 set_mode("free") \
                 .set_max_iterations(1) \
-                .set_completion_mode("chat")\
-                .set_model_name('gpt-3.5-turbo')\
+                .set_completion_mode("chat") \
+                .set_model_name('gpt-3.5-turbo') \
                 .set_pre_task("Act as an summary expert your specialties are writing summary. you are known to think "
                               "in small and detailed steps to get the right result. Your task :")
 
@@ -2040,7 +2097,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         path = self.observation_term_mem_file
         if not self.agent_collective_senses:
-            path += config.name + ".mem"
+            path += name + ".mem"
         else:
             path += 'CollectiveObservationMemory.mem'
 
@@ -2066,15 +2123,15 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
     def remove_agent_config(self, name):
         del self.config[f'agent-config-{name}']
-        self.config["agents-name-lsit"].remove(name)
+        self.config["agents-name-list"].remove(name)
 
     def get_agent_config_class(self, agent_name="Normal") -> AgentConfig:
 
-        if "agents-name-lsit" not in self.config.keys():
-            self.config["agents-name-lsit"] = []
+        if "agents-name-list" not in self.config.keys():
+            self.config["agents-name-list"] = []
 
-        if agent_name not in self.config["agents-name-lsit"]:
-            self.config["agents-name-lsit"].append(agent_name)
+        if agent_name not in self.config["agents-name-list"]:
+            self.config["agents-name-list"].append(agent_name)
             config = self.get_default_agent_config(agent_name)
             self.config[f'agent-config-{agent_name}'] = config
             print()
@@ -2164,16 +2221,20 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
             for text in agent_text.split('\n'):
 
+                text = text.strip()
+
                 if text.startswith("Execute:"):
                     text = text.replace("Execute:", "").strip()
                     for key, value in config.tools.items():
                         if key + '(' in text:
+                            text = text.strip()
                             return True, key, text
 
                 if text.startswith("Action:"):
                     text = text.replace("Action:", "").strip()
                     for key, value in config.tools.items():
                         if key + '(' in text:
+                            text = text.strip()
                             return True, key, text
 
         if config.mode == "execution":
@@ -2186,20 +2247,23 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             i = 0
             inputs_do = False
             for text in lines:
+                text = text.strip()
                 if text.startswith("Action:") and not valid_tool:
                     tool_name = text.replace("Action:", "").strip()
-                    self.print(Style.GREYBG(f"{tool_name}, {valid_tool}"))
                     for key in config.tools.keys():
                         if tool_name in key or tool_name.startswith(key) or tool_name.endswith(key):
                             valid_tool = True
                             run_key = key
-                            self.print(Style.GREYBG(f"Valid Tool"))
+                    self.print(Style.GREYBG(f"{tool_name}, {valid_tool}"))
                 if not valid_tool:
                     i += 1
                 if text.startswith("Inputs:"):
-                    print('Get inputs', text)
+                    self.print('Get inputs', text)
                     inputs = text.replace("Inputs:", "")
+                    inputs = inputs.strip()
                     inputs_do = True
+                    if run_key in config.tools.keys():
+                        valid_tool = True
 
                 if '(' in text:
                     function_name = text.split("(")[0]
@@ -2216,9 +2280,10 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                         text = text[1:]
                     if text.endswith('"'):
                         text = text[:1]
+                    text = text.strip()
                     inputs = text
                     inputs_do = True
-                    print('direct call detected', function_name)
+                    self.print('direct call detected', function_name)
                     valid_tool = True
                     run_key = function_name
                     break
@@ -2227,13 +2292,13 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 self.print(Style.GREYBG(f"{len(lines)}, {config.name}, {valid_tool}"))
                 if inputs_do:
                     return True, run_key, inputs
-                return True, run_key, ",".join(lines[i:]).replace(f"Action: {run_key}", "")
+                return True, run_key, ",".join(lines[i:]).replace(f"Action: {run_key}", "").strip()
 
         res = self.question_answering("What is the name of the action ?", agent_text)
         if res['score'] > 0.3:
             pos_actions: list[str] = res['answer'].replace("\n", "").split(' ')
             items = set(config.tools.keys())
-            print(agent_text[res['end']:].split('\n'))
+            self.print(Style.BLUEBG(str(agent_text[res['end']:].split('\n'))))
             text_list = agent_text[res['end']:].split('\n')
             text = text_list[0]
             if len(text_list) > 1:
@@ -2244,13 +2309,14 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             for p_ac in pos_actions:
                 if p_ac in items:
                     print()
+                    text = text.strip()
                     self.print(f"AI Execute Action {p_ac} {text}|")
                     return True, p_ac, text.replace('Inputs:', '')
 
         return False, "", ""
 
     @staticmethod
-    def test_task_done(agent_text, config=AgentConfig):
+    def test_task_done(agent_text):
 
         done = False
 
@@ -2269,7 +2335,21 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
     def run_tool(self, command, function_name, config=AgentConfig):
 
-        args = command.replace(function_name + "(", "").replace(function_name, "").split(",")
+        str_args = True
+        args = ''
+        args_len_c = 0
+
+        if command.startswith("{") and command.endswith("}"):
+            try:
+                args = eval(command)
+                args_len_c = len(list(args.keys()))
+                str_args = False
+            except Exception:
+                str_args = True
+
+        if str_args:
+            args = command.replace(function_name + "(", "").replace(function_name, "").split(",")
+            args_len_c = len(args)
 
         if not function_name in config.tools.keys():
             self.print(f"Unknown Function {function_name} valid ar : {config.tools.keys()}")
@@ -2281,18 +2361,27 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         args_len = len(sig.parameters)
         self.print(f"Runing : {function_name}")
         self.print(
-            f"signature : {sig} | fuction args len : {args_len} | providet nubers of args {len(args)}")
+            f"signature : {sig} | fuction args len : {args_len} | providet nubers of args {args_len_c}")
 
         observation = "Problem running function"
 
         if args_len == 0:
             observation = tool['func']()
 
-        if args_len == len(args):
+        if args_len == args_len_c:
             observation = tool['func'](*args)
 
-        if args_len == 1 and len(args) > 1:
-            observation = tool['func'](",".join(args))
+        if args_len == 1 and args_len_c > 1 and args_len < args_len_c:
+            if str_args:
+                observation = tool['func'](",".join(args))
+            else:
+                observation = tool['func'](args)
+
+        if args_len > args_len_c:
+            if not str_args:
+                observation = tool['func'](**args)
+
+        self.print("Observation : " + observation)
 
         path = self.observation_term_mem_file
         if not self.agent_collective_senses:
@@ -2310,7 +2399,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             # try:
             observation = self.summarize_dict(observation, config)
 
-        if not observation or observation == None:
+        if not observation or observation is None:
             observation = "Problem running function try run with mor detaiels"
 
         config.short_mem.text = observation
@@ -2403,29 +2492,33 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config.add_system_information = sto
         elif self.config[f'agent-config-{name}'].mode == "execution":
             self.logger.info(f"stream mode: {stream}")
-            out = self.stream_read_llm(text, config)
-            if not stream:
-                self.print_stream("execution-free : " + out)
-            print()
-            config.short_mem.text = out
-            t0 = time.time()
-            self.logger.info(f"analysing repose")
-            self.logger.info(f"analysing test_use_tools")
-            with Spinner('analysing repose', symbols='+'):
-                use_tool, func_name, command_ = self.test_use_tools(out, config)
-            self.logger.info(f"analysing test_task_done")
-            task_done = self.test_task_done(out, config)
-            self.logger.info(f"don analysing repose in t-{time.time() - t0}")
-            if use_tool:
-                self.print(f"Using-tools: {func_name} {command_}")
-                ob = self.run_tool(command_, func_name, config)
-                config.observe_mem.text = ob
-                out += "\nObservation: " + ob
-            if task_done:  # new task
-                # self.speek("Ist die Aufgabe abgeschlossen?")
-                if config.short_mem.tokens > 50:
-                    with Spinner('Saving work Memory', symbols='t'):
-                        config.short_mem.clear_to_collective()
+            for i in range(self.config[f'agent-config-{name}'].max_iterations):
+                out += self.stream_read_llm(text, config)
+                if not stream:
+                    self.print_stream("execution-free : " + out)
+                print()
+                config.short_mem.text = out
+                t0 = time.time()
+                self.logger.info(f"analysing repose")
+                self.logger.info(f"analysing test_use_tools")
+                with Spinner('analysing repose', symbols='+'):
+                    use_tool, func_name, command_ = self.test_use_tools(out, config)
+                self.logger.info(f"analysing test_task_done")
+                task_done = self.test_task_done(out)
+                self.logger.info(f"don analysing repose in t-{time.time() - t0}")
+                if use_tool:
+                    self.print(f"Using-tools: {func_name} {command_}")
+                    ob = self.run_tool(command_, func_name, config)
+                    config.observe_mem.text = ob
+                    out += "\nObservation: " + ob
+                if task_done:  # new task
+                    self.print(f"Task done")
+                    # self.speek("Ist die Aufgabe abgeschlossen?")
+                    if config.short_mem.tokens > 50:
+                        with Spinner('Saving work Memory', symbols='t'):
+                            config.short_mem.clear_to_collective()
+                    break
+
         else:
             out = self.stream_read_llm(text, config)
             if not stream:
@@ -2450,7 +2543,9 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             py_code, type_ = extract_code(out)
             if type_.lower() == 'python':
                 self.print("Executing Python code")
-                out += '\n\nPython\n'+self.config[f'agent-config-{name}'].python_env.run_and_display(py_code)
+                py_res = self.config[f'agent-config-{name}'].python_env.run_and_display(py_code)
+                out += '\n\nPython\n' + py_res
+                self.print(f"Result : {py_res}\n")
 
         config.short_mem.text = f"\n\n{config.name} RESPONSE:\n{out}\n\n"
 
@@ -2598,15 +2693,28 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                         args = args.replace(c_key, chain_data[c_key])
                 if use == "tool":
                     ret = self.run_tool(args, task_name, config)
+
+                if use == "expyd" or use == "chain":
+                    evaluation, chain_ret = self.execute_thought_chain(
+                        args, self.get_chain().get(task_name), config)
+                    ret = self.run_tool(args, task_name, config)
+
                 if use == "agent":
                     if config.mode == 'free':
                         config.task_list.append(args)
-                    ret = self.run_agent(config, args + " Answer: Let's work this out in a step by step " \
-                                                        "way to be sure we have the right answer")
+                    if config.completion_mode == 'chat':
+                        config.get_messages(create=True)
+                        config.add_message('system', config.short_mem.text)
+                        config.add_message('user', args)
+                        ret = self.run_agent(config, '')
+                    else:
+                        ret = self.run_agent(config, args)
                 if use == 'function':
                     if 'function' in keys:
                         if callable(task['function']) and chain_ret:
-                            task['function'](chain_ret[-1][1])
+                            ret = task['function'](chain_ret[-1][1])
+                        else:
+                            ret = self.scripts.run_script(task_name)
 
                 if 'short-mem' in keys:
                     if task['short-mem'] == "summary":

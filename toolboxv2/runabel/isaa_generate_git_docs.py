@@ -2,6 +2,8 @@
 import random
 import time
 
+import tiktoken
+
 from toolboxv2 import Style, Spinner
 from toolboxv2.utils.isaa_util import sys_print, run_agent_cmd, init_isaa, download_github_project, \
     get_code_files
@@ -17,7 +19,7 @@ NAME = "isaa-gitDocs"
 
 def run(app, args):
     isaa, self_agent_config, chains = init_isaa(app, speak_mode=args.speak, init_pipe=False, ide=True, create=False,
-                                                join_now=True, override_file_functions_user_input=True,
+                                                join_now=True,
                                                 global_stream_override=True)
 
     # slauw87/bart_summarisation
@@ -31,13 +33,14 @@ def run(app, args):
     isaa.get_context_memory().load_all()
     print("Starring")
     isaa_memory = isaa.get_context_memory()
+    isaa.get_chain().load_from_file()
 
     isaa.get_agent_config_class("think").set_model_name("gpt-3.5-turbo").stream = True
     # get project in isaa_work dir
     repo_url = "https://github.com/MarkinHaus/ToolBoxV2.git"
     branch = "init-isaa"
-    destination_folder = "isaa_work/toolbox/"
-    project_name = "toolboxv2"
+    destination_folder = "isaa_work/ai_collaboration_extension/"
+    project_name = "ai_collaboration_extension"
 
     # download_github_project(repo_url, branch, destination_folder)
 
@@ -51,17 +54,17 @@ def run(app, args):
         "GPT-4-p": 0.03,
         "GPT-4-c": 0.06,
     }
-    # for file in code_and_md_files:
-    #    with open("isaa_work/"+file, 'r', encoding='utf-8') as f:
-    #        tokens += len(tiktoken.encoding_for_model("gpt-3.5-turbo").encode(f.read()))
-    #
-    # out = ((tokens*3.7)/1000)*prices['gpt-3.5-turbo']
-    # inp = (tokens/1000)*prices['gpt-3.5-turbo']
-    # print(f"ALL of tokens : {tokens} text input price : ${inp}\n"
-    #      f"estimated output price :${out} \nfull price {inp+out}")
-    #
-    # if input(" AKZEPTIREN :") not in ['y']:
-    #    return
+    for file in code_and_md_files:
+       with open("isaa_work/"+file, 'r', encoding='utf-8') as f:
+           tokens += len(tiktoken.encoding_for_model("gpt-3.5-turbo").encode(f.read()))
+
+    out = ((tokens*3.7)/1000)*prices['gpt-3.5-turbo']
+    inp = (tokens/1000)*prices['gpt-3.5-turbo']
+    print(f"ALL of tokens : {tokens} text input price : ${inp}\n"
+         f"estimated output price :${out} \nfull price {inp+out}")
+
+    if input(" AKZEPTIREN :") not in ['y']:
+       return
 
     self_agent_config.stream = True
 
@@ -80,19 +83,19 @@ def run(app, args):
 
     print(code_and_md_files)
 
-    code_and_md_files = [
-        'toolbox/toolboxv2\\main_tool.py',
-        'toolbox/toolboxv2\\__init__.py', 'toolbox/toolboxv2\\api\\fast_api.py',
-        'toolbox/toolboxv2\\api\\fast_api_install.py', 'toolbox/toolboxv2\\api\\fast_api_main.py',
-        'toolbox/toolboxv2\\api\\fast_app.py', 'toolbox/toolboxv2\\api\\util.py',
-        'toolbox/toolboxv2\\mods\\api_manager.py',
-        'toolbox/toolboxv2\\mods\\cloudM.py', 'toolbox/toolboxv2\\mods\\DB.py', 'toolbox/toolboxv2\\mods\\isaa.py',
-        'toolbox/toolboxv2\\mods\\isaa_audio.py',
-        'toolbox/toolboxv2\\mods\\isaa_ide.py', 'toolbox/toolboxv2\\runabel\\isaa_conversation.py',
-        'toolbox/toolboxv2\\runabel\\isaa_init_chains.py',
-        'toolbox/toolboxv2\\utils\\file_handler.py', 'toolbox/toolboxv2\\utils\\isaa_util.py',
-        'toolbox/toolboxv2\\utils\\Style.py', 'toolbox/toolboxv2\\utils\\TBConfig.py',
-        'toolbox/toolboxv2\\utils\\tb_logger.py', 'toolbox/toolboxv2\\utils\\toolbox.py']
+   #code_and_md_files = [
+   #    'toolbox/toolboxv2\\main_tool.py',
+   #    'toolbox/toolboxv2\\__init__.py', 'toolbox/toolboxv2\\api\\fast_api.py',
+   #    'toolbox/toolboxv2\\api\\fast_api_install.py', 'toolbox/toolboxv2\\api\\fast_api_main.py',
+   #    'toolbox/toolboxv2\\api\\fast_app.py', 'toolbox/toolboxv2\\api\\util.py',
+   #    'toolbox/toolboxv2\\mods\\api_manager.py',
+   #    'toolbox/toolboxv2\\mods\\cloudM.py', 'toolbox/toolboxv2\\mods\\DB.py', 'toolbox/toolboxv2\\mods\\isaa.py',
+   #    'toolbox/toolboxv2\\mods\\isaa_audio.py',
+   #    'toolbox/toolboxv2\\mods\\isaa_ide.py', 'toolbox/toolboxv2\\runabel\\isaa_conversation.py',
+   #    'toolbox/toolboxv2\\runabel\\isaa_init_chains.py',
+   #    'toolbox/toolboxv2\\utils\\file_handler.py', 'toolbox/toolboxv2\\utils\\isaa_util.py',
+   #    'toolbox/toolboxv2\\utils\\Style.py', 'toolbox/toolboxv2\\utils\\TBConfig.py',
+   #    'toolbox/toolboxv2\\utils\\tb_logger.py', 'toolbox/toolboxv2\\utils\\toolbox.py']
 
     for file in code_and_md_files:
         do_on_file(file)
