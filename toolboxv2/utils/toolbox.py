@@ -16,6 +16,11 @@ import toolboxv2
 import logging
 from dotenv import load_dotenv
 
+import json
+from pygments import highlight
+from pygments.lexers import JsonLexer
+from pygments.formatters import TerminalFormatter
+
 load_dotenv()
 
 
@@ -385,6 +390,11 @@ class App(metaclass=Singleton):
         for i in obj_work:
             s += str(i) + " "
         return s
+
+    @staticmethod
+    def pretty_print_dict(data):
+        json_str = json.dumps(data, sort_keys=True, indent=4)
+        print(highlight(json_str, JsonLexer(), TerminalFormatter()))
 
     def autocompletion(self, command):
         options = []

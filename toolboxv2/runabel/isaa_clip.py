@@ -1,3 +1,5 @@
+import platform
+
 import keyboard
 
 # pyperclip.copy('The text to be copied to the clipboard.')
@@ -168,7 +170,7 @@ def run_chad(isaa: Isaa, user_text, self_agent_config):
         .set_completion_mode('text') \
         .set_model_name('gpt-3.5-turbo') \
         .stream = False
-    #user_text = 'cloudM.py'
+    # user_text = 'cloudM.py'
     sys_print("USER0: " + user_text)
 
     isaa.get_agent_config_class("think").set_model_name('gpt-4').stream = True
@@ -200,15 +202,15 @@ def run_chad(isaa: Isaa, user_text, self_agent_config):
     # self_agent_config.short_mem.max_length = 2676*4.3
 
     while not task_done:
-        #try:
+        # try:
         evaluation, chain_ret = isaa.execute_thought_chain(user_text, chain_instance.get(chain),
-                                                              self_agent_config)
-        #except Exception as e:
+                                                           self_agent_config)
+        # except Exception as e:
         #    print(e, '🔴')
         #    return "ERROR"
         evaluation = evaluation[::-1][:300][::-1]
         pipe_res = pipe(evaluation)
-        #aweeeewedspeak(f"The evaluation of the chain is {evaluation} i am {int(pipe_res[0]['score'])*10} Peasant sure")
+        # aweeeewedspeak(f"The evaluation of the chain is {evaluation} i am {int(pipe_res[0]['score'])*10} Peasant sure")
         print(chain_ret)
         print(pipe_res)
         if pipe_res[0]['label'] == "NEGATIVE":
@@ -240,25 +242,9 @@ def run_generate_exi_dict(isaa: Isaa, user_text, self_agent_config):
     return res
 
 
-def run(app, args):
-    speak_mode = args.speak
-    # Trigger word to process the text
-    trigger_word = '##i'
-    trigger_word_editor = '##e'
-    trigger_word_chad = '##c'
-    trigger_idea_dev = '##h'
-    trigger_gen_dic = '##g'
+def get_buffer(buffer):
+    if platform.system() != "Darwin":
 
-    print(f"Script running in the background")
-
-    isaa, self_agent_config, chains = init_isaa(app, speak_mode=speak_mode, calendar=True, ide=True, create=True)
-
-    idea_enhancer(isaa, '', self_agent_config, chains, create_agent=True)
-    generate_exi_dict(isaa, '', create_agent=True, tools=None, retrys=0)
-    print("init completed waiting for trigger word: ")
-    buffer = ' ' * 8
-    alive = True
-    while alive:
         event = keyboard.read_event()
 
         if event.event_type == keyboard.KEY_DOWN:
@@ -273,109 +259,134 @@ def run(app, args):
 
             if buffer.endswith("isaa-exit"):
                 alive = False
+    else:
+        return input(":")
 
-            if buffer.endswith("isaa-clear"):
-                self_agent_config.short_mem.memory_data = []
-                self_agent_config.observe_mem.memory_data = []
-                self_agent_config.edit_text.memory_data = []
-                isaa.get_chain().load_from_file()
-                print("Memory cleared")
 
-            if buffer.endswith(trigger_word):
-                print("Isaa Running N\n")
-                context = pyperclip.paste()
+def run(app, args):
+    speak_mode = args.speak
+    # Trigger word to process the text
+    trigger_word = '##i'
+    trigger_word_editor = '##e'
+    trigger_word_chad = '##c'
+    trigger_idea_dev = '##h'
+    trigger_gen_dic = '##g'
 
-                if context:
-                    self_agent_config.short_mem.text = context
+    print(f"Script running in the background")
 
-                user_text = get_input(speek_mode=speak_mode)
+    isaa, self_agent_config, chains = init_isaa(app, speak_mode=speak_mode, calendar=True, ide=True, create=True)
 
-                res = run_agent_clip(app, user_text, self_agent_config, sys_print, isaa.speak, get_input, speak_mode)
+    idea_enhancer(isaa, '', self_agent_config, chains, create_agent=True)
+    generate_exi_dict(isaa, '', create_agent=True, tools=self_agent_config.tools, retrys=0)
+    print("init completed waiting for trigger word: ")
+    buffer = ' ' * 8
+    alive = True
+    while alive:
 
-                if res:
-                    print("Agent:", res)
-                    pyperclip.copy(res)
+        buffer = get_buffer(buffer)
 
-                buffer = ' ' * 8
-                print("waiting for trigger word:: ")
+        if buffer.endswith("isaa-clear"):
+            self_agent_config.short_mem.memory_data = []
+            self_agent_config.observe_mem.memory_data = []
+            self_agent_config.edit_text.memory_data = []
+            isaa.get_chain().load_from_file()
+            print("Memory cleared")
 
-            if buffer.endswith(trigger_word_editor):
+        if buffer.endswith(trigger_word):
+            print("Isaa Running N\n")
+            context = pyperclip.paste()
 
-                print("Isaa Running E\n")
-                context = pyperclip.paste()
+            if context:
+                self_agent_config.short_mem.text = context
 
-                if context:
-                    self_agent_config.edit_text.text = context
+            user_text = get_input(speek_mode=speak_mode)
 
-                user_text = get_input(speek_mode=speak_mode)
+            res = run_agent_clip(app, user_text, self_agent_config, sys_print, isaa.speak, get_input, speak_mode)
 
-                res = run_editor(isaa, user_text, self_agent_config)
+            if res:
+                print("Agent:", res)
+                pyperclip.copy(res)
 
-                if res:
-                    print("Agent:", res)
-                    pyperclip.copy(res)
+            buffer = ' ' * 8
+            print("waiting for trigger word:: ")
 
-                buffer = ' ' * 8
-                print("waiting for trigger word:: ")
+        if buffer.endswith(trigger_word_editor):
 
-            if buffer.endswith(trigger_word_chad):
+            print("Isaa Running E\n")
+            context = pyperclip.paste()
 
-                print("Isaa Running C\n")
-                context = pyperclip.paste()
+            if context:
+                self_agent_config.edit_text.text = context
 
-                if context:
-                    self_agent_config.edit_text.text = context
+            user_text = get_input(speek_mode=speak_mode)
 
-                user_text = get_input(speek_mode=speak_mode)
+            res = run_editor(isaa, user_text, self_agent_config)
 
-                res = run_chad(isaa, user_text, self_agent_config)
+            if res:
+                print("Agent:", res)
+                pyperclip.copy(res)
 
-                if res:
-                    isaa.speak(res)
-                    print("Agent:", res)
-                    pyperclip.copy(res)
+            buffer = ' ' * 8
+            print("waiting for trigger word:: ")
 
-                buffer = ' ' * 8
-                print("waiting for trigger word:: ")
+        if buffer.endswith(trigger_word_chad):
 
-            if buffer.endswith(trigger_idea_dev):
+            print("Isaa Running C\n")
+            context = pyperclip.paste()
 
-                print("Isaa Running C\n")
-                context = pyperclip.paste()
+            if context:
+                self_agent_config.edit_text.text = context
 
-                if context:
-                    self_agent_config.edit_text.text = context
+            user_text = get_input(speek_mode=speak_mode)
 
-                user_text = get_input(speek_mode=speak_mode)
+            res = run_chad(isaa, user_text, self_agent_config)
 
-                res = run_idea_development(isaa, user_text, chains, self_agent_config)
+            if res:
+                isaa.speak(res)
+                print("Agent:", res)
+                pyperclip.copy(res)
 
-                if res:
-                    isaa.speak(res)
-                    print("Agent:", res)
-                    pyperclip.copy(res)
+            buffer = ' ' * 8
+            print("waiting for trigger word:: ")
 
-                buffer = ' ' * 8
-                print("waiting for trigger word:: ")
+        if buffer.endswith(trigger_idea_dev):
 
-            if buffer.endswith(trigger_gen_dic):
+            print("Isaa Running C\n")
+            context = pyperclip.paste()
 
-                print("Isaa Running C\n")
-                context = pyperclip.paste()
+            if context:
+                self_agent_config.edit_text.text = context
 
-                if context:
-                    self_agent_config.edit_text.text = context
+            user_text = get_input(speek_mode=speak_mode)
 
-                user_text = get_input(speek_mode=speak_mode)
+            res = run_idea_development(isaa, user_text, chains, self_agent_config)
 
-                res = run_generate_exi_dict(isaa, context+'\n'+user_text, self_agent_config)
+            if res:
+                isaa.speak(res)
+                print("Agent:", res)
+                pyperclip.copy(res)
 
-                if res:
-                    isaa.speak(res)
-                    print("Agent:", res)
-                    pyperclip.copy(str(res))
+            buffer = ' ' * 8
+            print("waiting for trigger word:: ")
 
-                buffer = ' ' * 8
-                print("waiting for trigger word:: ")
+        if buffer.endswith(trigger_gen_dic):
+
+            print("Isaa Running C\n")
+            context = pyperclip.paste()
+
+            if context:
+                self_agent_config.edit_text.text = context
+
+            user_text = get_input(speek_mode=speak_mode)
+
+            res = run_generate_exi_dict(isaa, context + '\n' + user_text, self_agent_config)
+
+            if res:
+                isaa.speak(res)
+                print("Agent:", res)
+                pyperclip.copy(str(res))
+
+            buffer = ' ' * 8
+            print("waiting for trigger word:: ")
 
     print("\nExiting...")

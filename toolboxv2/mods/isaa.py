@@ -1339,6 +1339,13 @@ You can call functions using the following syntax:
 Action: Function-Name
 Inputs: Inputs
 Execute:
+Observations:
+Conclusion: <conclusion>
+Outline of the next step:
+Action: Function-Name
+...
+Final Answer:
+// Return Final Answer: wen you ar don execution
 
 To successfully execution the plan, it is important to pay attention to writing "Execute:" to execute the function.
 If additional user input is needed during the execution process,
@@ -1582,7 +1589,7 @@ class Tools(MainTool, FileHandler):
         self.agent_collective_senses = False
         self.global_stream_override = False
         self.pipes_device = 1
-        self.lang_chain_tools_list = {}
+        self.lang_chain_tools_dict = {}
         self.agent_chain = AgentChain()
         self.agent_memory = AIContextMemory()
         self.summarization_mode = 0  # 0 to 2 0 huggingface 1 text
@@ -1776,6 +1783,16 @@ class Tools(MainTool, FileHandler):
 
         config.tools.update(tool)
 
+    def add_lang_chain_tools_to_agent(self, agent, tools=None):
+
+        if tools is None:
+            tools = {}
+        for key, _tool in self.lang_chain_tools_dict.items():
+            tools[key] = {"func": _tool, "description": _tool.description, "format": f"{key}({_tool.args})",
+                          'langchain-tool': True}
+
+        agent.set_tools(tools)
+
     def get_default_agent_config(self, name="Normal") -> AgentConfig:
         config = AgentConfig(name)
         if name != "Normal":
@@ -1908,9 +1925,9 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
             }
 
-        if name.startswith("langChainTools"):
+        if "tools" in name:
             tools = {}
-            for key, _tool in self.lang_chain_tools_list.items():
+            for key, _tool in self.lang_chain_tools_dict.items():
                 tools[key] = {"func": _tool, "description": _tool.description, "format": f"{key}({_tool.args})"}
             config. \
                 set_mode("tools") \
@@ -2017,7 +2034,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config. \
                 set_mode("execution") \
                 .set_max_iterations(4) \
-                .set_completion_mode("chat")
+                .set_completion_mode("chat")\
+                .set_model_name("gpt-4-0613")
 
         if name == "isaa-chat-web":
             config. \
@@ -2258,7 +2276,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 if not valid_tool:
                     i += 1
                 if text.startswith("Inputs:"):
-                    self.print('Get inputs', text)
+                    self.print(f'Inputs detracted')
                     inputs = text.replace("Inputs:", "")
                     inputs = inputs.strip()
                     inputs_do = True
@@ -2331,6 +2349,9 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             if line.startswith("Thought: I now know the final answer"):
                 done = True
 
+            if "Final Answer:" in line:
+                done = True
+
         return done
 
     def run_tool(self, command, function_name, config=AgentConfig):
@@ -2366,18 +2387,29 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         observation = "Problem running function"
 
         if args_len == 0:
+            self.logger.info("Running with no arguments")
             observation = tool['func']()
 
         if args_len == args_len_c:
+            self.logger.info("Running with matching arguments")
             observation = tool['func'](*args)
 
         if args_len == 1 and args_len_c > 1 and args_len < args_len_c:
+            self.logger.info("Running with one or more then one arguments")
             if str_args:
                 observation = tool['func'](",".join(args))
             else:
                 observation = tool['func'](args)
 
+        if args_len == 2:
+            self.logger.info("Running with one arguments and one None state")
+            if str_args:
+                observation = tool['func'](",".join(args), None)
+            else:
+                observation = tool['func'](args, None)
+
         if args_len > args_len_c:
+            self.logger.info("Matching keyword")
             if not str_args:
                 observation = tool['func'](**args)
 
@@ -2563,10 +2595,17 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         default_mode_ = config.mode
         default_completion_mode_ = config.completion_mode
+        config.completion_mode = "chat"
+        config.get_messages(create=True)
+        sto_name = config.name
         sto_config = None
         chain_mem = self.get_context_memory()
+        self.logger.info(Style.GREY(f"Starting Chain {agent_tasks}"))
+        config.stop_sequence = ['\n\n', "Execute:", "Observation:", "User:"]
         for task in agent_tasks:
 
+            self.logger.info(Style.GREY(f"{type(task)}, {task}"))
+            chain_ret_ = []
             config.mode = "free"
             config.completion_mode = "chat"
 
@@ -2581,59 +2620,45 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             if use == 'agent':
                 sto_config, config = config, self.get_agent_config_class(task_name)
 
-            self.print(f"Running task {args}")
+            self.print(f"Running task:{steps} {args}")
 
             default_mode = config.mode
             default_completion_mode = config.completion_mode
 
             if 'mode' in keys:
                 config.mode = task['mode']
+                self.logger.info(Style.GREY(f"In Task {steps} detected 'mode' {config.mode}"))
             if 'completion-mode' in keys:
                 config.completion_mode = task['completion-mode']
+                self.logger.info(Style.GREY(f"In Task {steps} detected 'completion-mode' {config.completion_mode}"))
 
             if "infos" in keys:
                 config.short_mem.text += task['infos']
+                self.logger.info(Style.GREY(f"In Task {steps} detected 'info' {task['infos'][:15]}..."))
 
             chain_data['$edit-text-mem'] = config.edit_text.text
 
             speak(f"Chain running {task_name} at step {steps} with the input : {args}")
 
             if 'chuck-run-all' in keys:
-
+                self.logger.info(Style.GREY(f"In Task {steps} detected 'chuck-run-all'"))
+                chunk_num = -1
                 for chunk in chain_data[task['chuck-run-all']]:
-
+                    chunk_num += 1
+                    self.logger.info(Style.GREY(f"In chunk {chunk_num}"))
                     if not chunk:
+                        self.logger.warning(Style.YELLOW(f"In chunk {chunk_num} no detected 'chunk' detected"))
                         continue
+
+                    self.logger.info(Style.GREY(f"detected 'chunk' {str(chunk)[:15]}..."))
 
                     args_ = args.replace(task['chuck-run-all'], str(chunk))
 
-                    if use == "tool":
-                        ret = self.run_tool(args_, task_name, config)
-
-                    if use == "agent":
-                        if config.mode == 'free':
-                            config.task_list.append(args_)
-                        ret = self.run_agent(config, args_, mode_over_lode=config.mode)
-
-                    if use == 'function':
-                        if 'function' in keys:
-                            if callable(task['function']) and chain_ret:
-                                task['function'](chain_ret[-1][1])
-
-                    if 'short-mem' in keys:
-                        if task['short-mem'] == "summary":
-                            short_mem = config.short_mem.text
-                            if short_mem != sum_sto:
-                                config.short_mem.clear_to_collective()
-                                config.short_mem.text = self.mas_text_summaries(short_mem)
-                            else:
-                                sum_sto = short_mem
-                        if task['short-mem'] == "full":
-                            pass
-                        if task['short-mem'] == "clear":
-                            config.short_mem.clear_to_collective()
+                    ret, sum_sto, chain_ret_ = self.chain_cor_runner(use, task_name, args_, config, sto_name, task, steps, keys,
+                                                        chain_ret, sum_sto)
 
             elif 'chuck-run' in keys:
+                self.logger.info(Style.GREY(f"In Task {steps} detected 'chuck-run'"))
                 rep = chain_mem.vector_store[uesd_mem[task['chuck-run']]]['represent']
                 if len(rep) == 0:
                     self.get_context_memory().crate_live_context(uesd_mem[task['chuck-run']])
@@ -2649,85 +2674,32 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                     t = self.get_agent_config_class('thinkm')
                     ret = self.run_agent(t, action)
                 ret_chunk = []
+                chunk_num = -1
                 for chunk_vec in rep:
-                    ret_ = ''
+                    chunk_num += 1
+                    self.logger.info(Style.GREY(f"In chunk {chunk_num}"))
                     if not chunk_vec:
+                        self.logger.warning(Style.YELLOW(f"In chunk {chunk_num} no detected 'chunk' detected"))
                         continue
 
                     chunk = chain_mem.hydrate_vectors(uesd_mem[task['chuck-run']], chunk_vec)
 
                     args_ = args.replace(task['chuck-run'], str(chunk[0].page_content))
 
-                    if use == "tool":
-                        ret_ = self.run_tool(args_, task_name, config)
-
-                    if use == "agent":
-                        if config.mode == 'free':
-                            config.task_list.append(args_)
-                        ret_ = self.run_agent(config, args_, mode_over_lode=config.mode)
-
-                    if use == 'function':
-                        if 'function' in keys:
-                            if callable(task['function']) and chain_ret:
-                                ret_ = task['function'](chain_ret[-1][1])
-
-                    ret_chunk.append(ret_)
-
-                    if 'short-mem' in keys:
-                        if task['short-mem'] == "summary":
-                            short_mem = config.short_mem.text
-                            if short_mem != sum_sto:
-                                config.short_mem.clear_to_collective()
-                                config.short_mem.text = self.mas_text_summaries(short_mem)
-                            else:
-                                sum_sto = short_mem
-                        if task['short-mem'] == "full":
-                            pass
-                        if task['short-mem'] == "clear":
-                            config.short_mem.clear_to_collective()
-                continue
+                    ret, sum_sto, chain_ret_ = self.chain_cor_runner(use, task_name, args_, config, sto_name, task, steps,
+                                                        keys,
+                                                        chain_ret, sum_sto)
+                    ret_chunk.append(ret)
+                ret = ret_chunk
 
             else:
                 for c_key in chain_data.keys():
                     if c_key in args:
-                        args = args.replace(c_key, chain_data[c_key])
-                if use == "tool":
-                    ret = self.run_tool(args, task_name, config)
+                        args = args.replace(c_key, str(chain_data[c_key]))
 
-                if use == "expyd" or use == "chain":
-                    evaluation, chain_ret = self.execute_thought_chain(
-                        args, self.get_chain().get(task_name), config)
-                    ret = self.run_tool(args, task_name, config)
-
-                if use == "agent":
-                    if config.mode == 'free':
-                        config.task_list.append(args)
-                    if config.completion_mode == 'chat':
-                        config.get_messages(create=True)
-                        config.add_message('system', config.short_mem.text)
-                        config.add_message('user', args)
-                        ret = self.run_agent(config, '')
-                    else:
-                        ret = self.run_agent(config, args)
-                if use == 'function':
-                    if 'function' in keys:
-                        if callable(task['function']) and chain_ret:
-                            ret = task['function'](chain_ret[-1][1])
-                        else:
-                            ret = self.scripts.run_script(task_name)
-
-                if 'short-mem' in keys:
-                    if task['short-mem'] == "summary":
-                        short_mem = config.short_mem.text
-                        if short_mem != sum_sto:
-                            config.short_mem.clear_to_collective()
-                            config.short_mem.text = self.mas_text_summaries(short_mem)
-                        else:
-                            sum_sto = short_mem
-                    if task['short-mem'] == "full":
-                        pass
-                    if task['short-mem'] == "clear":
-                        config.short_mem.clear_to_collective()
+                ret, sum_sto, chain_ret_ = self.chain_cor_runner(use, task_name, args, config, sto_name, task, steps,
+                                                    keys,
+                                                    chain_ret, sum_sto)
 
             if 'validate' in keys:
                 self.print("Validate task")
@@ -2754,6 +2726,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             speak(f"Step {steps} with response {ret}")
 
             if "return" in keys:
+                if chain_ret_:
+                    ret = chain_ret_
                 if 'text-splitter' in keys:
                     mem = self.get_context_memory()
                     sep = ''
@@ -2793,6 +2767,50 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                               f"Produce a summarization of what happened "
                               f"(max 1 paragraph) using the given information {chain_sum_data}"
                               f"and validate if the task was executed successfully"), chain_ret
+
+    def chain_cor_runner(self, use, task_name, args, config, sto_name, task, steps, keys, chain_ret, sum_sto):
+        ret = ''
+        ret_data = []
+        self.logger.info(Style.GREY(f"using {steps} {use} {task_name} {args[:15]}..."))
+        if use == "tool":
+            if 'agent' in task_name.lower():
+                ret = self.run_agent(config, args, mode_over_lode="tools")
+            else:
+                ret = self.run_tool(args, task_name, config)
+
+        if use == "agent":
+            if config.mode == 'free':
+                config.task_list.append(args)
+            if config.name == sto_name:
+                config.add_message("system", args)
+                ret = self.run_agent(config, '', mode_over_lode=config.mode)
+            else:
+                ret = self.run_agent(config, args, mode_over_lode=config.mode)
+        if use == 'function':
+            if 'function' in keys:
+                if callable(task['function']) and chain_ret:
+                    task['function'](chain_ret[-1][1])
+
+        if use == 'expyd' or use == 'chain':
+            ret, ret_data = self.execute_thought_chain(args, self.agent_chain.get(task_name), config, speak=self.speak)
+
+        self.logger.info(Style.GREY(f"Don : {str(ret)[:15]}..."))
+
+        if 'short-mem' in keys:
+            self.logger.warning(Style.GREY(f"In chunk {steps} no detected 'short-mem' {task['short-mem']}"))
+            if task['short-mem'] == "summary":
+                short_mem = config.short_mem.text
+                if short_mem != sum_sto:
+                    config.short_mem.clear_to_collective()
+                    config.short_mem.text = self.mas_text_summaries(short_mem)
+                else:
+                    sum_sto = short_mem
+            if task['short-mem'] == "full":
+                pass
+            if task['short-mem'] == "clear":
+                config.short_mem.clear_to_collective()
+
+        return ret, sum_sto, ret_data
 
     def execute_2tree(self, user_text, tree, config: AgentConfig):
         config.binary_tree = tree

@@ -32,7 +32,7 @@ class MainTool:
         if self.stuf:
             return
 
-        print('\n'+Style.style_dic[self.color] + self.name + Style.style_dic["END"] + ":", message, end=end, **kwargs)
+        print(Style.style_dic[self.color] + self.name + Style.style_dic["END"] + ":", message, end=end, **kwargs)
 
     def get_uid(self, command, app: App):
 

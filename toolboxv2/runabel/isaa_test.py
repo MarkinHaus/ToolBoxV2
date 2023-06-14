@@ -1,6 +1,7 @@
 """Console script for toolboxv2. Isaa CMD Tool"""
+from langchain.agents import load_tools
 
-from toolboxv2 import Style, Spinner
+from toolboxv2 import Style, Spinner, get_logger
 from toolboxv2.mods.isaa import AgentChain, IsaaQuestionBinaryTree, AgentConfig
 from toolboxv2.utils.isaa_util import init_isaa, extract_dict_from_string, split_todo_list, generate_exi_dict, \
     run_chain_in_cmd, free_run_in_cmd, validate_dictionary, idea_enhancer
@@ -17,6 +18,88 @@ def run(app, args):
     isaa.get_context_memory().load_all()
     isaa.agent_collective_senses = True
     isaa.summarization_mode = 1
+    from langchain.tools import ShellTool
+    from langchain.tools.file_management import (
+        ReadFileTool,
+        CopyFileTool,
+        DeleteFileTool,
+        MoveFileTool,
+        WriteFileTool,
+        ListDirectoryTool,
+    )
+    from langchain.utilities import WikipediaAPIWrapper
+    from langchain.tools import AIPluginTool
+    shell_tool = ShellTool()
+    read_file_tool = ReadFileTool()
+    copy_file_tool = CopyFileTool()
+    delete_file_tool = DeleteFileTool()
+    move_file_tool = MoveFileTool()
+    write_file_tool = WriteFileTool()
+    list_directory_tool = ListDirectoryTool()
+    wikipedia = WikipediaAPIWrapper()
+
+    plugins = [
+        # SceneXplain
+        # "https://scenex.jina.ai/.well-known/ai-plugin.json",
+        # Weather Plugin for getting current weather information.
+    #    "https://gptweather.skirano.repl.co/.well-known/ai-plugin.json",
+        # Transvribe Plugin that allows you to ask any YouTube video a question.
+    #    "https://www.transvribe.com/.well-known/ai-plugin.json",
+        # ASCII Art Convert any text to ASCII art.
+    #    "https://chatgpt-plugin-ts.transitive-bullshit.workers.dev/.well-known/ai-plugin.json",
+        # DomainsGPT Check the availability of a domain and compare prices across different registrars.
+        # "https://domainsg.pt/.well-known/ai-plugin.json",
+        #PlugSugar Search for information from the internet
+    #    "https://websearch.plugsugar.com/.well-known/ai-plugin.json",
+        # FreeTV App Plugin for getting the latest news, include breaking news and local news
+    #    "https://www.freetv-app.com/.well-known/ai-plugin.json",
+        # Screenshot (Urlbox) Render HTML to an image or ask to see the web page of any URL or organisation.
+        # "https://www.urlbox.io/.well-known/ai-plugin.json",
+        # OneLook Thesaurus Plugin for searching for words by describing their meaning, sound, or spelling.
+        # "https://datamuse.com/.well-known/ai-plugin.json", -> long loading time
+        # Shop Search for millions of products from the world's greatest brands.
+        # "https://server.shop.app/.well-known/ai-plugin.json",
+        # Zapier Interact with over 5,000+ apps like Google Sheets, Gmail, HubSpot, Salesforce, and thousands more.
+        "https://nla.zapier.com/.well-known/ai-plugin.json",
+        # Remote Ambition Search millions of jobs near you
+        # "https://remoteambition.com/.well-known/ai-plugin.json",
+        # Kyuda Interact with over 1,000+ apps like Google Sheets, Gmail, HubSpot, Salesforce, and more.
+        # "https://www.kyuda.io/.well-known/ai-plugin.json",
+        # GitHub (unofficial) Plugin for interacting with GitHub repositories, accessing file structures, and modifying code. @albfresco for support.
+   #     "https://gh-plugin.teammait.com/.well-known/ai-plugin.json",
+        # getit Finds new plugins for you
+        "https://api.getit.ai/.well_known/ai-plugin.json",
+        # WOXO VidGPT Plugin for create video from prompt
+        "https://woxo.tech/.well-known/ai-plugin.json",
+        # Semgrep Plugin for Semgrep. A plugin for scanning your code with Semgrep for security, correctness, and performance issues.
+        # "https://semgrep.dev/.well-known/ai-plugin.json",
+    ]
+
+    isaa.lang_chain_tools_dict = {
+        "ShellTool": shell_tool,
+        "ReadFileTool": read_file_tool,
+        "CopyFileTool": copy_file_tool,
+        "DeleteFileTool": delete_file_tool,
+        "MoveFileTool": move_file_tool,
+        "WriteFileTool": write_file_tool,
+        "ListDirectoryTool": list_directory_tool,
+    }
+
+    for plugin_url in plugins:
+        get_logger().info(Style.BLUE(f"Try opening plugin from : {plugin_url}"))
+        try:
+            plugin_tool = AIPluginTool.from_plugin_url(plugin_url)
+            get_logger().info(Style.GREEN(f"Plugin : {plugin_tool.name} loaded successfully"))
+            isaa.lang_chain_tools_dict[plugin_tool.name+"-usage-information"] = plugin_tool
+        except Exception as e:
+            get_logger().error(Style.RED(f"Could not load : {plugin_url}"))
+            get_logger().error(Style.GREEN(f"{e}"))
+
+    isaa.get_agent_config_class("think")
+    isaa.get_agent_config_class("execution")
+    for tool in load_tools(["requests_all"]):
+        isaa.lang_chain_tools_dict[tool.name] = tool
+    isaa.add_lang_chain_tools_to_agent(self_agent_config, self_agent_config.tools)
 
     self_agent_config.stream = True
     self_agent_config.max_tokens = 4012
@@ -25,30 +108,27 @@ def run(app, args):
 
     self_agent_config.stop_sequence = ['\n\n\n', "Execute:", "Observation:", "User:"]
 
-    # new env isaa withs chains
-    agents = isaa.config["agents-name-list"]
-    task = """Crate an File operating agent. and read the ai_collaboration_extension directory return all files."""
+    task = """Erstelle einen Read folder agent und eine task liste für diesen um einen ordner zu lesen """
 
-    infos_c = f"List of Avalabel Agents : {isaa.config['agents-name-list']}\n Tools : {list(self_agent_config.tools.keys())}\n" \
-              f" Functions : {isaa.scripts.get_scripts_list()}\n executable python dicts : {str(isaa.get_chain())} "
+    task = idea_enhancer(isaa, task, self_agent_config, chains, True)
 
-    self_agent_config.get_messages(create=True)
-    self_agent_config.add_message("user", task)
-    self_agent_config.add_message("system", infos_c)
+    expyd = generate_exi_dict(isaa, task, True, list(self_agent_config.tools.keys()))
 
-    self_agent_config.add_message("system", """Use Spawn agent and talk to agent to crat a
-     agent for the task with te right specification""")
+    self_agent_config.task_list = split_todo_list(isaa.run_agent(self_agent_config, task, mode_over_lode='planing'))
 
-    coordination = "NO Data"
-    for _ in range(3):
-        coordination = isaa.run_agent(self_agent_config, '', mode_over_lode='execution')
+    if expyd:
+        resp, chain_ret = run_chain_in_cmd(isaa, task, chains, expyd, self_agent_config)
+        expyd = generate_exi_dict(isaa, f"Optimise the dict : {expyd} bas of ths outcome : {chain_ret}", False,
+                                  list(self_agent_config.tools.keys()))
 
-        print(self_agent_config.last_prompt)
+    if expyd:
+        resp, chain_ret = run_chain_in_cmd(isaa, task, chains, expyd, self_agent_config)
+        expyd = generate_exi_dict(isaa, f"Optimise the dict : {expyd} bas of ths outcome : {chain_ret}", False,
+                                  list(self_agent_config.tools.keys()))
 
-        self_agent_config.add_message("assistant", coordination)
-        self_agent_config.add_message("user", input(":"))
+    print(resp)
 
-    return coordination
+
 
 def run__(app, args):
     isaa, self_agent_config, chains = init_isaa(app, speak_mode=args.speak, calendar=False, ide=True, create=True,
