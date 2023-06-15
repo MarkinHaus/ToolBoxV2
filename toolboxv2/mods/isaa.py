@@ -2586,10 +2586,16 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         return out
 
-    def execute_thought_chain(self, user_text: str, agent_tasks, config: AgentConfig, speak=lambda x: x):
-        chain_ret = []
-        chain_data = {}
-        uesd_mem = {}
+    def execute_thought_chain(self, user_text: str, agent_tasks, config: AgentConfig, speak=lambda x: x, start=0,
+                              end=None, chain_ret=None, chain_data=None, uesd_mem=None, chain_data_infos=False):
+        if uesd_mem is None:
+            uesd_mem = {}
+        if chain_data is None:
+            chain_data = {}
+        if chain_ret is None:
+            chain_ret = []
+        if end is None:
+            end = len(agent_tasks)+1
         ret = ""
         steps = 0
 
@@ -2602,7 +2608,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         chain_mem = self.get_context_memory()
         self.logger.info(Style.GREY(f"Starting Chain {agent_tasks}"))
         config.stop_sequence = ['\n\n', "Execute:", "Observation:", "User:"]
-        for task in agent_tasks:
+        for task in agent_tasks[start:end]:
 
             self.logger.info(Style.GREY(f"{type(task)}, {task}"))
             chain_ret_ = []
@@ -2701,54 +2707,35 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                                                     keys,
                                                     chain_ret, sum_sto)
 
-            if 'validate' in keys:
-                self.print("Validate task")
-                try:
-                    pipe_res = self.text_classification(ret)
-                    self.print(f"Validation :  {pipe_res[0]}")
-                    if pipe_res[0]['score'] > 0.8:
-                        if pipe_res[0]['label'] == "NEGATIVE":
-                            print('🟡')
-                            if 'on-error' in keys:
-                                if task['validate'] == 'inject':
-                                    task['inject'](ret)
-                                if task['validate'] == 'return':
-                                    task['inject'](ret)
-                                    chain_ret.append([task, ret])
-                                    return "an error occurred", chain_ret
-                        else:
-                            print(f'🟢')
-                except Exception as e:
-                    print(f"Error in validation : {e}")
+            # if 'validate' in keys:
+            #     self.print("Validate task")
+            #     try:
+            #         pipe_res = self.text_classification(ret)
+            #         self.print(f"Validation :  {pipe_res[0]}")
+            #         if pipe_res[0]['score'] > 0.8:
+            #             if pipe_res[0]['label'] == "NEGATIVE":
+            #                 print('🟡')
+            #                 if 'on-error' in keys:
+            #                     if task['validate'] == 'inject':
+            #                         task['inject'](ret)
+            #                     if task['validate'] == 'return':
+            #                         task['inject'](ret)
+            #                         chain_ret.append([task, ret])
+            #                         return "an error occurred", chain_ret
+            #             else:
+            #                 print(f'🟢')
+            #     except Exception as e:
+            #         print(f"Error in validation : {e}")
+
             if 'to-edit-text' in keys:
                 config.edit_text.text = ret
 
             speak(f"Step {steps} with response {ret}")
 
-            if "return" in keys:
-                if chain_ret_:
-                    ret = chain_ret_
-                if 'text-splitter' in keys:
-                    mem = self.get_context_memory()
-                    sep = ''
-                    al = 'KMeans'
-                    if 'separators' in keys:
-                        sep = task['separators']
-                        if task['separators'].endswith('code'):
-                            al = 'AgglomerativeClustering'
-                            sep = sep.replace('code', '')
-                    self.print(f"task_name:{task_name} al:{al} sep:{sep}")
-                    ret = mem.split_text(task_name, ret, separators=sep, chunk_size=task['text-splitter'])
-                    mem.add_data(task_name)
-
-                    mem.crate_live_context(task_name, al)
-                    uesd_mem[task['return']] = task_name
-
-                chain_data[task['return']] = ret
+            chain_data, chain_ret, uesd_mem = self.chain_return(keys, chain_ret_, task, task_name, ret,
+                                                                chain_data, uesd_mem, chain_ret)
 
             self.print(Style.ITALIC(Style.GREY(f'Chain at step : {steps}\nreturned : {str(ret)[:150]}...')))
-
-            chain_ret.append([task, ret])
 
             steps += 1
             if sto_config:
@@ -2762,6 +2749,13 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         config.mode = default_mode_
         config.completion_mode = default_completion_mode_
+
+        if chain_data_infos:
+            return self.run_agent(self.get_agent_config_class("think"),
+                                  f"Produce a summarization of what happened "
+                                  f"(max 1 paragraph) using the given information {chain_sum_data}"
+                                  f"and validate if the task was executed successfully"), chain_ret, chain_ret,\
+                chain_data, uesd_mem
 
         return self.run_agent(self.get_agent_config_class("think"),
                               f"Produce a summarization of what happened "
@@ -2811,6 +2805,32 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 config.short_mem.clear_to_collective()
 
         return ret, sum_sto, ret_data
+
+    def chain_return(self, keys, chain_ret_, task, task_name, ret, chain_data, uesd_mem, chain_ret):
+
+        if "return" in keys:
+            if chain_ret_:
+                ret = chain_ret_
+            if 'text-splitter' in keys:
+                mem = self.get_context_memory()
+                sep = ''
+                al = 'KMeans'
+                if 'separators' in keys:
+                    sep = task['separators']
+                    if task['separators'].endswith('code'):
+                        al = 'AgglomerativeClustering'
+                        sep = sep.replace('code', '')
+                self.print(f"task_name:{task_name} al:{al} sep:{sep}")
+                ret = mem.split_text(task_name, ret, separators=sep, chunk_size=task['text-splitter'])
+                mem.add_data(task_name)
+
+                mem.crate_live_context(task_name, al)
+                uesd_mem[task['return']] = task_name
+
+            chain_data[task['return']] = ret
+            chain_ret.append([task, ret])
+
+        return chain_data, chain_ret, uesd_mem
 
     def execute_2tree(self, user_text, tree, config: AgentConfig):
         config.binary_tree = tree

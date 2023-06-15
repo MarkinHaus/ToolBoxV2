@@ -8,8 +8,9 @@ from langchain.agents import load_tools
 
 from toolboxv2 import Style, Spinner, get_logger, App
 from toolboxv2.mods.isaa import AgentChain, IsaaQuestionBinaryTree, AgentConfig
-from toolboxv2.utils.isaa_util import init_isaa, extract_dict_from_string, split_todo_list, generate_exi_dict, \
-    idea_enhancer, startage_task_aproche, run_chain_in_cmd, free_run_in_cmd, get_code_files
+from toolboxv2.utils.isaa_util import init_isaa, generate_exi_dict, \
+    idea_enhancer, startage_task_aproche, free_run_in_cmd, get_code_files, \
+    run_chain_in_cmd_auto_observation_que
 
 NAME = "isaa-l-auto"
 
@@ -106,10 +107,14 @@ def run(app: App, args):
             get_logger().error(Style.GREEN(f"{e}"))
 
     isaa.get_agent_config_class("think")
-    isaa.get_agent_config_class("execution")
+    execution_agent = isaa.get_agent_config_class("execution")
+
     for tool in load_tools(["requests_all", 'wikipedia', 'human']):
         isaa.lang_chain_tools_dict[tool.name] = tool
-    isaa.add_lang_chain_tools_to_agent(self_agent_config, self_agent_config.tools)
+
+    execution_agent.tools = dict(execution_agent.tools, **self_agent_config.tools)
+
+    isaa.add_lang_chain_tools_to_agent(execution_agent, execution_agent.tools)
 
     def sum_dir(dir_):
 
@@ -213,7 +218,23 @@ def run(app: App, args):
 
         if user_input == "1":
             if isinstance(expyd, dict) or expyd in chains.chains.keys():
-                ret, chain_infos = run_chain_in_cmd(isaa, task, chains, expyd, self_agent_config)
+                infos_c = f"List of Avalabel Agents : {isaa.config['agents-name-list']}\n Tools : {list(execution_agent.tools.keys())}\n" \
+                          f" Functions : {isaa.scripts.get_scripts_list()}\n executable python dicts : {str(isaa.get_chain())} "
+                execution_agent.get_messages(create=True)
+                execution_agent.add_message("user", task)
+                execution_agent.add_message("system", infos_c)
+                execution_agent.add_message("assistant",
+                                         "Planning is complete and I will now begin executing the plan by taking "
+                                         "action.")
+                execution_agent.add_message("system", """
+You can't tell what happened. everything that happened is in the text. give concrete information about the plan in order to fulfill the plan. if you don't know what to do next, you can make
+1. look in your memories
+2. another agent.
+3. switch to the planning mode with the task to subdivide the current step until it matches your skills.
+4. ask the user.
+
+                """)
+                ret, chain_infos = run_chain_in_cmd_auto_observation_que(isaa, task, chains, expyd, execution_agent)
                 summary = isaa.summarize_ret_list(chain_infos)
 
                 out = isaa.run_agent(self_agent_config, f"ate a summary of  Data to check :"

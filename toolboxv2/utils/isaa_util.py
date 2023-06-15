@@ -431,7 +431,7 @@ def generate_exi_dict(isaa, task, create_agent=False, tools=None, retrys=3):
     return coordination
 
 
-def run_chain_in_cmd(isaa, task, chains, extracted_dict: str or dict, self_agent_config=AgentConfig):
+def run_chain_in_cmd(isaa, task, chains, extracted_dict: str or dict, self_agent_config):
     response = ''
     task_done = False
     chain_ret = []
@@ -449,9 +449,9 @@ def run_chain_in_cmd(isaa, task, chains, extracted_dict: str or dict, self_agent
             get_logger().info(f"{chain_name} is valid")
 
     while not task_done:
-        #try:
+        # try:
         evaluation, chain_ret = isaa.execute_thought_chain(task, chains.get(chain_name), self_agent_config)
-        #except Exception as e:
+        # except Exception as e:
         #    print(e, '🔴')
         #    return "ERROR", chain_ret
         evaluation = evaluation[::-1][:300][::-1]
@@ -469,6 +469,91 @@ def run_chain_in_cmd(isaa, task, chains, extracted_dict: str or dict, self_agent
             print(f'🟢')
             task_done = True
             response = chain_ret[-1][1]
+
+    return response, chain_ret
+
+
+def run_chain_in_cmd_auto_observation_que(isaa, task, chains, extracted_dict: str or dict,
+                                          self_agent_config):
+    response = ''
+    pressing = True
+
+    def get_chain_name(extracted_dict_data):
+        chain_name_ = extracted_dict_data
+        if isinstance(extracted_dict_data, dict):
+            get_logger().info(f"Getting dict")
+            chain_name_ = extracted_dict_data['name']
+            dicht = chains.get(chain_name_)
+            if dicht != extracted_dict_data:
+                get_logger().info(f"Getting not found start init")
+                chains.add(chain_name_, extracted_dict_data['tasks'])
+                chains.init_chain(chain_name_)
+                get_logger().info(f"added {chain_name_}")
+            else:
+                get_logger().info(f"{chain_name_} is valid")
+        return chain_name_
+
+    chain_name = get_chain_name(extracted_dict)
+    task_que = chains.get(chain_name)
+
+    # user_text: str, agent_tasks, config: AgentConfig, speak = lambda x: x, start = 0,
+    # end = None, chain_ret = None, chain_data = None, uesd_mem = None, chain_data_infos = False)
+    uesd_mem = {}
+    chain_data = {}
+    chain_ret = []
+    step = 0
+    RETRYS = 4
+    while pressing:
+
+        if len(task_que) - step <= 0:
+            pressing = False
+
+        # do task get
+        # evaluate, data...
+
+        pipe_res_label = "NEGATIVE"
+        try:
+            evaluation, chain_ret, chain_ret, chain_data, uesd_mem = isaa.execute_thought_chain(task,
+                                                                                                chains.get(chain_name)
+                                                                                                , self_agent_config,
+                                                                                                start=step,
+                                                                                                end=step + 1,
+                                                                                                chain_ret=chain_ret
+                                                                                                , chain_data=chain_data,
+                                                                                                uesd_mem=uesd_mem,
+                                                                                                chain_data_infos=True)
+            evaluation_ = evaluation[::-1][:300][::-1]
+            pipe_res = isaa.text_classification(evaluation_)
+            pipe_res_label = pipe_res[0]['label']
+            print(evaluation_)
+
+        except Exception as e:
+            print(e, '🔴')
+            evaluation = e
+
+        if pipe_res_label == "NEGATIVE":
+            print('🟡')
+            ui = input("optimise ? : ")
+            if "y" == ui:
+                data = generate_exi_dict(isaa,
+                                         f"Optimise the task que : {task_que[step:]} based on this outcome : {chain_ret}"
+                                         f" the evaluation {evaluation} and the task {task}\nOnly return the dict\nDict:",
+                                         create_agent=False,
+                                         tools=self_agent_config.tools, retrys=3)
+                if isinstance(data, dict):
+                    task_que = chains.get(get_chain_name(data))
+            elif 'r' == ui:
+                print("RETRY")
+                if RETRYS == 0:
+                    break
+                RETRYS -= 1
+            else:
+                print(f'🟢')
+                step += 1
+
+        else:
+            print(f'🟢')
+            step += 1
 
     return response, chain_ret
 
@@ -602,7 +687,7 @@ def startage_task_aproche(isaa, task, self_agent_config, chains, create_agent=Fa
 
     agents = isaa.config["agents-name-list"]
     infos_c = f"List of Avalabel Agents : {agents}\n Tools : {list(self_agent_config.tools.keys())}\n" \
-              f" Functions : {isaa.scripts.get_scripts_list()}\n Chains : {str(chains)} " \
+              f" Functions : {isaa.scripts.get_scripts_list()}\n Chains : {str(chains)} "
 
     think_agent.get_messages(create=True)
     think_agent.add_message("user", task)
@@ -1015,7 +1100,7 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
                                                                                                  'steps to get the '
                                                                                                  'right result. write '
                                                                                                  'and production redy '
-                                                                                                 'code for :'+x,
+                                                                                                 'code for :' + x,
                                                                               mode_over_lode='free')
                       , "generate code via function not so effective", '', self_agent_config)
     if speak_mode:
