@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+    <script src="app/scripts.js" type="module" defer></script>
+    <link rel="stylesheet" href="app/styles.css">
+    <script src="./scripts.js" type="module" defer></script>
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<div id="overlay"></div>
+    <header>
+    <nav>
+        <ul>
+            <li><a href="/app">Start</a></li>
+            <li><a href="/app/signup">Sign Up</a></li>
+            <li><a href="/app/login">Login</a></li>
+            <li><a href="/app/terms.html">Terms and Conditions</a></li>
+            <li><a href="/app/dashboard">Dashboard</a></li>
+        </ul>
+    </nav>
+    <div class="dark-mode-toggle">
+        <input type="checkbox" id="darkModeToggle">
+        <label for="darkModeToggle" id="toggleLabel">☀️</label>
+    </div>
+</header>
+
+    <!-- Your main content goes here -->
+    <main >
+        <div id="threeDScene"></div>
+        <div class="main-content frosted-glass">
+            <!-- Your main content -->
+            <h1>Welcome to simple</h1>
+            <p>simple website offers the best services for your need. Join us today and experience the difference.</p>
+            <button onclick="location.href='app/signup'">Sign Up</button>
+            <hr/>
+            <a href="app/waiting_list.html">Email waiting list</a>
+        </div>
+    </main>
+
+</body>
+</html>

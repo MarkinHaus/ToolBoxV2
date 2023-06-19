@@ -5,6 +5,11 @@ from fastapi import Request, HTTPException, Depends, APIRouter
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer
 
+import os
+import zipfile
+from io import StringIO
+from flask import Response
+
 from toolboxv2 import App
 from toolboxv2.utils.toolbox import get_app
 
@@ -15,7 +20,7 @@ router = APIRouter(
     # responses={404: {"description": "Not found"}},
 )
 
-level = 0  # Setzen Sie den Level-Wert, um verschiedene Routen zu aktivieren oder zu deaktivieren
+level = 2  # Setzen Sie den Level-Wert, um verschiedene Routen zu aktivieren oder zu deaktivieren
 pattern = ['.png', '.jpg', '.jpeg', '.js', '.css', '.ico', '.gif', '.svg', '.wasm']
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
@@ -32,7 +37,16 @@ def check_access_level(required_level: int):
 
 
 @router.get("")
-async def index(access_allowed: bool = Depends(lambda: check_access_level(0))):
+async def index(access_allowed: bool = Depends(lambda: check_access_level(-1))):
+    if level == -1:
+        return serve_app_func('serverInWartung.html')
+    return serve_app_func('index.html')
+
+
+@router.get("/")
+async def index2(access_allowed: bool = Depends(lambda: check_access_level(-1))):
+    if level == -1:
+        return serve_app_func('serverInWartung.html')
     return serve_app_func('index.html')
 
 
@@ -54,15 +68,9 @@ async def quicknote(current_user: str = Depends(get_current_user),
     return serve_app_func('quicknote/index.html')
 
 
-@router.get("/daytree")
-async def daytree(current_user: str = Depends(get_current_user),
-                  access_allowed: bool = Depends(lambda: check_access_level(0))):
-    return serve_app_func('daytree/index.html')
-
-
-@router.get("/serverInWartung")
-async def server_in_wartung(access_allowed: bool = Depends(lambda: check_access_level(-1))):
-    return serve_app_func('serverInWartung.html')
+@router.get("/dashboard")
+async def quicknote(access_allowed: bool = Depends(lambda: check_access_level(1))):
+    return serve_app_func('dashboard_builder.html')
 
 
 @router.get("/{path:path}")
@@ -70,11 +78,25 @@ async def serve_files(path: str, request: Request, access_allowed: bool = Depend
     return serve_app_func(path)
 
 
-def serve_app_func(path: str, prefix: str = os.getcwd()+"/app/"): # test location
+def serve_app_func(path: str, prefix: str = os.getcwd() + "/app/"):
     request_file_path = Path(prefix + path)
     ext = request_file_path.suffix
     print(request_file_path, ext)
-    if ext in pattern:
-        request_file_path = Path(prefix + 'main.html')
+
+    # Define a dictionary to map file extensions to MIME types
+    mime_types = {
+        '.js': 'application/javascript',
+        '.html': 'text/html',
+        '.css': 'text/css',
+        # Add other MIME types if needed
+    }
+
+    # Set the default MIME type to 'text/html'
+    content_type = 'text/html'
+
+    # Check if the file extension exists in the mime_types dictionary
+    if ext in mime_types:
+        content_type = mime_types[ext]
+
     path = request_file_path
-    return FileResponse(path)
+    return FileResponse(path, media_type=content_type)

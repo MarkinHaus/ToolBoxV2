@@ -253,13 +253,13 @@ Create a user friendly web app First start with an interesting landing page!
     agent_categorize_config \
         .set_mode('free') \
         .set_completion_mode('chat') \
-        .set_model_name('gpt-3.5-turbo')
+        .set_model_name('gpt-3.5-turbo-0613')
 
     isaa.get_agent_config_class("think").stream = True
 
     # 'bigscience/bloom' to small
     agent_categorize_config.set_model_name(
-        'gpt-3.5-turbo')  # chavinlo/gpt4-x-alpaca # nomic-ai/gpt4all-j # TheBloke/gpt4-alpaca-lora-13B-GPTQ-4bit-128g
+        'gpt-3.5-turbo-0613')  # chavinlo/gpt4-x-alpaca # nomic-ai/gpt4all-j # TheBloke/gpt4-alpaca-lora-13B-GPTQ-4bit-128g
     agent_categorize_config.stream = True
     agent_categorize_config.max_tokens = 4012
     agent_categorize_config.set_completion_mode('chat')

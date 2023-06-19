@@ -97,8 +97,13 @@ class Tools(MainTool, FileHandler):
         self._simpel_speech_recognizer_mice = sr.Microphone()
         self._simpel_speech_recognizer = sr.Recognizer()
         self.logger.info("simpel speech online")
+
+        if not os.path.exists("./data/isaa_data/work"):
+            Path("./data/isaa_data/work").mkdir(parents=True, exist_ok=True)
+
         if config is not None:
             self.config = eval(config)
+
 
     def on_exit(self):
         del self._simpel_speech_recognizer
@@ -156,14 +161,14 @@ def get_hash_key(text):
 
 
 def load_cache_file():
-    if os.path.exists("cache_file.pkl"):
-        with open("cache_file.pkl", "rb") as f:
+    if os.path.exists(".data/cache_file.pkl"):
+        with open(".data/cache_file.pkl", "rb") as f:
             return pickle.load(f)
     return {}
 
 
 def save_cache_file(cache_data):
-    with open("cache_file.pkl", "wb") as f:
+    with open(".data/cache_file.pkl", "wb") as f:
         pickle.dump(cache_data, f)
 
 

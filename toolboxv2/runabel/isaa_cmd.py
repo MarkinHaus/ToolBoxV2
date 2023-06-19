@@ -67,7 +67,7 @@ def run(app, args):
             }
         }
     })
-    self_agent_config.set_completion_mode('chat').set_model_name('gpt-3.5-turbo')
+    self_agent_config.set_completion_mode('chat').set_model_name('gpt-3.5-turbo-0613')
     sys_print("\n================================Starting-Agent================================")
     # print(self_agent_config.prompt)
     # text_u = "stop the Expation of the univers"

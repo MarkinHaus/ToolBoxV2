@@ -18,6 +18,7 @@ class Tools(MainTool, FileHandler):
             "all": [["Version", "Shows current Version"],
                     ["first-redis-connection", "set up a web connection to MarkinHaus"],
                     ["get", "get key and value from redis"],
+                    ["append_on_set", "append_on_list"],
                     ["set", "set key value pair redis"],
                     ["del", "set key value pair redis"],
                     ["all", "get all (Autocompletion helper)"],
@@ -29,6 +30,7 @@ class Tools(MainTool, FileHandler):
             "get": self.get_keys,
             "set": self.set_key,
             "del": self.delete_key,
+            "append_on_set": self.append_on_set,
 
         }
 
@@ -45,6 +47,9 @@ class Tools(MainTool, FileHandler):
         version_command = self.get_file_handler(self.keys["url"])
         if version_command is not None and version_command != 'redis://default:{id}@{url}.com:{port}':
             self.rcon = redis.from_url(version_command)
+            for key in self.rcon.scan_iter():
+                val = self.rcon.get(key)
+                self.print(f"{key} = {val}")
         else:
             self.print("No url found pleas run first-redis-connection")
 
@@ -88,6 +93,28 @@ class Tools(MainTool, FileHandler):
                     return val
                 else:
                     return str(val, 'utf-8')
+        return command
+
+    def append_on_set(self, command):
+
+        if self.rcon is None:
+            return 'Pleas run first-redis-connection'
+
+        val = self.rcon.get(command[0])
+
+        print(val)
+
+        if val:
+            val = eval(val)
+            for new_val in command[1]:
+                if new_val in val:
+                    return "Error value: " + str(new_val) + "already in list"
+                val.append(new_val)
+        else:
+            val = command[1]
+
+        self.rcon.set(command[0], str(val))
+
         return command
 
     def check(self, request, app: App):

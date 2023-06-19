@@ -112,7 +112,7 @@ Ask questions to help to find a decisions or recommendations.
                 user_text = buffer.replace("##", "")
             print("You pressed enter!")
             comm('stop')
-            # self_agent_config.set_completion_mode('chat').set_model_name('gpt-3.5-turbo')
+            # self_agent_config.set_completion_mode('chat').set_model_name('gpt-3.5-turbo-0613')
             while not que.empty():
                 user_text += que.get() + ' '
             sys_print("\n================================Starting-Agent================================")

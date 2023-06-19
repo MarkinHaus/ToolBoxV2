@@ -1,3 +1,4 @@
+from pebble import concurrent
 import json
 import logging
 import math
@@ -122,7 +123,9 @@ def get_ip():
     return response["ip"]
 
 
+@concurrent.process(timeout=12)
 def get_location():
+
     ip_address = get_ip()
     response = requests.get(f'https://ipapi.co/{ip_address}/json/').json()
     location_data = f"city: {response.get('city')},region: {response.get('region')},country: {response.get('country_name')},"
@@ -142,7 +145,14 @@ def getSystemInfo():
             'architecture': platform.machine(), 'hostname': socket.gethostname(),
             'ip-address': ip,
             'mac-address': ':'.join(re.findall('..', '%012x' % uuid.getnode())), 'processor': platform.processor(),
-            'ram': str(round(psutil.virtual_memory().total / (1024.0 ** 3))) + " GB", 'location': get_location()}
+            'ram': str(round(psutil.virtual_memory().total / (1024.0 ** 3))) + " GB"}
+
+    try:
+        process = get_location()
+        info['location'] = process.result()
+    except TimeoutError and Exception:
+        info['location'] = "Berlin Schöneberg"
+
     return info
 
 
@@ -195,7 +205,8 @@ class Scripts:
         return {name: script["description"] for name, script in self.scripts.items()}
 
     def save_scripts(self):
-        with open(self.filename + '.pkl', "wb") as f:
+        app_id = get_app().id
+        with open(f".data/{app_id}/{self.filename}.pkl", "wb") as f:
             pickle.dump(self.scripts, f)
 
     def load_scripts(self):
@@ -416,7 +427,7 @@ class AgentChain:
                 print(f"Loading : {chain_name}")
                 self.add(chain_name, chain_data["tasks"])
             except Exception as e:
-                print(f"Beim Laden der Datei '{file_path}' ist ein Fehler aufgetreten: {e}")
+                print(Style.RED(f"Beim Laden der Datei '{file_path}' ist ein Fehler aufgetreten: {e}"))
         print(f"--------------------------------")
         print(
             f"\n================================\nChainsLoaded : {len(self.chains.keys())}\n================================\n")
@@ -833,7 +844,7 @@ class AIContextMemory:
         data = self.search(mem_name['key'], text, marginal=marginal)
         last = []
         final = f"Data from ({mem_name['key']}):\n"
-        print(data)
+        # print(data)
         for res in data:
             if last != res:
                 try:
@@ -1110,14 +1121,13 @@ Transparent: Isaa is open and honest about its capabilities, limitations, and de
 Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of tasks and challenges."""
     system_information = f"""
 system information's : {getSystemInfo()}
-
 """
 
     def __init__(self, name="agentConfig"):
 
         self.name: str = name
         self.mode: str = "talk"
-        self.model_name: str = "gpt-3.5-turbo"
+        self.model_name: str = "gpt-3.5-turbo-0613"
 
         self.agent_type: AgentType = AgentType(
             "structured-chat-zero-shot-react-description")  # "zero-shot-react-description"
@@ -1150,10 +1160,10 @@ system information's : {getSystemInfo()}
         self.add_system_information = True
 
         self.init_mem_state = False
-        self.context = None
-        self.observe_mem = None
-        self.edit_text = None
-        self.short_mem = None
+        self.context: None or ShortTermMemory = None
+        self.observe_mem: None or ShortTermMemory = None
+        self.edit_text: None or ShortTermMemory = None
+        self.short_mem: None or ShortTermMemory = None
 
         self.init_memory()
 
@@ -1272,7 +1282,6 @@ system information's : {getSystemInfo()}
         pl = get_tokens(prompt, self.model_name) + 2
         self.token_left = self.max_tokens - pl
         if self.token_left < 0:
-            print(f"No tokens left cut short_mem mem to {self.token_left * -1}")
             self.token_left *= -1
             self.short_mem.max_length = self.token_left
             self.short_mem.cut()
@@ -1565,6 +1574,7 @@ class Tools(MainTool, FileHandler):
             "Config": "config~~~~"
         }
         self.initstate = {}
+        self.mas_text_summaries_dict = [[],[]]
         self.genrate_image = image_genrating_tool
         self.observation_term_mem_file = f".data/{app.id}/Memory/observationMemory/"
         self.tools = {
@@ -1595,7 +1605,7 @@ class Tools(MainTool, FileHandler):
         self.summarization_mode = 0  # 0 to 2 0 huggingface 1 text
         self.summarization_limiter = 10200  # 0 to 2 0 huggingface 1 text
         self.speak = lambda x, *args, **kwargs: x
-        self.scripts = Scripts(app.id)
+        self.scripts = Scripts("ScriptFile")
 
         FileHandler.__init__(self, "issa.config", app.id if app else __name__)
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
@@ -1691,8 +1701,44 @@ class Tools(MainTool, FileHandler):
         return self.config["question-answering_pipeline"](qa, **kwargs)
 
     def summarization(self, text, model="pinglarin/summarization_papers", **kwargs):
+        if isinstance(text, str):
+            print(f"\t\tsummarization({len(text)})")
+        if isinstance(text, list):
+            print(f"\t\tsummarization({len(text)*len(text[0])})")
         self.init_pipeline('summarization', model)
-        return self.config["summarization_pipeline"](text, **kwargs)
+        try:
+            summary_ = self.config["summarization_pipeline"](text, **kwargs)
+        except IndexError as e:
+            if isinstance(text, str):
+                h = len(text) // 2
+                self.logger.warning(f'Summarization text to log split in to tex len : {len(text)} splitt to {h}')
+                summary_text_ = self.summarization(text[:h], **kwargs)[0]['summary_text']
+                summary_ = self.summarization(text[h:], **kwargs)
+                summary_[0]['summary_text'] = summary_text_ + '\n' + summary_[0]['summary_text']
+            if isinstance(text, list):
+                old_cap = len(text[0])
+                new_cap = int(old_cap*.95)
+
+                print(f"\tCould not generate summary old cap : {old_cap} new cap : {new_cap}")
+
+                new_text = []
+                str_text = ' '.join(text)
+                num_tokens = new_cap / 2.0
+
+                if num_tokens > 1020:
+                    new_cap = int(new_cap / (num_tokens / 1020))
+                    print(f"\t\t2New cap : {new_cap}")
+
+                while len(str_text) > new_cap:
+                    new_text.append(str_text[:new_cap])
+                    str_text = str_text[new_cap:]
+                if str_text:
+                    new_text.append(str_text)
+                summary_ = self.summarization(new_text, **kwargs)
+            else:
+                summary_ = f"text type invalid {type(text)} valid ar str and list"
+
+        return summary_
 
     def text_classification(self, text, model="distilbert-base-uncased-finetuned-sst-2-english", **kwargs):
         self.init_pipeline('text-classification', model)
@@ -1774,6 +1820,22 @@ class Tools(MainTool, FileHandler):
         return self.config[f'LLM-model-{name}']
 
     def add_tool(self, name, func, dis, form, config: AgentConfig, lagchaintool=False):
+
+        if name is None:
+            self.print(Style.RED('Error no name specified'))
+            return
+        if func is None:
+            self.print(Style.RED(f'Error no func specified {Style.CYAN(f"Tool {name} not active")}'))
+            return
+        if dis is None:
+            self.print(Style.RED(f'Error no dis specified {Style.CYAN(f"Tool {name} not active")}'))
+            return
+        if form is None:
+            self.print(Style.RED(f'Error no form specified {Style.CYAN(f"Tool {name} not active")}'))
+            return
+        if config is None:
+            self.print(Style.RED(f'Error no config specified {Style.CYAN(f"Tool {name} not active")}'))
+            return
 
         self.print(f"ADDING TOOL:{name} to {config.name}")
 
@@ -1886,7 +1948,7 @@ class Tools(MainTool, FileHandler):
             self.config["self_agent_agents_"] = ["todolist"]
 
             config.mode = "free"
-            config.agent_tye = "gpt-3.5-turbo"
+            config.agent_tye = "gpt-3.5-turbo-0613"
             config.max_iterations = 6
             config.personality = """
 Resourceful: Isaa is able to efficiently utilize its wide range of capabilities and resources to assist the user.
@@ -1931,7 +1993,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 tools[key] = {"func": _tool, "description": _tool.description, "format": f"{key}({_tool.args})"}
             config. \
                 set_mode("tools") \
-                .set_model_name("gpt-3.5-turbo") \
+                .set_model_name("gpt-3.5-turbo-0613") \
                 .set_max_iterations(4) \
                 .set_completion_mode("chat") \
                 .set_tools(tools)
@@ -1977,8 +2039,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config.short_mem.max_length = 3000
 
         if name == "search":
-            config.mode = "tools"
-            config.model_name = "gpt-3.5-turbo"
+            config.mode = "execution"
+            config.model_name = "gpt-3.5-turbo-0613"
             config.completion_mode = "chat"
             config.agent_type = "zero-shot-react-description"
             config.max_iterations = 6
@@ -2026,7 +2088,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config. \
                 set_mode("free") \
                 .set_max_iterations(1) \
-                .set_completion_mode("chat")
+                .set_completion_mode("chat").set_model_name("gpt-3.5-16k-063")
 
             config.stop_sequence = ["\n\n\n"]
 
@@ -2048,7 +2110,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 set_mode("free") \
                 .set_max_iterations(1) \
                 .set_completion_mode("chat") \
-                .set_model_name('gpt-3.5-turbo') \
+                .set_model_name('gpt-3.5-turbo-0613') \
                 .set_pre_task("Act as an summary expert your specialties are writing summary. you are known to think "
                               "in small and detailed steps to get the right result. Your task :")
 
@@ -2058,7 +2120,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         if name == "thinkm":
             config. \
                 set_mode("free") \
-                .set_model_name("gpt-3.5-turbo") \
+                .set_model_name("gpt-3.5-turbo-0613") \
                 .set_max_iterations(1) \
                 .set_completion_mode("chat")
 
@@ -2372,7 +2434,15 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             args = command.replace(function_name + "(", "").replace(function_name, "").split(",")
             args_len_c = len(args)
 
-        if not function_name in config.tools.keys():
+        valid_func = False
+
+        for func in list(config.tools.keys()):
+            if function_name.lower().strip() == func.lower().strip():
+                valid_func = True
+                function_name = func
+                break
+
+        if not valid_func:
             self.print(f"Unknown Function {function_name} valid ar : {config.tools.keys()}")
             return f"Unknown Function {function_name} valid ar : {config.tools.keys()}"
 
@@ -2386,32 +2456,48 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         observation = "Problem running function"
 
-        if args_len == 0:
-            self.logger.info("Running with no arguments")
-            observation = tool['func']()
+        try:
+            if args_len == 0:
+                self.logger.info("Running with no arguments")
+                observation = tool['func']()
 
-        if args_len == args_len_c:
-            self.logger.info("Running with matching arguments")
-            observation = tool['func'](*args)
+            elif args_len == args_len_c:
+                self.logger.info("Running with matching arguments")
+                observation = tool['func'](*args)
 
-        if args_len == 1 and args_len_c > 1 and args_len < args_len_c:
-            self.logger.info("Running with one or more then one arguments")
-            if str_args:
-                observation = tool['func'](",".join(args))
+            elif args_len == 1 and args_len_c > 1 and args_len < args_len_c:
+                self.logger.info("Running with one or more then one arguments")
+                if str_args:
+                    observation = tool['func'](",".join(args))
+                else:
+                    observation = tool['func'](args)
+
+            elif args_len == 2:
+                self.logger.info("Running with one arguments and one None state")
+                if str_args:
+                    observation = tool['func'](",".join(args), None)
+                else:
+                    observation = tool['func'](args, None)
+
+            elif args_len == 2 and args_len_c == 1:
+                self.logger.info("Running with one arguments and one None state")
+                if str_args:
+                    observation = tool['func'](args, None)
+                else:
+                    if len(args.keys()) == 1:
+                        args = args[list(args.keys())[0]]
+                    observation = tool['func'](args, None)
+
+            elif args_len > args_len_c:
+                self.logger.info("Matching keyword")
+                if not str_args:
+                    observation = tool['func'](**args)
+
             else:
-                observation = tool['func'](args)
+                observation = "Error this is bad the arguments dos not match the tool"
 
-        if args_len == 2:
-            self.logger.info("Running with one arguments and one None state")
-            if str_args:
-                observation = tool['func'](",".join(args), None)
-            else:
-                observation = tool['func'](args, None)
-
-        if args_len > args_len_c:
-            self.logger.info("Matching keyword")
-            if not str_args:
-                observation = tool['func'](**args)
+        except Exception as e:
+            observation = "Fatal error in tool error "+ str(e)
 
         self.print("Observation : " + observation)
 
@@ -2524,8 +2610,17 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config.add_system_information = sto
         elif self.config[f'agent-config-{name}'].mode == "execution":
             self.logger.info(f"stream mode: {stream}")
+            out = ''
+            last = ''
             for i in range(self.config[f'agent-config-{name}'].max_iterations):
-                out += self.stream_read_llm(text, config)
+                out_ = self.stream_read_llm(text, config)
+                out += out_
+                if last == out_:
+                    if config.short_mem.tokens > 50:
+                        with Spinner('Saving work Memory', symbols='t'):
+                            config.short_mem.clear_to_collective()
+                    break
+                last = out_
                 if not stream:
                     self.print_stream("execution-free : " + out)
                 print()
@@ -2607,7 +2702,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         sto_config = None
         chain_mem = self.get_context_memory()
         self.logger.info(Style.GREY(f"Starting Chain {agent_tasks}"))
-        config.stop_sequence = ['\n\n', "Execute:", "Observation:", "User:"]
+        config.stop_sequence = ['\n\n\n', "Execute:", "Observation:", "User:"]
         for task in agent_tasks[start:end]:
 
             self.logger.info(Style.GREY(f"{type(task)}, {task}"))
@@ -2626,7 +2721,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             if use == 'agent':
                 sto_config, config = config, self.get_agent_config_class(task_name)
 
-            self.print(f"Running task:{steps} {args}")
+            self.print(f"Running task: {args}")
 
             default_mode = config.mode
             default_completion_mode = config.completion_mode
@@ -2751,11 +2846,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         config.completion_mode = default_completion_mode_
 
         if chain_data_infos:
-            return self.run_agent(self.get_agent_config_class("think"),
-                                  f"Produce a summarization of what happened "
-                                  f"(max 1 paragraph) using the given information {chain_sum_data}"
-                                  f"and validate if the task was executed successfully"), chain_ret, chain_ret,\
-                chain_data, uesd_mem
+            return chain_ret, chain_ret, chain_data, uesd_mem
 
         return self.run_agent(self.get_agent_config_class("think"),
                               f"Produce a summarization of what happened "
@@ -2994,12 +3085,19 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             else:
                 self.logger.error("The server is currently overloaded with other requests. Sorry about that!")
                 return "The System cannot correct the text input for the agent."
-        return "No Output providet"
+
+        except Exception as e:
+
+            return "Error: " + str(e)
 
     def mas_text_summaries(self, text, min_length=1600):
+
         len_text = len(text)
         if len_text < min_length:
             return text
+
+        if text in self.mas_text_summaries_dict[0]:
+            return self.mas_text_summaries_dict[1][self.mas_text_summaries_dict[0].index(text)]
 
         cap = 800
         max_length = 45
@@ -3011,11 +3109,11 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             max_length = 80
 
         if len(text) >= 10200:
-            cap = 2000
+            cap = 1800
             max_length = 160
 
         if len(text) >= 70200:
-            cap = 2500
+            cap = 1900
             max_length = 412
 
         summarization_mode_sto = 0
@@ -3031,20 +3129,13 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 for i in x:
                     end.append({'summary_text': self.process_completion(i, self.get_default_agent_config('summary'))})
             else:
-                end = {'summary_text': self.process_completion(x, self.get_default_agent_config('summary'))}
+                end = [{'summary_text': self.process_completion(x, self.get_default_agent_config('summary'))}]
             return end
-
-        num_tokens = cap / 1.9
-        if num_tokens > 1023:
-            cap = int(cap / (num_tokens / 1023))
 
         while len(text) > cap:
             chucks.append(text[:cap])
             text = text[cap:]
-
-        if len(text) < max_length:
-            chucks[-1] += "\n" + text
-        else:
+        if text:
             chucks.append(text)
 
         self.print(f"SYSTEM: chucks to summary: {len(chucks)} cap : {cap}")
@@ -3079,6 +3170,9 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         if summarization_mode_sto:
             self.summarization_mode = summarization_mode_sto
+
+        self.mas_text_summaries_dict[0].append(text)
+        self.mas_text_summaries_dict[1].append(summary)
 
         return summary
 

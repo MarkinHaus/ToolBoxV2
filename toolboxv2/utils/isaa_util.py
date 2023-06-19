@@ -5,6 +5,8 @@ import threading
 import fnmatch
 import subprocess
 import re
+from pathlib import Path
+import time
 
 from langchain.agents import load_tools
 from langchain.tools import ShellTool
@@ -249,12 +251,13 @@ def validate_dictionary(dictionary, valid_agents, valid_tools, valid_functions, 
             else:
                 errors.append(
                     f"Invalid 'use' type '{use_type}' in a task. It should be 'agent', 'chain', 'tool', or 'function'. {i}")
-            if not isinstance(task["args"], str):
+            if not (isinstance(task["args"], str) or isinstance(task["args"], dict)):
                 errors.append(f"The value of the 'args' key in a task must be a string. in task : {i}")
             if not isinstance(task["return"], str):
                 errors.append(f"The value of the 'return' key in a task must be a string. in task : {i}")
 
     return errors
+
 
 def generate_exi_dict(isaa, task, create_agent=False, tools=None, retrys=3):
     if tools is None:
@@ -410,7 +413,8 @@ def generate_exi_dict(isaa, task, create_agent=False, tools=None, retrys=3):
             print(f"Errors: {len(errors)} : {errors[:1]}")
             if errors:
                 agent_config.add_message("system",
-                                         "Errors : " + ', '.join(errors) + f" Fix them by using {infos_c}")
+                                         "Errors : " + ', '.join(errors) + f" Fix them by using {infos_c} refer to your"
+                                                                           f" last output oly change the error and return the full dict")
                 if retrys == 2:
                     purpes = isaa.run_agent(agent_config, f"What is the purpes of the magent listed {errors}")
                     isaa.run_agent(agent_config, f"Crate the missing agent : {errors} {purpes}", mode_over_lode='tools')
@@ -510,50 +514,78 @@ def run_chain_in_cmd_auto_observation_que(isaa, task, chains, extracted_dict: st
 
         # do task get
         # evaluate, data...
-
-        pipe_res_label = "NEGATIVE"
+        sys_print(f"---------------------- Start --------------------")
+        pipe_res_label = "POSITIVE"
         try:
-            evaluation, chain_ret, chain_ret, chain_data, uesd_mem = isaa.execute_thought_chain(task,
-                                                                                                chains.get(chain_name)
-                                                                                                , self_agent_config,
-                                                                                                start=step,
-                                                                                                end=step + 1,
-                                                                                                chain_ret=chain_ret
-                                                                                                , chain_data=chain_data,
-                                                                                                uesd_mem=uesd_mem,
-                                                                                                chain_data_infos=True)
+            chain_ret, chain_ret, chain_data, uesd_mem = isaa.execute_thought_chain(task,chains.get(chain_name),
+                 self_agent_config,start=step,end=step + 1,chain_ret=chain_ret, chain_data=chain_data,
+                  uesd_mem=uesd_mem,chain_data_infos=True)
+            evaluation = chain_ret[-1][-1]
+            #print(self_agent_config.last_prompt)
             evaluation_ = evaluation[::-1][:300][::-1]
             pipe_res = isaa.text_classification(evaluation_)
             pipe_res_label = pipe_res[0]['label']
             print(evaluation_)
 
         except Exception as e:
-            print(e, '🔴')
+            sys_print(f"🔴 {e}")
             evaluation = e
 
+        sys_print(f"---------------------- End execute_thought_chain step(s) --------------------")
+
+        sys_print(f"Progress Main Chain at step : {step} from :{len(task_que)}")
+
         if pipe_res_label == "NEGATIVE":
-            print('🟡')
-            ui = input("optimise ? : ")
+            sys_print('🟡')
+            if chain_ret:
+                get_app().pretty_print_dict({"Last-task":chain_ret[-1]})
+            print("Y -> to generate task adjustment\nR (text for infos)-> Retry on Task\nE -> return current state\n"
+                  "lev black for next task")
+            ui = input("optimise ? : ").lower()
             if "y" == ui:
                 data = generate_exi_dict(isaa,
-                                         f"Optimise the task que : {task_que[step:]} based on this outcome : {chain_ret}"
-                                         f" the evaluation {evaluation} and the task {task}\nOnly return the dict\nDict:",
+                                         f"Optimise the task: {task_que[step]} based on this outcome : {chain_ret[-1]}"
+                                         f" the evaluation {evaluation} and the task {task}\nOnly return the dict\nWitch The Corrent Task updated:",
                                          create_agent=False,
                                          tools=self_agent_config.tools, retrys=3)
                 if isinstance(data, dict):
-                    task_que = chains.get(get_chain_name(data))
+                    try:
+                        task_que[step] = data['task'][0]
+                        sys_print(f'🟡🟢')
+                    except KeyError:
+                        sys_print(f'🟡🔴')
+                        step += 1
             elif 'r' == ui:
                 print("RETRY")
+                sys_print(f'🟡🟡')
                 if RETRYS == 0:
+                    sys_print(f'🟡🟡🔴')
                     break
                 RETRYS -= 1
+            elif len(ui) > 3:
+                self_agent_config.add_message("user", ui)
+                sys_print(f'🟡🟢🟢')
+            elif ui == 'e':
+                chain_sum_data = isaa.summarize_ret_list(chain_ret)
+                response = isaa.run_agent("think",
+                                          f"Produce a summarization of what happened "
+                                          f"(max 1 paragraph) using the given information {chain_sum_data}"
+                                          f"and validate if the task was executed successfully")
+
+                return response, chain_ret
             else:
-                print(f'🟢')
+                sys_print(f'🟢🟡')
                 step += 1
 
         else:
-            print(f'🟢')
+            sys_print(f'🟢')
             step += 1
+
+    chain_sum_data = isaa.summarize_ret_list(chain_ret)
+    response = isaa.run_agent("think",
+                              f"Produce a summarization of what happened "
+                              f"(max 1 paragraph) using the given information {chain_sum_data}"
+                              f"and validate if the task was executed successfully")
 
     return response, chain_ret
 
@@ -565,8 +597,10 @@ def free_run_in_cmd(isaa, task, self_agent_config):
         for agent_name in agents[3:]:
             isaa.get_agent_config_class(agent_name)
     free_run = True
-    while free_run:
-        env_text = f"""Welcome, you are in a hostile environment, your name is isaa.
+    strp = 0
+    self_agent_config.get_messages(create=True)
+    self_agent_config.add_message("user", task)
+    env_text = f"""Welcome, you are in a hostile environment, your name is isaa.
     you have several basic skills 1. creating agents 2. creating some agents 3. using skills, agents and tools
 
     you have created {len(agents)}agents so far these are : {agents}.
@@ -577,30 +611,118 @@ def free_run_in_cmd(isaa, task, self_agent_config):
     if you have no ather wy then to ask for help write Question: 'your question'\nUser:
 
     Task : {task}"""
+    self_agent_config.add_message("system", env_text)
+    data = []
+    while free_run:
 
+        sys_print(f"-------------------- Start Agent (free text mode) -----------------")
         sim = isaa.run_agent(self_agent_config, env_text, mode_over_lode='execution')
-        task += str(sim)
+        sys_print(f"-------------------- End Agent -----------------")
+
+        self_agent_config.add_message("assistant", sim)
+
+
+        strp += 1
+
+        sys_print(f"-------------------- in free exiqution ----------------- STEP : {strp}")
 
         if "user:" in sim.lower():
-            print("USER QUESTION")
-            task += input()
-
-        print(isaa.config["agents-name-list"])
-        agents = isaa.config["agents-name-list"]
+            sys_print(f"-------------------- USER QUESTION -----------------")
+            self_agent_config.add_message("user", input("User: "))
 
         if new_agent != isaa.config["agents-name-list"][-1]:
             new_agent = isaa.config["agents-name-list"][-1]
             isaa.get_agent_config_class(new_agent).save_to_file()
+        do_list = split_todo_list(sim)
+        if do_list:
+            self_agent_config.todo_list = do_list
 
-        print(split_todo_list(sim))
-        print()
-        print()
-        user_val = input("")
-        print()
+        user_val = input("User (exit with n): ")
+
+        data.append([sim, user_val])
+
         if user_val == "n":
             free_run = False
-        elif len(user_val) > 3:
-            task += "User: " + user_val
+
+        self_agent_config.add_message("user", user_val)
+
+    return data
+
+
+def startage_task_aproche(isaa, task, self_agent_config, chains, create_agent=False):
+    sto_agent_ = isaa.agent_collective_senses
+    sto_summar = isaa.summarization_mode
+
+    if create_agent:
+        isaa.get_context_memory().load_all()
+        isaa.agent_collective_senses = True
+        isaa.summarization_mode = 2
+        isaa.get_chain().save_to_file()
+
+        think_agent = isaa.get_agent_config_class("think") \
+            .set_completion_mode('chat') \
+            .set_model_name('gpt-4').set_mode('free')
+        think_agent.stop_sequence = ['\n\n\n']
+        think_agent.stream = True
+        if not task:
+            return
+        # new env isaa withs chains
+    else:
+        think_agent = isaa.get_agent_config_class("think")
+
+    agents = isaa.config["agents-name-list"]
+    infos_c = f"List of Avalabel Agents : {agents}\n Tools : {list(self_agent_config.tools.keys())}\n" \
+              f" Functions : {isaa.scripts.get_scripts_list()}\n Chains : {str(chains)} "
+
+    think_agent.get_messages(create=True)
+    think_agent.add_message("user", task)
+    think_agent.add_message("system", infos_c)
+    think_agent.add_message("system", "Process help Start by gathering relevant information. Then coordinate the next "
+                                      "steps based on the information.When the task is simple enough, proceed with "
+                                      "the execution. Then help yourself by creating an expert agent that can solve "
+                                      "the task. Also use existing solution methods to solve the task more "
+                                      "effectively.")
+    think_agent.add_message("system", "Create 4 strategies (add a Describing name) "
+                                      "with which you can solve this problem."
+                                      "Specify the required agent tools and scripts in each strategie."
+                                      " For each stratagem you should specify a success probability from 0% to 100%."
+                                      "For each stratagem you should specify a deviation from the task"
+                                      "from 100 to 0. -> 0 = no deviation is in perfect alignment to the task."
+                                      " 100 = full deviation not related to the task ")
+    think_agent.add_message("assistant", "After long and detailed step by step thinking and evaluating,"
+                                         " brainstormen of the task I have created the following strategies."
+                                         "Strategies :")
+
+    strategies = isaa.run_agent(think_agent, '')
+
+    think_agent.add_message("assistant", strategies)
+
+    think_agent.add_message("system", "Think about 3 further strategies with an lower Deviation then the best strategy."
+                                      "Brainstorm new ideas and add old knowledge by extracted and or combined with "
+                                      "new ideas."
+                                      "Consider your stills,"
+                                      " Reflect the successes "
+                                      "as well as the deviation from the task at hand. Give both numbers.")
+
+    perfact = False
+    strategies_final = ""
+    while not perfact:
+        strategies_final = isaa.run_agent(think_agent, '')
+        think_agent.add_message("assistant", strategies_final)
+        u = input(":")
+        if u == 'x':
+            exit(0)
+        if u == 'y':
+            think_agent.add_message("system", "Return an Elaborate of the effective strategie for the next agent"
+                                              " consider what the user ask and the best variant.")
+            strategies_final = isaa.run_agent(think_agent, '')
+            perfact = True
+        think_agent.add_message("user", u)
+
+    isaa.agent_collective_senses = sto_agent_
+    isaa.summarization_mode = sto_summar
+
+    return strategies_final
 
 
 def idea_enhancer(isaa, task, self_agent_config, chains, create_agent=False):
@@ -663,75 +785,6 @@ def idea_enhancer(isaa, task, self_agent_config, chains, create_agent=False):
 
     return str(new_task)
 
-
-def startage_task_aproche(isaa, task, self_agent_config, chains, create_agent=False):
-    sto_agent_ = isaa.agent_collective_senses
-    sto_summar = isaa.summarization_mode
-
-    if create_agent:
-        isaa.get_context_memory().load_all()
-        isaa.agent_collective_senses = True
-        isaa.summarization_mode = 2
-        isaa.get_chain().save_to_file()
-
-        think_agent = isaa.get_agent_config_class("think") \
-            .set_completion_mode('chat') \
-            .set_model_name('gpt-4').set_mode('free')
-        think_agent.stop_sequence = ['\n\n\n']
-        think_agent.stream = True
-        if not task:
-            return
-        # new env isaa withs chains
-    else:
-        think_agent = isaa.get_agent_config_class("think")
-
-    agents = isaa.config["agents-name-list"]
-    infos_c = f"List of Avalabel Agents : {agents}\n Tools : {list(self_agent_config.tools.keys())}\n" \
-              f" Functions : {isaa.scripts.get_scripts_list()}\n Chains : {str(chains)} "
-
-    think_agent.get_messages(create=True)
-    think_agent.add_message("user", task)
-    think_agent.add_message("system", infos_c)
-    think_agent.add_message("system", "Create 4 strategies with which you can solve this problem."
-                                      "Specify the required agent tools and scripts in each strategie."
-                                      " For each stratagem you should specify a success probability from 0% to 100%."
-                                      "For each stratagem you should specify a deviation from the task probability "
-                                      "from 100% to 0%. -> 0 = no deviation is in perfect alignment to the task."
-                                      " 100 = full deviation not related to the task ")
-    think_agent.add_message("assistant", "After long and detailed step by step thinking and evaluating,"
-                                         " brainstormen of the task I have created the following strategies."
-                                         "Strategies :")
-
-    strategies = isaa.run_agent(think_agent, '')
-
-    think_agent.add_message("assistant", strategies)
-
-    think_agent.add_message("system", "Think about 3 further strategies with an lower Deviation then the best strategy."
-                                      "Brainstorm new ideas and add old knowledge by extracted and or combined with "
-                                      "new ideas."
-                                      "Consider your stills,"
-                                      " Reflect the successes "
-                                      "as well as the deviation from the task at hand. Give both numbers.")
-
-    perfact = False
-    strategies_final = ""
-    while not perfact:
-        strategies_final = isaa.run_agent(think_agent, '')
-        think_agent.add_message("assistant", strategies_final)
-        u = input(":")
-        if u == 'x':
-            exit(0)
-        if u == 'y':
-            think_agent.add_message("system", "Return an Elaborate of the effective strategie for the next agent"
-                                              " consider what the user ask and the best variant.")
-            strategies_final = isaa.run_agent(think_agent, '')
-            perfact = True
-        think_agent.add_message("user", u)
-
-    isaa.agent_collective_senses = sto_agent_
-    isaa.summarization_mode = sto_summar
-
-    return strategies_final
 
 
 def add_skills(isaa, self_agent_config):
@@ -796,7 +849,6 @@ def add_skills(isaa, self_agent_config):
         "CopyFileTool": copy_file_tool,
         "DeleteFileTool": delete_file_tool,
         "MoveFileTool": move_file_tool,
-        "WriteFileTool": write_file_tool,
         "ListDirectoryTool": list_directory_tool,
     }
 
@@ -1012,6 +1064,10 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
             return '', ''
 
         def save_file(name, text):
+
+            if not os.path.exists("./data/isaa_data/work"):
+                Path("./data/isaa_data/work").mkdir(parents=True, exist_ok=True)
+
             open('./data/isaa_data/work/' + name, 'a').close()
             with open('./data/isaa_data/work/' + name, 'w') as f:
                 f.write(text)
@@ -1022,22 +1078,30 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
             if code:
                 save_file("test." + type_, code)
 
+        def modify_file(file_path, content):
+            """Modify the file contents file name content"""
+            save_file(file_path, content)
+
         chain_h['save_code'] = helper
 
         rft = ReadFileTool()
         cft = CopyFileTool()
         dft = DeleteFileTool()
         mft = MoveFileTool()
-        wft = WriteFileTool()
         lft = ListDirectoryTool()
 
         isaa.add_tool("Read", rft, f"Read({rft.args})", rft.description, self_agent_config, lagchaintool=True)
         isaa.add_tool("Copy", cft, f"Copy({cft.args})", cft.description, self_agent_config, lagchaintool=True)
         isaa.add_tool("Delete", dft, f"Delete({dft.args})", dft.description, self_agent_config, lagchaintool=True)
         isaa.add_tool("Move", mft, f"Move({mft.args})", mft.description, self_agent_config, lagchaintool=True)
-        isaa.add_tool("Write", wft, f"Write({wft.args})", wft.description, self_agent_config, lagchaintool=True)
+        isaa.add_tool("Write-first-code-block-to-file", helper, f"Write-first-code-block-to-file(<code>)", "extract first code block"
+                                                                                                           "and w"
+                                                                                                           "rite code "
+                                                                                                           "to file",
+                      self_agent_config)
         isaa.add_tool("ListDirectory", lft, f"ListDirectory({lft.args})", lft.description, self_agent_config,
                       lagchaintool=True)
+        isaa.add_tool("modify_file", modify_file, f"modify_file(file_path, content)", modify_file.__doc__, self_agent_config)
 
     if chain_runner:
         chain_instance: AgentChain = isaa.get_chain()
@@ -1113,7 +1177,7 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
 
         task = f"Act as an summary expert your specialties are writing summary. you are known to think in small and " \
                f"detailed steps to get the right result. Your task : write a summary reladet to {x}\n\n{ress}"
-        res = isaa.run_agent(isaa.get_default_agent_config('think').set_model_name('gpt-3.5-turbo'), task)
+        res = isaa.run_agent(isaa.get_default_agent_config('think').set_model_name('gpt-3.5-turbo-0613'), task)
 
         if res:
             return res

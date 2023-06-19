@@ -1,56 +1,87 @@
 <!DOCTYPE html>
 <html>
 <head>
-        <title>Login Page</title>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-                body {
-                        background-color: #f2f2f2;
-                        font-family: Arial, sans-serif;
-                }
-                form {
-                        background-color: #fff;
-                        border-radius: 5px;
-                        box-shadow: 0 0 10px rgba(0,0,0,0.2);
-                        padding: 20px;
-                        width: 300px;
-                        margin: 50px auto;
-                }
-                input[type=text], input[type=password] {
-                        width: 100%;
-                        padding: 12px 20px;
-                        margin: 8px 0;
-                        display: inline-block;
-                        border: 1px solid #ccc;
-                        border-radius: 4px;
-                        box-sizing: border-box;
-                }
-                button {
-                        background-color: #4CAF50;
-                        color: white;
-                        padding: 14px 20px;
-                        margin: 8px 0;
-                        border: none;
-                        border-radius: 4px;
-                        cursor: pointer;
-                        width: 100%;
-                }
-                button:hover {
-                        background-color: #45a049;
-                }
-        </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="./scripts.js" type="module" defer></script>
+    <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-        <form>
-                <h2>Login</h2>
-                <label for="username">Username</label>
-                <input type="text" id="username" name="username" placeholder="Enter your username">
+<div id="overlay"></div>
+<header>
+    <nav>
+        <ul>
+            <li><a href="/app">Start</a></li>
+            <li><a href="/app/signup">Sign Up</a></li>
+            <li><a href="/app/login">Login</a></li>
+            <li><a href="/app/terms.html">Terms and Conditions</a></li>
+            <li><a href="/app/dashboard.html">Dashboard</a></li>
+        </ul>
+    </nav>
+    <div class="dark-mode-toggle">
+        <input type="checkbox" id="darkModeToggle">
+        <label for="darkModeToggle" id="toggleLabel">☀️</label>
+    </div>
+</header>
 
-                <label for="password">Password</label>
-                <input type="password" id="password" name="password" placeholder="Enter your password">
+<!-- Your main content goes here -->
+<main>
+  <div id="threeDScene"></div>
+  <div class="main-content frosted-glass">
+    <section id="login">
+      <div class="form-container">
+        <form id="loginForm" class="form">
+          <h2>Login</h2>
 
-                <button type="submit">Login</button>
+            <div id="infoPopup" class="form-container" style="display: none; z-index: 1000;">
+            <p id="infoText"></p>
+            </div>
+
+          <input type="text" id="username" placeholder="Username">
+          <input type="password" id="password" placeholder="Password">
+          <label>Remember me <input type="checkbox" id="remember-me"></label>
+          <button type="submit">Login</button>
         </form>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+
+document.addEventListener('DOMContentLoaded', () => {
+
+  document.getElementById('loginForm').addEventListener('submit', function(event) {
+    event.preventDefault();
+
+    var username = document.getElementById('username').value;
+    var password = document.getElementById('password').value;
+
+    fetch('/api/post/cloudM/run/log_in_user', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        token: 'string',
+        data: {
+          username: username,
+          password: password
+        }
+      })
+    })
+    .then(response => response.json())
+    .then(data => {
+      // Display the response in the popup
+      document.getElementById('infoText').textContent = JSON.stringify(data['res']);
+      document.getElementById('infoPopup').style.display = 'block';
+    })
+    .catch((error) => {
+      console.error('Error:', error);
+    });
+  });
+ });
+</script>
+
 </body>
 </html>

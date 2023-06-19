@@ -2,6 +2,7 @@ import binascii
 import hashlib
 import logging
 import os
+import random
 import subprocess
 import sys
 import tempfile
@@ -50,9 +51,10 @@ class Tools(MainTool, FileHandler):
                     ["first-web-connection", "set up a web connection to MarkinHaus"],
                     ["create-account", "create a new account"],
                     ["login", "login with Username & password"],
-                    ["create_user", "create a new user - api instance"],
-                    ["validate_jwt", "validate a  user - api instance"],
-                    ["log_in_user", "log_in user - api instance"],
+                    ["api_create_user", "create a new user - api instance"],
+                    ["api_validate_jwt", "validate a  user - api instance"],
+                    ["api_log_in_user", "log_in user - api instance"],
+                    ["api_email_waiting_list", "email_waiting_list user - api instance"],
                     ["download_api_files", "download mods"],
                     ["get-init-config", "get-init-config mods"],
                     ["mod-installer", "installing mods via json url"],
@@ -66,8 +68,9 @@ class Tools(MainTool, FileHandler):
             "first-web-connection": self.add_url_con,
             "create-account": self.create_account,
             "login": self.log_in,
-            "create_user": self.create_user,
-            "log_in_user": self.log_in_user,
+            "api_create_user": self.create_user,
+            "api_log_in_user": self.log_in_user,
+            "api_email_waiting_list": self.email_waiting_list,
             "validate_jwt": self.validate_jwt,
             "download_api_files": self.download_api_files,
             "#update-core": self.update_core,
@@ -90,6 +93,46 @@ class Tools(MainTool, FileHandler):
 
         self.logger.info(f"Time to initialize MainTool {time.time() - t1}")
         self.logger.info(f"Time to initialize Tools {self.name} {time.time() - t0}")
+
+    def prep_system_initial(self, command, app):
+
+        db = app.new_ac_mod('db')
+
+        if db.rcon is None:
+            self.print("No redis instance provided from db run DB first-redis-connection")
+            return "Pleas connect first to a redis instance"
+        i = 0
+        for key in db.rcon.scan_iter():
+            i += 1
+
+        if i != 0:
+            self.print("Pleas clean redis database first")
+            return "Data in database"
+
+        secret = str(random.randint(0, 100))
+        for i in range(4):
+            secret += str(uuid.uuid5(uuid.NAMESPACE_X500, secret))
+
+        db.rcon.set("jwt-secret-cloudMService", secret)
+        db.rcon.set("email_waiting_list", [])
+
+        key = str(uuid.uuid4())
+
+        print("First key :" + key)
+        db.rcon.set(key, "Valid")
+
+
+    def start_user_instance(self, uid):
+        pass
+
+    def save_user_instance(self, uid):
+        pass
+
+    def close_user_instance(self, uid):
+        pass
+
+    def delet_user_instance(self, uid):
+        pass
 
     def load_open_file(self):
         self.logger.info("Starting cloudM")
@@ -171,7 +214,7 @@ def show_version(_, app: App):
         if '-fh' in command:
             boilerplate = boilerplate.replace('pass', '').replace('# ~ ', '')
             self.logger.info(f"adding FileHandler")
-        if '-func'in command:
+        if '-func' in command:
             boilerplate += helper_functions_func
             self.logger.info(f"adding functional based")
         else:
@@ -306,9 +349,9 @@ def show_version(_, app: App):
 
     def create_account(self):
         version_command = self.get_file_handler(self.keys["URL"])
-        url = "https://simeplm/cloudM/create_acc_mhs"
+        url = "https://simeplm/app/signup"
         if version_command is not None:
-            url = version_command + "/cloudM/create_acc_mhs"
+            url = version_command + "/app/signup"
         # os.system(f"start {url}")
 
         try:
@@ -397,14 +440,20 @@ def show_version(_, app: App):
         exit(0)
 
     def create_user(self, command, app: App):
-        if "db" not in list(app.MOD_LIST.keys()):
-            return "Server has no database module"
 
         data = command[0].data
 
         username = data["username"]
         email = data["email"]
         password = data["password"]
+        invitation_key = data["invitation"]
+
+        invitation_data = app.run_any('db', 'get', [invitation_key])
+
+        if invitation_data != "Valid":
+            return "Invalid Invitation Key"
+
+        app.run_any('db', 'del', ['', invitation_key])
 
         uid = str(uuid.uuid4())
 
@@ -423,8 +472,8 @@ def show_version(_, app: App):
         return jwt_key
 
     def log_in_user(self, command, app: App):
-        if "db" not in list(app.MOD_LIST.keys()):
-            return "Server has no database module"
+        # if "db" not in list(app.MOD_LIST.keys()):
+        #    return "Server has no database module"
 
         data = command[0].data
 
@@ -434,7 +483,7 @@ def show_version(_, app: App):
         tb_token_jwt = app.run_any('db', 'get', ["jwt-secret-cloudMService"])
 
         if not tb_token_jwt:
-            return "jwt scret - not found pleas register one"
+            return "The server is Not Initialized yet if u ar an admin run 'cloudM prep_system_initial'"
 
         user_data_token = app.run_any('db', 'get', [f"user::{username}::*"])
 
@@ -463,6 +512,26 @@ def show_version(_, app: App):
         return crate_sing_key(username, user_data["email"], "", user_data["uid"],
                               gen_token_time({"v": self.version}, 4380),
                               tb_token_jwt, app)
+
+    def email_waiting_list(self, command, app: App):
+        # if "db" not in list(app.MOD_LIST.keys()):
+        #    return "Server has no database module"
+
+        data = command[0].data
+
+        email = data["email"]
+        imp = ["email_waiting_list", [email]]
+        tb_token_jwt = app.run_any('db', 'append_on_set', imp)
+
+        out = "My apologies Unfortunately they could not be added"
+        if tb_token_jwt == imp:
+            out = "You will receive an invitation email in a few days"
+
+        if "already in list" in tb_token_jwt:
+            out = "You are already in the list, please do not try to add yourself more than once. the system " \
+                  "recognizes it."
+
+        return f"{email}: {out}"
 
     def validate_jwt(self, command, app: App):  # spec s -> validate token by server x ask max
         res = ''

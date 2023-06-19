@@ -1,7 +1,6 @@
 import os
 from typing import Union
 from fastapi import APIRouter, UploadFile
-from starlette.staticfiles import StaticFiles
 
 from toolboxv2 import ToolBox_over, App
 from .util import PostRequest
@@ -97,7 +96,7 @@ def get_mod_run(mod: str, name: str, command: Union[str, None] = None):
             tb_app.new_ac_mod(mod)
 
     if tb_app.AC_MOD:
-        res = tb_app.run_function('api_'+name, command.split('|'))
+        res = tb_app.run_function('api_' + name, command.split('|'))
 
     if type(res) == str:
         if (res.startswith('{') or res.startswith('[')) or res.startswith('"[') or res.startswith('"{') \
@@ -114,7 +113,7 @@ async def post_mod_run(data: PostRequest, mod: str, name: str, command: Union[st
         command = ''
 
     command = [data, command.split('|')]
-    res = tb_app.run_any(mod, 'api_'+name, command)
+    res = tb_app.run_any(mod, 'api_' + name, command)
 
     if type(res) == str:
         if (res.startswith('{') or res.startswith('[')) or res.startswith('"[') or res.startswith('"{') \

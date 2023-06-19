@@ -109,7 +109,7 @@ def run_editor(isaa, user_text, self_agent_config):
     step = 0
     task_done = False
 
-    self_agent_config.model_name = "code-davinci-edit-001"  # "gpt-3.5-turbo"
+    self_agent_config.model_name = "code-davinci-edit-001"  # "gpt-3.5-turbo-0613"
     self_agent_config.completion_mode = "edit"
 
     sys_print("USER0: " + user_text)
@@ -159,7 +159,7 @@ def run_chad(isaa: Isaa, user_text, self_agent_config):
     #     }
     # ])
 
-    self_agent_config.model_name = "gpt-3.5-turbo"
+    self_agent_config.model_name = "gpt-3.5-turbo-0613"
     self_agent_config.mode = "free"
     self_agent_config.completion_mode = "chat"
 
@@ -168,7 +168,7 @@ def run_chad(isaa: Isaa, user_text, self_agent_config):
     agent_categorize_config \
         .set_mode('free') \
         .set_completion_mode('text') \
-        .set_model_name('gpt-3.5-turbo') \
+        .set_model_name('gpt-3.5-turbo-0613') \
         .stream = False
     # user_text = 'cloudM.py'
     sys_print("USER0: " + user_text)
@@ -256,11 +256,10 @@ def get_buffer(buffer):
                 buffer += str(key_name).lower()
 
             print(buffer[len(buffer) - 8:], end='\r')
-
-            if buffer.endswith("isaa-exit"):
-                alive = False
     else:
-        return input(":")
+        buffer = input(":")
+
+    return buffer
 
 
 def run(app, args):
@@ -285,6 +284,9 @@ def run(app, args):
 
         buffer = get_buffer(buffer)
 
+        if buffer.endswith("isaa-exit"):
+            alive = False
+
         if buffer.endswith("isaa-clear"):
             self_agent_config.short_mem.memory_data = []
             self_agent_config.observe_mem.memory_data = []
@@ -293,7 +295,7 @@ def run(app, args):
             print("Memory cleared")
 
         if buffer.endswith(trigger_word):
-            print("Isaa Running N\n")
+            print("Isaa Running simple exiqution\n")
             context = pyperclip.paste()
 
             if context:
@@ -312,7 +314,7 @@ def run(app, args):
 
         if buffer.endswith(trigger_word_editor):
 
-            print("Isaa Running E\n")
+            print("Isaa Running Editor\n")
             context = pyperclip.paste()
 
             if context:
@@ -331,7 +333,7 @@ def run(app, args):
 
         if buffer.endswith(trigger_word_chad):
 
-            print("Isaa Running C\n")
+            print("Isaa Running Chain runner\n")
             context = pyperclip.paste()
 
             if context:
@@ -351,7 +353,7 @@ def run(app, args):
 
         if buffer.endswith(trigger_idea_dev):
 
-            print("Isaa Running C\n")
+            print("Isaa Running Idea development\n")
             context = pyperclip.paste()
 
             if context:
@@ -371,7 +373,7 @@ def run(app, args):
 
         if buffer.endswith(trigger_gen_dic):
 
-            print("Isaa Running C\n")
+            print("Isaa Running Plan generation\n")
             context = pyperclip.paste()
 
             if context:

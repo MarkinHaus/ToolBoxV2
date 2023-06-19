@@ -170,13 +170,14 @@ class FileHandler(Code):
                 except ValueError:
                     logger.error(f"ValueError Loading {obj} ; {self.file_handler_filename}")
                 except SyntaxError:
-                    logger.critical(
-                        Style.RED(
+                    logger.warning(
+                        Style.YELLOW(
                             f"SyntaxError Loading {obj} ; {self.file_handler_filename}"
-                            f" {len(objects[1])}, {type(objects[1])}"
+                            f" {len(objects[1])} {type(objects[1])}"
                         )
                     )
-                    pass  # print(Style.YELLOW(f"Data frc : {obj} ; {objects[1]}"))
+                    return objects[1]
+                    # print(Style.YELLOW(f"Data frc : {obj} ; {objects[1]}"))
                 except NameError:
                     return str(objects[1])
 

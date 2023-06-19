@@ -35,7 +35,7 @@ def run(app, args):
     isaa_memory = isaa.get_context_memory()
     isaa.get_chain().load_from_file()
 
-    isaa.get_agent_config_class("think").set_model_name("gpt-3.5-turbo").stream = True
+    isaa.get_agent_config_class("think").set_model_name("gpt-3.5-turbo-0613").stream = True
     # get project in isaa_work dir
     repo_url = "https://github.com/MarkinHaus/ToolBoxV2.git"
     branch = "init-isaa"
@@ -48,7 +48,7 @@ def run(app, args):
 
     tokens = 0
     prices = {
-        "gpt-3.5-turbo": 0.002,
+        "gpt-3.5-turbo-0613": 0.002,
         "Davinci": 0.02,
         "Babbage": 0.0005,
         "GPT-4-p": 0.03,
@@ -56,10 +56,10 @@ def run(app, args):
     }
     for file in code_and_md_files:
        with open("isaa_work/"+file, 'r', encoding='utf-8') as f:
-           tokens += len(tiktoken.encoding_for_model("gpt-3.5-turbo").encode(f.read()))
+           tokens += len(tiktoken.encoding_for_model("gpt-3.5-turbo-0613").encode(f.read()))
 
-    out = ((tokens*3.7)/1000)*prices['gpt-3.5-turbo']
-    inp = (tokens/1000)*prices['gpt-3.5-turbo']
+    out = ((tokens*3.7)/1000)*prices['gpt-3.5-turbo-0613']
+    inp = (tokens/1000)*prices['gpt-3.5-turbo-0613']
     print(f"ALL of tokens : {tokens} text input price : ${inp}\n"
          f"estimated output price :${out} \nfull price {inp+out}")
 

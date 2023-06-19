@@ -74,8 +74,12 @@ class Tools(MainTool, FileHandler):  # FileHandler
         api_name = command[1]
 
         if api_name not in self.api_config.keys():
+            host = "127.0.0.1"
+            if 'live' in api_name:
+                host = "0.0.0.0"
+
             self.api_config[api_name] = {"Name": api_name, "version": self.version,
-                                         "port": 5000, "host": "127.0.0.1"}
+                                         "port": 5000, "host": host}
 
         api_data = self.api_config[api_name]
 
