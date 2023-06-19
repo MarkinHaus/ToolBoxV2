@@ -881,7 +881,8 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
         try:
             calender_run = app.AC_MOD.get_llm_tool("markinhausmanns@gmail.com")
         except Exception:
-            os.remove("token.pickle")
+            if os.path.exists("token.pickle"):
+                os.remove("token.pickle")
             calender_run = app.AC_MOD.get_llm_tool("markinhausmanns@gmail.com")
         append_calender_agent = app.AC_MOD.append_agent
 

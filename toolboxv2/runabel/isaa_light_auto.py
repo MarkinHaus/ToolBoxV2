@@ -15,7 +15,7 @@ NAME = "isaa-l-auto"
 
 
 def run(app: App, args):
-    isaa, self_agent_config, chains = init_isaa(app, speak_mode=args.speak, calendar=True, ide=True, create=True,
+    isaa, self_agent_config, chains = init_isaa(app, speak_mode=args.speak, calendar=False, ide=True, create=True,
                                                 isaa_print=False, python_test=True, init_mem=True, init_pipe=True,
                                                 join_now=False,
                                                 global_stream_override=False, chain_runner=True)
