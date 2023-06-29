@@ -1,0 +1,20 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto Markdown Visible</title>
+</head>
+<body>
+<button id="testButton">Test Module</button>
+<div class="autoMarkdownVisible" id="testElement1">
+    **Test String 1:** This is a *test* string with some _markdown_ syntax.
+    <div class="markdown" id="markdown-testElement1">**Test String 3:** This is a *test* string with some _markdown_ syntax.</div>
+    <div class="markdownNO" id="markdownNO-testElement1">**Test String 4:** This is a *test* string with some _markdown_ syntax.</div>
+</div>
+<div class="autoMarkdownVisible" id="testElement2">
+    **Test String 2:** Another _test_ string with *markdown* syntax.
+</div>
+
+<script type="module" src="/app/scripts/AutoMardown.js"></script>
+</body>
+</html>

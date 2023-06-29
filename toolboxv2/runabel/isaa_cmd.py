@@ -1,7 +1,6 @@
 """Console script for toolboxv2. Isaa CMD Tool"""
 from toolboxv2.mods.isaa import IsaaQuestionBinaryTree
-from toolboxv2.utils.isaa_util import sys_print, init_isaa
-from toolboxv2.utils.toolbox import get_app
+from toolboxv2.mods.isaa_extars.isaa_modi import sys_print, init_isaa
 import copy
 
 NAME = "isaa-cmd"

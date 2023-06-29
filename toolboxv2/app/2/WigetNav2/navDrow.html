@@ -1,0 +1,26 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/app/2/WigetNav2/navDrow.css">
+    <title>Custom Circular Selector</title>
+</head>
+<body>
+<div class="option-wheel" onclick="optionWheel({    option1: { return: 'option1', color: '#f00' },
+    option2: { return: 'option2', color: '#0f0' }})">
+    <div class="circle center"></div>
+    <div class="circle option1"></div>
+    <div class="circle option2"></div>
+</div>
+<div class="wheel" id="wheel">
+    <div class="segment" id="agent1">Agent 1</div>
+    <div class="segment" id="agent2">Agent 2</div>
+    <div class="segment" id="agent3">Agent 3</div>
+    <!-- Add more agents as needed -->
+    <div class="center" id="center">Select Agent</div>
+</div>
+<script src="/app/2/WigetNav2/navDrow.js"></script>
+</body>
+</html>

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="/app/scripts/scripts.js" type="module" defer></script>
+    <script src="/app/scripts/WorkerSocketRenderer.js" defer></script>
+    <link rel="stylesheet" href="/app/assets/styles.css">
+</head>
+<body>
+<div id="overlay"></div>
+<header>
+    <nav>
+        <ul>
+            <li><a href="/app">Start</a></li>
+            <li><a href="/app/signup">Sign Up</a></li>
+            <li><a href="/app/login">Login</a></li>
+            <li><a href="/app/assets/terms.html">Terms and Conditions</a></li>
+            <li><a href="/app/dashboards/dashboard.html">Dashboard</a></li>
+        </ul>
+    </nav>
+    <div class="dark-mode-toggle">
+        <input type="checkbox" id="darkModeToggle">
+        <label for="darkModeToggle" id="toggleLabel">☀️</label>
+    </div>
+</header>
+
+<!-- Your main content goes here -->
+<main>
+  <div id="threeDScene"></div>
+  <div class="main-content frosted-glass">
+    <section id="login">
+      <div class="form-container">
+        <form id="loginForm" class="form">
+          <h2>Login</h2>
+
+            <div id="infoPopup" class="form-container" style="display: none; z-index: 1000;">
+            <p id="infoText"></p>
+            </div>
+
+          <input type="text" id="username" placeholder="Username">
+          <input type="password" id="password" placeholder="Password">
+          <label>Remember me <input type="checkbox" id="remember-me"></label>
+          <button type="submit">Login</button>
+        </form>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+
+document.addEventListener('DOMContentLoaded', () => {
+
+  document.getElementById('loginForm').addEventListener('submit', function(event) {
+    event.preventDefault();
+
+    var username = document.getElementById('username').value;
+    var password = document.getElementById('password').value;
+
+    fetch('/api/post/cloudM/run/log_in_user', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        token: 'string',
+        data: {
+          username: username,
+          password: password
+        }
+      })
+    })
+    .then(response => response.json())
+    .then(data => {
+      // Display the response in the popup
+        var data_res = JSON.stringify(data['res']);
+        if (data_res.includes("CloudM")){
+            document.getElementById('infoText').textContent = "Valid";
+            document.getElementById('infoPopup').style.display = 'block';
+            setTimeout(()=>{
+                localStorage.setItem("WsID", data_res.replaceAll('"', ''));
+                localStorage.setItem("local_ws.onopen:installMod-welcome", 'false');
+                window.location.href = "/app/dashboard"
+            }, 200)
+        }else{
+            document.getElementById('infoText').textContent = JSON.stringify(data['res']);
+            document.getElementById('infoPopup').style.display = 'block';
+        }
+    })
+    .catch((error) => {
+      console.error('Error:', error);
+    });
+  });
+ });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,24 @@
+#editor {
+    width: 300px;
+    margin: 0 auto;
+    background-color: var(--primary-color);
+    padding: 20px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    border-radius: 5px;
+}
+
+#editor select {
+    width: 100%;
+    padding: 5px;
+    margin-bottom: 10px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+}
+
+
+#editor .key-value-group {
+    border: 1px solid var(--text-color);
+    padding: 10px;
+    margin-bottom: 10px;
+    border-radius: 3px;
+}

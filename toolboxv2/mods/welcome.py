@@ -8,21 +8,40 @@ import os
 
 class Tools(MainTool):
     def __init__(self, app=None):
-        self.version = "0.0.1"
+        self.version = "0.0.2"
         self.name = "welcome"
         self.color = "YELLOW"
         self.tools = {
-            "all": [["Version", "Shows current Version "], ["Animation", "TOOL BOX 0 8s"],
-                    ["Animation1", "TOOL BOX 1 8s"], ["printT", "print TOOL BOX"]],
+            "all": [["Version", "Shows current Version"],
+                    ["Animation", "TOOL BOX 0 8s"],
+                    ["Animation1", "TOOL BOX 1 8s"],
+                    ["printT", "print TOOL BOX"],
+                    ["webInstall", "return html content for web welcome", 0, 'generate_web_content']
+                    ],
             "name": "welcome",
             "Animation": self.ali1,
             "Animation1": self.ali2,
             "Version": self.show_version,
-            "printT": self.print_t}
+            "printT": self.print_t,
+            "webInstall": self.webInstall_app_wrapper
+        }
 
         MainTool.__init__(self, load=self.print_t, v=self.version, tool=self.tools,
                           name=self.name, logs=None, color=self.color, on_exit=lambda: "")
 
+    def webInstall(self, user_instance, construct_render) -> str:
+        self.print("Installing Web")
+        return construct_render(content="./app/0/welcome/welcome.html",
+                          element_id="main",
+                          externals=["/app/0/welcome/welcome.js"],
+                          from_file=True)
+
+    def webInstall_app_wrapper(self, command):
+
+        return command[1](content="./app/0/welcome/welcome.html",
+                          element_id="main",
+                          externals=["/app/0/welcome/welcome.js"],
+                          from_file=True)
     def print_t(self):
         print()
         printc("**************************************************************************")
@@ -597,7 +616,6 @@ class Tools(MainTool):
 
 
 def printc(str_):
-
     if 'unittest' in sys.argv[0]:
         print(f"{__name__=} {sys.argv=}")
         print("unsupported chars unittest")
@@ -609,4 +627,3 @@ def printc(str_):
             print(Style.GREEN(str(str_, 'ISO-88591')))
         except TypeError:
             print(str_)
-

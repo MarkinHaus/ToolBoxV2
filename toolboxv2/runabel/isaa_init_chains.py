@@ -1,4 +1,4 @@
-from toolboxv2.utils.isaa_util import sys_print, run_agent_cmd, init_isaa
+from toolboxv2.mods.isaa_extars.isaa_modi import init_isaa
 
 NAME = "isaa-init-chains"
 

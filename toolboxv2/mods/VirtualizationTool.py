@@ -14,7 +14,7 @@ class Tools(MainTool, FileHandler):
         if app is None:
             app = get_app()
 
-        self.app = app
+        self.app_ = app
         self.instances = {}
         self.color = "BLUE"
         self.keys = {
@@ -51,34 +51,54 @@ class Tools(MainTool, FileHandler):
         self.print("Version: ", self.version)
         return self.version
 
-    def set_ac_instances(self, name):
+    def set_ac_instances(self, command):
+        name = command
+        if isinstance(command, list):
+            if len(command) == 1:
+                name = command[0]
+            if len(command) == 2:
+                name = command[1]
         if name not in self.instances.keys():
-            self.print(Style.RED("Pleas Create an instance before calling it!"))
-            return None
-        self.app.AC_MOD = self.instances[name]
+            self.print(Style.RED(f"Pleas Create an instance before calling it! : {name}"))
+
+            self.logger.warning(Style.RED("set_ac_instances - Pleas Create an instance before calling it!"))
+            return False
+        self.app_.AC_MOD = self.instances[name]
+        return True
 
     def get_instance(self, name):
         if name not in self.instances.keys():
-            self.print(Style.RED("Pleas Create an instance before calling it!"))
+            self.list_instances()
+            self.print(Style.YELLOW("Pleas Create an instance before calling it!"))
+            self.logger.warning(Style.YELLOW("get_instance - Pleas Create an instance before calling it!"))
             return None
         return self.instances[name]
 
     def create_instance(self, name, mod_name):
         loc = "toolboxv2.mods."
-        mod = import_module(loc + mod_name)
-        mod = getattr(mod, "Tools")
-        mod = mod(app=get_app(f"Virtual-{name}"))
-        if not mod:
-            self.logger.errow(Style.RED("No Mod found to virtualize"))
-        self.instances[name] = mod
-        self.set_ac_instances(name)
-        self.shear_function(name, mod_name, 'show_version')
+        self.print(Style.CYAN(f"Create an instance {mod_name}"))
+        try:
+            mod = import_module(loc + mod_name)
+            mod = getattr(mod, "Tools")
+            mod_init = mod(app=get_app(f"Virtual-{name}"))
+            if not mod_init:
+                self.logger.errow(Style.RED("No Mod found to virtualize"))
+            if issubclass(mod, FileHandler):
+                mod_init.file_handler_file_prefix += f"Virtualize/{name}/"
+            self.instances[name] = mod_init
+            self.app_.save_init_mod(name, mod_init)
+            self.set_ac_instances(name)
+            self.shear_function(name, mod_name, 'show_version')
+            return mod_init
+        except ImportError as e:
+            self.print(Style.Bold(f"{Style.RED('Error')} Virtualizing {mod_name} in {name} ; {e}"))
+            return None
 
     def list_instances(self):
         for name, instance in self.instances.items():
             self.print(f"{name}: {instance.name}")
 
     def shear_function(self, name, mod_name, function_name):
-        self.app.new_ac_mod(mod_name)
-        function = getattr(self.app.AC_MOD, function_name)
+        self.app_.new_ac_mod(mod_name)
+        function = getattr(self.app_.AC_MOD, function_name)
         setattr(self.instances[name], function_name, function)

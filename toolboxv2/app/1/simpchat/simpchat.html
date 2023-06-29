@@ -1,49 +1,28 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chat Application</title>
-    <script src="../../scripts.js" type="module" defer></script>
-    <link rel="stylesheet" href="../../styles.css">
+<link rel="stylesheet" href="/app/1/simpchat/simpchat.css">
+<script src="/app/scripts/scripts.js" type="module" defer></script>
+<link rel="stylesheet"
+      href="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/default.min.css">
+<script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+<div id="infoPopup" class="form-container" style="z-index: 3;">
+    <p id="infoText"></p>
+</div>
 
-    <script src="simpchat.js" defer></script>
-    <link rel="stylesheet" href="simpchat.css">
-
-</head>
-<body>
-<div id="overlay"></div>
-<header>
-    <nav>
-        <ul>
-            <li><a href="/app">Start</a></li>
-            <li><a href="/app/dashboard.html">Dashboard</a></li>
-        </ul>
-    </nav>
-    <div class="dark-mode-toggle">
-        <input type="checkbox" id="darkModeToggle">
-        <label for="darkModeToggle" id="toggleLabel">☀️</label>
-    </div>
-</header>
-
-<!-- Your main content goes here -->
-<main>
-    <div id="threeDScene"></div>
-
-    <div class="main-content frosted-glass">
-        <h2>Chat with Isaa</h2>
-        <div class="chat-container">
-        <div class="chat-messages" id="chat-messages">
-            <div class="loading-spinner" id="loading-spinner">
-                <img src="https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/0.16.1/images/loader-large.gif" alt="Loading...">
-            </div>
+<div class="chat-container draggable" id="SimpChatContainer">
+    <div class="widget-from"></div>
+    <div class="chat-messages" id="chat-messages">
+        <div class="loading-spinner" id="loading-spinner">
+            <img src="https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/0.16.1/images/loader-large.gif" alt="Loading...">
         </div>
-        <form class="chat-form" id="chat-form">
-            <input type="text" id="message-input" placeholder="Type your message...">
-            <button type="submit">Send</button>
-        </form>
     </div>
-    </div>
-</main>
-</body>
-</html>
+    <form class="chat-form" id="chat-form">
+        <textarea id="message-input" rows="2" cols="5" placeholder="Type your message..."></textarea>
+        <div id="ChatActionSection" style="text-align: center">
+            <button type="submit" id="$chatID" class="chat-submit-button">Send</button>
+            <select id="taskSelector">
+                <option value="">--Select a task--</option>
+            </select>
+        </div>
+    </form>
+</div>
+
+

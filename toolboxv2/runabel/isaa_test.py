@@ -1,10 +1,10 @@
 """Console script for toolboxv2. Isaa CMD Tool"""
 from langchain.agents import load_tools
 
-from toolboxv2 import Style, Spinner, get_logger
-from toolboxv2.mods.isaa import AgentChain, IsaaQuestionBinaryTree, AgentConfig
-from toolboxv2.utils.isaa_util import init_isaa, extract_dict_from_string, split_todo_list, generate_exi_dict, \
-    run_chain_in_cmd, free_run_in_cmd, validate_dictionary, idea_enhancer
+from toolboxv2 import Style, get_logger
+from toolboxv2.mods.isaa import IsaaQuestionBinaryTree, AgentConfig
+from toolboxv2.mods.isaa_extars.isaa_modi import init_isaa, split_todo_list, generate_exi_dict, \
+    run_chain_in_cmd, idea_enhancer
 
 NAME = "isaa-test"
 

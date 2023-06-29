@@ -1,8 +1,6 @@
 """Console script for toolboxv2. Isaa CMD Tool"""
 
-from toolboxv2 import Style, Spinner
-from toolboxv2.mods.isaa import AgentChain, IsaaQuestionBinaryTree, AgentConfig
-from toolboxv2.utils.isaa_util import init_isaa, extract_dict_from_string, split_todo_list, generate_exi_dict
+from toolboxv2.mods.isaa_extars.isaa_modi import init_isaa, split_todo_list, generate_exi_dict
 
 NAME = "isaa-s-auto"
 

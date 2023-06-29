@@ -2,6 +2,7 @@ import json
 import os
 
 from fastapi.staticfiles import StaticFiles
+from starlette.websockets import WebSocketDisconnect
 
 from toolboxv2 import App
 
@@ -56,56 +57,47 @@ async def exit_code():
     tb_app.exit()
     exit(0)
 
+
+@app.get("/HotReload")
+async def exit_code():
+    if "HotReload" in tb_app.id:
+        tb_app.reset()
+        tb_app.remove_all_modules()
+        tb_app.load_all_mods_in_file()
+        return "OK"
+    return "Not found"
+
 @app.websocket("/ws/{ws_id}")
 async def websocket_endpoint(websocket: WebSocket, ws_id: str):
     websocket_id = ws_id
     print(f'websocket: {websocket_id}')
     await manager.connect(websocket, websocket_id)
-    try:
+    #try:
 
-        if ws_id.endswith("simpchat-initial"):
-            content = """
-                <script src="/app/1/simpchat/simpchat.js" defer></script>
-    <link rel="stylesheet" href="/app/1/simpchat/simpchat.css">
-            <div class="main-content frosted-glass">
-        <h2>Chat with Isaa</h2>
-        <div class="chat-container">
-        <div class="chat-messages" id="chat-messages">
-            <div class="loading-spinner" id="loading-spinner">
-                <img src="https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/0.16.1/images/loader-large.gif" alt="Loading...">
-            </div>
-        </div>
-        <form class="chat-form" id="chat-form">
-            <input type="text" id="message-input" placeholder="Type your message...">
-            <button type="submit">Send</button>
-        </form>
-    </div>
-    </div>"""
-            render_data = {
-                "render": {
-                    "content": content,
-                    "place": "#chat",
-                    "id": "chat",
-                    "externals": ["/app/1/simpchat/simpchat.css","/app/1/simpchat/simpchat.js"],
-                    "placeholderContent": "<h1>Loading...Snapchat</h1>"
-                }
-            }
-            await websocket.send_text(json.dumps(render_data))
-
-        if ws_id.endswith("Start-initial"):
-            await manager.initialize_Simple(websocket_id, websocket)
-
-        while True:
+    while True:
+        try:
             data = await websocket.receive_text()
-            await manager.send_message(data, websocket, websocket_id)
-    except Exception as e:
-        print(e)
-    finally:
-        await manager.disconnect(websocket, websocket_id)
+        except WebSocketDisconnect as e:
+            print(e)
+            break
+        # try:
+        res = await manager.manage_data_flow(websocket, websocket_id, data)
+        # print("manage_data_flow")
+        # except Exception as e:
+        #    print(e)
+        #    res = '{"res": "error"}'
+        if res is not None:
+            print(f"RESPONSE: {res}")
+            await websocket.send_text(res)
+            print("Sending data to websocket")
+        print("manager Don listening ->")
+    #except Exception as e:
+    #    print("websocket_endpoint - Exception: ", e)
+    #finally:
+    #    await manager.disconnect(websocket, websocket_id)
 
 
-
-print("API: ", __name__) # https://www.youtube.com/watch?v=_Im4_3Z1NxQ watch NOW
+print("API: ", __name__)  # https://www.youtube.com/watch?v=_Im4_3Z1NxQ watch NOW
 if __name__ == 'toolboxv2.api.fast_api_main':
 
     config_file = "api.config"
@@ -120,7 +112,7 @@ if __name__ == 'toolboxv2.api.fast_api_main':
     tb_app = get_app(id_name)
     if id_name == tb_app.id:
         print("🟢 START")
-    with open(f"api_pid_{id_name}", "w") as f:
+    with open(f"./data/api_pid_{id_name}", "w") as f:
         f.write(str(os.getpid()))
     # tb_app.load_all_mods_in_file()
     tb_app.save_load("welcome")

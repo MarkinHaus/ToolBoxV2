@@ -9,12 +9,12 @@ import pyperclip
 
 from transformers import pipeline
 
-from toolboxv2 import Style, Spinner
 from toolboxv2.mods.isaa import AgentConfig
 from toolboxv2.mods.isaa import AgentChain
 from toolboxv2.mods.isaa import Tools as Isaa
-from toolboxv2.mods.isaa_audio import text_to_speech3, get_audio_transcribe
-from toolboxv2.utils.isaa_util import init_isaa, sys_print, run_agent_cmd, stop_helper, idea_enhancer, generate_exi_dict
+from toolboxv2.mods.isaa_audio import text_to_speech3
+from toolboxv2.mods.isaa_extars.isaa_modi import init_isaa, sys_print, run_agent_cmd, stop_helper,\
+    idea_enhancer, generate_exi_dict
 
 NAME = "isaa-clip"
 

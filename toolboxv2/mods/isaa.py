@@ -1,3 +1,5 @@
+import sys
+
 from pebble import concurrent
 import json
 import logging
@@ -107,7 +109,7 @@ pipeline_arr = [
 
 
 def get_tokens(text, model_name, only_len=True):
-    if '/' in model_name:
+    if '/' in model_name or not (model_name.endswith("4") or model_name.endswith("5")):
         model_name = 'gpt2'
 
     tokens = tiktoken.encoding_for_model(model_name).encode(text)
@@ -125,7 +127,6 @@ def get_ip():
 
 @concurrent.process(timeout=12)
 def get_location():
-
     ip_address = get_ip()
     response = requests.get(f'https://ipapi.co/{ip_address}/json/').json()
     location_data = f"city: {response.get('city')},region: {response.get('region')},country: {response.get('country_name')},"
@@ -134,11 +135,13 @@ def get_location():
 
 
 def getSystemInfo():
+    return f"{time.time()=}"
     # try:
     ip = '0.0.0.0'
     try:
         socket.gethostbyname(socket.gethostname())
-    except Exception:
+    except Exception as e:
+        self.logger.error(Style.RED(str(e)))
         pass
     info = {'time': datetime.today().strftime('%Y-%m-%d %H:%M:%S'), 'platform': platform.system(),
             'platform-release': platform.release(), 'platform-version': platform.version(),
@@ -210,8 +213,11 @@ class Scripts:
             pickle.dump(self.scripts, f)
 
     def load_scripts(self):
-        with open(self.filename + '.pkl', "rb") as f:
-            self.scripts = pickle.load(f)
+        if os.path.exists(self.filename + '.pkl'):
+            with open(self.filename + '.pkl', "rb") as f:
+                self.scripts = pickle.load(f)
+        else:
+            open(self.filename + '.pkl', "a").close()
 
 
 class IsaaQuestionNode:
@@ -464,56 +470,6 @@ class AgentChain:
 
     def __str__(self):
         return str(self.chains.keys())
-
-
-class PineconeMemory:
-    def __init__(self):
-        pinecone_api_key = os.getenv("PINECONE_API_KEY")
-        pinecone_region = os.getenv("PINECONE_ENV")
-        pinecone.init(api_key=pinecone_api_key, environment=pinecone_region)
-        dimension = 1536
-        metric = "cosine"
-        pod_type = "p1"
-        table_name = "isaa-memory"
-        # this assumes we don't start with memory.
-        # for now this works.
-        # we'll need a more complicated and robust system if we want to start with memory.
-        self.vec_num = 0
-        if table_name not in pinecone.list_indexes():
-            pinecone.create_index(table_name, dimension=dimension, metric=metric, pod_type=pod_type)
-        self.index = pinecone.Index(table_name)
-
-    def add(self, data):
-        vector = get_ada_embedding(data)
-        # no metadata here. We may wish to change that long term.
-        resp = self.index.upsert([(str(self.vec_num), vector, {"raw_text": data})])
-        _text = f"Inserting data into memory at index: {self.vec_num}:\n data: {data}"
-        self.vec_num += 1
-        return _text
-
-    def get(self, data):
-        return self.get_relevant(data, 1)
-
-    def clear(self):
-        self.index.delete(deleteAll=True)
-        return "Obliviated"
-
-    def get_relevant(self, data, num_relevant=5):
-        """
-        Returns all the data in the memory that is relevant to the given data.
-        :param data: The data to compare to.
-        :param num_relevant: The number of relevant data to return. Defaults to 5
-        """
-        try:
-            query_embedding = get_ada_embedding(data)
-            results = self.index.query(query_embedding, top_k=num_relevant, include_metadata=True)
-            sorted_results = sorted(results.matches, key=lambda x: x.score)
-            return [str(item['metadata']["raw_text"]) for item in sorted_results]
-        except Exception:
-            return ""
-
-    def get_stats(self):
-        return self.index.describe_index_stats()
 
 
 class AIContextMemory:
@@ -1155,7 +1111,7 @@ system information's : {getSystemInfo()}
         self.messages_sto = {}
         self._stream = False
         self._stream_reset = False
-        self.stop_sequence = ["\n\n", "Observation:", "Execute:"]
+        self.stop_sequence = ["\n\n\n", "Observation:", "Execute:"]
         self.completion_mode = "text"
         self.add_system_information = True
 
@@ -1427,7 +1383,8 @@ Task : """ + f"\n{task}\n\nBegin!\nPrompt:"
             prompt = prompt.replace('{', '{{').replace('}', '}}').replace('input}', '') + '{input}'
 
         if self.mode == 'free':
-            prompt = task
+            if self.name != "self":
+                prompt = task
 
         if self.mode == 'q2tree':
             if self.binary_tree:
@@ -1574,7 +1531,7 @@ class Tools(MainTool, FileHandler):
             "Config": "config~~~~"
         }
         self.initstate = {}
-        self.mas_text_summaries_dict = [[],[]]
+        self.mas_text_summaries_dict = [[], []]
         self.genrate_image = image_genrating_tool
         self.observation_term_mem_file = f".data/{app.id}/Memory/observationMemory/"
         self.tools = {
@@ -1587,12 +1544,18 @@ class Tools(MainTool, FileHandler):
                     ["info", "Show Config"],
                     ["lode", "lode models"],
                     ["image", "genarate image input"],
+                    ["load_", "load ev keys", math.inf, 'load_keys_from_env'],
+                    ["api_initIsaa", "init isaa wit dif functions", 0, 'init_isaa_wrapper'],
+                    ["api_start_widget", "init isaa wit dif functions", 0, 'init_isaa_wrapper'],
                     ],
             "name": "isaa",
             "Version": self.show_version,
             "info": self.info,
             "api_run": self.run_isaa_wrapper,
             "image": self.genrate_image_wrapper,
+            "load_": self.load_keys_from_env,
+            "api_initIsaa": self.init_isaa_wrapper,
+            "api_start_widget": self.start_widget,
         }
         self.app_ = app
         self.print_stream = print
@@ -1605,7 +1568,7 @@ class Tools(MainTool, FileHandler):
         self.summarization_mode = 0  # 0 to 2 0 huggingface 1 text
         self.summarization_limiter = 10200  # 0 to 2 0 huggingface 1 text
         self.speak = lambda x, *args, **kwargs: x
-        self.scripts = Scripts("ScriptFile")
+        self.scripts = Scripts(f"ScriptFile")
 
         FileHandler.__init__(self, "issa.config", app.id if app else __name__)
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
@@ -1613,10 +1576,17 @@ class Tools(MainTool, FileHandler):
 
     def run_isaa_wrapper(self, command):
         self.print(f"Running isaa wrapper {command}")
-        if len(command) < 1:
-            return "Unknown command"
+        # if len(command) < 1:
+        #    return "Unknown command"
+        #
+        # return self.run_agent(command[0].data['name'], command[0].data['text'])
+        return """Um alle `h`-Elemente (Überschriften) in einem `div` auszuwählen, können Sie in Ihrer CSS-Datei oder im `<style>`-Bereich Ihres HTML-Dokuments den folgenden CSS-Selektor verwenden:
 
-        return self.run_agent(command[0].data['name'], command[0].data['text'])
+```css
+div h1, div h2, div h3, div h4, div h5, div h6 {
+  /* Hier können Sie Ihre gewünschten Stile hinzufügen */
+}
+```"""
 
     def genrate_image_wrapper(self, command):
         if len(command) != 1:
@@ -1624,23 +1594,180 @@ class Tools(MainTool, FileHandler):
 
         return self.genrate_image(command[0], self.app_)
 
+    def start_widget(self, command, app):
+
+        uid, err = self.get_uid(command, app)
+
+        if err:
+            return "Invalid Token"
+
+        self.logger.debug("Instance get_user_instance")
+
+        user_instance = self.get_user_instance(uid, app)
+
+        self.logger.debug("Instace Recived")
+
+        sender, receiver = self.app_.run_any("WebSocketManager", "srqw",
+                                             ["ws://localhost:5000/ws", user_instance["webSocketID"]])
+
+        widget_id = str(uuid.uuid4())[25:]
+
+        def print_ws(x):
+            sender.put(json.dumps({"Isaa": x}))
+
+        self.print_stream = print_ws
+
+        group_name = user_instance["webSocketID"] + "-IsaaSWidget"
+        collection_name = user_instance["webSocketID"] + '-' + widget_id + "-IsaaSWidget"
+
+        self.app_.run_any("MinimalHtml", "add_group", [group_name])
+
+        widget_data = {'name': collection_name, 'group': [
+            {'name': 'nav', 'file_path': './app/1/simpchat/simpchat.html',
+             'kwargs': {'chatID': widget_id}}]}
+
+        self.app_.run_any("MinimalHtml", "add_collection_to_group", [group_name, widget_data])
+
+        isaa_widget_html_element = self.app_.run_any("MinimalHtml", "generate_html", [group_name, collection_name])
+
+        print(isaa_widget_html_element)
+
+        # Initialize the widget ui
+        ui_html_content = self.app_.run_any("WebSocketManager", "construct_render",
+                                            command=isaa_widget_html_element[0]['html_element'],
+                                            element_id="widgetChat",
+                                            externals=["/app/1/simpchat/simpchat.js"])
+
+        # Initial the widget backend
+        # on receiver { task: '', IChain': {
+        #             "args": "Present the final report $final_report",
+        #             "name": "execution",
+        #             "return": "$presentation",
+        #             "use": "agent"
+        #         } }
+
+        def runner():
+
+            uesd_mem = {}
+            chain_data = {}
+            chain_ret = []
+
+            running = True
+            while running:
+                while not receiver.empty():
+                    data = receiver.get()
+
+                    if 'exit' in data:
+                        running = False
+                    self.logger.info(f'Received Data {data}')
+
+                    #if 'widgetID' not in data.keys():
+                    #    continue
+#
+                    #self.logger.info(f'widgetID found in Data keys Valid:{data["widgetID"] != widget_id}')
+#
+                    #if data['widgetID'] != widget_id:
+                    #    continue
+
+                    try:
+                        if "type" in data.keys():
+                            if 'id' not in data.keys():
+                                continue
+                            #if data['id'] != widget_id:
+                            #    continue
+                            if data["type"] == "textWidgetData":
+                                chain_data[data["context"]] = data["text"]
+                                sender.put({"ChairData": True, "data": {'res': f"Text in {data['context']}"}})
+                        elif 'task' in data.keys() and 'IChain' in data.keys():
+                            chain_ret, chain_data, uesd_mem = self.execute_thought_chain(data['task'], [data["IChain"]],
+                                                                                         chain_ret=chain_ret,
+                                                                                         chain_data=chain_data,
+                                                                                         uesd_mem=uesd_mem,
+                                                                                         chain_data_infos=True,
+                                                                                         config=self.get_agent_config_class(
+                                                                                             "self"))
+
+                            sender.put({"ChairData": True, "data": {'res': chain_ret[-1][-1]}})
+
+                    except Exception as e:
+                        sender.put({'error': f"Error e", 'res': str(e)})
+
+        widget_runner = threading.Thread(target=runner)
+        widget_runner.start()
+
+        self.print(ui_html_content)
+
+        return ui_html_content
+
+    def init_isaa_wrapper(self, command, app):
+
+        uid, err = self.get_uid(command, app)
+
+        if err:
+            return "Invalid Token"
+
+        if not self.observation_term_mem_file.endswith(uid[12:]):
+            self.observation_term_mem_file += uid[12:]
+
+        self.print("Init Isaa Instance")
+
+        modis = command[0].data['modis']
+
+        sys.setrecursionlimit(1500)
+
+        if 'global_stream_override' in modis:
+            self.global_stream_override = True
+
+        qu_init_t = threading.Thread(target=self.init_all_pipes_default)
+        qu_init_t.start()
+
+        mem_init_t = threading.Thread(target=self.get_context_memory().load_all)
+        mem_init_t.start()
+
+        self_agent_config: AgentConfig = self.get_agent_config_class("self")
+
+        mem = self.get_context_memory()
+
+        def get_relevant_informations(x):
+            ress = mem.get_context_for(x)
+
+            task = f"Act as an summary expert your specialties are writing summary. you are known to think in small and " \
+                   f"detailed steps to get the right result. Your task : write a summary reladet to {x}\n\n{ress}"
+            res = self.run_agent(self.get_default_agent_config('think').set_model_name('gpt-3.5-turbo-0613'), task)
+
+            if res:
+                return res
+
+            return ress
+
+        def ad_data(x):
+            mem.add_data('main', x)
+
+            return 'added to memory'
+
+        self.add_tool("memory", get_relevant_informations, "a tool to get similar information from your memories."
+                                                           " useful to get similar data. ",
+                      "memory(<related_information>)",
+                      self_agent_config)
+
+        self.add_tool("save_data_to_memory", ad_data, "tool to save data to memory,"
+                                                      " write the data as specific"
+                                                      " and accurate as possible.",
+                      "save_data_to_memory(<store_information>)",
+                      self_agent_config)
+
     def show_version(self):
         self.print("Version: ", self.version)
-
-    def add_str_to_config(self, command):
-        if len(command) != 3:
-            self.logger.error('Invalid command must be key value')
-            return False
-        self.config[command[1]] = command[2]
 
     def on_start(self):
         self.print("Isaa starting init fh, env, config")
         self.load_file_handler()
-        self.load_keys_from_env()
+        self.agent_chain.load_from_file()
+        # self.load_keys_from_env()
         self.scripts.load_scripts()
         config = self.get_file_handler(self.keys["Config"])
         if config is not None:
-            self.config = eval(config)
+            self.config = config
         if not os.path.exists(f".data/{get_app().id}/isaa/"):
             os.mkdir(f".data/{get_app().id}/isaa/")
 
@@ -1654,11 +1781,18 @@ class Tools(MainTool, FileHandler):
         self.config['PINECONE_API_KEY'] = os.getenv('PINECONE_API_KEY')
         self.config['PINECONE_API_ENV'] = os.getenv('PINECONE_API_ENV')
 
+    def webInstall(self, user_instance, construct_render) -> str:
+        self.print('Installing')
+        return construct_render(content="./app/0/isaa_installer/ii.html",
+                                element_id="Installation",
+                                externals=["/app/0/isaa_installer/ii.js"],
+                                from_file=True)
+
     def on_exit(self):
         for key in self.config.keys():
             if key.endswith("-init"):
                 self.config[key] = False
-        self.add_to_save_file_handler(self.keys["Config"], str(self.config))
+        self.add_to_save_file_handler(self.keys["Config"], json.dumps(self.config))
         self.save_file_handler()
         self.scripts.save_scripts()
 
@@ -1704,7 +1838,7 @@ class Tools(MainTool, FileHandler):
         if isinstance(text, str):
             print(f"\t\tsummarization({len(text)})")
         if isinstance(text, list):
-            print(f"\t\tsummarization({len(text)*len(text[0])})")
+            print(f"\t\tsummarization({len(text) * len(text[0])})")
         self.init_pipeline('summarization', model)
         try:
             summary_ = self.config["summarization_pipeline"](text, **kwargs)
@@ -1717,7 +1851,7 @@ class Tools(MainTool, FileHandler):
                 summary_[0]['summary_text'] = summary_text_ + '\n' + summary_[0]['summary_text']
             if isinstance(text, list):
                 old_cap = len(text[0])
-                new_cap = int(old_cap*.95)
+                new_cap = int(old_cap * .95)
 
                 print(f"\tCould not generate summary old cap : {old_cap} new cap : {new_cap}")
 
@@ -2096,7 +2230,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config. \
                 set_mode("execution") \
                 .set_max_iterations(4) \
-                .set_completion_mode("chat")\
+                .set_completion_mode("chat") \
                 .set_model_name("gpt-4-0613")
 
         if name == "isaa-chat-web":
@@ -2198,6 +2332,36 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                         f.write("[]")
         except FileNotFoundError and ValueError:
             print("File not found | mem not saved")
+
+        mem = self.get_context_memory()
+
+        def get_relevant_informations(x):
+            ress = mem.get_context_for(x)
+
+            task = f"Act as an summary expert your specialties are writing summary. you are known to think in small and " \
+                   f"detailed steps to get the right result. Your task : write a summary reladet to {x}\n\n{ress}"
+            res = self.run_agent(self.get_default_agent_config('think').set_model_name('gpt-3.5-turbo-0613'), task)
+
+            if res:
+                return res
+
+            return ress
+
+        def ad_data(x):
+            mem.add_data('main', x)
+
+            return 'added to memory'
+
+        self.add_tool("memory", get_relevant_informations, "a tool to get similar information from your memories."
+                                                           " useful to get similar data. ",
+                      "memory(<related_information>)",
+                      config)
+
+        self.add_tool("save_data_to_memory", ad_data, "tool to save data to memory,"
+                                                      " write the data as specific"
+                                                      " and accurate as possible.",
+                      "save_data_to_memory(<store_information>)",
+                      config)
 
         return config
 
@@ -2424,10 +2588,11 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         if command.startswith("{") and command.endswith("}"):
             try:
-                args = eval(command)
+                args = json.loads(command)
                 args_len_c = len(list(args.keys()))
                 str_args = False
-            except Exception:
+            except Exception as e:
+                self.logger.error(Style.RED(str(e)))
                 str_args = True
 
         if str_args:
@@ -2497,7 +2662,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 observation = "Error this is bad the arguments dos not match the tool"
 
         except Exception as e:
-            observation = "Fatal error in tool error "+ str(e)
+            observation = "Fatal error in tool error " + str(e)
 
         self.print("Observation : " + observation)
 
@@ -2690,7 +2855,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         if chain_ret is None:
             chain_ret = []
         if end is None:
-            end = len(agent_tasks)+1
+            end = len(agent_tasks) + 1
         ret = ""
         steps = 0
 
@@ -2755,8 +2920,9 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
                     args_ = args.replace(task['chuck-run-all'], str(chunk))
 
-                    ret, sum_sto, chain_ret_ = self.chain_cor_runner(use, task_name, args_, config, sto_name, task, steps, keys,
-                                                        chain_ret, sum_sto)
+                    ret, sum_sto, chain_ret_ = self.chain_cor_runner(use, task_name, args_, config, sto_name, task,
+                                                                     steps, keys,
+                                                                     chain_ret, sum_sto)
 
             elif 'chuck-run' in keys:
                 self.logger.info(Style.GREY(f"In Task {steps} detected 'chuck-run'"))
@@ -2787,9 +2953,10 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
                     args_ = args.replace(task['chuck-run'], str(chunk[0].page_content))
 
-                    ret, sum_sto, chain_ret_ = self.chain_cor_runner(use, task_name, args_, config, sto_name, task, steps,
-                                                        keys,
-                                                        chain_ret, sum_sto)
+                    ret, sum_sto, chain_ret_ = self.chain_cor_runner(use, task_name, args_, config, sto_name, task,
+                                                                     steps,
+                                                                     keys,
+                                                                     chain_ret, sum_sto)
                     ret_chunk.append(ret)
                 ret = ret_chunk
 
@@ -2799,8 +2966,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                         args = args.replace(c_key, str(chain_data[c_key]))
 
                 ret, sum_sto, chain_ret_ = self.chain_cor_runner(use, task_name, args, config, sto_name, task, steps,
-                                                    keys,
-                                                    chain_ret, sum_sto)
+                                                                 keys,
+                                                                 chain_ret, sum_sto)
 
             # if 'validate' in keys:
             #     self.print("Validate task")
@@ -2840,13 +3007,13 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config.mode = default_mode
             config.completion_mode = default_completion_mode
 
-        chain_sum_data = self.summarize_ret_list(chain_ret)
-
         config.mode = default_mode_
         config.completion_mode = default_completion_mode_
 
         if chain_data_infos:
-            return chain_ret, chain_ret, chain_data, uesd_mem
+            return chain_ret, chain_data, uesd_mem
+
+        chain_sum_data = self.summarize_ret_list(chain_ret)
 
         return self.run_agent(self.get_agent_config_class("think"),
                               f"Produce a summarization of what happened "
@@ -3035,6 +3202,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
                     for i, word in enumerate(ai_text):
                         print(word, end="", flush=True)
+                        if self.print_stream != print:
+                            self.print_stream({'isaa-text': word})
                         typing_speed = random.uniform(min_typing_speed, max_typing_speed)
                         time.sleep(typing_speed)
                         # type faster after each word
@@ -3087,8 +3256,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 return "The System cannot correct the text input for the agent."
 
         except Exception as e:
-
-            return "Error: " + str(e)
+            self.logger.error(str(e))
+            return "*Error*"
 
     def mas_text_summaries(self, text, min_length=1600):
 

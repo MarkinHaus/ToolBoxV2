@@ -36,25 +36,25 @@ def check_access_level(required_level: int):
 @router.get("")
 async def index(access_allowed: bool = Depends(lambda: check_access_level(-1))):
     if level == -1:
-        return serve_app_func('serverInWartung.html')
+        return serve_app_func('assets/serverInWartung.html')
     return serve_app_func('index.html')
 
 
 @router.get("/")
 async def index2(access_allowed: bool = Depends(lambda: check_access_level(-1))):
     if level == -1:
-        return serve_app_func('serverInWartung.html')
-    return serve_app_func('index.html')
+        return serve_app_func('assets/serverInWartung.html')
+    return serve_app_func('assets/reraut.html')
 
 
 @router.get("/login")
 async def login_page(access_allowed: bool = Depends(lambda: check_access_level(0))):
-    return serve_app_func('login.html')
+    return serve_app_func('assets/login.html')
 
 
 @router.get("/signup")
 async def signup_page(access_allowed: bool = Depends(lambda: check_access_level(2))):
-    return serve_app_func('signup.html')
+    return serve_app_func('assets/signup.html')
 
 
 @router.get("/quicknote")
@@ -67,7 +67,7 @@ async def quicknote(current_user: str = Depends(get_current_user),
 
 @router.get("/dashboard")
 async def quicknote(access_allowed: bool = Depends(lambda: check_access_level(1))):
-    return serve_app_func('dashboard_builder.html')
+    return serve_app_func('dashboards/dashboard_builder.html')
 
 
 @router.get("/{path:path}")
@@ -95,5 +95,7 @@ def serve_app_func(path: str, prefix: str = os.getcwd() + "/app/"):
     if ext in mime_types:
         content_type = mime_types[ext]
 
-    path = request_file_path
-    return FileResponse(path, media_type=content_type)
+    request_file_path.is_file()
+    if request_file_path.exists():
+        return FileResponse(request_file_path, media_type=content_type)
+    return FileResponse("./app/3Dbg.html", media_type=content_type)

@@ -84,7 +84,7 @@ class Tools(MainTool, FileHandler):
             "Version": self.show_version,
         }
 
-        FileHandler.__init__(self, "issa.config", app.id if app else __name__)
+        FileHandler.__init__(self, "issaAuDi.config", app.id if app else __name__)
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                           name=self.name, logs=None, color=self.color, on_exit=self.on_exit)
 

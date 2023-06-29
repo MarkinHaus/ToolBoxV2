@@ -77,7 +77,9 @@ def test_mod_dow(name: str):
 def get_mod_index(name: str):
     tb_app: App = get_app()
     try:
-        tb_app.new_ac_mod(name)
+        res = tb_app.new_ac_mod(name)
+        if isinstance(res, str):
+            return {"res": res}
         result = tb_app.help('')
     except:
         result = "None"

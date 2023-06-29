@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+    <script src="../scripts/scripts.js" type="module" defer></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="overlay"></div>
+<header>
+    <nav>
+        <ul>
+            <li><a href="/app">Start</a></li>
+            <li><a href="/app/assetserms.html">Terms and Conditions</a></li>
+        </ul>
+    </nav>
+    <div class="dark-mode-toggle">
+        <input type="checkbox" id="darkModeToggle">
+        <label for="darkModeToggle" id="toggleLabel">☀️</label>
+    </div>
+</header>
+
+<!-- Your main content goes here -->
+<main >
+    <div id="threeDScene"></div>
+    <div class="main-content frosted-glass">
+        <h1>Email Waiting List For Sing up</h1>
+
+        <div id="infoPopup" class="form-container" style="display: none; z-index: 1000;">
+            <p id="infoText"></p>
+        </div>
+
+        <form id="email-subscription-form" class="form-container">
+            <label for="email">Email:</label>
+            <input type="email" id="email" required>
+            <button type="submit">Subscribe</button>
+        </form>
+        <p id="success-message" hidden>Thank you for subscribing!</p>
+    </div>
+</main>
+
+
+
+<script>
+
+    document.addEventListener('DOMContentLoaded', () => {
+
+        document.getElementById('email-subscription-form').addEventListener('submit', function(event) {
+            event.preventDefault();
+
+            const email = document.getElementById('email').value;
+
+            fetch('/api/post/cloudM/run/email_waiting_list', {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    token: 'string',
+                    data: {
+                        email: email,
+                    }
+                })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    // Display the response in the popup
+                    if (JSON.stringify(data['res']) === 'false'){
+                        document.getElementById('infoText').textContent = "The waiting queue is filled up already.\n" +
+                            "Please try again at a different date";
+                        document.getElementById('infoPopup').style.display = 'block';
+                    }else {
+                        document.getElementById('infoText').textContent = JSON.stringify(data['res']);
+                        document.getElementById('infoPopup').style.display = 'block';
+                        document.getElementById('success-message').hidden = false;
+                    }
+
+                })
+                .catch((error) => {
+                    console.error('Error:', error);
+                });
+        });
+    });
+</script>
+
+
+</body>
+</html>

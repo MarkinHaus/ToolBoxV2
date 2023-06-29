@@ -74,7 +74,7 @@ class App(metaclass=Singleton):
 
         t0 = time.time()
         abspath = os.path.abspath(__file__)
-        self.system_flag = system() #Linux: Linux Mac: Darwin Windows: Windows
+        self.system_flag = system()  # Linux: Linux Mac: Darwin Windows: Windows
         if self.system_flag == "Darwin":
             dname = os.path.dirname(abspath).replace("/utils", "")
         else:
@@ -82,14 +82,14 @@ class App(metaclass=Singleton):
         os.chdir(dname)
 
         if not prefix:
-            if not os.path.exists("last-app-prefix"):
-                open("last-app-prefix", "a").close()
-            with open("last-app-prefix", "r") as prefix_file:
+            if not os.path.exists("./data/last-app-prefix"):
+                open("./data/last-app-prefix", "a").close()
+            with open("./data/last-app-prefix", "r") as prefix_file:
                 cont = prefix_file.read()
                 if cont:
                     prefix = cont
         else:
-            with open("last-app-prefix", "w") as prefix_file:
+            with open("./data/last-app-prefix", "w") as prefix_file:
                 prefix_file.write(prefix)
 
         print(f"Starting ToolBox as {prefix} from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
@@ -245,13 +245,18 @@ class App(metaclass=Singleton):
         mod = getattr(mod, "Tools")
         mod = mod(app=self)
         mod_name = mod.name
-        self.MOD_LIST[mod_name.lower()] = mod
-        color = mod.color if mod.color else "WHITE"
-        self.MACRO.append(mod_name.lower())
-        self.MACRO_color[mod_name.lower()] = color
-        self.HELPER[mod_name.lower()] = mod.tools["all"]
-
+        self.save_init_mod(mod_name, mod)
         return mod
+
+    def save_init_mod(self, name, mod):
+        self.MOD_LIST[name.lower()] = mod
+        color = mod.color if mod.color else "WHITE"
+        self.MACRO.append(name.lower())
+        self.MACRO_color[name.lower()] = color
+        self.HELPER[name.lower()] = mod.tools["all"]
+
+    def mod_online(self, mod_name):
+        return mod_name.lower() in self.MOD_LIST.keys()
 
     def _get_function(self, name):
 
@@ -471,70 +476,51 @@ class App(metaclass=Singleton):
             self.logger.error(Style.RED(f"AttributeError: {e} has no file handler 404"))
         return None
 
-    def run_function(self, name, command):
-        # get function
-        self.logger.info(f"Start setup for : {name} function")
+    def run_function(self, name, *args, **kwargs):
+        self.logger.info(f"Start setup for: {name} function")
 
         function = self._get_function(name)
-        res = {}
         if not function:
-            self.logger.debug(Style.RED(f"Function {name} not found"))
+            self.logger.debug(Style.RED(f"Function {name} not found in {self.AC_MOD.name}"))
             return False
-        # signature function
-        self.logger.info(f"profiling function")
+
+        self.logger.info(f"Profiling function")
         sig = signature(function)
-        self.logger.info(f"signature : {sig}")
-        args = len(sig.parameters)
-        self.logger.info(f"args-len : {args}")
-        self.logger.info(f"staring function")
-        if args == 0:
-            if self.debug:
-                res = function()
-            else:
-                try:
-                    self.print_ok()
-                    print("\nStart function\n")
-                    res = function()
-                except Exception as e:
-                    self.logger.error(Style.YELLOW(Style.Bold(f"! function ERROR : {e}")))
-                    return res
+        self.logger.info(f"Signature: {sig}")
+        parameters = list(sig.parameters)
+        self.logger.info(f"Parameters: {parameters}")
 
-        elif args == 1:
-            if self.debug:
-                res = function(command)
-            else:
-                try:
-                    self.print_ok()
-                    print("\nStart function\n")
-                    res = function(command)
-                except Exception as e:
-                    self.logger.error(Style.YELLOW(Style.Bold(f"! function ERROR : {e}")))
-                    return res
+        try:
+            self.print_ok()
+            print("\nStart function\n")
 
-        elif args == 2:
-            if self.debug:
-                res = function(command, self)
-            else:
-                try:
-                    self.print_ok()
-                    print("\nStart function\n")
-                    res = function(command, self)
-                except Exception as e:
-                    self.logger.error(Style.YELLOW(Style.Bold(f"! function ERROR : {e}")))
-                    return res
-        else:
-            self.logger.error(Style.YELLOW(f"! to many args {args} def ...(u): | -> {str(sig)}"))
-            return res
+            app_position = None
+            for i, param in enumerate(parameters):
+                if param == 'app':
+                    app_position = i
+                    break
 
-        self.logger.info(f"Execution done")
-        if not res:
-            self.logger.debug("No return value")
-        else:
-            self.logger.debug(res)
+            if app_position is not None:
+                args = list(args)
+                args.insert(app_position, self)
+
+            res = function(*args, **kwargs)
+
+            self.logger.info(f"Execution done")
+            if res:
+                self.print_ok()
+            else:
+                self.logger.debug("No return value")
+        except Exception as e:
+            self.logger.error(Style.YELLOW(Style.Bold(f"! Function ERROR: {e}")))
+            return {}
 
         return res
 
-    def run_any(self, module_name: str, function_name: str, command: list):
+    def run_any(self, module_name: str, function_name: str, command=None, **kwargs):
+
+        if command is None:
+            command = [ApiOb(), ""]
 
         do_sto = self.AC_MOD is not None
         ac_sto = ""
@@ -547,7 +533,7 @@ class App(metaclass=Singleton):
 
         if ac_sto != module_name:
             self.new_ac_mod(module_name)
-        res = self.run_function(function_name, command)
+        res = self.run_function(function_name, command, **kwargs)
 
         if do_sto:
             self.new_ac_mod(ac_sto)
@@ -562,8 +548,8 @@ class App(metaclass=Singleton):
     def new_ac_mod(self, name):
         self.logger.info(f"New ac mod : {name}")
         if name.lower() not in self.MOD_LIST.keys():
-            self.logger.warning(f"Could not find {name} in {self.MOD_LIST.keys()}")
-            return f"valid mods ar : {self.MOD_LIST.keys()}"
+            self.logger.warning(f"Could not find {name} in {list(self.MOD_LIST.keys())}")
+            return f"valid mods ar : {list(self.MOD_LIST.keys())}"
         self.AC_MOD = self.MOD_LIST[name.lower()]
         self.AC_MOD.stuf = self.stuf_load
         self.PREFIX = Style.CYAN(

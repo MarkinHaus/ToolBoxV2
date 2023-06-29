@@ -2,6 +2,7 @@
 # Import default Pages
 import sys
 import argparse
+import threading
 from platform import system
 
 # Import public Pages
@@ -164,7 +165,7 @@ def parse_args():
 
 
 def edit_logs():
-    name = input(f"Name of logger \ndefault {loggerNameOfToolboxv2} \n:")
+    name = input(f"Name of logger \ndefault {loggerNameOfToolboxv2}\n:")
     name = name if name else loggerNameOfToolboxv2
 
     def date_in_format(_date):
@@ -296,6 +297,17 @@ def main():
 
 if __name__ == "__main__":
     print("Starting")
+
+    def test_(name):
+        app = App(name)
+        print(app.id)
+
+
+    test_("Normal-test")
+
+    qu_init_t = threading.Thread(target=test_, args=(["Thread-test"]))
+    qu_init_t.start()
+
     # main()
     # init main : ToolBoxV2 -init main -f init.config
     # Exit

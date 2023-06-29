@@ -4,9 +4,8 @@ import time
 
 import tiktoken
 
-from toolboxv2 import Style, Spinner
-from toolboxv2.utils.isaa_util import sys_print, run_agent_cmd, init_isaa, download_github_project, \
-    get_code_files
+from toolboxv2 import Style
+from toolboxv2.mods.isaa_extars.isaa_modi import init_isaa, get_code_files
 
 NAME = "isaa-gitDocs"
 # tools.text_classification.TextClassificationTool()
@@ -134,3 +133,4 @@ def run(app, args):
     # Prompt Isaa first step
     # Isaa use relavent informations and code to generate code
     # Prompt verbesserungen >>-<<
+

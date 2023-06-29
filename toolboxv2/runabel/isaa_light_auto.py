@@ -1,13 +1,12 @@
 """Console script for toolboxv2. Isaa CMD Tool"""
-import json
 import os
 import random
 import time
 
 from langchain.agents import load_tools
 
-from toolboxv2 import Style, Spinner, get_logger, App
-from toolboxv2.utils.isaa_util import init_isaa, generate_exi_dict, \
+from toolboxv2 import Style, get_logger, App
+from toolboxv2.mods.isaa_extars.isaa_modi import init_isaa, generate_exi_dict, \
     idea_enhancer, startage_task_aproche, free_run_in_cmd, get_code_files, \
     run_chain_in_cmd_auto_observation_que, sys_print
 

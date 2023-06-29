@@ -47,9 +47,6 @@ class Tools(MainTool, FileHandler):
         version_command = self.get_file_handler(self.keys["url"])
         if version_command is not None and version_command != 'redis://default:{id}@{url}.com:{port}':
             self.rcon = redis.from_url(version_command)
-            for key in self.rcon.scan_iter():
-                val = self.rcon.get(key)
-                self.print(f"{key} = {val}")
         else:
             self.print("No url found pleas run first-redis-connection")
 
@@ -122,18 +119,31 @@ class Tools(MainTool, FileHandler):
             return True
         return True  # not "secret".upper() in request.upper()
 
-    def set_key(self, ind):
+    def set_key(self, command):
         if self.rcon is None:
             return 'Pleas run first-redis-connection'
-        if len(ind) == 3:
-            key = ind[1]
-            val = ind[2]
-            self.rcon.set(key, val)
+        try:
+            if len(command) == 3:
+                key = command[1]
+                val = command[2]
+                self.rcon.set(key, val)
+                self.print(f"key: {key} value: {val} DON 3")
+            elif len(command) == 2:
+                key = command[0]
+                val = command[1]
+                self.rcon.set(key, val)
+                self.print(f"key: {key} value: {val} DON 2")
+            else:
+                self.print("set {key} {value}, ")
+                self.print(f"{command=}")
+            return True
+        except TimeoutError as e:
+            self.logger.error(f"Timeout by redis DB : {e}")
+            return False
 
-            self.print(f"key: {key} value: {val} DON")
-        else:
-            self.print("set {key} {value}")
-        return True
+    def clean_db(self):
+        for key in self.rcon.scan_iter():
+            self.rcon.delete(key)
 
     def delete_key(self, ind):
         if self.rcon is None:

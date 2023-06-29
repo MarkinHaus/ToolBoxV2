@@ -1,0 +1,127 @@
+
+.speech-balloon {
+    position: sticky;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: rgba(var(--background-color), 0.6);
+    backdrop-filter: blur(30px);
+    border-radius: 10px;
+    padding: 20px;
+    min-width: max-content;
+    max-width: 25vw;
+    animation: speech-balloon-fadeIn 0.5s;
+    margin: 15px;
+}
+
+.speech-balloon-sys{
+    border: 1px solid var(--text-color);
+}
+
+.speech-balloon-isaa{
+    border: 1px solid var(--secondary-color);
+}
+
+.speech-balloon-from {
+    position: absolute;
+    top: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--background-color);
+    backdrop-filter: blur(50px);
+    padding: 0 5px;
+    z-index: 1;
+    border-radius: 5px;
+}
+
+.speech-balloon::after {
+    content: "";
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    margin-left: -5px;
+    border-width: 5px;
+    border-style: solid;
+    border-color: transparent transparent white transparent;
+}
+
+@keyframes speech-balloon-fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes speech-balloon-fadeOut {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0;
+    }
+}
+
+@keyframes speech-balloon-progressBar {
+    from {
+        width: 100%;
+    }
+    to {
+        width: 0;
+    }
+}
+
+
+.speech-balloon-content{
+    padding: -2px;
+    margin: -2px;
+}
+
+.speech-balloon-content p{
+    font-size: 1rem;
+}
+
+.speech-balloon-progress-bar-container {
+    width: 100%;
+    height: 5px;
+    background: rgba(var(--background-color), 0.1);
+    margin-top: 10px;
+}
+
+.speech-balloon-progress-bar {
+    height: 100%;
+    animation: speech-balloon-progressBar 30s linear forwards;
+}
+
+.speech-balloon-progress-sys {
+    background-color: var(--text-color);
+}
+
+.speech-balloon-progress-isaa {
+    background-color: var(--secondary-color);
+}
+
+.speech-balloon-close-button {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    cursor: pointer;
+}
+
+.speech-balloon-dot {
+    position: sticky;
+    padding: 5px;
+    transform: translateX(-5%);
+    width: 5px;
+    height: 5px;
+    background-color: var(--text-color);
+    border-radius: 50%;
+    animation: speech-balloon-fadeOut 15s forwards;
+    transition: 0.25s;
+}
+
+.speech-balloon-dot:hover{
+    scale: 1.2;
+    background-color: var(--nav-link-hover-color);
+}

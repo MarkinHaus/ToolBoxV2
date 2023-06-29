@@ -1,13 +1,11 @@
 import pyperclip
 
 from toolboxv2 import Spinner
-from toolboxv2.mods.isaa import IsaaQuestionBinaryTree
 from toolboxv2.utils.toolbox import get_app
 
 """Console script for toolboxv2. Isaa Conversation Tool"""
-from toolboxv2.mods.isaa_audio import init_live_transcript, s30sek_mean, speech_stream
-from toolboxv2.utils.isaa_util import sys_print, init_isaa, speak
-
+from toolboxv2.mods.isaa_audio import init_live_transcript, speech_stream
+from toolboxv2.mods.isaa_extars.isaa_modi import sys_print, init_isaa
 
 NAME = "isaa-talk"
 
