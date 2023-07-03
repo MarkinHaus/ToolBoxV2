@@ -321,10 +321,11 @@ class IsaaQuestionBinaryTree:
 
 
 class AgentChain:
-    def __init__(self, hydrate=None, f_hydrate=None):
+    def __init__(self, hydrate=None, f_hydrate=None, directory=".data/chains"):
         self.chains = {}
         self.chains_h = {}
         self.live_chains = {}
+        self.directory = directory
         if hydrate is not None:
             self.hydrate = hydrate
         else:
@@ -407,21 +408,20 @@ class AgentChain:
                     print(f"Die Aufgabe {task_idx} in der Chain '{chain_name}' hat keinen 'args'-Schlüssel.")
 
     def load_from_file(self, chain_name=None):
-        directory = ".data/chains"
 
         self.chains = self.live_chains
 
-        if not os.path.exists(directory):
-            print(f"Der Ordner '{directory}' existiert nicht.")
+        if not os.path.exists(self.directory):
+            print(f"Der Ordner '{self.directory}' existiert nicht.")
             return
 
         if chain_name is None:
-            files = os.listdir(directory)
+            files = os.listdir(self.directory)
         else:
             files = [f"{chain_name}.json"]
         print(f"--------------------------------")
         for file in files:
-            file_path = os.path.join(directory, file)
+            file_path = os.path.join(self.directory, file)
 
             if not file.endswith(".json"):
                 continue
@@ -441,10 +441,9 @@ class AgentChain:
         return self
 
     def save_to_file(self, chain_name=None):
-        directory = ".data/chains"
 
-        if not os.path.exists(directory):
-            os.makedirs(directory)
+        if not os.path.exists(self.directory):
+            os.makedirs(self.directory)
 
         if chain_name is None:
             chains_to_save = self.chains
@@ -455,7 +454,7 @@ class AgentChain:
             chains_to_save = {chain_name: self.chains[chain_name]}
         print(f"--------------------------------")
         for name, tasks in chains_to_save.items():
-            file_path = os.path.join(directory, f"{name}.json")
+            file_path = os.path.join(self.directory, f"{name}.json")
             chain_data = {"name": name, "tasks": tasks}
 
             try:
@@ -1544,7 +1543,6 @@ class Tools(MainTool, FileHandler):
                     ["info", "Show Config"],
                     ["lode", "lode models"],
                     ["image", "genarate image input"],
-                    ["load_", "load ev keys", math.inf, 'load_keys_from_env'],
                     ["api_initIsaa", "init isaa wit dif functions", 0, 'init_isaa_wrapper'],
                     ["api_start_widget", "init isaa wit dif functions", 0, 'init_isaa_wrapper'],
                     ],
@@ -1553,7 +1551,6 @@ class Tools(MainTool, FileHandler):
             "info": self.info,
             "api_run": self.run_isaa_wrapper,
             "image": self.genrate_image_wrapper,
-            "load_": self.load_keys_from_env,
             "api_initIsaa": self.init_isaa_wrapper,
             "api_start_widget": self.start_widget,
         }
@@ -2082,7 +2079,7 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
             self.config["self_agent_agents_"] = ["todolist"]
 
             config.mode = "free"
-            config.agent_tye = "gpt-3.5-turbo-0613"
+            config.model_name = "gpt-3.5-turbo-0613"
             config.max_iterations = 6
             config.personality = """
 Resourceful: Isaa is able to efficiently utilize its wide range of capabilities and resources to assist the user.
@@ -2141,7 +2138,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 return run_agent(config.name, x, mode_over_lode="talk")
 
             config. \
-                set_model_name("text-davinci-003"). \
+                set_model_name("gpt-3.5-turbo"). \
                 set_max_iterations(4). \
                 set_mode('tools'). \
                 set_tools({"Thinck": {"func": lambda x: priorisirung(x),
@@ -2270,7 +2267,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         if name.startswith("chain_search"):
 
             config.mode = "tools"
-            config.model_name = "text-davinci-003"
+            config.model_name = "gpt-3.5-turbo"
 
             config.agent_type = "self-ask-with-search"
             config.max_iterations = 4
@@ -3033,11 +3030,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         if use == "agent":
             if config.mode == 'free':
                 config.task_list.append(args)
-            if config.name == sto_name:
-                config.add_message("system", args)
-                ret = self.run_agent(config, '', mode_over_lode=config.mode)
-            else:
-                ret = self.run_agent(config, args, mode_over_lode=config.mode)
+            ret = self.run_agent(config, args, mode_over_lode=config.mode)
         if use == 'function':
             if 'function' in keys:
                 if callable(task['function']) and chain_ret:

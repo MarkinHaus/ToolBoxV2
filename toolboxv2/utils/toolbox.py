@@ -490,31 +490,24 @@ class App(metaclass=Singleton):
         parameters = list(sig.parameters)
         self.logger.info(f"Parameters: {parameters}")
 
+        mod_name = self.AC_MOD.name
+        print(f"\nStart function {mod_name}:{name}\n")
+        app_position = None
+        for i, param in enumerate(parameters):
+            if param == 'app':
+                app_position = i
+                break
+        if app_position is not None:
+            args = list(args)
+            args.insert(app_position, self)
         try:
-            self.print_ok()
-            print("\nStart function\n")
-
-            app_position = None
-            for i, param in enumerate(parameters):
-                if param == 'app':
-                    app_position = i
-                    break
-
-            if app_position is not None:
-                args = list(args)
-                args.insert(app_position, self)
-
             res = function(*args, **kwargs)
-
             self.logger.info(f"Execution done")
-            if res:
-                self.print_ok()
-            else:
-                self.logger.debug("No return value")
         except Exception as e:
-            self.logger.error(Style.YELLOW(Style.Bold(f"! Function ERROR: {e}")))
-            return {}
-
+            self.logger.error(Style.YELLOW(Style.Bold(f"! Function ERROR: in {mod_name}:{name} {e}")))
+            res = {'error-in': mod_name, 'error-func': name}
+        else:
+            self.print_ok()
         return res
 
     def run_any(self, module_name: str, function_name: str, command=None, **kwargs):

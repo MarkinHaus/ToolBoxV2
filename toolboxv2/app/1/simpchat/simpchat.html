@@ -1,5 +1,4 @@
 <link rel="stylesheet" href="/app/1/simpchat/simpchat.css">
-<script src="/app/scripts/scripts.js" type="module" defer></script>
 <link rel="stylesheet"
       href="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/default.min.css">
 <script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
@@ -18,9 +17,8 @@
         <textarea id="message-input" rows="2" cols="5" placeholder="Type your message..."></textarea>
         <div id="ChatActionSection" style="text-align: center">
             <button type="submit" id="$chatID" class="chat-submit-button">Send</button>
-            <select id="taskSelector">
-                <option value="">--Select a task--</option>
-            </select>
+            <label id="taskSelectorLabel" for="taskSelector"> Select a task </label>
+            <select id="taskSelector"></select>
         </div>
     </form>
 </div>

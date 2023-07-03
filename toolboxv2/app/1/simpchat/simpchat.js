@@ -32,30 +32,33 @@ function initChat() {
             displayLoadingSpinner(true);
             await sendMessage(messageText);
         }
+        loadTasks()
     });
 
-    taskSelector.addEventListener("click", loadTasks)
-
-    taskSelector.addEventListener('change', function () {
-        tasks = JSON.parse(localStorage.getItem('tasks')) || [];
-        selectedTask = tasks.find(t => t.name === this.value)
-        console.log('Selected task:', selectedTask);
+    taskSelector.addEventListener('change', (event)=> {
+        const tasks = JSON.parse(localStorage.getItem('tasks')) || [];
+        selectedTask = tasks.find(t => t.name === event.target.value);
+        console.log("selectedTask:", event.target.value, selectedTask)
     });
+    loadTasks();
+
+    function loadTasks() {
+        const tasks = JSON.parse(localStorage.getItem('tasks')) || [];
+        while (taskSelector.firstChild) {
+            taskSelector.removeChild(taskSelector.lastChild);
+        }
+        tasks.forEach(task => {
+            const option = document.createElement('option');
+            option.value = task['name'];
+            option.textContent = task['name'];
+            taskSelector.appendChild(option);
+        });
+    }
+
+
 
 }
 
-function loadTasks() {
-    const taskSelector = document.getElementById('taskSelector');
-    const tasks = JSON.parse(localStorage.getItem('tasks')) || [];
-    taskSelector.innerHTML = '';
-    // Clear the existing options
-    tasks.forEach(task => {
-        const option = document.createElement('option');
-        option.value = task['name'];
-        option.textContent = task['name'];
-        taskSelector.appendChild(option);
-    });
-}
 
 async function sendMessage(text) {
     console.log("sendMessage", initChatOnce)

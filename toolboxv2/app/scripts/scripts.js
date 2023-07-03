@@ -38,8 +38,8 @@ const milkGlassMaterial = new MeshPhysicalMaterial({
 
 let triangleGeometry = createSierpinskiTriangle(5, 12);
 let sk = 0.08;
-let animantionFactorKlick = 6;
-let animantionFactorIdeal = 8;
+let animantionFactorKlick = 8;
+let animantionFactorIdeal = 12;
 let animantionFactor = animantionFactorIdeal;
 let sk2 = sk;
 

@@ -217,7 +217,17 @@ class Tools(MainTool, FileHandler):
     async def connect(self, websocket: WebSocket, websocket_id):
         websocket_id_sto = await valid_id(websocket_id, self.app_id, websocket)
 
-        valid, key = self.app_.run_any("cloudM", "validate_ws_id", [websocket_id])
+        data = self.app_.run_any("cloudM", "validate_ws_id", [websocket_id])
+
+        if isinstance(data, list) or isinstance(data, tuple):
+            if len(data) == 2:
+                valid, key = data
+            else:
+                self.logger.error(f"list error connect {data}")
+                return False
+        else:
+            self.logger.error(f"isinstance error connect {data}, {type(data)}")
+            return False
 
         if valid:
             self.validated_instances[websocket_id_sto] = key
@@ -229,6 +239,7 @@ class Tools(MainTool, FileHandler):
         else:
             self.active_connections[websocket_id_sto] = [websocket]
         await websocket.accept()
+        return True
 
     async def disconnect(self, websocket: WebSocket, websocket_id):
         websocket_id_sto = await valid_id(websocket_id, self.app_id)

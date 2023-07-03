@@ -71,7 +71,9 @@ async def exit_code():
 async def websocket_endpoint(websocket: WebSocket, ws_id: str):
     websocket_id = ws_id
     print(f'websocket: {websocket_id}')
-    await manager.connect(websocket, websocket_id)
+    if not await manager.connect(websocket, websocket_id):
+        await websocket.close()
+        return
     #try:
 
     while True:

@@ -226,4 +226,7 @@ def run(app: App, *args):
     while app.alive:
         print("", end="" + "->>\r")
         command = user_input(app)
+        commands = []
+        for com in command:
+            commands.append(com.strip())
         command_runner(app, command)

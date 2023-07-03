@@ -186,6 +186,14 @@ class Tools(MainTool, FileHandler):
         instance = self.live_user_instances[self.get_si_id(uid)]
         self.user_instances[instance['SiID']] = instance['webSocketID']
         self.app_.run_any('db', 'set', ['', f"User::Instance::{uid}", json.dumps({"saves": instance['save']})])
+        for key, val in instance['live']:
+            if key.startswith('v-'):
+                continue
+            try:
+                val._on_exit()
+            except Exception as e:
+                self.logger.error(f"Error colosing {key}, {str(e)}")
+        del instance['live']
         self.save_user_instances(instance)
 
     def validate_ws_id(self, command):
@@ -246,18 +254,28 @@ class Tools(MainTool, FileHandler):
         }
 
         if instance['SiID'] in self.live_user_instances.keys():
-            return self.live_user_instances[instance['SiID']]
+            instance_live = self.live_user_instances[instance['SiID']]
+            if 'live' in instance_live.keys():
+                if instance_live['live'] and instance_live['save']['mods']:
+                    self.logger.info(Style.BLUEBG2("Instance returned from live"))
+                    return self.live_user_instances[instance['SiID']]
+                if instance_live['save']['mods']:
+                    instance = instance_live
+                    instance['live'] = {}
 
         if instance['SiID'] in self.user_instances.keys():  # der nutzer ist der server instanz bekannt
             chash_data = self.app_.run_any('db', 'get', [f"User::Instance::{uid}"])
+
             instance['webSocketID'] = self.user_instances[instance['SiID']]
-            if isinstance(chash_data, str):
-                self.print(chash_data)
-                try:
-                    instance['save'] = json.loads(chash_data)["saves"]
-                except Exception as e:
-                    self.logger.error(Style.YELLOW(f"Error loading instance {e}"))
-                    pass
+
+            self.print(chash_data)
+            try:
+                instance['save'] = json.loads(chash_data)["saves"]
+            except Exception as e:
+                instance['save'] = chash_data["saves"]
+                self.logger.error(Style.YELLOW(f"Error loading instance {e}"))
+
+            self.logger.info(Style.BLUEBG(f"Init mods : {instance['save']['mods']}"))
 
         self.print(Style.MAGENTA(f"instance : {instance}"))
 

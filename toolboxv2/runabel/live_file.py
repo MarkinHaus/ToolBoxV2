@@ -97,22 +97,22 @@ def watch_path(path, q):
     observer = Observer()
     observer.schedule(event_handler, path=path, recursive=True)
     observer.start()
-    return observer
+    return observer, event_handler
 
 
 def start_watch(path):
     q = queue.Queue()
-    observer = watch_path(path, q)
-    return q, observer
+    observer, handler = watch_path(path, q)
+    return q, observer, handler
 
 
 def run(app: App, args):
-
     observations = {}
 
     def new_observer(path):
-        changes, observer = start_watch(path)
-        observations[path] = [changes, observer]
+        changes, observer, handler = start_watch(path)
+        observations[path] = [changes, observer, handler]
+        return handler.file_contents
 
     def close_observer(path):
         _c, observer = observations[path]
@@ -126,7 +126,7 @@ def run(app: App, args):
     def get_changes():
         changes = []
         for key, value in observations.items():
-            change, _ = value
+            change, _, _ = value
             while not change.empty():
                 changes.append(change.get())
         return changes
@@ -142,19 +142,18 @@ def run(app: App, args):
     ws_id = ''
 
     if 'y' in input("Connect with old Connection-ID"):
-
         with open(ws_id_file, "r") as f:
             ws_id = f.read()
 
     if not ws_id:
         sys_print("PleasEnter Connection-ID:")
-        #username = input("Username:")
-        #password = input("Password:")
-        #data = ApiOb()
-        #data.data = {username, password}
-        #print(data)
-        #command = [data, ""]
-        ws_id = input()#app.run_any("cloudM", "log_in_user", command)
+        # username = input("Username:")
+        # password = input("Password:")
+        # data = ApiOb()
+        # data.data = {username, password}
+        # print(data)
+        # command = [data, ""]
+        ws_id = input()  # app.run_any("cloudM", "log_in_user", command)
         print(ws_id)
         with open(ws_id_file, "w") as f:
             f.write(ws_id)
@@ -164,8 +163,8 @@ def run(app: App, args):
     sender, receiver = app.run_any("WebSocketManager", "srqw", ["ws://localhost:5000/ws", ws_id])
 
     seed_id = str(uuid.uuid4())
-    rs = random.randint(4, len(seed_id)-1)
-    connaction_id = seed_id[3:]+'-'+seed_id[rs-3:rs]
+    rs = random.randint(4, len(seed_id) - 1)
+    connaction_id = seed_id[3:] + '-' + seed_id[rs - 3:rs]
 
     def runner_receiver():
 
@@ -190,7 +189,9 @@ def run(app: App, args):
                     continue
 
                 if 'new' in keys and 'path' in keys:
-                    new_observer(data['path'])
+                    sender.put({'ChairData': True, "data": {"info": f"reading-path {data['path']}"}})
+                    file_content = new_observer(data['path'])
+                    sender.put({'ChairData': True, "data": {"file_content": file_content}}) # TODO: sync wtith isaa
 
                 if 'close' in keys and 'path' in keys:
                     close_observer(data['path'])
@@ -217,7 +218,7 @@ def run(app: App, args):
     while running_s:
         changes = get_changes()
         if changes:
-            sender.put({'changes': changes})
+            sender.put({'ChairData': True, "data": {'changes': changes}})
         time.sleep(10)
 
     close_all_observers()
