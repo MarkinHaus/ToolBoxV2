@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        #settings-widget {
+            min-width: max-content;
+            height: min-content;
+            background-color: #f0f0f0;
+            border: 1px solid #ccc;
+            padding: 10px;
+        }
+
+        #search-bar {
+            margin-bottom: 10px;
+        }
+
+        .option {
+            margin-bottom: 5px;
+            border: 1px solid #ccc;
+            padding: 5px;
+        }
+
+        #download-button {
+            width: 100%;
+            bottom: 10px;
+        }
+    </style>
+    <link rel="stylesheet" href="/app/assets/styles.css">
+    <link rel="stylesheet" href="/app/assets/Wiget.css">
+</head>
+<body>
+<div id="settings-widget" class="widget">
+    <div id="search-bar">
+        <input type="text" id="search-input" placeholder="Search..." oninput="updateOptions()">
+    </div>
+    <div id="options-container">
+        <!-- Options will be dynamically added here -->
+    </div>
+    <button id="download-button" onclick="downloadAddon()">Download</button>
+</div>
+<template id="text-template">
+    <div class="option">
+        <label></label>
+        <input type="text" name="option">
+    </div>
+</template>
+<template id="toggle-template">
+    <div class="option">
+        <label></label>
+        <input type="checkbox" name="option">
+    </div>
+</template>
+<template id="button-template">
+    <div class="option">
+        <label></label>
+        <button name="option"></button>
+    </div>
+</template>
+<template id="options-select-template">
+    <div class="option">
+        <label></label>
+        <select name="option"></select>
+    </div>
+</template>
+<template id="group-template">
+    <div class="group">
+        <label class="group-label"></label>
+        <div class="group-content"></div>
+    </div>
+</template>
+
+<script>
+    function call_gent(name){
+        return (value)=>{
+            console.log('CallBack from', name, value)}
+    }
+    const user_name = 'Root';
+    const user_email = 'Root@root.root';
+    const send_mail = call_gent('send_mail');
+    const reset_password = call_gent('reset_password');
+    const set_task = call_gent('set_task');
+    var task_name = 'test'
+    const options = [
+        {
+            label: 'NutzerInformation',
+            tooltip: 'Informations about the user',
+            template: 'group-template',
+            items: [
+                {label: 'UserName', tooltip: 'unique username', template: 'text-template', value: 'user_name'},
+                {label: 'Email', tooltip: 'mail address', template: 'text-template', value: 'user_email'},
+                {label: 'allow News Emails', tooltip: 'mail address', template: 'toggle-template', callback: 'send_mail'},
+                {label: 'Request Password reset', tooltip: 'reset Password', template: 'button-template', callback: 'reset_password', value: 'set'},
+            ],
+        },
+        {
+            label: 'TaskEditor',
+            tooltip: 'edit Task',
+            template: 'group-template',
+            items: [
+                {label: 'load Task', tooltip: 'unique username', template: 'options-select-template', value: localStorage.getItem('tasks')||[], callback: 'set_task'},
+                {label: 'Task Name', tooltip: 'mail address', template: 'text-template', value: 'task_name'},
+                {label: 'use', tooltip: 'mail address', template: 'options-select-template', value:['agent', 'tool'], callback: 'send_mail'},
+                // ...
+            ],
+        }
+    ];
+
+    function createOptionElement(option, index) {
+        const template = document.getElementById(option.template);
+        const optionElement = template.content.cloneNode(true);
+        const inputElement = optionElement.querySelector('input, select, button');
+        const labelElement = optionElement.querySelector('label');
+
+        inputElement.id = option.label.replace(' ', '-') + index;
+        labelElement.setAttribute('for', inputElement.id);
+        labelElement.title = option.tooltip;
+        labelElement.textContent = option.label;
+
+        if (option.options && inputElement.tagName === 'SELECT') {
+            option.options.forEach(function(optionValue) {
+                const optionTag = document.createElement('option');
+                optionTag.value = optionTag.textContent = optionValue;
+                inputElement.appendChild(optionTag);
+            });
+        }
+
+        return optionElement;
+    }
+
+    function createGroupElement(group, index) {
+        const template = document.getElementById(group.template);
+        const groupElement = template.content.cloneNode(true);
+        const labelElement = groupElement.querySelector('.group-label');
+        const contentElement = groupElement.querySelector('.group-content');
+
+        labelElement.textContent = group.label;
+        labelElement.title = group.tooltip;
+
+        group.items.forEach((item, index) => {
+            const itemElement = createOptionElement(item, index);
+            contentElement.appendChild(itemElement);
+        });
+
+        return groupElement;
+    }
+
+    function loadOptions() {
+        const optionsContainer = document.getElementById('options-container');
+        options.forEach((option, index) => {
+            const optionElement = createGroupElement(option, index);
+            optionsContainer.appendChild(optionElement);
+        });
+    }
+
+    function updateOptions() {
+        var searchInput = document.getElementById('search-input').value.toLowerCase();
+        var optionsContainer = document.getElementById('options-container');
+        optionsContainer.innerHTML = '';
+        options.forEach(function(option, index) {
+            if (option.label.toLowerCase().includes(searchInput)) {
+                var optionElement = createOptionElement(option, index);
+                optionsContainer.appendChild(optionElement);
+            }
+        });
+    }
+
+    function downloadAddon() {
+        var selectedOption = document.querySelector('input[name=option]:checked');
+        if (selectedOption) {
+            var optionLabel = selectedOption.nextElementSibling;
+            var optionText = optionLabel.textContent;
+            alert('Download: ' + optionText);
+        } else {
+            alert('Please select an option.');
+        }
+    }
+
+    function loadCustomOption(option, index) {
+        var template = document.getElementById(option.template);
+        var optionElement = template.content.cloneNode(true);
+        optionElement.querySelector('input').id = option.label.replace(' ', '-') + index;
+        optionElement.querySelector('label').setAttribute('for', option.label.replace(' ', '-') + index);
+        optionElement.querySelector('label').title = option.tooltip;
+        optionElement.querySelector('label').textContent = option.label;
+        return optionElement;
+    }
+
+    // Load options on page load
+    window.onload = function() {
+        loadOptions();
+        options.forEach(function(option, index) {
+            if (option.template === 'custom-template') {
+                var optionElement = loadCustomOption(option, index);
+                document.getElementById('options-container').appendChild(optionElement);
+            }
+        });
+    };
+</script>
+</body>
+</html>
+

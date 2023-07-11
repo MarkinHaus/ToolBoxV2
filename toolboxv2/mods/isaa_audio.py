@@ -102,8 +102,7 @@ class Tools(MainTool, FileHandler):
             Path("./data/isaa_data/work").mkdir(parents=True, exist_ok=True)
 
         if config is not None:
-            self.config = eval(config)
-
+            self.config = config
 
     def on_exit(self):
         del self._simpel_speech_recognizer

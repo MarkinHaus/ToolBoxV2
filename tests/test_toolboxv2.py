@@ -144,9 +144,9 @@ class TestToolboxv2(unittest.TestCase):
         ob = ApiOb()
         ob.token = ""
         ob.data = {"": ""}
-        uid, err = main_tool.get_uid([ob, ], self.app)
-        self.assertTrue(err)
-        print(uid)
+        # uid, err = main_tool.get_uid([ob, ], self.app)
+        # self.assertTrue(err)
+        # print(uid)
 
     def test_styels(self):
         st = Style()

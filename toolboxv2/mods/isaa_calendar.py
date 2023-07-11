@@ -444,7 +444,7 @@ def append_agent(calender_agent_config, calender_run, thinc):
     calender_agent_config.mode = "tools"
     calender_agent_config.model_name = "text-davinci-003"
 
-    calender_agent_config.agent_type = "zero-shot-react-description"
+    calender_agent_config.set_agent_type("zero-shot-react-description")
     calender_agent_config.max_iterations = 4
     calender_agent_config.verbose = True
 

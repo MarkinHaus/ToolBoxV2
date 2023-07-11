@@ -70,7 +70,7 @@ async function sendMessage(text) {
     const inputElement = document.getElementById('ChatActionSection').querySelector('button');
     const inputId = inputElement ? inputElement.id : 'Input not found';
     const sendMessage_message_d = JSON.stringify({"ChairData":true, "data":{"widgetID": inputId, "task":text, "IChain": selectedTask['task']}});
-    // const sendMessage_message = JSON.stringify({"ServerAction":"runMod", "name":"isaa","function":"run", "command":inputId, "data":
+    // const sendMessage_message = JSON.stringify({"ServerAction":"runMod", "name":"isaa","function":"run", "command":inputId, "data":subject
     //         {"token": "**SelfAuth**", "data":{
     //                 "name": "self",
     //                 "text": text
@@ -83,7 +83,7 @@ async function sendMessage(text) {
 function displayMessage(text, className) {
     const chatMessages = document.getElementById("chat-messages");
     const messageElement = document.createElement("div");
-    messageElement.classList.add("message", className);
+    messageElement.classList.add("message", className, "markdown");
     messageElement.textContent = text;
     chatMessages.prepend(messageElement);
 }

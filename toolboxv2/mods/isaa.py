@@ -1,5 +1,6 @@
 import sys
 
+from langchain.tools import AIPluginTool
 from pebble import concurrent
 import json
 import logging
@@ -45,9 +46,10 @@ from langchain import LLMMathChain, SerpAPIWrapper, GoogleSerperAPIWrapper
 from langchain.utilities import BashProcess, BingSearchAPIWrapper
 from langchain.utilities.wolfram_alpha import WolframAlphaAPIWrapper
 from langchain.tools.ifttt import IFTTTWebhook
-from langchain.agents import initialize_agent, tool as LCtool, AgentType
+from langchain.agents import initialize_agent, tool as LCtool, AgentType, load_tools, load_huggingface_tool
 from langchain.vectorstores import Chroma
 
+from toolboxv2.mods.isaa_extars.AgentUtils import *
 from toolboxv2.utils.Style import print_to_console
 from toolboxv2.utils.toolbox import Singleton, get_app
 
@@ -134,40 +136,6 @@ def get_location():
     return location_data
 
 
-def getSystemInfo():
-    return f"{time.time()=}"
-    # try:
-    ip = '0.0.0.0'
-    try:
-        socket.gethostbyname(socket.gethostname())
-    except Exception as e:
-        self.logger.error(Style.RED(str(e)))
-        pass
-    info = {'time': datetime.today().strftime('%Y-%m-%d %H:%M:%S'), 'platform': platform.system(),
-            'platform-release': platform.release(), 'platform-version': platform.version(),
-            'architecture': platform.machine(), 'hostname': socket.gethostname(),
-            'ip-address': ip,
-            'mac-address': ':'.join(re.findall('..', '%012x' % uuid.getnode())), 'processor': platform.processor(),
-            'ram': str(round(psutil.virtual_memory().total / (1024.0 ** 3))) + " GB"}
-
-    try:
-        process = get_location()
-        info['location'] = process.result()
-    except TimeoutError and Exception:
-        info['location'] = "Berlin Schöneberg"
-
-    return info
-
-
-def get_ada_embedding(text):
-    text = text.replace("\n", " ")
-    return openai.Embedding.create(input=[text], model="text-embedding-ada-002")["data"][0]["embedding"]
-
-
-def get_text_from_embedding(embedding):
-    return openai.Embedding.retrieve(embedding, model="text-embedding-ada-002")["data"][0]["text"]
-
-
 def extract_code(x):
     data = x.split('```')
     if len(data) == 3:
@@ -178,1338 +146,6 @@ def extract_code(x):
     if len(data) > 3:
         print(x)
     return '', ''
-
-
-class Scripts:
-    def __init__(self, filename):
-        self.scripts = {}
-        self.filename = filename
-
-    def create_script(self, name, description, content, script_type="python"):
-        self.scripts[name] = {"description": description, "content": content, "type": script_type}
-
-    def run_script(self, name):
-        if name not in self.scripts:
-            return "Script not found!"
-        script = self.scripts[name]
-        with open(f"{name}.{script['type']}", "w") as f:
-            f.write(script["content"])
-        if script["type"] == "python":
-            result = subprocess.run(["python", f"{name}.py"], capture_output=True, text=True)
-        elif script["type"] == "bash":
-            result = subprocess.run(["bash", f"{name}.sh"], capture_output=True, text=True)
-        else:
-            os.remove(f"{name}.{script['type']}")
-            return "Not valid type valid ar python and bash"
-        os.remove(f"{name}.{script['type']}")
-        return result.stdout
-
-    def get_scripts_list(self):
-        return {name: script["description"] for name, script in self.scripts.items()}
-
-    def save_scripts(self):
-        app_id = get_app().id
-        with open(f".data/{app_id}/{self.filename}.pkl", "wb") as f:
-            pickle.dump(self.scripts, f)
-
-    def load_scripts(self):
-        if os.path.exists(self.filename + '.pkl'):
-            with open(self.filename + '.pkl', "rb") as f:
-                self.scripts = pickle.load(f)
-        else:
-            open(self.filename + '.pkl', "a").close()
-
-
-class IsaaQuestionNode:
-    def __init__(self, question, left=None, right=None):
-        self.question = question
-        self.left = left
-        self.right = right
-        self.index = ''
-        self.left.set_index('L') if self.left else None
-        self.right.set_index('R') if self.right else None
-
-    def set_index(self, index):
-        self.index += index
-        self.left.set_index(self.index) if self.left else None
-        self.right.set_index(self.index) if self.right else None
-
-    def __str__(self):
-        left_value = self.left.question if self.left else None
-        right_value = self.right.question if self.right else None
-        return f"Index: {self.index}, Question: {self.question}," \
-               f" Left child key: {left_value}, Right child key: {right_value}"
-
-
-class IsaaQuestionBinaryTree:
-    def __init__(self, root=None):
-        self.root = root
-
-    def __str__(self):
-        return json.dumps(self.serialize(), indent=4, ensure_ascii=True)
-
-    def get_depth(self, node=None):
-        if node is None:
-            return 0
-        left_depth = self.get_depth(node.left) if node.left else 0
-        right_depth = self.get_depth(node.right) if node.right else 0
-        return 1 + max(left_depth, right_depth)
-
-    def serialize(self):
-        def _serialize(node):
-            if node is None:
-                return None
-            return {
-                node.index if node.index else 'root': {
-                    'question': node.question,
-                    'left': _serialize(node.left),
-                    'right': _serialize(node.right)
-                }
-            }
-
-        final = _serialize(self.root)
-        return final[list(final.keys())[0]]
-
-    @staticmethod
-    def deserialize(tree_dict):
-        def _deserialize(node_dict):
-            if node_dict is None:
-                return None
-
-            index = list(node_dict.keys())[0]  # Get the node's index.
-            if index == 'question':
-                node_info = node_dict
-            else:
-                node_info = node_dict[index]  # Get the node's info.
-            return IsaaQuestionNode(
-                node_info['question'],
-                _deserialize(node_info['left']),
-                _deserialize(node_info['right'])
-            )
-
-        return IsaaQuestionBinaryTree(_deserialize(tree_dict))
-
-    def get_left_side(self, index):
-        depth = self.get_depth(self.root)
-        if index >= depth or index < 0:
-            return []
-
-        path = ['R' * index + 'L' * i for i in range(depth - index)]
-        questions = []
-        for path_key in path:
-            node = self.root
-            for direction in path_key:
-                if direction == 'L':
-                    node = node and node.left
-                else:
-                    node = node and node.right
-            if node is not None:
-                questions.append(node.question)
-        return questions
-
-    def cut_tree(self, cut_key):
-        def _cut_tree(node, cut_key):
-            if node is None or cut_key == '':
-                return node
-            if cut_key[0] == 'L':
-                return _cut_tree(node.left, cut_key[1:])
-            if cut_key[0] == 'R':
-                return _cut_tree(node.right, cut_key[1:])
-            return node
-
-        return IsaaQuestionBinaryTree(_cut_tree(self.root, cut_key))
-
-
-class AgentChain:
-    def __init__(self, hydrate=None, f_hydrate=None, directory=".data/chains"):
-        self.chains = {}
-        self.chains_h = {}
-        self.live_chains = {}
-        self.directory = directory
-        if hydrate is not None:
-            self.hydrate = hydrate
-        else:
-            self.hydrate = lambda x: x
-        if f_hydrate is not None:
-            self.f_hydrate = f_hydrate
-        else:
-            self.f_hydrate = lambda x: x
-
-    def add_hydrate(self, hydrate=None, f_hydrate=None):
-        if hydrate is not None:
-            self.hydrate = hydrate
-        else:
-            self.hydrate = lambda x: x
-        if f_hydrate is not None:
-            self.f_hydrate = f_hydrate
-        else:
-            self.f_hydrate = lambda x: x
-        self.chains_h = {}
-
-        for name, chain in self.chains.items():
-            self.add(name, chain)
-
-    def add(self, name, tasks):
-        if '/' in name or '\\' in name:
-            name = name.replace('/', '-').replace('\\', '-')
-        self.chains[name] = tasks
-        for task in tasks:
-            keys = task.keys()
-            if 'infos' in keys:
-                infos = task['infos']
-
-                if infos == "$Date":
-                    infos = infos.replace('$Date', datetime.today().strftime('%Y-%m-%d %H:%M:%S'))
-
-                task['infos'] = self.hydrate(infos)
-            if 'function' in keys:
-                infos = task['name']
-                task['function'] = self.hydrate(infos)
-        self.chains_h[name] = tasks
-
-    def remove(self, name):
-        if name in self.chains:
-            del self.chains[name]
-        else:
-            print(f"Chain '{name}' not found.")
-
-    def get(self, name):
-        if name in self.chains_h.keys():
-            return self.chains_h[name]
-        return {'name': 'unknown', 'tasks': []}
-
-    def init_chain(self, name):
-        self.save_to_file(name)
-        self.live_chains[name] = self.get(name)
-
-    def add_task(self, name, task):
-        if name in self.chains:
-            self.chains[name].append(task)
-        else:
-            print(f"Chain '{name}' not found.")
-
-    def remove_task(self, name, task_index):
-        if name in self.chains:
-            if 0 <= task_index < len(self.chains[name]):
-                self.chains[name].pop(task_index)
-            else:
-                print(f"Task index '{task_index}' is out of range.")
-        else:
-            print(f"Chain '{name}' not found.")
-
-    def test_chain(self):
-        for chain_name, tasks in self.chains.items():
-            for task_idx, task in enumerate(tasks):
-                if "use" not in task:
-                    print(f"Die Aufgabe {task_idx} in der Chain '{chain_name}' hat keinen 'use'-Schlüssel.")
-                if "name" not in task:
-                    print(f"Die Aufgabe {task_idx} in der Chain '{chain_name}' hat keinen 'name'-Schlüssel.")
-                if "args" not in task:
-                    print(f"Die Aufgabe {task_idx} in der Chain '{chain_name}' hat keinen 'args'-Schlüssel.")
-
-    def load_from_file(self, chain_name=None):
-
-        self.chains = self.live_chains
-
-        if not os.path.exists(self.directory):
-            print(f"Der Ordner '{self.directory}' existiert nicht.")
-            return
-
-        if chain_name is None:
-            files = os.listdir(self.directory)
-        else:
-            files = [f"{chain_name}.json"]
-        print(f"--------------------------------")
-        for file in files:
-            file_path = os.path.join(self.directory, file)
-
-            if not file.endswith(".json"):
-                continue
-            try:
-                with open(file_path, "r", encoding='utf-8') as f:
-                    dat = f.read()
-                    chain_data = json.loads(dat)
-                chain_name = os.path.splitext(file)[0]
-                print(f"Loading : {chain_name}")
-                self.add(chain_name, chain_data["tasks"])
-            except Exception as e:
-                print(Style.RED(f"Beim Laden der Datei '{file_path}' ist ein Fehler aufgetreten: {e}"))
-        print(f"--------------------------------")
-        print(
-            f"\n================================\nChainsLoaded : {len(self.chains.keys())}\n================================\n")
-
-        return self
-
-    def save_to_file(self, chain_name=None):
-
-        if not os.path.exists(self.directory):
-            os.makedirs(self.directory)
-
-        if chain_name is None:
-            chains_to_save = self.chains
-        else:
-            if chain_name not in self.chains:
-                print(f"Die Chain '{chain_name}' wurde nicht gefunden.")
-                return
-            chains_to_save = {chain_name: self.chains[chain_name]}
-        print(f"--------------------------------")
-        for name, tasks in chains_to_save.items():
-            file_path = os.path.join(self.directory, f"{name}.json")
-            chain_data = {"name": name, "tasks": tasks}
-
-            try:
-                with open(file_path, "w", encoding='utf-8') as f:
-                    print(f"Saving : {name}")
-                    json.dump(chain_data, f, ensure_ascii=False, indent=2)
-            except Exception as e:
-                print(f"Beim Speichern der Datei '{file_path}' ist ein Fehler aufgetreten: {e}")
-        print(f"--------------------------------")
-        print(
-            f"\n================================\nChainsSaved : {len(self.chains.keys())}\n================================\n")
-
-    def __str__(self):
-        return str(self.chains.keys())
-
-
-class AIContextMemory:
-    def __init__(self, model_name='sentence-transformers/all-MiniLM-L6-v2'):  # "MetaIX/GPT4-X-Alpaca-30B-4bit"):
-        self.memory = {
-            'rep': []
-        }
-        self.embedding = HuggingFaceEmbeddings(model_name=model_name)
-        self.vector_store = {}
-
-    def split_text(self, name, text, chunks=0, overlap_percentage=7.5, separators=None,
-                   chunk_size=None):  # ["class", "def"]
-        docs = []
-        if not chunk_size:
-            chunk_size = int(len(text) / (chunks + 1))
-
-            while chunk_size / 3.5 > 1300:
-                chunk_size = int(len(text) / (chunks + 1))
-                chunks += 1
-
-        chunk_overlap = int(chunk_size * (overlap_percentage / 100))
-
-        if isinstance(separators, str):
-            if separators == 'py':
-                separators = [
-                    # First, try to split along class definitions
-                    "\nclass ",
-                    "\ndef ",
-                    "\n\tdef ",
-                    # Now split by the normal type of lines
-                    "\n\n",
-                    "\n",
-                    " ",
-                    "",
-                ]
-            if separators == 'jv':
-                separators = [
-                    "\nclass ",
-                    "\npublic private ",
-                    "\n\tpublic ",
-                    "\nprivate ",
-                    "\n\tprivate ",
-                    "\n\n",
-                    "\n",
-                    " ",
-                    "",
-                ]
-            if separators == '':
-                docs = CharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap).split_text(
-                    text)
-
-        if not docs:
-            docs = RecursiveCharacterTextSplitter(separators=separators,
-                                                  chunk_size=chunk_size,
-                                                  chunk_overlap=chunk_overlap).split_text(text)
-
-        if not name in self.vector_store.keys():
-            self.vector_store[name] = self.get_sto_bo(name)
-
-        self.vector_store[name]['text'] = docs
-        return docs.copy()
-
-    @staticmethod
-    def get_sto_bo(name):
-        return {'text': [],
-                'full-text-len': 0,
-                'vectors': [],
-                'db': None,
-                'len-represent': 0,
-                'db-path': f'.data/{get_app().id}/Memory/{name}',
-                'represent': []}
-
-    def hydrate_vectors(self, name, vec):
-
-        ret = self.vector_store[name][
-            'db'].similarity_search_by_vector(vec)
-
-        return ret
-        # .delete_collection()
-
-    def init_store(self, name):
-        if not name in self.vector_store.keys():
-            self.vector_store[name] = self.get_sto_bo(name)
-        lo = False
-        if not os.path.exists(self.vector_store[name]['db-path']):
-            os.makedirs(self.vector_store[name]['db-path'], exist_ok=True)
-        else:
-            lo = True
-        self.vector_store[name]['db'] = Chroma(collection_name=name,
-                                               embedding_function=self.embedding,
-                                               persist_directory=self.vector_store[name][
-                                                   'db-path'])
-
-        if lo:
-            self.vector_store[name]['db'].get()
-            p = self.vector_store[name]['db-path'] + "/represent.vec"
-            if os.path.exists(p):
-                with open(p, "r") as f:
-                    res = f.read()
-                if res:
-                    self.vector_store[name]['represent'] = eval(res)
-
-    def load_all(self):
-        def list_folders_on_same_level(path):
-            """
-            List all folders on the same level in the directory at the specified path.
-            """
-            if not os.path.exists(path):
-                return f"Error: {path} does not exist."
-
-            folders = []
-            parent_dir = os.path.dirname(path)
-            for dir in os.listdir(parent_dir):
-                if os.path.isdir(os.path.join(parent_dir, dir)) and os.path.join(parent_dir, dir) != path:
-                    folders.append(dir)
-
-            return folders
-
-        i = 0
-        folders = list_folders_on_same_level(f".data/{get_app().id}/Memory/")
-        if isinstance(folders, str):
-            get_logger().warning(Style.Bold(folders))
-            return 0
-        for folder in folders:
-            get_logger().info(Style.Bold(f"Loading memory form {folder}"))
-            if os.path.isdir(folder) and folder not in ['.', '..', '/', '\\']:
-                i += 1
-                self.init_store(folder)
-        return i
-
-    @staticmethod
-    def cleanup_list(data: list[str]):
-
-        result = []
-
-        for doc in data:
-            if doc and len(doc.strip()) > 10:
-                result.append(doc)
-        del data
-        return result
-
-    def add_data(self, name, data=None):
-
-        if name not in self.vector_store.keys():
-            self.init_store(name)
-
-        if data is not None:
-            self.vector_store[name]['text'] += data
-
-        if not self.vector_store[name]['db']:
-            self.init_store(name)
-
-        if not self.vector_store[name]['text'] or len(self.vector_store[name]['text']) == 0:
-            return
-
-        if isinstance(self.vector_store[name]['text'], str):
-            vec = self.embedding.embed_query(self.vector_store[name]['text'])
-            self.vector_store[name]['db'].add_texts([self.vector_store[name]['text']])
-            self.vector_store[name]['vectors'].append(vec)
-
-        if isinstance(self.vector_store[name]['text'], list):
-            self.vector_store[name]['text'] = self.cleanup_list(self.vector_store[name]['text'])
-            try:
-                self.vector_store[name]['db'].add_texts(self.vector_store[name]['text'])
-            except ValueError:
-                l = len(self.vector_store[name]['text'])
-                self.vector_store[name]['db'].add_texts(self.vector_store[name]['text'][:l])
-                self.vector_store[name]['db'].add_texts(self.vector_store[name]['text'][l:])
-            for vec in self.embedding.embed_documents(self.vector_store[name]['text']):
-                self.vector_store[name]['vectors'].append(vec)
-
-        data = self.vector_store[name]['text']
-        if isinstance(data, str):
-            data = [data]
-
-        for text_c in data:
-            self.vector_store[name]['full-text-len'] += len(text_c)
-
-        self.vector_store[name]['text'] = []
-        self.vector_store[name]['db'].persist()
-
-    def stor_rep(self, name):
-        if not name in self.vector_store.keys():
-            return
-
-        p = self.vector_store[name]['db-path'] + "/represent.vec"
-
-        if not os.path.exists(p):
-            open(p, "a").close()
-        with open(p, "w") as f:
-            f.write(str(self.vector_store[name]['represent']))
-
-    def get_retriever(self, name):
-        if not name in self.vector_store.keys() or self.vector_store[name]['db'] is None:
-            return
-        return self.vector_store[name]['db'].as_retriever()
-
-    def crate_live_context(self, name, algorithm='KMeans', num_clusters=None):
-        if not name in self.vector_store.keys():
-            self.vector_store[name] = self.get_sto_bo(name)
-
-        if not self.vector_store[name]['vectors']:
-            if self.vector_store[name]['text']:
-                self.add_data(name)
-            else:
-                print(f"Error in vector_store no vectors found for {name}")
-                return
-
-        if not self.vector_store[name]['vectors']:
-            print(f"Error in vector_store no vectors found for {name} XX")
-            return
-
-        if num_clusters is None:
-            def f(x):
-                if not x:
-                    return 0
-                if x <= 48275:
-                    return 2
-                elif x <= 139472:
-                    slope = (10 - 2) / (139472 - 48275)
-                    return int(2 + slope * (x - 48275))
-                else:
-                    slope = (15 - 10) / (939472 - 139472)
-                    return int(10 + slope * (x - 139472))
-
-            num_clusters = f(self.vector_store[name]['full-text-len'])
-
-        if len(self.vector_store[name]['vectors']) < num_clusters:
-            self.vector_store[name]['represent'] = self.vector_store[name]['vectors']
-            self.vector_store[name]['len-represent'] = len(self.vector_store[name]['represent'])
-            self.memory[name + '-tl'] = self.vector_store[name]['full-text-len']
-            return
-        if algorithm == 'AgglomerativeClustering':
-
-            cluster = AgglomerativeClustering(n_clusters=num_clusters).fit(self.vector_store[name]['vectors'])
-        elif algorithm == 'KMeans':
-            cluster = KMeans(n_clusters=num_clusters, random_state=42).fit(self.vector_store[name]['vectors'])
-        else:
-            print("No algorithm found")
-            return
-
-        closest_indices = []
-
-        # Loop through the number of clusters you have
-        for i in range(num_clusters):
-            # Get the list of distances from that particular cluster center
-            distances = np.linalg.norm(self.vector_store[name]['vectors'] - cluster.cluster_centers_[i], axis=1)
-
-            # Find the list position of the closest one (using argmin to find the smallest distance)
-            closest_index = np.argmin(distances)
-
-            # Append that position to your closest indices list
-            closest_indices.append(closest_index)
-        for index_ in sorted(closest_indices):
-            self.vector_store[name]['represent'].append(self.vector_store[name]['vectors'][index_])
-        self.vector_store[name]['len-represent'] = len(self.vector_store[name]['represent'])
-        self.memory[name + '-tl'] = self.vector_store[name]['full-text-len']
-        self.stor_rep(name)
-
-    def get_best_fit_memory(self, text):
-
-        request_vector = self.embedding.embed_query(text)
-
-        context_data_fit = {
-            "max": 0,
-            "min": math.inf,
-            "key": ""
-        }
-
-        if len(self.vector_store.keys()) < 1:
-            get_logger().info(Style.WHITE("Loading memory from filesystem"))
-            self.load_all()
-
-        for key, memory in self.vector_store.items():
-            if not memory['represent']:
-                self.memory[key + '-tl'] = memory['full-text-len']
-                self.crate_live_context(key)
-            if not key + '-tl' in list(self.memory.keys()):
-                self.memory[key + '-tl'] = 0
-                self.crate_live_context(key)
-            if self.memory[key + '-tl'] < memory['full-text-len']:
-                self.crate_live_context(key)
-            # get vectors
-            if context_data_fit['key'] == '':
-                context_data_fit['key'] = key
-            context_data_fit[key] = []
-            for representation in memory['represent']:
-                context_data_fit[key].append(np.dot(representation, request_vector))
-
-            if len(memory['represent']):
-                local_max = max(context_data_fit[key])
-                local_min = min(context_data_fit[key])
-                if local_max > context_data_fit['max'] and local_min < context_data_fit['min']:
-                    context_data_fit['key'] = key
-                    context_data_fit['min'] = local_min
-                    context_data_fit['max'] = local_max
-            else:
-                if not context_data_fit['key']:
-                    context_data_fit['key'] = key
-
-        return context_data_fit
-
-    def search(self, name, text, marginal=False):
-
-        if not name in self.vector_store.keys():
-            self.vector_store[name] = self.get_sto_bo(name)
-
-        if self.vector_store[name]['db'] is None:
-            self.init_store(name)
-            return []
-
-        if not os.path.exists(self.vector_store[name]['db-path'] + "/index"):
-            print(f"Cannot find index in vector store {name} pleas add data before quarry")
-            return []
-        if marginal:
-            return self.vector_store[name]['db'].max_marginal_relevance_search(text)
-
-        return self.vector_store[name]['db'].similarity_search_with_score(text)
-
-    def get_context_for(self, text, name=None, marginal=False):
-        mem_name = {'key': name}
-        if name is None:
-            mem_name = self.get_best_fit_memory(text)
-
-        if mem_name['key'] == '':
-            return "No Memory available"
-
-        data = self.search(mem_name['key'], text, marginal=marginal)
-        last = []
-        final = f"Data from ({mem_name['key']}):\n"
-        # print(data)
-        for res in data:
-            if last != res:
-                try:
-                    final += res.page_content + '\n\n'
-                except AttributeError:
-                    try:
-                        final += res[0].page_content + '\n\n'
-                    except AttributeError:
-                        final += str(res) + '\n\n'
-            else:
-                print("WARNING- same")
-        return final
-
-
-class CollectiveMemory:
-    collection = []
-
-    do_mem = True
-    memory = None
-    token_in_use = 1
-    text_mem = []
-    text_len = 1
-    mean_token_len = 1
-
-    def text(self, context):
-        if not context or context == "None":
-            return f"active memory contains {self.token_in_use} tokens for mor informations Input similar information"
-        if self.do_mem:
-            return get_tool(get_app()).get_context_memory().get_context_for(context)
-        # "memory will performe a vector similarity search using memory"
-        relevant_memory = self.memory.get_relevant(context, 10)
-        if len(relevant_memory) == 0:
-            l = ""
-            for i in ddg_suggestions(context)[:3]:
-                l += i['phrase'] + " ,"
-            return f"No data faund in memory try : {l}"
-
-        return "\n#-#".join(relevant_memory)
-
-    def text_add(self, data):
-        if self.do_mem:
-            return " NO MEMORY Avalabel"
-        if not data:
-            return
-
-        if isinstance(data, str):
-            data = {'data': data, 'token-count': self.mean_token_len + 1, 'vector': []}
-
-        print(
-            Style.RED(f"ADD DATA : ColetiveMemory :{len(self.collection)} {data['token-count']} {self.token_in_use=}"),
-            end="\r")
-        self.token_in_use += data['token-count']
-        if data['data'] not in self.text_mem:
-            self.text_mem += [data['data']]
-            self.memory.add(data['data'])
-            self.text_len += len(data['data'])
-            self.collection.append(data)
-            self.mean_token_len = self.text_len / self.token_in_use
-
-        return f"Data Saved"
-
-    def __str__(self):
-        if self.do_mem:
-            return " NO MEMORY Avalabel"
-        return f"\n{len(self.collection)=}\n{self.memory.get_stats()=}\n" \
-               f"{self.token_in_use=}\n{len(self.text_mem)=}\n" \
-               f"{self.text_len=}\n{self.mean_token_len=}\n"
-
-
-class ObservationMemory:
-    memory_data: list[dict] = []
-    tokens: int = 0
-    max_length: int = 1000
-    model_name: str = "text-embedding-ada-002"
-
-    add_to_static: list[dict] = []
-
-    def info(self):
-        text = self.text
-        return f"\n{self.tokens=}\n{self.max_length=}\n{self.model_name=}\n{text[:60]=}\n"
-
-    @property
-    def text(self):
-        memorys = ""
-        if not self.memory_data:
-            return "No memory data"
-
-        for memory in self.memory_data:
-            d: str = memory['data']
-            d = d.replace('No memory dataInput:', '').replace('No memory data', '')
-            memorys += d + '\n'
-
-        return memorys
-
-    @text.setter
-    def text(self, data):
-        tok = 0
-        for line in CharacterTextSplitter(chunk_size=max(300, int(len(data) / 10)),
-                                          chunk_overlap=max(20, int(len(data) / 200))).split_text(data):
-            if line:
-                ntok = get_tokens(line, self.model_name)
-                self.memory_data.append({'data': line, 'token-count': ntok, 'vector': []})
-                tok += ntok
-
-        self.tokens += tok
-
-        # print("Tokens add to ShortTermMemory:", tok, " max is:", self.max_length)
-        if self.tokens > self.max_length:
-            self.cut()
-
-    def cut(self):
-
-        tok = 0
-        all_mem = []
-        while self.tokens > self.max_length:
-            if len(self.memory_data) == 0:
-                break
-            # print("Tokens in ShortTermMemory:", self.tokens, end=" | ")
-            memory = self.memory_data[-1]
-            self.add_to_static.append(memory)
-            tok += memory['token-count']
-            self.tokens -= memory['token-count']
-            all_mem.append(memory['data'])
-            self.memory_data.remove(memory)
-            # print("Removed Tokens", memory['token-count'])
-
-        get_tool(get_app()).get_context_memory().add_data('observations', all_mem)
-
-        print(f"Removed ~ {tok} tokens from ObservationMemory tokens in use: {self.tokens} ")
-
-
-class ShortTermMemory:
-    memory_data: list[dict] = []
-    tokens: int = 0
-    max_length: int = 2000
-    model_name: str = "text-embedding-ada-002"
-
-    add_to_static: list[dict] = []
-
-    lines_ = []
-
-    def __init__(self, name):
-        self.name = name
-
-    def set_name(self, name: str):
-        self.name = name
-
-    def info(self):
-        text = self.text
-        return f"\n{self.tokens=}\n{self.max_length=}\n{self.model_name=}\n{text[:60]=}\n"
-
-    def cut(self):
-
-        if self.tokens <= 0:
-            return
-
-        tok = 0
-
-        all_mem = []
-        while self.tokens > self.max_length:
-            if len(self.memory_data) == 0:
-                break
-            # print("Tokens in ShortTermMemory:", self.tokens, end=" | ")
-            memory = self.memory_data[-1]
-            self.add_to_static.append(memory)
-            tok += memory['token-count']
-            self.tokens -= memory['token-count']
-            all_mem.append(memory['data'])
-            self.memory_data.remove(memory)
-            # print("Removed Tokens", memory['token-count'])
-
-        if all_mem:
-            get_tool(get_app()).get_context_memory().add_data(self.name, all_mem)
-
-        print(f"\nRemoved ~ {tok} tokens from {self.name} tokens in use: {self.tokens} max : {self.max_length}")
-
-    def clear_to_collective(self, min_token=20):
-        if self.tokens < min_token:
-            return
-        max_tokens = self.max_length
-        self.max_length = 0
-        self.cut()
-        self.max_length = max_tokens
-
-    @property
-    def text(self) -> str:
-        memorys = ""
-        if not self.memory_data:
-            return ""
-
-        for memory in self.memory_data:
-            memorys += memory['data'] + '\n'
-
-        return memorys
-
-    @text.setter
-    def text(self, data):
-        tok = 0
-        if not isinstance(data, str):
-            print(f"DATA text edd {type(data)} data {data}")
-
-        for line in CharacterTextSplitter(chunk_size=max(300, int(len(data) / 10)),
-                                          chunk_overlap=max(20, int(len(data) / 200))).split_text(data):
-            if line not in self.lines_ and len(line) != 0:
-                ntok = get_tokens(line, self.model_name)
-                self.memory_data.append({'data': line, 'token-count': ntok, 'vector': []})
-                tok += ntok
-
-        self.tokens += tok
-
-        if self.tokens > self.max_length:
-            self.cut()
-
-        # print("Tokens add to ShortTermMemory:", tok, " max is:", self.max_length)
-
-    #    text-davinci-003
-    #    text-curie-001
-    #    text-babbage-001
-    #    text-ada-001
-
-
-class PyEnvEval:
-    def __init__(self):
-        self.global_env = globals().copy()
-        self.local_env = {}
-
-    def eval_code(self, code):
-        try:
-            result = eval(code, self.global_env, self.local_env)
-            return self.format_output(result)
-        except Exception as e:
-            return self.format_output(e)
-
-    def get_env(self):
-        # global_env_str = self.format_env(self.global_env)
-        local_env_str = self.format_env(self.local_env)
-        return f"Locals:\n{local_env_str}"
-
-    @staticmethod
-    def format_output(output):
-        return f"Ergebnis: {output}"
-
-    @staticmethod
-    def format_env(env):
-        return "\n".join(f"{key}: {value}" for key, value in env.items())
-
-    def run_and_display(self, code):
-        # Anfangszustand anzeigen
-        end = ""
-        end += f"Startzustand:\n{self.get_env()}"
-
-        # Code ausführen
-        result = self.eval_code(code)
-
-        # Endzustand anzeigen
-        end += f"\nEndzustand:\n{self.get_env()}"
-
-        # Ergebnis anzeigen
-        end += f"\nAusführungsergebnis:\n{result}"
-        return end
-
-
-class AgentConfig:
-    available_modes = ['talk', 'tools', 'conversation', 'free', 'planning', 'execution', 'generate', 'q2tree', 'python']
-    max_tokens = 4097
-
-    python_env = PyEnvEval()
-
-    capabilities = """Resourceful: Isaa is able to efficiently utilize its wide range of capabilities and resources to assist the user.
-Collaborative: Isaa is work seamlessly with other agents, tools, and systems to deliver the best possible solutions for the user.
-Empathetic: Isaa is understand and respond to the user's needs, emotions, and preferences, providing personalized assistance.
-Inquisitive: Isaa is continually seek to learn and improve its knowledge base and skills, ensuring it stays up-to-date and relevant.
-Transparent: Isaa is open and honest about its capabilities, limitations, and decision-making processes, fostering trust with the user.
-Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of tasks and challenges."""
-    system_information = f"""
-system information's : {getSystemInfo()}
-"""
-
-    def __init__(self, name="agentConfig"):
-
-        self.name: str = name
-        self.mode: str = "talk"
-        self.model_name: str = "gpt-3.5-turbo-0613"
-
-        self.agent_type: AgentType = AgentType(
-            "structured-chat-zero-shot-react-description")  # "zero-shot-react-description"
-        self.max_iterations: int = 2
-        self.verbose: bool = True
-
-        self.personality = ""
-        self.goals = ""
-        self.tools: dict = {
-            # "test_tool": {"func": lambda x: x, "description": "only for testing if tools are available",
-            #              "format": "test_tool(input:str):"}
-        }
-
-        self.last_prompt = ""
-
-        self.task_list: list[str] = []
-        self.task_list_done: list[str] = []
-        self.step_between: str = ""
-
-        self.pre_task: str or None = None
-        self.task_index = 0
-
-        self.token_left = 2000
-        self.temperature = 0.06
-        self.messages_sto = {}
-        self._stream = False
-        self._stream_reset = False
-        self.stop_sequence = ["\n\n\n", "Observation:", "Execute:"]
-        self.completion_mode = "text"
-        self.add_system_information = True
-
-        self.init_mem_state = False
-        self.context: None or ShortTermMemory = None
-        self.observe_mem: None or ShortTermMemory = None
-        self.edit_text: None or ShortTermMemory = None
-        self.short_mem: None or ShortTermMemory = None
-
-        self.init_memory()
-
-        self.binary_tree: IsaaQuestionBinaryTree or None = None
-
-    def init_memory(self):
-        self.init_mem_state = True
-        self.short_mem: ShortTermMemory = ShortTermMemory(f'{self.name}-ShortTerm')
-        self.edit_text: ShortTermMemory = ShortTermMemory(f'{self.name}-EditText')
-        self.edit_text.max_length = 5400
-        self.context: ShortTermMemory = ShortTermMemory(f'{self.name}-ContextMemory')
-        self.observe_mem: ObservationMemory = ObservationMemory()
-
-    def task(self, reset_step=False):
-        task = ''
-        if self.pre_task is not None:
-            task = self.pre_task + ' '
-        if self.step_between:
-            task += str(self.step_between)
-            if reset_step:
-                self.step_between = ""
-            return task
-        if len(self.task_list) != 0:
-            task = self.task_list[self.task_index]
-            return task
-        return ""
-
-    def clone(self):
-
-        return
-
-    @property
-    def stream(self):
-        if self.completion_mode == 'edit':
-            self._stream_reset = self._stream
-            return False
-        if self._stream_reset:
-            self._stream_reset, self._stream = False, self._stream_reset
-            return self._stream_reset
-        return self._stream
-
-    @stream.setter
-    def stream(self, value):
-        self._stream = value
-
-    def init_message(self, key):
-        self.messages_sto[key] = []
-        prompt = self.prompt
-        prompt.replace("Task:", "")
-
-        self.messages_sto[key].append({'role': "system", 'content': prompt})
-
-    def add_message(self, role, message):
-        key = f"{self.name}-{self.mode}"
-        if key not in self.messages_sto.keys():
-            self.init_message(key)
-
-        self.messages_sto[key].append({'role': role, 'content': message})
-
-    def get_messages(self, create=True):
-        key = f"{self.name}-{self.mode}"
-        messages = []
-        if key in self.messages_sto.keys():
-            messages = self.messages_sto[key]
-        if create:
-            messages = self.a_messages
-        return messages
-
-    @property
-    def a_messages(self) -> list:
-        key = f"{self.name}-{self.mode}"
-
-        if key not in self.messages_sto.keys():
-            self.init_message(key)
-
-        last_prompt = ""
-        for msg in self.messages_sto[key]:
-            last_prompt += msg['content']
-        i = 0
-        tokens = get_tokens(last_prompt, self.model_name)
-        while self.max_tokens < tokens:
-            i += 1
-            self.messages_sto[key] = []
-            self.init_message(key)
-            if i > 2:
-                temp_message = []
-                mas_text_sum = get_tool(get_app()).mas_text_summaries
-                for msg in self.messages_sto[key]:
-                    temp_message.append({'role': msg['role'], 'content': mas_text_sum(msg['content'])})
-                self.messages_sto[key] = temp_message
-            if i > 3:
-                self.messages_sto[key] = [self.messages_sto[key][-2], self.messages_sto[key][-1]]
-            if i > 4:
-                self.messages_sto[key] = [self.messages_sto[key][-1]]
-                break
-            last_prompt = ""
-            for msg in self.messages_sto[key]:
-                last_prompt += msg['content']
-            tokens = get_tokens(last_prompt, self.model_name)
-
-        self.last_prompt = last_prompt
-
-        return self.messages_sto[key]
-
-    @property
-    def prompt(self) -> str:
-        if not self.init_mem_state:
-            self.init_memory()
-        if not self.short_mem.model_name:
-            self.short_mem.model_name = self.model_name
-        if not self.observe_mem.model_name:
-            self.observe_mem.model_name = self.model_name
-
-        prompt = (self.system_information if self.add_system_information else '') + self.get_prompt()
-
-        pl = get_tokens(prompt, self.model_name) + 2
-        self.token_left = self.max_tokens - pl
-        if self.token_left < 0:
-            self.token_left *= -1
-            self.short_mem.max_length = self.token_left
-            self.short_mem.cut()
-        if self.token_left > self.max_tokens:
-            self.token_left = self.max_tokens - 200
-        self.last_prompt = prompt
-        return prompt
-
-    def __str__(self):
-
-        return f"\n{self.name=}\n{self.mode=}\n{self.model_name=}\n{self.agent_type=}\n{self.max_iterations=}" \
-               f"\n{self.verbose=}\n{self.personality[:45]=}\n{self.goals[:45]=}" \
-               f"\n{str(self.tools)[:45]=}\n{self.task_list=}\n{self.task_list_done=}\n{self.step_between=}\nshort_mem\n{self.short_mem.info()}\nObservationMemory\n{self.observe_mem.info()}\nCollectiveMemory\n{str(CollectiveMemory())}\n"
-
-    def get_prompt(self):
-
-        tools = ""
-        names = []
-        for key, value in self.tools.items():
-            format_ = value['format'] if 'format' in value.keys() else f"{key}('function input')"
-            if format_.endswith("('function input')"):
-                value['format'] = format_
-            tools += f"{key.strip()}: {value['description'].strip()} - {format_.strip()}\n"
-            names.append(key)
-        task = self.task(reset_step=True)
-        task_list = '\n'.join(self.task_list)
-
-        prompt = f"Answer the following questions as best you can." \
-                 f" You have access to a live python interpreter write run python code" \
-                 f"\ntake all (Observations) into account!!!" \
-                 f"Personality:'''{self.personality}'''\n\n" + \
-                 f"Goals:'''{self.goals}'''\n\n" + \
-                 f"Capabilities:'''{self.capabilities}'''\n\n" + \
-                 f"Permanent-Memory:\n'''{CollectiveMemory().text(context=task)}'''\n\n" + \
-                 f"Resent Agent response:\n'''{self.observe_mem.text}'''\n\n" + \
-                 f"\n\nBegin!\n\n" \
-                 f"Task:'{task}\n{self.short_mem.text}\nAgent : "
-
-        if self.mode == 'planning':
-            prompt = """
-You are a planning agent , and your job is to create the most efficient plan for a given input.
-There are {{""" + f"\n{tools}\n" + """}} different functions that must be called in the correct order and with the
-correct inputs. Your goal is to find a plan that accomplishes the task. Create a plan for the input
-{{""" + f"{task}" + """}} by providing the following information:
-
-1.    Function(s) and Input(s) you wish to invoke, selecting only those useful for executing the plan.
-2.    focusing on efficiency and minimizing steps.
-
-Actual Observations: {{""" + f"{self.observe_mem.text}" + """}}
-
-you have aces to a live python wirte valid python code and it will be executed.
-
-Note that your plan should be clear and understandable. Strive for the most efficient solution to accomplish the task.
-Use only the features that are useful for executing the plan. Return a detailed Plan.
-Begin.
-
-Plan:"""
-
-        if self.mode == 'execution':
-            prompt = """
-You are an execution agent, and your task is to implement the plan created by a planning agent.
-You can call functions using the following syntax:
-
-Action: Function-Name
-Inputs: Inputs
-Execute:
-Observations:
-Conclusion: <conclusion>
-Outline of the next step:
-Action: Function-Name
-...
-Final Answer:
-// Return Final Answer: wen you ar don execution
-
-To successfully execution the plan, it is important to pay attention to writing "Execute:" to execute the function.
-If additional user input is needed during the execution process,
-use the syntax "Question:" followed by a question to obtain the required information from the user. ending with "\\nUser:"
-
-Please execute the plan created by a planning agent by following these steps:
-
-1)    Analyze the plan provided by a planning agent and understand the order of functions and inputs.
-2)    Call the functions in the specified order using the syntax described above.
-3)    Ask questions to the user if additional information is needed and integrate the answers into the plan.
-4)    Make sure to write "Execute:" to execute each function.
-5)    Verify if the plan has been successfully implemented and provide feedback to the planning agent if necessary.
-
-Ensure that your implementation is clear and comprehensible
-so that other people can follow the progress and provide support if needed.
-
-you have aces to a live python wirte valid python code and it will be executed.
-You have access to following functions : {{""" + f"\n{tools}" + """}}
-
-The Plan to execute : {{""" + f"\n{task_list}\n" + """}}
-Resent Observations : {{""" + f"{self.observe_mem.text}" + """}}
-Begin!
-
-""" + f"{self.short_mem.text}\n" + """
-Current Step : """ + f"{task}\nPerform Action\n"
-
-        if self.mode == 'generate':
-            prompt = """
-You are a prompt creation agent, and your task is to create effective and engaging prompts for various topics and requirements.
-Your prompts should be clear and understandable, encouraging users to provide deep and interesting responses.
-Please follow these steps to create a new prompt for a given topic or requirement:
-
-1)    Carefully analyze the desired topic or requirement to gain a clear understanding of the expectations.
-2)    Develop an engaging and open-ended question or prompt that encourages users to share their thoughts, experiences, or ideas.
-3)    Make sure the prompt is clearly and understandably worded so that users of different knowledge and experience levels can easily understand it.
-4)    Ensure the prompt is flexible enough to allow for creative and diverse responses, while also providing enough structure to focus on the desired topic or requirement.
-5)    Review your prompt for grammar, spelling, and style to ensure a professional and appealing presentation.
-
-Resent Observations : {{""" + f"{self.edit_text.text}" + """}}
-
-Task : """ + f"\n{task}\n\nBegin!\nPrompt:"
-
-        if self.mode in ['talk', 'conversation']:
-            prompt = f"Goals:{self.goals.replace('{input}', '')}\n" + \
-                     f"Capabilities:{self.capabilities.replace('{input}', '')}\n" + \
-                     f"Important information: to run a tool type 'Action: $tool-name'\n" + \
-                     f"Long-termContext:{CollectiveMemory().text(context=self.short_mem.text).replace('{input}', '')}\n" + \
-                     f"\nResent Observation:{self.observe_mem.text.replace('{input}', '')}" + \
-                     f"Task:{task}\n" + \
-                     "{input}" + \
-                     f"\n{self.short_mem.text.replace('{input}', '')}"
-
-        if self.mode == 'tools':
-            prompt = f"Answer the following questions as best you can. You have access to the following python functions\n" \
-                     f"'''{tools}'''" \
-                     f"\ntake all (Observations) into account!!!\nUnder no circumstances are you allowed to output 'Task:'!!!\n\n" \
-                     f"Personality:'''{self.personality}'''\n\n" + \
-                     f"Goals:'''{self.goals}'''\n\n" + \
-                     f"Capabilities:'''{self.capabilities}'''\n\n" + \
-                     f"Permanent-Memory:\n'''{CollectiveMemory().text(context=task)}'''\n\n" + \
-                     f"Resent Agent response:\n'''{self.observe_mem.text}'''\n\n" + \
-                     "Use the following format To Run an Python Function:\n\n" + \
-                     "Task: the input question you must answer\n" + \
-                     "Thought: you should always think about what to do\n" + \
-                     "Knowleg: Knowleg from The LLM abaut the real world\n" + \
-                     f"Action: the action to take, should be one of {names}\n" + \
-                     f"Execute: <function_name>(<args>)\n" + \
-                     f"\n\nBegin!\n\n" \
-                     f"Resent:\n{self.short_mem.text}\nTask:'{task}"
-            prompt = prompt.replace('{', '{{').replace('}', '}}').replace('input}', '') + '{input}'
-
-        if self.mode == 'free':
-            if self.name != "self":
-                prompt = task
-
-        if self.mode == 'q2tree':
-            if self.binary_tree:
-                questions_ = self.binary_tree.get_left_side(0)
-                questions = '\n'.join(
-                    f"Question {i + 1} : {q.replace('task', f'task ({task})')}" for i, q in enumerate(questions_))
-                prompt = f"""Answer the following questions as best you can. Your:
-Capabilities:
-'''
-Functions: ''\n{tools}''
-Goals: ''\n{self.goals}''
-: ''\n{self.capabilities}''
-'''
-
-I'm going to ask you {len(questions_)} questions, answer the following questions as best you can.
-You are known to think in small and detailed steps to get the right result.
-Task : '''{task}'''
-imagen yourself doing the task.
-{questions}
-
-Answer-format:
-Answer 1: ...
-
-Begin!"""
-
-        return prompt
-
-    def next_task(self):
-        if len(self.task_list) < self.task_index:
-            self.task_index += 1
-        return self
-
-    def set_mode(self, mode: str):
-        """Set The Mode of The Agent available ar
-         ['talk', 'tool', 'conversation', 'free', 'planning', 'execution', 'generate']"""
-        self.mode = mode
-
-        return self
-
-    def set_completion_mode(self, mode: str):
-        """Set the completion mode for the agent text edit and chat"""
-        self.completion_mode = mode
-        return self
-
-    def set_temperature(self, temperature: float):
-        """Set the temperature for the agent temperature = 0 strict- 1 = creative-response """
-        self.temperature = temperature
-        return self
-
-    def add_task(self, task: str):
-        """Add a task to the agent"""
-        self.task_list.append(task)
-        return self
-
-    def mark_task_done(self, task: str):
-        self.task_list_done.append(task)
-        self.task_list.remove(task)
-        return self
-
-    def set_tools(self, tools: dict):
-        self.tools = tools
-        return self
-
-    def add_tool(self, tool_name: str, func: callable, description: str, format_: str):
-        self.tools[tool_name] = {
-            "func": func,
-            "description": description,
-            "format": format_,
-        }
-        return self
-
-    def set_agent_type(self, agent_type: str):
-        """langchain agent type"""
-        self.agent_type = agent_type
-        return self
-
-    def set_max_iterations(self, max_iterations: int):
-        self.max_iterations = max_iterations
-        return self
-
-    def set_verbose(self, verbose: bool):
-        self.verbose = verbose
-        return self
-
-    def set_personality(self, personality: str):
-        self.personality = personality
-        return self
-
-    def set_goals(self, goals: str):
-        self.goals = goals
-        return self
-
-    def set_short_term_memory(self, short_mem: ShortTermMemory):
-        self.short_mem = short_mem
-        return self
-
-    def set_context(self, context: ShortTermMemory):
-        self.context = context
-        return self
-
-    def set_pre_task(self, pre_task):
-        self.pre_task = pre_task
-
-    def set_observation_memory(self, obser_mem: ObservationMemory):
-        self.observe_mem = obser_mem
-        return self
-
-    def set_model_name(self, model_name: str):
-        """OpenAI modes """
-        self.model_name = model_name
-        return self
-
-    def save_to_file(self):
-        file_path = f".data/{get_app().id}/Memory/{self.name}.agent"
-        with open(file_path, 'w') as f:
-            json.dump(str(self), f, indent=4)
-
-    @classmethod
-    def load_from_file(cls, name):
-        file_path = f".data/{get_app().id}/Memory/{name}.agent"
-        with open(file_path, 'r') as f:
-            data = json.load(f)
-        agent_config = cls(name)
-        for key, value in data.items():
-            setattr(agent_config, key, value)
-        return agent_config
 
 
 class Tools(MainTool, FileHandler):
@@ -1532,7 +168,10 @@ class Tools(MainTool, FileHandler):
         self.initstate = {}
         self.mas_text_summaries_dict = [[], []]
         self.genrate_image = image_genrating_tool
-        self.observation_term_mem_file = f".data/{app.id}/Memory/observationMemory/"
+        extra_path = ""
+        if self.toolID:
+            extra_path = f"/{self.toolID}"
+        self.observation_term_mem_file = f".data/{app.id}/Memory{extra_path}/observationMemory/"
         self.tools = {
             "all": [["Version", "Shows current Version"],
                     ["api_run", "name inputs"],
@@ -1544,7 +183,13 @@ class Tools(MainTool, FileHandler):
                     ["lode", "lode models"],
                     ["image", "genarate image input"],
                     ["api_initIsaa", "init isaa wit dif functions", 0, 'init_isaa_wrapper'],
-                    ["api_start_widget", "init isaa wit dif functions", 0, 'init_isaa_wrapper'],
+                    ["add_task", "Agent Chin add - Task"],
+                    ["api_save_task", "Agent Chin save - Task", 0, "save_task"],
+                    ["api_load_task", "Agent Chin load - Task", 1, "load_task"],
+                    ["api_get_task", "Agent Chin get - Task", 0, "get_task"],
+                    ["api_list_task", "Agent Chin list - Task", 0, "list_task"],
+                    ["api_start_widget", "api_start_widget", 0, "start_widget"],
+                    ["generate_task", "generate_task", 0, "generate_task"]
                     ],
             "name": "isaa",
             "Version": self.show_version,
@@ -1553,6 +198,12 @@ class Tools(MainTool, FileHandler):
             "image": self.genrate_image_wrapper,
             "api_initIsaa": self.init_isaa_wrapper,
             "api_start_widget": self.start_widget,
+            "add_task": self.add_task,
+            "save_task": self.save_task,
+            "load_task": self.load_task,
+            "get_task": self.get_task,
+            "list_task": self.list_task,
+            "generate_task": self.generate_task,
         }
         self.app_ = app
         self.print_stream = print
@@ -1560,16 +211,229 @@ class Tools(MainTool, FileHandler):
         self.global_stream_override = False
         self.pipes_device = 1
         self.lang_chain_tools_dict = {}
-        self.agent_chain = AgentChain()
-        self.agent_memory = AIContextMemory()
+        self.agent_chain = AgentChain(directory=f".data/{app.id}{extra_path}/chains")
+        self.agent_memory = AIContextMemory(extra_path=extra_path)
         self.summarization_mode = 0  # 0 to 2 0 huggingface 1 text
         self.summarization_limiter = 10200  # 0 to 2 0 huggingface 1 text
         self.speak = lambda x, *args, **kwargs: x
-        self.scripts = Scripts(f"ScriptFile")
+        self.scripts = Scripts(f".data/{app.id}{extra_path}/ScriptFile")
+        self.ac_task = None
 
-        FileHandler.__init__(self, "issa.config", app.id if app else __name__)
+        self.tools_dict = {
+
+        }
+
+        FileHandler.__init__(self, f"isaa{extra_path.replace('/', '-')}.config", app.id if app else __name__)
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                           name=self.name, logs=None, color=self.color, on_exit=self.on_exit)
+
+        self.toolID = ""
+        MainTool.toolID = ""
+
+    def add_task(self, name, task):
+        self.agent_chain.add_task(name, task)
+
+    def save_task(self, name=None):
+        self.agent_chain.save_to_file(name)
+
+    def load_task(self, name=None):
+        self.agent_chain.load_from_file(name)
+
+    def get_task(self, name):
+        return self.agent_chain.get(name)
+
+    def get_augment(self, task_name=None, exclude=None):
+        return {
+            "tools": self.tools_dict,
+            "Agents": self.serialize_all(exclude=exclude),
+            "customFunctions": self.scripts.scripts,
+            "tasks": self.agent_chain.save_to_dict(task_name)
+        }
+
+    def init_from_augment(self, augment, agent_name='self', exclude=None):
+        agent = self.get_agent_config_class(agent_name)
+        tools = augment['tools']
+        agents = augment['Agents']
+        custom_functions = augment['customFunctions']
+        tasks = augment['tasks']
+
+        print("tools:", tools)
+        self.init_tools(agent, tools)
+        self.deserialize_all(agents, agent, exclude=exclude)
+        self.scripts.scripts = custom_functions
+        if isinstance(tasks, str):
+            tasks = json.loads(tasks)
+        self.agent_chain.load_from_dict(tasks)
+
+    def init_tools(self, self_agent, tools):
+
+        plugins = [
+            # SceneXplain
+            # "https://scenex.jina.ai/.well-known/ai-plugin.json",
+            # Weather Plugin for getting current weather information.
+            #    "https://gptweather.skirano.repl.co/.well-known/ai-plugin.json",
+            # Transvribe Plugin that allows you to ask any YouTube video a question.
+            #    "https://www.transvribe.com/.well-known/ai-plugin.json",
+            # ASCII Art Convert any text to ASCII art.
+            #    "https://chatgpt-plugin-ts.transitive-bullshit.workers.dev/.well-known/ai-plugin.json",
+            # DomainsGPT Check the availability of a domain and compare prices across different registrars.
+            # "https://domainsg.pt/.well-known/ai-plugin.json",
+            # PlugSugar Search for information from the internet
+            #    "https://websearch.plugsugar.com/.well-known/ai-plugin.json",
+            # FreeTV App Plugin for getting the latest news, include breaking news and local news
+            #    "https://www.freetv-app.com/.well-known/ai-plugin.json",
+            # Screenshot (Urlbox) Render HTML to an image or ask to see the web page of any URL or organisation.
+            # "https://www.urlbox.io/.well-known/ai-plugin.json",
+            # OneLook Thesaurus Plugin for searching for words by describing their meaning, sound, or spelling.
+            # "https://datamuse.com/.well-known/ai-plugin.json", -> long loading time
+            # Shop Search for millions of products from the world's greatest brands.
+            # "https://server.shop.app/.well-known/ai-plugin.json",
+            # Zapier Interact with over 5,000+ apps like Google Sheets, Gmail, HubSpot, Salesforce, and thousands more.
+            "https://nla.zapier.com/.well-known/ai-plugin.json",
+            # Remote Ambition Search millions of jobs near you
+            # "https://remoteambition.com/.well-known/ai-plugin.json",
+            # Kyuda Interact with over 1,000+ apps like Google Sheets, Gmail, HubSpot, Salesforce, and more.
+            # "https://www.kyuda.io/.well-known/ai-plugin.json",
+            # GitHub (unofficial) Plugin for interacting with GitHub repositories, accessing file structures, and modifying code. @albfresco for support.
+            #     "https://gh-plugin.teammait.com/.well-known/ai-plugin.json",
+            # getit Finds new plugins for you
+            "https://api.getit.ai/.well_known/ai-plugin.json",
+            # WOXO VidGPT Plugin for create video from prompt
+            "https://woxo.tech/.well-known/ai-plugin.json",
+            # Semgrep Plugin for Semgrep. A plugin for scanning your code with Semgrep for security, correctness, and performance issues.
+            # "https://semgrep.dev/.well-known/ai-plugin.json",
+        ]
+
+        # tools = {  # Todo save tools to file and loade from usaage data format : and isaa_extras
+        #    "lagChinTools": ["ShellTool", "ReadFileTool", "CopyFileTool",
+        #                     "DeleteFileTool", "MoveFileTool", "ListDirectoryTool"],
+        #    "huggingTools": [],
+        #    "Plugins": ["https://nla.zapier.com/.well-known/ai-plugin.json"],
+        #    "Custom": [],
+        # }
+
+        for plugin_url in tools['Plugins']:
+            get_logger().info(Style.BLUE(f"Try opening plugin from : {plugin_url}"))
+            try:
+                plugin_tool = AIPluginTool.from_plugin_url(plugin_url)
+                get_logger().info(Style.GREEN(f"Plugin : {plugin_tool.name} loaded successfully"))
+                self.lang_chain_tools_dict[plugin_tool.name + "-usage-information"] = plugin_tool
+            except Exception as e:
+                get_logger().error(Style.RED(f"Could not load : {plugin_url}"))
+                get_logger().error(Style.GREEN(f"{e}"))
+
+
+        for tool in load_tools(tools['lagChinTools'], self.get_llm_models(self_agent.model_name)):
+            self.lang_chain_tools_dict[tool.name] = tool
+        for tool in tools['huggingTools']:
+            self.lang_chain_tools_dict[tool.name] = load_huggingface_tool(tool, self.config['HUGGINGFACEHUB_API_TOKEN'])
+
+        # Add custom Tools
+
+        self.add_lang_chain_tools_to_agent(self_agent, self_agent.tools)
+
+        mem = self.get_context_memory()
+
+        def get_relevant_informations(*args):
+            x = ' '.join(args)
+            ress = mem.get_context_for(x)
+
+            task = f"Act as an summary expert your specialties are writing summary. you are known to think in small and " \
+                   f"detailed steps to get the right result. Your task : write a summary reladet to {x}\n\n{ress}"
+            res = self.run_agent(self.get_default_agent_config('think').set_model_name('gpt-3.5-turbo-0613'), task)
+
+            if res:
+                return res
+
+            return ress
+
+        def ad_data(*args):
+            x = ' '.join(args)
+            mem.add_data('main', x)
+
+            return 'added to memory'
+
+        if 'memory' not in self_agent.tools.keys():
+            self.add_tool("memory", get_relevant_informations, "a tool to get similar information from your memories."
+                                                               " useful to get similar data. ",
+                          "memory(<related_information>)",
+                          self_agent)
+
+            self.add_tool("save_data_to_memory", ad_data, "tool to save data to memory,"
+                                                          " write the data as specific"
+                                                          " and accurate as possible.",
+                          "save_data_to_memory(<store_information>)",
+                          self_agent)
+
+        self.tools_dict = tools
+
+    def serialize_all(self, exclude=None):
+        if exclude is None:
+            exclude = []
+        data = {}
+        for agent_name in self.config['agents-name-list']:
+            agent = self.get_agent_config_class(agent_name)
+            agent_data = agent.serialize()
+            for e in exclude:
+                del agent_data[e]
+            data[agent.name] = agent_data
+        return data
+
+    def deserialize_all(self, data, s_agent, exclude=None):
+        for key, agent_data in data.items():
+            agent = self.get_agent_config_class(key)
+            agent.deserialize(agent_data, reste_task=True, agent_config=agent, exclude=exclude)
+            ac_tools = {}
+            for tool_name in agent.tools:
+                if tool_name in s_agent.tools.keys():
+                    ac_tools[tool_name] = s_agent.tools[tool_name]
+                else:
+                    self.print(Style.YELLOW(f"Tools {tool_name} not found"))
+
+    def generate_task(self, subject, variables=None, context=None):
+
+        if context is None:
+            context = []
+        if variables is None:
+            variables = []
+
+        self_agent = self.get_agent_config_class('self')
+
+        agent_context_de = f"""
+Handle als Entscheidungsagenten du sollst, basierend auf einer Auswahl an Aufgaben und dem Kontext entscheiden, ob und welche Aufgabe für das Subjekt X angewendet werden soll. Wenn keine Aufgabe eine Erfolgswahrscheinlichkeit von über 80% für die beste Aufgabe aufweist, soll der Agent angeben, dass keine Aufgabe das Ziel erreicht, und das System wird eine passende Aufgabe erstellen.
+Befehl: Entscheide, welche Aufgabe für {subject} basierend auf dem Kontext {context} {variables} angewendet werden soll. Wenn keine Aufgabe eine Erfolgswahrscheinlichkeit von über 80% für die beste Aufgabe aufweist, gib an, dass keine Aufgabe das Ziel erreicht, und erstelle eine passende Aufgabe.
+Verfügbare aufgaben : {str(self.agent_chain)}
+Aufgaben Name oder None:"""
+
+        # task_name = self.mini_task_completion(agent_context_de)
+        # task_name_l = task_name.lower()
+        # if not (task_name_l != "None".lower() or len(task_name) > 1):
+        #    self.init_config_var_initialise('chains-keys', [l.lower() for l in self.agent_chain.chains.keys()])
+        #    if task_name_l in self.config['chains-keys']:
+        #        return task_name  # Agent selected a valid task
+        #
+        # self.print_stream(f"Agent Evaluation: System cant detect valid task : {task_name}")
+        self.print_stream(f"Pleas Open The Task editor or the isaa task creator")
+        tools, names = self_agent.generate_tools_and_names_compact()
+        ta_c = self.mini_task_completion(
+            f"Handle als Entscheidungsagenten Überlege, wie komplex die Aufgabe ist und welche Fähigkeiten dafür "
+            f"benötigt werden. Es gibt verschiedene Tools, Die du zu auswahl hast"
+            f", wie zum Beispiel ein Text2Text Taschenrechner. Wähle zwischen einem "
+            f"Tool oder einem Agenten für diese Aufgabe. Die verfügbaren Tools sind "
+            f"{names}. Hier sind ihre Beschreibungen: {tools}. Es stehen auch folgende "
+            f"Agenten zur Verfügung: {self.config['agents-name-list']}. Wenn weder ein "
+            f"Agent noch ein Tool zum Thema '{subject}' passen, hast du noch eine weitere Option: "
+            f"Gib 'Create-Agent' ein. Bitte beachte den Kontext: {context} {variables}. "
+            f"Was ist dein gewählter Tool- oder Agentenname oder möchtest du einen "
+            f"Agenten erstellen?"
+            f"Ausgabe:")
+
+        self.print(ta_c)
+
+        return {'isaa': 'crate-task'}
+
+    def list_task(self):
+        return str(self.agent_chain)
 
     def run_isaa_wrapper(self, command):
         self.print(f"Running isaa wrapper {command}")
@@ -1658,19 +522,19 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
                         running = False
                     self.logger.info(f'Received Data {data}')
 
-                    #if 'widgetID' not in data.keys():
+                    # if 'widgetID' not in data.keys():
                     #    continue
-#
-                    #self.logger.info(f'widgetID found in Data keys Valid:{data["widgetID"] != widget_id}')
-#
-                    #if data['widgetID'] != widget_id:
+                    #
+                    # self.logger.info(f'widgetID found in Data keys Valid:{data["widgetID"] != widget_id}')
+                    #
+                    # if data['widgetID'] != widget_id:
                     #    continue
 
                     try:
                         if "type" in data.keys():
                             if 'id' not in data.keys():
                                 continue
-                            #if data['id'] != widget_id:
+                            # if data['id'] != widget_id:
                             #    continue
                             if data["type"] == "textWidgetData":
                                 chain_data[data["context"]] = data["text"]
@@ -1685,6 +549,10 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
                                                                                              "self"))
 
                             sender.put({"ChairData": True, "data": {'res': chain_ret[-1][-1]}})
+                        elif 'subject' in data.keys():
+                            context = self.agent_memory.get_context_for(data['subject'])
+                            res = self.generate_task(data['subject'], str(chain_data), context)
+                            sender.put({"ChairData": True, "data": {'res': res}})
 
                     except Exception as e:
                         sender.put({'error': f"Error e", 'res': str(e)})
@@ -1764,6 +632,8 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
         self.scripts.load_scripts()
         config = self.get_file_handler(self.keys["Config"])
         if config is not None:
+            if isinstance(config, str):
+                config = json.loads(config)
             self.config = config
         if not os.path.exists(f".data/{get_app().id}/isaa/"):
             os.mkdir(f".data/{get_app().id}/isaa/")
@@ -1786,16 +656,37 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
                                 from_file=True)
 
     def on_exit(self):
-        for key in self.config.keys():
+        for key in list(self.config.keys()):
+            if key.startswith("LLM-model-"):
+                del self.config[key]
+            if key.startswith("agent-config-"):
+                del self.config[key]
+            if key.endswith("_pipeline"):
+                del self.config[key]
             if key.endswith("-init"):
                 self.config[key] = False
+            if key == 'agents-name-list':
+                self.config[key] = []
         self.add_to_save_file_handler(self.keys["Config"], json.dumps(self.config))
         self.save_file_handler()
+        self.agent_chain.save_to_file()
         self.scripts.save_scripts()
 
     def info(self):
         self.print(self.config)
         return self.config
+
+    def init_config_var_initialise(self, key: str, value):
+        key_i = key + '-init'
+        if key_i not in self.config.keys():
+            self.config[key_i] = False
+        if not self.config[key_i]:
+            self.config[key] = value
+            self.config[key_i] = True
+
+    def init_config_var_reset(self, key):
+        key = key + '-init'
+        self.config[key] = False
 
     def init_all_pipes_default(self):
         self.init_pipeline('question-answering', "deepset/roberta-base-squad2")
@@ -1832,10 +723,10 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
         return self.config["question-answering_pipeline"](qa, **kwargs)
 
     def summarization(self, text, model="pinglarin/summarization_papers", **kwargs):
-        if isinstance(text, str):
-            print(f"\t\tsummarization({len(text)})")
-        if isinstance(text, list):
-            print(f"\t\tsummarization({len(text) * len(text[0])})")
+        # if isinstance(text, str):
+        #     print(f"\t\tsummarization({len(text)})")
+        # if isinstance(text, list):
+        #     print(f"\t\tsummarization({len(text) * len(text[0])})")
         self.init_pipeline('summarization', model)
         try:
             summary_ = self.config["summarization_pipeline"](text, **kwargs)
@@ -1981,16 +872,20 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
         if tools is None:
             tools = {}
         for key, _tool in self.lang_chain_tools_dict.items():
-            tools[key] = {"func": _tool, "description": _tool.description, "format": f"{key}({_tool.args})",
-                          'langchain-tool': True}
+            try:
+                tools[key] = {"func": _tool, "description": _tool.description, "format": f"{key}({_tool.args})",
+                              'langchain-tool': True}
+            except Exception as e:
+                self.logger.error(Style.YELLOW(Style.Bold(f"Error in add tool : {key} {e}")))
+                self.print(Style.RED(f"Tools:{key} Not available"))
 
         agent.set_tools(tools)
 
     def get_default_agent_config(self, name="Normal") -> AgentConfig:
-        config = AgentConfig(name)
+        config = AgentConfig(self, name)
         if name != "Normal":
             if os.path.exists(f".data/{get_app().id}/Memory/{name}.agent"):
-                config = AgentConfig.load_from_file(name)
+                config = AgentConfig.load_from_file(self, name)
 
         def toggel(x):
             x = x.lower()
@@ -2115,6 +1010,9 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 "image-generator": {"func": lambda x: image_genrating_tool(x, self.app_),
                                     "description": "Run to generate image"
                     , "format": "reminder(<detaild_discription>)"},
+                "mini_task": {"func": lambda x: self.mini_task_completion(x),
+                                    "description": "programmable pattern completion engin. use text davici args:str only"
+                    , "format": "reminder(<detaild_discription>)"},
 
             }
 
@@ -2173,7 +1071,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config.mode = "execution"
             config.model_name = "gpt-3.5-turbo-0613"
             config.completion_mode = "chat"
-            config.agent_type = "zero-shot-react-description"
+            config.set_agent_type("zero-shot-react-description")
             config.max_iterations = 6
             config.verbose = True
 
@@ -2219,9 +1117,18 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config. \
                 set_mode("free") \
                 .set_max_iterations(1) \
-                .set_completion_mode("chat").set_model_name("gpt-3.5-16k-063")
+                .set_completion_mode("chat").set_model_name("gpt-4")
 
             config.stop_sequence = ["\n\n\n"]
+
+        if name == "TaskCompletion":
+            config. \
+                set_mode("free") \
+                .set_max_iterations(1) \
+                .set_completion_mode("text") \
+                .set_model_name("text-davinci-003")
+
+            config.stop_sequence = ["\n"]
 
         if name == "execution":
             config. \
@@ -2241,7 +1148,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 set_mode("free") \
                 .set_max_iterations(1) \
                 .set_completion_mode("chat") \
-                .set_model_name('gpt-3.5-turbo-0613') \
+                .set_model_name('gpt-3.5-turbo') \
                 .set_pre_task("Act as an summary expert your specialties are writing summary. you are known to think "
                               "in small and detailed steps to get the right result. Your task :")
 
@@ -2269,7 +1176,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config.mode = "tools"
             config.model_name = "gpt-3.5-turbo"
 
-            config.agent_type = "self-ask-with-search"
+            config.set_agent_type("self-ask-with-search")
             config.max_iterations = 4
 
             config.personality = """
@@ -2349,6 +1256,14 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
             return 'added to memory'
 
+        def crate_task_wrapper(task, *args):
+            if task:
+                if args:
+                    task += ' '.join(args)
+                self.print(Style.GREEN("Crating Task"))
+                return self.crate_task(task)
+            self.print(Style.YELLOW("Not Task specified"))
+
         self.add_tool("memory", get_relevant_informations, "a tool to get similar information from your memories."
                                                            " useful to get similar data. ",
                       "memory(<related_information>)",
@@ -2358,6 +1273,14 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                                                       " write the data as specific"
                                                       " and accurate as possible.",
                       "save_data_to_memory(<store_information>)",
+                      config)
+
+        self.add_tool("crate_task", lambda x: crate_task_wrapper(x), "tool to crate a task for a subject input subject:str",
+                      "crate_task(<subject>)",
+                      config)
+
+        self.add_tool("optimise_task", lambda x: self.optimise_task(x), "tool to optimise a task enter task name",
+                      "optimise_task(<subject>)",
                       config)
 
         return config
@@ -2371,25 +1294,177 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         if "agents-name-list" not in self.config.keys():
             self.config["agents-name-list"] = []
 
-        if agent_name not in self.config["agents-name-list"]:
+        if agent_name in self.config["agents-name-list"]:
+            config = self.config[f'agent-config-{agent_name}']
+            self.print(f"Using AGENT: {config.name} {config.mode}\n")
+        else:
             self.config["agents-name-list"].append(agent_name)
             config = self.get_default_agent_config(agent_name)
             self.config[f'agent-config-{agent_name}'] = config
             print()
-            self.print(f" {agent_name}:{config.name} {config.mode}\n")
-
-            return config
-
-        if f'agent-config-{agent_name}' in self.config.keys():
-            config = self.config[f'agent-config-{agent_name}']
-            self.print(f"Using AGENT: {config.name} {config.mode}\n")
-        else:
-            config = AgentConfig(agent_name)
+            self.print(f"Init:Agent::{agent_name}:{config.name} {config.mode}\n")
 
         return config
 
+    def mini_task_completion(self, mini_task):
+        agent = self.get_agent_config_class("TaskCompletion")
+        return self.stream_read_llm(mini_task, agent)
+
+    def crate_task(self, task):
+        agent = self.get_agent_config_class("self")
+        agent_execution = self.get_agent_config_class("execution")
+        agent_execution.get_messages(create=True)
+
+        task_genrator = [
+            {
+                "use": "tool",
+                "name": "memory",
+                "args": "$user-input",
+                "return": "$D-Memory"
+            },
+            {
+                "use": "agent",
+                "mode": "generate",
+                "name": "self",
+                "args": "Erstelle Eine Prompt für den Nächsten Agent."
+                        "Der Agent soll eine auf das Subject angepasste task zurück geben"
+                        "Der Agent soll beachten das die Task Im korrekten json format ist. und das alle attribute"
+                        " richtig ausgewählt werden sollen. Die prompt soll auf das Subject und die informationen"
+                        " angepasst sein"
+                        "Subject : $user-input"
+                        "informationen die das system zum Subject hat: $D-Memory.",
+                "return": "$task"
+            },
+            {
+                "use": "agent",
+                "name": "execution",
+                "args": "$task Details für das format:\n"
+                        "Task format:\n"
+                        "Keys that must be included [use,name,args,mode,return]\n"
+                        "values for use ['agent', 'tool']\n"
+                        f"values for name if use='agent' {self.config['agents-name-list']}\n"
+                        f"values for name if use='tool' {agent.tools.keys()}\n"
+                        "args: str = command for the agent or tool"
+                        "return = optional return value, stor return value in an variabel for later use expel"
+                        " $return-from-task1 -> args for next task 'validate $return-from-task1'"
+                        f"if use='agent' mode = {agent.available_modes}"
+                        "return format : [task0,-*optional*-taskN... ]"
+                        "example task:dict = {'use':'agent','name':'self','args':'Bitte stell dich vor',"
+                        "'mode':'free','return':'$return'}"
+                        "try to return only one task if the subject includes mutabel bigger steppes"
+                        "return multiple tasks in a list."
+                        "return_val:List[dict] = "
+                ,
+                "return": "$taskDict",
+            },
+        ]
+        chain_data = {}
+        res, chain_data = self.execute_thought_chain(task, task_genrator, agent, chain_data=chain_data, chain_data_infos=True)
+        print(res)
+        task_list = []
+        try:
+            if '$taskDict' in chain_data.keys():
+                task_list = chain_data['$taskDict']
+            else:
+                task_list = res[-1][-1]
+            task_list = json.loads(task_list)
+            if isinstance(task_list, dict):
+                task_list = [task_list]
+        except ValueError as e:
+            self.print_stream(Style.RED("Error parsing auto task builder"))
+            self.logger.error(Style.RED(f"Error in auto task builder {e}"))
+
+        self.print(f"{type(task_list)=}")
+
+        if not isinstance(task_list, list):
+            if isinstance(task_list, str):
+                if task_list.startswith("{") and task_list.endswith("}"):
+                    task_list = json.loads(task_list)
+                if task_list.startswith("[") and task_list.endswith("]"):
+                    task_list = eval(task_list)
+            if isinstance(task_list, dict):
+                task_list = [task_list]
+
+        task_name = self.mini_task_completion(f"Crate a name for this task {task_list} subject {task}\nTaskName:")
+        if not task_name:
+            task_name = self.process_completion(f"Crate a name for this task {task_list} subject {task}\nTaskName:", agent)
+        if not task_name:
+            task_name = str(uuid.uuid4())
+        self.print(Style.Bold(Style.CYAN(f"TASK:{task_name}:{task_list}:{type(task_list)}####")))
+        self.agent_chain.add(task_name, task_list)
+        self.agent_chain.init_chain(task_name)
+
+        return task_name
+
+    def optimise_task(self, task_name):
+        agent = self.get_agent_config_class("self")
+        task = self.agent_chain.get(task_name)
+        optimise_genrator = [
+            {
+                "use": "tool",
+                "name": "memory",
+                "args": "$user-input",
+                "return": "$D-Memory"
+            },
+            {
+                "use": "agent",
+                "name": "self",
+                "args": "Brainstorm about the users requesst $user-input find ways to improve it"
+                        " consider all avalabel information"
+                        "informationen die das system zum Subject hat: $D-Memory."
+                ,
+                "return": "$infos"
+            },
+            {
+                "use": "agent",
+                "mode": "generate",
+                "name": "self",
+                "args": "Erstelle Eine Prompt für den Nächsten Agent."
+                        "Der Agent soll eine auf das Subject angepasste task Optimireren"
+                        "Der Agent soll beachten das die Task Im korrekten json format ist. und das alle attribute"
+                        " richtig ausgewählt werden sollen. Die prompt soll auf das Subject und die informationen"
+                        " angepasst sein"
+                        "Subject : $user-input"
+                        "informationen die das system zum Subject hat: $D-Memory. $infos.",
+                "return": "$task"
+            },
+            {
+                "use": "agent",
+                "mode": "free",
+                "name": "execution",
+                "args": "$task Details für das format:\n"
+                        "Task format:\n"
+                        "Keys that must be included [use,name,args,mode,return]\n"
+                        "values for use ['agent', 'tool']\n"
+                        f"values for name if use='agent' {self.config['agents-name-list']}\n"
+                        f"values for name if use='tool' {agent.tools.keys()}\n"
+                        "args: str = command for the agent or tool"
+                        "return = optional return value, stor return value in an variabel for later use expel"
+                        " $return-from-task1 -> args for next task 'validate $return-from-task1'"
+                        f"if use='agent' mode = {agent.available_modes}"
+                        "return format : [task0,-*optional*-taskN... ]"
+                        "example task = {'use':'agent','name':'self','args':'Bitte stell dich vor',"
+                        "'mode':'free','return':'$return'}"
+                        "try to return only one task if the subject includes mutabel bigger steppes"
+                        "return multiple tasks in a list."
+                ,
+                "return": "$taskDict",
+            },
+        ]
+        res = self.execute_thought_chain(str(task), optimise_genrator, agent)
+        task_dict = []
+        try:
+            task_dict = json.loads(res[-1][-1][-1])
+            if isinstance(task_dict, dict):
+                task_dict = [task_dict]
+        except ValueError as e:
+            self.print_stream("Error parsing auto task builder")
+            self.logger.error(f"Error in auto task builder {e}")
+
+        return task_dict
+
     @staticmethod
-    def process_completion(text, config=AgentConfig()):
+    def process_completion(text, config: AgentConfig):
 
         if len(config.task_list) == 0 and len(text) != 0:
             config.step_between = text
@@ -2453,7 +1528,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         return ret
 
-    def test_use_tools(self, agent_text, config=AgentConfig()) -> tuple[bool, str, str]:
+    def test_use_tools(self, agent_text, config: AgentConfig) -> tuple[bool, str, str]:
         print()
         if not agent_text:
             return False, "", ""
@@ -2618,48 +1693,42 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         observation = "Problem running function"
 
-        try:
-            if args_len == 0:
-                self.logger.info("Running with no arguments")
-                observation = tool['func']()
-
-            elif args_len == args_len_c:
-                self.logger.info("Running with matching arguments")
-                observation = tool['func'](*args)
-
-            elif args_len == 1 and args_len_c > 1 and args_len < args_len_c:
-                self.logger.info("Running with one or more then one arguments")
-                if str_args:
-                    observation = tool['func'](",".join(args))
-                else:
-                    observation = tool['func'](args)
-
-            elif args_len == 2:
-                self.logger.info("Running with one arguments and one None state")
-                if str_args:
-                    observation = tool['func'](",".join(args), None)
-                else:
-                    observation = tool['func'](args, None)
-
-            elif args_len == 2 and args_len_c == 1:
-                self.logger.info("Running with one arguments and one None state")
-                if str_args:
-                    observation = tool['func'](args, None)
-                else:
-                    if len(args.keys()) == 1:
-                        args = args[list(args.keys())[0]]
-                    observation = tool['func'](args, None)
-
-            elif args_len > args_len_c:
-                self.logger.info("Matching keyword")
-                if not str_args:
-                    observation = tool['func'](**args)
-
+        #try:
+        if args_len == 0:
+            self.logger.info("Running with no arguments")
+            observation = tool['func']()
+        elif args_len == args_len_c:
+            self.logger.info("Running with matching arguments")
+            observation = tool['func'](*args)
+        elif args_len == 1 and args_len_c > 1 and args_len < args_len_c:
+            self.logger.info("Running with one or more then one arguments")
+            if str_args:
+                observation = tool['func'](",".join(args))
             else:
-                observation = "Error this is bad the arguments dos not match the tool"
+                observation = tool['func'](args)
+        elif args_len == 2:
+            self.logger.info("Running with one arguments and one None state")
+            if str_args:
+                observation = tool['func'](",".join(args), None)
+            else:
+                observation = tool['func'](args, None)
+        elif args_len == 2 and args_len_c == 1:
+            self.logger.info("Running with one arguments and one None state")
+            if str_args:
+                observation = tool['func'](args, None)
+            else:
+                if len(args.keys()) == 1:
+                    args = args[list(args.keys())[0]]
+                observation = tool['func'](args, None)
+        elif args_len > args_len_c:
+            self.logger.info("Matching keyword")
+            if not str_args:
+                observation = tool['func'](**args)
+        else:
+            observation = "Error this is bad the arguments dos not match the tool"
 
-        except Exception as e:
-            observation = "Fatal error in tool error " + str(e)
+        #except Exception as e:
+        #    observation = f"Fatal error in tool {function_name}: {str(e)}"
 
         self.print("Observation : " + observation)
 
@@ -2705,8 +1774,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         out = "Invalid configuration\n"
         system = ""
         stream = config.stream
-        self.logger.info(f"stream mode: {stream} mode : {self.config[f'agent-config-{name}'].mode}")
-        if self.config[f'agent-config-{name}'].mode == "talk":
+        self.logger.info(f"stream mode: {stream} mode : {config.mode}")
+        if config.mode == "talk":
             sto, config.add_system_information = config.add_system_information, False
             prompt = PromptTemplate(
                 input_variables=["input"],
@@ -2714,7 +1783,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             )
             out = LLMChain(prompt=prompt, llm=self.get_llm_models(config.model_name)).run(text)
             config.add_system_information = sto
-        elif self.config[f'agent-config-{name}'].mode == "tools":
+        elif config.mode == "tools":
             sto, config.add_system_information = config.add_system_information, False
 
             try:
@@ -2745,16 +1814,16 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                                                               return_direct=return_direct
                                                               ))
             agent_type = config.agent_type
-            if agent_type in ["structured-chat-zero-shot-react-description"]:
-                if text:
-                    config.step_between = text
-                out = initialize_agent(tools, prompt=prompt,
-                                       llm=self.get_llm_models(config.model_name),
-                                       agent=agent_type, verbose=config.verbose,
-                                       max_iterations=config.max_iterations).run(config.prompt)
-                print(out)
-            else:
-                out = initialize_agent(tools, prompt=prompt,
+            #if agent_type in ["structured-chat-zero-shot-react-description"]:
+            #    if text:
+            #        config.step_between = text
+            #    out = initialize_agent(tools, prompt=prompt,
+            #                           llm=self.get_llm_models(config.model_name),
+            #                           agent=agent_type, verbose=config.verbose,
+            #                           max_iterations=config.max_iterations).run(text)
+            #    print(out)
+            #else:
+            out = initialize_agent(tools, prompt=prompt,
                                        llm=self.get_llm_models(config.model_name),
                                        agent=agent_type, verbose=config.verbose,
                                        return_intermediate_steps=True,
@@ -2762,7 +1831,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             if agent_type not in ["structured-chat-zero-shot-react-description"]:
                 out = self.summarize_dict(out, config)
             config.add_system_information = sto
-        elif self.config[f'agent-config-{name}'].mode == "conversation":
+        elif config.mode == "conversation":
             sto, config.add_system_information = config.add_system_information, False
             prompt = PromptTemplate(
                 input_variables=["input"],
@@ -2770,43 +1839,32 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             )
             out = ConversationChain(prompt=prompt, llm=self.get_llm_models(config.model_name)).predict(input=text)
             config.add_system_information = sto
-        elif self.config[f'agent-config-{name}'].mode == "execution":
+        elif config.mode == "execution":
             self.logger.info(f"stream mode: {stream}")
-            out = ''
-            last = ''
-            for i in range(self.config[f'agent-config-{name}'].max_iterations):
-                out_ = self.stream_read_llm(text, config)
-                out += out_
-                if last == out_:
-                    if config.short_mem.tokens > 50:
-                        with Spinner('Saving work Memory', symbols='t'):
-                            config.short_mem.clear_to_collective()
-                    break
-                last = out_
-                if not stream:
-                    self.print_stream("execution-free : " + out)
-                print()
-                config.short_mem.text = out
-                t0 = time.time()
-                self.logger.info(f"analysing repose")
-                self.logger.info(f"analysing test_use_tools")
-                with Spinner('analysing repose', symbols='+'):
-                    use_tool, func_name, command_ = self.test_use_tools(out, config)
-                self.logger.info(f"analysing test_task_done")
-                task_done = self.test_task_done(out)
-                self.logger.info(f"don analysing repose in t-{time.time() - t0}")
-                if use_tool:
-                    self.print(f"Using-tools: {func_name} {command_}")
-                    ob = self.run_tool(command_, func_name, config)
-                    config.observe_mem.text = ob
-                    out += "\nObservation: " + ob
-                if task_done:  # new task
-                    self.print(f"Task done")
-                    # self.speek("Ist die Aufgabe abgeschlossen?")
-                    if config.short_mem.tokens > 50:
-                        with Spinner('Saving work Memory', symbols='t'):
-                            config.short_mem.clear_to_collective()
-                    break
+            out = self.stream_read_llm(text, config)
+            if not stream:
+                self.print_stream("execution-free : " + out)
+            print()
+            config.short_mem.text = out
+            t0 = time.time()
+            self.logger.info(f"analysing repose")
+            self.logger.info(f"analysing test_use_tools")
+            with Spinner('analysing repose', symbols='+'):
+                use_tool, func_name, command_ = self.test_use_tools(out, config)
+            self.logger.info(f"analysing test_task_done")
+            task_done = self.test_task_done(out)
+            self.logger.info(f"don analysing repose in t-{time.time() - t0}")
+            if use_tool:
+                self.print(f"Using-tools: {func_name} {command_}")
+                ob = self.run_tool(command_, func_name, config)
+                config.observe_mem.text = ob
+                out += "\nObservation: " + ob
+            if task_done:  # new task
+                self.print(f"Task done")
+                # self.speek("Ist die Aufgabe abgeschlossen?")
+                if config.short_mem.tokens > 50:
+                    with Spinner('Saving work Memory', symbols='t'):
+                        config.short_mem.clear_to_collective()
 
         else:
             out = self.stream_read_llm(text, config)
@@ -2828,7 +1886,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         #    else:
         #        return f"\nERROR runnig agent named: {name} retrys {str(retrys)} errormessage: {str(e)}\n{str(res)}"
 
-        if self.config[f'agent-config-{name}'].mode not in ["free", 'conversation']:
+        if config.mode not in ["free", 'conversation'] and isinstance(out, str):
             py_code, type_ = extract_code(out)
             if type_.lower() == 'python':
                 self.print("Executing Python code")
@@ -2854,7 +1912,6 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         if end is None:
             end = len(agent_tasks) + 1
         ret = ""
-        steps = 0
 
         default_mode_ = config.mode
         default_completion_mode_ = config.completion_mode
@@ -2865,7 +1922,29 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         chain_mem = self.get_context_memory()
         self.logger.info(Style.GREY(f"Starting Chain {agent_tasks}"))
         config.stop_sequence = ['\n\n\n', "Execute:", "Observation:", "User:"]
-        for task in agent_tasks[start:end]:
+
+        invalid = False
+        error = ""
+        if not isinstance(agent_tasks, list):
+            self.print(Style.RED(f"tasks must be list ist: {type(agent_tasks)}:{agent_tasks}"))
+            error = "tasks must be a list"
+            invalid = True
+        if len(agent_tasks) == 0:
+            self.print(Style.RED("no tasks specified"))
+            error = "no tasks specified"
+            invalid = True
+
+        if invalid:
+            if chain_data_infos:
+                return chain_ret, chain_data, uesd_mem
+            else:
+                return error, chain_ret
+
+        work_pointer = start
+        running = True
+        while running:
+
+            task = agent_tasks[work_pointer]
 
             self.logger.info(Style.GREY(f"{type(task)}, {task}"))
             chain_ret_ = []
@@ -2882,29 +1961,39 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
             if use == 'agent':
                 sto_config, config = config, self.get_agent_config_class(task_name)
-
-            self.print(f"Running task: {args}")
+            else:
+                config = self.get_agent_config_class('self')
 
             default_mode = config.mode
             default_completion_mode = config.completion_mode
 
             if 'mode' in keys:
                 config.mode = task['mode']
-                self.logger.info(Style.GREY(f"In Task {steps} detected 'mode' {config.mode}"))
+                self.logger.info(Style.GREY(f"In Task {work_pointer} detected 'mode' {config.mode}"))
             if 'completion-mode' in keys:
                 config.completion_mode = task['completion-mode']
-                self.logger.info(Style.GREY(f"In Task {steps} detected 'completion-mode' {config.completion_mode}"))
-
+                self.logger.info(Style.GREY(f"In Task {work_pointer} detected 'completion-mode' {config.completion_mode}"))
             if "infos" in keys:
                 config.short_mem.text += task['infos']
-                self.logger.info(Style.GREY(f"In Task {steps} detected 'info' {task['infos'][:15]}..."))
+                self.logger.info(Style.GREY(f"In Task {work_pointer} detected 'info' {task['infos'][:15]}..."))
 
             chain_data['$edit-text-mem'] = config.edit_text.text
 
-            speak(f"Chain running {task_name} at step {steps} with the input : {args}")
+            for c_key in chain_data.keys():
+                if c_key in args:
+                    args = args.replace(c_key, str(chain_data[c_key]))
+
+            if use == 'chain':
+                for c_key in chain_data.keys():
+                    if c_key in task_name:
+                        task_name = task_name.replace(c_key, str(chain_data[c_key]))
+
+            self.print(f"Running task: {args}")
+
+            speak(f"Chain running {task_name} at step {work_pointer} with the input : {args}")
 
             if 'chuck-run-all' in keys:
-                self.logger.info(Style.GREY(f"In Task {steps} detected 'chuck-run-all'"))
+                self.logger.info(Style.GREY(f"In Task {work_pointer} detected 'chuck-run-all'"))
                 chunk_num = -1
                 for chunk in chain_data[task['chuck-run-all']]:
                     chunk_num += 1
@@ -2918,11 +2007,11 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                     args_ = args.replace(task['chuck-run-all'], str(chunk))
 
                     ret, sum_sto, chain_ret_ = self.chain_cor_runner(use, task_name, args_, config, sto_name, task,
-                                                                     steps, keys,
+                                                                     work_pointer, keys,
                                                                      chain_ret, sum_sto)
 
             elif 'chuck-run' in keys:
-                self.logger.info(Style.GREY(f"In Task {steps} detected 'chuck-run'"))
+                self.logger.info(Style.GREY(f"In Task {work_pointer} detected 'chuck-run'"))
                 rep = chain_mem.vector_store[uesd_mem[task['chuck-run']]]['represent']
                 if len(rep) == 0:
                     self.get_context_memory().crate_live_context(uesd_mem[task['chuck-run']])
@@ -2951,18 +2040,15 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                     args_ = args.replace(task['chuck-run'], str(chunk[0].page_content))
 
                     ret, sum_sto, chain_ret_ = self.chain_cor_runner(use, task_name, args_, config, sto_name, task,
-                                                                     steps,
+                                                                     work_pointer,
                                                                      keys,
                                                                      chain_ret, sum_sto)
                     ret_chunk.append(ret)
                 ret = ret_chunk
 
             else:
-                for c_key in chain_data.keys():
-                    if c_key in args:
-                        args = args.replace(c_key, str(chain_data[c_key]))
 
-                ret, sum_sto, chain_ret_ = self.chain_cor_runner(use, task_name, args, config, sto_name, task, steps,
+                ret, sum_sto, chain_ret_ = self.chain_cor_runner(use, task_name, args, config, sto_name, task, work_pointer,
                                                                  keys,
                                                                  chain_ret, sum_sto)
 
@@ -2986,23 +2072,44 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             #     except Exception as e:
             #         print(f"Error in validation : {e}")
 
+
             if 'to-edit-text' in keys:
                 config.edit_text.text = ret
-
-            speak(f"Step {steps} with response {ret}")
 
             chain_data, chain_ret, uesd_mem = self.chain_return(keys, chain_ret_, task, task_name, ret,
                                                                 chain_data, uesd_mem, chain_ret)
 
-            self.print(Style.ITALIC(Style.GREY(f'Chain at step : {steps}\nreturned : {str(ret)[:150]}...')))
+            self.print(Style.ITALIC(Style.GREY(f'Chain at {work_pointer}\nreturned : {str(ret)[:150]}...')))
 
-            steps += 1
             if sto_config:
                 config = sto_config
                 sto_config = None
 
             config.mode = default_mode
             config.completion_mode = default_completion_mode
+
+            if 'brakeOn' in keys:
+                do_brake = False
+                if isinstance(task['brakeOn'], list):
+                    for b in task['brakeOn']:
+                        if b in ret:
+                            do_brake = True
+
+                if isinstance(task['brakeOn'], str):
+
+                    if task['brakeOn'] in ret:
+                        do_brake = True
+
+                if isinstance(task['brakeOn'], bool):
+
+                    if task['brakeOn']:
+                        do_brake = True
+
+                running = not do_brake
+
+            work_pointer += 1
+            if work_pointer >= end or work_pointer >= len(agent_tasks):
+                running = False
 
         config.mode = default_mode_
         config.completion_mode = default_completion_mode_
@@ -3011,11 +2118,13 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             return chain_ret, chain_data, uesd_mem
 
         chain_sum_data = self.summarize_ret_list(chain_ret)
-
-        return self.run_agent(self.get_agent_config_class("think"),
+        sum_a = self.get_agent_config_class("summary")
+        sum_a.get_messages(create=True)
+        return self.run_agent(sum_a,
                               f"Produce a summarization of what happened "
-                              f"(max 1 paragraph) using the given information {chain_sum_data}"
-                              f"and validate if the task was executed successfully"), chain_ret
+                              f"(max 1 paragraph) using the given information,validate if the task was executed successfully"
+                              f"{chain_sum_data}"
+                              f"and validate if the task was executed successfully, the task : {user_text}"), chain_ret
 
     def chain_cor_runner(self, use, task_name, args, config, sto_name, task, steps, keys, chain_ret, sum_sto):
         ret = ''
@@ -3027,17 +2136,19 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             else:
                 ret = self.run_tool(args, task_name, config)
 
-        if use == "agent":
+        elif use == "agent":
             if config.mode == 'free':
                 config.task_list.append(args)
             ret = self.run_agent(config, args, mode_over_lode=config.mode)
-        if use == 'function':
+        elif use == 'function':
             if 'function' in keys:
                 if callable(task['function']) and chain_ret:
                     task['function'](chain_ret[-1][1])
 
-        if use == 'expyd' or use == 'chain':
+        elif use == 'expyd' or use == 'chain':
             ret, ret_data = self.execute_thought_chain(args, self.agent_chain.get(task_name), config, speak=self.speak)
+        else:
+            self.print(Style.YELLOW(f"use is not available {use} avalabel ar [tool, agent, function, chain]"))
 
         self.logger.info(Style.GREY(f"Don : {str(ret)[:15]}..."))
 
@@ -3169,6 +2280,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                     f"Generating response {config.name} {config.model_name} {config.mode} {config.completion_mode}"):
                     res = self.process_completion(text, config)
                 print(' ' * 400)
+                if config.completion_mode == 'chat':
+                    config.add_message('assistant', res)
                 return res
 
             print(f"Generating response (/) stream (\\) {config.name} {config.model_name} {config.mode} "
@@ -3211,6 +2324,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 if r > 0:
                     print('\n\n')
                     return self.stream_read_llm(text + '\n' + res, config, r - 1)
+            if config.completion_mode == 'chat':
+                config.add_message('assistant', res)
             return res
         except openai.error.RateLimitError:
             self.print(f"{' ' * 30}  | Retry level: {r} ", end="\r")
@@ -3362,9 +2477,15 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             if isinstance(step, list):
                 step_content = f"\naction {i}" + str(step[0]['use']) + ": " + str(step[0]['name'])
                 step_content += f"\ntool_input {i} " + str(step[0]['args'])
-                if step[1]:  # assuming the second item in the list is always of interest
-                    step_content += f"\nlog {i} " + str(step[1][0])  # assuming the list contains a string
-                chucs.append(self.mas_text_summaries(step_content))  # assuming this function exists
+                if step[1]:
+                    if isinstance(step[1], list):
+                        step_content += f"\nlog {i} " + str(step[1][0])
+                    if isinstance(step[1], dict):
+                        if 'input' in step[1]:
+                            step_content += f"\ninput {i} " + str(step[1]['input'])
+                        if 'output' in step[1]:
+                            step_content += f"\noutput {i} " + str(step[1]['output'])
+                chucs.append(self.mas_text_summaries(step_content))
         text = 'NoContent'
         if chucs:
             text = '\n'.join(chucs)

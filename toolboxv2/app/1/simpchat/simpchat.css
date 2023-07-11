@@ -15,6 +15,7 @@
     overflow-y: auto;
     max-height: 50vh;
     display: flex;
+    max-width: max-content;
     flex-direction: column-reverse;
 }
 
@@ -38,7 +39,7 @@ ul {
     margin-bottom: 10px;
     padding: 10px;
     border-radius: 5px;
-    max-width: max-content;
+    max-width: 90%;
     background-color: var(--primary-color);
     color: var(--text-color);
 }

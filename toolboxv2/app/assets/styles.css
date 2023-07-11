@@ -402,12 +402,11 @@ textarea:hover {
 
 .markdown {
     text-align: start;
-    min-width: max-content;
     min-height: max-content;
     font-size: 0.75rem;
     background: var(--background-color);
     padding: 5px;
-    max-width: min-content;
+    max-width: max-content;
 }
 .markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown p, .markdown span {
     margin-top: 1px;

@@ -266,6 +266,10 @@ class App(metaclass=Singleton):
             self.logger.debug(Style.RED("No module Active"))
             return None
 
+        for key, func in self.AC_MOD.tools.items():
+            if name.lower() == key.lower():
+                return func
+
         if name.lower() not in self.SUPER_SET:
             self.logger.debug(Style.RED(f"KeyError: {name} function not found 404"))
             return None
@@ -477,7 +481,7 @@ class App(metaclass=Singleton):
         return None
 
     def run_function(self, name, *args, **kwargs):
-        self.logger.info(f"Start setup for: {name} function")
+        self.logger.info(f"Start setup for: {name} function mod:{self.AC_MOD.name}")
 
         function = self._get_function(name)
         if not function:
@@ -501,7 +505,12 @@ class App(metaclass=Singleton):
             args = list(args)
             args.insert(app_position, self)
         try:
-            res = function(*args, **kwargs)
+            if len(parameters) == 0:
+                res = function()
+            elif len(parameters) == 1:
+                res = function(*args)
+            else:
+                res = function(*args, **kwargs)
             self.logger.info(f"Execution done")
         except Exception as e:
             self.logger.error(Style.YELLOW(Style.Bold(f"! Function ERROR: in {mod_name}:{name} {e}")))

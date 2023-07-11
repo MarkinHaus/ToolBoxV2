@@ -1,8 +1,9 @@
 """Console script for toolboxv2. Isaa CMD Tool"""
-from langchain.agents import load_tools
+from langchain.agents import load_tools, get_all_tool_names
 
 from toolboxv2 import Style, get_logger
 from toolboxv2.mods.isaa import IsaaQuestionBinaryTree, AgentConfig
+from toolboxv2.mods.isaa_extars.AgentUtils import Task
 from toolboxv2.mods.isaa_extars.isaa_modi import init_isaa, split_todo_list, generate_exi_dict, \
     run_chain_in_cmd, idea_enhancer
 
@@ -10,6 +11,484 @@ NAME = "isaa-test"
 
 
 def run(app, args):
+    isaa, self_agent_config, chains = init_isaa(app, speak_mode=args.speak, ide=False, create=False,
+                                                python_test=False, init_mem=True, init_pipe=True,
+                                                join_now=False, chain_runner=True)
+
+    isaa.global_stream_override = True
+
+    if 'augment' in isaa.config.keys() and False:
+        print("init augment")
+        isaa.init_from_augment(isaa.config['augment'], exclude=['messages_sto'])
+    else:
+
+        tools = {
+            "lagChinTools": ['python_repl', 'requests_all',
+                             'terminal', 'sleep', 'google-search', 'ddg-search', 'wikipedia',
+                             'llm-math',
+                             ],
+            "huggingTools": [],
+            "Plugins": ["https://nla.zapier.com/.well-known/ai-plugin.json"],
+            "Custom": [],
+        }
+        isaa.init_tools(self_agent_config, tools)
+
+    planing_steps = {
+        "name": "First-Analysis",
+        "tasks": [
+            {
+                "use": "tool",
+                "name": "memory",
+                "args": "$user-input",
+                "return": "$D-Memory"
+            },
+            {
+                "use": "agent",
+                "mode": "generate",
+                "name": "self",
+                "args": "Erstelle Eine Prompt für die Analyse diese Subjects '''$user-input''',"
+                        "informationen die das system zum Subjects hat: $D-Memory",
+                "return": "$task"
+            },
+            {
+                "use": "agent",
+                "mode": "free",
+                "name": "think",
+                "args": "Beantworte nach bestem wissen und Gewissen die Die Aufgabe $task. Wenn die aufgebe nicht "
+                        "direct von dir gelöst werden kann spezifiziere die nächste schritte die eingeleitet"
+                        " werden müssen um die Aufgabe zu bewerkstelligen es beste die option zwischen"
+                        "der nutzung von tools und agents.",
+                "return": "$0final",
+            },
+            {
+                "use": "tool",
+                "name": "save_data_to_memory",
+                "args": "user-input= $user-input task= $task out= $0final",
+                "return": "$D-Memory"
+            },
+            {
+                "use": "tool",
+                "name": "mini_task",
+                "args": "Bestimme ob die aufgebe abgeschlossen ist gebe True oder False wider."
+                        "Tip wenn es sich um eine plan zur Bewerkstelligung der Aufgabe handelt gebe False wider."
+                        "Aufgeben : ###'$user-input'###"
+                        "Antwort : '$0final'",
+                "return": "$completion-evaluation",
+                "brakeOn": ["True", "true", "error", "Error"],
+            },
+            {
+                "use": "agent",
+                "mode": "generate",
+                "name": "self",
+                "args": "Formuliere eine Konkrete aufgabe für den nächste agent alle wichtigen informationen sollen"
+                        " in der aufgaben stellung sein aber fasse die aufgaben stellung so kurz."
+                        "Nutze dazu dies Informationen : $0final"
+                        "informationen die das system zum Subjects hat : $D-Memory",
+                "return": "$task",
+            },
+            {
+                "use": "tool",
+                "name": "crate_task",
+                "args": "$user-input $task",
+                "return": "$task_name"
+            },
+            {
+                "use": "chain",
+                "name": "$task_name",
+                "args": "user-input= $user-input task= $task",
+                "return": "$ret0"
+            },
+        ]
+    }
+    stategy_crator = {
+        "name": "Strategie-Creator",
+        "tasks": [
+            {
+                "use": "tool",
+                "name": "memory",
+                "args": "$user-input",
+                "return": "$D-Memory"
+            },
+            {
+                "use": "tool",
+                "name": "search",
+                "args": "Suche Information bezüglich : $user-input mache dir ein bild der aktuellen situation",
+                "return": "$WebI"
+            },
+            {
+                "use": "agent",
+                "mode": "generate",
+                "name": "self",
+                "args": "Erstelle Eine Prompt für die Analyse diese Subject '''$user-input''',"
+                        "Es soll bestimmt Werden, Mit welcher Strategie das Subject angegangen und gelöst werden kann "
+                        "Der Agent soll Dazu angewiesen werden 3 Strategie in feinsarbeit auszuarbeiten. "
+                        "Die folgenden information soll jede Strategie enthalten : einen Namen Eine Beschreibung Eine "
+                        "Erklären. weise den Agent auch darauf hin sich kurz und konkret zuhalten "
+                        "informationen die das system zum Subject hat: $D-Memory."
+                        "informationen die im web zum Subject gefunden wurden: $WebI.",
+                "return": "$task"
+            },
+            {
+                "use": "agent",
+                "mode": "free",
+                "name": "think",
+                "args": "$task",
+                "return": "$0st",
+            },
+            {
+                "use": "agent",
+                "mode": "free",
+                "name": "think",
+                "args": "Verbessere die Strategie combine die besten und vile versprechenden aspekt der"
+                        " Strategie und Erstelle 3 Neue Strategien"
+                        "'''$0st''' im bezug auf '''$user-input'''",
+                "return": "$1st",
+            },
+            {
+                "use": "agent",
+                "mode": "generate",
+                "name": "self",
+                "args": "Formuliere eine Konkrete aufgabe für den nächste agent."
+                        "Dieser soll aus verschiedenen Starteigen evaluation "
+                        "und so die beste Strategie zu finden. und die besten Aspekte ven den anderen."
+                        "Mit diesen Informationen Soll der Agent nun eine Finale Stratege erstellen, Passe die Prompt "
+                        "auf folgende informationen an."
+                        "user input : $user-input"
+                        "informationen die das system zum Subjects hat : $D-Memory",
+                "return": "$task",
+            },
+            {
+                "use": "agent",
+                "mode": "free",
+                "name": "think",
+                "args": "Erstelle die Finale Strategie."
+                        " Strategien: "
+                        "$0st"
+                        "$1st"
+                        "Hille stellung : $task"
+                        "Finale Strategie:",
+                "return": "$fst",
+            },
+            {
+                "use": "tool",
+                "name": "save_data_to_memory",
+                "args": "user-input= $user-input out= $fst",
+                "return": "$D-Memory"
+            },
+
+        ]
+    }
+    ideen_optimierer = {
+        "name": "Innovativer Ideen-Optimierer",
+        "tasks": [
+            {
+                "use": "tool",
+                "name": "memory",
+                "args": "$user-input",
+                "return": "$D-Memory"
+            },
+            {
+                "use": "tool",
+                "name": "search",
+                "args": "Suche Information bezüglich : $user-input mache dir ein bild der aktuellen situation",
+                "return": "$WebI"
+            },
+            {
+                "use": "agent",
+                "mode": "generate",
+                "name": "self",
+                "args": "Erstelle Eine Prompt für den Nächsten Agent dieser ist ein Innovativer Ideen-Optimierer "
+                        "Das zeil Ist es eine Idee zu verstehen und ansßlißend zu verbessern"
+                        "Erklärung: Der 'Innovative Ideen-Optimierer' nutzt Brainstorming und kreative "
+                        "Denktechniken,"
+                        "um neue und innovative ansätze zu generieren. Er verbessert"
+                        " die Qualität der Ideen und identifier Schwachstellen und verbessert diese."
+                        "Dies Tut er in dem er in einem förderlichem Umfeld ist welches,"
+                        "das Innovation und Kreativität fördert,"
+                        "und integriert verschiedene Ideen und Konzepte,"
+                        "um innovative Lösungen zu entwickeln. Durch die Kombination dieser Ansätze"
+                        "kann der Ideenverbesserer seine Denkflexibilität erhöhen,"
+                        "die Qualität seiner Ideen verbessern."
+                        "Erstelle Eine Auf die Informationen Zugschnittenden 'Innovative Ideen-Optimierer' "
+                        "prompt die den Nächsten agent auffordert die idee mittels genannter techniken zu verbesser. "
+                        "Subject : $user-input"
+                        "informationen die das system zum Subject hat: $D-Memory."
+                        "informationen die im web zum Subject gefunden wurden: $WebI.",
+                "return": "$task"
+            },
+            {
+                "use": "agent",
+                "mode": "free",
+                "name": "think",
+                "args": "$task",
+                "return": "$output",
+            },
+            {
+                "use": "agent",
+                "mode": "generate",
+                "name": "self",
+                "args": "Formuliere eine Konkrete aufgabe für den nächste agent."
+                        "Dieser soll Überprüfen ob die ursprungs idee verbessert worden ist. und feinheiten anpassen"
+                        "um die final verbesserte idee zu erstellen"
+                        "user input : $user-input"
+                        "Agent-verbesserung?: $output"
+                        "informationen die das system zum Subjects hat : $D-Memory",
+                "return": "$ntask",
+            },
+            {
+                "use": "agent",
+                "mode": "free",
+                "name": "think",
+                "args": "$ntask",
+                "return": "$idee",
+            },
+            {
+                "use": "tool",
+                "name": "save_data_to_memory",
+                "args": "user-input= $user-input out= $idee",
+            },
+
+        ]
+    }
+    cosena_genrator = {
+        "name": "Cosena Generator",
+        "tasks": [
+            {
+                "use": "tool",
+                "name": "memory",
+                "args": "$user-input",
+                "return": "$D-Memory"
+            },
+            {
+                "use": "agent",
+                "mode": "generate",
+                "name": "self",
+                "args": "Erstelle Eine Prompt für den Nächsten Agent."
+                        "Der Agent soll eine Mentale Map über das Subject erstellen."
+                        " Weise den Agent an die Map so minimalistisch und akkurat wie möglich sein soll."
+                        " Die Mentale Map soll in einem compakten format sein names "
+                        "Cosena "
+                        "0x5E2A: Idee (Betrifft Verbreitung von Ideen) "
+                        "0x5E2B: Ziel (Vereinfachung der Verbreitung von Ideen) "
+                        "0x5E2C: Verbreitung "
+                        "0x5E2D: Vereinfachung "
+                        "0x5E2E: Repräsentation (in Form von Code) "
+                        "0x5E2F: Code "
+                        "Beziehungen: "
+                        "0x5E2A betrifft 0x5E2C "
+                        "0x5E2B ist Ziel von 0x5E2A "
+                        "0x5E2A wird durch 0x5E2E veranschaulicht "
+                        "0x5E2E verwendet 0x5E2F "
+                        "cosena-code: 0x5E2A-0x2B-0x2C-0x2D-0x2E-0x2F Konzept: Verbreitung von Ideen "
+                        "Hauptcode 0x5E2A: Idee Untercodes: "
+                        "0x2B: Ziel "
+                        "0x2C: Verbreitung "
+                        "0x2D: Vereinfachung "
+                        "0x2E: Repräsentation "
+                        "0x2F: Code "
+                        "Beziehungen: "
+                        "Die Idee betrifft die Verbreitung von Ideen : 0x2C "
+                        "Das Ziel der Idee ist die Vereinfachung der Verbreitung von Ideen : 0x2D "
+                        "Die Idee wird durch eine Repräsentation in Form von Code veranschaulicht : 0x2F "
+                        "Wise den Agent an das Subject in Cosena darzustellen"
+                        "Subject : $user-input"
+                        "informationen die das system zum Subject hat: $D-Memory."
+                        "informationen die im web zum Subject gefunden wurden: $WebI.",
+                "return": "$task"
+            },
+            {
+                "use": "agent",
+                "mode": "free",
+                "name": "think",
+                "args": "$task",
+                "return": "$Cosena",
+            },
+            {
+                "use": "tool",
+                "name": "save_data_to_memory",
+                "args": "user-input= $user-input out= $Cosena",
+            },
+            {
+                "use": "agent",
+                "mode": "free",
+                "name": "think",
+                "args": "Formuliere die finale ausgabe für den user nutze dazu diese information $Cosena",
+                "return": "$out",
+            },
+
+        ]
+    }
+    task_ = [
+
+            {
+                "use": "tool",
+                "name": "write-production-redy-code",
+                "args": """
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        #settings-widget {
+            position: fixed;
+            top: 0;
+            right: 0;
+            min-width: max-content;
+            height: min-content;
+            max-height: 50vh;
+            background-color: #f0f0f0;
+            border: 1px solid #ccc;
+            padding: 10px;
+        }
+
+        #search-bar {
+            margin-bottom: 10px;
+        }
+
+        .option {
+            margin-bottom: 5px;
+            border: 1px solid #ccc;
+            padding: 5px;
+        }
+
+        #download-button {
+            width: 100%;
+            bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+<div id="settings-widget">
+    <div id="search-bar">
+        <input type="text" id="search-input" placeholder="Search..." oninput="updateOptions()">
+    </div>
+    <div id="options-container">
+        <!-- Options will be dynamically added here -->
+    </div>
+    <button id="download-button" onclick="downloadAddon()">Download</button>
+</div>
+<template id="text-input-template">
+    <div class="option">
+        <label for="text-option${index}" title="${tooltip}">${label}</label>
+        <input type="text" name="option" id="text-option${index}">
+        <button>Set</button>
+    </div>
+</template>
+<template id="pw-input-template">
+    <div class="option">
+        <label for="pw-option${index}" title="${tooltip}">${label}</label>
+        <input type="password" name="option" id="pw-option${index}">
+        <button>Set</button>
+    </div>
+</template>
+
+<template id="toggle-template">
+    <div class="option">
+        <label for="toggle-option${index}" title="${tooltip}">${label}</label>
+        <input type="checkbox" name="option" id="toggle-option${index}">
+    </div>
+</template>
+
+<script>
+    var options = [
+        { label: 'Option 1', tooltip: 'This is option 1', template: 'pw-input-template' },
+        { label: 'Option 2', tooltip: 'This is option 2', template: 'text-input-template' },
+        { label: 'Option 3', tooltip: 'This is option 3', template: 'toggle-template' },
+        // Add more options as needed
+    ];
+
+    function createOptionElement(option, index) {
+        var template = document.getElementById(option.template);
+        var optionElement = template.content.cloneNode(true);
+        optionElement.querySelector('input').id = option.label.replace(' ', '-') + index;
+        optionElement.querySelector('label').setAttribute('for', option.label.replace(' ', '-') + index);
+        optionElement.querySelector('label').title = option.tooltip;
+        optionElement.querySelector('label').textContent = option.label;
+        return optionElement;
+    }
+
+    function loadOptions() {
+        var optionsContainer = document.getElementById('options-container');
+        options.forEach(function(option, index) {
+            var optionElement = createOptionElement(option, index);
+            optionsContainer.appendChild(optionElement);
+        });
+    }
+
+    function updateOptions() {
+        var searchInput = document.getElementById('search-input').value.toLowerCase();
+        var optionsContainer = document.getElementById('options-container');
+        optionsContainer.innerHTML = '';
+        options.forEach(function(option, index) {
+            if (option.label.toLowerCase().includes(searchInput)) {
+                var optionElement = createOptionElement(option, index);
+                optionsContainer.appendChild(optionElement);
+            }
+        });
+    }
+
+    function downloadAddon() {
+        var selectedOption = document.querySelector('input[name=option]:checked');
+        if (selectedOption) {
+            var optionLabel = selectedOption.nextElementSibling;
+            var optionText = optionLabel.textContent;
+            alert('Download: ' + optionText);
+        } else {
+            alert('Please select an option.');
+        }
+    }
+
+    // Load options on page load
+    window.onload = loadOptions;
+</script>
+</body>
+</html>
+
+
+
+$user-input
+""",
+            },
+
+        ]
+
+
+
+    planing_steps = planing_steps
+    chains.add(planing_steps['name'], planing_steps['tasks'])
+    task = """
+Erstelle einen Plan für ein dynamischin system welches in 3 schritten arbeitet
+a1. Definition des gewünschten Ergebnisses: Zunächst muss klar definiert werden, was das gewünschte Ergebnis ist. Dies könnte durch eine Kombination aus Benutzereingaben und systeminternen Algorithmen erfolgen. Das System könnte auch vorgegebene Ziele oder Ergebnisse haben, die es erreichen soll.
+
+a2. Analyse des aktuellen Zustands: Das System muss den aktuellen Zustand analysieren und verstehen. Dies könnte durch eine Kombination aus Sensoren, Datenbankabfragen und anderen Methoden erfolgen. Das System muss in der Lage sein, den aktuellen Zustand mit dem gewünschten Ergebnis zu vergleichen und zu verstehen, welche Schritte notwendig sind, um von einem zum anderen zu gelangen.
+
+a3. Erstellung des ersten Schritts: Basierend auf der Analyse des aktuellen Zustands und des gewünschten Ergebnisses, muss das System den ersten Schritt zur Erreichung des Ziels erstellen. Dies könnte durch eine Kombination aus Algorithmen, maschinellem Lernen und anderen Methoden erfolgen.
+
+b1. Testen des ersten Schritts: Das System muss den ersten Schritt testen und evaluieren. Dies könnte durch eine Kombination aus Simulationen, realen Tests und anderen Methoden erfolgen. Das System muss in der Lage sein, die Ergebnisse des Tests zu analysieren und zu verstehen, ob der Schritt erfolgreich war oder nicht.
+
+b2. Aufteilung der Aufgabe in kleinere Schritte: Basierend auf den Ergebnissen des Tests, muss das System die Aufgabe in kleinere Schritte aufteilen. Dies könnte durch eine Kombination aus Algorithmen, maschinellem Lernen und anderen Methoden erfolgen. Das System muss in der Lage sein, jeden einzelnen Schritt zu verstehen und erfolgreich auszuführen.
+
+c1. Umschalten auf Ausführungsmodus: Nachdem alle Schritte erstellt und getestet wurden, muss das System in den Ausführungsmodus wechseln. Dies bedeutet, dass es den generierten Plan mit höchster Präzision ausführt.
+
+c2. Erstellung von Agenten und Verwendung von Tools: Das System muss in der Lage sein, Agenten zu erstellen und Tools zu verwenden, um die Aufgaben auszuführen. Die Agenten könnten spezielle Algorithmen oder Programme sein, die bestimmte Aufgaben ausführen. Die Tools könnten alles sein, von Hardwaregeräten bis hin zu Softwareanwendungen.
+
+8. Bedingte Ausführung von Aufgaben: Das System muss in der Lage sein, Aufgaben bedingt auszuführen. Dies bedeutet, dass es in der Lage sein muss, zu entscheiden, wann eine Aufgabe ausgeführt werden soll, basierend auf bestimmten Bedingungen oder Regeln.
+das sysstem kann agents erstelln und tools benutzen
+agents könenen tools benutzen
+das system kann aufgaben erstellen und bedigt ausführen
+Erstelle einen Detairten Plan.
+"""
+    res = isaa.execute_thought_chain(task, planing_steps['tasks'], self_agent_config)
+    # res = isaa.execute_thought_chain(res[-2][-1], stategy_crator['tasks'], self_agent_config)
+    # res = isaa.execute_thought_chain(res[-2][-1], _planing_steps['tasks'], self_agent_config)
+
+    print(res)
+    c = isaa.get_augment(exclude=['messages_sto'])
+    isaa.config['augment'] = c
+    print(c)
+    isaa.on_exit()
+
+
+def run2(app, args):
     isaa, self_agent_config, chains = init_isaa(app, speak_mode=args.speak, calendar=False, ide=True, create=True,
                                                 isaa_print=False, python_test=True, init_mem=True, init_pipe=True,
                                                 join_now=False,
@@ -42,17 +521,17 @@ def run(app, args):
         # SceneXplain
         # "https://scenex.jina.ai/.well-known/ai-plugin.json",
         # Weather Plugin for getting current weather information.
-    #    "https://gptweather.skirano.repl.co/.well-known/ai-plugin.json",
+        #    "https://gptweather.skirano.repl.co/.well-known/ai-plugin.json",
         # Transvribe Plugin that allows you to ask any YouTube video a question.
-    #    "https://www.transvribe.com/.well-known/ai-plugin.json",
+        #    "https://www.transvribe.com/.well-known/ai-plugin.json",
         # ASCII Art Convert any text to ASCII art.
-    #    "https://chatgpt-plugin-ts.transitive-bullshit.workers.dev/.well-known/ai-plugin.json",
+        #    "https://chatgpt-plugin-ts.transitive-bullshit.workers.dev/.well-known/ai-plugin.json",
         # DomainsGPT Check the availability of a domain and compare prices across different registrars.
         # "https://domainsg.pt/.well-known/ai-plugin.json",
-        #PlugSugar Search for information from the internet
-    #    "https://websearch.plugsugar.com/.well-known/ai-plugin.json",
+        # PlugSugar Search for information from the internet
+        #    "https://websearch.plugsugar.com/.well-known/ai-plugin.json",
         # FreeTV App Plugin for getting the latest news, include breaking news and local news
-    #    "https://www.freetv-app.com/.well-known/ai-plugin.json",
+        #    "https://www.freetv-app.com/.well-known/ai-plugin.json",
         # Screenshot (Urlbox) Render HTML to an image or ask to see the web page of any URL or organisation.
         # "https://www.urlbox.io/.well-known/ai-plugin.json",
         # OneLook Thesaurus Plugin for searching for words by describing their meaning, sound, or spelling.
@@ -66,7 +545,7 @@ def run(app, args):
         # Kyuda Interact with over 1,000+ apps like Google Sheets, Gmail, HubSpot, Salesforce, and more.
         # "https://www.kyuda.io/.well-known/ai-plugin.json",
         # GitHub (unofficial) Plugin for interacting with GitHub repositories, accessing file structures, and modifying code. @albfresco for support.
-   #     "https://gh-plugin.teammait.com/.well-known/ai-plugin.json",
+        #     "https://gh-plugin.teammait.com/.well-known/ai-plugin.json",
         # getit Finds new plugins for you
         "https://api.getit.ai/.well_known/ai-plugin.json",
         # WOXO VidGPT Plugin for create video from prompt
@@ -90,7 +569,7 @@ def run(app, args):
         try:
             plugin_tool = AIPluginTool.from_plugin_url(plugin_url)
             get_logger().info(Style.GREEN(f"Plugin : {plugin_tool.name} loaded successfully"))
-            isaa.lang_chain_tools_dict[plugin_tool.name+"-usage-information"] = plugin_tool
+            isaa.lang_chain_tools_dict[plugin_tool.name + "-usage-information"] = plugin_tool
         except Exception as e:
             get_logger().error(Style.RED(f"Could not load : {plugin_url}"))
             get_logger().error(Style.GREEN(f"{e}"))
@@ -127,7 +606,6 @@ def run(app, args):
                                   list(self_agent_config.tools.keys()))
 
     print(resp)
-
 
 
 def run__(app, args):

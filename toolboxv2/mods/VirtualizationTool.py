@@ -64,6 +64,7 @@ class Tools(MainTool, FileHandler):
             self.logger.warning(Style.RED("set_ac_instances - Pleas Create an instance before calling it!"))
             return False
         self.app_.AC_MOD = self.instances[name]
+        self.print(Style.WHITE(Style.Bold(f"New ac instances: {self.app_.AC_MOD.name}:{name}")))
         return True
 
     def get_instance(self, name):
@@ -80,7 +81,9 @@ class Tools(MainTool, FileHandler):
         try:
             mod = import_module(loc + mod_name)
             mod = getattr(mod, "Tools")
+            mod.toolID = name
             mod_init = mod(app=get_app(f"Virtual-{name}"))
+            mod.toolID = ""
             if not mod_init:
                 self.logger.errow(Style.RED("No Mod found to virtualize"))
             if issubclass(mod, FileHandler):

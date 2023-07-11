@@ -258,16 +258,16 @@ class Tools(MainTool, FileHandler):
             if 'live' in instance_live.keys():
                 if instance_live['live'] and instance_live['save']['mods']:
                     self.logger.info(Style.BLUEBG2("Instance returned from live"))
-                    return self.live_user_instances[instance['SiID']]
+                    return instance_live
                 if instance_live['save']['mods']:
                     instance = instance_live
                     instance['live'] = {}
 
         if instance['SiID'] in self.user_instances.keys():  # der nutzer ist der server instanz bekannt
-            chash_data = self.app_.run_any('db', 'get', [f"User::Instance::{uid}"])
-
             instance['webSocketID'] = self.user_instances[instance['SiID']]
 
+        chash_data = self.app_.run_any('db', 'get', [f"User::Instance::{uid}"])
+        if chash_data:
             self.print(chash_data)
             try:
                 instance['save'] = json.loads(chash_data)["saves"]
@@ -275,7 +275,7 @@ class Tools(MainTool, FileHandler):
                 instance['save'] = chash_data["saves"]
                 self.logger.error(Style.YELLOW(f"Error loading instance {e}"))
 
-            self.logger.info(Style.BLUEBG(f"Init mods : {instance['save']['mods']}"))
+        self.logger.info(Style.BLUEBG(f"Init mods : {instance['save']['mods']}"))
 
         self.print(Style.MAGENTA(f"instance : {instance}"))
 

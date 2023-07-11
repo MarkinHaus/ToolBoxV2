@@ -1,9 +1,14 @@
+import uuid
+
 from toolboxv2.utils.toolbox import App
 from toolboxv2.utils.Style import Style
 from toolboxv2.utils.tb_logger import get_logger
 
 
 class MainTool:
+
+    toolID = ""
+
     def __init__(self, *args, **kwargs):
         self.version = kwargs["v"]
         self.tools = kwargs["tool"]
@@ -21,10 +26,10 @@ class MainTool:
 
     def load(self):
         if self.todo:
-            try:
+            #try:
                 self.todo()
-            except Exception as e:
-                get_logger().error(f" Error loading mod {self.name} {e}")
+            #except Exception as e:
+            #    get_logger().error(f" Error loading mod {self.name} {e}")
         else:
             get_logger().info(f"{self.name} no load require")
 

@@ -4,7 +4,12 @@
     <title>Title</title>
     <script src="/app/scripts/scripts.js" type="module"></script>
     <script src="/app/scripts/WorkerSocketRenderer.js" defer></script>
+    <script src="/app/scripts/AutoMarkdown.js" type="module" defer></script>
+    <script src="/app/scripts/infos.js" defer></script>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
     <link rel="stylesheet" href="/app/assets/styles.css">
+    <link rel="stylesheet"
+          href="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/default.min.css">
 </head>
 <body>
 <div id="overlay"></div>
@@ -24,19 +29,23 @@
     <link rel="apple-touch-icon" sizes="512X512" href="/app/webapp/piano-512.png">
     <link rel="manifest" href="/app/webapp/manifest.json">
     <nav id="NAV">
-    </nav>
+
     <div id="controls"></div>
     <div id="DragControls"></div>
-    <button id="logOutBtn" onclick="WS.send(JSON.stringify({'ServerAction':'logOut', 'command':'', 'data':
-    {'token': '**SelfAuth**', 'data':{
-    'webSocketID': localStorage.getItem('WsID'),
-    }}}));"> LogOut </button>
+    <div id="MainControls">
+        <button id="logOutBtn" onclick="WS.send(JSON.stringify({'ServerAction':'logOut', 'command':'', 'data':
+        {'token': '**SelfAuth**', 'data':{
+        'webSocketID': localStorage.getItem('WsID'),
+        }}}));"> LogOut </button>
+        <button id="initMDBtn"> startMD </button>
+    </div>
+    </nav>
     <div class="dark-mode-toggle">
         <input type="checkbox" id="darkModeToggle">
         <label for="darkModeToggle" id="toggleLabel">☀️</label>
     </div>
 </header>
-<main id="MainContent">
+<main id="MainContent" class="autoMarkdownVisible">
     <div id="infoPopup" class="form-container" style="z-index: 1000;">
         <p id="infoText"></p>
     </div>

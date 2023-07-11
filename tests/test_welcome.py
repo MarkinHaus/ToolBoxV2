@@ -38,12 +38,12 @@ class TestWelcome(unittest.TestCase):
 
     def test_show_version(self):
         comd = []
-        res = self.app.run_function("Version", command=comd)
-        self.assertEqual(res, "0.0.1")
+        res = self.app.run_function("Version", comd)
+        self.assertEqual(res, "0.0.2")
 
     def test_print_t(self):  # charmap error
         comd = []
-        res = self.app.run_function("printT", command=comd)
+        res = self.app.run_function("printT", comd)
         self.assertEqual(res, "TOOL BOX")
         self.assertTrue("TOOL BOX")
 

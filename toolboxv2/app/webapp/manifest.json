@@ -1,0 +1,20 @@
+{
+  "name": "Simple",
+  "short_name": "SPle",
+  "lang": "en",
+  "start_url": "/",
+  "display": "standalone",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "piano-192.png",
+      "sizes": "192X192"
+    },
+    {
+      "src": "piano-512",
+      "sizes": "512X512"
+    }
+  ],
+    "theme_color": "#537FE7",
+  "background_color": "#537FE7"
+}

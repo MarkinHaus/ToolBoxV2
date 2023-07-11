@@ -12,6 +12,8 @@
     animation: widget-fadeIn 0.5s;
     margin: 15px;
     border: 1px solid var(--text-color);
+    /*resize: both;*/
+    /*overflow: auto;*/
 }
 
 .widget-from {

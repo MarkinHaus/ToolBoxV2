@@ -48,7 +48,7 @@ class TestCloudM(unittest.TestCase):
 
     def test_show_version(self):
         comd = []
-        res = self.app.run_function("Version", command=comd)
+        res = self.app.run_function("Version", comd)
         self.assertEqual(res, "0.0.1")
 
     def test_new_module(self):

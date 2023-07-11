@@ -468,9 +468,9 @@ class Tools(MainTool, FileHandler):
                         self.app_.AC_MOD.save_user_instances(user_instance)
 
                     try:
-                        if self.app_.run_any("VirtualizationTool", 'set-ac',
-                                             user_instance['live']['v-' + data['name']]):
-                            res = self.app_.run_any(data['name'], 'api_' + data['function'], command)
+                        self.app_.new_ac_mod("VirtualizationTool")
+                        if self.app_.run_function('set-ac', user_instance['live']['v-' + data['name']]):
+                            res = self.app_.run_function('api_' + data['function'], command)
                         else:
                             res = "Mod Not Found 404"
                     except Exception as e:

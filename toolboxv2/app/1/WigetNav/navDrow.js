@@ -1,5 +1,33 @@
 let WidgetIDStore = [];
+let WidgetStore = [];
 let WidgetInit = false;
+let maxZIndex = 2; // Startwert
+
+
+function addWidget2Manager(widget){
+    WidgetStore.push(widget)
+    try{
+        console.log("makeDraggable")
+        makeDraggable(widget)
+    }catch (e) {
+        console.log(e)
+    }
+    //autoZIndex
+    widget.addEventListener('click', function(e) {
+        // Erhöhe den z-index, wenn er kleiner als 100 ist
+        if (maxZIndex < 100) {
+            maxZIndex++;
+        }
+        // Setze den z-index des angeklickten divs auf den maximalen Wert
+        widget.style.zIndex = maxZIndex;
+        for (let j = 0; j < WidgetStore.length; j++) {
+            if (WidgetStore[j] !== widget && WidgetStore[j].style.zIndex > 2) {
+                WidgetStore[j].style.zIndex--;
+            }
+        }
+    });
+}
+
 function dropdownInit(){
 
     if (WidgetInit){
@@ -47,14 +75,10 @@ dropdownMenu.addEventListener('click', (event) => {
 
         if (event.target.id === 'text-w'){
             try{
-                const widgetText = addTextWidget("MainContent", "TextWidget-"+WidgetIDStore.length, dropdownTitle.value)
+                const textWidget = addTextWidget("MainContent", "TextWidget-"+WidgetIDStore.length, dropdownTitle.value)
                 WidgetIDStore.push(dropdownTitle.value)
-                try{
-                    console.log("makeDraggable")
-                    makeDraggable(widgetText)
-                }catch (e) {
-                    console.log(e)
-                }
+                addWidget2Manager(textWidget)
+
             }catch (e){
                 console.log("getTextWidget", e)
                 WS.send(JSON.stringify({"ServerAction":"getTextWidget"}));
@@ -87,14 +111,10 @@ dropdownMenu.addEventListener('click', (event) => {
 
         else if (event.target.id === 'path-w'){
             //try{
-                const pathText = addPathWidget("MainContent", "PathWidget-"+WidgetIDStore.length, dropdownTitle.value)
+                const pathWidget = addPathWidget("MainContent", "PathWidget-"+WidgetIDStore.length, dropdownTitle.value)
                 WidgetIDStore.push(dropdownTitle.value)
-            //    try{
-                    console.log("makeDraggable")
-                    makeDraggable(pathText)
-            //    }catch (e) {
-            //        console.log(e)
-            //    }
+                addWidget2Manager(pathWidget)
+
             //}catch (e){
             //    console.log("getPathWidget", e)
             //    WS.send(JSON.stringify({"ServerAction":"getPathWidget"}));

@@ -99,8 +99,8 @@ def run_agent_cmd(isaa, user_text, self_agent_config, step, spek):
 
     sys_print(f"\n{'=' * 20}STEP:{step}{'=' * 20}\n")
     sys_print(f"\tMODE               : {self_agent_config.mode}\n")
-    sys_print(f"\tCollectiveMemory   : {CollectiveMemory().token_in_use} | total vec num : "
-              f"{CollectiveMemory().memory.get_stats()['total_vector_count']}\n")
+    sys_print(f"\tCollectiveMemory   : {CollectiveMemory(isaa).token_in_use} | total vec num : "
+              f"{CollectiveMemory(isaa).memory.get_stats()['total_vector_count']}\n")
     sys_print(f"\tObservationMemory  : {self_agent_config.observe_mem.tokens}\n")
     sys_print(f"\tShortTermMemory    : {self_agent_config.short_mem.tokens}\n\n")
     if "Answer: " in response:

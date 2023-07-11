@@ -42,6 +42,7 @@ class Tools(MainTool):
                           element_id="main",
                           externals=["/app/0/welcome/welcome.js"],
                           from_file=True)
+
     def print_t(self):
         print()
         printc("**************************************************************************")
@@ -72,6 +73,10 @@ class Tools(MainTool):
             os.system("cls")
         else:
             os.system("clear")
+
+    def show_version(self):
+        self.print(f"Version: {self.version}")
+        return self.version
 
     def ali2(self):
         printc("**************************************************************************")
@@ -609,10 +614,6 @@ class Tools(MainTool):
         sleep(0.5)
         self.cls()
         return "Animation"
-
-    def show_version(self):
-        self.print(f"Version: {self.version}")
-        return self.version
 
 
 def printc(str_):
