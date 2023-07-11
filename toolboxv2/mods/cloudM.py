@@ -74,6 +74,7 @@ class Tools(MainTool, FileHandler):
                     ["system_init", "Init system", math.inf, 'prep_system_initial'],
                     ["close_user_instance", "close_user_instance", math.inf],
                     ["get_user_instance", "get_user_instance only programmatic", math.inf],
+                    ["set_user_level", "set_user_level only programmatic", math.inf],
                     ],
             "name": "cloudM",
             "Version": self.show_version,
@@ -98,6 +99,7 @@ class Tools(MainTool, FileHandler):
             "mod-remover": delete_package,
             "close_user_instance": self.close_user_instance,
             "get_user_instance": self.get_user_instance_wrapper,
+            "set_user_level": self.set_user_level
         }
         self.live_user_instances = {}
         self.user_instances = {}
@@ -227,6 +229,38 @@ class Tools(MainTool, FileHandler):
         self.app_.run_any('db', 'del', ['', f"User::Instance::{uid}"])
         return "Instance deleted successfully"
 
+    def set_user_level(self, command):
+
+        users, keys = [(u['save'], _) for _, u in self.live_user_instances.items()]
+        users_names = [u['username'] for u in users]
+        for user in users:
+            self.print(f"User: {user['username']} level : {user['level']}")
+
+        rot_input = input("Username: ")
+        if not rot_input:
+            self.print(Style.YELLOW("Please enter a username"))
+            return "Please enter a username"
+        if rot_input not in users_names:
+            self.print(Style.YELLOW("Please enter a valid username"))
+            return "Please enter a valid username"
+
+        user = users[users_names.index(rot_input)]
+
+        self.print(Style.WHITE(f"Usr level : {user['level']}"))
+
+        level = input("set level :")
+        level = int(level)
+
+        instance = self.live_user_instances[keys[users_names.index(rot_input)]]
+
+        instance['save']['level'] = level
+
+        self.save_user_instances(instance)
+
+        self.print("done")
+
+        return True
+
     def save_user_instances(self, instance):
         self.logger.info("Saving instance")
         self.user_instances[instance['SiID']] = instance['webSocketID']
@@ -288,7 +322,6 @@ class Tools(MainTool, FileHandler):
         # instance['save'] = upper
 
         instance = self.hydrate_instance(instance)
-        self.live_user_instances[instance['SiID']] = instance
         self.save_user_instances(instance)
 
         return instance
@@ -342,7 +375,7 @@ class Tools(MainTool, FileHandler):
             if mod_name in chak:
                 continue
 
-            user_instance_name_mod = mod_name+'-'+user_instance_name
+            user_instance_name_mod = mod_name + '-' + user_instance_name
 
             mod = vt.get_instance(user_instance_name_mod)
 
@@ -388,7 +421,7 @@ class Tools(MainTool, FileHandler):
                     rt.restrict(mod, endpoint_name, by, resid, endpoint_func_name)
 
             instance['live'][mod_name] = mod
-            instance['live']['v-'+mod_name] = user_instance_name_mod
+            instance['live']['v-' + mod_name] = user_instance_name_mod
 
         return instance
 
