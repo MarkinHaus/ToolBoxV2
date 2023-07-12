@@ -15,7 +15,7 @@ TB_DIR = os.getcwd()
 
 @router.get("/{file_name}")
 def download_file(file_name: str):
-    if platform.system() == "Darwin":
+    if platform.system() == "Darwin" or platform.system() == "Linux":
         directory = file_name.split("/")
     else:
         directory = file_name.split("\\")
@@ -26,7 +26,7 @@ def download_file(file_name: str):
     if ".." in file_name:
         return {"message": f"unsupported operation .. "}
 
-    if platform.system() == "Darwin":
+    if platform.system() == "Darwin" or platform.system() == "Linux":
         file_path = TB_DIR + "/" + file_name
     else:
         file_path = TB_DIR + "\\" + file_name
@@ -39,7 +39,7 @@ def download_file(file_name: str):
 
         if directory == "tests":
 
-            if platform.system() == "Darwin":
+            if platform.system() == "Darwin" or platform.system() == "Linux":
                 file_path = "/".join(TB_DIR.split("/")[:-1]) + "/" + file_name
             else:
                 file_path = "\\".join(TB_DIR.split("\\")[:-1]) + "\\" + file_name

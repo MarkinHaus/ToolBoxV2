@@ -1,82 +1,33 @@
-import sys
-
-from langchain.tools import AIPluginTool
-from pebble import concurrent
 import json
 import logging
-import math
 import random
+import sys
 import threading
-from datetime import datetime
-from typing import Tuple, Any
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-
-import subprocess
-import pickle
-import keyboard
-import requests
-from duckduckgo_search import ddg, ddg_answers, ddg_suggestions, ddg_news
-import replicate
-from transformers import pipeline, AutoModelWithLMHead, AutoModelForSeq2SeqLM, AutoModelForMaskedLM, \
-    AutoModelForCausalLM
-from transformers import FSMTForConditionalGeneration, FSMTTokenizer
-import os
-from sentence_transformers import SentenceTransformer, util
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
-from huggingface_hub import HfFolder
-from huggingface_hub import InferenceApi
-import time
-import torch
-
-from toolboxv2 import MainTool, FileHandler, Style, App, Spinner, get_logger
-
-from langchain import PromptTemplate, LLMChain, OpenAI, HuggingFaceHub, ConversationChain, GoogleSearchAPIWrapper
-from langchain.chains import ConversationalRetrievalChain
-import tiktoken
-from bs4 import BeautifulSoup
-
-import pinecone
-import openai
+import uuid
 from inspect import signature
 
-from langchain.python import PythonREPL
-from langchain.tools.python.tool import PythonREPLTool
-from langchain import LLMMathChain, SerpAPIWrapper, GoogleSerperAPIWrapper
-from langchain.utilities import BashProcess, BingSearchAPIWrapper
-from langchain.utilities.wolfram_alpha import WolframAlphaAPIWrapper
-from langchain.tools.ifttt import IFTTTWebhook
-from langchain.agents import initialize_agent, tool as LCtool, AgentType, load_tools, load_huggingface_tool
-from langchain.vectorstores import Chroma
-
-from toolboxv2.mods.isaa_extars.AgentUtils import *
-from toolboxv2.utils.Style import print_to_console
-from toolboxv2.utils.toolbox import Singleton, get_app
-
-from langchain.document_loaders import PyPDFLoader
-
-# Loaders
-from langchain.schema import Document
-
-# Splitters
-from langchain.text_splitter import RecursiveCharacterTextSplitter, CharacterTextSplitter, TextSplitter
-
+import openai
+import replicate
+import torch
+from bs4 import BeautifulSoup
+from duckduckgo_search import ddg, ddg_answers, ddg_news
+from langchain import PromptTemplate, LLMChain, OpenAI, HuggingFaceHub, ConversationChain, GoogleSearchAPIWrapper
+from langchain.agents import initialize_agent, tool as LCtool, load_tools, load_huggingface_tool
+from langchain.chains import ConversationalRetrievalChain
 # Model
 from langchain.chat_models import ChatOpenAI
+from langchain.tools import AIPluginTool
+from transformers import pipeline
 
+from toolboxv2 import MainTool, FileHandler, App, Spinner
+from toolboxv2.mods.isaa_extars.AgentUtils import *
+from toolboxv2.utils.toolbox import get_app
+
+# Loaders
+# Splitters
 # Embedding Support
-from langchain.vectorstores import FAISS
-from langchain.embeddings import OpenAIEmbeddings, HuggingFaceEmbeddings
-
 # Summarizer we'll use for Map Reduce
-from langchain.chains.summarize import load_summarize_chain
-
 # Data Science
-import numpy as np
-from sklearn.cluster import KMeans, AgglomerativeClustering
-
-import platform, socket, re, uuid, json, psutil, logging
-from langchain.indexes import VectorstoreIndexCreator
 
 pipeline_arr = [
     # 'audio-classification',

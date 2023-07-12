@@ -386,7 +386,7 @@ def get_audio_text_c0(app, phrase_time_limit=6):
 
 def text_to_speech(text, lang='de'):
     tts = gTTS(text=text, lang=lang)
-    if platform.system() == "Darwin":
+    if platform.system() == "Darwin" or platform.system() == "Linux":
         filename = './data/isaa_data/speech.mp3'
     else:
         filename = '.\\data/isaa_data\\speech.mp3'

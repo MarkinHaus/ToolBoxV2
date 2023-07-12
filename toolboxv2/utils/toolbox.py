@@ -75,11 +75,16 @@ class App(metaclass=Singleton):
         t0 = time.time()
         abspath = os.path.abspath(__file__)
         self.system_flag = system()  # Linux: Linux Mac: Darwin Windows: Windows
-        if self.system_flag == "Darwin":
+        if self.system_flag == "Darwin" or self.system_flag == "Linux":
             dname = os.path.dirname(abspath).replace("/utils", "")
         else:
             dname = os.path.dirname(abspath).replace("\\utils", "")
         os.chdir(dname)
+
+        if not os.path.exists("./data"):
+            os.mkdir("./data")
+        if not os.path.exists("./config"):
+            os.mkdir("./config")
 
         if not prefix:
             if not os.path.exists("./data/last-app-prefix"):
@@ -89,6 +94,8 @@ class App(metaclass=Singleton):
                 if cont:
                     prefix = cont
         else:
+            if not os.path.exists("./data/last-app-prefix"):
+                open("./data/last-app-prefix", "a").close()
             with open("./data/last-app-prefix", "w") as prefix_file:
                 prefix_file.write(prefix)
 
