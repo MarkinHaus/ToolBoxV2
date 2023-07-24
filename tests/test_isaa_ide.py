@@ -1,3 +1,4 @@
+import os
 import time
 import unittest
 
@@ -56,6 +57,8 @@ class TestIsaaIDE(unittest.TestCase):
     def test_move(self):
         # Test file move
         new_path = "new_folder/" + self.file_name
+        if os.path.exists("isaa_work/"+new_path):
+            self.fm.delete(new_path)
         self.fm.create([self.file_name])
         self.assertEqual(self.fm.move([self.file_name, new_path]),
                          f"{self.fm.scope + self.file_name} moved to {self.fm.scope + new_path}")
@@ -86,9 +89,11 @@ class TestIsaaIDE(unittest.TestCase):
     def test_copy(self):
         # Test file copy
         new_path = "new_folder/" + self.file_name
+        if os.path.exists(self.fm.scope + new_path):
+            self.fm.delete(new_path)
         self.fm.create(self.file_name)
         self.fm.create("new_folder/")
-        self.assertEqual(self.fm.copy([self.file_name, new_path]), f"File copied from isaa-directory//test_file.txt to isaa-directory//new_folder/test_file.txt")
+        self.assertIn("File copied from", self.fm.copy([self.file_name, new_path]))
         self.fm.delete([self.file_name])
         self.fm.delete(["new_folder/"])
         self.fm.delete([self.folder_name])

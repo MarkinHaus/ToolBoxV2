@@ -11,11 +11,291 @@ NAME = "isaa-test"
 
 
 def run(app, args):
+    import gpt4all
+
+    printgpt4allGPT4Alllist_models = [
+        {
+            'order': 'a',
+            'md5sum': 'e8d47924f433bd561cb5244557147793',
+            'name': 'Wizard v1.1',
+            'filename': 'wizardlm-13b-v1.1-superhot-8k.ggmlv3.q4_0.bin',
+            'filesize': '7323310848',
+            'ramrequired': '16',
+            'parameters': '13 billion',
+            'quant': 'q4_0',
+            'type': 'LLaMA',
+            'systemPrompt': ' ',
+            'description': '<strong>Best overall model</strong><br><ul><li>Instruction based<li>Gives very long responses<li>Finetuned with only 1k of high-quality data<li>Trained by Microsoft and Peking University<li>Cannot be used commercially</ul'
+        },
+        {
+            'order': 'b',
+            'md5sum': '725f148218a65ce8ebcc724e52f31b49',
+            'name': 'GPT4All Falcon',
+            'filename': 'ggml-model-gpt4all-falcon-q4_0.bin',
+            'filesize': '4061641216',
+            'requires': '2.4.9',
+            'ramrequired': '8',
+            'parameters': '7 billion',
+            'quant': 'q4_0',
+            'type': 'Falcon',
+            'systemPrompt': ' ',
+            'description': '<strong>Best overall smaller model</strong><br><ul><li>Fast responses</li><li>Instruction based</li><li>Trained by TII<li>Finetuned by Nomic AI<li>Licensed for commercial use</ul>',
+            'url': 'https://huggingface.co/nomic-ai/gpt4all-falcon-ggml/resolve/main/ggml-model-gpt4all-falcon-q4_0.bin',
+            'promptTemplate': '### Instruction:\n%1\n### Response:\n'
+        },
+        {
+            'order': 'c',
+            'md5sum': '4acc146dd43eb02845c233c29289c7c5',
+            'name': 'Hermes',
+            'filename': 'nous-hermes-13b.ggmlv3.q4_0.bin',
+            'filesize': '8136777088',
+            'requires': '2.4.7',
+            'ramrequired': '16',
+            'parameters': '13 billion',
+            'quant': 'q4_0',
+            'type': 'LLaMA',
+            'systemPrompt': ' ',
+            'description': '<strong>Extremely good model</strong><br><ul><li>Instruction based<li>Gives long responses<li>Curated with 300,000 uncensored instructions<li>Trained by Nous Research<li>Cannot be used commercially</ul>',
+            'url': 'https://huggingface.co/TheBloke/Nous-Hermes-13B-GGML/resolve/main/nous-hermes-13b.ggmlv3.q4_0.bin',
+            'promptTemplate': '### Instruction:\n%1\n### Response:\n'
+        },
+        {
+            'order': 'e',
+            'md5sum': '81a09a0ddf89690372fc296ff7f625af',
+            'name': 'Groovy',
+            'filename': 'ggml-gpt4all-j-v1.3-groovy.bin',
+            'filesize': '3785248281',
+            'ramrequired': '8',
+            'parameters': '7 billion',
+            'quant': 'q4_0',
+            'type': 'GPT-J',
+            'systemPrompt': ' ',
+            'description': '<strong>Creative model can be used for commercial purposes</strong><br><ul><li>Fast responses<li>Creative responses</li><li>Instruction based</li><li>Trained by Nomic AI<li>Licensed for commercial use</ul>'
+        },
+        {
+            'order': 'f',
+            'md5sum': '11d9f060ca24575a2c303bdc39952486',
+            'name': 'Snoozy',
+            'filename': 'GPT4All-13B-snoozy.ggmlv3.q4_0.bin',
+            'filesize': '8136770688',
+            'requires': '2.4.7',
+            'ramrequired': '16',
+            'parameters': '13 billion',
+            'quant': 'q4_0',
+            'type': 'LLaMA',
+            'systemPrompt': ' ',
+            'description': '<strong>Very good overall model</strong><br><ul><li>Instruction based<li>Based on the same dataset as Groovy<li>Slower than Groovy, with higher quality responses<li>Trained by Nomic AI<li>Cannot be used commercially</ul>',
+            'url': 'https://huggingface.co/TheBloke/GPT4All-13B-snoozy-GGML/resolve/main/GPT4All-13B-snoozy.ggmlv3.q4_0.bin'
+        },
+        {
+            'order': 'g',
+            'md5sum': '756249d3d6abe23bde3b1ae272628640',
+            'name': 'MPT Chat',
+            'filename': 'ggml-mpt-7b-chat.bin',
+            'filesize': '4854401050',
+            'requires': '2.4.1',
+            'ramrequired': '8',
+            'parameters': '7 billion',
+            'quant': 'q4_0',
+            'type': 'MPT',
+            'description': '<strong>Best overall smaller model</strong><br><ul><li>Fast responses<li>Chat based<li>Trained by Mosaic ML<li>Cannot be used commercially</ul>',
+            'promptTemplate': '<|im_start|>user\n%1<|im_end|><|im_start|>assistant\n',
+            'systemPrompt': '<|im_start|>system\n- You are a helpful assistant chatbot trained by MosaicML.\n- You answer questions.\n- You are excited to be able to help the user, but will refuse to do anything that could be considered harmful to the user.\n- You are more than just an information source, you are also able to write poetry, short stories, and make jokes.<|im_end|>'
+        },
+        {
+            'order': 'h',
+            'md5sum': 'e64e74375ce9d36a3d0af3db1523fd0a',
+            'name': 'Mini Orca',
+            'filename': 'orca-mini-7b.ggmlv3.q4_0.bin',
+            'filesize': '3791749248',
+            'requires': '2.4.7',
+            'ramrequired': '8',
+            'parameters': '7 billion',
+            'quant': 'q4_0',
+            'type': 'OpenLLaMa',
+            'description': '<strong>New model with novel dataset</strong><br><ul><li>Instruction based<li>Explain tuned datasets<li>Orca Research Paper dataset construction approaches<li>Licensed for commercial use</ul>',
+            'url': 'https://huggingface.co/TheBloke/orca_mini_7B-GGML/resolve/main/orca-mini-7b.ggmlv3.q4_0.bin',
+            'promptTemplate': '### User:\n%1\n### Response:\n',
+            'systemPrompt': '### System:\nYou are an AI assistant that follows instruction extremely well. Help as much as you can.\n\n'
+        },
+        {
+            'order': 'i',
+            'md5sum': '6a087f7f4598fad0bb70e6cb4023645e',
+            'name': 'Mini Orca (Small)',
+            'filename': 'orca-mini-3b.ggmlv3.q4_0.bin',
+            'filesize': '1928446208',
+            'requires': '2.4.7',
+            'ramrequired': '4',
+            'parameters': '3 billion',
+            'quant': 'q4_0',
+            'type': 'OpenLLaMa',
+            'description': '<strong>Small version of new model with novel dataset</strong><br><ul><li>Instruction based<li>Explain tuned datasets<li>Orca Research Paper dataset construction approaches<li>Licensed for commercial use</ul>',
+            'url': 'https://huggingface.co/TheBloke/orca_mini_3B-GGML/resolve/main/orca-mini-3b.ggmlv3.q4_0.bin',
+            'promptTemplate': '### User:\n%1\n### Response:\n',
+            'systemPrompt': '### System:\nYou are an AI assistant that follows instruction extremely well. Help as much as you can.\n\n'
+        },
+        {
+            'order': 'j',
+            'md5sum': '959b7f65b2d12fd1e3ff99e7493c7a3a',
+            'name': 'Mini Orca (Large)',
+            'filename': 'orca-mini-13b.ggmlv3.q4_0.bin',
+            'filesize': '7323329152',
+            'requires': '2.4.7',
+            'ramrequired': '16',
+            'parameters': '13 billion',
+            'quant': 'q4_0',
+            'type': 'OpenLLaMa',
+            'description': '<strong>Largest version of new model with novel dataset</strong><br><ul><li>Instruction based<li>Explain tuned datasets<li>Orca Research Paper dataset construction approaches<li>Licensed for commercial use</ul>',
+            'url': 'https://huggingface.co/TheBloke/orca_mini_13B-GGML/resolve/main/orca-mini-13b.ggmlv3.q4_0.bin',
+            'promptTemplate': '### User:\n%1\n### Response:\n',
+            'systemPrompt': '### System:\nYou are an AI assistant that follows instruction extremely well. Help as much as you can.\n\n'
+        },
+        {
+            'order': 'k',
+            'md5sum': '29119f8fa11712704c6b22ac5ab792ea',
+            'name': 'Vicuna',
+            'filename': 'ggml-vicuna-7b-1.1-q4_2.bin',
+            'filesize': '4212859520',
+            'ramrequired': '8',
+            'parameters': '7 billion',
+            'quant': 'q4_2',
+            'type': 'LLaMA',
+            'systemPrompt': ' ',
+            'description': '<strong>Good small model - trained by teams from UC Berkeley, CMU, Stanford, MBZUAI, and UC San Diego</strong><br><ul><li>Instruction based<li>Cannot be used commercially</ul>'
+        },
+        {
+            'order': 'l',
+            'md5sum': '95999b7b0699e2070af63bf5d34101a8',
+            'name': 'Vicuna (large)',
+            'filename': 'ggml-vicuna-13b-1.1-q4_2.bin',
+            'filesize': '8136770688',
+            'ramrequired': '16',
+            'parameters': '13 billion',
+            'quant': 'q4_2',
+            'type': 'LLaMA',
+            'systemPrompt': ' ',
+            'description': '<strong>Good larger model - trained by teams from UC Berkeley, CMU, Stanford, MBZUAI, and UC San Diego</strong><br><ul><li>Instruction based<li>Cannot be used commercially</ul>'
+        },
+        {
+            'order': 'm',
+            'md5sum': '99e6d129745a3f1fb1121abed747b05a',
+            'name': 'Wizard',
+            'filename': 'ggml-wizardLM-7B.q4_2.bin',
+            'filesize': '4212864640',
+            'ramrequired': '8',
+            'parameters': '7 billion',
+            'quant': 'q4_2',
+            'type': 'LLaMA',
+            'systemPrompt': ' ',
+            'description': '<strong>Good small model - trained by by Microsoft and Peking University</strong><br><ul><li>Instruction based<li>Cannot be used commercially</ul>'
+        },
+        {
+            'order': 'n',
+            'md5sum': '6cb4ee297537c9133bddab9692879de0',
+            'name': 'Stable Vicuna',
+            'filename': 'ggml-stable-vicuna-13B.q4_2.bin',
+            'filesize': '8136777088',
+            'ramrequired': '16',
+            'parameters': '13 billion',
+            'quant': 'q4_2',
+            'type': 'LLaMA',
+            'description': '<strong>Trained with RLHF by Stability AI</strong><br><ul><li>Instruction based<li>Cannot be used commercially</ul>',
+            'systemPrompt': '## Assistant: I am StableVicuna, a large language model created by CarperAI. I am here to chat!\n\n'
+        },
+        {
+            'order': 'o',
+            'md5sum': '1cfa4958f489f0a0d1ffdf6b37322809',
+            'name': 'MPT Instruct',
+            'filename': 'ggml-mpt-7b-instruct.bin',
+            'filesize': '4854401028',
+            'requires': '2.4.1',
+            'ramrequired': '8',
+            'parameters': '7 billion',
+            'quant': 'q4_0',
+            'type': 'MPT',
+            'systemPrompt': ' ',
+            'description': "<strong>Mosaic's instruction model</strong><br><ul><li>Instruction based<li>Trained by Mosaic ML<li>Licensed for commercial use</ul>"
+        },
+        {
+            'order': 'p',
+            'md5sum': '120c32a51d020066288df045ef5d52b9',
+            'name': 'MPT Base',
+            'filename': 'ggml-mpt-7b-base.bin',
+            'filesize': '4854401028',
+            'requires': '2.4.1',
+            'ramrequired': '8',
+            'parameters': '7 billion',
+            'quant': 'q4_0',
+            'type': 'MPT',
+            'systemPrompt': ' ',
+            'description': '<strong>Trained for text completion with no assistant finetuning</strong><br><ul><li>Completion based<li>Trained by Mosaic ML<li>Licensed for commercial use</ul>'
+        },
+        {
+            'order': 'q',
+            'md5sum': 'd5eafd5b0bd0d615cfd5fd763f642dfe',
+            'name': 'Nous Vicuna',
+            'filename': 'ggml-nous-gpt4-vicuna-13b.bin',
+            'filesize': '8136777088',
+            'ramrequired': '16',
+            'parameters': '13 billion',
+            'quant': 'q4_0',
+            'type': 'LLaMA',
+            'systemPrompt': ' ',
+            'description': '<strong>Trained on ~180,000 instructions</strong><br><ul><li>Instruction based<li>Trained by Nous Research<li>Cannot be used commercially</ul>'
+        },
+        {
+            'order': 'r',
+            'md5sum': '489d21fd48840dcb31e5f92f453f3a20',
+            'name': 'Wizard Uncensored',
+            'filename': 'wizardLM-13B-Uncensored.ggmlv3.q4_0.bin',
+            'filesize': '8136777088',
+            'requires': '2.4.7',
+            'ramrequired': '16',
+            'parameters': '13 billion',
+            'quant': 'q4_0',
+            'type': 'LLaMA',
+            'systemPrompt': ' ',
+            'description': '<strong>Trained on uncensored assistant data and instruction data</strong><br><ul><li>Instruction based<li>Cannot be used commercially</ul>',
+            'url': 'https://huggingface.co/TheBloke/WizardLM-13B-Uncensored-GGML/resolve/main/wizardLM-13B-Uncensored.ggmlv3.q4_0.bin'
+        },
+        {
+            'order': 's',
+            'md5sum': '615890cb571fcaa0f70b2f8d15ef809e',
+            'disableGUI': 'true',
+            'name': 'Replit',
+            'filename': 'ggml-replit-code-v1-3b.bin',
+            'filesize': '5202046853',
+            'requires': '2.4.7',
+            'ramrequired': '4',
+            'parameters': '3 billion',
+            'quant': 'f16',
+            'type': 'Replit',
+            'systemPrompt': ' ',
+            'description': '<strong>Trained on subset of the Stack</strong><br><ul><li>Code completion based<li>Licensed for commercial use</ul>',
+            'url': 'https://huggingface.co/nomic-ai/ggml-replit-code-v1-3b/resolve/main/ggml-replit-code-v1-3b.bin'
+        },
+        {
+            'order': 't',
+            'md5sum': '031bb5d5722c08d13e3e8eaf55c37391',
+            'disableGUI': 'true',
+            'name': 'Bert',
+            'filename': 'ggml-all-MiniLM-L6-v2-f16.bin',
+            'filesize': '45521167',
+            'requires': '2.4.14',
+            'ramrequired': '1',
+            'parameters': '1 million',
+            'quant': 'f16',
+            'type': 'Bert',
+            'systemPrompt': ' ',
+            'description': '<strong>Sbert</strong><br><ul><li>For embeddings'
+        }
+    ]
     isaa, self_agent_config, chains = init_isaa(app, speak_mode=args.speak, ide=False, create=False,
                                                 python_test=False, init_mem=True, init_pipe=True,
                                                 join_now=False, chain_runner=True)
 
     isaa.global_stream_override = True
+    isaa.summarization_mode = 2
 
     if 'augment' in isaa.config.keys() and False:
         print("init augment")
@@ -28,7 +308,7 @@ def run(app, args):
                              'llm-math',
                              ],
             "huggingTools": [],
-            "Plugins": ["https://nla.zapier.com/.well-known/ai-plugin.json"],
+            "Plugins": [],
             "Custom": [],
         }
         isaa.init_tools(self_agent_config, tools)
@@ -54,10 +334,10 @@ def run(app, args):
                 "use": "agent",
                 "mode": "free",
                 "name": "think",
-                "args": "Beantworte nach bestem wissen und Gewissen die Die Aufgabe $task. Wenn die aufgebe nicht "
+                "args": "Beantworte nach bestem wissen und Gewissen die Die Aufgabe. Wenn die aufgebe nicht "
                         "direct von dir gelöst werden kann spezifiziere die nächste schritte die eingeleitet"
                         " werden müssen um die Aufgabe zu bewerkstelligen es beste die option zwischen"
-                        "der nutzung von tools und agents.",
+                        "der nutzung von tools und agents. aufgabe : $task",
                 "return": "$0final",
             },
             {
@@ -97,6 +377,39 @@ def run(app, args):
                 "name": "$task_name",
                 "args": "user-input= $user-input task= $task",
                 "return": "$ret0"
+            },
+        ]
+    }
+    auto_unit_test = {
+        "name": "Python-unit-test",
+        "tasks": [
+            {
+                "use": "agent",
+                "mode": "generate",
+                "name": "self",
+                "args": "Erstelle Die Nächste Prompt für das schrieben eines unit"
+                        " test aufbau :  '''$user-input''', "
+                        " Die prompt soll den agent auffordern eine unit test mit dem "
+                        "python modul unittest zu schrieben."
+                        """
+füge Konkrete code Beispiele an da der nähste agent den aufbau nicht erhält. so ist deine aufgabe auch him diesen zu
+ erklären und dan agent anzuleiten für die zu testende function einen test zu schreiben geb hin dafür
+  auch die function.""",
+                "return": "$task"
+            },
+            {
+                "use": "tool",
+                "name": "write-production-redy-code",
+                "args": "Schreibe einen unit test und erfülle die aufgabe "
+                        " Der agent soll best practise anwenden :"
+                        " 1. Verwenden Sie unittest, um Testfälle zu erstellen und Assertions durchzuführen."
+                        "2. Schreiben Sie testbaren Code, der kleine, reine Funktionen verwendet und Abhängigkeiten "
+                        "injiziert."
+                        "3. Dokumentieren Sie Ihre Tests, um anderen Entwicklern zu helfen, den Zweck und die "
+                        "Funktionalität der Tests zu verstehen."
+                        "Task: $task\n\n"
+                        "Code: $user-input",
+                "return": "$return",
             },
         ]
     }
@@ -320,10 +633,10 @@ def run(app, args):
     }
     task_ = [
 
-            {
-                "use": "tool",
-                "name": "write-production-redy-code",
-                "args": """
+        {
+            "use": "tool",
+            "name": "write-production-redy-code",
+            "args": """
 <!DOCTYPE html>
 <html>
 <head>
@@ -447,15 +760,13 @@ def run(app, args):
 
 $user-input
 """,
-            },
+        },
 
-        ]
+    ]
 
-
-
-    planing_steps = planing_steps
+    planing_steps = auto_unit_test
     chains.add(planing_steps['name'], planing_steps['tasks'])
-    task = """
+    task_ = """
 Erstelle einen Plan für ein dynamischin system welches in 3 schritten arbeitet
 a1. Definition des gewünschten Ergebnisses: Zunächst muss klar definiert werden, was das gewünschte Ergebnis ist. Dies könnte durch eine Kombination aus Benutzereingaben und systeminternen Algorithmen erfolgen. Das System könnte auch vorgegebene Ziele oder Ergebnisse haben, die es erreichen soll.
 
@@ -477,6 +788,45 @@ agents könenen tools benutzen
 das system kann aufgaben erstellen und bedigt ausführen
 Erstelle einen Detairten Plan.
 """
+    task = """
+Schreibe eine unit test ablauf
+für die erstellung validrung eins test nutzers dieser soll beiplei haft das system test
+dafür gibt es folgende function :
+
+1)
+def create_user(self, command, app: App)->str: # gibt eine wes keybindings id zurück 'webSocketID'
+    data = command[0].data
+    username = data["username"]
+    email = data["email"]
+    password = data["password"]
+    invitation_key = data["invitation"]
+
+auf ruf shema:
+    '/api/post/cloudM/run/create_user', {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    token: 'string',
+                    data: {
+                        username: username,
+                        password: password,
+                        email: email,
+                        invitation: invitation
+                    }
+                })
+            })
+2)
+def log_out_user(self, command):
+      data = command[0].data
+      ws_id = data["webSocketID"]
+      """
+
+
+
+
     res = isaa.execute_thought_chain(task, planing_steps['tasks'], self_agent_config)
     # res = isaa.execute_thought_chain(res[-2][-1], stategy_crator['tasks'], self_agent_config)
     # res = isaa.execute_thought_chain(res[-2][-1], _planing_steps['tasks'], self_agent_config)

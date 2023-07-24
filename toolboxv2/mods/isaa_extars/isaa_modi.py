@@ -907,7 +907,7 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
     sys.setrecursionlimit(1500)
 
     app.new_ac_mod('isaa')
-    isaa: Isaa = app.AC_MOD
+    isaa: Isaa = app.get_mod('isaa')
     isaa.load_keys_from_env()
 
     if global_stream_override:
@@ -1175,16 +1175,20 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
     def get_relevant_informations(x):
         ress = mem.get_context_for(x)
 
-        task = f"Act as an summary expert your specialties are writing summary. you are known to think in small and " \
-               f"detailed steps to get the right result. Your task : write a summary reladet to {x}\n\n{ress}"
-        res = isaa.run_agent(isaa.get_default_agent_config('think').set_model_name('gpt-3.5-turbo-0613'), task)
+        res = isaa.run_agent(isaa.get_agent_config_class('summary'),
+                             f"write a summary related to {x}\n\nInformation's :{ress}")
 
         if res:
             return res
 
         return ress
 
-    def ad_data(x):
+    def ad_data(x, lsit=None, *args):
+        if args:
+            if isinstance(x, str):
+             x = [x] + args
+            if isinstance(x, lsit):
+             x = x + args
         mem.add_data('main', x)
 
         return 'added to memory'

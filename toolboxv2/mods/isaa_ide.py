@@ -188,7 +188,10 @@ class Tools(MainTool):
             for root, dirs, files in os.walk(path):
                 for name in files:
                     with open(os.path.join(root, name), 'r') as f:
-                        contents = f.read()
+                        try:
+                            contents = f.read()
+                        except UnicodeDecodeError:
+                            contents = ''
                         if keyword in contents:
                             found = True
                             self.print(f"Found keyword '{keyword}' in file at {os.path.join(root, name)}")

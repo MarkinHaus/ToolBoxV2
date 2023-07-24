@@ -12,7 +12,7 @@ class Tools(MainTool):
         self.name = "welcome"
         self.color = "YELLOW"
         self.tools = {
-            "all": [["Version", "Shows current Version"],
+            "all": [["Version", "Shows current Version"],["api_Version", "Shows current Version"],
                     ["Animation", "TOOL BOX 0 8s"],
                     ["Animation1", "TOOL BOX 1 8s"],
                     ["printT", "print TOOL BOX"],
@@ -22,6 +22,7 @@ class Tools(MainTool):
             "Animation": self.ali1,
             "Animation1": self.ali2,
             "Version": self.show_version,
+            "api_Version": self.show_version,
             "printT": self.print_t,
             "webInstall": self.webInstall_app_wrapper
         }

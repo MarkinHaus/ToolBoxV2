@@ -18,6 +18,7 @@ from langchain.embeddings import HuggingFaceEmbeddings
 import numpy as np
 from sklearn.cluster import KMeans, AgglomerativeClustering
 import platform, socket, re, uuid, json, psutil
+
 # add data classes
 pipeline_arr = [
     # 'audio-classification',
@@ -74,28 +75,30 @@ def get_location():
     response = requests.get(f'https://ipapi.co/{ip_address}/json/').json()
     location_data = f"city: {response.get('city')},region: {response.get('region')},country: {response.get('country_name')},"
 
-    return location_data
+    return location_data, ip_address
 
 
 def getSystemInfo():
-    return f"{time.time()=}"
-    # try:
-    ip = '0.0.0.0'
+
+    if getSystemInfoData:
+        getSystemInfoData['time'] = datetime.today().strftime('%Y-%m-%d %H:%M:%S')
+        return getSystemInfoData
+
     try:
         socket.gethostbyname(socket.gethostname())
     except Exception as e:
-        self.logger.error(Style.RED(str(e)))
+        get_logger().error(Style.RED(str(e)))
         pass
+
     info = {'time': datetime.today().strftime('%Y-%m-%d %H:%M:%S'), 'platform': platform.system(),
             'platform-release': platform.release(), 'platform-version': platform.version(),
             'architecture': platform.machine(), 'hostname': socket.gethostname(),
-            'ip-address': ip,
             'mac-address': ':'.join(re.findall('..', '%012x' % uuid.getnode())), 'processor': platform.processor(),
             'ram': str(round(psutil.virtual_memory().total / (1024.0 ** 3))) + " GB"}
 
     try:
         process = get_location()
-        info['location'] = process.result()
+        info['location'], info['ip'] = process.result()
     except TimeoutError and Exception:
         info['location'] = "Berlin Schöneberg"
 
@@ -343,7 +346,8 @@ class AgentChain:
             print(f"Chain '{name}' not found.")
 
     def get(self, name):
-        print(f"AgentChain##############{ name in list(self.chains_h.keys())}############# { name}, {list(self.chains_h.keys())}")
+        print(
+            f"AgentChain##############{name in list(self.chains_h.keys())}############# {name}, {list(self.chains_h.keys())}")
         if name in list(self.chains_h.keys()):
             return self.chains_h[name]
         return []
@@ -1114,8 +1118,9 @@ class PyEnvEval:
 
 
 class AgentConfig:
-    available_modes = ['tools', 'free', 'planning', 'execution', 'generate']  # [ 'talk' 'conversation','q2tree', 'python'
-    max_tokens = 3950
+    available_modes = ['tools', 'free', 'planning', 'execution',
+                       'generate']  # [ 'talk' 'conversation','q2tree', 'python'
+    max_tokens = 4080
 
     python_env = PyEnvEval()
 
@@ -1140,7 +1145,8 @@ system information's : {getSystemInfo()}
         self.mode: str = "talk"
         self.model_name: str = "gpt-3.5-turbo-0613"
 
-        self.agent_type: AgentType = AgentType("structured-chat-zero-shot-react-description")  # "zero-shot-react-description"
+        self.agent_type: AgentType = AgentType(
+            "structured-chat-zero-shot-react-description")  # "zero-shot-react-description"
         self.max_iterations: int = 2
         self.verbose: bool = True
 
@@ -1291,7 +1297,7 @@ system information's : {getSystemInfo()}
         prompt = (self.system_information if self.add_system_information else '') + self.get_prompt()
 
         pl = get_tokens(prompt, self.model_name) + 2
-        self.token_left = self.max_tokens-pl
+        self.token_left = self.max_tokens - pl
         print("TOKEN LEFT : ", self.token_left, "Token in Prompt :", pl, "Max tokens :", self.max_tokens)
         if pl > self.max_tokens:
             self.short_mem.cut()
@@ -1513,7 +1519,6 @@ Begin!"""
         self.toolsL = tools
         return self
 
-
     def add_tool(self, tool_name: str, func: callable, description: str, format_: str):
         self.tools[tool_name] = {
             "func": func,
@@ -1659,4 +1664,32 @@ Begin!"""
 
         return agent_config
 
+
+getSystemInfoData = {}
+
+if not os.path.exists(".config/system.infos"):
+
+    if not os.path.exists(".config/"):
+        os.mkdir(".config/")
+
+    info_sys = getSystemInfo()
+
+    del info_sys['time']
+
+    with open(".config/system.infos", "a") as f:
+        f.write(json.dumps(info_sys))
+
+    getSystemInfoData = info_sys
+
+else:
+
+    with open(".config/system.infos", "r") as f:
+        getSystemInfoData = json.loads(f.read())
+
+    info_sys = getSystemInfo()
+
+    del info_sys['time']
+
+    if info_sys != getSystemInfoData:
+        getSystemInfoData = info_sys
 

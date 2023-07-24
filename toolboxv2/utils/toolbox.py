@@ -48,6 +48,12 @@ class ApiOb:
     token = ""
     data = {}
 
+    def __init__(self, data=None, token=""):
+        if data is None:
+            data = {}
+        self.data = data
+        self.token = token
+
     def default(self):
         return self
 
@@ -450,24 +456,24 @@ class App(metaclass=Singleton):
                             f" {self.pretty_print(list(self.HELPER.keys()))}"))
             return "invalid commands"
 
-    def save_load(self, filename):
-        self.logger.info(f"Save load module {filename}")
-        if not filename:
+    def save_load(self, modname):
+        self.logger.info(f"Save load module {modname}")
+        if not modname:
             self.logger.warning("no filename specified")
             return False
         avalabel_mods = self.get_all_mods()
         i = 0
-        fw = filename.lower()
+        fw = modname.lower()
         for mod in list(map(lambda x: x.lower(), avalabel_mods)):
             if fw == mod:
-                filename = avalabel_mods[i]
+                modname = avalabel_mods[i]
             i += 1
         if self.debug:
-            return self.load_mod(filename)
+            return self.load_mod(modname)
         try:
-            return self.load_mod(filename)
+            return self.load_mod(modname)
         except ModuleNotFoundError:
-            self.logger.error(Style.RED(f"Module {filename} not found"))
+            self.logger.error(Style.RED(f"Module {modname} not found"))
 
         return False
 
@@ -499,7 +505,6 @@ class App(metaclass=Singleton):
         sig = signature(function)
         self.logger.info(f"Signature: {sig}")
         parameters = list(sig.parameters)
-        self.logger.info(f"Parameters: {parameters}")
 
         mod_name = self.AC_MOD.name
         print(f"\nStart function {mod_name}:{name}\n")
@@ -565,6 +570,15 @@ class App(metaclass=Singleton):
             f"~{node()}:{Style.Bold(self.pretty_print([name.lower()]).strip())}{Style.CYAN('@>')}")
         self.set_spec()
         return True
+
+    def get_mod(self, name):
+        if name.lower() not in self.MOD_LIST.keys():
+            mod = self.save_load(name)
+            if mod:
+                return mod
+            self.logger.warning(f"Could not find {name} in {list(self.MOD_LIST.keys())}")
+            raise ValueError(f"Could not find {name} in {list(self.MOD_LIST.keys())} pleas install the module")
+        return self.MOD_LIST[name.lower()]
 
     @staticmethod
     def command_viewer(mod_command):

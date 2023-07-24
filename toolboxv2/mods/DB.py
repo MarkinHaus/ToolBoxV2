@@ -1,5 +1,25 @@
-from toolboxv2 import MainTool, FileHandler, App
+import time
+
+from toolboxv2 import MainTool, FileHandler, App, Style
 import redis
+
+
+class MiniRedis:
+
+    def __init__(self):
+        self.data = {}
+
+    def scan_iter(self, serch=''):
+        return [key for key in list(self.data.keys()) if key.startswith(serch)]
+
+    def get(self, key):
+        return self.data.get(key)
+
+    def set(self, key, value):
+        self.data[key] = value
+
+    def delete(self, key):
+        return self.data.pop(key)
 
 
 class Tools(MainTool, FileHandler):
@@ -45,10 +65,13 @@ class Tools(MainTool, FileHandler):
     def on_start(self):
         self.load_file_handler()
         version_command = self.get_file_handler(self.keys["url"])
-        if version_command is not None and version_command != 'redis://default:{id}@{url}.com:{port}':
+        if version_command is not None and version_command != 'redis://default:id@url.com:port':
             self.rcon = redis.from_url(version_command)
         else:
-            self.print("No url found pleas run first-redis-connection")
+            self.print("No url found starting localhost server not secure!!!")
+            self.print(Style.RED("do not go live"))
+            self.logger.warning("Local MiniRedis not secure")
+            self.rcon = MiniRedis()
 
     def on_exit(self):
         self.save_file_handler()

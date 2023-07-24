@@ -18,6 +18,7 @@ from langchain.chains import ConversationalRetrievalChain
 from langchain.chat_models import ChatOpenAI
 from langchain.tools import AIPluginTool
 from transformers import pipeline
+import gpt4all
 
 from toolboxv2 import MainTool, FileHandler, App, Spinner
 from toolboxv2.mods.isaa_extars.AgentUtils import *
@@ -62,6 +63,7 @@ pipeline_arr = [
 
 
 def get_tokens(text, model_name, only_len=True):
+
     if '/' in model_name or not (model_name.endswith("4") or model_name.endswith("5")):
         model_name = 'gpt2'
 
@@ -165,7 +167,7 @@ class Tools(MainTool, FileHandler):
         self.agent_chain = AgentChain(directory=f".data/{app.id}{extra_path}/chains")
         self.agent_memory = AIContextMemory(extra_path=extra_path)
         self.summarization_mode = 0  # 0 to 2 0 huggingface 1 text
-        self.summarization_limiter = 10200  # 0 to 2 0 huggingface 1 text
+        self.summarization_limiter = 102000
         self.speak = lambda x, *args, **kwargs: x
         self.scripts = Scripts(f".data/{app.id}{extra_path}/ScriptFile")
         self.ac_task = None
@@ -641,9 +643,9 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
 
     def init_all_pipes_default(self):
         self.init_pipeline('question-answering', "deepset/roberta-base-squad2")
-        time.sleep(2)
+        time.sleep(0.1)
         self.init_pipeline('summarization', "pinglarin/summarization_papers")
-        time.sleep(2)
+        time.sleep(0.1)
         self.init_pipeline('text-classification', "distilbert-base-uncased-finetuned-sst-2-english")
 
     def init_pipeline(self, p_type, model):
@@ -765,7 +767,7 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
 
         return function
 
-    def load_llm_models(self, names: list):
+    def load_llm_models(self, names: list[str]):
         for model in names:
             if f'LLM-model-{model}-init' not in self.initstate.keys():
                 self.initstate[f'LLM-model-{model}-init'] = False
@@ -773,19 +775,22 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
             if not self.initstate[f'LLM-model-{model}-init']:
                 self.initstate[f'LLM-model-{model}-init'] = True
                 if '/' in model:
-                    print('Initialized HF model')
                     self.config[f'LLM-model-{model}'] = HuggingFaceHub(repo_id=model,
                                                                        huggingfacehub_api_token=self.config[
                                                                            'HUGGINGFACEHUB_API_TOKEN'])
+                    self.print('Initialized HF model')
+                elif model.startswith('gpt4all#'):
+                    self.config[f'LLM-model-{model}'] = gpt4all.GPT4All(model.replace('gpt4all#', ''))
+                    self.print('Initialized gpt4all model')
                 elif model.startswith('gpt'):
-                    print('Initialized OpenAi model')
                     self.config[f'LLM-model-{model}'] = ChatOpenAI(model_name=model,
                                                                    openai_api_key=self.config['OPENAI_API_KEY'],
                                                                    streaming=True)
+                    self.print('Initialized OpenAi model')
                 else:
-                    print('Initialized OpenAi model')
                     self.config[f'LLM-model-{model}'] = OpenAI(model_name=model,
                                                                openai_api_key=self.config['OPENAI_API_KEY'])
+                    self.print('Initialized OpenAi model')
 
     def get_llm_models(self, name: str):
         if f'LLM-model-{name}' not in self.config.keys():
@@ -925,7 +930,7 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
             self.config["self_agent_agents_"] = ["todolist"]
 
             config.mode = "free"
-            config.model_name = "gpt-3.5-turbo-0613"
+            config.model_name = "gpt-4"
             config.max_iterations = 6
             config.personality = """
 Resourceful: Isaa is able to efficiently utilize its wide range of capabilities and resources to assist the user.
@@ -1099,7 +1104,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 set_mode("free") \
                 .set_max_iterations(1) \
                 .set_completion_mode("chat") \
-                .set_model_name('gpt-3.5-turbo') \
+                .set_model_name('gpt4all#ggml-model-gpt4all-falcon-q4_0.bin') \
                 .set_pre_task("Act as an summary expert your specialties are writing summary. you are known to think "
                               "in small and detailed steps to get the right result. Your task :")
 
@@ -1310,7 +1315,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             },
         ]
         chain_data = {}
-        res, chain_data = self.execute_thought_chain(task, task_genrator, agent, chain_data=chain_data, chain_data_infos=True)
+        res, chain_data, _ = self.execute_thought_chain(task, task_genrator, agent, chain_data=chain_data, chain_data_infos=True)
         print(res)
         task_list = []
         try:
@@ -2211,10 +2216,14 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         return res, res_um
 
     def stream_read_llm(self, text, config, r=2.0):
-        p_token_num = get_tokens(text, config.model_name)
-        self.print(f"TOKENS: {p_token_num} | left = {config.token_left}")
-        if p_token_num > config.token_left:
+        p_token_num = self.get_tokens(text, config.model_name)
+        config.token_left = config.max_tokens - p_token_num
+        self.print(f"TOKENS: {p_token_num} | left = {config.token_left if config.token_left > 0 else '-'}")
+        if config.token_left < 0:
             text = self.mas_text_summaries(text)
+            p_token_num = self.get_tokens(text, config.model_name)
+            config.token_left = config.max_tokens - p_token_num
+            self.print(f"TOKENS: {p_token_num} | left = {config.token_left if config.token_left > 0 else '-'}")
 
         if '/' in config.model_name:
             if text:
@@ -2224,6 +2233,9 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 template=config.prompt.replace('{', '}}').replace('}', '{{') + '{xVx}',
             )
             return LLMChain(prompt=prompt, llm=self.get_llm_models(config.model_name)).run(' ')
+        elif config.model_name.startswith('gpt4all#'):
+            return self.config[f'LLM-model-{config.model_name}'].generate(prompt=config.prompt,
+                                                                          streaming=config.stream)
 
         try:
             if not config.stream:
@@ -2355,9 +2367,9 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             if isinstance(x, list):
                 end = []
                 for i in x:
-                    end.append({'summary_text': self.process_completion(i, self.get_default_agent_config('summary'))})
+                    end.append({'summary_text': self.stream_read_llm(i, self.get_agent_config_class('summary'), r=0)})
             else:
-                end = [{'summary_text': self.process_completion(x, self.get_default_agent_config('summary'))}]
+                end = [{'summary_text': self.stream_read_llm(x, self.get_agent_config_class('summary'), r=0)}]
             return end
 
         while len(text) > cap:
@@ -2381,17 +2393,19 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         self.print(f"SYSTEM: all summary_chucks : {len(summary_chucks)}")
 
-        summary = summary_chucks
         if len(summaries) > 8:
-            if 4000 < len(summary_chucks) > 20000:
+            if len(summary_chucks) < 20000:
                 summary = summary_chucks
-            elif len(summary_chucks) < 20000:
+            elif len(summary_chucks) > 20000:
                 if self.summarization_mode == 0:
                     summary = summary_func(summary_chucks)[0]['summary_text']
                 else:
                     summary = summary_func2(summary_chucks)[0]['summary_text']
             else:
                 summary = self.mas_text_summaries(summary_chucks)
+        else:
+            summary = summary_chucks
+
         self.print(
             f"SYSTEM: final summary from {len_text}:{len(summaries)} ->"
             f" {len(summary)} compressed {len_text / len(summary):.2f}X\n")
@@ -2451,6 +2465,20 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             retriever.search_kwargs['k'] = 20
             return ConversationalRetrievalChain.from_llm(self.get_llm_models(config.model_name), retriever=retriever)
         return None
+
+    def get_tokens(self, text, model_name, only_len=True):
+
+        if model_name.startswith('gpt4all#'):
+            if f'LLM-model-{model_name}' not in self.config.keys():
+                self.load_llm_models([model_name])
+            emb = self.config[f'LLM-model-{model_name}'].model.generate_embedding(text)
+
+            if only_len:
+                return len(emb)
+            else:
+                return emb
+        else:
+            return get_tokens(text, model_name, only_len)
 
     def get_chain(self, hydrate=None, f_hydrate=None) -> AgentChain:
         logger = get_logger()

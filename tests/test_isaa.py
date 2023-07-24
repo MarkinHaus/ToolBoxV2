@@ -17,9 +17,7 @@ class TestIsaaIDE(unittest.TestCase):
         cls.app.debug = True
         cls.app.inplace_load("isaa", "toolboxv2.mods.")
         cls.app.new_ac_mod("isaa")
-        cls.fm = cls.app.AC_MOD
-        cls.file_name = "test_file.txt"
-        cls.folder_name = "test_folder"
+        cls.isaa_tool_class = cls.app.AC_MOD
 
     @classmethod
     def tearDownClass(cls):

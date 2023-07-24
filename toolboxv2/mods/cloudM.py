@@ -49,7 +49,7 @@ class Tools(MainTool, FileHandler):
             "TOKEN": "comm-tok~~",
         }
         self.tools = {
-            "all": [["Version", "Shows current Version"],
+            "all": [["Version", "Shows current Version"], ["api_Version", "Shows current Version"],
                     ["NEW", "crate a boilerplate file to make a new mod", "add is case sensitive",
                      "flags -fh for FileHandler", "-func for functional bas Tools els class based"],
                     ["download", "download a mod from MarkinHaus server", "add is case sensitive"],
@@ -78,6 +78,7 @@ class Tools(MainTool, FileHandler):
                     ],
             "name": "cloudM",
             "Version": self.show_version,
+            "api_Version": self.show_version,
             "NEW": self.new_module,
             "upload": self.upload,
             "download": self.download,
@@ -123,9 +124,7 @@ class Tools(MainTool, FileHandler):
 
     def prep_system_initial(self, command, app):
 
-        app.new_ac_mod('db')
-
-        db = app.AC_MOD
+        db = app.get_mod('DB')
 
         if db is None or not db:
             self.print("No redis instance provided from db run DB first-redis-connection")
@@ -135,8 +134,9 @@ class Tools(MainTool, FileHandler):
             self.print("No redis instance provided from db run DB first-redis-connection")
             return "Pleas connect first to a redis instance"
 
-        if 'y' not in input(Style.RED("Ar u sure : the deb will be cleared type y :")):
-            return
+        if command[0] != 'do-root':
+            if 'y' not in input(Style.RED("Ar u sure : the deb will be cleared type y :")):
+                return
         db.clean_db()
         i = 0
         for key in db.rcon.scan_iter():
@@ -156,14 +156,16 @@ class Tools(MainTool, FileHandler):
         key = str(uuid.uuid4())
 
         print("First key :" + key)
+        self.print("Server Initialized for root user")
         db.rcon.set(key, "Valid")
+        return True
 
     def get_si_id(self, uid):
         ss_id = uid + 'SiID'
         # app . key generator
         # app . hash pepper and Salting
         # app . key generator
-        self.print(f"APP: generated from SiID:")
+        self.print(f"APP: generated SiID")
         return ss_id
 
     def get_vt_id(self, uid):
@@ -183,19 +185,26 @@ class Tools(MainTool, FileHandler):
         return ws_id
 
     def close_user_instance(self, uid):
-        if uid not in self.live_user_instances.keys():
+        if self.get_si_id(uid) not in self.live_user_instances.keys():
+            self.logger.warning("User instance not found")
             return "User instance not found"
         instance = self.live_user_instances[self.get_si_id(uid)]
         self.user_instances[instance['SiID']] = instance['webSocketID']
         self.app_.run_any('db', 'set', ['', f"User::Instance::{uid}", json.dumps({"saves": instance['save']})])
-        for key, val in instance['live']:
+        if not instance['live']:
+            self.save_user_instances(instance)
+            self.logger.info("No modules to close")
+            return "No modules to close"
+        for key, val in instance['live'].items():
             if key.startswith('v-'):
                 continue
             try:
                 val._on_exit()
             except Exception as e:
-                self.logger.error(f"Error colosing {key}, {str(e)}")
+                self.logger.error(f"Error closing {key}, {str(e)}")
         del instance['live']
+        instance['live'] = {}
+        self.logger.info("User instance live removed")
         self.save_user_instances(instance)
 
     def validate_ws_id(self, command):
@@ -276,7 +285,7 @@ class Tools(MainTool, FileHandler):
     def get_user_instance_wrapper(self, command):
         return self.get_user_instance(command[0])
 
-    def get_user_instance(self, uid, username=None, token=None):
+    def get_user_instance(self, uid: str, username: str or None = None, token: str or None = None):
         # Test if an instance exist locally -> instance = set of data a dict
 
         instance = {
@@ -293,7 +302,7 @@ class Tools(MainTool, FileHandler):
                 if instance_live['live'] and instance_live['save']['mods']:
                     self.logger.info(Style.BLUEBG2("Instance returned from live"))
                     return instance_live
-                if instance_live['save']['mods']:
+                if instance_live['token']:
                     instance = instance_live
                     instance['live'] = {}
 
