@@ -32,14 +32,14 @@ class Tools(MainTool, FileHandler):
         return self.version
 
     def restricted_generator(self, by, name):
-        text = Style.WHITE(Style.Bold(f"Function {name} is restricted ") + "by" )+by
+        text = Style.WHITE(Style.Bold(f"Function {name} is restricted ") + "by ")+by
         def restricted(*args, **kwargs):
             self.print(text)
             curframe = inspect.currentframe()
 
             calframe = inspect.getouterframes(curframe, 2)
 
-            self.print('ty access from:', calframe)
+            self.print(f'ty access from: {calframe}')
             print(f"{args=}"
                   f"{kwargs=}")
 
@@ -53,7 +53,9 @@ class Tools(MainTool, FileHandler):
         mod.tools[function_name] = restriction
         setattr(mod, real_name, restriction)
 
-    def un_lock(self, by, resid, function_name):
+    def un_lock(self, by, resid, function_name, real_name: str or None = None):
+        if real_name is None:
+            real_name = function_name
 
         if ToolBox_over != 'root':
             self.print(Style.RED("Permission dined"))
@@ -69,3 +71,6 @@ class Tools(MainTool, FileHandler):
             self.print("Wrong access id")
 
         data['mod'].tools[function_name] = data['function']
+        setattr(data['mod'], real_name, data['function'])
+
+        del self.seves[f"{by}-{function_name}"]

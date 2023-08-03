@@ -321,7 +321,6 @@ class App(metaclass=Singleton):
             self.logger.info(f"Loading module : {mod}")
             if self.debug:
                 self.load_mod(mod)
-                continue
             else:
                 try:
                     self.load_mod(mod)

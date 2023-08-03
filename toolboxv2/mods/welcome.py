@@ -76,7 +76,7 @@ class Tools(MainTool):
             os.system("clear")
 
     def show_version(self):
-        self.print(f"Version: {self.version}")
+        self.print(f"Version: {self.name}::{self.version}")
         return self.version
 
     def ali2(self):

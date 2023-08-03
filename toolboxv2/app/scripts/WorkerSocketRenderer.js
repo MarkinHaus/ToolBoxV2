@@ -142,3 +142,28 @@ async function getsInit(){
     await WS.send(JSON.stringify({"ServerAction":"getWidgetNave"}));
     await WS.send(JSON.stringify({"ServerAction":"getDrag"}));
 }
+
+function createElementFromDict(dict) {
+    // Create element
+    let element = document.createElement(dict.tag);
+
+    // Set attributes
+    for (let attr in dict.attributes) {
+        element.setAttribute(attr, dict.attributes[attr]);
+    }
+
+    // Set content
+    element.innerHTML = dict.content;
+
+    // Set event listeners
+    for (let event in dict.events) {
+        if (element.addEventListener) {
+            element.addEventListener(event, dict.events[event]);
+        } else if (element.attachEvent) {
+            element.attachEvent('on' + event, dict.events[event]);
+        }
+    }
+
+    // Return the created element
+    return element;
+}

@@ -20,7 +20,8 @@ class MainTool:
         self.todo = kwargs["load"]
         self._on_exit = kwargs["on_exit"]
         self.stuf = False
-        self.config = {}
+        if not hasattr(self, 'config'):
+            self.config = {}
         self.load()
         self.ac_user_data_sto = {}
 

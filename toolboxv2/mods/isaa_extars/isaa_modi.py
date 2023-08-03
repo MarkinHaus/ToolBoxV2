@@ -22,7 +22,7 @@ from langchain.tools.file_management import (
 
 from toolboxv2 import App, get_logger
 from toolboxv2.utils.toolbox import get_app
-from toolboxv2.mods.isaa import CollectiveMemory, AgentConfig, Tools as Isaa, AgentChain
+from toolboxv2.mods.isaa import AgentConfig, Tools as Isaa, AgentChain
 
 try:
     from toolboxv2.mods.isaa_audio import s30sek_mean, text_to_speech3, speech_stream, get_audio_transcribe
@@ -99,8 +99,6 @@ def run_agent_cmd(isaa, user_text, self_agent_config, step, spek):
 
     sys_print(f"\n{'=' * 20}STEP:{step}{'=' * 20}\n")
     sys_print(f"\tMODE               : {self_agent_config.mode}\n")
-    sys_print(f"\tCollectiveMemory   : {CollectiveMemory(isaa).token_in_use} | total vec num : "
-              f"{CollectiveMemory(isaa).memory.get_stats()['total_vector_count']}\n")
     sys_print(f"\tObservationMemory  : {self_agent_config.observe_mem.tokens}\n")
     sys_print(f"\tShortTermMemory    : {self_agent_config.short_mem.tokens}\n\n")
     if "Answer: " in response:
@@ -693,7 +691,7 @@ def startage_task_aproche(isaa, task, self_agent_config, chains, create_agent=Fa
                                          " brainstormen of the task I have created the following strategies."
                                          "Strategies :")
 
-    strategies = isaa.run_agent(think_agent, '')
+    strategies = isaa.run_agent(think_agent, 'Exquisite the Task as best as you can.')
 
     think_agent.add_message("assistant", strategies)
 
@@ -707,7 +705,7 @@ def startage_task_aproche(isaa, task, self_agent_config, chains, create_agent=Fa
     perfact = False
     strategies_final = ""
     while not perfact:
-        strategies_final = isaa.run_agent(think_agent, '')
+        strategies_final = isaa.run_agent(think_agent, 'Exquisite the Task as best as you can.')
         think_agent.add_message("assistant", strategies_final)
         u = input(":")
         if u == 'x':
@@ -715,7 +713,7 @@ def startage_task_aproche(isaa, task, self_agent_config, chains, create_agent=Fa
         if u == 'y':
             think_agent.add_message("system", "Return an Elaborate of the effective strategie for the next agent"
                                               " consider what the user ask and the best variant.")
-            strategies_final = isaa.run_agent(think_agent, '')
+            strategies_final = isaa.run_agent(think_agent, 'Exquisite the Task as best as you can.')
             perfact = True
         think_agent.add_message("user", u)
 
@@ -768,7 +766,7 @@ def idea_enhancer(isaa, task, self_agent_config, chains, create_agent=False):
     perfact = False
     new_task = ""
     while not perfact:
-        new_task = isaa.run_agent(clarification_agent, '')
+        new_task = isaa.run_agent(clarification_agent, 'Exquisite the Task as best as you can.')
         clarification_agent.add_message("assistant", new_task)
         u = input(":")
         if u == 'x':
@@ -776,7 +774,7 @@ def idea_enhancer(isaa, task, self_agent_config, chains, create_agent=False):
         if u == 'y':
             clarification_agent.add_message("system", "Return an Elaborate task for the next agent"
                                                       " consider what the user ask and the best variant.")
-            new_task = isaa.run_agent(clarification_agent, '')
+            new_task = isaa.run_agent(clarification_agent, 'Exquisite the Task as best as you can.')
             perfact = True
         clarification_agent.add_message("user", u)
 
@@ -1183,12 +1181,12 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
 
         return ress
 
-    def ad_data(x, lsit=None, *args):
+    def ad_data(x, *args):
         if args:
             if isinstance(x, str):
-             x = [x] + args
-            if isinstance(x, lsit):
-             x = x + args
+             x = [x].append(args)
+            if isinstance(x, list):
+             x = x.append(args)
         mem.add_data('main', x)
 
         return 'added to memory'

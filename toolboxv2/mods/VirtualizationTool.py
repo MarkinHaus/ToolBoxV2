@@ -76,6 +76,7 @@ class Tools(MainTool, FileHandler):
         return self.instances[name]
 
     def create_instance(self, name, mod_name):
+        mod_sto = self.app_.AC_MOD
         loc = "toolboxv2.mods."
         self.print(Style.CYAN(f"Create an instance {mod_name}"))
         try:
@@ -88,12 +89,18 @@ class Tools(MainTool, FileHandler):
                 self.logger.errow(Style.RED("No Mod found to virtualize"))
             if issubclass(mod, FileHandler):
                 mod_init.file_handler_file_prefix += f"Virtualize/{name}/"
+
+            self.print(f"Virtualizing source {mod_init.name} to -> {name}")
+
+            mod_init.name = name
             self.instances[name] = mod_init
             self.app_.save_init_mod(name, mod_init)
             self.set_ac_instances(name)
-            self.shear_function(name, mod_name, 'show_version')
+            self.shear_function(mod_name, name, 'show_version')
+            self.app_.AC_MOD = mod_sto
             return mod_init
         except ImportError as e:
+            self.app_.AC_MOD = mod_sto
             self.print(Style.Bold(f"{Style.RED('Error')} Virtualizing {mod_name} in {name} ; {e}"))
             return None
 
@@ -101,7 +108,9 @@ class Tools(MainTool, FileHandler):
         for name, instance in self.instances.items():
             self.print(f"{name}: {instance.name}")
 
-    def shear_function(self, name, mod_name, function_name):
-        self.app_.new_ac_mod(mod_name)
+    def shear_function(self, name, instance_name, function_name):
+        print(name)
+        self.app_.new_ac_mod(name)
         function = getattr(self.app_.AC_MOD, function_name)
-        setattr(self.instances[name], function_name, function)
+        setattr(self.instances[instance_name], function_name, function)
+

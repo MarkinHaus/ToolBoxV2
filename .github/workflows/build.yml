@@ -2,9 +2,15 @@ on:
     push:
         branches:
             - master
+            - init-isaa
+            - init
+            - mods
     pull_request:
         branches:
             - master
+            - init-isaa
+            - init
+            - mods
 
 name: build
 jobs:
@@ -43,3 +49,4 @@ jobs:
             - name: PKG-TEST
               run: |
                   python -m unittest discover tests/
+

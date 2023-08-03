@@ -17,7 +17,6 @@ import pickle
 
 import torch
 from transformers import pipeline
-from typing.io import IO
 
 from toolboxv2 import MainTool, FileHandler, get_logger, Style
 from pydub import AudioSegment
@@ -98,8 +97,8 @@ class Tools(MainTool, FileHandler):
         self._simpel_speech_recognizer = sr.Recognizer()
         self.logger.info("simpel speech online")
 
-        if not os.path.exists("./data/isaa_data/work"):
-            Path("./data/isaa_data/work").mkdir(parents=True, exist_ok=True)
+        if not os.path.exists("./data/isaa_data/"):
+            Path("./data/isaa_data/").mkdir(parents=True, exist_ok=True)
 
         if config is not None:
             self.config = config

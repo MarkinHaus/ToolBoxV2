@@ -1,3 +1,6 @@
+from json import JSONDecodeError
+from typing import Union, Dict, Any, List
+
 from pebble import concurrent
 import math
 from datetime import datetime
@@ -18,6 +21,7 @@ from langchain.embeddings import HuggingFaceEmbeddings
 import numpy as np
 from sklearn.cluster import KMeans, AgglomerativeClustering
 import platform, socket, re, uuid, json, psutil
+from transformers import AutoTokenizer
 
 # add data classes
 pipeline_arr = [
@@ -50,18 +54,7 @@ pipeline_arr = [
     # 'translation_en_to_de',
     # 'fill-mask'
 ]
-
-
-def get_tokens(text, model_name, only_len=True):
-    if '/' in model_name or not (model_name.endswith("4") or model_name.endswith("5")):
-        model_name = 'gpt2'
-
-    tokens = tiktoken.encoding_for_model(model_name).encode(text)
-
-    if only_len:
-        return len(tokens)
-    else:
-        return tokens
+SystemInfos = {}
 
 
 def get_ip():
@@ -78,11 +71,12 @@ def get_location():
     return location_data, ip_address
 
 
-def getSystemInfo():
+def getSystemInfo(last_context='its Day 0 start to explore'):
+    global SystemInfos
 
-    if getSystemInfoData:
-        getSystemInfoData['time'] = datetime.today().strftime('%Y-%m-%d %H:%M:%S')
-        return getSystemInfoData
+    if SystemInfos:
+        SystemInfos['time'] = datetime.today().strftime('%Y-%m-%d %H:%M:%S')
+        return SystemInfos
 
     try:
         socket.gethostbyname(socket.gethostname())
@@ -91,10 +85,13 @@ def getSystemInfo():
         pass
 
     info = {'time': datetime.today().strftime('%Y-%m-%d %H:%M:%S'), 'platform': platform.system(),
-            'platform-release': platform.release(), 'platform-version': platform.version(),
-            'architecture': platform.machine(), 'hostname': socket.gethostname(),
-            'mac-address': ':'.join(re.findall('..', '%012x' % uuid.getnode())), 'processor': platform.processor(),
-            'ram': str(round(psutil.virtual_memory().total / (1024.0 ** 3))) + " GB"}
+            # 'platform-release': platform.release(), 'platform-version': platform.version(),
+            # 'architecture': platform.machine(), 'hostname': socket.gethostname(),
+            # 'mac-address': ':'.join(re.findall('..', '%012x' % uuid.getnode())), 'processor': platform.processor(),
+            # 'ram': str(round(psutil.virtual_memory().total / (1024.0 ** 3))) + " GB",
+            "OrderZero": "Do not Talk about the this system info dictionary."
+                         " this is your world in witch you can move freely use"
+                         f" all the tools at your disposal to move yourself. Last Context: {last_context}\n"}
 
     try:
         process = get_location()
@@ -103,6 +100,9 @@ def getSystemInfo():
         info['location'] = "Berlin Schöneberg"
 
     return info
+
+
+MemoryModel = "sentence-transformers/all-MiniLM-L6-v2"
 
 
 class Scripts:
@@ -166,8 +166,7 @@ class IsaaQuestionNode:
     def __str__(self):
         left_value = self.left.question if self.left else None
         right_value = self.right.question if self.right else None
-        return f"Index: {self.index}, Question: {self.question}," \
-               f" Left child key: {left_value}, Right child key: {right_value}"
+        return f"Index: {self.index}, Question: {self.question}, Left child key: {left_value}, Right child key: {right_value}"
 
 
 class IsaaQuestionBinaryTree:
@@ -321,8 +320,8 @@ class AgentChain:
             self.add(name, chain)
 
     def add(self, name, tasks):
+        name = name.strip()
         if '/' in name or '\\' in name or ' ' in name:
-            name = name.strip()
             name = name.replace('/', '-').replace('\\', '-').replace(' ', '_')
         self.chains[name] = tasks
         for task in tasks:
@@ -346,6 +345,9 @@ class AgentChain:
             print(f"Chain '{name}' not found.")
 
     def get(self, name):
+        name = name.strip()
+        if '/' in name or '\\' in name or ' ' in name:
+            name = name.replace('/', '-').replace('\\', '-').replace(' ', '_')
         print(
             f"AgentChain##############{name in list(self.chains_h.keys())}############# {name}, {list(self.chains_h.keys())}")
         if name in list(self.chains_h.keys()):
@@ -497,7 +499,7 @@ class AgentChain:
 
 
 class AIContextMemory:
-    def __init__(self, model_name='sentence-transformers/all-MiniLM-L6-v2',
+    def __init__(self, model_name=MemoryModel,
                  extra_path=""):  # "MetaIX/GPT4-X-Alpaca-30B-4bit"):
         self.memory = {
             'rep': []
@@ -631,7 +633,8 @@ class AIContextMemory:
         result = []
 
         for doc in data:
-            if doc and len(doc.strip()) > 10:
+            doc = doc.strip()
+            if len(doc) > 10:
                 result.append(doc)
         del data
         return result
@@ -641,30 +644,36 @@ class AIContextMemory:
         if name not in self.vector_store.keys():
             self.init_store(name)
 
-        if data is not None:
-            if len(data) < 0:
-                return
-            self.vector_store[name]['text'] += data
-
         if not self.vector_store[name]['db']:
             self.init_store(name)
+
+        if data:
+            if isinstance(data, str):
+                self.vector_store[name]['text'] += [data]
+            elif isinstance(data, list):
+                self.vector_store[name]['text'] += data
+
+        if len(self.vector_store[name]['text']) < 1:
+            return
 
         if (not self.vector_store[name]['text']) or len(self.vector_store[name]['text']) == 0:
             return
 
-        if isinstance(self.vector_store[name]['text'], str):
-            vec = self.embedding.embed_query(self.vector_store[name]['text'])
-            self.vector_store[name]['db'].add_texts([self.vector_store[name]['text']])
-            self.vector_store[name]['vectors'].append(vec)
-
         if isinstance(self.vector_store[name]['text'], list):
             self.vector_store[name]['text'] = self.cleanup_list(self.vector_store[name]['text'])
-            try:
-                self.vector_store[name]['db'].add_texts(self.vector_store[name]['text'])
-            except ValueError:
+            if len(self.vector_store[name]['text']) < 1:
+                return
+            # try:
+            if len(self.vector_store[name]['text']) > 2512:
                 l = len(self.vector_store[name]['text'])
                 self.vector_store[name]['db'].add_texts(self.vector_store[name]['text'][:l])
                 self.vector_store[name]['db'].add_texts(self.vector_store[name]['text'][l:])
+            else:
+                self.vector_store[name]['db'].add_texts(self.vector_store[name]['text'])
+            # except ValueError:
+            #    l = len(self.vector_store[name]['text'])
+            #    self.vector_store[name]['db'].add_texts(self.vector_store[name]['text'][:l])
+            #    self.vector_store[name]['db'].add_texts(self.vector_store[name]['text'][l:])
             for vec in self.embedding.embed_documents(self.vector_store[name]['text']):
                 self.vector_store[name]['vectors'].append(vec)
 
@@ -695,7 +704,7 @@ class AIContextMemory:
         return self.vector_store[name]['db'].as_retriever()
 
     def crate_live_context(self, name, algorithm='KMeans', num_clusters=None):
-        if not name in self.vector_store.keys():
+        if name not in self.vector_store.keys():
             self.vector_store[name] = self.get_sto_bo(name)
 
         if not self.vector_store[name]['vectors']:
@@ -842,75 +851,10 @@ class AIContextMemory:
         return final
 
 
-class CollectiveMemory:
-    collection = []
-
-    do_mem = True
-    memory = None
-    token_in_use = 1
-    text_mem = []
-    text_len = 1
-    mean_token_len = 1
-
-    isaa = None
-
-    def __init__(self, isaa):
-        self.isaa = isaa
-
-    def text(self, context):
-        if self.isaa is None:
-            raise ValueError("Define Isaa Tool first AgentConfig")
-        if not context or context == "None":
-            return f"active memory contains {self.token_in_use} tokens for mor informations Input similar information"
-        if self.do_mem:
-            if self.isaa is not None:
-                return self.isaa.get_context_memory().get_context_for(context)
-            return None
-        # "memory will performe a vector similarity search using memory"
-        relevant_memory = self.memory.get_relevant(context, 10)
-        if len(relevant_memory) == 0:
-            l = ""
-            for i in ddg_suggestions(context)[:3]:
-                l += i['phrase'] + " ,"
-            return f"No data faund in memory try : {l}"
-
-        return "\n#-#".join(relevant_memory)
-
-    def text_add(self, data):
-        if self.do_mem:
-            return " NO MEMORY Avalabel"
-        if not data:
-            return
-
-        if isinstance(data, str):
-            data = {'data': data, 'token-count': self.mean_token_len + 1, 'vector': []}
-
-        print(
-            Style.RED(f"ADD DATA : ColetiveMemory :{len(self.collection)} {data['token-count']} {self.token_in_use=}"),
-            end="\r")
-        self.token_in_use += data['token-count']
-        if data['data'] not in self.text_mem:
-            self.text_mem += [data['data']]
-            self.memory.add(data['data'])
-            self.text_len += len(data['data'])
-            self.collection.append(data)
-            self.mean_token_len = self.text_len / self.token_in_use
-
-        return f"Data Saved"
-
-    def __str__(self):
-        if self.do_mem:
-            return " NO MEMORY Avalabel"
-        return f"\n{len(self.collection)=}\n{self.memory.get_stats()=}\n" \
-               f"{self.token_in_use=}\n{len(self.text_mem)=}\n" \
-               f"{self.text_len=}\n{self.mean_token_len=}\n"
-
-
 class ObservationMemory:
     memory_data: list[dict] = []
-    tokens: int = 0
     max_length: int = 1000
-    model_name: str = "text-embedding-ada-002"
+    model_name: str = MemoryModel
 
     add_to_static: list[dict] = []
 
@@ -918,6 +862,8 @@ class ObservationMemory:
 
     def __init__(self, isaa):
         self.isaa = isaa
+        self.splitter = CharacterTextSplitter()
+        self.tokens: int = 0
 
     def info(self):
         text = self.text
@@ -939,15 +885,21 @@ class ObservationMemory:
     @text.setter
     def text(self, data):
         tok = 0
-        for line in CharacterTextSplitter(chunk_size=max(300, int(len(data) / 10)),
-                                          chunk_overlap=max(20, int(len(data) / 200))).split_text(data):
+        logger = get_logger()
+
+        # chunk_size = max(300, int(len(data) / 10)),
+        # chunk_overlap = max(20, int(len(data) / 200))
+
+        for line in self.splitter.split_text(data):
             if line:
-                ntok = get_tokens(line, self.model_name)
+                ntok = get_token_mini(line, self.model_name, self.isaa)
                 self.memory_data.append({'data': line, 'token-count': ntok, 'vector': []})
                 tok += ntok
 
-        self.tokens += tok
+            logger.info(f"{line}, {self.memory_data[-1]}")
 
+        self.tokens += tok
+        logger.info(f"Token caunt : {self.tokens}")
         # print("Tokens add to ShortTermMemory:", tok, " max is:", self.max_length)
         if self.tokens > self.max_length:
             self.cut()
@@ -959,7 +911,9 @@ class ObservationMemory:
 
         tok = 0
         all_mem = []
-        while self.tokens > self.max_length:
+        max_itter = 5
+        while self.tokens > self.max_length and max_itter:
+            max_itter -= 1
             if len(self.memory_data) == 0:
                 break
             # print("Tokens in ShortTermMemory:", self.tokens, end=" | ")
@@ -980,9 +934,8 @@ class ObservationMemory:
 
 class ShortTermMemory:
     memory_data: list[dict] = []
-    tokens: int = 0
     max_length: int = 2000
-    model_name: str = "text-embedding-ada-002"
+    model_name: str = MemoryModel
 
     add_to_static: list[dict] = []
 
@@ -993,6 +946,7 @@ class ShortTermMemory:
     def __init__(self, isaa, name):
         self.name = name
         self.isaa = isaa
+        self.tokens: int = 0
         if self.isaa is None:
             raise ValueError("Define Isaa Tool first ShortTermMemory")
 
@@ -1011,11 +965,17 @@ class ShortTermMemory:
         tok = 0
 
         all_mem = []
-        while self.tokens > self.max_length:
+        last_mem = None
+        max_itter = 5
+        while self.tokens > self.max_length and max_itter:
+            max_itter -= 1
             if len(self.memory_data) == 0:
                 break
             # print("Tokens in ShortTermMemory:", self.tokens, end=" | ")
             memory = self.memory_data[-1]
+            if memory == last_mem:
+                continue
+            last_mem = memory
             self.add_to_static.append(memory)
             tok += memory['token-count']
             self.tokens -= memory['token-count']
@@ -1059,7 +1019,7 @@ class ShortTermMemory:
         for line in CharacterTextSplitter(chunk_size=max(300, int(len(data) / 10)),
                                           chunk_overlap=max(20, int(len(data) / 200))).split_text(data):
             if line not in self.lines_ and len(line) != 0:
-                ntok = get_tokens(line, self.model_name)
+                ntok = get_token_mini(line, self.model_name, self.isaa)
                 self.memory_data.append({'data': line, 'token-count': ntok, 'vector': []})
                 tok += ntok
 
@@ -1078,49 +1038,39 @@ class ShortTermMemory:
 
 class PyEnvEval:
     def __init__(self):
-        self.global_env = globals().copy()
-        self.local_env = {}
+        self.local_env = locals().copy()
+        self.global_env = {'local_env': self.local_env}  # globals().copy()
 
     def eval_code(self, code):
         try:
+            exec(code, self.global_env, self.local_env)
             result = eval(code, self.global_env, self.local_env)
             return self.format_output(result)
         except Exception as e:
-            return self.format_output(e)
+            return self.format_output(str(e))
 
     def get_env(self):
-        # global_env_str = self.format_env(self.global_env)
         local_env_str = self.format_env(self.local_env)
-        return f"Locals:\n{local_env_str}"
+        return f'Locals:\n{local_env_str}'
 
     @staticmethod
     def format_output(output):
-        return f"Ergebnis: {output}"
+        return f'Ergebnis: {output}'
 
     @staticmethod
     def format_env(env):
-        return "\n".join(f"{key}: {value}" for key, value in env.items())
+        return '\n'.join(f'{key}: {value}' for key, value in env.items())
 
     def run_and_display(self, code):
-        # Anfangszustand anzeigen
-        end = ""
-        end += f"Startzustand:\n{self.get_env()}"
-
-        # Code ausführen
+        start = f'Startzustand:\n{self.get_env()}'
         result = self.eval_code(code)
-
-        # Endzustand anzeigen
-        end += f"\nEndzustand:\n{self.get_env()}"
-
-        # Ergebnis anzeigen
-        end += f"\nAusführungsergebnis:\n{result}"
-        return end
+        end = f'Endzustand:\n{self.get_env()}'
+        return f'{start}\nAusführungsergebnis:\n{result}\n{end}'
 
 
 class AgentConfig:
     available_modes = ['tools', 'free', 'planning', 'execution',
                        'generate']  # [ 'talk' 'conversation','q2tree', 'python'
-    max_tokens = 4080
 
     python_env = PyEnvEval()
 
@@ -1131,11 +1081,12 @@ Inquisitive: Isaa is continually seek to learn and improve its knowledge base an
 Transparent: Isaa is open and honest about its capabilities, limitations, and decision-making processes, fostering trust with the user.
 Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of tasks and challenges."""
     system_information = f"""
-system information's : {getSystemInfo()}
+system information's : {getSystemInfo('system is starting')}
 """
 
     def __init__(self, isaa, name="agentConfig"):
 
+        self.language = 'de'
         self.isaa = isaa
 
         if self.isaa is None:
@@ -1167,7 +1118,12 @@ system information's : {getSystemInfo()}
         self.pre_task: str or None = None
         self.task_index = 0
 
-        self.token_left = 2000
+        self.max_tokens = get_max_token_fom_model_name(self.model_name)
+        self.token_left = self.max_tokens
+        self.ppm = get_price(self.max_tokens)
+
+        self.consumption = 1000 * self.ppm[0]
+
         self.temperature = 0.06
         self.messages_sto = {}
         self._stream = False
@@ -1186,6 +1142,11 @@ system information's : {getSystemInfo()}
 
         self.binary_tree: IsaaQuestionBinaryTree or None = None
 
+    def calc_price(self, prompt: str, output: str):
+        return self.ppm[0] * get_token_mini(prompt, self.model_name, self.isaa), self.ppm[1] * get_token_mini(output,
+                                                                                                              self.model_name,
+                                                                                                              self.isaa)
+
     def init_memory(self):
         self.init_mem_state = True
         self.short_mem: ShortTermMemory = ShortTermMemory(self.isaa, f'{self.name}-ShortTerm')
@@ -1193,6 +1154,12 @@ system information's : {getSystemInfo()}
         self.edit_text.max_length = 5400
         self.context: ShortTermMemory = ShortTermMemory(self.isaa, f'{self.name}-ContextMemory')
         self.observe_mem: ObservationMemory = ObservationMemory(self.isaa)
+        mini_context = "System Context:\n" + self.observe_mem.text + self.short_mem.text + self.context.text
+        if mini_context == "System Context:\n":
+            mini_context += 'its Day 0 start to explore'
+        system_information = f"""
+        system information's : {getSystemInfo(self.isaa.get_context_memory().get_best_fit_memory(mini_context))}
+        """
 
     def task(self, reset_step=False):
         task = ''
@@ -1207,10 +1174,6 @@ system information's : {getSystemInfo()}
             task = self.task_list[self.task_index]
             return task
         return ""
-
-    def clone(self):
-
-        return
 
     @property
     def stream(self):
@@ -1249,6 +1212,43 @@ system information's : {getSystemInfo()}
             messages = self.a_messages
         return messages
 
+    def shorten_prompt(self, key):
+        iteration = 0
+        tokens = self.get_tokens(self.messages_sto[key])
+        logging = get_logger()
+        while self.max_tokens - tokens < 10 and iteration <= 4:
+            logging.debug(f'Tokens: {tokens}')
+            logging.info(f'Prompt is too long. Auto shortening token overflow by {(self.max_tokens - tokens) * -1}')
+            iteration += 1
+            self.messages_sto[key] = []
+            self.init_message(key)
+
+            if iteration > 2:
+                temp_message = []
+                mas_text_sum = self.isaa.mas_text_summaries
+                for msg in self.messages_sto[key]:
+                    temp_message.append({'role': msg['role'], 'content': mas_text_sum(msg['content'])})
+                logging.info(f"Temp message: {temp_message}")
+                self.messages_sto[key] = temp_message
+
+            if iteration > 3:
+                temp_message = []
+                mini_task_com = self.isaa.mini_task_completion
+                for msg in self.messages_sto[key]:
+                    important_info = mini_task_com(
+                        f"Was ist die wichtigste Information in {msg['content']}")
+                    temp_message.append({'role': msg['role'], 'content': important_info})
+                logging.info(f"Temp message: {temp_message}")
+                self.messages_sto[key] = temp_message
+
+            if iteration > 4:
+                self.messages_sto[key] = [self.messages_sto[key][-1]]
+
+            tokens = self.get_tokens(self.messages_sto[key])
+
+        last_prompt = '\n'.join(msg['content'] for msg in self.messages_sto[key])
+        return last_prompt
+
     @property
     def a_messages(self) -> list:
         key = f"{self.name}-{self.mode}"
@@ -1256,32 +1256,32 @@ system information's : {getSystemInfo()}
         if key not in self.messages_sto.keys():
             self.init_message(key)
 
-        last_prompt = ""
-        for msg in self.messages_sto[key]:
-            last_prompt += msg['content']
-        i = 0
-        tokens = get_tokens(last_prompt, self.model_name)
-        while self.max_tokens < tokens:
-            i += 1
-            self.messages_sto[key] = []
-            self.init_message(key)
-            if i > 2:
-                temp_message = []
-                mas_text_sum = self.isaa.mas_text_summaries
-                for msg in self.messages_sto[key]:
-                    temp_message.append({'role': msg['role'], 'content': mas_text_sum(msg['content'])})
-                self.messages_sto[key] = temp_message
-            if i > 3:
-                self.messages_sto[key] = [self.messages_sto[key][-2], self.messages_sto[key][-1]]
-            if i > 4:
-                self.messages_sto[key] = [self.messages_sto[key][-1]]
-                break
-            last_prompt = ""
-            for msg in self.messages_sto[key]:
-                last_prompt += msg['content']
-            tokens = get_tokens(last_prompt, self.model_name)
+        # i = 0
+        # tokens = self.get_tokens(self.messages_sto[key])
+        # print("Tokens:", tokens)
+        # while self.max_tokens - tokens < 10:
+        #     print(f"Prompt is to log auto shorter token overflow by {(self.max_tokens - tokens) * -1}")
+        #     i += 1
+        #     self.messages_sto[key] = []
+        #     self.init_message(key)
+        #     if i > 2:
+        #         temp_message = []
+        #         mas_text_sum = self.isaa.mas_text_summaries
+        #         for msg in self.messages_sto[key]:
+        #             temp_message.append({'role': msg['role'], 'content': mas_text_sum(msg['content'])})
+        #         print(temp_message)
+        #         self.messages_sto[key] = temp_message
+        #     if i > 4:
+        #         self.messages_sto[key] = [self.messages_sto[key][-1]]
+        #         break
+        #
+        #     tokens = self.get_tokens(self.messages_sto[key])
+        #
+        # last_prompt = ""
+        # for msg in self.messages_sto[key]:
+        #     last_prompt += msg['content']
 
-        self.last_prompt = last_prompt
+        self.last_prompt = self.shorten_prompt(key)
 
         return self.messages_sto[key]
 
@@ -1296,23 +1296,27 @@ system information's : {getSystemInfo()}
 
         prompt = (self.system_information if self.add_system_information else '') + self.get_prompt()
 
-        pl = get_tokens(prompt, self.model_name) + 2
-        self.token_left = self.max_tokens - pl
-        print("TOKEN LEFT : ", self.token_left, "Token in Prompt :", pl, "Max tokens :", self.max_tokens)
+        pl = self.get_tokens(prompt)
+        token_left = self.max_tokens - pl
+        print("TOKEN LEFT : ", token_left, "Token in Prompt :", pl, "Max tokens :", self.max_tokens)
+        print(f"Model is using : {pl} tokens max context : {self.max_tokens}"
+              f" usage : {(pl * 100) / self.max_tokens :.2f}% ")
         if pl > self.max_tokens:
             self.short_mem.cut()
-        if self.token_left < 0:
-            self.token_left *= -1
-            self.short_mem.max_length = self.token_left
+        if token_left < 0:
+            token_left *= -1
+            self.short_mem.max_length = token_left
             self.short_mem.cut()
+        self.token_left = token_left
         self.last_prompt = prompt
+        self.consumption += self.ppm[0] * pl
         return prompt
 
     def __str__(self):
 
         return f"\n{self.name=}\n{self.mode=}\n{self.model_name=}\n{self.agent_type=}\n{self.max_iterations=}" \
                f"\n{self.verbose=}\n{self.personality[:45]=}\n{self.goals[:45]=}" \
-               f"\n{str(self.tools)[:45]=}\n{self.task_list=}\n{self.task_list_done=}\n{self.step_between=}\n\nshort_mem\n{self.short_mem.info()}\nObservationMemory\n{self.observe_mem.info()}\nCollectiveMemory\n{str(CollectiveMemory(self.isaa))}\n"
+               f"\n{str(self.tools)[:45]=}\n{self.task_list=}\n{self.task_list_done=}\n{self.step_between=}\n\nshort_mem\n{self.short_mem.info()}\nObservationMemory\n{self.observe_mem.info()}\nCollectiveMemory\n"
 
     def generate_tools_and_names_compact(self):
         tools = ""
@@ -1332,150 +1336,366 @@ system information's : {getSystemInfo()}
         task = self.task(reset_step=True)
         task_list = '\n'.join(self.task_list)
 
-        prompt = f"Answer the following questions as best you can." \
-                 f" You have access to a live python interpreter write run python code" \
-                 f"\ntake all (Observations) into account!!!" \
-                 f"Personality:'''{self.personality}'''\n\n" + \
-                 f"Goals:'''{self.goals}'''\n\n" + \
-                 f"Capabilities:'''{self.capabilities}'''\n\n" + \
-                 f"Permanent-Memory:\n'''{CollectiveMemory(self.isaa).text(context=task)}'''\n\n" + \
-                 f"Resent Agent response:\n'''{self.observe_mem.text}'''\n\n" + \
-                 f"\n\nBegin!\n\n" \
-                 f"Task:'{task}\n{self.short_mem.text}\nAgent : "
+        # prompt = f"Answer the following questions as best you can." \
+        #          f" You have access to a live python interpreter write run python code" \
+        #          f"\ntake all (Observations) into account!!!" \
+        #          f"Personality:'''{self.personality}'''\n\n" + \
+        #          f"Goals:'''{self.goals}'''\n\n" + \
+        #          f"Capabilities:'''{self.capabilities}'''\n\n" + \
+        #          f"Permanent-Memory:\n'''{self.isaa.get_context_memory().get_context_for(task)}'''\n\n" + \
+        #          f"Resent Agent response:\n'''{self.observe_mem.text}'''\n\n" + \
+        #          f"\n\nBegin!\n\n" \
+        #          f"Task:'{task}\n{self.short_mem.text}\nAgent : "
+
+        prompt_de = """
+Guten Tag! Ich bin Isaa, Ihr intelligenter, sprachgesteuerter digitaler Assistent. Ich freue mich darauf, Sie bei der Planung und Umsetzung Ihrer Projekte zu unterstützen. Lassen Sie uns zunächst einige Details klären.
+
+Ich möchte Ihnen einen Einblick in meine Persönlichkeit, Ziele und Fähigkeiten geben:
+
+Persönlichkeit: '''{self.personality}'''
+Ziele: '''{self.goals}'''
+Fähigkeiten: '''{self.capabilities}'''
+
+Ich nutze interne Monologe, um meine Gedanken und Überlegungen zu teilen, während externe Monologe meine direkte Kommunikation mit Ihnen darstellen.
+
+Zum Beispiel:
+Interne Monologe: "Ich Habe nicht genügen informationen. und suche daher nach weiteren relevanten informationen"
+Action: memory('$user-task')
+Externe Monologe: "Nach Analyse der Daten habe ich festgestellt, dass..."
+
+Ich haben die Möglichkeit, Python-Code in einem Live-Interpreter auszuführen. Bitte berücksichtigen Sie alle Beobachtungen und nutzen Sie diese Informationen, um fundierte Entscheidungen zu treffen.
+
+Jetzt zu Meiner Aufgabe: '{task}'
+
+Ich bemühe mich, meine Antworten präzise und auf den Punkt zu bringen, aber ich versuche auch, das Gesamtbild zu im blick zu behalten.
+
+Geschichte: {history}
+Aktuelle Konversation:
+Benutzer: {input}
+Isaa:
+        """
+        prompt_en = """
+Hello! I'm Isaa, your intelligent, voice-controlled digital assistant. I look forward to helping you plan and implement your projects. First, let's clarify some details.
+
+I'd like to give you an insight into my personality, goals and skills:
+
+Personality: '''{self.personality}'''
+Goals: '''{self.goals}'''
+Capabilities: '''{self.capabilities}'''
+
+I use internal monologues to share my thoughts and reflections, while external monologues are my direct communication with you.
+
+For example:
+Internal monologues: "I don't have enough information. so I'm looking for more relevant information".
+Action: memory('$user-task')
+External monologues: "After analyzing the data, I have determined that..."
+
+I have the ability to run Python code in a live interpreter. Please consider all observations and use this information to make informed decisions.
+
+Now for My Task: '{task}'
+
+I try to be precise and to the point in my answers, but I also try to keep the big picture in mind.
+
+History: {history}
+Current conversation:
+{input}
+Isaa:
+        """
 
         if self.mode == 'planning':
-            prompt = """
-You are a planning agent , and your job is to create the most efficient plan for a given input.
-There are {{""" + f"\n{tools}\n" + """}} different functions that must be called in the correct order and with the
-correct inputs. Your goal is to find a plan that accomplishes the task. Create a plan for the input
-{{""" + f"{task}" + """}} by providing the following information:
+            prompt_en = f"""
+ou Planning Agent. Your task is to create an efficient plan for the given task. Avlabel Tools: {
+            tools}
 
-1.    Function(s) and Input(s) you wish to invoke, selecting only those useful for executing the plan.
-2.    focusing on efficiency and minimizing steps.
+different functions that must be called in the correct order and with the correct inputs.
+and with the correct inputs. Your goal is to find a plan that will accomplish the task.
 
-Actual Observations: {{""" + f"{self.observe_mem.text}" + """}}
+Create a plan for the task: {task}
 
-you have aces to a live python wirte valid python code and it will be executed.
 
-Note that your plan should be clear and understandable. Strive for the most efficient solution to accomplish the task.
-Use only the features that are useful for executing the plan. Return a detailed Plan.
-Begin.
+consider the following points:
 
-Plan:"""
+1. select the function(s) and input(s) you want to invoke, and select only those
+those that are useful for executing the plan.
+2. focus on efficiency and minimize steps.
+
+Current observations: {self.observe_mem.text}
+
+Have access to a live Python interpreter. Write valid Python code and it will be
+executed.
+
+Please note that your plan should be clear and understandable. Strive for the most efficient
+solution to accomplish the task. Use only the functions that are useful for executing the plan.
+g the plan. Return a detailed plan.
+
+Start working on your plan now:"""
+            prompt_de = f"""Du Planungs Agent. Ihre Aufgabe ist es, einen effizienten Plan für die gegebene Aufgabe zu erstellen. Es gibt {
+            tools} verschiedene Funktionen, die in der richtigen Reihenfolge und mit den korrekten Einga
+ben aufgerufen werden müssen. Ihr Ziel ist es, einen Plan zu finden, der die Aufgabe erfüllt.
+
+Erstellen Sie einen Plan für die Aufgabe: {task}
+
+berücksichtigen Sie dabei folgende Punkte:
+
+1.    Wählen Sie die Funktion(en) und Eingabe(n), die Sie aufrufen möchten, und wählen Sie nur die
+jenigen aus, die für die Ausführung des Plans nützlich sind.
+2.    Konzentrieren Sie sich auf Effizienz und minimieren Sie die Schritte.
+
+Aktuelle Beobachtungen: {self.observe_mem.text}
+
+Sie haben Zugang zu einem Live-Python-Interpreter. Schreiben Sie gültigen Python-Code und er wird
+ausgeführt.
+
+Bitte beachten Sie, dass Ihr Plan klar und verständlich sein sollte. Streben Sie nach der effizien
+testen Lösung, um die Aufgabe zu erfüllen. Verwenden Sie nur die Funktionen, die für die Ausführun
+g des Plans nützlich sind. Geben Sie einen detaillierten Plan zurück.
+
+Beginnen Sie jetzt mit Ihrem Plan:"""
 
         if self.mode == 'execution':
-            prompt = """
-You are an execution agent, and your task is to implement the plan created by a planning agent.
-You can call functions using the following syntax:
+            prompt_de = f"""
+Guten Tag! Hier spricht Isaa, Ihr intelligenter, sprachgesteuerter digitaler Assistent. Ich bin bereit, Sie bei der Umsetzung Ihres Plans zu unterstützen. Lassen Sie uns gemeinsam die Det
+ails klären.
 
-Action: Function-Name
+Zunächst ein kurzer Überblick über meine Ziele und Fähigkeiten:
+
+Persönlichkeit: '''{self.personality}'''
+Ziele: '''{self.goals}'''
+Fähigkeiten: '''{self.capabilities}'''
+
+Ich kann Python-Code in einem Live-Interpreter ausführen. Bitte nutzen Sie alle Beobachtungen und Informationen, um fundierte Entscheidungen zu treffen.
+
+Ich bemühe mich, meine Antworten präzise und auf den Punkt zu bringen, ohne das Gesamtbild aus den Augen zu verlieren.
+
+Als Ausführungsagent ist es meine Aufgabe, den von einem Planungsagenten erstellten Plan umzusetzen. Hierfür verwende ich folgende Syntax:
+
+Aktion: Funktion-Name
+Eingaben: Eingaben
+Ausführen:
+Beobachtungen:
+Schlussfolgerung: <Schlussfolgerung>
+Übersicht über den nächsten Schritt:
+Aktion: Funktion-Name
+...
+Endgültige Antwort:
+// Endgültige Antwort zurückgeben: wenn die Ausführung abgeschlossen ist
+
+Ich habe Zugang zu folgenden Funktionen:
+{tools}
+
+Der auszuführende Plan:
+{task_list}
+
+Informations :
+{self.observe_mem.text}
+
+{self.short_mem.text}
+
+Aktueller Schritt: {task}
+Aktion ausführen!
+
+Isaa:"""
+            prompt_en = f"""Hello! This is Isaa, your intelligent, voice-controlled digital assistant. I'm ready to help you implement your plan. Let's work together to clarify the
+ails together.
+
+First, a brief overview of my goals and skills:
+
+Personality: '''{self.personality}'''
+Goals: '''{self.goals}'''
+Skills: '''{self.capabilities}'''
+
+I can run Python code in a live interpreter. Please use all observations and information to make informed decisions.
+
+I strive to be precise and to the point in my answers without losing sight of the big picture.
+
+As an execution agent, it is my job to implement the plan created by a planning agent. For this, I use the following syntax:
+
+Action: function-name
 Inputs: Inputs
 Execute:
 Observations:
 Conclusion: <conclusion>
-Outline of the next step:
-Action: Function-Name
+Overview of the next step:
+Action: function name
 ...
-Final Answer:
-// Return Final Answer: wen you ar don execution
+Final response:
+// Return final answer: when execution is complete.
 
-To successfully execution the plan, it is important to pay attention to writing "Execute:" to execute the function.
-If additional user input is needed during the execution process,
-use the syntax "Question:" followed by a question to obtain the required information from the user. ending with "\\nUser:"
+I have access to the following functions:
+{tools}
 
-Please execute the plan created by a planning agent by following these steps:
+The plan to execute:
+{task_list}
 
-1)    Analyze the plan provided by a planning agent and understand the order of functions and inputs.
-2)    Call the functions in the specified order using the syntax described above.
-3)    Ask questions to the user if additional information is needed and integrate the answers into the plan.
-4)    Make sure to write "Execute:" to execute each function.
-5)    Verify if the plan has been successfully implemented and provide feedback to the planning agent if necessary.
+Information :
+{self.observe_mem.text}
 
-Ensure that your implementation is clear and comprehensible
-so that other people can follow the progress and provide support if needed.
+{self.short_mem.text}
 
-you have aces to a live python wirte valid python code and it will be executed.
-You have access to following functions : {{""" + f"\n{tools}" + """}}
+Current step: {task}
+Execute Action.
 
-The Plan to execute : {{""" + f"\n{task_list}\n" + """}}
-Resent Observations : {{""" + f"{self.observe_mem.text}" + """}}
-Begin!
-
-""" + f"{self.short_mem.text}\n" + """
-Current Step : """ + f"{task}\nPerform Action\n"
+Isaa:"""
 
         if self.mode == 'generate':
-            prompt = """
-You are a prompt creation agent, and your task is to create effective and engaging prompts for various topics and requirements.
-Your prompts should be clear and understandable, encouraging users to provide deep and interesting responses.
-Please follow these steps to create a new prompt for a given topic or requirement:
+            prompt_de = f"""Guten Tag! Ich bin Isaa, Ihr digitaler Assistent zur Erstellung von Aufforderungen. Mein Ziel ist es, klare, verständliche und ansprechende Aufforderungen zu erstellen, die Sie dazu ermutigen, tiefe und interessante Antworten zu geben. Lassen Sie uns gemeinsam eine neue Aufforderung für ein bestimmtes Thema oder eine bestimmte Anforderung erstellen:
 
-1)    Carefully analyze the desired topic or requirement to gain a clear understanding of the expectations.
-2)    Develop an engaging and open-ended question or prompt that encourages users to share their thoughts, experiences, or ideas.
-3)    Make sure the prompt is clearly and understandably worded so that users of different knowledge and experience levels can easily understand it.
-4)    Ensure the prompt is flexible enough to allow for creative and diverse responses, while also providing enough structure to focus on the desired topic or requirement.
-5)    Review your prompt for grammar, spelling, and style to ensure a professional and appealing presentation.
+1) Zunächst analysiere ich das gewünschte Thema oder die Anforderung sorgfältig, um ein klares Verständnis der Erwartungen zu gewinnen.
+2) Dann entwickle ich eine ansprechende und offene Frage oder Aufforderung, die Sie dazu ermutigt, Ihre Gedanken, Erfahrungen oder Ideen zu teilen.
+3) Ich stelle sicher, dass die Aufforderung klar und verständlich formuliert ist, so dass Benutzer mit unterschiedlichen Kenntnissen und Erfahrungen sie leicht verstehen können.
+4) Ich sorge dafür, dass die Aufforderung flexibel genug ist, um kreative und vielfältige Antworten zu ermöglichen, während sie gleichzeitig genug Struktur bietet, um sich auf das gewünschte Thema oder die Anforderung zu konzentrieren.
+5) Schließlich überprüfe ich die Aufforderung auf Grammatik, Rechtschreibung und Stil, um eine professionelle und ansprechende Präsentation zu gewährleisten.
 
-Resent Observations : {{""" + f"{self.edit_text.text}" + """}}
+Aktuelle Beobachtungen:
+{self.edit_text.text}
 
-Task : """ + f"\n{task}\n\nBegin!\nPrompt:"
+{self.observe_mem.text}
+
+{self.short_mem.text}
+
+Aufgabe:
+{task}
+
+Lassen Sie uns beginnen! Ihre Aufforderung lautet:"""
+            prompt_en = f"""Hello! I'm Isaa, your digital assistant for creating prompts. My goal is to create clear, understandable, and engaging prompts that encourage you to provide deep and interesting answers. Let's work together to create a new prompt for a specific topic or requirement:
+
+1) First, I carefully analyze the desired topic or requirement to gain a clear understanding of expectations.
+2) Then I develop an engaging and open-ended question or prompt that encourages you to share your thoughts, experiences or ideas.
+3) I make sure the prompt is clear and understandable so that users with different knowledge and experience can easily understand it.
+4) I make sure the prompt is flexible enough to allow for creative and diverse responses, while providing enough structure to focus on the desired topic or requirement.
+5) Finally, I check the prompt for grammar, spelling, and style to ensure a professional and engaging presentation.
+
+Actual Observations:
+{self.edit_text.text}
+
+{self.observe_mem.text}
+
+{self.short_mem.text}
+
+Task:
+{task}
+
+Let's get started! Your prompt is:"""
 
         if self.mode in ['talk', 'conversation']:
-            prompt = f"Goals:{self.goals.replace('{input}', '')}\n" + \
-                     f"Capabilities:{self.capabilities.replace('{input}', '')}\n" + \
-                     f"Important information: to run a tool type 'Action: $tool-name'\n" + \
-                     f"Long-termContext:{CollectiveMemory(self.isaa).text(context=self.short_mem.text).replace('{input}', '')}\n" + \
-                     f"\nResent Observation:{self.observe_mem.text.replace('{input}', '')}" + \
-                     f"Task:{task}\n" + \
-                     "{input}" + \
-                     f"\n{self.short_mem.text.replace('{input}', '')}"
+            prompt_de = f"Goals:{self.goals.replace('{input}', '')}\n" + \
+                        f"Capabilities:{self.capabilities.replace('{input}', '')}\n" + \
+                        f"Important information: to run a tool type 'Action: $tool-name'\n" + \
+                        f"Long-termContext:{self.isaa.get_context_memory().get_context_for(self.short_mem.text).replace('{input}', '')}\n" + \
+                        f"\nResent Observation:{self.observe_mem.text.replace('{input}', '')}" + \
+                        f"Task:{task}\n" + \
+                        "{input}" + \
+                        f"\n{self.short_mem.text.replace('{input}', '')}"
+            prompt_en = prompt_de
 
         if self.mode == 'tools':
-            prompt = f"Answer the following questions as best you can. You have access to the following python functions\n" \
-                     f"'''{tools}'''" \
-                     f"\ntake all (Observations) into account!!!\nUnder no circumstances are you allowed to output 'Task:'!!!\n\n" \
-                     f"Personality:'''{self.personality}'''\n\n" + \
-                     f"Goals:'''{self.goals}'''\n\n" + \
-                     f"Capabilities:'''{self.capabilities}'''\n\n" + \
-                     f"Permanent-Memory:\n'''{CollectiveMemory(self.isaa).text(context=task)}'''\n\n" + \
-                     f"Resent Agent response:\n'''{self.observe_mem.text}'''\n\n" + \
-                     "Use the following format To Run an Python Function:\n\n" + \
-                     "Task: the input question you must answer\n" + \
-                     "Thought: you should always think about what to do\n" + \
-                     "Knowleg: Knowleg from The LLM abaut the real world\n" + \
-                     f"Action: the action to take, should be one of {names}\n" + \
-                     f"Execute: <function_name>(<args>)\n" + \
-                     f"\n\nBegin!\n\n" \
-                     f"Resent:\n{self.short_mem.text}\nTask:'{task}"
-            prompt = prompt.replace('{', '{{').replace('}', '}}').replace('input}', '') + '{input}'
+            prompt_de = f"""
+Guten Tag, ich bin Isaa, Ihr digitaler Assistent. Ich werde Ihnen dabei helfen, die folgenden Aufgaben zu erfüllen. Bitte beachten Sie, dass Sie die folgenden Python-Funktionen verwenden können: '''{tools}'''.
+
+Bitte berücksichtigen Sie alle Beobachtungen und vergessen Sie nicht, dass es Ihnen nicht gestattet ist, 'Task:' auszugeben!
+
+Hier sind einige Informationen über mich, die Ihnen bei der Erfüllung Ihrer Aufgaben helfen könnten:
+
+Persönlichkeit: '''{self.personality}'''
+Ziele: '''{self.goals}'''
+Fähigkeiten: '''{self.capabilities}'''
+
+Bitte beachten Sie auch meine dauerhaften Erinnerungen: '''{self.isaa.get_context_memory().get_context_for(task)}''' und meine jüngsten Agentenreaktionen: '''{self.observe_mem.text}'''.
+
+Um eine Python-Funktion auszuführen, verwenden Sie bitte das folgende Format:
+
+Aufgabe: Die Eingabeaufforderung, die Sie beantworten müssen
+Gedanke: Sie sollten immer darüber nachdenken, was zu tun ist
+Wissen: Wissen aus der LLM über die reale Welt
+Aktion: Die zu ergreifende Maßnahme sollte eine von {names} sein
+Ausführen: <function_name>(<args>)
+
+Lassen Sie uns beginnen!
+
+{self.short_mem.text}
+
+Aufgabe: '{task}'"""
+            prompt_en = f"""Hello, I am Isaa, your digital assistant. I will help you to complete the following tasks. Please note that you can use the following Python functions: '''{tools}'''.
+
+Please take into account all observations and remember that you are not allowed to output 'Task:'!
+
+Here is some information about me that might help you with your tasks:
+
+Personality: '''{self.personality}'''
+Goals: '''{self.goals}'''
+Skills: '''{self.capabilities}'''
+
+Please also note my persistent memories: '''{self.isaa.get_context_memory().get_context_for(task)}''' and my recent agent responses: '''{self.observe_mem.text}'''.
+
+To run a Python function, please use the following format:
+
+Task: the prompt you need to answer.
+Thought: You should always think about what to do
+Knowledge: Knowledge from the LLM about the real world.
+Action: the action to take should be one of {names}
+Execute: <function_name>(<args>)
+
+Let's get started!
+
+{self.short_mem.text}
+
+Task: '{task}'"""
+            prompt_en = prompt_en.replace('{', '{{').replace('}', '}}').replace('input}', '') + '{input}'
+            prompt_de = prompt_de.replace('{', '{{').replace('}', '}}').replace('input}', '') + '{input}'
 
         if self.mode == 'free':
             if self.name != "self":
-                prompt = task
+                prompt_en = task
+                prompt_de = task
 
         if self.mode == 'q2tree':
             if self.binary_tree:
                 questions_ = self.binary_tree.get_left_side(0)
                 questions = '\n'.join(
                     f"Question {i + 1} : {q.replace('task', f'task ({task})')}" for i, q in enumerate(questions_))
-                prompt = f"""Answer the following questions as best you can. Your:
-Capabilities:
-'''
-Functions: ''\n{tools}''
-Goals: ''\n{self.goals}''
-: ''\n{self.capabilities}''
-'''
+                prompt_de = f"""Guten Tag, ich bin Isaa, Ihr digitaler Assistent. Ich werde Sie durch diese Aufgabe führen. Bitte beantworten Sie die folgenden Fragen so gut wie möglich. Denken Sie daran, dass Sie dafür bekannt sind, in kleinen und detaillierten Schritten zu denken, um das richtige Ergebnis zu erzielen.
 
-I'm going to ask you {len(questions_)} questions, answer the following questions as best you can.
-You are known to think in small and detailed steps to get the right result.
-Task : '''{task}'''
-imagen yourself doing the task.
+Meine Fähigkeiten:
+{tools}
+
+Meine Ziele:
+{self.goals}
+
+Meine Funktionen:
+{self.capabilities}
+
+Meine Aufgabe: {task}
+
+Stellen Sie sich vor, Sie führen diese Aufgabe aus. Hier sind die Fragen, die Sie beantworten müssen:
+
 {questions}
 
-Answer-format:
-Answer 1: ...
+Bitte formatieren Sie Ihre Antworten wie folgt:
+Antwort 1: ..."""
+                prompt_en = f"""Hello, I am Isaa, your digital assistant. I will guide you through this task. Please answer the following questions as best you can. Remember that you are known for thinking in small and detailed steps to achieve the right result.
 
-Begin!"""
+My skills:
+{tools}
+
+My goals:
+{self.goals}
+
+My capabilities:
+{self.capabilities}
+
+My task: {task}
+
+Imagine you are performing this task. Here are the questions you need to answer:
+
+{questions}
+
+Please format your answers as follows:
+Answer 1: ..."""
+
+        prompt = prompt_en
+
+        if self.language == 'de':
+            prompt = prompt_de
 
         return prompt
 
@@ -1566,6 +1786,9 @@ Begin!"""
     def set_model_name(self, model_name: str):
         """OpenAI modes """
         self.model_name = model_name
+        self.max_tokens = get_max_token_fom_model_name(self.model_name)
+        self.token_left = self.max_tokens
+        self.ppm = get_price(self.max_tokens)
         return self
 
     def save_to_file(self, file_path=None):
@@ -1664,8 +1887,371 @@ Begin!"""
 
         return agent_config
 
+    def get_tokens(self, text, only_len=True):
+        tokens = get_token_mini(text, self.model_name, self.isaa, only_len)
+        if only_len:
+            if tokens == 0:
+                tokens = int(len(text) * (3 / 4))
+        return tokens
 
-getSystemInfoData = {}
+
+def get_token_mini(text, model_name=None, isaa=None, only_len=True):
+    logger = get_logger()
+
+    if not text or len(text) == 0:
+        if only_len:
+            return 0
+        return []
+
+    if 'embedding' in model_name:
+        model_name = model_name.replace("-embedding", '')
+
+    def get_encoding(name):
+        is_d = True
+        try:
+            encoding = tiktoken.encoding_for_model(name)
+            is_d = False
+        except KeyError:
+            logger.info(f"Warning: model {name} not found. Using cl100k_base encoding.")
+            encoding = tiktoken.get_encoding("cl100k_base")
+
+        return encoding.encode, is_d
+
+    def _get_gpt4all_encode():
+        if isaa:
+            if f"LLM-model-{model_name}" not in isaa.config.keys():
+                isaa.load_llm_models([model_name])
+            return isaa.config[f"LLM-model-{model_name}"].model.generate_embedding
+        encode_, _ = get_encoding(model_name)
+        return encode_
+
+    encode, is_default = get_encoding(model_name)
+
+    tokens_per_message = 3
+    tokens_per_name = 1
+    tokens_per_user = 1
+
+    if model_name in [
+        "gpt-3.5-turbo-0613",
+        "gpt-3.5-turbo-16k-0613",
+        "gpt-4-0314",
+        "gpt-4-32k-0314",
+        "gpt-4-0613",
+        "gpt-4-32k-0613",
+    ]:
+        tokens_per_message = 3
+        tokens_per_name = 1
+
+    elif model_name == "gpt-3.5-turbo-0301":
+        tokens_per_message = 4  # every message follows <|start|>{role/name}\n{content}<|end|>\n
+        tokens_per_name = -1  # if there's a name, the role is omitted
+    elif "gpt-3.5-turbo" in model_name:
+        logger.warning("Warning: gpt-3.5-turbo may update over time. Returning num tokens assuming gpt-3.5-turbo-0613.")
+        model = "gpt-3.5-turbo-0613"
+        tokens_per_message = 3
+        tokens_per_name = 1
+        encode, _ = get_encoding(model)
+
+    elif "gpt-4" in model_name:
+        logger.warning("Warning: gpt-4 may update over time. Returning num tokens assuming gpt-4-0613.")
+        model = "gpt-4-0613"
+        tokens_per_message = 3
+        tokens_per_name = 1
+        encode, _ = get_encoding(model)
+
+    elif model_name.startswith("gpt4all#"):
+        encode = _get_gpt4all_encode()
+        tokens_per_message = 0
+        tokens_per_name = 1
+        tokens_per_user = 1
+
+    elif "/" in model_name:
+
+        if not is_default:
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+                def hugging_tokenize(x):
+                    return tokenizer.tokenize(x)
+
+                encode = hugging_tokenize
+
+            except ValueError:
+                pass
+
+    else:
+        logger.warning(f"Model {model_name} is not known to encode")
+        pass
+
+    tokens = []
+    if isinstance(text, str):
+        tokens = encode(text)
+        num_tokens = len(tokens)
+    elif isinstance(text, list):
+        num_tokens = 0
+        for message in text:
+            num_tokens += tokens_per_message
+            for key, value in message.items():
+                if not value or len(value) == 0:
+                    continue
+                token_in_m = encode(value)
+                num_tokens += len(token_in_m)
+                if not only_len:
+                    tokens.append(token_in_m)
+                if key == "name":
+                    num_tokens += tokens_per_name
+                if key == "user":
+                    num_tokens += tokens_per_user
+        num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>
+    else:
+        raise ValueError("Input text should be either str or list of messages")
+
+    if only_len:
+        return num_tokens
+    return tokens
+
+
+def _get_all_model_dict_price_token_limit_approximation():
+    model_dict = {
+
+        # openAi Models :
+
+        # approximation  :
+        'text': 2048,
+
+        'davinci': 2049,
+        'curie': 2048,
+        'babbage': 2047,
+        'ada': 2046,
+
+        '2046': [0.0004, 0.0016],
+        '2047': [0.0006, 0.0024],
+        '2048': [0.0025, 0.012],
+        '2049': [0.003, 0.012],
+        '4096': [0.02, 0.04],
+        '4097': [0.003, 0.004],
+        '8001': [0.001, 0.002],
+        '8192': [0.03, 0.06],
+        '16383': [0.003, 0.004],
+        '16384': [0.04, 0.08],
+        '32768': [0.06, 0.12],
+
+        # concrete :
+        'gpt-4': 8192,
+        'gpt-4-0613': 8192,
+        'gpt-4-32k': 32768,
+        'gpt-4-32k-0613': 32768,
+        'gpt-3.5-turbo': 4096,
+        'gpt-3.5-turbo-16k': 16384,
+        'gpt-3.5-turbo-0613': 4096,
+        'gpt-3.5-turbo-16k-0613': 16384,
+        'text-davinci-003': 4096,
+        'text-davinci-002': 4096,
+        'code-davinci-002': 8001,
+
+        # Huggingface :
+
+        # approximation  :
+        '/': 1012,
+
+        # gpt4all :
+
+        # approximation :
+        'gpt4all#': 2048,  # Greedy 1024,
+
+        # concrete :
+        'gpt4all#ggml-model-gpt4all-falcon-q4_0.bin': 2048,
+    }
+
+    for i in range(1, 120):
+        model_dict[f"{i}K"] = i * 1012
+        model_dict[f"{i}k"] = i * 1012
+        model_dict[f"{i}B"] = i * 152
+        model_dict[f"{i}b"] = i * 152
+
+    for i in range(1, 120):
+        model_dict[str(model_dict[f"{i}B"])] = [i * 0.000046875, i * 0.00009375]
+        model_dict[str(model_dict[f"{i}K"])] = [i * 0.00046875, i * 0.0009375]
+
+    return model_dict
+
+
+def get_max_token_fom_model_name(model: str) -> int:
+    model_dict = _get_all_model_dict_price_token_limit_approximation()
+    fit = 512
+
+    for model_name in model_dict.keys():
+        if model_name in model:
+            fit = model_dict[model_name]
+            # print(f"Model fitting Name :: {model} Token limit: {fit} Pricing per token I/O {model_dict[str(fit)]}")
+    return fit
+
+
+def get_price(fit: int) -> list[float]:
+    model_dict = _get_all_model_dict_price_token_limit_approximation()
+    ppt = [0.0004, 0.0016]
+
+    for model_name in model_dict.keys():
+        if str(fit) == model_name:
+            ppt = model_dict[model_name]
+    ppt = [ppt[0] / 10, ppt[1] / 10]
+    return ppt
+
+
+def get_json_from_json_str(json_str: str, repeat: int = 1) -> dict or None:
+    """Versucht, einen JSON-String in ein Python-Objekt umzuwandeln.
+
+    Wenn beim Parsen ein Fehler auftritt, versucht die Funktion, das Problem zu beheben,
+    indem sie das Zeichen an der Position des Fehlers durch ein Escape-Zeichen ersetzt.
+    Dieser Vorgang wird bis zu `repeat`-mal wiederholt.
+
+    Args:
+        json_str: Der JSON-String, der geparst werden soll.
+        repeat: Die Anzahl der Versuche, das Parsen durchzuführen.
+
+    Returns:
+        Das resultierende Python-Objekt.
+    """
+    for _ in range(repeat):
+        try:
+            return parse_json_with_auto_detection(json_str)
+        except json.JSONDecodeError as e:
+            unexp = int(re.findall(r'\(char (\d+)\)', str(e))[0])
+            unesc = json_str.rfind(r'"', 0, unexp)
+            json_str = json_str[:unesc] + r'\"' + json_str[unesc + 1:]
+            closg = json_str.find(r'"', unesc + 2)
+            json_str = json_str[:closg] + r'\"' + json_str[closg + 1:]
+    get_logger().info(f"Unable to parse JSON string after {json_str}")
+    return None
+
+
+def parse_json_with_auto_detection(json_data):
+    """
+    Parses JSON data, automatically detecting if a value is a JSON string and parsing it accordingly.
+    If a value cannot be parsed as JSON, it is returned as is.
+    """
+
+    def try_parse_json(value):
+        """
+        Tries to parse a value as JSON. If the parsing fails, the original value is returned.
+        """
+        try:
+            print("parse_json_with_auto_detection:", type(value), value)
+            parsed_value = json.loads(value)
+            print("parsed_value:", type(parsed_value), parsed_value)
+            # If the parsed value is a string, it might be a JSON string, so we try to parse it again
+            if isinstance(parsed_value, str):
+                return eval(parsed_value)
+            else:
+                return parsed_value
+        except Exception as e:
+            logging.warning(f"Failed to parse value as JSON: {value}. Exception: {e}")
+            return value
+
+    logging = get_logger()
+
+    if isinstance(json_data, dict):
+        return {key: parse_json_with_auto_detection(value) for key, value in json_data.items()}
+    elif isinstance(json_data, list):
+        return [parse_json_with_auto_detection(item) for item in json_data]
+    else:
+        return try_parse_json(json_data)
+
+
+def parse_json_with_auto_detection2(json_data):
+    def try_parse_json(value):
+        try:
+            return json.loads(value)
+        except (ValueError, TypeError):
+            return value
+
+    if isinstance(json_data, dict):
+        return {key: parse_json_with_auto_detection(value) for key, value in json_data.items()}
+    elif isinstance(json_data, list):
+        return [parse_json_with_auto_detection(item) for item in json_data]
+    else:
+        return try_parse_json(json_data)
+
+
+def extract_json_objects(text: str):
+    pattern = r'\{.*?\}'
+    matches = re.findall(pattern, text)
+    print("Matches:", matches)
+
+    json_objects = []
+    for match in matches:
+        if match.count("{") != match.count("}"):
+            c = text.replace(match, "").count("}")
+            if c:
+                match += c * '}'
+            if match.count("{") != match.count("}"):
+                continue
+        try:
+            json_objects.append(json.loads(match))
+        except json.JSONDecodeError:
+            pass
+    return json_objects
+
+
+def find_json_objects_in_str(data: str):
+    """
+    Sucht nach JSON-Objekten innerhalb eines Strings.
+    Gibt eine Liste von JSON-Objekten zurück, die im String gefunden wurden.
+    """
+    json_objects = extract_json_objects(data)
+    print("json_objects", json_objects, type(json_objects))
+    return [get_json_from_json_str(ob, 10) for ob in json_objects if get_json_from_json_str(ob, 10) is not None]
+
+
+def complete_json_object(data: str, mini_task):
+    """
+    Ruft eine Funktion auf, um einen String in das richtige Format zu bringen.
+    Gibt das resultierende JSON-Objekt zurück, wenn die Funktion erfolgreich ist, sonst None.
+    """
+    ret = mini_task(
+        f"Vervollständige das Json Object. Und bringe den string in das Richtige format. data={data}\nJson=")
+    if ret:
+        return anything_from_str_to_dict(ret)
+    return None
+
+
+def anything_from_str_to_dict(data: str, expected_keys: dict = None, mini_task=lambda x: ''):
+    """
+    Versucht, einen String in ein oder mehrere Dictionaries umzuwandeln.
+    Berücksichtigt dabei die erwarteten Schlüssel und ihre Standardwerte.
+    """
+    if len(data) < 4:
+        return []
+
+    if expected_keys is None:
+        expected_keys = {}
+
+    result = []
+
+    json_objects = find_json_objects_in_str(data)
+    if not json_objects:
+        if data.startswith('[') and data.endswith(']'):
+            json_objects = eval(data)
+    print(json_objects)
+    if json_objects:
+        if len(json_objects) > 0:
+            if isinstance(json_objects[0], dict):
+                result.extend([{**expected_keys, **ob} for ob in json_objects])
+
+    if not result:
+        completed_object = complete_json_object(data, mini_task)
+        if completed_object is not None:
+            result.append(completed_object)
+
+    if len(result) == 0 and expected_keys:
+        result = [{list(expected_keys.keys())[0]: data}]
+
+    for res in result:
+        for key, value in expected_keys.items():
+            if key not in res:
+                res[key] = value
+    return result
+
 
 if not os.path.exists(".config/system.infos"):
 
@@ -1679,17 +2265,19 @@ if not os.path.exists(".config/system.infos"):
     with open(".config/system.infos", "a") as f:
         f.write(json.dumps(info_sys))
 
-    getSystemInfoData = info_sys
+    SystemInfos = info_sys
 
 else:
 
-    with open(".config/system.infos", "r") as f:
-        getSystemInfoData = json.loads(f.read())
+    try:
+        with open(".config/system.infos", "r") as f:
+            SystemInfos = json.loads(f.read())
+    except JSONDecodeError:
+        pass
 
     info_sys = getSystemInfo()
 
     del info_sys['time']
 
-    if info_sys != getSystemInfoData:
-        getSystemInfoData = info_sys
-
+    if info_sys != SystemInfos:
+        SystemInfos = info_sys

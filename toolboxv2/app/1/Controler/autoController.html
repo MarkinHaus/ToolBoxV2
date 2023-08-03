@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Widget Test</title>
+    <style>
+        .widget {
+            border: 1px solid #000;
+            padding: 10px;
+            margin: 10px;
+        }
+        .widget-label,.widget-tooltip,.widget-items {
+            margin: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="widgetContainer"></div>
+
+    <script>
+        const widgetTemplate = `
+    <div class="widget">
+        <label class="widget-label"></label>
+        <span class="widget-tooltip"></span>
+        <div class="widget-items"></div>
+    </div>
+`;
+
+        function createWidgetElement(item) {
+            const element = document.createElement('div');
+            element.className = item.template;
+
+            const label = document.createElement('label');
+            label.textContent = item.label;
+            element.appendChild(label);
+
+            const tooltip = document.createElement('span');
+            tooltip.className = 'tooltip';
+            tooltip.textContent = item.tooltip;
+            element.appendChild(tooltip);
+
+            if (item.value) {
+                const value = document.createElement('span');
+                value.textContent = item.value;
+                element.appendChild(value);
+            }
+
+            if (item.callback) {
+                element.addEventListener('click', window[item.callback]);
+            }
+
+            return element;
+        }
+
+        function createWidget(json) {
+            let data = typeof json === 'string' ? JSON.parse(json) : json;
+
+            const widget = document.createElement('div');
+            widget.innerHTML = widgetTemplate;
+
+            const label = widget.querySelector('.widget-label');
+            label.textContent = data.label;
+
+            const tooltip = widget.querySelector('.widget-tooltip');
+            tooltip.textContent = data.tooltip;
+
+            const itemsContainer = widget.querySelector('.widget-items');
+            data.items.forEach(item => {
+                const element = createElementFromDict(item);
+                itemsContainer.appendChild(element);
+            });
+
+            return widget;
+        }
+
+        function addWidget(json, containerId) {
+            const container = document.getElementById(containerId);
+            const widget = createWidget(json);
+            container.appendChild(widget);
+        }
+
+function createElementFromDict(dict) {
+    // Create element
+    let element = document.createElement(dict.tag);
+
+    // Set attributes
+    for (let attr in dict.attributes) {
+        element.setAttribute(attr, dict.attributes[attr]);
+    }
+
+    // Set content
+    element.innerHTML = dict.content;
+
+    // Set event listeners
+    for (let event in dict.events) {
+        if (element.addEventListener) {
+            element.addEventListener(event, dict.events[event]);
+        } else if (element.attachEvent) {
+            element.attachEvent('on' + event, dict.events[event]);
+        }
+    }
+
+    // Return the created element
+    return element;
+}
+    </script>
+
+    <script>
+        const dictionary = {
+            label: 'NutzerInformation',
+            tooltip: 'Informations about the user',
+            template: 'group-template',
+            items: [
+                {
+    tag: 'div',
+    attributes: {
+        id: 'myDiv',
+        class: 'myClass'
+    },
+    content: '<h1> Hallo wort</h1>',
+    events: {
+        click: function() {
+            console.log('Div clicked!');
+        },
+        submit: function() {
+            console.log('Form submitted!');
+        }
+    }
+    },
+                {label: 'Email', tooltip: 'mail address', template: 'text-template', value: 'user_email'},
+                {label: 'allow News Emails', tooltip: 'mail address', template: 'toggle-template', callback: 'send_mail'},
+                {label: 'Request Password reset', tooltip: 'reset Password', template: 'button-template', callback: 'reset_password', value: 'set'}
+            ]
+        };
+
+        addWidget(dictionary, 'widgetContainer');
+        addWidget(dictionary, 'widgetContainer');
+    </script>
+</body>
+</html>

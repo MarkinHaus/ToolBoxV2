@@ -245,9 +245,10 @@ def run(app: App, args):
             execution_agent.stop_sequence = ["\n\n\n\n"]
 
             execution_agent.add_message("assistant", "Take action in the real world!")
+            u = ''
             while not perfect:
 
-                execution_agent_0_run_ret = isaa.run_agent(execution_agent, '')
+                execution_agent_0_run_ret = isaa.run_agent(execution_agent, u)
 
                 data_execution_agent_0_run_ret.append(execution_agent_0_run_ret)
 

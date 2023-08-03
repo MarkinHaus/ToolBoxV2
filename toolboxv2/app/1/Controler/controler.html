@@ -65,15 +65,12 @@
 <template id="group-template">
     <div class="group">
         <label class="group-label"></label>
-        <div class="group-content"></div>
+        <div class="group-content hidden"></div>
     </div>
 </template>
 
 <script>
-    function call_gent(name){
-        return (value)=>{
-            console.log('CallBack from', name, value)}
-    }
+    const call_gent = name => value => console.log('CallBack from', name, value);
     const user_name = 'Root';
     const user_email = 'Root@root.root';
     const send_mail = call_gent('send_mail');
@@ -104,6 +101,9 @@
             ],
         }
     ];
+
+    let searchInput = '';
+    let optionsContainer = '';
 
     function createOptionElement(option, index) {
         const template = document.getElementById(option.template);
@@ -136,6 +136,10 @@
         labelElement.textContent = group.label;
         labelElement.title = group.tooltip;
 
+        labelElement.addEventListener('click', () => {
+            contentElement.classList.toggle('hidden');
+        });
+
         group.items.forEach((item, index) => {
             const itemElement = createOptionElement(item, index);
             contentElement.appendChild(itemElement);
@@ -145,7 +149,7 @@
     }
 
     function loadOptions() {
-        const optionsContainer = document.getElementById('options-container');
+        optionsContainer = document.getElementById('options-container');
         options.forEach((option, index) => {
             const optionElement = createGroupElement(option, index);
             optionsContainer.appendChild(optionElement);
@@ -153,12 +157,12 @@
     }
 
     function updateOptions() {
-        var searchInput = document.getElementById('search-input').value.toLowerCase();
-        var optionsContainer = document.getElementById('options-container');
+        searchInput = document.getElementById('search-input').value.toLowerCase();
+        optionsContainer = document.getElementById('options-container');
         optionsContainer.innerHTML = '';
         options.forEach(function(option, index) {
             if (option.label.toLowerCase().includes(searchInput)) {
-                var optionElement = createOptionElement(option, index);
+                const optionElement = createOptionElement(option, index);
                 optionsContainer.appendChild(optionElement);
             }
         });
@@ -186,15 +190,14 @@
     }
 
     // Load options on page load
-    window.onload = function() {
-        loadOptions();
-        options.forEach(function(option, index) {
-            if (option.template === 'custom-template') {
-                var optionElement = loadCustomOption(option, index);
-                document.getElementById('options-container').appendChild(optionElement);
-            }
-        });
-    };
+       document.addEventListener('DOMContentLoaded', () => {
+            loadOptions();
+            options.forEach((option, index) => {
+                if (option.template === 'custom-template') {
+                    const optionElement = loadCustomOption(option, index);
+                    document.getElementById('options-container').appendChild(optionElement);
+                }
+            });});
 </script>
 </body>
 </html>

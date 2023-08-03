@@ -1,4 +1,7 @@
 """Console script for toolboxv2. Isaa CMD Tool"""
+import json
+import re
+
 from langchain.agents import load_tools, get_all_tool_names
 
 from toolboxv2 import Style, get_logger
@@ -512,18 +515,14 @@ füge Konkrete code Beispiele an da der nähste agent den aufbau nicht erhält. 
                 "name": "self",
                 "args": "Erstelle Eine Prompt für den Nächsten Agent dieser ist ein Innovativer Ideen-Optimierer "
                         "Das zeil Ist es eine Idee zu verstehen und ansßlißend zu verbessern"
-                        "Erklärung: Der 'Innovative Ideen-Optimierer' nutzt Brainstorming und kreative "
-                        "Denktechniken,"
-                        "um neue und innovative ansätze zu generieren. Er verbessert"
+                        "um neue und innovative ansätze zu generieren.Verbessere"
                         " die Qualität der Ideen und identifier Schwachstellen und verbessert diese."
-                        "Dies Tut er in dem er in einem förderlichem Umfeld ist welches,"
-                        "das Innovation und Kreativität fördert,"
-                        "und integriert verschiedene Ideen und Konzepte,"
+                        "integriere verschiedene Ideen und Konzepte,"
                         "um innovative Lösungen zu entwickeln. Durch die Kombination dieser Ansätze"
                         "kann der Ideenverbesserer seine Denkflexibilität erhöhen,"
-                        "die Qualität seiner Ideen verbessern."
-                        "Erstelle Eine Auf die Informationen Zugschnittenden 'Innovative Ideen-Optimierer' "
-                        "prompt die den Nächsten agent auffordert die idee mittels genannter techniken zu verbesser. "
+                        "die Qualität der Ideen verbessern."
+                        "Erstelle Eine Auf die Informationen Zugschnittenden 'Innovativer Ideen-Optimierer' "
+                        "prompt die den Nächsten agent auffordert die idee erweitern und zu verbesser. "
                         "Subject : $user-input"
                         "informationen die das system zum Subject hat: $D-Memory."
                         "informationen die im web zum Subject gefunden wurden: $WebI.",
@@ -631,23 +630,662 @@ füge Konkrete code Beispiele an da der nähste agent den aufbau nicht erhält. 
 
         ]
     }
-    task_ = [
+    lv1_function_genertion = {"name": "function improver v1",
+                              "tasks": [
+                                  {
+                                      "use": "tool",
+                                      "name": "memory",
+                                      "args": "$user-input",
+                                      "return": "$D-Memory"
+                                  },
+                                  {
+                                      "use": "agent",
+                                      "mode": "free",
+                                      "name": "think",
+                                      "args": "$user-input\nWelche technologien werden ind dieser function verwendend?"
+                                              " welche von diesen Ist veraltet und sollte Überarbeitet werden.",
+                                      "return": "$technologien",
+                                  },
+                                  {
+                                      "use": "tool",
+                                      "name": "search_web",
+                                      "args": "Suche nach information bezüglich : $technologien gibe "
+                                              "mir die und Version und Anwendung beispiele.",
+                                      "return": "$WebI"
+                                  },
+                                  {
+                                      "use": "agent",
+                                      "mode": "generate",
+                                      "name": "self",
+                                      "args": "Der Näste schritt ist die Analyse. **Analyse der aktuellen Funktion**: "
+                                              "Zunächst ist es wichtig, die aktuelle Funktion zu verstehen. Dazu "
+                                              "gehört das Verstehen der Logik, der Eingabe- und Ausgabeformate und "
+                                              "der aktuellen Leistung. Hierbei können Tools wie Profiler und Debugger "
+                                              "hilfreich sein."
+                                              "Erstelle Basierend auf den dir vorliegenden Informationen ein Prompt für"
+                                              " den Nächsten Agent um Die funktion detailliert zu analysis"
+                                              "function : $user-input\n"
+                                              "Web Infos: $WebI\n"
+                                              "informationen die das system zum Subjects hat : $D-Memory\n",
+                                      "return": "$ntask",
+                                  },
+                                  {
+                                      "use": "agent",
+                                      "mode": "free",
+                                      "name": "think",
+                                      "args": "$ntask"
+                                              "function : $user-input\n",
+                                      "return": "$Analyse",
+                                  },
+                                  {
+                                      "use": "agent",
+                                      "mode": "generate",
+                                      "name": "self",
+                                      "args": "Der Näste schritt ist die **Identifizierung von "
+                                              "Verbesserungsbereichen**: Basierend auf der Analyse identifizieren wir "
+                                              "Bereiche, die verbessert werden können. Dies könnte das Logging,"
+                                              " das Error Handling, die Effizienz und die "
+                                              "Anpassungsfähigkeit der Funktion umfassen."
+                                              "Erstelle Basierend auf den dir vorliegenden Informationen ein Prompt für"
+                                              " den Nächsten Agent."
+                                              "function : $user-input\n"
+                                              "Analyse: $Analyse\n"
+                                              "informationen die das system zum Subjects hat : $D-Memory\n",
+                                      "return": "$ntask2",
+                                  },
+                                  {
+                                      "use": "agent",
+                                      "mode": "free",
+                                      "name": "think",
+                                      "args": "$ntask2"
+                                              "function : $user-input\n"
+                                              "Analyse : $Analyse\n",
+                                      "return": "$Verbesserungsbereichen",
+                                  },
+                                  {
+                                      "use": "agent",
+                                      "mode": "generate",
+                                      "name": "self",
+                                      "args": "Der Näste schritt ist die **Entwicklung einer Strategie zur "
+                                              "Verbesserung**: Nachdem die Verbesserungsbereiche identifiziert "
+                                              "wurden, entwickeln wir eine Strategie zur Verbesserung. Dies könnte "
+                                              "die Verwendung von KI-Tools zur Automatisierung bestimmter "
+                                              "Teilschritte, die Verbesserung des Logging's "
+                                              "und des Error Handlings durch die Verwendung geeigneter Bibliotheken "
+                                              "und Techniken, die Verbesserung der Effizienz durch die Verwendung "
+                                              "effizienterer Algorithmen oder Datenstrukturen und die Verbesserung "
+                                              "der Anpassungsfähigkeit durch die Verwendung flexiblerer "
+                                              "Datenstrukturen und Algorithmen umfassen."
+                                              "Erstelle Basierend auf den dir vorliegenden Informationen ein Prompt für"
+                                              " den Nächsten Agent."
+                                              "function : $user-input\n"
+                                              "Verbesserungsbereichen: $Verbesserungsbereichen\n"
+                                              "informationen die das system zum Subjects hat : $D-Memory\n",
+                                      "return": "$ntask3",
+                                  },
+                                  {
+                                      "use": "agent",
+                                      "mode": "free",
+                                      "name": "think",
+                                      "args": "$ntask3"
+                                              "function : $user-input\n"
+                                              "Verbesserungsbereichen : $Verbesserungsbereichen\n",
+                                      "return": "$Strategie",
+                                  },
+                                  {
+                                      "use": "agent",
+                                      "mode": "generate",
+                                      "name": "self",
+                                      "args": "Der Näste schritt ist die **Implementierung der Verbesserungen**: "
+                                              "Nachdem die Strategie entwickelt wurde, implementieren wir die "
+                                              "Verbesserungen. Dies könnte die Neuschreibung bestimmter Teile des "
+                                              "Codes, die Hinzufügung neuer Funktionen oder die Änderung der Art und "
+                                              "Weise, wie bestimmte Operationen durchgeführt werden, umfassen."
+                                              "Erstelle Basierend auf den dir vorliegenden Informationen ein Prompt für"
+                                              " den Nächsten Agent. Erstelle Einen Konkreten Schritt für schritt"
+                                              " anweisung um eine Finale function zu erstellen."
+                                              "Web Infos: $WebI\n\n"
+                                              "Analyse: $Analyse\n\n"
+                                              "Verbesserungsbereichen: $Verbesserungsbereichen\n\n"
+                                              "$Strategie: $Strategie\n\n"
+                                              "informationen die das system zum Subjects hat : $D-Memory\n",
+                                      "return": "$ntask4",
+                                  },
+                                  {
+                                      "use": "tool",
+                                      "name": "write-production-redy-code",
+                                      "args": "$ntask4"
+                                              "function : $user-input\n"
+                                              "Erstelle die perfecte function.",
+                                      "return": "$function",
+                                  },
+                              ]
+                              }
+    first_widget_generator = {
+        "name": "first widget generator v1",
+        "tasks": [
+            {
+                "use": "tool",
+                "name": "memory",
+                "args": "$user-input",
+                "return": "$D-Memory"
+            },
+            {
+                "use": "agent",
+                "mode": "generate",
+                "name": "self",
+                "args": "Erstelle Eine Prompt für die Erstellung eines Möglichen aufbaus eines Html Widget für diese "
+                        "Subjects '''$user-input''', zu erstellen,"
+                        "informationen die das system zum Subjects hat: $D-Memory",
+                "return": "$task0"
+            },
+            {
+                "use": "agent",
+                "mode": "free",
+                "name": "think",
+                "args": "$task0",
+                "return": "$0final",
+            },
+            {
+                "use": "agent",
+                "mode": "generate",
+                "name": "self",
+                "args": "Erstelle Eine Prompt für die Entwicklung der specification"
+                        " für diese Subjects '''$user-input''',"
+                        "informationen die das system zum Subjects hat: $D-Memory",
+                "return": "$task1"
+            },
+            {
+                "use": "agent",
+                "mode": "free",
+                "name": "think",
+                "args": "$task1 ,benötigte elemente $0final",
+                "return": "$1final",
+            },
+            {
+                "use": "tool",
+                "name": "write-production-redy-code",
+                "args": """
+Beisiel :
+<template id="text-widget-template">
+    <div className="text-widget widget draggable">
+        <div className="text-widget-from widget-from"></div>
+        <span className="text-widget-close-button widget-close-button">X</span>
+        <label htmlFor="text-widget-text-input"></label>
+        <!-- mor spesific widget content -->
+    </div>
+</template>
+
+
+function addWidget(element_id, id, context, content="") {
+    console.log("ADDING Widget ", element_id);
+    const targetElement = document.getElementById(element_id);
+    let speechBalloon = createWidget(id, context, targetElement, content);
+    targetElement.appendChild(speechBalloon);
+    speechBalloon.id = id;
+    return speechBalloon
+}
+
+function createWidget(textarea_id, context, targetElement, content="") {
+    const template = document.getElementById('widget-template');
+    const widget = template.content.cloneNode(true).querySelector('.text-widget');
+    const fromElement = widget.querySelector('.text-widget-from');
+    fromElement.textContent = context;
+    const textarea = widget.querySelector('#text-widget-text-input');
+    const widget_injection = widget.querySelector('#text-widget-injection');
+    textarea.id = textarea_id+'-Text';
+    textarea.value = content;
+
+    const closeButton = widget.querySelector('.text-widget-close-button');
+    closeButton.addEventListener('click', closeWidget);
+    widget_injection.addEventListener('click', ()=>{
+        console.log("widget_injection:testWidget")
+        WS.send(JSON.stringify({"ChairData":true, "data": {"type":"textWidgetData","context":context,
+                "id": textarea_id, "text": textarea.value}}));
+    });
+
+    function closeWidget() {
+        widget.style.animation = 'text-widget-fadeOut 0.5s';
+        setTimeout(() => {
+            widget.style.display = 'none';
+            targetElement.removeChild(widget);
+        }, 500);
+    }
+
+    return widget;
+}
+Der bereitgestellte Code ist ein Beispiel für ein Widget-System, das in einer Webanwendung verwendet wird. Es besteht aus einem HTML-Template und zwei JavaScript-Funktionen, `addTextWidget` und `createTextWidget`.
+
+Das HTML-Template definiert die Struktur des Widgets. Es enthält ein Textfeld, einen Senden-Button und einen Schließen-Button. Das Textfeld wird verwendet, um Text einzugeben, der Senden-Button, um den eingegebenen Text zu senden, und der Schließen-Button, um das Widget zu schließen.
+
+Die Funktion `addTextWidget` nimmt vier Parameter: `element_id`, `id`, `context` und `content`. `element_id` ist die ID des HTML-Elements, in das das Widget eingefügt werden soll. `id` ist die ID des Widgets. `context` ist der Kontext, in dem das Widget verwendet wird. `content` ist der anfängliche Text, der im Textfeld des Widgets angezeigt wird. Die Funktion erstellt ein neues Widget mit der Funktion `createTextWidget`, fügt es in das Ziel-HTML-Element ein und gibt das Widget zurück.
+
+Die Funktion `createTextWidget` nimmt die gleichen vier Parameter wie `addTextWidget`. Sie klont das HTML-Template, fügt den Kontext und den anfänglichen Text in das geklonte Template ein und fügt EventListener für die Schließen- und Senden-Buttons hinzu. Der Schließen-Button entfernt das Widget aus dem DOM. Der Senden-Button sendet den eingegebenen Text an einen WebSocket-Server. Die Funktion gibt das erstellte Widget zurück.
+
+Hier ist ein Beispiel, wie man diese Funktionen verwenden kann:
+
+```javascript
+// Fügt ein Widget in das HTML-Element mit der ID 'myElement' ein.
+// Das Widget hat die ID 'myWidget', den Kontext 'myContext' und den anfänglichen Text 'Hello, world!'.
+addTextWidget('myElement', 'myWidget', 'myContext', 'Hello, world!');
+```
+
+Mit diesem Code können Sie ein Widget-System erstellen, das es Benutzern ermöglicht, Text in einem Textfeld einzugeben, den Text zu senden und das Widget zu schließen. Dieses Konzept kann auf verschiedene Arten von Widgets angewendet werden, nicht nur auf Text-Widgets.
+
+Erstelle ein Neues Widget Benutze dafür das hir beschriebene muster.
+specification :
+$1final
+                """,
+                "return": "$completion-evaluation",
+                "brakeOn": ["True", "true", "error", "Error"],
+            },
+        ]
+    }
+
+    task_2 = [
 
         {
             "use": "tool",
             "name": "write-production-redy-code",
             "args": """
+$user-input
+""",
+        },
+
+    ]
+
+    planing_steps = first_widget_generator
+    chains.add(planing_steps['name'], planing_steps['tasks'])
+    task_ = """
+Erstelle einen Plan für ein dynamischin system welches in 3 schritten arbeitet
+a1. Definition des gewünschten Ergebnisses: Zunächst muss klar definiert werden, was das gewünschte Ergebnis ist. Dies könnte durch eine Kombination aus Benutzereingaben und systeminternen Algorithmen erfolgen. Das System könnte auch vorgegebene Ziele oder Ergebnisse haben, die es erreichen soll.
+
+a2. Analyse des aktuellen Zustands: Das System muss den aktuellen Zustand analysieren und verstehen. Dies könnte durch eine Kombination aus Sensoren, Datenbankabfragen und anderen Methoden erfolgen. Das System muss in der Lage sein, den aktuellen Zustand mit dem gewünschten Ergebnis zu vergleichen und zu verstehen, welche Schritte notwendig sind, um von einem zum anderen zu gelangen.
+
+a3. Erstellung des ersten Schritts: Basierend auf der Analyse des aktuellen Zustands und des gewünschten Ergebnisses, muss das System den ersten Schritt zur Erreichung des Ziels erstellen. Dies könnte durch eine Kombination aus Algorithmen, maschinellem Lernen und anderen Methoden erfolgen.
+
+b1. Testen des ersten Schritts: Das System muss den ersten Schritt testen und evaluieren. Dies könnte durch eine Kombination aus Simulationen, realen Tests und anderen Methoden erfolgen. Das System muss in der Lage sein, die Ergebnisse des Tests zu analysieren und zu verstehen, ob der Schritt erfolgreich war oder nicht.
+
+b2. Aufteilung der Aufgabe in kleinere Schritte: Basierend auf den Ergebnissen des Tests, muss das System die Aufgabe in kleinere Schritte aufteilen. Dies könnte durch eine Kombination aus Algorithmen, maschinellem Lernen und anderen Methoden erfolgen. Das System muss in der Lage sein, jeden einzelnen Schritt zu verstehen und erfolgreich auszuführen.
+
+c1. Umschalten auf Ausführungsmodus: Nachdem alle Schritte erstellt und getestet wurden, muss das System in den Ausführungsmodus wechseln. Dies bedeutet, dass es den generierten Plan mit höchster Präzision ausführt.
+
+c2. Erstellung von Agenten und Verwendung von Tools: Das System muss in der Lage sein, Agenten zu erstellen und Tools zu verwenden, um die Aufgaben auszuführen. Die Agenten könnten spezielle Algorithmen oder Programme sein, die bestimmte Aufgaben ausführen. Die Tools könnten alles sein, von Hardwaregeräten bis hin zu Softwareanwendungen.
+
+8. Bedingte Ausführung von Aufgaben: Das System muss in der Lage sein, Aufgaben bedingt auszuführen. Dies bedeutet, dass es in der Lage sein muss, zu entscheiden, wann eine Aufgabe ausgeführt werden soll, basierend auf bestimmten Bedingungen oder Regeln.
+das sysstem kann agents erstelln und tools benutzen
+agents könenen tools benutzen
+das system kann aufgaben erstellen und bedigt ausführen
+Erstelle einen Detairten Plan.
+"""
+    task__ = """
+test fuction :
+class Teststream_read_llm(unittest.TestCase):
+    t0 = 0
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        # Code, der einmal vor allen Tests ausgeführt wird
+        cls.t0 = time.time()
+        cls.app = App("test-TestIsaa")
+        cls.app.mlm = "I"
+        cls.app.debug = True
+        cls.app.inplace_load("isaa", "toolboxv2.mods.")
+        cls.app.new_ac_mod("isaa")
+        cls.isaa: Tools = cls.app.get_mod('isaa')  ## !!!!!!!!!!!!!!!!!!!!!!!!!! this is the tool its reffers to the name isaa your name
+        cls.isaa_tool_class = cls.app.AC_MOD
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.app.remove_all_modules()
+        cls.app.save_exit()
+        cls.app.exit()
+        cls.app.logger.info(f"Accomplished in {time.time() - cls.t0}")
+
+    # ... test fuctionen
+
+    # Neue Test :
+Schreibe einen Unit test für dieser function :
+´´´
+class Tools(MainTool, FileHandler):
+
+    def __init__(self, app=None):
+        if app is None:
+            app = get_app()
+        self.version = "0.0.2"
+        self.name = "isaa"
+        self.logger: logging.Logger or None = app.logger if app else None
+        self.color = "VIOLET2"
+        self.config = {'genrate_image-init': False,
+                       'agents-name-list': []
+                       }
+        self.per_data = {}
+        self.keys = {
+            "KEY": "key~~~~~~~",
+            "Config": "config~~~~"
+        }
+        self.initstate = {}
+        self.mas_text_summaries_dict = [[], []]
+        self.genrate_image = image_genrating_tool
+        extra_path = ""
+        if self.toolID:
+            extra_path = f"/{self.toolID}"
+        self.observation_term_mem_file = f".data/{app.id}/Memory{extra_path}/observationMemory/"
+        self.tools = {
+            "all": [["Version", "Shows current Version"],
+                    ["api_run", "name inputs"],
+                    ["add_api_key", "Adds API Key"],
+                    ["login", "Login"],
+                    ["new-sug", "Add New Question or Class to Config"],
+                    ["run-sug", "Run Huggingface Pipeline"],
+                    ["info", "Show Config"],
+                    ["lode", "lode models"],
+                    ["image", "genarate image input"],
+                    ["api_initIsaa", "init isaa wit dif functions", 0, 'init_isaa_wrapper'],
+                    ["add_task", "Agent Chin add - Task"],
+                    ["api_save_task", "Agent Chin save - Task", 0, "save_task"],
+                    ["api_load_task", "Agent Chin load - Task", 1, "load_task"],
+                    ["api_get_task", "Agent Chin get - Task", 0, "get_task"],
+                    ["api_list_task", "Agent Chin list - Task", 0, "list_task"],
+                    ["api_start_widget", "api_start_widget", 0, "start_widget"],
+                    ["generate_task", "generate_task", 0, "generate_task"]
+                    ],
+            "name": "isaa",
+            "Version": self.show_version,
+            "info": self.info,
+            "api_run": self.run_isaa_wrapper,
+            "image": self.genrate_image_wrapper,
+            "api_initIsaa": self.init_isaa_wrapper,
+            "api_start_widget": self.start_widget,
+            "add_task": self.add_task,
+            "save_task": self.save_task,
+            "load_task": self.load_task,
+            "get_task": self.get_task,
+            "list_task": self.list_task,
+            "generate_task": self.generate_task,
+        }
+        self.app_ = app
+        self.print_stream = print
+        self.agent_collective_senses = False
+        self.global_stream_override = False
+        self.pipes_device = 1
+        self.lang_chain_tools_dict = {}
+        self.agent_chain = AgentChain(directory=f".data/{app.id}{extra_path}/chains")
+        self.agent_memory = AIContextMemory(extra_path=extra_path)
+        self.summarization_mode = 0  # 0 to 2 0 huggingface 1 text
+        self.summarization_limiter = 102000
+        self.speak = lambda x, *args, **kwargs: x
+        self.scripts = Scripts(f".data/{app.id}{extra_path}/ScriptFile")
+        self.ac_task = None
+
+        self.price = {
+            'all': 0,
+            'input': 0,
+            'output': 0,
+            'consumption': [],
+            'price_consumption': 0
+        }
+
+        self.tools_dict = {
+
+        }
+
+        FileHandler.__init__(self, f"isaa{extra_path.replace('/', '-')}.config", app.id if app else __name__)
+        MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
+                          name=self.name, logs=None, color=self.color, on_exit=self.on_exit)
+
+        self.toolID = ""
+        MainTool.toolID = ""
+
+    # def test_init(self): -> abgeschlossen
+
+    # ... schon getestete function
+
+    # ... noch zu testende fuctionen :
+
+    def mas_text_summaries(self, text, min_length=1600):
+
+        len_text = len(text)
+        if len_text < min_length:
+            return text
+
+        if text in self.mas_text_summaries_dict[0]:
+            return self.mas_text_summaries_dict[1][self.mas_text_summaries_dict[0].index(text)]
+
+        cap = 800
+        max_length = 45
+        summary_chucks = ""
+        chucks = []
+
+        splitter = None
+
+        if 'text-splitter0-init' not in self.config.keys():
+            self.config['text-splitter0-init'] = False
+        if not self.config['text-splitter0-init'] or not isinstance(self.config['text-splitter0-init'],
+                                                                    CharacterTextSplitter):
+            self.config['text-splitter0-init'] = CharacterTextSplitter(chunk_size=cap, chunk_overlap=cap / 6)
+
+        splitter = self.config['text-splitter0-init']
+
+        if len(text) >= 6200:
+            cap = 1200
+            max_length = 80
+            if 'text-splitter1-init' not in self.config.keys():
+                self.config['text-splitter1-init'] = False
+            if not self.config['text-splitter1-init'] or not isinstance(self.config['text-splitter1-init'],
+                                                                        CharacterTextSplitter):
+                self.config['text-splitter1-init'] = CharacterTextSplitter(chunk_size=cap, chunk_overlap=cap / 6)
+
+            splitter = self.config['text-splitter1-init']
+
+        if len(text) >= 10200:
+            cap = 1800
+            max_length = 160
+            if 'text-splitter2-init' not in self.config.keys():
+                self.config['text-splitter2-init'] = False
+            if not self.config['text-splitter2-init'] or not isinstance(self.config['text-splitter2-init'],
+                                                                        CharacterTextSplitter):
+                self.config['text-splitter2-init'] = CharacterTextSplitter(chunk_size=cap, chunk_overlap=cap / 6)
+
+            splitter = self.config['text-splitter2-init']
+
+        if len(text) >= 70200:
+            cap = 1900
+            max_length = 412
+            if 'text-splitter3-init' not in self.config.keys():
+                self.config['text-splitter3-init'] = False
+            if not self.config['text-splitter3-init'] or not isinstance(self.config['text-splitter3-init'],
+                                                                        CharacterTextSplitter):
+                self.config['text-splitter3-init'] = CharacterTextSplitter(chunk_size=cap, chunk_overlap=cap / 6)
+
+            splitter = self.config['text-splitter3-init']
+
+        summarization_mode_sto = 0
+        if len(text) > self.summarization_limiter and self.summarization_mode:
+            self.summarization_mode, summarization_mode_sto = 0, self.summarization_mode
+
+        def summary_func(x):
+            return self.summarization(x, max_length=max_length)
+
+        def summary_func2(x):
+            if isinstance(x, list):
+                end = []
+                for i in x:
+                    end.append({'summary_text': self.stream_read_llm(i, self.get_agent_config_class('summary'), r=0)})
+            else:
+                end = [{'summary_text': self.stream_read_llm(x, self.get_agent_config_class('summary'), r=0)}]
+            return end
+
+        # while len(text) > cap:
+        #     chucks.append(text[:cap])
+        #     text = text[cap:]
+        # if text:
+        #     chucks.append(text)
+
+        chucks = splitter.split_text(text)
+
+        self.print(f"SYSTEM: chucks to summary: {len(chucks)} cap : {cap}")
+
+        with Spinner("Generating summary", symbols='d'):
+            if self.summarization_mode == 0:
+                summaries = summary_func(chucks)
+            elif self.summarization_mode == 2:
+                summaries = summary_func2(chucks)
+            else:
+                summaries = summary_func(chucks)
+
+        for i, chuck_summary in enumerate(summaries):
+            summary_chucks += chuck_summary['summary_text'] + "\n"
+
+        self.print(f"SYSTEM: all summary_chucks : {len(summary_chucks)}")
+
+        if len(summaries) > 8:
+            if len(summary_chucks) < 20000:
+                summary = summary_chucks
+            elif len(summary_chucks) > 20000:
+                if self.summarization_mode == 0:
+                    summary = summary_func(summary_chucks)[0]['summary_text']
+                else:
+                    summary = summary_func2(summary_chucks)[0]['summary_text']
+            else:
+                summary = self.mas_text_summaries(summary_chucks)
+        else:
+            summary = summary_chucks
+
+        self.print(
+            f"SYSTEM: final summary from {len_text}:{len(summaries)} ->"
+            f" {len(summary)} compressed {len_text / len(summary):.2f}X\n")
+
+        if summarization_mode_sto:
+            self.summarization_mode = summarization_mode_sto
+
+        self.mas_text_summaries_dict[0].append(text)
+        self.mas_text_summaries_dict[1].append(summary)
+
+        return summary
+
+      """
+
+    task = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Widget Test</title>
+    <style>
+        .widget {
+            border: 1px solid #000;
+            padding: 10px;
+            margin: 10px;
+        }
+        .widget-label, .widget-tooltip, .widget-items {
+            margin: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="widgetContainer"></div>
+
+    <script>
+        const widgetTemplate = `
+    <div class="widget">
+        <label class="widget-label"></label>
+        <span class="widget-tooltip"></span>
+        <div class="widget-items"></div>
+    </div>
+`;
+        // Funktion zum Erstellen eines neuen Widget-Elements
+function createWidgetElement(item) {
+    const element = document.createElement('div');
+    element.className = item.template;
+
+    const label = document.createElement('label');
+    label.textContent = item.label;
+    element.appendChild(label);
+
+    const tooltip = document.createElement('span');
+    tooltip.className = 'tooltip';
+    tooltip.textContent = item.tooltip;
+    element.appendChild(tooltip);
+
+    if (item.value) {
+        const value = document.createElement('span');
+        value.textContent = item.value;
+        element.appendChild(value);
+    }
+
+    if (item.callback) {
+        element.addEventListener('click', window[item.callback]);
+    }
+
+    return element;
+}
+
+// Funktion zum Erstellen des Widgets
+function createWidget(json) {
+    let data = json;
+    if (json === String){
+        data = JSON.parse(json);
+    }
+
+    const widget = document.createElement('div');
+    widget.innerHTML = widgetTemplate;
+
+    const label = widget.querySelector('.widget-label');
+    label.textContent = data.label;
+
+    const tooltip = widget.querySelector('.widget-tooltip');
+    tooltip.textContent = data.tooltip;
+
+    const itemsContainer = widget.querySelector('.widget-items');
+    data.items.forEach(item => {
+        const element = createWidgetElement(item);
+        itemsContainer.appendChild(element);
+    });
+
+    return widget;
+}
+
+// Funktion zum Hinzufügen des Widgets zum Dokument
+function addWidget(json, containerId) {
+    const container = document.getElementById(containerId);
+    const widget = createWidget(json);
+    container.appendChild(widget);
+}
+    </script>
+
+    <script>
+        // Beispiel dictonary
+        const dictonary = {
+            "label": "NutzerInformation",
+            "tooltip": "Informations about the user",
+            "template": "group-template",
+            "items": [
+                {"label": "UserName", "tooltip": "unique username", "template": "text-template", "value": "user_name"},
+                {"label": "Email", "tooltip": "mail address", "template": "text-template", "value": "user_email"},
+                {"label": "allow News Emails", "tooltip": "mail address", "template": "toggle-template", "callback": "send_mail"},
+                {"label": "Request Password reset", "tooltip": "reset Password", "template": "button-template", "callback": "reset_password", "value": "set"}
+            ]
+        };
+
+        // Füge das Widget zum Dokument hinzu
+        addWidget(json, 'widgetContainer');
+        addWidget(json, 'widgetContainer');
+
+    </script>
+</body>
+</html>
+
+schreibe die createWidgetElement so um das sie dynamisch auf die daten im dictonary anpasst. füge auch callbacks für buttons randio groop text paswort emal number color input hinzu.
+"""
+    task_ = """
 <!DOCTYPE html>
 <html>
 <head>
     <style>
         #settings-widget {
-            position: fixed;
-            top: 0;
-            right: 0;
             min-width: max-content;
             height: min-content;
-            max-height: 50vh;
             background-color: #f0f0f0;
             border: 1px solid #ccc;
             padding: 10px;
@@ -668,9 +1306,11 @@ füge Konkrete code Beispiele an da der nähste agent den aufbau nicht erhält. 
             bottom: 10px;
         }
     </style>
+    <link rel="stylesheet" href="/app/assets/styles.css">
+    <link rel="stylesheet" href="/app/assets/Wiget.css">
 </head>
 <body>
-<div id="settings-widget">
+<div id="settings-widget" class="widget">
     <div id="search-bar">
         <input type="text" id="search-input" placeholder="Search..." oninput="updateOptions()">
     </div>
@@ -679,50 +1319,116 @@ füge Konkrete code Beispiele an da der nähste agent den aufbau nicht erhält. 
     </div>
     <button id="download-button" onclick="downloadAddon()">Download</button>
 </div>
-<template id="text-input-template">
+<template id="text-template">
     <div class="option">
-        <label for="text-option${index}" title="${tooltip}">${label}</label>
-        <input type="text" name="option" id="text-option${index}">
-        <button>Set</button>
+        <label></label>
+        <input type="text" name="option">
     </div>
 </template>
-<template id="pw-input-template">
-    <div class="option">
-        <label for="pw-option${index}" title="${tooltip}">${label}</label>
-        <input type="password" name="option" id="pw-option${index}">
-        <button>Set</button>
-    </div>
-</template>
-
 <template id="toggle-template">
     <div class="option">
-        <label for="toggle-option${index}" title="${tooltip}">${label}</label>
-        <input type="checkbox" name="option" id="toggle-option${index}">
+        <label></label>
+        <input type="checkbox" name="option">
+    </div>
+</template>
+<template id="button-template">
+    <div class="option">
+        <label></label>
+        <button name="option"></button>
+    </div>
+</template>
+<template id="options-select-template">
+    <div class="option">
+        <label></label>
+        <select name="option"></select>
+    </div>
+</template>
+<template id="group-template">
+    <div class="group">
+        <label class="group-label"></label>
+        <div class="group-content"></div>
     </div>
 </template>
 
 <script>
-    var options = [
-        { label: 'Option 1', tooltip: 'This is option 1', template: 'pw-input-template' },
-        { label: 'Option 2', tooltip: 'This is option 2', template: 'text-input-template' },
-        { label: 'Option 3', tooltip: 'This is option 3', template: 'toggle-template' },
-        // Add more options as needed
+    function call_gent(name){
+        return (value)=>{
+            console.log('CallBack from', name, value)}
+    }
+    const user_name = 'Root';
+    const user_email = 'Root@root.root';
+    const send_mail = call_gent('send_mail');
+    const reset_password = call_gent('reset_password');
+    const set_task = call_gent('set_task');
+    var task_name = 'test'
+    const options = [
+        {
+            label: 'NutzerInformation',
+            tooltip: 'Informations about the user',
+            template: 'group-template',
+            items: [
+                {label: 'UserName', tooltip: 'unique username', template: 'text-template', value: 'user_name'},
+                {label: 'Email', tooltip: 'mail address', template: 'text-template', value: 'user_email'},
+                {label: 'allow News Emails', tooltip: 'mail address', template: 'toggle-template', callback: 'send_mail'},
+                {label: 'Request Password reset', tooltip: 'reset Password', template: 'button-template', callback: 'reset_password', value: 'set'},
+            ],
+        },
+        {
+            label: 'TaskEditor',
+            tooltip: 'edit Task',
+            template: 'group-template',
+            items: [
+                {label: 'load Task', tooltip: 'unique username', template: 'options-select-template', value: localStorage.getItem('tasks')||[], callback: 'set_task'},
+                {label: 'Task Name', tooltip: 'mail address', template: 'text-template', value: 'task_name'},
+                {label: 'use', tooltip: 'mail address', template: 'options-select-template', value:['agent', 'tool'], callback: 'send_mail'},
+                // ...
+            ],
+        }
     ];
 
     function createOptionElement(option, index) {
-        var template = document.getElementById(option.template);
-        var optionElement = template.content.cloneNode(true);
-        optionElement.querySelector('input').id = option.label.replace(' ', '-') + index;
-        optionElement.querySelector('label').setAttribute('for', option.label.replace(' ', '-') + index);
-        optionElement.querySelector('label').title = option.tooltip;
-        optionElement.querySelector('label').textContent = option.label;
+        const template = document.getElementById(option.template);
+        const optionElement = template.content.cloneNode(true);
+        const inputElement = optionElement.querySelector('input, select, button');
+        const labelElement = optionElement.querySelector('label');
+
+        inputElement.id = option.label.replace(' ', '-') + index;
+        labelElement.setAttribute('for', inputElement.id);
+        labelElement.title = option.tooltip;
+        labelElement.textContent = option.label;
+
+        if (option.options && inputElement.tagName === 'SELECT') {
+            option.options.forEach(function(optionValue) {
+                const optionTag = document.createElement('option');
+                optionTag.value = optionTag.textContent = optionValue;
+                inputElement.appendChild(optionTag);
+            });
+        }
+
         return optionElement;
     }
 
+    function createGroupElement(group, index) {
+        const template = document.getElementById(group.template);
+        const groupElement = template.content.cloneNode(true);
+        const labelElement = groupElement.querySelector('.group-label');
+        const contentElement = groupElement.querySelector('.group-content');
+
+        labelElement.textContent = group.label;
+        labelElement.title = group.tooltip;
+
+        group.items.forEach((item, index) => {
+            const itemElement = createOptionElement(item, index);
+            contentElement.appendChild(itemElement);
+        });
+
+        return groupElement;
+    }
+
     function loadOptions() {
-        var optionsContainer = document.getElementById('options-container');
-        options.forEach(function(option, index) {
-            var optionElement = createOptionElement(option, index);
+        const optionsContainer = document.getElementById('options-container');
+        options.forEach((option, index) => {
+            const optionElement = createGroupElement(option, index);
             optionsContainer.appendChild(optionElement);
         });
     }
@@ -750,84 +1456,62 @@ füge Konkrete code Beispiele an da der nähste agent den aufbau nicht erhält. 
         }
     }
 
+    function loadCustomOption(option, index) {
+        var template = document.getElementById(option.template);
+        var optionElement = template.content.cloneNode(true);
+        optionElement.querySelector('input').id = option.label.replace(' ', '-') + index;
+        optionElement.querySelector('label').setAttribute('for', option.label.replace(' ', '-') + index);
+        optionElement.querySelector('label').title = option.tooltip;
+        optionElement.querySelector('label').textContent = option.label;
+        return optionElement;
+    }
+
     // Load options on page load
-    window.onload = loadOptions;
+    window.onload = function() {
+        loadOptions();
+        options.forEach(function(option, index) {
+            if (option.template === 'custom-template') {
+                var optionElement = loadCustomOption(option, index);
+                document.getElementById('options-container').appendChild(optionElement);
+            }
+        });
+    };
 </script>
 </body>
 </html>
 
+Verfolständige und verbessere den contoller.
+Die aufgabe dessen ist die einstellungen zu managen und dynamisch witere einstellungen zu laden
+der aufbau soll wie folgt sein
+- const options.
 
-
-$user-input
-""",
-        },
-
-    ]
-
-    planing_steps = auto_unit_test
-    chains.add(planing_steps['name'], planing_steps['tasks'])
-    task_ = """
-Erstelle einen Plan für ein dynamischin system welches in 3 schritten arbeitet
-a1. Definition des gewünschten Ergebnisses: Zunächst muss klar definiert werden, was das gewünschte Ergebnis ist. Dies könnte durch eine Kombination aus Benutzereingaben und systeminternen Algorithmen erfolgen. Das System könnte auch vorgegebene Ziele oder Ergebnisse haben, die es erreichen soll.
-
-a2. Analyse des aktuellen Zustands: Das System muss den aktuellen Zustand analysieren und verstehen. Dies könnte durch eine Kombination aus Sensoren, Datenbankabfragen und anderen Methoden erfolgen. Das System muss in der Lage sein, den aktuellen Zustand mit dem gewünschten Ergebnis zu vergleichen und zu verstehen, welche Schritte notwendig sind, um von einem zum anderen zu gelangen.
-
-a3. Erstellung des ersten Schritts: Basierend auf der Analyse des aktuellen Zustands und des gewünschten Ergebnisses, muss das System den ersten Schritt zur Erreichung des Ziels erstellen. Dies könnte durch eine Kombination aus Algorithmen, maschinellem Lernen und anderen Methoden erfolgen.
-
-b1. Testen des ersten Schritts: Das System muss den ersten Schritt testen und evaluieren. Dies könnte durch eine Kombination aus Simulationen, realen Tests und anderen Methoden erfolgen. Das System muss in der Lage sein, die Ergebnisse des Tests zu analysieren und zu verstehen, ob der Schritt erfolgreich war oder nicht.
-
-b2. Aufteilung der Aufgabe in kleinere Schritte: Basierend auf den Ergebnissen des Tests, muss das System die Aufgabe in kleinere Schritte aufteilen. Dies könnte durch eine Kombination aus Algorithmen, maschinellem Lernen und anderen Methoden erfolgen. Das System muss in der Lage sein, jeden einzelnen Schritt zu verstehen und erfolgreich auszuführen.
-
-c1. Umschalten auf Ausführungsmodus: Nachdem alle Schritte erstellt und getestet wurden, muss das System in den Ausführungsmodus wechseln. Dies bedeutet, dass es den generierten Plan mit höchster Präzision ausführt.
-
-c2. Erstellung von Agenten und Verwendung von Tools: Das System muss in der Lage sein, Agenten zu erstellen und Tools zu verwenden, um die Aufgaben auszuführen. Die Agenten könnten spezielle Algorithmen oder Programme sein, die bestimmte Aufgaben ausführen. Die Tools könnten alles sein, von Hardwaregeräten bis hin zu Softwareanwendungen.
-
-8. Bedingte Ausführung von Aufgaben: Das System muss in der Lage sein, Aufgaben bedingt auszuführen. Dies bedeutet, dass es in der Lage sein muss, zu entscheiden, wann eine Aufgabe ausgeführt werden soll, basierend auf bestimmten Bedingungen oder Regeln.
-das sysstem kann agents erstelln und tools benutzen
-agents könenen tools benutzen
-das system kann aufgaben erstellen und bedigt ausführen
-Erstelle einen Detairten Plan.
-"""
+    """
     task = """
-Schreibe eine unit test ablauf
-für die erstellung validrung eins test nutzers dieser soll beiplei haft das system test
-dafür gibt es folgende function :
+Erstelle mir ein Task Widget. wlches 2 Modie hat 1. Informations Anzeige und 2. Informationen Bearbeiten
 
-1)
-def create_user(self, command, app: App)->str: # gibt eine wes keybindings id zurück 'webSocketID'
-    data = command[0].data
-    username = data["username"]
-    email = data["email"]
-    password = data["password"]
-    invitation_key = data["invitation"]
+die Informationen die eine Task Widget enthalt sind folgende.
+{
+    "use": "agent",
+    "mode": "free",
+    "name": "think",
+    "args": "$task0",
+    "return": "$0final",
+},
 
-auf ruf shema:
-    '/api/post/cloudM/run/create_user', {
-                method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    token: 'string',
-                    data: {
-                        username: username,
-                        password: password,
-                        email: email,
-                        invitation: invitation
-                    }
-                })
-            })
-2)
-def log_out_user(self, command):
-      data = command[0].data
-      ws_id = data["webSocketID"]
-      """
+use soll als radiso selcetion groop angezeigt werden mit den Optionen : agent|tool|function|chain
+mode ...  mit den Optionen : text|free|tools|conversation|planning|execution|generate
+name basirend auf der aus wahl von use entwider
+        - agent  mit den Optionen : self|think|summary|todolist|search|execution und custom text input
+        - tool liste vom server abfragen : custom text input
+        - function: custom text input
+        - chain: custom text input
+args : custom text input
+return : custom text input
+custom text input key : custom text input value
 
-
-
-
-    res = isaa.execute_thought_chain(task, planing_steps['tasks'], self_agent_config)
+erstelle ein Task widget.
+    """
+    res = isaa.execute_thought_chain(task,planing_steps['tasks'], self_agent_config)
     # res = isaa.execute_thought_chain(res[-2][-1], stategy_crator['tasks'], self_agent_config)
     # res = isaa.execute_thought_chain(res[-2][-1], _planing_steps['tasks'], self_agent_config)
 
@@ -835,7 +1519,6 @@ def log_out_user(self, command):
     c = isaa.get_augment(exclude=['messages_sto'])
     isaa.config['augment'] = c
     print(c)
-    isaa.on_exit()
 
 
 def run2(app, args):

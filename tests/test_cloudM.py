@@ -12,7 +12,6 @@ from toolboxv2.utils.toolbox import ApiOb
 install(show_locals=True)
 
 """Tests for `cloudM` package."""
-from coverage.annotate import os
 
 from toolboxv2 import App, Style
 
@@ -30,17 +29,16 @@ class TestCloudM(unittest.TestCase):
     def setUpClass(cls):
         # Code, der einmal vor allen Tests ausgeführt wird
         cls.t0 = time.time()
-        cls.app = App("test")
+        cls.app = App("test-cloudM")
         # api = threading.Thread(target=cls.app.run_any, args=('api_manager', 'start-api', ['start-api', 'test-api']))
         # api.start()
-        time.sleep(0.6)
         cls.app.mlm = "I"
         cls.app.debug = True
         cls.app.load_mod("cloudM")
         cls.tool = cls.app.get_mod("cloudM")
         cls.app.new_ac_mod("cloudM")
-        #cls.app.run_function("first-web-connection", ['first-web-connection', 'http://127.0.0.1:5000/api'])
-        #cls.app.HELPER['api-thread'] = api
+        # cls.app.run_function("first-web-connection", ['first-web-connection', 'http://127.0.0.1:5000/api'])
+        # cls.app.HELPER['api-thread'] = api
 
     @classmethod
     def tearDownClass(cls):
@@ -134,6 +132,7 @@ class TestCloudM(unittest.TestCase):
         self.assertEqual("Instance deleted successfully", res)
         self.assertEqual(self.tool.user_instances, {})
         self.assertEqual(self.tool.live_user_instances, {})
+
     def test_create_user(self):
 
         self.tool.prep_system_initial(['do-root'], self.app)

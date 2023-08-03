@@ -5,6 +5,7 @@ import sys
 import threading
 import uuid
 from inspect import signature
+from typing import Tuple, Any
 
 import openai
 import replicate
@@ -60,19 +61,6 @@ pipeline_arr = [
     # 'translation_en_to_de',
     # 'fill-mask'
 ]
-
-
-def get_tokens(text, model_name, only_len=True):
-
-    if '/' in model_name or not (model_name.endswith("4") or model_name.endswith("5")):
-        model_name = 'gpt2'
-
-    tokens = tiktoken.encoding_for_model(model_name).encode(text)
-
-    if only_len:
-        return len(tokens)
-    else:
-        return tokens
 
 
 def get_ip():
@@ -132,7 +120,6 @@ class Tools(MainTool, FileHandler):
                     ["login", "Login"],
                     ["new-sug", "Add New Question or Class to Config"],
                     ["run-sug", "Run Huggingface Pipeline"],
-                    ["info", "Show Config"],
                     ["lode", "lode models"],
                     ["image", "genarate image input"],
                     ["api_initIsaa", "init isaa wit dif functions", 0, 'init_isaa_wrapper'],
@@ -146,7 +133,6 @@ class Tools(MainTool, FileHandler):
                     ],
             "name": "isaa",
             "Version": self.show_version,
-            "info": self.info,
             "api_run": self.run_isaa_wrapper,
             "image": self.genrate_image_wrapper,
             "api_initIsaa": self.init_isaa_wrapper,
@@ -171,6 +157,16 @@ class Tools(MainTool, FileHandler):
         self.speak = lambda x, *args, **kwargs: x
         self.scripts = Scripts(f".data/{app.id}{extra_path}/ScriptFile")
         self.ac_task = None
+
+        self.price = {
+            'all': 0,
+            'input': 0,
+            'output': 1,
+            'consumption': [],
+            'price_consumption': 0,
+            'model_consumption': {},
+            'history': {},
+        }
 
         self.tools_dict = {
 
@@ -218,7 +214,7 @@ class Tools(MainTool, FileHandler):
             tasks = json.loads(tasks)
         self.agent_chain.load_from_dict(tasks)
 
-    def init_tools(self, self_agent, tools):
+    def init_tools(self, self_agent, tools):  # not  in unit test
 
         plugins = [
             # SceneXplain
@@ -274,7 +270,6 @@ class Tools(MainTool, FileHandler):
             except Exception as e:
                 get_logger().error(Style.RED(f"Could not load : {plugin_url}"))
                 get_logger().error(Style.GREEN(f"{e}"))
-
 
         for tool in load_tools(tools['lagChinTools'], self.get_llm_models(self_agent.model_name)):
             self.lang_chain_tools_dict[tool.name] = tool
@@ -381,9 +376,12 @@ Aufgaben Name oder None:"""
             f"Agenten erstellen?"
             f"Ausgabe:")
 
+        if not ta_c:
+            ta_c = 'crate-task'
+
         self.print(ta_c)
 
-        return {'isaa': 'crate-task'}
+        return {'isaa': ta_c}  ## TODO test
 
     def list_task(self):
         return str(self.agent_chain)
@@ -587,7 +585,12 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
         if config is not None:
             if isinstance(config, str):
                 config = json.loads(config)
-            self.config = config
+            if isinstance(config, dict):
+                self.config = {**self.config, **config}
+        if 'price' in self.config.keys():
+            if isinstance(self.config['price'], dict):
+                self.logger.info("Persist Price from Last session")
+                self.price = self.config['price']
         if not os.path.exists(f".data/{get_app().id}/isaa/"):
             os.mkdir(f".data/{get_app().id}/isaa/")
 
@@ -609,6 +612,25 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
                                 from_file=True)
 
     def on_exit(self):
+        self.show_usage()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        if now in self.price['history'].keys():
+            self.price['input'] += self.price['history'][now]['i']
+            self.price['output'] += self.price['history'][now]['o']
+            self.price['price_consumption'] += self.price['history'][now]['c']
+
+        self.price['history'][now] = {
+            'i': self.price['input'],
+            'o': self.price['output'],
+            'c': self.price['price_consumption'],
+        }
+
+        self.price['input'] = 0
+        self.price['output'] = 0
+        self.price['price_consumption'] = 0
+
+        self.config['price'] = self.price
+        time.sleep(0.2)
         for key in list(self.config.keys()):
             if key.startswith("LLM-model-"):
                 del self.config[key]
@@ -624,10 +646,6 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
         self.save_file_handler()
         self.agent_chain.save_to_file()
         self.scripts.save_scripts()
-
-    def info(self):
-        self.print(self.config)
-        return self.config
 
     def init_config_var_initialise(self, key: str, value):
         key_i = key + '-init'
@@ -767,6 +785,11 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
 
         return function
 
+    def free_llm_model(self, names: list[str]):
+        for model in names:
+            self.initstate[f'LLM-model-{model}-init'] = False
+            del self.config[f'LLM-model-{model}']
+
     def load_llm_models(self, names: list[str]):
         for model in names:
             if f'LLM-model-{model}-init' not in self.initstate.keys():
@@ -778,19 +801,20 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
                     self.config[f'LLM-model-{model}'] = HuggingFaceHub(repo_id=model,
                                                                        huggingfacehub_api_token=self.config[
                                                                            'HUGGINGFACEHUB_API_TOKEN'])
-                    self.print('Initialized HF model')
+                    self.print(f'Initialized HF model : {model}')
                 elif model.startswith('gpt4all#'):
-                    self.config[f'LLM-model-{model}'] = gpt4all.GPT4All(model.replace('gpt4all#', ''))
-                    self.print('Initialized gpt4all model')
+                    m = gpt4all.GPT4All(model.replace('gpt4all#', ''))
+                    self.config[f'LLM-model-{model}'] = m
+                    self.print(f'Initialized gpt4all model : {model}')
                 elif model.startswith('gpt'):
                     self.config[f'LLM-model-{model}'] = ChatOpenAI(model_name=model,
                                                                    openai_api_key=self.config['OPENAI_API_KEY'],
                                                                    streaming=True)
-                    self.print('Initialized OpenAi model')
+                    self.print(f'Initialized OpenAi model : {model}')
                 else:
                     self.config[f'LLM-model-{model}'] = OpenAI(model_name=model,
                                                                openai_api_key=self.config['OPENAI_API_KEY'])
-                    self.print('Initialized OpenAi model')
+                    self.print(f'Initialized OpenAi : {model}')
 
     def get_llm_models(self, name: str):
         if f'LLM-model-{name}' not in self.config.keys():
@@ -837,8 +861,11 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
 
         agent.set_tools(tools)
 
+    def create_agent_class(self, name="BP"):
+        return AgentConfig(self, name)
+
     def get_default_agent_config(self, name="Normal") -> AgentConfig:
-        config = AgentConfig(self, name)
+        config = self.create_agent_class(name)
         if name != "Normal":
             if os.path.exists(f".data/{get_app().id}/Memory/{name}.agent"):
                 config = AgentConfig.load_from_file(self, name)
@@ -927,8 +954,6 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
             return ress
 
         if name == "self":
-            self.config["self_agent_agents_"] = ["todolist"]
-
             config.mode = "free"
             config.model_name = "gpt-4"
             config.max_iterations = 6
@@ -967,7 +992,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                                     "description": "Run to generate image"
                     , "format": "reminder(<detaild_discription>)"},
                 "mini_task": {"func": lambda x: self.mini_task_completion(x),
-                                    "description": "programmable pattern completion engin. use text davici args:str only"
+                              "description": "programmable pattern completion engin. use text davici args:str only"
                     , "format": "reminder(<detaild_discription>)"},
 
             }
@@ -1083,7 +1108,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 .set_max_iterations(1) \
                 .set_completion_mode("text") \
                 .set_model_name("text-davinci-003")
-
+            config.add_system_information = False
             config.stop_sequence = ["\n"]
 
         if name == "execution":
@@ -1103,8 +1128,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config. \
                 set_mode("free") \
                 .set_max_iterations(1) \
-                .set_completion_mode("chat") \
-                .set_model_name('gpt4all#ggml-model-gpt4all-falcon-q4_0.bin') \
+                .set_completion_mode("text") \
+                .set_model_name('text-curie-001') \
                 .set_pre_task("Act as an summary expert your specialties are writing summary. you are known to think "
                               "in small and detailed steps to get the right result. Your task :")
 
@@ -1217,7 +1242,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 if args:
                     task += ' '.join(args)
                 self.print(Style.GREEN("Crating Task"))
-                return self.crate_task(task)
+                return self.create_task(task)
             self.print(Style.YELLOW("Not Task specified"))
 
         self.add_tool("memory", get_relevant_informations, "a tool to get similar information from your memories."
@@ -1231,7 +1256,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                       "save_data_to_memory(<store_information>)",
                       config)
 
-        self.add_tool("crate_task", lambda x: crate_task_wrapper(x), "tool to crate a task for a subject input subject:str",
+        self.add_tool("crate_task", lambda x: crate_task_wrapper(x),
+                      "tool to crate a task for a subject input subject:str",
                       "crate_task(<subject>)",
                       config)
 
@@ -1252,7 +1278,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         if agent_name in self.config["agents-name-list"]:
             config = self.config[f'agent-config-{agent_name}']
-            self.print(f"Using AGENT: {config.name} {config.mode}\n")
+            self.print(f"collecting AGENT: {config.name} {config.mode}")
         else:
             self.config["agents-name-list"].append(agent_name)
             config = self.get_default_agent_config(agent_name)
@@ -1266,7 +1292,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         agent = self.get_agent_config_class("TaskCompletion")
         return self.stream_read_llm(mini_task, agent)
 
-    def crate_task(self, task):
+    def create_task(self, task):
         agent = self.get_agent_config_class("self")
         agent_execution = self.get_agent_config_class("execution")
         agent_execution.get_messages(create=True)
@@ -1315,7 +1341,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             },
         ]
         chain_data = {}
-        res, chain_data, _ = self.execute_thought_chain(task, task_genrator, agent, chain_data=chain_data, chain_data_infos=True)
+        res, chain_data, _ = self.execute_thought_chain(task, task_genrator, agent, chain_data=chain_data,
+                                                        chain_data_infos=True)
         print(res)
         task_list = []
         try:
@@ -1323,7 +1350,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 task_list = chain_data['$taskDict']
             else:
                 task_list = res[-1][-1]
-            task_list = json.loads(task_list)
+            task_list = anything_from_str_to_dict(task_list)
             if isinstance(task_list, dict):
                 task_list = [task_list]
         except ValueError as e:
@@ -1335,7 +1362,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         if not isinstance(task_list, list):
             if isinstance(task_list, str):
                 if task_list.startswith("{") and task_list.endswith("}"):
-                    task_list = json.loads(task_list)
+                    task_list = anything_from_str_to_dict(task_list)
                 if task_list.startswith("[") and task_list.endswith("]"):
                     task_list = eval(task_list)
             if isinstance(task_list, dict):
@@ -1343,7 +1370,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         task_name = self.mini_task_completion(f"Crate a name for this task {task_list} subject {task}\nTaskName:")
         if not task_name:
-            task_name = self.process_completion(f"Crate a name for this task {task_list} subject {task}\nTaskName:", agent)
+            task_name = self.process_completion(f"Crate a name for this task {task_list} subject {task}\nTaskName:",
+                                                self.get_agent_config_class("think"))
         if not task_name:
             task_name = str(uuid.uuid4())
         self.print(Style.Bold(Style.CYAN(f"TASK:{task_name}:{task_list}:{type(task_list)}####")))
@@ -1409,181 +1437,105 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         ]
         res = self.execute_thought_chain(str(task), optimise_genrator, agent)
         task_dict = []
-        try:
-            task_dict = json.loads(res[-1][-1][-1])
-            if isinstance(task_dict, dict):
-                task_dict = [task_dict]
-        except ValueError as e:
-            self.print_stream("Error parsing auto task builder")
-            self.logger.error(f"Error in auto task builder {e}")
+        if res[-1][-1][-1]:
+            task_dict = anything_from_str_to_dict(res[-1][-1][-1])
 
         return task_dict
 
-    @staticmethod
-    def process_completion(text, config: AgentConfig):
-
-        if len(config.task_list) == 0 and len(text) != 0:
-            config.step_between = text
-
-        model_name = config.model_name
-        ret = ""
-        if config.stream:
-            ret = {'choices': [{'text': "", 'delta': {'content': ''}}]}
-
-        if '/' in model_name:
-            return "only supported for open ai."
-
-        if config.completion_mode == 'text':
-
-            if model_name.startswith('gpt-'):
-                model_name = "text-davinci-003"
-
-            ret = openai.Completion.create(
-                model=model_name,
-                prompt=config.prompt,
-                # max_tokens=config.token_left,
-                temperature=config.temperature,
-                n=1,
-                stream=config.stream,
-                logprobs=3,
-                stop=config.stop_sequence,
-            )
-
-            if not config.stream:
-                ret = ret.choices[0].text
-
-        elif config.completion_mode == 'chat':
-            if text:
-                config.add_message("user", text)
-            messages = config.get_messages(create=True)
-            ret = openai.ChatCompletion.create(
-                model=model_name,
-                messages=messages,
-                # max_tokens=config.token_left,
-                temperature=config.temperature,
-                n=1,
-                stream=config.stream,
-                stop=config.stop_sequence,
-            )
-            if not config.stream:
-                ret = ret.choices[0].message.content
-
-        elif config.completion_mode == 'edit':
-            if text:
-                config.edit_text.text = text
-            else:
-                config.edit_text.text = config.short_mem.text
-            ret = openai.Edit.create(
-                model=model_name,
-                input=config.edit_text.text,
-                instruction=text,
-            )
-            ret = ret.choices[0].text
-        else:
-            raise ValueError(f"Invalid mode : {config.completion_mode} valid ar 'text' 'chat' 'edit'")
-
-        return ret
-
-    def test_use_tools(self, agent_text, config: AgentConfig) -> tuple[bool, str, str]:
-        print()
+    def test_use_tools2(self, agent_text: str, config) -> tuple[bool, Any, Any]:  # TODO: mor investigation.
         if not agent_text:
             return False, "", ""
 
-        if config.mode == "free":
+        # Check if the input is a JSON string
+        self.logger.info("Check if the input is a JSON string")
+        self.print("Check if the input is a JSON string")
+        try:
+            json_obj = json.loads(agent_text)
+            if "Action" in json_obj and "Inputs" in json_obj:
+                action = json_obj["Action"]
+                inputs = json_obj["Inputs"]
+                if action in config.tools.keys():
+                    return True, action, inputs
+        except json.JSONDecodeError:
+            pass
 
-            for text in agent_text.split('\n'):
+        # Check if the input is a string with Action and Inputs
+        self.logger.info("Check if the input is a string with Action and Inputs")
+        self.print("Check if the input is a string with Action and Inputs")
+        action_match = re.search(r"Action:\s*(\w+)", agent_text)
+        inputs_match = re.search(r"Inputs:\s*({.*})", agent_text)
+        inputs_matchs = re.search(r"Inputs:\s*(.*)", agent_text)
+        if action_match and inputs_match:
+            action = action_match.group(1)
+            inputs = inputs_match.group(1)
+            if action in config.tools.keys():
+                return True, action, inputs
 
-                text = text.strip()
+        if action_match and inputs_matchs:
+            action = action_match.group(1)
+            inputs = inputs_matchs.group(1)
+            if action in config.tools.keys():
+                return True, action, inputs
 
-                if text.startswith("Execute:"):
-                    text = text.replace("Execute:", "").strip()
-                    for key, value in config.tools.items():
-                        if key + '(' in text:
-                            text = text.strip()
-                            return True, key, text
+        if action_match:
+            action = action_match.group(1)
+            if action in config.tools.keys():
+                return True, action, ''
 
-                if text.startswith("Action:"):
-                    text = text.replace("Action:", "").strip()
-                    for key, value in config.tools.items():
-                        if key + '(' in text:
-                            text = text.strip()
-                            return True, key, text
+        # Use AI function to determine the action
+        self.logger.info("Use AI function to determine the action")
+        action = self.mini_task_completion(
+            f"Is one of the tools called in this line '''{agent_text}''' Avalabel tools: {list(config.tools.keys())}? If yes, answer with the tool name, if no, then with NONE. Answer:\n")
+        action = action.strip()
+        self.logger.info(f"Use AI : {action}")
+        self.print(f"Use AI : {action}")
+        print(action in list(config.tools.keys()), list(config.tools.keys()))
+        if action in list(config.tools.keys()):
+            inputs = agent_text.split(action, 1)
+            if len(inputs):
+                inputs = inputs[1].strip().replace("Inputs: ", "")
+            return True, action, inputs
 
-        if config.mode == "execution":
+        return False, "", ""
 
-            tool_name = ""
-            inputs = ""
-            valid_tool = False
-            run_key = ""
-            lines = agent_text.split('\n')
-            i = 0
-            inputs_do = False
-            for text in lines:
-                text = text.strip()
-                if text.startswith("Action:") and not valid_tool:
-                    tool_name = text.replace("Action:", "").strip()
-                    for key in config.tools.keys():
-                        if tool_name in key or tool_name.startswith(key) or tool_name.endswith(key):
-                            valid_tool = True
-                            run_key = key
-                    self.print(Style.GREYBG(f"{tool_name}, {valid_tool}"))
-                if not valid_tool:
-                    i += 1
-                if text.startswith("Inputs:"):
-                    self.print(f'Inputs detracted')
-                    inputs = text.replace("Inputs:", "")
-                    inputs = inputs.strip()
-                    inputs_do = True
-                    if run_key in config.tools.keys():
-                        valid_tool = True
+    def test_use_tools(self, agent_text: str, config: AgentConfig) -> tuple[bool, Any, Any]:
+        if not agent_text:
+            return False, "", ""
 
-                if '(' in text:
-                    function_name = text.split("(")[0]
-                    text = text.replace(function_name, '')
-                    if text.startswith("("):
-                        text = text[1:]
-                    if text.endswith(")"):
-                        text = text[:1]
-                    if text.startswith("'"):
-                        text = text[1:]
-                    if text.endswith("'"):
-                        text = text[:1]
-                    if text.startswith('"'):
-                        text = text[1:]
-                    if text.endswith('"'):
-                        text = text[:1]
-                    text = text.strip()
-                    inputs = text
-                    inputs_do = True
-                    self.print('direct call detected', function_name)
-                    valid_tool = True
-                    run_key = function_name
-                    break
+        self.logger.info("Start testing tools")
 
-            if valid_tool:
-                self.print(Style.GREYBG(f"{len(lines)}, {config.name}, {valid_tool}"))
-                if inputs_do:
-                    return True, run_key, inputs
-                return True, run_key, ",".join(lines[i:]).replace(f"Action: {run_key}", "").strip()
+        print(f"_extract_from_json, {agent_text}")
 
-        res = self.question_answering("What is the name of the action ?", agent_text)
-        if res['score'] > 0.3:
-            pos_actions: list[str] = res['answer'].replace("\n", "").split(' ')
-            items = set(config.tools.keys())
-            self.print(Style.BLUEBG(str(agent_text[res['end']:].split('\n'))))
-            text_list = agent_text[res['end']:].split('\n')
-            text = text_list[0]
-            if len(text_list) > 1:
-                text = text_list[1]
-            for i in text_list:
-                if i:
-                    text = i
-            for p_ac in pos_actions:
-                if p_ac in items:
-                    print()
-                    text = text.strip()
-                    self.print(f"AI Execute Action {p_ac} {text}|")
-                    return True, p_ac, text.replace('Inputs:', '')
+        action, inputs = _extract_from_json(agent_text, config)
+        print(f"{action=}| {inputs=} {action in config.tools.keys()=}")
+        if action and action in config.tools.keys():
+            return True, action, inputs
+
+        print("_extract_from_string")
+        action, inputs = _extract_from_string(agent_text, config)
+        print(f"{action=}| {inputs=} {action in config.tools.keys()=}")
+        if action and action in config.tools.keys():
+            return True, action, inputs
+
+        print("_extract_from_string")
+        action, inputs = _extract_from_string_de(agent_text, config)
+        print(f"{action=}| {inputs=} {action in config.tools.keys()=}")
+        if action and action in config.tools.keys():
+            return True, action, inputs
+
+        self.logger.info("Use AI function to determine the action")
+        action = self.mini_task_completion(
+            f"Is one of the tools called in this line '''{agent_text}''' Avalabel tools: {list(config.tools.keys())}? If yes, answer with the tool name, if no, then with NONE. Answer:\n")
+        action = action.strip()
+        self.logger.info(f"Use AI : {action}")
+        self.print(f"Use AI : {action}")
+        print(action in list(config.tools.keys()), list(config.tools.keys()))
+        if action in list(config.tools.keys()):
+            inputs = agent_text.split(action, 1)
+            if len(inputs):
+                inputs = inputs[1].strip().replace("Inputs: ", "")
+            print(f"{action=}| {inputs=} ")
+            return True, action, inputs
 
         return False, "", ""
 
@@ -1608,85 +1560,46 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         return done
 
-    def run_tool(self, command, function_name, config=AgentConfig):
+    @staticmethod
+    def parse_arguments(command: str):
+        try:
+            args = json.loads(command)
+            if isinstance(args, dict):
+                return (), args
+            return (args,), {}
+        except json.JSONDecodeError:
+            args = command.split(',')
+            args = [a.strip() for a in args]
+            return args, {}
 
-        str_args = True
-        args = ''
-        args_len_c = 0
+    def run_tool(self, command: str, function_name: str, config: AgentConfig):
+        positional_args, keyword_args = self.parse_arguments(command)
 
-        if command.startswith("{") and command.endswith("}"):
-            try:
-                args = json.loads(command)
-                args_len_c = len(list(args.keys()))
-                str_args = False
-            except Exception as e:
-                self.logger.error(Style.RED(str(e)))
-                str_args = True
-
-        if str_args:
-            args = command.replace(function_name + "(", "").replace(function_name, "").split(",")
-            args_len_c = len(args)
-
-        valid_func = False
-
-        for func in list(config.tools.keys()):
+        for func in config.tools.keys():
             if function_name.lower().strip() == func.lower().strip():
-                valid_func = True
                 function_name = func
                 break
-
-        if not valid_func:
-            self.print(f"Unknown Function {function_name} valid ar : {config.tools.keys()}")
-            return f"Unknown Function {function_name} valid ar : {config.tools.keys()}"
+        else:
+            self.logger.error(f"Unknown Function {function_name}. Valid functions are: {config.tools.keys()}")
+            return f"Unknown Function {function_name}. Valid functions are: {config.tools.keys()}"
 
         tool = config.tools[function_name]
-
         sig = signature(tool['func'])
-        args_len = len(sig.parameters)
-        self.print(f"Runing : {function_name}")
-        self.print(
-            f"signature : {sig} | fuction args len : {args_len} | providet nubers of args {args_len_c}")
+        len_para = len(list(sig.parameters))
+        self.logger.info(f"Running: {function_name} with signature: {sig}")
 
-        observation = "Problem running function"
-
-        #try:
-        if args_len == 0:
-            self.logger.info("Running with no arguments")
-            observation = tool['func']()
-        elif args_len == args_len_c:
-            self.logger.info("Running with matching arguments")
-            observation = tool['func'](*args)
-        elif args_len == 1 and args_len_c > 1 and args_len < args_len_c:
-            self.logger.info("Running with one or more then one arguments")
-            if str_args:
-                observation = tool['func'](",".join(args))
+        try:
+            if len_para == 0:
+                observation = tool['func']()
+            elif len_para == 1 and len(positional_args) > 1:
+                observation = tool['func'](','.join(positional_args))
             else:
-                observation = tool['func'](args)
-        elif args_len == 2:
-            self.logger.info("Running with one arguments and one None state")
-            if str_args:
-                observation = tool['func'](",".join(args), None)
-            else:
-                observation = tool['func'](args, None)
-        elif args_len == 2 and args_len_c == 1:
-            self.logger.info("Running with one arguments and one None state")
-            if str_args:
-                observation = tool['func'](args, None)
-            else:
-                if len(args.keys()) == 1:
-                    args = args[list(args.keys())[0]]
-                observation = tool['func'](args, None)
-        elif args_len > args_len_c:
-            self.logger.info("Matching keyword")
-            if not str_args:
-                observation = tool['func'](**args)
-        else:
-            observation = "Error this is bad the arguments dos not match the tool"
+                observation = tool['func'](*positional_args, **keyword_args)
+        except Exception as e:
+            self.logger.error(f"Fatal error in tool {function_name}: {str(e)}")
+            observation = f"Fatal error in tool {function_name}: {str(e)}"
 
-        #except Exception as e:
-        #    observation = f"Fatal error in tool {function_name}: {str(e)}"
-
-        self.print("Observation : " + observation)
+        self.logger.info(f"Observation: {observation}")
 
         path = self.observation_term_mem_file
         if not self.agent_collective_senses:
@@ -1698,14 +1611,16 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             try:
                 f.write(str(observation))
             except UnicodeEncodeError:
-                self.print("Memory not encoded properly")
+                self.logger.error("Memory not encoded properly")
 
         if isinstance(observation, dict):
-            # try:
             observation = self.summarize_dict(observation, config)
 
-        if not observation or observation is None:
-            observation = "Problem running function try run with mor detaiels"
+        if not observation:
+            observation = "Problem running function, try running with more details"
+
+        if not isinstance(observation, str):
+            observation = str(observation)
 
         config.short_mem.text = observation
 
@@ -1770,7 +1685,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                                                               return_direct=return_direct
                                                               ))
             agent_type = config.agent_type
-            #if agent_type in ["structured-chat-zero-shot-react-description"]:
+            # if agent_type in ["structured-chat-zero-shot-react-description"]:
             #    if text:
             #        config.step_between = text
             #    out = initialize_agent(tools, prompt=prompt,
@@ -1778,12 +1693,12 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             #                           agent=agent_type, verbose=config.verbose,
             #                           max_iterations=config.max_iterations).run(text)
             #    print(out)
-            #else:
+            # else:
             out = initialize_agent(tools, prompt=prompt,
-                                       llm=self.get_llm_models(config.model_name),
-                                       agent=agent_type, verbose=config.verbose,
-                                       return_intermediate_steps=True,
-                                       max_iterations=config.max_iterations)(text)
+                                   llm=self.get_llm_models(config.model_name),
+                                   agent=agent_type, verbose=config.verbose,
+                                   return_intermediate_steps=True,
+                                   max_iterations=config.max_iterations)(text)
             if agent_type not in ["structured-chat-zero-shot-react-description"]:
                 out = self.summarize_dict(out, config)
             config.add_system_information = sto
@@ -1928,7 +1843,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 self.logger.info(Style.GREY(f"In Task {work_pointer} detected 'mode' {config.mode}"))
             if 'completion-mode' in keys:
                 config.completion_mode = task['completion-mode']
-                self.logger.info(Style.GREY(f"In Task {work_pointer} detected 'completion-mode' {config.completion_mode}"))
+                self.logger.info(
+                    Style.GREY(f"In Task {work_pointer} detected 'completion-mode' {config.completion_mode}"))
             if "infos" in keys:
                 config.short_mem.text += task['infos']
                 self.logger.info(Style.GREY(f"In Task {work_pointer} detected 'info' {task['infos'][:15]}..."))
@@ -2004,7 +1920,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
             else:
 
-                ret, sum_sto, chain_ret_ = self.chain_cor_runner(use, task_name, args, config, sto_name, task, work_pointer,
+                ret, sum_sto, chain_ret_ = self.chain_cor_runner(use, task_name, args, config, sto_name, task,
+                                                                 work_pointer,
                                                                  keys,
                                                                  chain_ret, sum_sto)
 
@@ -2027,7 +1944,6 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             #                 print(f'🟢')
             #     except Exception as e:
             #         print(f"Error in validation : {e}")
-
 
             if 'to-edit-text' in keys:
                 config.edit_text.text = ret
@@ -2085,6 +2001,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
     def chain_cor_runner(self, use, task_name, args, config, sto_name, task, steps, keys, chain_ret, sum_sto):
         ret = ''
         ret_data = []
+        task_name = task_name.strip()
         self.logger.info(Style.GREY(f"using {steps} {use} {task_name} {args[:15]}..."))
         if use == "tool":
             if 'agent' in task_name.lower():
@@ -2102,7 +2019,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                     task['function'](chain_ret[-1][1])
 
         elif use == 'expyd' or use == 'chain':
-            ret, ret_data = self.execute_thought_chain(args, self.agent_chain.get(task_name), config, speak=self.speak)
+            ret, ret_data = self.execute_thought_chain(args, self.agent_chain.get(task_name.strip()), config, speak=self.speak)
         else:
             self.print(Style.YELLOW(f"use is not available {use} avalabel ar [tool, agent, function, chain]"))
 
@@ -2216,26 +2133,59 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         return res, res_um
 
     def stream_read_llm(self, text, config, r=2.0):
-        p_token_num = self.get_tokens(text, config.model_name)
+
+        p_token_num = config.get_tokens(text)
         config.token_left = config.max_tokens - p_token_num
-        self.print(f"TOKENS: {p_token_num} | left = {config.token_left if config.token_left > 0 else '-'}")
+        self.print(f"TOKENS: {p_token_num}:{len(text)} | left = {config.token_left if config.token_left > 0 else '-'} |"
+                   f" max : {config.max_tokens}")
         if config.token_left < 0:
             text = self.mas_text_summaries(text)
-            p_token_num = self.get_tokens(text, config.model_name)
+            p_token_num = config.get_tokens(text)
             config.token_left = config.max_tokens - p_token_num
             self.print(f"TOKENS: {p_token_num} | left = {config.token_left if config.token_left > 0 else '-'}")
 
+        if p_token_num == 0 and len(text) <= 9:
+            self.print(f"No context")
+            return "No context"
+
         if '/' in config.model_name:
-            if text:
-                config.step_between = text
+            # if text:
+            #     config.step_between = text
+            template = config.prompt.replace('{', '}}').replace('}', '{{') + '{xVx}'
             prompt = PromptTemplate(
                 input_variables=['xVx'],
-                template=config.prompt.replace('{', '}}').replace('}', '{{') + '{xVx}',
+                template=template,
             )
-            return LLMChain(prompt=prompt, llm=self.get_llm_models(config.model_name)).run(' ')
+            try:
+                llm_output = LLMChain(prompt=prompt, llm=self.get_llm_models(config.model_name)).run(text)
+            except ValueError:
+                return ""
+
+            return self.add_price_data(prompt=template,
+                                       config=config,
+                                       llm_output=llm_output)
+
         elif config.model_name.startswith('gpt4all#'):
-            return self.config[f'LLM-model-{config.model_name}'].generate(prompt=config.prompt,
-                                                                          streaming=config.stream)
+            if text:
+                config.step_between = text
+
+            prompt = config.prompt
+
+            llm_output = self.config[f'LLM-model-{config.model_name}'].generate(
+                prompt=prompt,
+                streaming=config.stream,
+
+                temp=config.temperature,
+                top_k=34,
+                top_p=0.4,
+                repeat_penalty=1.18,
+                repeat_last_n=64,
+                n_batch=8,
+            )
+
+            return self.add_price_data(prompt=prompt,
+                                       config=config,
+                                       llm_output=llm_output)
 
         try:
             if not config.stream:
@@ -2245,6 +2195,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 print(' ' * 400)
                 if config.completion_mode == 'chat':
                     config.add_message('assistant', res)
+                self.add_price_data(prompt=config.last_prompt, config=config, llm_output=res)
                 return res
 
             print(f"Generating response (/) stream (\\) {config.name} {config.model_name} {config.mode} "
@@ -2289,6 +2240,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                     return self.stream_read_llm(text + '\n' + res, config, r - 1)
             if config.completion_mode == 'chat':
                 config.add_message('assistant', res)
+            self.add_price_data(prompt=config.last_prompt, config=config, llm_output=res)
             return res
         except openai.error.RateLimitError:
             self.print(f"{' ' * 30}  | Retry level: {r} ", end="\r")
@@ -2330,6 +2282,75 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             self.logger.error(str(e))
             return "*Error*"
 
+    @staticmethod
+    def process_completion(text, config: AgentConfig):
+
+        if not isinstance(config, AgentConfig):
+            raise TypeError("Invalid config")
+
+        if len(config.task_list) == 0 and len(text) != 0:
+            config.step_between = text
+
+        model_name = config.model_name
+        ret = ""
+        if config.stream:
+            ret = {'choices': [{'text': "", 'delta': {'content': ''}}]}
+
+        if '/' in model_name:
+            return "only supported for open ai."
+
+        if config.completion_mode == 'text':
+
+            if model_name.startswith('gpt-'):
+                model_name = "text-davinci-003"
+
+            ret = openai.Completion.create(
+                model=model_name,
+                prompt=config.prompt,
+                # max_tokens=config.token_left,
+                temperature=config.temperature,
+                n=1,
+                stream=config.stream,
+                logprobs=3,
+                stop=config.stop_sequence,
+            )
+
+            if not config.stream:
+                ret = ret.choices[0].text
+
+        elif config.completion_mode == 'chat':
+            messages = config.get_messages(create=True)
+            if text:
+                config.add_message("user", text)
+            ret = openai.ChatCompletion.create(
+                model=model_name,
+                messages=messages,
+                # max_tokens=config.token_left,
+                temperature=config.temperature,
+                n=1,
+                stream=config.stream,
+                stop=config.stop_sequence,
+            )
+            if not config.stream:
+                ret = ret.choices[0].message.content
+
+        elif config.completion_mode == 'edit':
+            if text:
+                config.edit_text.text = text
+            else:
+                config.edit_text.text = config.short_mem.text
+
+            ret = openai.Edit.create(
+                model=model_name,
+                input=config.edit_text.text,
+                instruction=text,
+            )
+            ret = ret.choices[0].text
+        else:
+            raise ValueError(f"Invalid mode : {config.completion_mode} valid ar 'text' 'chat' 'edit'")
+
+        return ret
+
     def mas_text_summaries(self, text, min_length=1600):
 
         len_text = len(text)
@@ -2342,19 +2363,47 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         cap = 800
         max_length = 45
         summary_chucks = ""
-        chucks = []
+
+        if 'text-splitter0-init' not in self.config.keys():
+            self.config['text-splitter0-init'] = False
+        if not self.config['text-splitter0-init'] or not isinstance(self.config['text-splitter0-init'],
+                                                                    CharacterTextSplitter):
+            self.config['text-splitter0-init'] = CharacterTextSplitter(chunk_size=cap, chunk_overlap=cap / 6)
+
+        splitter = self.config['text-splitter0-init']
 
         if len(text) >= 6200:
             cap = 1200
             max_length = 80
+            if 'text-splitter1-init' not in self.config.keys():
+                self.config['text-splitter1-init'] = False
+            if not self.config['text-splitter1-init'] or not isinstance(self.config['text-splitter1-init'],
+                                                                        CharacterTextSplitter):
+                self.config['text-splitter1-init'] = CharacterTextSplitter(chunk_size=cap, chunk_overlap=cap / 6)
+
+            splitter = self.config['text-splitter1-init']
 
         if len(text) >= 10200:
             cap = 1800
             max_length = 160
+            if 'text-splitter2-init' not in self.config.keys():
+                self.config['text-splitter2-init'] = False
+            if not self.config['text-splitter2-init'] or not isinstance(self.config['text-splitter2-init'],
+                                                                        CharacterTextSplitter):
+                self.config['text-splitter2-init'] = CharacterTextSplitter(chunk_size=cap, chunk_overlap=cap / 6)
+
+            splitter = self.config['text-splitter2-init']
 
         if len(text) >= 70200:
             cap = 1900
             max_length = 412
+            if 'text-splitter3-init' not in self.config.keys():
+                self.config['text-splitter3-init'] = False
+            if not self.config['text-splitter3-init'] or not isinstance(self.config['text-splitter3-init'],
+                                                                        CharacterTextSplitter):
+                self.config['text-splitter3-init'] = CharacterTextSplitter(chunk_size=cap, chunk_overlap=cap / 6)
+
+            splitter = self.config['text-splitter3-init']
 
         summarization_mode_sto = 0
         if len(text) > self.summarization_limiter and self.summarization_mode:
@@ -2372,21 +2421,41 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 end = [{'summary_text': self.stream_read_llm(x, self.get_agent_config_class('summary'), r=0)}]
             return end
 
-        while len(text) > cap:
-            chucks.append(text[:cap])
-            text = text[cap:]
-        if text:
-            chucks.append(text)
+        def summary_func3(x):
+            if isinstance(x, list):
+                end = []
+                for i in x:
+                    end.append({'summary_text': self.stream_read_llm(i, self.get_agent_config_class('think'), r=0)})
+            else:
+                end = [{'summary_text': self.stream_read_llm(x, self.get_agent_config_class('think'), r=0)}]
+            return end
 
-        self.print(f"SYSTEM: chucks to summary: {len(chucks)} cap : {cap}")
+        # while len(text) > cap:
+        #     chucks.append(text[:cap])
+        #     text = text[cap:]
+        # if text:
+        #     chucks.append(text)
+
+        chunks: list[str] = splitter.split_text(text)
+        i = 0
+        max_iter = int(len(chunks) * 1.2)
+        while i < len(chunks) and max_iter > 0:
+            max_iter -= 1
+            chunk = chunks[i]
+            if len(chunk) > cap*1.5:
+                chunks = chunks[:i] + [chunk[:len(chunk) // 2], chunk[len(chunk) // 2:]] + chunks[i + 1:]
+            else:
+                i += 1
+
+        self.print(f"SYSTEM: chucks to summary: {len(chunks)} cap : {cap}")
 
         with Spinner("Generating summary", symbols='d'):
             if self.summarization_mode == 0:
-                summaries = summary_func(chucks)
+                summaries = summary_func(chunks)
             elif self.summarization_mode == 2:
-                summaries = summary_func2(chucks)
+                summaries = summary_func2(chunks)
             else:
-                summaries = summary_func(chucks)
+                summaries = summary_func(chunks)
 
         for i, chuck_summary in enumerate(summaries):
             summary_chucks += chuck_summary['summary_text'] + "\n"
@@ -2398,9 +2467,9 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 summary = summary_chucks
             elif len(summary_chucks) > 20000:
                 if self.summarization_mode == 0:
-                    summary = summary_func(summary_chucks)[0]['summary_text']
-                else:
                     summary = summary_func2(summary_chucks)[0]['summary_text']
+                else:
+                    summary = summary_func3(summary_chucks)[0]['summary_text']
             else:
                 summary = self.mas_text_summaries(summary_chucks)
         else:
@@ -2466,20 +2535,6 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             return ConversationalRetrievalChain.from_llm(self.get_llm_models(config.model_name), retriever=retriever)
         return None
 
-    def get_tokens(self, text, model_name, only_len=True):
-
-        if model_name.startswith('gpt4all#'):
-            if f'LLM-model-{model_name}' not in self.config.keys():
-                self.load_llm_models([model_name])
-            emb = self.config[f'LLM-model-{model_name}'].model.generate_embedding(text)
-
-            if only_len:
-                return len(emb)
-            else:
-                return emb
-        else:
-            return get_tokens(text, model_name, only_len)
-
     def get_chain(self, hydrate=None, f_hydrate=None) -> AgentChain:
         logger = get_logger()
         logger.info(Style.GREYBG(f"AgentChain requested"))
@@ -2495,6 +2550,99 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         cm = self.agent_memory
         logger.info(Style.Bold(f"AIContextMemory instance, returned"))
         return cm
+
+    def add_price_data(self, prompt: str, llm_output: str, config: AgentConfig):
+        input_price, output_price = config.calc_price(prompt, llm_output)
+        self.price['input'] += input_price
+        self.price['output'] += output_price
+        self.price['all'] += output_price + input_price
+        self.price['price_consumption'] += config.consumption
+        self.price['consumption'].append([config.name, config.consumption])
+        if config.model_name not in self.price['model_consumption'].keys():
+            self.price['model_consumption'][config.model_name] = {
+                'i': 0,
+                'o': 1,
+                'c': 0,
+            }
+        self.price['model_consumption'][config.model_name]['i'] += input_price
+        self.price['model_consumption'][config.model_name]['o'] += output_price
+        self.price['model_consumption'][config.model_name]['c'] += 1
+        config.consumption = 0
+        return llm_output
+
+    def clear_price(self):
+        self.price = {
+            'all': 0,
+            'input': 0,
+            'output': 1,
+            'consumption': [],
+            'price_consumption': 0,
+            'model_consumption': {},
+            'history': {},
+        }
+
+    def show_usage(self):
+
+        self.print("Consumption Overview\n")
+        doller_euro = 0.91
+        prosessing_factor = 0.2
+
+        def show_eruo_doller(price, t='€'):
+            return f"{(price / 100) * doller_euro:.4f}€" if t == '€' else f"{(price / 100):.4f}$"
+
+        print(f"{Style.WHITE(Style.Bold(' === Usage === '))}\n")
+        print(f"{Style.WHITE(' --- Agents --- ')}\n")
+
+        agents = {}
+
+        for agent_usage in self.price['consumption']:
+            if not agent_usage[0] in agents.keys():
+                agents[agent_usage[0]] = []
+            agents[agent_usage[0]].append(agent_usage[1])
+
+        if self.price['price_consumption'] == 0:
+            self.price['price_consumption'] = 1
+        if self.price['output'] == 0:
+            self.price['output'] = 1
+
+        for name, agent_usage in agents.items():
+            print(
+                f"\t- {show_eruo_doller(sum(agent_usage) * prosessing_factor)} by {name}")
+
+        if agents == {}:
+            print("\tNo Agents were used")
+        print(f"\n{Style.WHITE(' --- Models --- ')}\n")
+
+        for name, value in self.price['model_consumption'].items():
+            input_con = value['i']
+            out_con = value['o']
+            sum_con = input_con + out_con
+            print(
+                f"\t- {show_eruo_doller(sum_con * prosessing_factor)} by {name}  calld {value['c']}X")
+        if self.price['model_consumption'] == {}:
+            print("\tNo Models were used")
+        print(f"\n{Style.WHITE(f' --- History : {self.app_.id} --- ')}\n")
+
+        for name, value in self.price['history'].items():
+            input_con = value['i']
+            out_con = value['o']
+            sum_con = input_con + out_con
+            print(
+                f"\t- {show_eruo_doller(sum_con)} intern {show_eruo_doller(value['c'] * prosessing_factor)} at {name}")
+        if self.price['history'] == {}:
+            print("\tNo history found")
+
+        print(f"\n{Style.WHITE(' --- Summary --- ')}\n")
+        print(
+            f"\t{Style.BLUE(Style.Bold('I/O:'))} {show_eruo_doller(self.price['input'])} / {show_eruo_doller(self.price['output'])} sum : {show_eruo_doller(self.price['all'])}")
+        print(Style.GREY(f"\t- i/o balance {self.price['input'] // self.price['output']} times mor input then Output"))
+        print(Style.ITALIC(Style.GREEN(
+            f"\tInternal consumption: {show_eruo_doller(self.price['price_consumption'] * prosessing_factor)}")))
+
+        print(Style.ITALIC(Style.Bold(Style.CYAN("\tCold Price : ") + show_eruo_doller(self.price['all']))))
+        print(Style.ITALIC(Style.Bold(Style.MAGENTA("\tHot  Price : ") + show_eruo_doller(
+            self.price['all'] + (self.price['price_consumption'] * prosessing_factor)))))
+        print()
 
 
 def get_tool(app: App):
@@ -2518,12 +2666,19 @@ def get_tool(app: App):
     return Tools()
 
 
-def initialize_gi(app: App, model_name):
+def initialize_gi(app: App or Tools, model_name):
     app.logger.info(f'initializing gi {model_name}')
-    mod = get_tool(app)
+    if isinstance(app, App):
+        mod = get_tool(app)
+    elif isinstance(app, Tools):
+        mod = app
+    else:
+        raise ValueError(f"Unknown app or mod type {type(app)}")
     mod.config['genrate_image-init-in'] = model_name
 
     if not mod.config['genrate_image-init']:
+        if 'REPLICATE_API_TOKEN' not in mod.config.keys():
+            raise ValueError("No REPLICATE_API_TOKEN Specified pleas set the key in the config")
         mod.config[f'replicate'] = replicate.Client(api_token=mod.config[f'REPLICATE_API_TOKEN'])
 
     mod.config['genrate_image-init'] = True
@@ -2534,21 +2689,27 @@ def initialize_gi(app: App, model_name):
     #     mod.config[f'genrate_image{model_name}'].scheduler.config)
 
     model = mod.config[f'replicate'].models.get(model_name)
-    mod.config[f'genrate_image{model_name}'] = model.versions.get(
+    mod.config[f'genrate_image-{model_name}'] = model.versions.get(
         "db21e45d3f7023abc2a46ee38a23973f6dce16bb082a930b0c49861f96d1e5bf")
+    print(f"Initializing Model : {model_name}")
 
 
 def genrate_image(inputs, app: App, model="stability-ai/stable-diffusion"):
     mod = get_tool(app)
+    if 'genrate_image-init' not in mod.config.keys():
+        mod.config['genrate_image-init'] = False
     if not mod.config['genrate_image-init']:
-        initialize_gi(app, model)
+        initialize_gi(mod, model)
     if 'genrate_image-in' not in mod.config.keys():
         mod.config['genrate_image-in'] = model
 
     if mod.config['genrate_image-in'] != model:
-        initialize_gi(app, model)
+        initialize_gi(mod, model)
 
-    return mod.config[f'genrate_image{model}'].predict(**inputs)  # (text).images
+    if f'genrate_image-{model}' not in mod.config.keys():
+        initialize_gi(mod, model)
+
+    return mod.config[f'genrate_image-{model}'].predict(**inputs)  # (text).images
 
 
 from toolboxv2.mods import BROWSER
@@ -2620,8 +2781,12 @@ def browse_website(url, question, summ):
 
 def get_text_summary(url, question, summarize):
     text = scrape_text(url)
-    summary = summarize(text)
-    return """ "Result" : """ + summary
+    print(text)
+    summary = summarize(f"Context ###{text}### Question ###{question}###")
+    if isinstance(summary, list):
+        summary = '\n'.join(summary)
+
+    return """Result: """ + summary
 
 
 def get_hyperlinks(url):
@@ -2680,5 +2845,75 @@ def scrape_links(url):
     hyperlinks = extract_hyperlinks(soup)
 
     return format_hyperlinks(hyperlinks)
+
+
+def _extract_from_json(agent_text, config):
+    try:
+        print(agent_text)
+        json_obj = anything_from_str_to_dict(agent_text, {"Action": None, "Inputs": None})
+        print("OBJ:::::::::", json_obj)
+        if json_obj:
+            json_obj = json_obj[0]
+            if not isinstance(json_obj, dict):
+                return None, ''
+            if "Action" in json_obj.keys() and "Inputs" in json_obj.keys():
+                action = json_obj["Action"]
+                inputs = json_obj["Inputs"]
+                if action in config.tools.keys():
+                    return action, inputs
+    except json.JSONDecodeError:
+        pass
+    return None, ''
+
+
+def _extract_from_string(agent_text, config):
+    action_match = re.search(r"Action:\s*(\w+)", agent_text)
+    inputs_match = re.search(r"Inputs:\s*({.*})", agent_text)
+    inputs_matchs = re.search(r"Inputs:\s*(.*)", agent_text)
+    if action_match is not None and inputs_match is not None:
+        action = action_match.group(1)
+        inputs = inputs_match.group(1)
+        if action in config.tools.keys():
+            return action.strip(), inputs
+
+    if action_match is not None and inputs_matchs is not None:
+        action = action_match.group(1)
+        inputs = inputs_matchs.group(1)
+        print(f"action: {action=}\n{action in config.tools.keys()=}\n {config.tools.keys()=}")
+        if action in config.tools.keys():
+            return action.strip(), inputs
+
+    if action_match is not None:
+        action = action_match.group(1)
+        if action in config.tools.keys():
+            return action.strip(), ''
+
+    return None, ''
+
+def _extract_from_string_de(agent_text, config):
+    action_match = re.search(r"Aktion:\s*(\w+)", agent_text)
+    inputs_match = re.search(r"Eingaben:\s*({.*})", agent_text)
+    inputs_matchs = re.search(r"Eingaben:\s*(.*)", agent_text)
+
+    if action_match is not None and inputs_match is not None:
+        action = action_match.group(1)
+        inputs = inputs_match.group(1)
+        if action in config.tools.keys():
+            return action.strip(), inputs
+
+    if action_match is not None and inputs_matchs is not None:
+        action = action_match.group(1)
+        inputs = inputs_matchs.group(1)
+        print(f"action: {action=}\n{action in config.tools.keys()=}\n {config.tools.keys()=}")
+        if action in config.tools.keys():
+            return action.strip(), inputs
+
+    if action_match is not None:
+        action = action_match.group(1)
+        if action in config.tools.keys():
+            return action.strip(), ''
+
+    return None, ''
+
 
 # print(get_tool(get_app('debug')).get_context_memory().get_context_for("Hallo das ist ein Test")) Fridrich
