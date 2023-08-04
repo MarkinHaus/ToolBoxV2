@@ -98,10 +98,10 @@ class Tools(MainTool, FileHandler):  # FileHandler
             if len(command) == 2:
                 command += ["127.0.0.1", 5000]
 
-        if not os.path.exists(f"./data/api_pid_{command[1]}"):
+        if not os.path.exists(f"./.data/api_pid_{command[1]}"):
             self.logger.warning("no api_pid file found ")
             return
-        with open(f"./data/api_pid_{command[1]}", "r") as f:
+        with open(f"./.data/api_pid_{command[1]}", "r") as f:
             api_pid = f.read()
             requests.get(f"http://{command[2]}:{command[3]}/api/exit/{api_pid}")
             if system() == "Windows":

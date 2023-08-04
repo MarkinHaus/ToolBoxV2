@@ -87,22 +87,22 @@ class App(metaclass=Singleton):
             dname = os.path.dirname(abspath).replace("\\utils", "")
         os.chdir(dname)
 
-        if not os.path.exists("./data"):
-            os.mkdir("./data")
-        if not os.path.exists("./config"):
-            os.mkdir("./config")
+        if not os.path.exists("./.data"):
+            os.mkdir("./.data")
+        if not os.path.exists("./.config"):
+            os.mkdir("./.config")
 
         if not prefix:
-            if not os.path.exists("./data/last-app-prefix"):
-                open("./data/last-app-prefix", "a").close()
-            with open("./data/last-app-prefix", "r") as prefix_file:
+            if not os.path.exists("./.data/last-app-prefix"):
+                open("./.data/last-app-prefix", "a").close()
+            with open("./.data/last-app-prefix", "r") as prefix_file:
                 cont = prefix_file.read()
                 if cont:
                     prefix = cont
         else:
-            if not os.path.exists("./data/last-app-prefix"):
-                open("./data/last-app-prefix", "a").close()
-            with open("./data/last-app-prefix", "w") as prefix_file:
+            if not os.path.exists("./.data/last-app-prefix"):
+                open("./.data/last-app-prefix", "a").close()
+            with open("./.data/last-app-prefix", "w") as prefix_file:
                 prefix_file.write(prefix)
 
         print(f"Starting ToolBox as {prefix} from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))

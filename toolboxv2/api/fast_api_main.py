@@ -114,7 +114,7 @@ if __name__ == 'toolboxv2.api.fast_api_main':
     tb_app = get_app(id_name)
     if id_name == tb_app.id:
         print("🟢 START")
-    with open(f"./data/api_pid_{id_name}", "w") as f:
+    with open(f"./.data/api_pid_{id_name}", "w") as f:
         f.write(str(os.getpid()))
     # tb_app.load_all_mods_in_file()
     tb_app.save_load("welcome")
