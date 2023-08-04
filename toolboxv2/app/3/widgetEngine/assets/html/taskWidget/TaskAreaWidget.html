@@ -1,0 +1,41 @@
+<link rel="stylesheet" href="../../../../../1/WigetNav/navDrow.css">
+<link rel="stylesheet" href="../../../../../assets/Wiget.css">
+<link rel="stylesheet" href="../../../../../assets/styles.css">
+<style>
+    .taskA-widget{
+        resize: both;
+    }
+
+</style>
+<div class="taskA-widget widget draggable">
+        <div class="text-widget-from widget-from">Task Aria : Default</div>
+        <span class="text-widget-close-button widget-close-button">X</span>
+        <nav>
+            <button onclick="endEdit()">New Task</button>
+            <label>Select Task
+                <select class="task-widget-mode">
+                    <option value="task1">task1</option>
+                    <option value="task2">task2</option>
+                    <option value="task3">task3</option>
+                    <option value="task4">task4</option>
+                </select>
+            </label>
+        </nav>
+    <div id="TaskAria">
+
+    </div>
+</div>
+
+<script>
+
+    function startEdit(){
+        document.getElementById('Informations').style.display = 'none';
+        document.getElementById('Editing').style.display = '';
+    }
+    function endEdit(){
+        document.getElementById('Informations').style.display = ''
+        document.getElementById('Editing').style.display = 'none'
+    }
+
+    document.getElementById('Editing').style.display = 'none'
+</script>

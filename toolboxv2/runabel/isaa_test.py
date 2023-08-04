@@ -298,7 +298,7 @@ def run(app, args):
                                                 join_now=False, chain_runner=True)
 
     isaa.global_stream_override = True
-    isaa.summarization_mode = 2
+    isaa.summarization_mode = 3
 
     if 'augment' in isaa.config.keys() and False:
         print("init augment")
@@ -894,7 +894,7 @@ $user-input
 
     ]
 
-    planing_steps = first_widget_generator
+    planing_steps = auto_unit_test
     chains.add(planing_steps['name'], planing_steps['tasks'])
     task_ = """
 Erstelle einen Plan für ein dynamischin system welches in 3 schritten arbeitet
@@ -918,600 +918,284 @@ agents könenen tools benutzen
 das system kann aufgaben erstellen und bedigt ausführen
 Erstelle einen Detairten Plan.
 """
-    task__ = """
-test fuction :
-class Teststream_read_llm(unittest.TestCase):
-    t0 = 0
-    app = None
-
-    @classmethod
-    def setUpClass(cls):
-        # Code, der einmal vor allen Tests ausgeführt wird
-        cls.t0 = time.time()
-        cls.app = App("test-TestIsaa")
-        cls.app.mlm = "I"
-        cls.app.debug = True
-        cls.app.inplace_load("isaa", "toolboxv2.mods.")
-        cls.app.new_ac_mod("isaa")
-        cls.isaa: Tools = cls.app.get_mod('isaa')  ## !!!!!!!!!!!!!!!!!!!!!!!!!! this is the tool its reffers to the name isaa your name
-        cls.isaa_tool_class = cls.app.AC_MOD
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.app.remove_all_modules()
-        cls.app.save_exit()
-        cls.app.exit()
-        cls.app.logger.info(f"Accomplished in {time.time() - cls.t0}")
-
-    # ... test fuctionen
-
+    task = """
     # Neue Test :
 Schreibe einen Unit test für dieser function :
 ´´´
+
 class Tools(MainTool, FileHandler):
 
     def __init__(self, app=None):
+        self.version = "0.0.2"
+        self.name = "WebSocketManager"
+        self.logger: logging.Logger or None = app.logger if app else None
         if app is None:
             app = get_app()
-        self.version = "0.0.2"
-        self.name = "isaa"
-        self.logger: logging.Logger or None = app.logger if app else None
-        self.color = "VIOLET2"
-        self.config = {'genrate_image-init': False,
-                       'agents-name-list': []
-                       }
-        self.per_data = {}
+
+        self.app_ = app
+        self.color = "BLUE"
+        self.active_connections: dict = {}
+        self.app_id = get_app().id
         self.keys = {
-            "KEY": "key~~~~~~~",
-            "Config": "config~~~~"
+            "tools": "v-tools~~~"
         }
-        self.initstate = {}
-        self.mas_text_summaries_dict = [[], []]
-        self.genrate_image = image_genrating_tool
-        extra_path = ""
-        if self.toolID:
-            extra_path = f"/{self.toolID}"
-        self.observation_term_mem_file = f".data/{app.id}/Memory{extra_path}/observationMemory/"
         self.tools = {
             "all": [["Version", "Shows current Version"],
-                    ["api_run", "name inputs"],
-                    ["add_api_key", "Adds API Key"],
-                    ["login", "Login"],
-                    ["new-sug", "Add New Question or Class to Config"],
-                    ["run-sug", "Run Huggingface Pipeline"],
-                    ["info", "Show Config"],
-                    ["lode", "lode models"],
-                    ["image", "genarate image input"],
-                    ["api_initIsaa", "init isaa wit dif functions", 0, 'init_isaa_wrapper'],
-                    ["add_task", "Agent Chin add - Task"],
-                    ["api_save_task", "Agent Chin save - Task", 0, "save_task"],
-                    ["api_load_task", "Agent Chin load - Task", 1, "load_task"],
-                    ["api_get_task", "Agent Chin get - Task", 0, "get_task"],
-                    ["api_list_task", "Agent Chin list - Task", 0, "list_task"],
-                    ["api_start_widget", "api_start_widget", 0, "start_widget"],
-                    ["generate_task", "generate_task", 0, "generate_task"]
+                    ["connect", "connect to a socket async (Server side)"],
+                    ["disconnect", "disconnect a socket async (Server side)"],
+                    ["send_message", "send_message to a socket group"],
+                    ["list", "list all instances"],
+                    ["srqw", "Gent an WebSocket with url and ws_id", math.inf, 'srqw_wrapper'],
+                    ["construct_render", "construct_render"],
                     ],
-            "name": "isaa",
+            "name": "WebSocketManager",
             "Version": self.show_version,
-            "info": self.info,
-            "api_run": self.run_isaa_wrapper,
-            "image": self.genrate_image_wrapper,
-            "api_initIsaa": self.init_isaa_wrapper,
-            "api_start_widget": self.start_widget,
-            "add_task": self.add_task,
-            "save_task": self.save_task,
-            "load_task": self.load_task,
-            "get_task": self.get_task,
-            "list_task": self.list_task,
-            "generate_task": self.generate_task,
-        }
-        self.app_ = app
-        self.print_stream = print
-        self.agent_collective_senses = False
-        self.global_stream_override = False
-        self.pipes_device = 1
-        self.lang_chain_tools_dict = {}
-        self.agent_chain = AgentChain(directory=f".data/{app.id}{extra_path}/chains")
-        self.agent_memory = AIContextMemory(extra_path=extra_path)
-        self.summarization_mode = 0  # 0 to 2 0 huggingface 1 text
-        self.summarization_limiter = 102000
-        self.speak = lambda x, *args, **kwargs: x
-        self.scripts = Scripts(f".data/{app.id}{extra_path}/ScriptFile")
-        self.ac_task = None
-
-        self.price = {
-            'all': 0,
-            'input': 0,
-            'output': 0,
-            'consumption': [],
-            'price_consumption': 0
+            "connect": self.connect,
+            "disconnect": self.disconnect,
+            "send_message": self.send_message,
+            "list": self.list_instances,
+            "get": self.get_instances,
+            "srqw": self.srqw_wrapper,
+            "construct_render": self.construct_render,
         }
 
-        self.tools_dict = {
+        self.validated_instances = {
 
         }
-
-        FileHandler.__init__(self, f"isaa{extra_path.replace('/', '-')}.config", app.id if app else __name__)
+        self.vtID = None
+        FileHandler.__init__(self, "WebSocketManager.config", app.id if app else __name__, keys=self.keys, defaults={})
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
-                          name=self.name, logs=None, color=self.color, on_exit=self.on_exit)
-
-        self.toolID = ""
-        MainTool.toolID = ""
-
-    # def test_init(self): -> abgeschlossen
+                          name=self.name, logs=self.logger, color=self.color, on_exit=self.on_exit)
 
     # ... schon getestete function
 
     # ... noch zu testende fuctionen :
 
-    def mas_text_summaries(self, text, min_length=1600):
+    async def create_sender(self, websocket: WebSocket):
+        await websocket.send_text(json.dumps({"ValidateSelf": True}))
+        response = await websocket.receive_text()
 
-        len_text = len(text)
-        if len_text < min_length:
-            return text
+        response_dict = json.loads(response)
 
-        if text in self.mas_text_summaries_dict[0]:
-            return self.mas_text_summaries_dict[1][self.mas_text_summaries_dict[0].index(text)]
+        if 'valid' in response_dict:
+            if not response_dict['valid']:
+                self.print("Invalid websocket connection")
+                return "Invalid User " + response_dict['res']
 
-        cap = 800
-        max_length = 45
-        summary_chucks = ""
-        chucks = []
+        self.print("Crating Sender")
 
-        splitter = None
+        @concurrent.process(timeout=4)
+        def sender_process(message):
+            try:
+                websocket.send_text(message)
+            except Exception as e:
+                get_logger().error(Style.RED(f"Error sending message : {e}"))
+                print(Style.RED(f"Error sending message : {e}"))
+                return False
+            return True
 
-        if 'text-splitter0-init' not in self.config.keys():
-            self.config['text-splitter0-init'] = False
-        if not self.config['text-splitter0-init'] or not isinstance(self.config['text-splitter0-init'],
-                                                                    CharacterTextSplitter):
-            self.config['text-splitter0-init'] = CharacterTextSplitter(chunk_size=cap, chunk_overlap=cap / 6)
+        def sender(message):
+            try:
+                sending_process = sender_process(message)
+                if not sending_process.result():
+                    return "Error sending"
+                return True
+            except TimeoutError and Exception:
+                get_logger().error(Style.YELLOW(f"Timeout sending message"))
+                print(Style.YELLOW(f"Timeout sending message"))
+                return "Timeout Error"
 
-        splitter = self.config['text-splitter0-init']
+        return sender
 
-        if len(text) >= 6200:
-            cap = 1200
-            max_length = 80
-            if 'text-splitter1-init' not in self.config.keys():
-                self.config['text-splitter1-init'] = False
-            if not self.config['text-splitter1-init'] or not isinstance(self.config['text-splitter1-init'],
-                                                                        CharacterTextSplitter):
-                self.config['text-splitter1-init'] = CharacterTextSplitter(chunk_size=cap, chunk_overlap=cap / 6)
+    async def connect(self, websocket: WebSocket, websocket_id):
+        websocket_id_sto = await valid_id(websocket_id, self.app_id, websocket)
 
-            splitter = self.config['text-splitter1-init']
-
-        if len(text) >= 10200:
-            cap = 1800
-            max_length = 160
-            if 'text-splitter2-init' not in self.config.keys():
-                self.config['text-splitter2-init'] = False
-            if not self.config['text-splitter2-init'] or not isinstance(self.config['text-splitter2-init'],
-                                                                        CharacterTextSplitter):
-                self.config['text-splitter2-init'] = CharacterTextSplitter(chunk_size=cap, chunk_overlap=cap / 6)
-
-            splitter = self.config['text-splitter2-init']
-
-        if len(text) >= 70200:
-            cap = 1900
-            max_length = 412
-            if 'text-splitter3-init' not in self.config.keys():
-                self.config['text-splitter3-init'] = False
-            if not self.config['text-splitter3-init'] or not isinstance(self.config['text-splitter3-init'],
-                                                                        CharacterTextSplitter):
-                self.config['text-splitter3-init'] = CharacterTextSplitter(chunk_size=cap, chunk_overlap=cap / 6)
-
-            splitter = self.config['text-splitter3-init']
-
-        summarization_mode_sto = 0
-        if len(text) > self.summarization_limiter and self.summarization_mode:
-            self.summarization_mode, summarization_mode_sto = 0, self.summarization_mode
-
-        def summary_func(x):
-            return self.summarization(x, max_length=max_length)
-
-        def summary_func2(x):
-            if isinstance(x, list):
-                end = []
-                for i in x:
-                    end.append({'summary_text': self.stream_read_llm(i, self.get_agent_config_class('summary'), r=0)})
+        data = self.app_.run_any("cloudM", "validate_ws_id", [websocket_id])
+        valid, key = False, ''
+        if isinstance(data, list) or isinstance(data, tuple):
+            if len(data) == 2:
+                valid, key = data
             else:
-                end = [{'summary_text': self.stream_read_llm(x, self.get_agent_config_class('summary'), r=0)}]
-            return end
-
-        # while len(text) > cap:
-        #     chucks.append(text[:cap])
-        #     text = text[cap:]
-        # if text:
-        #     chucks.append(text)
-
-        chucks = splitter.split_text(text)
-
-        self.print(f"SYSTEM: chucks to summary: {len(chucks)} cap : {cap}")
-
-        with Spinner("Generating summary", symbols='d'):
-            if self.summarization_mode == 0:
-                summaries = summary_func(chucks)
-            elif self.summarization_mode == 2:
-                summaries = summary_func2(chucks)
-            else:
-                summaries = summary_func(chucks)
-
-        for i, chuck_summary in enumerate(summaries):
-            summary_chucks += chuck_summary['summary_text'] + "\n"
-
-        self.print(f"SYSTEM: all summary_chucks : {len(summary_chucks)}")
-
-        if len(summaries) > 8:
-            if len(summary_chucks) < 20000:
-                summary = summary_chucks
-            elif len(summary_chucks) > 20000:
-                if self.summarization_mode == 0:
-                    summary = summary_func(summary_chucks)[0]['summary_text']
-                else:
-                    summary = summary_func2(summary_chucks)[0]['summary_text']
-            else:
-                summary = self.mas_text_summaries(summary_chucks)
+                self.logger.error(f"list error connect {data}")
+                return False
         else:
-            summary = summary_chucks
+            self.logger.error(f"isinstance error connect {data}, {type(data)}")
+            return False
 
-        self.print(
-            f"SYSTEM: final summary from {len_text}:{len(summaries)} ->"
-            f" {len(summary)} compressed {len_text / len(summary):.2f}X\n")
+        if valid:
+            self.validated_instances[websocket_id_sto] = key
 
-        if summarization_mode_sto:
-            self.summarization_mode = summarization_mode_sto
+        if websocket_id_sto in self.active_connections.keys():
+            print(f"Active connection - added nums {len(self.active_connections[websocket_id_sto])}")
+            await self.send_message(json.dumps({"res": f"New connection : {websocket_id}"}), websocket, websocket_id)
+            self.active_connections[websocket_id_sto].append(websocket)
+        else:
+            self.active_connections[websocket_id_sto] = [websocket]
+        await websocket.accept()
+        return True
 
-        self.mas_text_summaries_dict[0].append(text)
-        self.mas_text_summaries_dict[1].append(summary)
+    async def disconnect(self, websocket: WebSocket, websocket_id):
+        websocket_id_sto = await valid_id(websocket_id, self.app_id)
+        await self.send_message(json.dumps({"res": f"Closing connection : {websocket_id}"}), websocket, websocket_id)
+        self.active_connections[websocket_id_sto].remove(websocket)
+        if len(self.active_connections[websocket_id_sto]) == 0:
+            del self.active_connections[websocket_id_sto]
+        await websocket.close()
 
-        return summary
+    async def send_message(self, message: str, websocket: WebSocket or None, websocket_id):
+        websocket_id_sto = await valid_id(websocket_id, self.app_id)
+        for connection in self.active_connections[websocket_id_sto]:
+            if connection != websocket:
+                try:
+                    await connection.send_text(message)
+                except Exception as e:
+                    self.logger.error(f"{Style.YELLOW('Error')} Connection in {websocket_id} lost to {connection}")
+                    self.logger.error(str(e))
+                    self.print(f"{Style.YELLOW('Error')} Connection in {websocket_id} lost to {connection}")
+                    self.active_connections[websocket_id_sto].remove(connection)
 
+    async def manage_data_flow(self, websocket, websocket_id, data):
+        self.logger.info(f"Managing data flow: data {data}")
+        websocket_id_sto = await valid_id(websocket_id, self.app_id)
+
+        if websocket_id_sto not in self.active_connections.keys():
+            return '{"res": "No websocket connection pleas Log in"}'
+
+        if websocket_id_sto not in self.validated_instances.keys():
+            content = "Invalid"
+            return content
+
+        si_id = self.validated_instances[websocket_id_sto]
+
+        data_type = "Noice"
+        try:
+            data = json.loads(data)
+            data_type = "dict"
+        except ValueError as e:
+            self.logger.error(Style.YELLOW(f"ValueError json.loads data : {e}"))
+            if websocket_id_sto in data:
+                data_type = "str"
+
+        self.logger.info(f"type: {data_type}:{type(data)}")
+
+        if data_type == "Noice":
+            return
+
+        if data_type == "dict" and isinstance(data, dict):
+            keys = list(data.keys())
+            if "ServerAction" in keys:
+                action = data["ServerAction"]
+                if action == "getModList":
+                    return json.dumps({'modlist': self.app_.get_all_mods()})  # Add serviec Path with fake modes
+                if action == "getModData":
+                    mod_name = data["mod-name"]
+                    try:
+                        mod = self.app_.get_mod(mod_name)
+                        return {"settings": {'mod-description': mod.description}}
+                    except ValueError:
+                        content = "error"
+                        return content
+                if action == "installMod":
+                    user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
+                    if user_instance is None or not user_instance:
+                        self.logger.info("No valid user instance")
+                        return '{"res": "No User Instance Found Pleas Log in"}'
+
+                    if data["name"] not in user_instance['save']['mods']:
+                        self.logger.info(f"Appending mod {data['name']}")
+                        user_instance['save']['mods'].append(data["name"])
+
+                    self.app_.new_ac_mod("cloudM")
+                    self.app_.AC_MOD.hydrate_instance(user_instance)
+                    self.print("Sending webInstaller")
+                    installer_content = user_instance['live'][data["name"]].webInstall(user_instance,
+                                                                                       self.construct_render)
+                    self.app_.new_ac_mod("cloudM")
+                    self.app_.AC_MOD.save_user_instances(user_instance)
+                    await websocket.send_text(installer_content)
+                if action == "addConfig":
+                    user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
+                    if data["name"] in user_instance['live'].keys():
+                        user_instance['live'][data["name"]].add_str_to_config([data["key"], data["value"]])
+                    else:
+                        await websocket.send_text('{"res": "Mod nod installed or available"}')
+                if action == "runMod":
+                    user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
+
+                    self.print(f"{user_instance}, {data}")
+                    if user_instance is None or not user_instance:
+                        return '{"res": "No User Instance Found pleas log in"}'
+
+                    if data['data']['token'] == "**SelfAuth**":
+                        data['data']['token'] = user_instance['token']
+
+                    api_data = ApiOb()
+                    api_data.data = data['data']['data']
+                    api_data.token = data['data']['token']
+                    command = [api_data, data['command'].split('|')]
+
+                    token_data = self.app_.run_any('cloudM', "validate_jwt", command)
+
+                    if not isinstance(token_data, dict):
+                        return json.dumps({'res': 'u ar using an invalid token pleas log in again'})
+
+                    if token_data["uid"] != user_instance['save']['uid']:
+                        self.logger.critical(
+                            f"{Style.RED(f'''User {user_instance['save']['username']} {Style.CYAN('Accessed')} : {Style.Bold(token_data['username'])} token both log aut.''')}")
+                        self.app_.run_any('cloudM', "close_user_instance", token_data["uid"])
+                        self.app_.run_any('cloudM', "close_user_instance", user_instance['save']['uid'])
+                        return json.dumps({'res': "The server registered: you are"
+                                                  " trying to register with an not fitting token "})
+
+                    if data['name'] not in user_instance['save']['mods']:
+                        user_instance['save']['mods'].append(data['name'])
+
+                    if data['name'] not in user_instance['live'].keys():
+                        self.logger.info(f"'Crating live module:{data['name']}'")
+                        self.app_.new_ac_mod("cloudM")
+                        self.app_.AC_MOD.hydrate_instance(user_instance)
+                        self.app_.new_ac_mod("cloudM")
+                        self.app_.AC_MOD.save_user_instances(user_instance)
+
+                    try:
+                        self.app_.new_ac_mod("VirtualizationTool")
+                        if self.app_.run_function('set-ac', user_instance['live']['v-' + data['name']]):
+                            res = self.app_.run_function('api_' + data['function'], command)
+                        else:
+                            res = "Mod Not Found 404"
+                    except Exception as e:
+                        res = "Mod Error " + str(e)
+
+                    if type(res) == str:
+                        if (res.startswith('{') or res.startswith('[')) or res.startswith('"[') or res.startswith('"{') \
+                            or res.startswith('\"[') or res.startswith('\"{') or res.startswith(
+                            'b"[') or res.startswith('b"{'): \
+                            res = eval(res)
+                    if not isinstance(res, dict):
+                        res = {"res": res, data['name']: True}
+                    await websocket.send_text(json.dumps(res))
+
+            if "ValidateSelf" in keys:
+                user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
+                if user_instance is None or not user_instance:
+                    self.logger.info("No valid user instance")
+                    return json.dumps({"res": "No User Instance Found Pleas Log in", "valid": False})
+                return json.dumps({"res": "User Instance is valid", "valid": True})
+            if "ChairData" in keys:
+                user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
+                if user_instance is None or not user_instance:
+                    self.logger.info("No valid user instance")
+                    return json.dumps({"res": "No User Instance Found Pleas Log in", "valid": False})
+                if len(self.active_connections[websocket_id_sto]) < 1:
+                    return json.dumps({"res": "No other connections found", "valid": True})
+                await self.send_message(json.dumps(data['data']), websocket, websocket_id)
+                return json.dumps({"res": "Data Send", "valid": True})
+
+        if data_type == "str":
+            await self.send_message(data, websocket, websocket_id)
       """
 
-    task = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Widget Test</title>
-    <style>
-        .widget {
-            border: 1px solid #000;
-            padding: 10px;
-            margin: 10px;
-        }
-        .widget-label, .widget-tooltip, .widget-items {
-            margin: 5px;
-        }
-    </style>
-</head>
-<body>
-    <div id="widgetContainer"></div>
-
-    <script>
-        const widgetTemplate = `
-    <div class="widget">
-        <label class="widget-label"></label>
-        <span class="widget-tooltip"></span>
-        <div class="widget-items"></div>
-    </div>
-`;
-        // Funktion zum Erstellen eines neuen Widget-Elements
-function createWidgetElement(item) {
-    const element = document.createElement('div');
-    element.className = item.template;
-
-    const label = document.createElement('label');
-    label.textContent = item.label;
-    element.appendChild(label);
-
-    const tooltip = document.createElement('span');
-    tooltip.className = 'tooltip';
-    tooltip.textContent = item.tooltip;
-    element.appendChild(tooltip);
-
-    if (item.value) {
-        const value = document.createElement('span');
-        value.textContent = item.value;
-        element.appendChild(value);
-    }
-
-    if (item.callback) {
-        element.addEventListener('click', window[item.callback]);
-    }
-
-    return element;
-}
-
-// Funktion zum Erstellen des Widgets
-function createWidget(json) {
-    let data = json;
-    if (json === String){
-        data = JSON.parse(json);
-    }
-
-    const widget = document.createElement('div');
-    widget.innerHTML = widgetTemplate;
-
-    const label = widget.querySelector('.widget-label');
-    label.textContent = data.label;
-
-    const tooltip = widget.querySelector('.widget-tooltip');
-    tooltip.textContent = data.tooltip;
-
-    const itemsContainer = widget.querySelector('.widget-items');
-    data.items.forEach(item => {
-        const element = createWidgetElement(item);
-        itemsContainer.appendChild(element);
-    });
-
-    return widget;
-}
-
-// Funktion zum Hinzufügen des Widgets zum Dokument
-function addWidget(json, containerId) {
-    const container = document.getElementById(containerId);
-    const widget = createWidget(json);
-    container.appendChild(widget);
-}
-    </script>
-
-    <script>
-        // Beispiel dictonary
-        const dictonary = {
-            "label": "NutzerInformation",
-            "tooltip": "Informations about the user",
-            "template": "group-template",
-            "items": [
-                {"label": "UserName", "tooltip": "unique username", "template": "text-template", "value": "user_name"},
-                {"label": "Email", "tooltip": "mail address", "template": "text-template", "value": "user_email"},
-                {"label": "allow News Emails", "tooltip": "mail address", "template": "toggle-template", "callback": "send_mail"},
-                {"label": "Request Password reset", "tooltip": "reset Password", "template": "button-template", "callback": "reset_password", "value": "set"}
-            ]
-        };
-
-        // Füge das Widget zum Dokument hinzu
-        addWidget(json, 'widgetContainer');
-        addWidget(json, 'widgetContainer');
-
-    </script>
-</body>
-</html>
-
-schreibe die createWidgetElement so um das sie dynamisch auf die daten im dictonary anpasst. füge auch callbacks für buttons randio groop text paswort emal number color input hinzu.
-"""
-    task_ = """
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        #settings-widget {
-            min-width: max-content;
-            height: min-content;
-            background-color: #f0f0f0;
-            border: 1px solid #ccc;
-            padding: 10px;
-        }
-
-        #search-bar {
-            margin-bottom: 10px;
-        }
-
-        .option {
-            margin-bottom: 5px;
-            border: 1px solid #ccc;
-            padding: 5px;
-        }
-
-        #download-button {
-            width: 100%;
-            bottom: 10px;
-        }
-    </style>
-    <link rel="stylesheet" href="/app/assets/styles.css">
-    <link rel="stylesheet" href="/app/assets/Wiget.css">
-</head>
-<body>
-<div id="settings-widget" class="widget">
-    <div id="search-bar">
-        <input type="text" id="search-input" placeholder="Search..." oninput="updateOptions()">
-    </div>
-    <div id="options-container">
-        <!-- Options will be dynamically added here -->
-    </div>
-    <button id="download-button" onclick="downloadAddon()">Download</button>
-</div>
-<template id="text-template">
-    <div class="option">
-        <label></label>
-        <input type="text" name="option">
-    </div>
-</template>
-<template id="toggle-template">
-    <div class="option">
-        <label></label>
-        <input type="checkbox" name="option">
-    </div>
-</template>
-<template id="button-template">
-    <div class="option">
-        <label></label>
-        <button name="option"></button>
-    </div>
-</template>
-<template id="options-select-template">
-    <div class="option">
-        <label></label>
-        <select name="option"></select>
-    </div>
-</template>
-<template id="group-template">
-    <div class="group">
-        <label class="group-label"></label>
-        <div class="group-content"></div>
-    </div>
-</template>
-
-<script>
-    function call_gent(name){
-        return (value)=>{
-            console.log('CallBack from', name, value)}
-    }
-    const user_name = 'Root';
-    const user_email = 'Root@root.root';
-    const send_mail = call_gent('send_mail');
-    const reset_password = call_gent('reset_password');
-    const set_task = call_gent('set_task');
-    var task_name = 'test'
-    const options = [
-        {
-            label: 'NutzerInformation',
-            tooltip: 'Informations about the user',
-            template: 'group-template',
-            items: [
-                {label: 'UserName', tooltip: 'unique username', template: 'text-template', value: 'user_name'},
-                {label: 'Email', tooltip: 'mail address', template: 'text-template', value: 'user_email'},
-                {label: 'allow News Emails', tooltip: 'mail address', template: 'toggle-template', callback: 'send_mail'},
-                {label: 'Request Password reset', tooltip: 'reset Password', template: 'button-template', callback: 'reset_password', value: 'set'},
-            ],
-        },
-        {
-            label: 'TaskEditor',
-            tooltip: 'edit Task',
-            template: 'group-template',
-            items: [
-                {label: 'load Task', tooltip: 'unique username', template: 'options-select-template', value: localStorage.getItem('tasks')||[], callback: 'set_task'},
-                {label: 'Task Name', tooltip: 'mail address', template: 'text-template', value: 'task_name'},
-                {label: 'use', tooltip: 'mail address', template: 'options-select-template', value:['agent', 'tool'], callback: 'send_mail'},
-                // ...
-            ],
-        }
-    ];
-
-    function createOptionElement(option, index) {
-        const template = document.getElementById(option.template);
-        const optionElement = template.content.cloneNode(true);
-        const inputElement = optionElement.querySelector('input, select, button');
-        const labelElement = optionElement.querySelector('label');
-
-        inputElement.id = option.label.replace(' ', '-') + index;
-        labelElement.setAttribute('for', inputElement.id);
-        labelElement.title = option.tooltip;
-        labelElement.textContent = option.label;
-
-        if (option.options && inputElement.tagName === 'SELECT') {
-            option.options.forEach(function(optionValue) {
-                const optionTag = document.createElement('option');
-                optionTag.value = optionTag.textContent = optionValue;
-                inputElement.appendChild(optionTag);
-            });
-        }
-
-        return optionElement;
-    }
-
-    function createGroupElement(group, index) {
-        const template = document.getElementById(group.template);
-        const groupElement = template.content.cloneNode(true);
-        const labelElement = groupElement.querySelector('.group-label');
-        const contentElement = groupElement.querySelector('.group-content');
-
-        labelElement.textContent = group.label;
-        labelElement.title = group.tooltip;
-
-        group.items.forEach((item, index) => {
-            const itemElement = createOptionElement(item, index);
-            contentElement.appendChild(itemElement);
-        });
-
-        return groupElement;
-    }
-
-    function loadOptions() {
-        const optionsContainer = document.getElementById('options-container');
-        options.forEach((option, index) => {
-            const optionElement = createGroupElement(option, index);
-            optionsContainer.appendChild(optionElement);
-        });
-    }
-
-    function updateOptions() {
-        var searchInput = document.getElementById('search-input').value.toLowerCase();
-        var optionsContainer = document.getElementById('options-container');
-        optionsContainer.innerHTML = '';
-        options.forEach(function(option, index) {
-            if (option.label.toLowerCase().includes(searchInput)) {
-                var optionElement = createOptionElement(option, index);
-                optionsContainer.appendChild(optionElement);
-            }
-        });
-    }
-
-    function downloadAddon() {
-        var selectedOption = document.querySelector('input[name=option]:checked');
-        if (selectedOption) {
-            var optionLabel = selectedOption.nextElementSibling;
-            var optionText = optionLabel.textContent;
-            alert('Download: ' + optionText);
-        } else {
-            alert('Please select an option.');
-        }
-    }
-
-    function loadCustomOption(option, index) {
-        var template = document.getElementById(option.template);
-        var optionElement = template.content.cloneNode(true);
-        optionElement.querySelector('input').id = option.label.replace(' ', '-') + index;
-        optionElement.querySelector('label').setAttribute('for', option.label.replace(' ', '-') + index);
-        optionElement.querySelector('label').title = option.tooltip;
-        optionElement.querySelector('label').textContent = option.label;
-        return optionElement;
-    }
-
-    // Load options on page load
-    window.onload = function() {
-        loadOptions();
-        options.forEach(function(option, index) {
-            if (option.template === 'custom-template') {
-                var optionElement = loadCustomOption(option, index);
-                document.getElementById('options-container').appendChild(optionElement);
-            }
-        });
-    };
-</script>
-</body>
-</html>
-
-Verfolständige und verbessere den contoller.
-Die aufgabe dessen ist die einstellungen zu managen und dynamisch witere einstellungen zu laden
-der aufbau soll wie folgt sein
-- const options.
-
-    """
-    task = """
-Erstelle mir ein Task Widget. wlches 2 Modie hat 1. Informations Anzeige und 2. Informationen Bearbeiten
-
-die Informationen die eine Task Widget enthalt sind folgende.
-{
-    "use": "agent",
-    "mode": "free",
-    "name": "think",
-    "args": "$task0",
-    "return": "$0final",
-},
-
-use soll als radiso selcetion groop angezeigt werden mit den Optionen : agent|tool|function|chain
-mode ...  mit den Optionen : text|free|tools|conversation|planning|execution|generate
-name basirend auf der aus wahl von use entwider
-        - agent  mit den Optionen : self|think|summary|todolist|search|execution und custom text input
-        - tool liste vom server abfragen : custom text input
-        - function: custom text input
-        - chain: custom text input
-args : custom text input
-return : custom text input
-custom text input key : custom text input value
-
-erstelle ein Task widget.
-    """
-    res = isaa.execute_thought_chain(task,planing_steps['tasks'], self_agent_config)
+    res = isaa.execute_thought_chain(task, planing_steps['tasks'], self_agent_config)
     # res = isaa.execute_thought_chain(res[-2][-1], stategy_crator['tasks'], self_agent_config)
     # res = isaa.execute_thought_chain(res[-2][-1], _planing_steps['tasks'], self_agent_config)
 

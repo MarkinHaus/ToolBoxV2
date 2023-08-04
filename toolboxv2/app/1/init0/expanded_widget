@@ -1,6 +1,0 @@
-<div id="expanded-widget-$id" class="expanded-widget" style="display: none;">
-    <img src="$img-url">
-    <div class="name">$name</div>
-    <div class="description">$description</div>
-    <a href="#" class="download-button">Download</a>
-</div>

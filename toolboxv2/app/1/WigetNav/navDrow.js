@@ -81,13 +81,14 @@ dropdownMenu.addEventListener('click', (event) => {
 
             }catch (e){
                 console.log("getTextWidget", e)
+
                 WS.send(JSON.stringify({"ServerAction":"getTextWidget"}));
                 dropdownHelper.style.color = "var(--info-color)"
                 dropdownHelper.innerText = "Installing Widget Pleas click agan"
             }
         }
 
-        else if (event.target.id === 'isaa-w'){
+        else if (event.target.id === 'isaa'){
             console.log("Installing starting")
             const message = JSON.stringify({"ServerAction":"runMod", "name":"isaa","function":"start_widget", "command":"", "data":
                     {"token": "**SelfAuth**", "data":{
@@ -100,16 +101,25 @@ dropdownMenu.addEventListener('click', (event) => {
             }, 50)
         }
 
-        else if (event.target.id === 'isaa-editor-w'){
-            console.log("Installing starting")
-            const message = JSON.stringify({"ServerAction":"getEditor"});
-            console.log("Installing an Isaa task editor widget", message)
-            setTimeout(async ()=>{
-                await WS.send(message);
-            }, 50)
+        else if (event.target.id === 'ControlsWidget'){
+
+             try{
+                const controlsWidget =crateSettingsWidget({'items':[{tag: 'div', attributes:
+                            {id: 'main-settings', class: ''}, content: '<p> ...</p>',}]},"MainContent")
+                controlsWidget.id = "TextWidget-"+WidgetIDStore.length
+                WidgetIDStore.push(dropdownTitle.value)
+                addWidget2Manager(controlsWidget)
+
+            }catch (e){
+                console.log("getControlsWidget", e)
+                WS.send(JSON.stringify({"ServerAction":"getControls"}));
+                dropdownHelper.style.color = "var(--info-color)"
+                dropdownHelper.innerText = "Installing Widget"
+            }
+
         }
 
-        else if (event.target.id === 'path-w'){
+        else if (event.target.id === 'path'){
             //try{
                 const pathWidget = addPathWidget("MainContent", "PathWidget-"+WidgetIDStore.length, dropdownTitle.value)
                 WidgetIDStore.push(dropdownTitle.value)

@@ -1,8 +1,12 @@
 let WorkerSocketResEvents = []
-
+let WorkerSocketOneTimeEvents = []
+let WorkerSocketOneTimeEventsDelIndexes = []
 function MainInit() {
 
-    document.getElementById("InitMainButton").remove()
+    const btn = document.getElementById("InitMainButton");
+    if (btn){
+        btn.remove()
+    }
 
     const ws_id = localStorage.getItem("WsID");
     //var ws_id = "app-live-test-DESKTOP-CI57V1L1";
@@ -26,38 +30,26 @@ function MainInit() {
             console.log("is renderer")
             const renderData = data.render;
             const { content, place, id, externals, placeholderContent } = renderData;
-
-            console.log("Data", renderData)
-
             // Display the placeholder content
             displayPlaceholderContent(placeholderContent, place, id);
-
-            console.log("displayPlaceholderContent")
-
             // Download and store the content on the page
             storeContent(content, place, id);
-
-            console.log("storeContent")
-
             if (externals.length > 0){
 
                 console.log("Start downloadExternalFiles")
                 // Download external files using a background worker and custom event
                 await downloadExternalFiles(externals);
-
                 console.log("done downloadExternalFiles")
-            }else {
-                console.log("No file to download")
             }
-
             // Update the page with the downloaded content and external files
             updatePage(content, place, id);
-
             if (id==="infoText"){
-                document.getElementById('infoPopup').style.display = 'block';
-            }
+                const infoPopup = document.getElementById('infoPopup')
+                if (infoPopup){
+                    infoPopup.style.display = 'block';
+                }
 
-            console.log("updatePage Done")
+            }
 
         }
 
@@ -66,24 +58,47 @@ function MainInit() {
                 WorkerSocketResEvents.forEach(((callbacks)=>{
                     callbacks(data)
                 }))
-            }else{
-                const infoTextVar = document.getElementById('infoText');
-                if (infoTextVar){
-                    infoTextVar.innerText = data.res;
-                }
+            }
+            const infoTextVar = document.getElementById('infoText');
+            if (infoTextVar){
+                infoTextVar.innerText = data.res;
             }
         }
+
+        console.log("[WorkerSocketOneTimeEvents.length] = ", WorkerSocketOneTimeEvents.length)
+        if (WorkerSocketOneTimeEvents.length){
+            WorkerSocketOneTimeEvents.forEach((ob, index)=>{
+console.log("[WorkerSocketOneTimeEvents.key] = ", ob.onKey)
+console.log("[data.hasOwnProperty(key)] = ", data.hasOwnProperty(ob.onKey), data.hasOwnProperty('render'))
+console.log("[data] = ", data)
+console.log("[data] = ", ob.onKey in data)
+console.log("[data] = ", data[ob.onKey])
+                if (data.hasOwnProperty(ob.onKey)){
+                    console.log("[WorkerSocketOneTimeEvents] = Running")
+                    ob.func(data)
+                    console.log("[WorkerSocketOneTimeEvents] = Don")
+                }
+            })
+        }
+        if (WorkerSocketOneTimeEventsDelIndexes.length){
+            WorkerSocketOneTimeEventsDelIndexes.forEach((index)=>{
+                WorkerSocketOneTimeEvents.slice(index, 1)
+            })
+        }
+
     };
 
     local_ws.onopen = async function(event) {
-        console.log("local_ws.onopen:installMod-welcome")
         const init_do = localStorage.getItem("local_ws.onopen:installMod-welcome")
         if (init_do){
             if (init_do === 'true'){
                 await local_ws.send(JSON.stringify({"ServerAction":"installMod", "name": "welcome"}));
             }else {
                 await getsInit();
-                document.getElementById('main').classList.remove('main-content')
+                const mainElement = document.getElementById('main');
+                if (mainElement){
+                     mainElement.classList.remove('main-content')
+                }
             }
         }else {
             alert("Pleas Log or Sing In to Visit the DasBord")
@@ -93,17 +108,36 @@ function MainInit() {
     return local_ws
 }
 
+function callbackOncOn(func, key){
+    const index = WorkerSocketOneTimeEvents.length
+    const wrapper = (data)=>{
+        console.log("[:EVENT:] on '", key, "' Triggert with ", data)
+        try{
+            func(data)
+        }catch (e) {
+            console.log(e)
+        }
+        WorkerSocketOneTimeEventsDelIndexes.push(index)
+    }
+    WorkerSocketOneTimeEvents.push({'onKey':key, 'func':wrapper})
+}
+
+
 let WS = undefined
 
 
 function displayPlaceholderContent(placeholderContent, place, id) {
     const targetElement = id ? document.getElementById(id) : document.querySelector(place);
-    targetElement.innerHTML = placeholderContent;
+    if (targetElement){
+        targetElement.innerHTML = placeholderContent;
+    }
 }
 
 function storeContent(content, place, id) {
     const targetElement = id ? document.getElementById(id) : document.querySelector(place);
-    targetElement.dataset.content = content;
+    if (targetElement){
+        targetElement.dataset.content = content;
+    }
 }
 
 function downloadExternalFiles(externals) {
@@ -124,12 +158,16 @@ function downloadExternalFiles(externals) {
 
 function updatePage(content, place, id) {
     const targetElement = id ? document.getElementById(id) : document.querySelector(place);
-    targetElement.innerHTML = targetElement.dataset.content;
+    if (targetElement){
+        targetElement.innerHTML = targetElement.dataset.content;
+    }
 }
 
-function sendMessage(event) {
+function sendMessageONmessageText(event) {
     var input = document.getElementById("messageText")
-    console.log("sendMessage:input", input.value)
+    if (!input){
+        return
+    }
     WS.send(input.value)
     input.value = ''
     event.preventDefault()

@@ -129,6 +129,7 @@ class Tools(MainTool, FileHandler):
                     ["api_get_task", "Agent Chin get - Task", 0, "get_task"],
                     ["api_list_task", "Agent Chin list - Task", 0, "list_task"],
                     ["api_start_widget", "api_start_widget", 0, "start_widget"],
+                    ["api_get_use", "get_use", 0, "get_use"],
                     ["generate_task", "generate_task", 0, "generate_task"]
                     ],
             "name": "isaa",
@@ -142,6 +143,7 @@ class Tools(MainTool, FileHandler):
             "load_task": self.load_task,
             "get_task": self.get_task,
             "list_task": self.list_task,
+            "api_get_use": self.get_use,
             "generate_task": self.generate_task,
         }
         self.app_ = app
@@ -152,7 +154,7 @@ class Tools(MainTool, FileHandler):
         self.lang_chain_tools_dict = {}
         self.agent_chain = AgentChain(directory=f".data/{app.id}{extra_path}/chains")
         self.agent_memory = AIContextMemory(extra_path=extra_path)
-        self.summarization_mode = 0  # 0 to 2 0 huggingface 1 text
+        self.summarization_mode = 1  # 0 to 3  0 huggingface 1 text 2 opnai 3 gpt
         self.summarization_limiter = 102000
         self.speak = lambda x, *args, **kwargs: x
         self.scripts = Scripts(f".data/{app.id}{extra_path}/ScriptFile")
@@ -406,6 +408,26 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
 
         return self.genrate_image(command[0], self.app_)
 
+    def get_use(self, command, app):
+
+        uid, err = self.get_uid(command, app)
+
+        if err:
+            return "Invalid Token"
+
+        self.logger.debug("Instance get_user_instance")
+
+        # user_instance = self.get_user_instance(uid, app)
+        use = command[0].data['use']
+        if use == "agent":
+            return {"isaaUseResponse": self.config["agents-name-list"]}
+        if use == "tool":
+            return {"isaaUseResponse": list(self.get_agent_config_class('self').tools.keys())}
+        if use == "chain":
+            return {"isaaUseResponse": list(set(self.agent_chain.live_chains + self.agent_chain.chains))}
+        if use == "function":
+            return {"isaaUseResponse": list(self.scripts.scripts.keys())}
+
     def start_widget(self, command, app):
 
         uid, err = self.get_uid(command, app)
@@ -507,6 +529,8 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
 
                     except Exception as e:
                         sender.put({'error': f"Error e", 'res': str(e)})
+                        sender.put('exit')
+            sender.put('exit')
 
         widget_runner = threading.Thread(target=runner)
         widget_runner.start()
@@ -521,9 +545,6 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
 
         if err:
             return "Invalid Token"
-
-        if not self.observation_term_mem_file.endswith(uid[12:]):
-            self.observation_term_mem_file += uid[12:]
 
         self.print("Init Isaa Instance")
 
@@ -1127,14 +1148,15 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         if name == "summary":
             config. \
                 set_mode("free") \
-                .set_max_iterations(1) \
+                .set_max_iterations(2) \
                 .set_completion_mode("text") \
                 .set_model_name('text-curie-001') \
-                .set_pre_task("Act as an summary expert your specialties are writing summary. you are known to think "
-                              "in small and detailed steps to get the right result. Your task :")
+                .set_pre_task("Write a Summary of the following text :")
 
-            config.stop_sequence = ["\n\n"]
+        # text-davinci-003 text-babbage-001 curie
+            config.stop_sequence = ["\n\n\n"]
             config.stream = False
+            config.add_system_information = False
 
         if name == "thinkm":
             config. \
@@ -2019,7 +2041,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                     task['function'](chain_ret[-1][1])
 
         elif use == 'expyd' or use == 'chain':
-            ret, ret_data = self.execute_thought_chain(args, self.agent_chain.get(task_name.strip()), config, speak=self.speak)
+            ret, ret_data = self.execute_thought_chain(args, self.agent_chain.get(task_name.strip()), config,
+                                                       speak=self.speak)
         else:
             self.print(Style.YELLOW(f"use is not available {use} avalabel ar [tool, agent, function, chain]"))
 
@@ -2307,11 +2330,10 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             ret = openai.Completion.create(
                 model=model_name,
                 prompt=config.prompt,
-                # max_tokens=config.token_left,
+                max_tokens=int(config.token_left*0.9),
                 temperature=config.temperature,
                 n=1,
                 stream=config.stream,
-                logprobs=3,
                 stop=config.stop_sequence,
             )
 
@@ -2319,9 +2341,13 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 ret = ret.choices[0].text
 
         elif config.completion_mode == 'chat':
-            messages = config.get_messages(create=True)
+            messages = config.get_messages(create=False)
+            if not messages:
+                messages = config.get_messages(create=True)
             if text:
                 config.add_message("user", text)
+            # print(f"Chat Info\n{model_name=}\n{messages=}\n{config.token_left=}\n{config.temperature=}\n
+            # {config.stream=}\n{config.stop_sequence=}\n")
             ret = openai.ChatCompletion.create(
                 model=model_name,
                 messages=messages,
@@ -2358,6 +2384,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             return text
 
         if text in self.mas_text_summaries_dict[0]:
+            self.print("summ return vom chash")
             return self.mas_text_summaries_dict[1][self.mas_text_summaries_dict[0].index(text)]
 
         cap = 800
@@ -2412,22 +2439,29 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         def summary_func(x):
             return self.summarization(x, max_length=max_length)
 
-        def summary_func2(x):
+        def summary_func2(x, babage=None):
+            agent = self.get_agent_config_class('summary')
+            if babage:
+                agent.set_model_name("text-babbage-001")
+            else:
+                agent.set_model_name("text-curie-001")
             if isinstance(x, list):
                 end = []
                 for i in x:
-                    end.append({'summary_text': self.stream_read_llm(i, self.get_agent_config_class('summary'), r=0)})
+                    text_sum = self.stream_read_llm(i+"\nSummary :", agent, r=0)
+                    end.append({'summary_text':text_sum})
             else:
-                end = [{'summary_text': self.stream_read_llm(x, self.get_agent_config_class('summary'), r=0)}]
+                text_sum = self.stream_read_llm(x+"\nSummary :", agent, r=0)
+                end = [{'summary_text': text_sum}]
             return end
 
         def summary_func3(x):
             if isinstance(x, list):
                 end = []
                 for i in x:
-                    end.append({'summary_text': self.stream_read_llm(i, self.get_agent_config_class('think'), r=0)})
+                    end.append({'summary_text': self.stream_read_llm(i+"\nTask: Write a Summary.", self.get_agent_config_class('thinkm'), r=0)})
             else:
-                end = [{'summary_text': self.stream_read_llm(x, self.get_agent_config_class('think'), r=0)}]
+                end = [{'summary_text': self.stream_read_llm(x+"\nTask: Write a Summary.", self.get_agent_config_class('thinkm'), r=0)}]
             return end
 
         # while len(text) > cap:
@@ -2442,18 +2476,21 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         while i < len(chunks) and max_iter > 0:
             max_iter -= 1
             chunk = chunks[i]
-            if len(chunk) > cap*1.5:
+            if len(chunk) > cap * 1.5:
                 chunks = chunks[:i] + [chunk[:len(chunk) // 2], chunk[len(chunk) // 2:]] + chunks[i + 1:]
             else:
                 i += 1
 
         self.print(f"SYSTEM: chucks to summary: {len(chunks)} cap : {cap}")
-
         with Spinner("Generating summary", symbols='d'):
             if self.summarization_mode == 0:
                 summaries = summary_func(chunks)
+            elif self.summarization_mode == 1:
+                summaries = summary_func2(chunks, 'babbage')
             elif self.summarization_mode == 2:
                 summaries = summary_func2(chunks)
+            elif self.summarization_mode == 3:
+                summaries = summary_func3(chunks)
             else:
                 summaries = summary_func(chunks)
 
@@ -2890,6 +2927,7 @@ def _extract_from_string(agent_text, config):
 
     return None, ''
 
+
 def _extract_from_string_de(agent_text, config):
     action_match = re.search(r"Aktion:\s*(\w+)", agent_text)
     inputs_match = re.search(r"Eingaben:\s*({.*})", agent_text)
@@ -2914,6 +2952,5 @@ def _extract_from_string_de(agent_text, config):
             return action.strip(), ''
 
     return None, ''
-
 
 # print(get_tool(get_app('debug')).get_context_memory().get_context_for("Hallo das ist ein Test")) Fridrich

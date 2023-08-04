@@ -288,6 +288,41 @@ class TestIsaa(unittest.TestCase):
         self.assertGreater(len(res[0]['summary_text']), 0)
         print(f"This is a long text that needs to be summarized : {res[0]['summary_text']}")
 
+    def test_mas_text_summaries(self):
+        if "HUGGINGFACEHUB_API_TOKEN" not in self.isaa.config.keys():
+            print("Not HF token for testing")
+            return
+        if "OPENAI_API_KEY" not in self.isaa.config.keys():
+            print("Not OA token for testing")
+            return
+        res = self.isaa.mas_text_summaries('''Selbstverständlich. Hier sind die Punkte, die Sie im bereitgestellten Code überprüfen sollten:
+
+Verwendung von await und async:
+Stellen Sie sicher, dass alle Funktionen und Methoden, die mit await aufgerufen werden, als async deklariert sind und die korrekten Rückgabetypen haben.
+
+Verwendung von Awaitables in send() und receive():
+Überprüfen Sie die Verwendung von Awaitables (Instanzen von asyncio.Future, Coroutines oder anderen Awaitables) in den Funktionen send() und receive() und stellen Sie sicher, dass die übergebenen Objekte den erwarteten Typ haben.
+
+Verwendung von asyncio.wait():
+Untersuchen Sie die Verwendung von asyncio.wait() im Code und stellen Sie sicher, dass die Liste der Awaitables korrekt aufgebaut ist und keine ungültigen Objekte enthält.
+
+Verwendung des manager-Objekts:
+Überprüfen Sie die Verwendung des manager-Objekts und stellen Sie sicher, dass alle aufgerufenen Methoden korrekt sind und die erwarteten Rückgabetypen haben.
+
+Asynchrone vs. synchrone Operationen:
+Stellen Sie sicher, dass es keine Konflikte zwischen asynchronen und synchronen Operationen im Code gibt, die zu Fehlern führen könnten.
+
+Funktionsaufrufe in asyncio-Tasks:
+Prüfen Sie, ob die Funktionsaufrufe in den asyncio-Tasks ordnungsgemäß ablaufen und alle Awaitables korrekt verarbeitet werden.
+
+Ausnahmen und Fehlerbehandlung:
+Stellen Sie sicher, dass alle Ausnahmen ordnungsgemäß behandelt werden und es keine unbehandelten Ausnahmen gibt, die zu Fehlern führen könnten.
+
+Bitte beachten Sie, dass der bereitgestellte Codeausschnitt nicht den vollständigen Kontext zeigt, einschließlich der Definition der Funktionen send() und receive(), des manager-Objekts und möglicherweise anderer relevanter Teile des Codes. Um den genauen Fehler zu isolieren, ist es wichtig, den gesamten relevanten Code zu überprüfen und sicherzustellen, dass asynchrone Muster korrekt implementiert sind.
+
+Wenn Sie nach der Überprüfung dieser Punkte immer noch Schwierigkeiten haben, den Fehler zu finden, könnte es hilfreich sein, mehr von Ihrem Code zu sehen oder spezifische Teile zu isolieren und zu testen, um den Ursprung des Problems einzugrenzen.''')
+        print("res:", res)
+
     def test_text_classification(self):
         if "HUGGINGFACEHUB_API_TOKEN" not in self.isaa.config.keys():
             print("Not HF token for testing")

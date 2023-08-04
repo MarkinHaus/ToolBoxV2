@@ -159,6 +159,8 @@ class App(metaclass=Singleton):
 
         self._debug = debug
 
+        self.runnable = {}
+
         self._debug = self.config_fh.get_file_handler(self.keys["debug"])
         self.command_history = self.config_fh.get_file_handler(self.keys["comm-his"])
         self.dev_modi = self.config_fh.get_file_handler(self.keys["develop-mode"])
@@ -199,6 +201,17 @@ class App(metaclass=Singleton):
     @property
     def debug(self):
         return self._debug
+
+    def set_runnable(self, r):
+        self.runnable = r
+
+    def show_runnable(self):
+        self.pretty_print(list(self.runnable.keys()))
+        return self.runnable
+
+    def run_runnable(self, name, args):
+        if name in self.runnable.keys():
+            self.runnable[args.modi.lower()](self, args)
 
     @debug.setter
     def debug(self, value):

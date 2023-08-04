@@ -24,6 +24,7 @@ class MainTool:
             self.config = {}
         self.load()
         self.ac_user_data_sto = {}
+        self.description = "A toolbox mod"
 
     def load(self):
         if self.todo:

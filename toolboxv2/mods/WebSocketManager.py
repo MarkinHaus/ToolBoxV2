@@ -40,6 +40,7 @@ class Tools(MainTool, FileHandler):
         self.app_ = app
         self.color = "BLUE"
         self.active_connections: dict = {}
+        self.active_connections_client: dict = {}
         self.app_id = get_app().id
         self.keys = {
             "tools": "v-tools~~~"
@@ -80,19 +81,16 @@ class Tools(MainTool, FileHandler):
     def on_exit(self):
         self.logger.info(f"Closing WebSocketManager")
         self.save_file_handler()
-        pass
+        for key in list(self.active_connections_client.keys()):
+            self.close_websocket(key)
 
     def get_vt(self, uid):
         if self.vtID is not None:
             return self.vtID(uid)
 
-        if self.app_.new_ac_mod("cloudM"):
-            self.vtID = self.app_.AC_MOD.get_vt_id
-            return self.vtID(uid)
+        cloudM = self.app_.get_mod("cloudM")
 
-        self.app_.save_load("cloudM")
-        self.app_.new_ac_mod("cloudM")
-        self.vtID = self.app_.AC_MOD.get_vt_id
+        self.vtID = cloudM.get_vt_id
         return self.vtID(uid)
 
     def show_version(self):
@@ -127,7 +125,8 @@ class Tools(MainTool, FileHandler):
 
         async def send(ws):
             t0 = time.time()
-            while True:
+            running = True
+            while running:
                 msg = await loop.run_in_executor(None, send_queue.get)
                 msg_json = msg
                 if isinstance(msg, dict):
@@ -135,6 +134,8 @@ class Tools(MainTool, FileHandler):
                 if isinstance(msg, list):
                     msg_json = str(msg)
                 self.print(Style.GREY("Sending Data"))
+                if msg_json == "exit":
+                    running = False
                 await ws.send(msg_json)
                 self.print(Style.GREY("-- Sendet --"))
 
@@ -142,12 +143,17 @@ class Tools(MainTool, FileHandler):
                 if t0-time.time() > (60*60)*1:
                     ws.close()
 
+            print("SENDER received exit stop running")
+
         async def receive(ws):
             t0 = time.time()
-            while True:
+            running = True
+            while running:
                 msg_json = await ws.recv()
                 self.print(Style.GREY("-- received --"))
                 print(msg_json)
+                if msg_json == "exit":
+                    running = False
                 msg = json.loads(msg_json)
                 recv_queue.put(msg)
 
@@ -155,14 +161,29 @@ class Tools(MainTool, FileHandler):
                 if t0-time.time() > (60*60)*1:
                     ws.close()
 
+            print("receiver received exit call")
+
         async def websocket_handler():
-            async with websockets.connect(uri) as websocket:
+
+            with self.create_websocket(websocket_id) as websocket:
                 send_task = asyncio.create_task(send(websocket))
                 recv_task = asyncio.create_task(receive(websocket))
-                await asyncio.gather(send_task, recv_task)
+                try:
+                    await asyncio.gather(send_task, recv_task)
+                except Exception as e:
+                    self.logger.error(f"Error in Client WS : {e}")
+                except websockets.exceptions.ConnectionClosedOK:
+                    return True
+                finally:
+                    self.close_websocket(websocket_id)
+
+            return True
 
         def websocket_thread():
             asyncio.set_event_loop(loop)
+            # websocket_handler()
+            # loop.run_forever()
+            # loop.run_in_executor(None, websocket_handler)
             loop.run_until_complete(websocket_handler())
 
         ws_thread = threading.Thread(target=websocket_thread)
@@ -170,13 +191,21 @@ class Tools(MainTool, FileHandler):
 
         return send_queue, recv_queue
 
-    def create_websocket(self, websocket_id, url='ws://localhost:5000/ws/'):  # wss:
+    def create_websocket(self, websocket_id, url='ws://localhost:5000/ws'):  # wss:
         uri = f"{url}/{websocket_id}"
         self.logger.info(f"Crating websocket to {url}")
         websocket = connect(uri)
         if websocket:
             self.print(f"Connection to {url} established")
+            self.active_connections_client[websocket_id] = websocket
         return websocket
+
+    def close_websocket(self, websocket_id):
+        self.print(f"close_websocket called")
+        if websocket_id not in self.active_connections_client.keys():
+            self.print(f"websocket not found")
+        self.active_connections_client[websocket_id].close()
+        del self.active_connections_client[websocket_id]
 
     async def create_sender(self, websocket: WebSocket):
         await websocket.send_text(json.dumps({"ValidateSelf": True}))
@@ -218,7 +247,7 @@ class Tools(MainTool, FileHandler):
         websocket_id_sto = await valid_id(websocket_id, self.app_id, websocket)
 
         data = self.app_.run_any("cloudM", "validate_ws_id", [websocket_id])
-
+        valid, key = False, ''
         if isinstance(data, list) or isinstance(data, tuple):
             if len(data) == 2:
                 valid, key = data
@@ -260,37 +289,6 @@ class Tools(MainTool, FileHandler):
                     self.logger.error(str(e))
                     self.print(f"{Style.YELLOW('Error')} Connection in {websocket_id} lost to {connection}")
                     self.active_connections[websocket_id_sto].remove(connection)
-
-    def construct_render(self, content: str, element_id: str, externals: List[str] or None = None,
-                         placeholder_content: str or None = None, from_file=False):
-
-        if externals is None:
-            externals = []
-
-        if placeholder_content is None:
-            placeholder_content = "<h1>Loading...</h1>"
-
-        if from_file:
-            if os.path.exists(content):
-                with open(content, 'r') as f:
-                    self.logger.info(f"File read from {content}")
-                    content = f.read()
-            else:
-                self.print(f"{Style.RED('Could not find file ')}to create renderer {from_file}")
-
-        render_data = {
-            "render": {
-                "content": content,
-                "place": '#' + element_id,
-                "id": element_id,
-                "externals": externals,
-                "placeholderContent": placeholder_content
-            }
-        }
-
-        self.logger.info(f"render content :  {render_data}")
-
-        return json.dumps(render_data)
 
     async def manage_data_flow(self, websocket, websocket_id, data):
         self.logger.info(f"Managing data flow: data {data}")
@@ -364,13 +362,12 @@ class Tools(MainTool, FileHandler):
                                                          externals=["/app/Drag/drag.js"],
                                                          from_file=True)
                     await websocket.send_text(drag_content)
-                if action == "getEditor":
-                    drag_content = self.construct_render(content="./app/1/Options/editor.html",
+                if action == "getControls":
+                    controller_content = self.construct_render(content="",
                                                          element_id="editorWidget",
-                                                         externals=["/app/1/Options/editor.js"],
-                                                         from_file=True)
+                                                         externals=["/app/1/Controler/controller.js"])
 
-                    await websocket.send_text(drag_content)
+                    await websocket.send_text(controller_content)
                 if action == "serviceWorker":
                     sw_content = self.construct_render(content="",
                                                        element_id="control1",
@@ -405,6 +402,25 @@ class Tools(MainTool, FileHandler):
                                                        externals=["/app/scripts/go_home.js"])
 
                     await websocket.send_text(home_content)
+                if action == "getModListAll":
+                    return json.dumps({'modlistA': self.app_.get_all_mods()})
+                if action == "getModListInstalled":
+                    user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
+                    if user_instance is None or not user_instance:
+                        self.logger.info("No valid user instance")
+                        return '{"res": "No Mods Installed"}'
+
+                    return json.dumps({'modlistI': user_instance['save']['mods']})
+                if action == "getModData":
+                    mod_name = data["mod-name"]
+                    try:
+                        mod = self.app_.get_mod(mod_name)
+                        return {"settings": {'mod-description': mod.description}}
+                    except ValueError:
+                        content = self.construct_render(content=f"""<p id="infoText" color: style="color:var(--error-color);">Mod {mod_name} not found
+                        </p>
+                        """, element_id="infoText")
+                        return content
                 if action == "installMod":
                     user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
                     if user_instance is None or not user_instance:
@@ -451,7 +467,7 @@ class Tools(MainTool, FileHandler):
 
                     if token_data["uid"] != user_instance['save']['uid']:
                         self.logger.critical(
-                            f"{Style.RED(f'''User with the id {user_instance['save']['username']} {Style.CYAN('Accessed')} : {Style.Bold(token_data['username'])} token both log aut.''')}")
+                            f"{Style.RED(f'''User {user_instance['save']['username']} {Style.CYAN('Accessed')} : {Style.Bold(token_data['username'])} token both log aut.''')}")
                         self.app_.run_any('cloudM', "close_user_instance", token_data["uid"])
                         self.app_.run_any('cloudM', "close_user_instance", user_instance['save']['uid'])
                         return json.dumps({'res': "The server registered: you are"
@@ -482,7 +498,7 @@ class Tools(MainTool, FileHandler):
                             'b"[') or res.startswith('b"{'): \
                             res = eval(res)
                     if not isinstance(res, dict):
-                        res = {"res": res}
+                        res = {"res": res, data['name']: True}
                     await websocket.send_text(json.dumps(res))
 
             if "ValidateSelf" in keys:
@@ -503,3 +519,34 @@ class Tools(MainTool, FileHandler):
 
         if data_type == "str":
             await self.send_message(data, websocket, websocket_id)
+
+    def construct_render(self, content: str, element_id: str, externals: List[str] or None = None,
+                         placeholder_content: str or None = None, from_file=False):
+
+        if externals is None:
+            externals = []
+
+        if placeholder_content is None:
+            placeholder_content = "<h1>Loading...</h1>"
+
+        if from_file:
+            if os.path.exists(content):
+                with open(content, 'r') as f:
+                    self.logger.info(f"File read from {content}")
+                    content = f.read()
+            else:
+                self.print(f"{Style.RED('Could not find file ')}to create renderer {from_file}")
+
+        render_data = {
+            "render": {
+                "content": content,
+                "place": '#' + element_id,
+                "id": element_id,
+                "externals": externals,
+                "placeholderContent": placeholder_content
+            }
+        }
+
+        self.logger.info(f"render content :  {render_data}")
+
+        return json.dumps(render_data)

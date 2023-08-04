@@ -1,4 +1,0 @@
-<div class="widget" onclick="expandWidget($id)">
-    <img src="$img-url">
-    <div class="name">$name</div>
-</div>

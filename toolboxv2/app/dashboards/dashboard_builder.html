@@ -4,8 +4,10 @@
     <title>Title</title>
     <script src="/app/scripts/scripts.js" type="module"></script>
     <script src="/app/scripts/WorkerSocketRenderer.js" defer></script>
+    <script src="/app/scripts/util.js" defer></script>
     <script src="/app/scripts/AutoMarkdown.js" type="module" defer></script>
     <script src="/app/scripts/infos.js" defer></script>
+
     <script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
     <link rel="stylesheet" href="/app/assets/styles.css">
     <link rel="stylesheet"
@@ -38,7 +40,8 @@
         'webSocketID': localStorage.getItem('WsID'),
         }}}));"> LogOut </button>
         <button id="initMDBtn"> startMD </button>
-    </div>
+    </div> <!-- Project Spaces laden und speichern. Automatisch Organiser 3 System Widgets 1. Eisteilungen user projects mods
+      2. Widget Editor zum erstellen von widgets und arbeiten mit diesen 3. Peronised Admin widget -->
     </nav>
     <div class="dark-mode-toggle">
         <input type="checkbox" id="darkModeToggle">

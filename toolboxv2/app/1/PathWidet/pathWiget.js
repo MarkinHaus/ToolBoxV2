@@ -17,6 +17,16 @@ function createPathWidget(input_id, context, targetElement, path="", vKey="") {
     const vKeyInput = widget.querySelector('#verification-key-input');
     const widget_injection = widget.querySelector('#path-widget-injection');
     const userFeedback = widget.querySelector('#user-feedback');
+
+    var elements = [
+        'path/to/element1',
+        'path/to/element2',
+        'path/element3',
+        'path/to/element4',
+        'path/element5',
+        'element6'
+    ];
+
     input.id = input_id+'-Path';
     input.value = path;
     vKeyInput.value = vKey;
@@ -70,15 +80,6 @@ function createPathWidget(input_id, context, targetElement, path="", vKey="") {
         directoryNode.classList.add('directory-node');
         if (!isLeafNode) { directoryNode.classList.add('collapsed'); }
         var directoryName = document.createElement('span'); directoryName.classList.add('directory-name'); directoryName.textContent = name; directoryNode.appendChild(directoryName); directoryName.addEventListener('click', function() { if (directoryNode.classList.contains('collapsed')) { directoryNode.classList.remove('collapsed'); } else { directoryNode.classList.add('collapsed'); } }); return directoryNode; } function findChildNode(parentNode, name) { var childNodes = parentNode.children; for (var i = 0; i < childNodes.length; i++) { var childNode = childNodes[i]; var directoryName = childNode.querySelector('.directory-name'); if (directoryName && directoryName.textContent === name) { return childNode; } } return null; }
-
-    var elements = [
-        'path/to/element1',
-        'path/to/element2',
-        'path/element3',
-        'path/to/element4',
-        'path/element5',
-        'element6'
-    ];
 
 
     function wsHandelEvent(event) {

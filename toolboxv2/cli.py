@@ -273,6 +273,7 @@ def main():
         tb_app.run_any('api_manager', 'start-api', ['start-api', args.name])
 
     elif args.modi.lower() in runnable_dict.keys():
+        tb_app.set_runnable(runnable_dict)
         runnable_dict[args.modi.lower()](tb_app, args)
     else:
         print(f"Modi : [{args.modi}] not found on device installed modi : {runnable_dict.keys()}")

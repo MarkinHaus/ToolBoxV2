@@ -1778,6 +1778,7 @@ Answer 1: ..."""
 
     def set_pre_task(self, pre_task):
         self.pre_task = pre_task
+        return self
 
     def set_observation_memory(self, obser_mem: ObservationMemory):
         self.observe_mem = obser_mem

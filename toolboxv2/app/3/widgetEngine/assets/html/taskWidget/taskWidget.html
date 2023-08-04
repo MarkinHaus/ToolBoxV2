@@ -1,0 +1,30 @@
+<link rel="stylesheet" href="../../../../../1/WigetNav/navDrow.css">
+<link rel="stylesheet" href="../../../../../assets/Wiget.css">
+<link rel="stylesheet" href="../../../../../assets/styles.css">
+<style>
+    .task-widget{
+
+    }
+
+</style>
+
+<div class="widget">
+    <div class="text-widget-from widget-from">Task Name</div>
+    <!-- Tab content -->
+    <div id="Informations" class="tabcontent">
+    <p  onclick="startEdit()">Discretion</p>
+</div>
+
+<script>
+
+    function startEdit(){
+        document.getElementById('Informations').style.display = 'none';
+        document.getElementById('Editing').style.display = '';
+    }
+    function endEdit(){
+        document.getElementById('Informations').style.display = ''
+        document.getElementById('Editing').style.display = 'none'
+    }
+
+    document.getElementById('Editing').style.display = 'none'
+</script>

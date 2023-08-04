@@ -92,7 +92,7 @@ async def websocket_endpoint(websocket: WebSocket, ws_id: str):
             print(f"RESPONSE: {res}")
             await websocket.send_text(res)
             print("Sending data to websocket")
-        print("manager Don listening ->")
+        print("manager Don  ->")
     #except Exception as e:
     #    print("websocket_endpoint - Exception: ", e)
     #finally:

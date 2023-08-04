@@ -1,12 +1,12 @@
-const template = `
+const template = `<template id="text-widget-template">
     <div class="text-widget widget draggable">
         <div class="text-widget-from widget-from"></div>
         <span class="text-widget-close-button widget-close-button">X</span>
         <label for="text-widget-text-input"></label>
         <textarea id="text-widget-text-input" rows="10" cols="50" placeholder="Type your text here..."></textarea>
         <button id="text-widget-injection">Send</button>
-    </div>`
-
+    </div>
+</template>`
 function addTextWidget(element_id, id, context, content="") {
     console.log("ADDING Widget ", element_id);
     const targetElement = document.getElementById(element_id);
