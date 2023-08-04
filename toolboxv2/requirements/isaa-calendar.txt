@@ -1,4 +1,0 @@
-datefinder>=0.7.3
-gcsa>=2.1.0
-Pebble>=5.0.3
-beautiful-date>=2.2.0
