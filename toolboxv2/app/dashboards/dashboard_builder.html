@@ -1,0 +1,75 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+    <script src="/app/scripts/scripts.js" type="module"></script>
+    <script src="/app/scripts/WorkerSocketRenderer.js" defer></script>
+    <script src="/app/scripts/util.js" defer></script>
+    <script src="/app/scripts/AutoMarkdown.js" type="module" defer></script>
+    <script src="/app/scripts/infos.js" defer></script>
+
+    <script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+    <link rel="stylesheet" href="/app/assets/styles.css">
+    <link rel="stylesheet"
+          href="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/default.min.css">
+</head>
+<body>
+<div id="overlay"></div>
+<header>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="application-name" content="mov">
+    <meta name="apple-mobile-web-app-title" content="mov">
+    <meta name="msapplication-starturl" content="/app/dashboard">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+    <link rel="icon" sizes="192X192" href="/app/webapp/piano-192.png">
+    <link rel="apple-touch-icon" sizes="192X192" href="/app/webapp/piano-192.png">
+    <link rel="icon" sizes="512X512" href="/app/webapp/piano-512.png">
+    <link rel="apple-touch-icon" sizes="512X512" href="/app/webapp/piano-512.png">
+    <link rel="manifest" href="/app/webapp/manifest.json">
+    <nav id="NAV">
+
+    <div id="controls"></div>
+    <div id="DragControls"></div>
+    <div id="MainControls">
+        <button id="logOutBtn" onclick="WS.send(JSON.stringify({'ServerAction':'logOut', 'command':'', 'data':
+        {'token': '**SelfAuth**', 'data':{
+        'webSocketID': localStorage.getItem('WsID'),
+        }}}));"> LogOut </button>
+        <button id="initMDBtn"> startMD </button>
+    </div> <!-- Project Spaces laden und speichern. Automatisch Organiser 3 System Widgets 1. Eisteilungen user projects mods
+      2. Widget Editor zum erstellen von widgets und arbeiten mit diesen 3. Peronised Admin widget -->
+    </nav>
+    <div class="dark-mode-toggle">
+        <input type="checkbox" id="darkModeToggle">
+        <label for="darkModeToggle" id="toggleLabel">☀️</label>
+    </div>
+</header>
+<main id="MainContent" class="autoMarkdownVisible">
+    <div id="infoPopup" class="form-container" style="z-index: 1000;">
+        <p id="infoText"></p>
+    </div>
+    <div id="threeDScene"></div>
+    <div id="Installation"></div>
+    <div id="widgetChat"></div>
+    <div class="main-content" id="main" style="width: 90vw;text-align: center">
+        <button onclick="MainInit()" id="InitMainButton">Start Dashboard</button>
+    </div>
+</main>
+
+
+<div id="widgetText"></div>
+<div id="widgetPath"></div>
+<div id="widgetMD"></div>
+<div id="editorWidget"></div>
+
+
+<div id="extras" class="none">
+    <div id="extra"></div>
+</div>
+
+</body>
+</html>

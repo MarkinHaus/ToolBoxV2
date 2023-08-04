@@ -5,6 +5,9 @@ import time
 from json import JSONDecoder
 from platform import system
 from time import sleep
+import itertools
+import sys
+import threading
 
 
 def cls():
@@ -301,13 +304,14 @@ def remove_styles(text: str):
             text = text.replace(style, '')
     return text
 
+
 def print_to_console(
     title,
     title_color,
     content,
     min_typing_speed=0.05,
     max_typing_speed=0.01):
-    print(title_color + title + " " + Style.BLUE(""), end="")
+    print(title_color + title + Style.BLUE("") + " ", end="")
     if content:
         if isinstance(content, list):
             content = " ".join(content)
@@ -316,6 +320,11 @@ def print_to_console(
             print(content)
             return
         words = content.split()
+        if len(words) > 5000:
+            words = words[:5000]
+
+        min_typing_speed = min_typing_speed * 0.01
+        max_typing_speed = max_typing_speed * 0.01
         for i, word in enumerate(words):
             print(word, end="", flush=True)
             if i < len(words) - 1:
@@ -340,6 +349,7 @@ class JSONExtractor(JSONDecoder):
         except ValueError as e:
             return None, 0
 
+
 def extract_json_strings(text):
     json_strings = []
     extractor = JSONExtractor()
@@ -363,6 +373,7 @@ def extract_json_strings(text):
 
     return json_strings
 
+
 def extract_python_code(text):
     python_code_blocks = []
 
@@ -375,3 +386,62 @@ def extract_python_code(text):
         python_code_blocks.append(block)
 
     return python_code_blocks
+
+
+class Spinner:
+    """A simple spinner class"""
+
+    def __init__(self, message: str = "Loading...", delay: float = 0.1, symbols=None) -> None:
+        """Initialize the spinner class
+        Args:
+            message (str): The message to display.
+            delay (float): The delay between each spinner update.
+        """
+
+        if isinstance(symbols, str):
+            if symbols == "c":
+                symbols = ["◐", "◓", "◑", "◒"]
+            elif symbols == "b":
+                symbols = ["▁", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃"]
+            elif symbols == "d":
+                symbols = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
+            elif symbols == "w":
+                symbols = ["🌍", "🌎", "🌏"]
+            elif symbols == "s":
+                symbols = ["🌀   ", " 🌀  ", "  🌀 ", "   🌀", "  🌀 ", " 🌀  "]
+            elif symbols == "+":
+                symbols = ["+", "x"]
+            elif symbols == "t":
+                symbols = ["✶", "✸", "✹", "✺", "✹", "✷"]
+            else:
+                symbols = None
+
+        if symbols is None:
+            symbols = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+        self.spinner = itertools.cycle(symbols)
+        self.delay = delay
+        self.message = message
+        self.running = False
+        self.spinner_thread = None
+
+    def __enter__(self) -> None:
+        """Start the spinner"""
+        self.running = True
+        self.spinner_thread = threading.Thread(target=self.spin)
+        self.spinner_thread.start()
+
+    def __exit__(self, exc_type, exc_value, exc_traceback) -> None:
+        """Stop the spinner"""
+        self.running = False
+        if self.spinner_thread is not None:
+            self.spinner_thread.join()
+        sys.stdout.write(f"\r{' ' * len(self.message)}\r")
+        sys.stdout.flush()
+
+    def spin(self) -> None:
+        """Spin the spinner"""
+        while self.running:
+            sys.stdout.write(f"\r{next(self.spinner)} {self.message}")
+            sys.stdout.flush()
+            time.sleep(self.delay)

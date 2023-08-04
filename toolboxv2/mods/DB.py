@@ -1,5 +1,23 @@
-from toolboxv2 import MainTool, FileHandler, App
+from toolboxv2 import MainTool, FileHandler, App, Style
 import redis
+
+
+class MiniRedis:
+
+    def __init__(self):
+        self.data = {}
+
+    def scan_iter(self, serch=''):
+        return [key for key in list(self.data.keys()) if key.startswith(serch)]
+
+    def get(self, key):
+        return self.data.get(key)
+
+    def set(self, key, value):
+        self.data[key] = value
+
+    def delete(self, key):
+        return self.data.pop(key)
 
 
 class Tools(MainTool, FileHandler):
@@ -18,6 +36,7 @@ class Tools(MainTool, FileHandler):
             "all": [["Version", "Shows current Version"],
                     ["first-redis-connection", "set up a web connection to MarkinHaus"],
                     ["get", "get key and value from redis"],
+                    ["append_on_set", "append_on_list"],
                     ["set", "set key value pair redis"],
                     ["del", "set key value pair redis"],
                     ["all", "get all (Autocompletion helper)"],
@@ -29,6 +48,7 @@ class Tools(MainTool, FileHandler):
             "get": self.get_keys,
             "set": self.set_key,
             "del": self.delete_key,
+            "append_on_set": self.append_on_set,
 
         }
 
@@ -43,10 +63,13 @@ class Tools(MainTool, FileHandler):
     def on_start(self):
         self.load_file_handler()
         version_command = self.get_file_handler(self.keys["url"])
-        if version_command is not None and version_command != 'redis://default:{id}@{url}.com:{port}':
+        if version_command is not None and version_command != 'redis://default:id@url.com:port':
             self.rcon = redis.from_url(version_command)
         else:
-            self.print("No url found pleas run first-redis-connection")
+            self.print("No url found starting localhost server not secure!!!")
+            self.print(Style.RED("do not go live"))
+            self.logger.warning("Local MiniRedis not secure")
+            self.rcon = MiniRedis()
 
     def on_exit(self):
         self.save_file_handler()
@@ -90,23 +113,58 @@ class Tools(MainTool, FileHandler):
                     return str(val, 'utf-8')
         return command
 
+    def append_on_set(self, command):
+
+        if self.rcon is None:
+            return 'Pleas run first-redis-connection'
+
+        val = self.rcon.get(command[0])
+
+        print(val)
+
+        if val:
+            val = eval(val)
+            for new_val in command[1]:
+                if new_val in val:
+                    return "Error value: " + str(new_val) + "already in list"
+                val.append(new_val)
+        else:
+            val = command[1]
+
+        self.rcon.set(command[0], str(val))
+
+        return command
+
     def check(self, request, app: App):
         if app.id == "tb.config":
             return True
         return True  # not "secret".upper() in request.upper()
 
-    def set_key(self, ind):
+    def set_key(self, command):
         if self.rcon is None:
             return 'Pleas run first-redis-connection'
-        if len(ind) == 3:
-            key = ind[1]
-            val = ind[2]
-            self.rcon.set(key, val)
+        try:
+            if len(command) == 3:
+                key = command[1]
+                val = command[2]
+                self.rcon.set(key, val)
+                self.print(f"key: {key} value: {val} DON 3")
+            elif len(command) == 2:
+                key = command[0]
+                val = command[1]
+                self.rcon.set(key, val)
+                self.print(f"key: {key} value: {val} DON 2")
+            else:
+                self.print("set {key} {value}, ")
+                self.print(f"{command=}")
+            return True
+        except TimeoutError as e:
+            self.logger.error(f"Timeout by redis DB : {e}")
+            return False
 
-            self.print(f"key: {key} value: {val} DON")
-        else:
-            self.print("set {key} {value}")
-        return True
+    def clean_db(self):
+        for key in self.rcon.scan_iter():
+            self.rcon.delete(key)
 
     def delete_key(self, ind):
         if self.rcon is None:

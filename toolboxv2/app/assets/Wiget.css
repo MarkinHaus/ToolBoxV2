@@ -1,0 +1,83 @@
+.widget {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: rgba(var(--background-color), 0.6);
+    backdrop-filter: blur(30px);
+    border-radius: 10px;
+    padding: 20px;
+    min-width: max-content;
+    max-width: 25vw;
+    animation: widget-fadeIn 0.5s;
+    margin: 15px;
+    border: 1px solid var(--text-color);
+    /*resize: both;*/
+    /*overflow: auto;*/
+}
+
+.widget-from {
+    position: absolute;
+    top: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--background-color);
+    backdrop-filter: blur(50px);
+    padding: 0 5px;
+    z-index: 1;
+    border-radius: 5px;
+}
+
+.widget::after {
+    content: "";
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    margin-left: -5px;
+    border-width: 5px;
+    border-style: solid;
+    border-color: transparent transparent white transparent;
+}
+
+@keyframes widget-fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes widget-fadeOut {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0;
+    }
+}
+
+@keyframes widget-progressBar {
+    from {
+        width: 100%;
+    }
+    to {
+        width: 0;
+    }
+}
+
+.widget-content{
+    padding: -2px;
+    margin: -2px;
+}
+
+.widget-content p{
+    font-size: 1rem;
+}
+
+.widget-close-button {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    cursor: pointer;
+}

@@ -1,0 +1,44 @@
+<template id="path-widget-template">
+    <div class="path-widget widget">
+        <div class="path-widget-from widget-from"></div>
+        <span class="path-widget-close-button widget-close-button">X</span>
+        <input id="path-widget-input-fileData" type="text" placeholder="Enter Path" />
+        <input id="verification-key-input" type="text" placeholder="Enter verification key" />
+        <button id="path-widget-injection">Inject</button>
+        <div id="user-feedback"></div>
+        <div id="explorerContainer"></div>
+    </div>
+</template>
+<style>
+    .explorer-container {
+        font-family: Arial, sans-serif;
+    }
+
+    .directory-node {
+        margin-left: 20px;
+    }
+
+    .expand-button {
+        margin-right: 5px;
+    }
+
+    .children-container {
+        display: none;
+    }
+    .directory-node.collapsed > .children-container {
+        display: none;
+    }
+
+    .directory-node .directory-name {
+        cursor: pointer;
+        color: blue;
+    }
+
+    .directory-node.collapsed .directory-name::after {
+        content: ' [+]' ;
+    }
+
+    .directory-node .directory-name::after {
+        content: ' [-]' ;
+    }
+</style>

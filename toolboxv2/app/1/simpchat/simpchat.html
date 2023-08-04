@@ -1,0 +1,26 @@
+<link rel="stylesheet" href="/app/1/simpchat/simpchat.css">
+<link rel="stylesheet"
+      href="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/default.min.css">
+<script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+<div id="infoPopup" class="form-container" style="z-index: 3;">
+    <p id="infoText"></p>
+</div>
+
+<div class="chat-container draggable" id="SimpChatContainer">
+    <div class="widget-from"></div>
+    <div class="chat-messages" id="chat-messages">
+        <div class="loading-spinner" id="loading-spinner">
+            <img src="https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/0.16.1/images/loader-large.gif" alt="Loading...">
+        </div>
+    </div>
+    <form class="chat-form" id="chat-form">
+        <textarea id="message-input" rows="2" cols="5" placeholder="Type your message..."></textarea>
+        <div id="ChatActionSection" style="text-align: center">
+            <button type="submit" id="$chatID" class="chat-submit-button">Send</button>
+            <label id="taskSelectorLabel" for="taskSelector"> Select a task </label>
+            <select id="taskSelector"></select>
+        </div>
+    </form>
+</div>
+
+

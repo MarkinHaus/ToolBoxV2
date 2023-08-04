@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="/app/scripts/scripts.js" type="module" defer></script>
+    <script src="/app/scripts/WorkerSocketRenderer.js" defer></script>
+    <link rel="stylesheet" href="/app/assets/styles.css">
+</head>
+<body>
+<div id="overlay"></div>
+<header>
+    <nav>
+        <ul>
+            <li><a href="/app">Start</a></li>
+            <li><a href="/app/signup">Sign Up</a></li>
+            <li><a href="/app/login">Login</a></li>
+            <li><a href="/app/asset/terms.html">Terms and Conditions</a></li>
+            <li><a href="/app/dashboards/dashboard.html">Dashboard</a></li>
+        </ul>
+    </nav>
+    <div class="dark-mode-toggle">
+        <input type="checkbox" id="darkModeToggle">
+        <label for="darkModeToggle" id="toggleLabel">☀️</label>
+    </div>
+</header>
+
+<main >
+    <div id="threeDScene"></div>
+    <div class="main-content frosted-glass">
+<section id="signup">
+    <div class="form-container">
+        <form id="signupForm" class="form">
+            <h2>Sign Up</h2>
+
+            <div id="infoPopup" class="form-container" style="display: none; z-index: 1000;">
+            <p id="infoText"></p>
+            </div>
+
+            <input id="username" type="text" placeholder="Username">
+            <input id="email" type="email" placeholder="Email">
+            <input id="initiation" type="password" placeholder="Initiation-Key">
+            <input id="password" type="password" placeholder="Password">
+            <label for="confirm-password">Confirm Password:</label>
+            <input type="password" id="confirm-password" minlength="8" required placeholder="Password">
+            <button type="submit">Sign Up</button>
+        </form>
+    </div>
+</section>
+    </div>
+</main>
+
+
+<script>
+
+document.addEventListener('DOMContentLoaded', () => {
+
+  document.getElementById('signupForm').addEventListener('submit', function(event) {
+    event.preventDefault();
+
+    const username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
+    const password2 = document.getElementById('confirm-password').value;
+    const email = document.getElementById('email').value;
+    const invitation = document.getElementById('initiation').value;
+
+    if (password !== password2){
+        document.getElementById('infoText').textContent = "The passwords do not match";
+        document.getElementById('infoPopup').style.display = 'block';
+        document.getElementById('infoPopup').style.color = 'var(--error-color)';
+    }else{
+
+        fetch('/api/post/cloudM/run/create_user', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                token: 'string',
+                data: {
+                    username: username,
+                    password: password,
+                    email: email,
+                    invitation: invitation
+                }
+            })
+        })
+            .then(response => response.json())
+            .then(data => {
+                var data_res = JSON.stringify(data['res']);
+                if (data_res.includes("CloudM")){
+                    document.getElementById('infoText').textContent = "Valid";
+                    document.getElementById('infoPopup').style.display = 'block';
+                    setTimeout(()=>{
+                        localStorage.setItem("WsID", data_res.replaceAll('"', ''));
+                        sessionStorage.setItem("local_ws.onopen:installMod-welcome", 'true');
+                        window.location.href = "/app/dashboard"
+                    }, 200)
+                }else{
+                    // Display the response in the popup
+                    document.getElementById('infoText').textContent = JSON.stringify(data['res']);
+                    document.getElementById('infoPopup').style.display = 'block';
+                }
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+            });
+    }
+  });
+ });
+</script>
+
+</body>
+</html>

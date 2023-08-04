@@ -1,0 +1,414 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
+/* Import Google Fonts */
+
+:root {
+    --font-family: 'Roboto', sans-serif;
+    --spacing: 1rem;
+
+
+    --primary-color: rgba(0,0,0,0);
+    --secondary-color: #537FE7;
+    --text-color: #181823;
+
+
+    --background-color: #f8f9fa;
+    --dark-primary-color: #181823;
+    --dark-secondary-color: #E9F8F9;
+    --dark-background-color: #181823;
+    --dark-text-color: #E9F8F9;
+
+    --dark-nav-link-color: #181823;
+    --dark-nav-link-hover-color: #C0EEF2;
+    --dark-toggle-bg-color: #181823;
+
+    --toggle-bg-checked-color: var(--primary-color);
+
+    --error-color: #9c1079;
+    --fatal-error-color: #9c1010;
+    --info-color: #107b9c;
+    --susess-color: #109c41;
+    --worning-color: #9c6b10;
+
+}
+
+
+:root[data-theme="dark"]{
+    /*
+    --primary-color: var(--dark-primary-color);
+    --secondary-color: var(--dark-secondary-color);
+    --background-color: var(--dark-background-color);
+    --text-color: var(--dark-text-color);
+
+    --nav-link-color: var(--dark-nav-link-color);
+    --nav-link-hover-color: var(--dark-nav-link-hover-color);
+    --toggle-bg-color: var(--dark-toggle-bg-color);
+
+    --toggle-bg-checked-color: var(--primary-color);
+     */
+
+
+    --primary-color: #537FE7;
+    --secondary-color: #537FE7;
+    --background-color: #181823;
+    --text-color: #181823;
+
+    --nav-link-color: #181823;
+    --nav-link-hover-color: #C0EEF2;
+    --toggle-bg-color: #181823;
+}
+
+:root[data-theme="light"]{
+    /*
+    --primary-color: var(--dark-primary-color);
+    --secondary-color: var(--dark-secondary-color);
+    --background-color: var(--dark-background-color);
+    --text-color: var(--dark-text-color);
+
+    --nav-link-color: var(--dark-nav-link-color);
+    --nav-link-hover-color: var(--dark-nav-link-hover-color);
+    --toggle-bg-color: var(--dark-toggle-bg-color);
+
+    --toggle-bg-checked-color: var(--primary-color);
+
+     */
+
+    --primary-color: #181823;
+    --secondary-color: #E9F8F9;
+    --background-color: #f8f9fa;
+    --text-color: #E9F8F9;
+
+    --nav-link-color: #888;
+    --nav-link-hover-color: #fff;
+    --toggle-bg-color: #ccc;
+}
+
+
+@media screen and (max-width: 2000px) and (min-width: 1024px) {
+    .container {
+        max-width: 90%;
+    }
+    html {
+        font-size: 16px;
+    }
+    button{
+        padding: 0.5rem 1rem;
+        border-radius: 3px;
+    }
+}
+
+@media screen and (max-width: 1023px) and (min-width: 767px) {
+    html {
+        font-size: 20px;
+    }
+    button{
+        padding: 0.25rem 0.5rem;
+        border-radius: 5px;
+    }
+}
+/* Responsive design */
+@media screen and (max-width: 767px) and (min-width: 100px) {
+    .title {
+        font-size: 36px;
+    }
+
+    .motto {
+        font-size: 18px;
+    }
+    html {
+        font-size: 24px;
+    }
+    button{
+        padding: 0.02rem 0.1rem;
+        border-radius: 9px;
+    }
+}
+
+body, p, span, input, button {
+    font-size: 1rem; /* 16px */
+}
+
+
+h1 {
+    font-size: 2rem; /* 32px */
+}
+
+h2 {
+    font-size: 1.75rem; /* 28px */
+}
+
+h3 {
+    font-size: 1.5rem; /* 24px */
+}
+
+h4 {
+    font-size: 1.25rem; /* 20px */
+}
+
+h5 {
+    font-size: 1rem; /* 16px */
+}
+
+
+#overlay {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    z-index: 9999;
+    transition: width 0.4s, height 0.3s, top 0.3s, left 0.4s;
+    border-radius: 25px;
+
+    background: rgba(var(--background-color), 0.3);
+    backdrop-filter: blur(8px);
+}
+
+#overlay.active {
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+}
+
+body {
+    font-family: var(--font-family);
+    color: var(--text-color);
+    background-color: var(--background-color);
+    transition: background-color 0.5s ease;
+}
+
+body.dark-mode {
+    --background-color: var(--dark-background-color);
+    --text-color: var(--dark-text-color);
+    --primary-color: var(--dark-primary-color);
+    --secondary-color: var(--dark-secondary-color);
+}
+
+/* Dark mode styles */
+.dark-mode-toggle input:checked + label {
+    background-color: var(--dark-primary-color);
+}
+
+/* Navigation */
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: var(--primary-color);
+}
+
+nav {
+    display: flex;
+    justify-content: center;
+    gap: 2px;
+    margin-bottom: 5px;
+    background-color: var(--primary-color);
+    padding: 0.5rem 0;
+}
+
+a {
+    color: var(--text-color);
+    text-decoration-color: var(--text-color);
+    text-decoration-style: dotted;
+}
+
+nav ul {
+    list-style-type: none;
+    margin-right: var(--spacing);
+}
+
+ul {
+    margin-left: 1vw;
+    margin-right: 1vw;
+}
+
+nav ul li a {
+    text-decoration: none;
+    color: var(--nav-link-color);
+}
+
+nav ul li a:hover {
+    text-decoration: underline;
+    color: var(--nav-link-hover-color);
+}
+
+section {
+    margin-bottom: 2rem;
+}
+
+.container {
+    text-align: center;
+    padding: 50px;
+}
+
+.title {
+    font-size: 48px;
+    margin-bottom: 10px;
+}
+
+.motto {
+    font-size: 24px;
+    margin-bottom: 30px;
+}
+
+/* Form styles */
+.form-container {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+}
+
+.form {
+    width: 300px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+label {
+    text-align: center;
+    padding: 8px;
+}
+
+input {
+    padding: 10px;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    border-radius: 3px;
+    border: 2px var(--secondary-color) outset;
+}
+
+button {
+    background-color: var(--primary-color);
+    color: var(--text-color);
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    border: 2px var(--secondary-color) outset;
+    max-width: fit-content;
+    align-self: center;
+}
+
+button:hover {
+    background-color: var(--secondary-color);
+}
+
+#darkModeToggle {
+    display: none;
+}
+
+#darkModeToggle:checked + #toggleLabel {
+    content: "☀️";
+}
+
+
+form {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin: 2rem;
+}
+
+input[type="checkbox"] {
+    margin-left: 0;
+}
+
+
+.dark-mode-toggle input:checked + label {
+    background-color: var(--toggle-bg-checked-color);
+}
+
+
+.main-content {
+    position: relative;
+    margin: 0 auto;
+    text-align: center;
+    min-width: max-content;
+    padding-bottom: 20px;
+    padding-top: 5vh;
+    background-color: rgba(255, 255, 255, 0.2); /* semi-transparent white */
+    backdrop-filter: blur(10px); /* frosted glass effect */
+    -webkit-backdrop-filter: blur(10px); /* for Safari */
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    min-height: max-content;
+    max-height: 99vh;
+    max-width: 80vw;
+    overflow-y: auto;
+    overflow-x: clip;
+    border-radius: 4px;
+}
+
+
+/* Scrollbar styles */
+.main-content::-webkit-scrollbar {
+    width: 6px;
+    min-height: max-content;
+}
+
+.main-content::-webkit-scrollbar-track {
+    border: 2px solid var(--text-color);
+}
+
+.main-content::-webkit-scrollbar-thumb {
+    background: var(--primary-color);
+}
+
+.main-content::-webkit-scrollbar-thumb:hover {
+    background: var(--secondary-color);
+}
+
+
+.frosted-glass {
+    left: 0;
+    min-height: 80vh;
+    max-height: min-content;
+    min-width: min-content;
+    max-width: max-content;
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+    z-index: 1;
+    padding: 20px;
+}
+
+#threeDScene {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1; /* This will ensure the 3D scene is behind other content */
+}
+
+
+#controls{
+    display: contents;
+}
+
+.overlay-content {
+    position: relative; /* This will ensure the content is positioned relative to the 3D scene */
+    z-index: 1; /* This will ensure the content is in front of the 3D scene */
+    width: 100%;
+    height: 100%;
+}
+
+.none {
+    display: none;
+}
+
+textarea:hover {
+    cursor: url(/app/1/init0/tam.png), auto;
+}
+
+.markdown {
+    text-align: start;
+    min-height: max-content;
+    font-size: 0.75rem;
+    background: var(--background-color);
+    padding: 5px;
+    max-width: max-content;
+}
+.markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown p, .markdown span {
+    margin-top: 1px;
+    margin-bottom: 1px;
+}

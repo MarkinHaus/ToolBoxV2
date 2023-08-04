@@ -1,1 +1,1 @@
-BROWSER = 'firefox' # 'chrome'
+BROWSER = 'firefox'  # 'chrome'

@@ -1,10 +1,10 @@
 """Top-level package for ToolBox."""
-from toolboxv2.util.Style import Style, remove_styles
-from toolboxv2.util.file_handler import FileHandler
-from toolboxv2.util.toolbox import App, AppArgs
-from toolboxv2.util.tb_logger import setup_logging, get_logger
+from toolboxv2.utils.Style import Style, remove_styles, Spinner
+from toolboxv2.utils.file_handler import FileHandler
+from toolboxv2.utils.toolbox import App, AppArgs
+from toolboxv2.utils.tb_logger import setup_logging, get_logger
 
-from toolboxv2.main_tool import MainTool
+from toolboxv2.utils.main_tool import MainTool
 
 from toolboxv2.runabel import runnable_dict
 
@@ -17,6 +17,7 @@ __all__ = [
     "MainTool",
     "FileHandler",
     "Style",
+    "Spinner",
     "remove_styles",
     "AppArgs",
     "setup_logging",
@@ -24,4 +25,5 @@ __all__ = [
     "runnable_dict",
     ]
 
-ToolBox_ovner: str = "root"
+ToolBox_over: str = "root"
+

@@ -205,6 +205,13 @@ def command_runner(app, command):
     elif command[0] == 'mode:stuf':
         app.stuf_load = not app.stuf_load
 
+    elif command[0] == 'run-i':
+
+        if len(command) > 1:
+            app.run_runnable(command[1])
+        else:
+            app.show_runnable()
+
     elif command[0].lower() in app.MOD_LIST.keys():
         app.new_ac_mod(command[0])
 
@@ -226,4 +233,7 @@ def run(app: App, *args):
     while app.alive:
         print("", end="" + "->>\r")
         command = user_input(app)
+        commands = []
+        for com in command:
+            commands.append(com.strip())
         command_runner(app, command)

@@ -5,7 +5,7 @@ import os
 from logging.handlers import SocketHandler
 from math import inf as infinity
 
-from toolboxv2.util.Style import Style, remove_styles
+from toolboxv2.utils.Style import Style, remove_styles
 
 loggerNameOfToolboxv2 = 'toolboxV2'
 
@@ -167,4 +167,4 @@ def _edit_many_log_files(name, date, level, n, m, d):
         n += 1
 
 
-#edit_log_files("toolbox-test", '2023-02-XX', logging.NOTSET, 0, do=unstyle_log_files)
+# edit_log_files("toolbox-test", '2023-02-XX', logging.NOTSET, 0, do=unstyle_log_files)

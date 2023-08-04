@@ -1,8 +1,9 @@
+import json
 import os
 
-from toolboxv2.util.tb_logger import get_logger
-from toolboxv2.util.Style import Style
-from toolboxv2.util.cryp import Code
+from toolboxv2.utils.tb_logger import get_logger
+from toolboxv2.utils.Style import Style
+from toolboxv2.utils.cryp import Code
 
 
 class FileHandler(Code):
@@ -77,15 +78,17 @@ class FileHandler(Code):
             )
         )
 
-        for key in self.file_handler_save.keys():
-            data = self.file_handler_save[key]
-            get_logger().info(
-                Style.BLUE(
-                    f"writing to file : {key} : {len(data)} char(s)"
-                )
-            )
-            self.file_handler_storage.write(key + str(data))
-            self.file_handler_storage.write('\n')
+        self.file_handler_storage.write(json.dumps(self.file_handler_save))
+
+        # for key in self.file_handler_save.keys():
+        #     data = self.file_handler_save[key]
+        #     get_logger().info(
+        #         Style.BLUE(
+        #             f"writing to file : {key} : {len(data)} char(s)"
+        #         )
+        #     )
+        #     self.file_handler_storage.write(key + str(data))
+        #     self.file_handler_storage.write('\n')
 
         self.file_handler_storage.close()
         self.file_handler_storage = None
@@ -107,19 +110,12 @@ class FileHandler(Code):
                 )
             )
             return False
-        # if key not in self.file_handler_save.keys():
-        #     print(Style.YELLOW(f"{key} wos not found in file set new"))
-        #     w = 'None'
-        # else:
-        #     w = self.file_handler_save[key]
         if key not in self.file_handler_load.keys():
             if key in self.file_handler_key_mapper:
                 key = self.file_handler_key_mapper[key]
 
         self.file_handler_load[key] = value
         self.file_handler_save[key] = self.encode_code(value)
-
-        # return w, self.decode_code(w)
         return True
 
     def load_file_handler(self):
@@ -136,12 +132,22 @@ class FileHandler(Code):
             )
         self.open_l_file_handler()
 
-        for line in self.file_handler_storage:
-            line = line[:-1]
-            heda = line[:10]
-            self.file_handler_save[heda] = line[10:]
-            enc = self.decode_code(line[10:])
-            self.file_handler_load[heda] = enc
+        try:
+
+            self.file_handler_save = json.load(self.file_handler_storage)
+            for key, line in self.file_handler_save.items():
+                self.file_handler_load[key] = self.decode_code(line)
+
+        except json.decoder.JSONDecodeError and Exception:
+
+            for line in self.file_handler_storage:
+                line = line[:-1]
+                heda = line[:10]
+                self.file_handler_save[heda] = line[10:]
+                enc = self.decode_code(line[10:])
+                self.file_handler_load[heda] = enc
+
+            self.file_handler_save = {}
 
         self.file_handler_storage.close()
         self.file_handler_storage = None
@@ -170,13 +176,14 @@ class FileHandler(Code):
                 except ValueError:
                     logger.error(f"ValueError Loading {obj} ; {self.file_handler_filename}")
                 except SyntaxError:
-                    logger.critical(
-                        Style.RED(
+                    logger.warning(
+                        Style.YELLOW(
                             f"SyntaxError Loading {obj} ; {self.file_handler_filename}"
-                            f" {len(objects[1])}, {type(objects[1])}"
+                            f" {len(objects[1])} {type(objects[1])}"
                         )
                     )
-                    pass  # print(Style.YELLOW(f"Data frc : {obj} ; {objects[1]}"))
+                    return objects[1]
+                    # print(Style.YELLOW(f"Data frc : {obj} ; {objects[1]}"))
                 except NameError:
                     return str(objects[1])
 

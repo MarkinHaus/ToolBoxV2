@@ -1,0 +1,83 @@
+h1{
+    font-size: 2rem;
+    margin: 0;
+}
+
+p{
+    font-size: 1.25rem;
+}
+
+.fade_in {
+    animation: fadeIn 1.25s ease-out;
+}
+
+.fade {
+    opacity: 0;
+    animation: fadeOut 0.55s ease-in;
+}
+
+.fade2 {
+    opacity: 0;
+    animation: fadeOut 1.95s ease-in-out;
+}
+
+@keyframes fadeIn {
+    0% {
+        opacity: 0;
+        scale: 1.25;
+    }
+    50% {
+        opacity: 0.5;
+    }
+    97% {
+        scale: 0.98;
+    }
+    99% {
+        scale: 0.99;
+    }
+    100% {
+        opacity: 1;
+        scale: 1;
+    }
+}
+
+@keyframes fadeOut {
+    0% {
+        opacity: 1;
+    }
+    75% {
+        opacity: 0.1;
+    }
+    100% {
+        opacity: 0;
+        scale: 2;
+    }
+}
+
+.center {
+    height: 50vh;
+    animation: fadeIn 1.25s ease-in-out;
+    justify-content: center;
+    align-items: center;
+    min-height: max-content;
+    z-index: 2;
+}
+
+.over {
+    padding: 10px;
+    top:0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 1;
+    background: rgba(var(--text-color), 0.9);
+}
+
+.options {
+    display: none;
+    margin-bottom: 20px;
+}
+
+.input-container {
+    display: none;
+}

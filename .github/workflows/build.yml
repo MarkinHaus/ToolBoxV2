@@ -1,10 +1,12 @@
 on:
     push:
         branches:
-            - master
+            - light-tb
+            - mod-server
     pull_request:
         branches:
-            - master
+            - light-tb
+            - mod-server
 
 name: build
 jobs:
@@ -43,3 +45,4 @@ jobs:
             - name: PKG-TEST
               run: |
                   python -m unittest discover tests/
+

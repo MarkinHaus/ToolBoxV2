@@ -1,11 +1,10 @@
 import os
 from typing import Union
 from fastapi import APIRouter, UploadFile
-from starlette.staticfiles import StaticFiles
 
-from toolboxv2 import ToolBox_ovner, App
+from toolboxv2 import ToolBox_over, App
 from .util import PostRequest
-from ..util.toolbox import get_app
+from ..utils.toolbox import get_app
 
 router = APIRouter(
     prefix="/api",
@@ -33,7 +32,7 @@ def close(data: PostRequest, pid: int):
         if "uid" not in res.keys():
             return {"res": str(res)}
 
-        if res["username"] in (ToolBox_ovner if not isinstance(ToolBox_ovner, str) else [ToolBox_ovner]):
+        if res["username"] in (ToolBox_over if not isinstance(ToolBox_over, str) else [ToolBox_over]):
             tb_app.save_exit()
             tb_app.exit()
             exit(0)
@@ -78,7 +77,9 @@ def test_mod_dow(name: str):
 def get_mod_index(name: str):
     tb_app: App = get_app()
     try:
-        tb_app.new_ac_mod(name)
+        res = tb_app.new_ac_mod(name)
+        if isinstance(res, str):
+            return {"res": res}
         result = tb_app.help('')
     except:
         result = "None"
@@ -97,7 +98,7 @@ def get_mod_run(mod: str, name: str, command: Union[str, None] = None):
             tb_app.new_ac_mod(mod)
 
     if tb_app.AC_MOD:
-        res = tb_app.run_function(name, command.split('|'))
+        res = tb_app.run_function('api_' + name, command.split('|'))
 
     if type(res) == str:
         if (res.startswith('{') or res.startswith('[')) or res.startswith('"[') or res.startswith('"{') \
@@ -114,7 +115,7 @@ async def post_mod_run(data: PostRequest, mod: str, name: str, command: Union[st
         command = ''
 
     command = [data, command.split('|')]
-    res = tb_app.run_any(mod, name, command)
+    res = tb_app.run_any(mod, 'api_' + name, command)
 
     if type(res) == str:
         if (res.startswith('{') or res.startswith('[')) or res.startswith('"[') or res.startswith('"{') \

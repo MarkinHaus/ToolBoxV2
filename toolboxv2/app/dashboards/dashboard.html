@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+    <script src="../scripts/scripts.js" type="module" defer></script>
+    <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+<div id="overlay"></div>
+<header>
+    <nav>
+        <ul>
+            <li><a href="/app">Start</a></li>
+            <li><a href="/app/signup">Sign Up</a></li>
+            <li><a href="/app/login">Login</a></li>
+            <li><a href="/app/assets/terms.html">Terms and Conditions</a></li>
+        </ul>
+    </nav>
+    <div class="dark-mode-toggle">
+        <input type="checkbox" id="darkModeToggle">
+        <label for="darkModeToggle" id="toggleLabel">☀️</label>
+    </div>
+</header>
+
+<main >
+    <div id="threeDScene"></div>
+    <div class="main-content" style="width: 90vw;text-align: center"> <h1>Welcome to simple</h1>
+
+    <div>
+        <div class="container" id="Options">
+            <label for="slideA">slideA</label><input id="slideA" type="number" min="1" max="8" step="1" value="0"/>
+            <hr/>
+            <label for="slideX">slideX</label><input id="slideX" type="number" min="0" max="360" step="1" value="0"/>
+            <hr/>
+            <label for="slideY">slideY</label><input id="slideY" type="number" min="0" max="360" step="1" value="0"/>
+            <hr/>
+            <label for="slideZ">slideZ</label><input id="slideZ" type="number" min="0" max="360" step="1" value="0"/>
+        </div>
+    </div>
+    </div>
+
+</main>
+
+</body>
+</html>

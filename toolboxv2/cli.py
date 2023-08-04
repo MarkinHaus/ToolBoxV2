@@ -2,16 +2,17 @@
 # Import default Pages
 import sys
 import argparse
+import threading
 from platform import system
 
 # Import public Pages
-from toolboxv2 import App, MainTool, runnable_dict
-from toolboxv2.util.toolbox import get_app
+from toolboxv2 import App, MainTool, runnable_dict as runnable_dict_func
+from toolboxv2.utils.toolbox import get_app
 
 try:
-    from toolboxv2.util.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
+    from toolboxv2.utils.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
 except ModuleNotFoundError:
-    from .util.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
+    from .utils.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
 
 import os
 import subprocess
@@ -164,7 +165,7 @@ def parse_args():
 
 
 def edit_logs():
-    name = input(f"Name of logger \ndefault {loggerNameOfToolboxv2} \n:")
+    name = input(f"Name of logger \ndefault {loggerNameOfToolboxv2}\n:")
     name = name if name else loggerNameOfToolboxv2
 
     def date_in_format(_date):
@@ -267,14 +268,15 @@ def main():
         setup = input("Set up for :")
         if setup == "1":
             setup_app()
-
+    runnable_dict = runnable_dict_func()
     if args.modi == 'api':
         tb_app.run_any('api_manager', 'start-api', ['start-api', args.name])
 
     elif args.modi.lower() in runnable_dict.keys():
+        tb_app.set_runnable(runnable_dict)
         runnable_dict[args.modi.lower()](tb_app, args)
     else:
-        print(f"Modi : {args.modi} not found on device")
+        print(f"Modi : [{args.modi}] not found on device installed modi : {runnable_dict.keys()}")
 
     if args.modi == "kill-app":
         app_pid = str(os.getpid())

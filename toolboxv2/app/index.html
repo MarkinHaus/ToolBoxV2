@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+    <script src="/app/scripts/scripts.js" type="module" defer></script>
+    <link rel="stylesheet" href="/app/assets/styles.css">
+</head>
+<body>
+<div id="overlay"></div>
+    <header>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="application-name" content="mov">
+        <meta name="apple-mobile-web-app-title" content="mov">
+        <meta name="msapplication-starturl" content="/">
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+        <link rel="icon" sizes="192X192" href="/app/webapp/piano-192.png">
+        <link rel="apple-touch-icon" sizes="192X192" href="/app/webapp/piano-192.png">
+        <link rel="icon" sizes="512X512" href="/app/webapp/piano-512.png">
+        <link rel="apple-touch-icon" sizes="512X512" href="/app/webapp/piano-512.png">
+        <link rel="manifest" href="/app/webapp/manifest.json">
+
+    <nav>
+        <ul>
+            <li><a href="/app">Start</a></li>
+            <li><a href="/app/signup">Sign Up</a></li>
+            <li><a href="/app/login">Login</a></li>
+            <li><a href="/app/assets/terms.html">Terms and Conditions</a></li>
+            <li><a href="/app/dashboard">Dashboard</a></li>
+        </ul>
+    </nav>
+    <div class="dark-mode-toggle">
+        <input type="checkbox" id="darkModeToggle">
+        <label for="darkModeToggle" id="toggleLabel">☀️</label>
+    </div>
+</header>
+
+    <!-- Your main content goes here -->
+    <main >
+        <div id="threeDScene"></div>
+        <div class="main-content frosted-glass">
+            <!-- Your main content -->
+            <h1>Welcome to simple</h1>
+            <p>simple website offers the best services for your need. Join us today and experience the difference.</p>
+            <button onclick="location.href='app/signup'">Sign Up</button>
+            <hr/>
+            <a href="/app/assets/waiting_list.html">Email waiting list</a>
+        </div>
+    </main>
+
+</body>
+</html>

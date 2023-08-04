@@ -2,19 +2,24 @@
 import os
 import sys
 import time
-from platform import node
+from platform import node, system
 from importlib import import_module
 from inspect import signature
 
 import requests
 
-from toolboxv2.util.file_handler import FileHandler
-from toolboxv2.util.tb_logger import setup_logging, get_logger
-from toolboxv2.util.Style import Style
+from toolboxv2.utils.file_handler import FileHandler
+from toolboxv2.utils.tb_logger import setup_logging, get_logger
+from toolboxv2.utils.Style import Style
 import toolboxv2
 
 import logging
 from dotenv import load_dotenv
+
+import json
+from pygments import highlight
+from pygments.lexers import JsonLexer
+from pygments.formatters import TerminalFormatter
 
 load_dotenv()
 
@@ -43,6 +48,12 @@ class ApiOb:
     token = ""
     data = {}
 
+    def __init__(self, data=None, token=""):
+        if data is None:
+            data = {}
+        self.data = data
+        self.token = token
+
     def default(self):
         return self
 
@@ -66,20 +77,34 @@ class Singleton(type):
 
 class App(metaclass=Singleton):
     def __init__(self, prefix: str = "", args=AppArgs().default()):
+
+        t0 = time.time()
+        abspath = os.path.abspath(__file__)
+        self.system_flag = system()  # Linux: Linux Mac: Darwin Windows: Windows
+        if self.system_flag == "Darwin" or self.system_flag == "Linux":
+            dname = os.path.dirname(abspath).replace("/utils", "")
+        else:
+            dname = os.path.dirname(abspath).replace("\\utils", "")
+        os.chdir(dname)
+
+        if not os.path.exists("./.data"):
+            os.mkdir("./.data")
+        if not os.path.exists("./.config"):
+            os.mkdir("./.config")
+
         if not prefix:
-            if not os.path.exists("last-app-prefix"):
-                open("last-app-prefix", "a").close()
-            with open("last-app-prefix", "r") as prefix_file:
+            if not os.path.exists("./.data/last-app-prefix"):
+                open("./.data/last-app-prefix", "a").close()
+            with open("./.data/last-app-prefix", "r") as prefix_file:
                 cont = prefix_file.read()
                 if cont:
                     prefix = cont
         else:
-            with open("last-app-prefix", "w") as prefix_file:
+            if not os.path.exists("./.data/last-app-prefix"):
+                open("./.data/last-app-prefix", "a").close()
+            with open("./.data/last-app-prefix", "w") as prefix_file:
                 prefix_file.write(prefix)
-        t0 = time.time()
-        abspath = os.path.abspath(__file__)
-        dname = os.path.dirname(abspath).replace("\\util", "")
-        os.chdir(dname)
+
         print(f"Starting ToolBox as {prefix} from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 
         debug = False
@@ -91,6 +116,7 @@ class App(metaclass=Singleton):
             setup_logging(logging.WARNING, name="toolbox-live", is_online=True
                           , online_level=logging.WARNING).info("Logger initialized")
         elif "debug" in prefix:
+            prefix = prefix.replace("-debug", '').replace("debug", '')
             setup_logging(logging.DEBUG, name="toolbox-debug", interminal=True,
                           file_level=logging.WARNING).info("Logger initialized")
             debug = True
@@ -133,6 +159,8 @@ class App(metaclass=Singleton):
 
         self._debug = debug
 
+        self.runnable = {}
+
         self._debug = self.config_fh.get_file_handler(self.keys["debug"])
         self.command_history = self.config_fh.get_file_handler(self.keys["comm-his"])
         self.dev_modi = self.config_fh.get_file_handler(self.keys["develop-mode"])
@@ -173,6 +201,17 @@ class App(metaclass=Singleton):
     @property
     def debug(self):
         return self._debug
+
+    def set_runnable(self, r):
+        self.runnable = r
+
+    def show_runnable(self):
+        self.pretty_print(list(self.runnable.keys()))
+        return self.runnable
+
+    def run_runnable(self, name, args):
+        if name in self.runnable.keys():
+            self.runnable[args.modi.lower()](self, args)
 
     @debug.setter
     def debug(self, value):
@@ -232,13 +271,18 @@ class App(metaclass=Singleton):
         mod = getattr(mod, "Tools")
         mod = mod(app=self)
         mod_name = mod.name
-        self.MOD_LIST[mod_name.lower()] = mod
-        color = mod.color if mod.color else "WHITE"
-        self.MACRO.append(mod_name.lower())
-        self.MACRO_color[mod_name.lower()] = color
-        self.HELPER[mod_name.lower()] = mod.tools["all"]
-
+        self.save_init_mod(mod_name, mod)
         return mod
+
+    def save_init_mod(self, name, mod):
+        self.MOD_LIST[name.lower()] = mod
+        color = mod.color if mod.color else "WHITE"
+        self.MACRO.append(name.lower())
+        self.MACRO_color[name.lower()] = color
+        self.HELPER[name.lower()] = mod.tools["all"]
+
+    def mod_online(self, mod_name):
+        return mod_name.lower() in self.MOD_LIST.keys()
 
     def _get_function(self, name):
 
@@ -247,6 +291,10 @@ class App(metaclass=Singleton):
         if not self.AC_MOD:
             self.logger.debug(Style.RED("No module Active"))
             return None
+
+        for key, func in self.AC_MOD.tools.items():
+            if name.lower() == key.lower():
+                return func
 
         if name.lower() not in self.SUPER_SET:
             self.logger.debug(Style.RED(f"KeyError: {name} function not found 404"))
@@ -286,7 +334,6 @@ class App(metaclass=Singleton):
             self.logger.info(f"Loading module : {mod}")
             if self.debug:
                 self.load_mod(mod)
-                continue
             else:
                 try:
                     self.load_mod(mod)
@@ -379,6 +426,11 @@ class App(metaclass=Singleton):
             s += str(i) + " "
         return s
 
+    @staticmethod
+    def pretty_print_dict(data):
+        json_str = json.dumps(data, sort_keys=True, indent=4)
+        print(highlight(json_str, JsonLexer(), TerminalFormatter()))
+
     def autocompletion(self, command):
         options = []
         if command == "":
@@ -416,24 +468,24 @@ class App(metaclass=Singleton):
                             f" {self.pretty_print(list(self.HELPER.keys()))}"))
             return "invalid commands"
 
-    def save_load(self, filename):
-        self.logger.info(f"Save load module {filename}")
-        if not filename:
+    def save_load(self, modname):
+        self.logger.info(f"Save load module {modname}")
+        if not modname:
             self.logger.warning("no filename specified")
             return False
         avalabel_mods = self.get_all_mods()
         i = 0
-        fw = filename.lower()
+        fw = modname.lower()
         for mod in list(map(lambda x: x.lower(), avalabel_mods)):
             if fw == mod:
-                filename = avalabel_mods[i]
+                modname = avalabel_mods[i]
             i += 1
         if self.debug:
-            return self.load_mod(filename)
+            return self.load_mod(modname)
         try:
-            return self.load_mod(filename)
+            return self.load_mod(modname)
         except ModuleNotFoundError:
-            self.logger.error(Style.RED(f"Module {filename} not found"))
+            self.logger.error(Style.RED(f"Module {modname} not found"))
 
         return False
 
@@ -453,70 +505,48 @@ class App(metaclass=Singleton):
             self.logger.error(Style.RED(f"AttributeError: {e} has no file handler 404"))
         return None
 
-    def run_function(self, name, command):
-        # get function
-        self.logger.info(f"Start setup for : {name} function")
+    def run_function(self, name, *args, **kwargs):
+        self.logger.info(f"Start setup for: {name} function mod:{self.AC_MOD.name}")
 
         function = self._get_function(name)
-        res = {}
         if not function:
-            self.logger.debug(Style.RED(f"Function {name} not found"))
+            self.logger.debug(Style.RED(f"Function {name} not found in {self.AC_MOD.name}"))
             return False
-        # signature function
-        self.logger.info(f"profiling function")
+
+        self.logger.info(f"Profiling function")
         sig = signature(function)
-        self.logger.info(f"signature : {sig}")
-        args = len(sig.parameters)
-        self.logger.info(f"args-len : {args}")
-        self.logger.info(f"staring function")
-        if args == 0:
-            if self.debug:
+        self.logger.info(f"Signature: {sig}")
+        parameters = list(sig.parameters)
+
+        mod_name = self.AC_MOD.name
+        print(f"\nStart function {mod_name}:{name}\n")
+        app_position = None
+        for i, param in enumerate(parameters):
+            if param == 'app':
+                app_position = i
+                break
+        if app_position is not None:
+            args = list(args)
+            args.insert(app_position, self)
+        try:
+            if len(parameters) == 0:
                 res = function()
+            elif len(parameters) == 1:
+                res = function(*args)
             else:
-                try:
-                    self.print_ok()
-                    print("\nStart function\n")
-                    res = function()
-                except Exception as e:
-                    self.logger.error(Style.YELLOW(Style.Bold(f"! function ERROR : {e}")))
-                    return res
-
-        elif args == 1:
-            if self.debug:
-                res = function(command)
-            else:
-                try:
-                    self.print_ok()
-                    print("\nStart function\n")
-                    res = function(command)
-                except Exception as e:
-                    self.logger.error(Style.YELLOW(Style.Bold(f"! function ERROR : {e}")))
-                    return res
-
-        elif args == 2:
-            if self.debug:
-                res = function(command, self)
-            else:
-                try:
-                    self.print_ok()
-                    print("\nStart function\n")
-                    res = function(command, self)
-                except Exception as e:
-                    self.logger.error(Style.YELLOW(Style.Bold(f"! function ERROR : {e}")))
-                    return res
+                res = function(*args, **kwargs)
+            self.logger.info(f"Execution done")
+        except Exception as e:
+            self.logger.error(Style.YELLOW(Style.Bold(f"! Function ERROR: in {mod_name}:{name} {e}")))
+            res = {'error-in': mod_name, 'error-func': name}
         else:
-            self.logger.error(Style.YELLOW(f"! to many args {args} def ...(u): | -> {str(sig)}"))
-            return res
-
-        self.logger.info(f"Execution done")
-        if not res:
-            self.logger.debug("No return value")
-        else:
-            self.logger.debug(res)
-
+            self.print_ok()
         return res
 
-    def run_any(self, module_name: str, function_name: str, command: list):
+    def run_any(self, module_name: str, function_name: str, command=None, **kwargs):
+
+        if command is None:
+            command = [ApiOb(), ""]
 
         do_sto = self.AC_MOD is not None
         ac_sto = ""
@@ -527,8 +557,9 @@ class App(metaclass=Singleton):
             self.logger.warning(f"Module : {module_name}.{function_name} not online")
             self.save_load(module_name)
 
-        self.new_ac_mod(module_name)
-        res = self.run_function(function_name, command)
+        if ac_sto != module_name:
+            self.new_ac_mod(module_name)
+        res = self.run_function(function_name, command, **kwargs)
 
         if do_sto:
             self.new_ac_mod(ac_sto)
@@ -543,14 +574,23 @@ class App(metaclass=Singleton):
     def new_ac_mod(self, name):
         self.logger.info(f"New ac mod : {name}")
         if name.lower() not in self.MOD_LIST.keys():
-            self.logger.warning(f"Could not find {name} in {self.MOD_LIST.keys()}")
-            return f"valid mods ar : {self.MOD_LIST.keys()}"
+            self.logger.warning(f"Could not find {name} in {list(self.MOD_LIST.keys())}")
+            return f"valid mods ar : {list(self.MOD_LIST.keys())}"
         self.AC_MOD = self.MOD_LIST[name.lower()]
         self.AC_MOD.stuf = self.stuf_load
         self.PREFIX = Style.CYAN(
             f"~{node()}:{Style.Bold(self.pretty_print([name.lower()]).strip())}{Style.CYAN('@>')}")
         self.set_spec()
         return True
+
+    def get_mod(self, name):
+        if name.lower() not in self.MOD_LIST.keys():
+            mod = self.save_load(name)
+            if mod:
+                return mod
+            self.logger.warning(f"Could not find {name} in {list(self.MOD_LIST.keys())}")
+            raise ValueError(f"Could not find {name} in {list(self.MOD_LIST.keys())} pleas install the module")
+        return self.MOD_LIST[name.lower()]
 
     @staticmethod
     def command_viewer(mod_command):
