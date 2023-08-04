@@ -1,16 +1,14 @@
 on:
     push:
         branches:
-            - master
-            - init-isaa
-            - init
-            - mods
+            - light-client
+            - light-server
+            - mod-server
     pull_request:
         branches:
-            - master
-            - init-isaa
-            - init
-            - mods
+            - light-client
+            - light-server
+            - mod-server
 
 name: build
 jobs:
