@@ -297,18 +297,7 @@ def main():
 
 
 if __name__ == "__main__":
-    print("Starting")
-
-    def test_(name):
-        app = App(name)
-        print(app.id)
-
-
-    test_("Normal-test")
-
-    qu_init_t = threading.Thread(target=test_, args=(["Thread-test"]))
-    qu_init_t.start()
-
+    sys.exit(main())
     # main()
     # init main : ToolBoxV2 -init main -f init.config
     # Exit
