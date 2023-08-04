@@ -1,13 +1,11 @@
 on:
     push:
         branches:
-            - light-client
-            - light-server
+            - light-tb
             - mod-server
     pull_request:
         branches:
-            - light-client
-            - light-server
+            - light-tb
             - mod-server
 
 name: build
