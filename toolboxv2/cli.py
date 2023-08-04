@@ -298,7 +298,6 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-    # main()
     # init main : ToolBoxV2 -init main -f init.config
     # Exit
     # y
