@@ -1,12 +1,11 @@
 #!/usr/bin/env python
 from rich.traceback import install
-import os
+
 
 
 install(show_locals=True)
 
 """Tests for `cloudM` package."""
-from coverage.annotate import os
 
 from toolboxv2 import App
 

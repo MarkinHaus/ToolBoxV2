@@ -2,7 +2,6 @@ import unittest
 import time
 
 from toolboxv2 import App
-from toolboxv2.mods.Restrictor import Tools
 from toolboxv2.utils.toolbox import ApiOb
 
 

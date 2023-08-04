@@ -387,6 +387,7 @@ def extract_python_code(text):
 
     return python_code_blocks
 
+
 class Spinner:
     """A simple spinner class"""
 

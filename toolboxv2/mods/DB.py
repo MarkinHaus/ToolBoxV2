@@ -1,5 +1,3 @@
-import time
-
 from toolboxv2 import MainTool, FileHandler, App, Style
 import redis
 

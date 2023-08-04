@@ -1,11 +1,8 @@
-import json
-import queue
+
 import time
 import unittest
-from unittest.mock import MagicMock, patch
 
 from toolboxv2 import App
-from toolboxv2.mods.WebSocketManager import Tools
 
 
 class TestWebSocketManager(unittest.TestCase):

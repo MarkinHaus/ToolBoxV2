@@ -1,6 +1,6 @@
 import inspect
 import logging
-from toolboxv2 import MainTool, FileHandler, App, Style
+from toolboxv2 import MainTool, FileHandler, Style
 from toolboxv2 import ToolBox_over
 
 

@@ -1,12 +1,10 @@
 import asyncio
-import json
 import logging
 import math
 import queue
 import threading
 import time
 
-from pebble import concurrent
 import os.path
 from typing import List
 import websockets
@@ -14,7 +12,7 @@ from websockets.sync.client import connect
 
 import json
 
-from toolboxv2 import MainTool, FileHandler, App, Style, get_logger
+from toolboxv2 import MainTool, FileHandler, Style
 from toolboxv2.utils.toolbox import get_app, ApiOb
 from fastapi import WebSocket, HTTPException
 
@@ -207,41 +205,6 @@ class Tools(MainTool, FileHandler):
         self.active_connections_client[websocket_id].close()
         del self.active_connections_client[websocket_id]
 
-    async def create_sender(self, websocket: WebSocket):
-        await websocket.send_text(json.dumps({"ValidateSelf": True}))
-        response = await websocket.receive_text()
-
-        response_dict = json.loads(response)
-
-        if 'valid' in response_dict:
-            if not response_dict['valid']:
-                self.print("Invalid websocket connection")
-                return "Invalid User " + response_dict['res']
-
-        self.print("Crating Sender")
-
-        @concurrent.process(timeout=4)
-        def sender_process(message):
-            try:
-                websocket.send_text(message)
-            except Exception as e:
-                get_logger().error(Style.RED(f"Error sending message : {e}"))
-                print(Style.RED(f"Error sending message : {e}"))
-                return False
-            return True
-
-        def sender(message):
-            try:
-                sending_process = sender_process(message)
-                if not sending_process.result():
-                    return "Error sending"
-                return True
-            except TimeoutError and Exception:
-                get_logger().error(Style.YELLOW(f"Timeout sending message"))
-                print(Style.YELLOW(f"Timeout sending message"))
-                return "Timeout Error"
-
-        return sender
 
     async def connect(self, websocket: WebSocket, websocket_id):
         websocket_id_sto = await valid_id(websocket_id, self.app_id, websocket)

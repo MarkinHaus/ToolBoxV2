@@ -2,7 +2,6 @@ import time
 import unittest
 
 from toolboxv2 import App
-from toolboxv2.mods.VirtualizationTool import Tools
 
 
 class TestVirtualizationTool(unittest.TestCase):

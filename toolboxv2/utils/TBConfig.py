@@ -1,4 +1,3 @@
-import os
 from dotenv import load_dotenv
 
 from toolboxv2 import get_logger

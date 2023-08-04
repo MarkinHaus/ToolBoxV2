@@ -14,16 +14,13 @@ from datetime import datetime, timedelta, timezone
 import json
 import urllib.request
 import shutil
-from json import JSONDecoder
 from pathlib import Path
-from urllib import request
 
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
 import jwt
 import requests
-import re
 from toolboxv2 import MainTool, FileHandler, App, Style, ToolBox_over
 from toolboxv2.utils.Style import extract_json_strings
 from toolboxv2.utils.toolbox import get_app

@@ -1,7 +1,7 @@
 import logging
 from importlib import import_module
 
-from toolboxv2 import MainTool, FileHandler, App, Style
+from toolboxv2 import MainTool, FileHandler, Style
 from toolboxv2.utils.toolbox import get_app
 
 
