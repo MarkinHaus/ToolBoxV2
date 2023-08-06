@@ -74,29 +74,29 @@ async def websocket_endpoint(websocket: WebSocket, ws_id: str):
     if not await manager.connect(websocket, websocket_id):
         await websocket.close()
         return
-    #try:
+    try:
 
-    while True:
-        try:
-            data = await websocket.receive_text()
-        except WebSocketDisconnect as e:
-            print(e)
-            break
-        # try:
-        res = await manager.manage_data_flow(websocket, websocket_id, data)
-        # print("manage_data_flow")
-        # except Exception as e:
-        #    print(e)
-        #    res = '{"res": "error"}'
-        if res is not None:
-            print(f"RESPONSE: {res}")
-            await websocket.send_text(res)
-            print("Sending data to websocket")
-        print("manager Don  ->")
-    #except Exception as e:
-    #    print("websocket_endpoint - Exception: ", e)
-    #finally:
-    #    await manager.disconnect(websocket, websocket_id)
+        while True:
+            try:
+                data = await websocket.receive_text()
+            except WebSocketDisconnect as e:
+                print(e)
+                break
+            try:
+                res = await manager.manage_data_flow(websocket, websocket_id, data)
+                print("manage_data_flow")
+            except Exception as e:
+               print(e)
+               res = '{"res": "error"}'
+            if res is not None:
+                print(f"RESPONSE: {res}")
+                await websocket.send_text(res)
+                print("Sending data to websocket")
+            print("manager Don  ->")
+    except Exception as e:
+        print("websocket_endpoint - Exception: ", e)
+    finally:
+        await manager.disconnect(websocket, websocket_id)
 
 
 print("API: ", __name__)  # https://www.youtube.com/watch?v=_Im4_3Z1NxQ watch NOW
