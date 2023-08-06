@@ -20,11 +20,11 @@ with io.open(path.join(here, "requirements.txt"), encoding="utf-8") as f:
 install_requires = [x.strip() for x in all_reqs if "git+" not in x]
 dependency_links = [x.strip().replace("git+", "") for x in all_reqs if "git+" not in x]
 
-requirements = [ ]
+requirements = []
 
-setup_requirements = [ ]
+setup_requirements = []
 
-test_requirements = [ ]
+test_requirements = []
 
 setup(
     author="Markin Hausmanns",
@@ -64,6 +64,6 @@ setup(
     test_suite='tests',
     tests_require=test_requirements,
     url='https://github.com/MarkinHaus/ToolBoxV2',
-    version='0.0.3',
+    version='0.1.0',
     zip_safe=False,
 )
