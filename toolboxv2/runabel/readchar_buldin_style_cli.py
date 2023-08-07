@@ -98,7 +98,7 @@ def user_input(app: App):
     return print_command
 
 
-def command_runner(app, command):
+def command_runner(app, command, args):
     if command[0] == '':  # log(helper)
         print("Pleas enter a command or help for mor information")
 
@@ -208,7 +208,7 @@ def command_runner(app, command):
     elif command[0] == 'run-i':
 
         if len(command) > 1:
-            app.run_runnable(command[1])
+            app.run_runnable(command[1], args)
         else:
             app.show_runnable()
 
@@ -236,4 +236,4 @@ def run(app: App, *args):
         commands = []
         for com in command:
             commands.append(com.strip())
-        command_runner(app, command)
+        command_runner(app, command, args)

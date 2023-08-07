@@ -206,7 +206,7 @@ class App(metaclass=Singleton):
         self.runnable = r
 
     def show_runnable(self):
-        self.pretty_print(list(self.runnable.keys()))
+        print(self.pretty_print(list(self.runnable.keys())))
         return self.runnable
 
     def run_runnable(self, name, args):
