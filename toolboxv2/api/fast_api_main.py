@@ -3,7 +3,7 @@ import os
 
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
-
+from fastapi.responses import RedirectResponse
 from toolboxv2 import App
 
 from fastapi import FastAPI, Request, WebSocket
@@ -48,8 +48,8 @@ async def add_process_time_header(request: Request, call_next):
 
 @app.get("/")
 async def index():
-    # return RedirectResponse(url="/app")
-    return "Willkommen bei Simple V0 powered by ToolBoxV2-0.0.3"
+    return RedirectResponse(url="/app")
+    # return "Willkommen bei Simple V0 powered by ToolBoxV2-0.0.3"
 
 
 @app.get("/exit")

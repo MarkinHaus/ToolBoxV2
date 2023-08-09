@@ -949,7 +949,7 @@ def crate_sing_key(username: str, email: str, password: str, uid: str, message: 
 def get_jwtdata(jwt_key: str, jwt_secret: str, aud):
     try:
         token = jwt.decode(jwt_key, jwt_secret, leeway=timedelta(seconds=10),
-                           algorithms=["HS512"], verify=False, audience=aud)
+                           algorithms=["HS512"], verify=False), # audience=aud)
         return token
     except jwt.exceptions.InvalidSignatureError:
         return "InvalidSignatureError"

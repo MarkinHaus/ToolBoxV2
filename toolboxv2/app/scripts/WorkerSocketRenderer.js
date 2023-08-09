@@ -12,7 +12,7 @@ function MainInit() {
     //var ws_id = "app-live-test-DESKTOP-CI57V1L1";
     let local_ws;
     if (WS === undefined){
-        local_ws = new WebSocket("ws://localhost:5000/ws/" + ws_id);
+        local_ws = new WebSocket("wss://simple.markinhaus.repl.co/ws/" + ws_id);
         WS = local_ws;
     }else {
         local_ws = WS;

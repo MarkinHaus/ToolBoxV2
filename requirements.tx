@@ -1,5 +1,4 @@
 fastapi~=0.86.0
-toolboxv2~=0.0.3
 pyjwt~=2.6.0
 pydantic~=1.10.7
 flask~=2.2.5
