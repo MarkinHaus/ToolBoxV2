@@ -113,8 +113,10 @@ class App(metaclass=Singleton):
             setup_logging(logging.NOTSET, name="toolbox-test", interminal=True,
                           file_level=logging.NOTSET).info("Logger initialized")
         elif "live" in prefix:
-            setup_logging(logging.WARNING, name="toolbox-live", is_online=True
-                          , online_level=logging.WARNING).info("Logger initialized")
+            setup_logging(logging.DEBUG, name="toolbox-debug", interminal=True,
+                          file_level=logging.WARNING).info("Logger initialized")
+            #setup_logging(logging.WARNING, name="toolbox-live", is_online=True
+            #              , online_level=logging.WARNING).info("Logger initialized")
         elif "debug" in prefix:
             prefix = prefix.replace("-debug", '').replace("debug", '')
             setup_logging(logging.DEBUG, name="toolbox-debug", interminal=True,

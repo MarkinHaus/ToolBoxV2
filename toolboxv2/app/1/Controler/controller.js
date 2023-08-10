@@ -89,6 +89,7 @@ const settingsWidgetTemplate = `
     </div>
 
 `;
+let workingTask = {}
 let itemsContainerSettingsWidget = null
 let MODLIST = []
 
@@ -276,6 +277,7 @@ function initTaskEditor() {
     function createKeyValuePair(key = '', value = '' || []) {
         const group = document.createElement('div');
         group.className = 'key-value-group';
+        workingTask[key] = value;
 
         const keyInput = document.createElement('p');
         keyInput.innerText = key;
@@ -414,13 +416,8 @@ function initTaskEditor() {
             return;
         }
 
-        const inputs = taskForm.querySelectorAll('input');
-        const values = taskForm.querySelectorAll('h3');
-        const task = {};
-        for (let i = 0; i < inputs.length; i += 1) {
-            task[values[i].innerText] = inputs[i].value;
-        }
-        tasks.push({ name: taskName, task });
+        tasks.push({ name: taskName, JSON.parse(JSON.stringify(workingTask))});
+        workingTask = {}
         localStorage.setItem('tasks', JSON.stringify(tasks));
         const valueOpt = document.createElement('option');
         valueOpt.value = taskName;

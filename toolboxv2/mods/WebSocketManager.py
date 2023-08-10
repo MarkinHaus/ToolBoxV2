@@ -189,7 +189,7 @@ class Tools(MainTool, FileHandler):
 
         return send_queue, recv_queue
 
-    def create_websocket(self, websocket_id, url='ws://localhost:5000/ws'):  # wss:
+    def create_websocket(self, websocket_id, url='wss://0.0.0.0:5000/ws'):  # wss:
         uri = f"{url}/{websocket_id}"
         self.logger.info(f"Crating websocket to {url}")
         websocket = connect(uri)

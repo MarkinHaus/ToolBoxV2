@@ -1,5 +1,5 @@
 let initChatOnce = false;
-let selectedTask = {};
+let selectedTask = {"name":"Welcome","task":{"use":"agent","name":"self","args":"Please introduce yourself to the user. Tell the user abut yur goals and capabilities. add 2 ideas for the user to start using you","return":"$ret"}};
 function initChat() {
     console.log("initChat 0")
     if (initChatOnce){
@@ -69,13 +69,17 @@ async function sendMessage(text) {
     console.log("[selectedTask]:",selectedTask)
     const inputElement = document.getElementById('ChatActionSection').querySelector('button');
     const inputId = inputElement ? inputElement.id : 'Input not found';
-    const sendMessage_message_d = JSON.stringify({"ChairData":true, "data":{"widgetID": inputId, "task":text, "IChain": selectedTask['task']}});
+    const IChain = selectedTask['task'];
+    const dataToChair = {"widgetID": inputId, "task":text, "IChain": IChain};
+    const sendMessage_message_d = JSON.stringify({"ChairData":true, "data":dataToChair});
+  console.log("[IChain]", IChain)
+  console.log("[dataToChair]", dataToChair)
+  console.log("[sendMessage_message_d]", sendMessage_message_d)
     // const sendMessage_message = JSON.stringify({"ServerAction":"runMod", "name":"isaa","function":"run", "command":inputId, "data":subject
     //         {"token": "**SelfAuth**", "data":{
     //                 "name": "self",
     //                 "text": text
     //             }}});
-    console.log("sendMessage:sendMessage_message", sendMessage_message_d)
     await WS.send(sendMessage_message_d);
 
 }
