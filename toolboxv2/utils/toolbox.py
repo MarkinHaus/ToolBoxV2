@@ -87,6 +87,8 @@ class App(metaclass=Singleton):
             dname = os.path.dirname(abspath).replace("\\utils", "")
         os.chdir(dname)
 
+        self.start_dir = dname
+
         if not os.path.exists("./.data"):
             os.mkdir("./.data")
         if not os.path.exists("./.config"):
