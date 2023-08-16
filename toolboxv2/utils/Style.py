@@ -298,10 +298,17 @@ class Style:
         return self._Underline
 
 
-def remove_styles(text: str):
+def remove_styles(text: str, infos=False):
+    in_ = []
     for key, style in Style.style_dic.items():
         if style in text:
             text = text.replace(style, '')
+            if infos:
+                in_.append([key for key, st in Style.style_dic.items() if style == st][0])
+    if infos:
+        if "END" in in_:
+            in_.remove('END')
+        return text, in_
     return text
 
 

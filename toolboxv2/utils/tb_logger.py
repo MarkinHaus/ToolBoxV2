@@ -120,7 +120,7 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
 
     logger.setLevel(level)
 
-    return logger
+    return logger, filename
 
 
 def get_logger() -> logging.Logger:

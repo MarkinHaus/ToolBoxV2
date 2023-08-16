@@ -87,57 +87,34 @@ class Tools(MainTool, FileHandler):
         ["close_user_instance", "close_user_instance", math.inf],
         ["get_user_instance", "get_user_instance only programmatic", math.inf],
         ["set_user_level", "set_user_level only programmatic", math.inf],
+        ["make_installable", "crate pack for toolbox"],
       ],
       "name":
       "cloudM",
-      "Version":
-      self.show_version,
-      "api_Version":
-      self.show_version,
-      "NEW":
-      self.new_module,
-      "upload":
-      self.upload,
-      "download":
-      self.download,
-      "first-web-connection":
-      self.add_url_con,
-      "create-account":
-      self.create_account,
-      "login":
-      self.log_in,
-      "api_create_user":
-      self.create_user,
-      "api_log_in_user":
-      self.log_in_user,
-      "api_log_out_user":
-      self.log_out_user,
-      "api_email_waiting_list":
-      self.email_waiting_list,
-      "api_validate_jwt":
-      self.validate_jwt,
-      "validate_jwt":
-      self.validate_jwt,
-      "download_api_files":
-      self.download_api_files,
-      "#update-core":
-      self.update_core,
-      "wsGetI":
-      self.get_instance_si_id,
-      "validate_ws_id":
-      self.validate_ws_id,
-      "mod-installer":
-      installer,
-      "system_init":
-      self.prep_system_initial,
-      "mod-remover":
-      delete_package,
-      "close_user_instance":
-      self.close_user_instance,
-      "get_user_instance":
-      self.get_user_instance_wrapper,
-      "set_user_level":
-      self.set_user_level
+      "Version": self.show_version,
+        "api_Version": self.show_version,
+        "NEW": self.new_module,
+        "upload": self.upload,
+        "download": self.download,
+        "first-web-connection": self.add_url_con,
+        "create-account": self.create_account,
+        "login": self.log_in,
+        "api_create_user": self.create_user,
+        "api_log_in_user": self.log_in_user,
+        "api_log_out_user": self.log_out_user,
+        "api_email_waiting_list": self.email_waiting_list,
+        "api_validate_jwt": self.validate_jwt,
+        "validate_jwt": self.validate_jwt
+        , "download_api_files": self.download_api_files,
+        "#update-core": self.update_core,
+        "wsGetI": self.get_instance_si_id,
+        "validate_ws_id": self.validate_ws_id,
+        "mod-installer": installer,
+        "system_init": self.prep_system_initial,
+        "mod-remover": delete_package,
+        "close_user_instance": self.close_user_instance,
+        "get_user_instance": self.get_user_instance_wrapper,
+        "set_user_level": self.set_user_level,
     }
     self.live_user_instances = {}
     self.user_instances = {}

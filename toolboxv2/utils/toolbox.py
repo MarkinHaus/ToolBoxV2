@@ -112,20 +112,21 @@ class App(metaclass=Singleton):
         debug = False
 
         if "test" in prefix:
-            setup_logging(logging.NOTSET, name="toolbox-test", interminal=True,
-                          file_level=logging.NOTSET).info("Logger initialized")
+            self.logger, self.logging_filename = setup_logging(logging.NOTSET, name="toolbox-test", interminal=True,
+                          file_level=logging.NOTSET)
         elif "live" in prefix:
-            setup_logging(logging.DEBUG, name="toolbox-debug", interminal=True,
-                          file_level=logging.WARNING).info("Logger initialized")
+            self.logger, self.logging_filename = setup_logging(logging.DEBUG, name="toolbox-debug", interminal=True,
+                          file_level=logging.WARNING)
             #setup_logging(logging.WARNING, name="toolbox-live", is_online=True
             #              , online_level=logging.WARNING).info("Logger initialized")
         elif "debug" in prefix:
             prefix = prefix.replace("-debug", '').replace("debug", '')
-            setup_logging(logging.DEBUG, name="toolbox-debug", interminal=True,
-                          file_level=logging.WARNING).info("Logger initialized")
+            self.logger, self.logging_filename = setup_logging(logging.DEBUG, name="toolbox-debug", interminal=True,
+                          file_level=logging.WARNING)
             debug = True
         else:
-            setup_logging(logging.ERROR, name=f"toolbox-{prefix}").info("Logger initialized")
+            self.logger, self.logging_filename = setup_logging(logging.ERROR, name=f"toolbox-{prefix}")
+        self.logger.info("Logger initialized")
         get_logger().info(Style.GREEN("Starting Tool"))
 
         if args.init:
@@ -178,12 +179,10 @@ class App(metaclass=Singleton):
         self.auto_save = True
         self.PREFIX = Style.CYAN(f"~{node()}@>")
         self.MOD_LIST = {}
-        self.logger: logging.Logger = get_logger()
         self.SUPER_SET = []
         self.AC_MOD = None
         self.alive = True
-
-        print(
+        self.print(
             f"SYSTEM :: {node()}\nID -> {self.id},\nVersion -> {self.version},\n"
             f"load_mode -> {'coppy' if self.mlm == 'C' else ('Inplace' if self.mlm == 'I' else 'pleas use I or C')}\n")
 
@@ -194,7 +193,7 @@ class App(metaclass=Singleton):
             v = self.version
             if args.mod_version_name != "mainTool":
                 v = self.run_any(args.mod_version_name, 'Version', [])
-            print(f"Version {args.mod_version_name} : {v}")
+            self.print(f"Version {args.mod_version_name} : {v}")
 
         self.logger.info(
             Style.GREEN(
@@ -210,7 +209,7 @@ class App(metaclass=Singleton):
         self.runnable = r
 
     def show_runnable(self):
-        print(self.pretty_print(list(self.runnable.keys())))
+        self.print(self.pretty_print(list(self.runnable.keys())))
         return self.runnable
 
     def run_runnable(self, name, args):
@@ -430,10 +429,9 @@ class App(metaclass=Singleton):
             s += str(i) + " "
         return s
 
-    @staticmethod
-    def pretty_print_dict(data):
+    def pretty_print_dict(self, data):
         json_str = json.dumps(data, sort_keys=True, indent=4)
-        print(highlight(json_str, JsonLexer(), TerminalFormatter()))
+        self.print(highlight(json_str, JsonLexer(), TerminalFormatter()))
 
     def autocompletion(self, command):
         options = []
@@ -448,29 +446,29 @@ class App(metaclass=Singleton):
     def exit(self):
         self.exit_all_modules()
         self.logger.info("Exiting ToolBox")
-        print(Style.Bold(Style.CYAN("OK - EXIT ")))
-        print('\033[?25h', end="")
+        self.print(Style.Bold(Style.CYAN("OK - EXIT ")))
+        self.print('\033[?25h', end="")
         self.alive = False
         self.config_fh.save_file_handler()
 
     def help(self, command: str):
         if not self.AC_MOD and command == "":
-            print(f"All commands: {self.pretty_print(self.MACRO)} \nfor mor information type : help [command]")
-            return "intern-error"
+            self.print(f"All commands: {self.pretty_print(self.MACRO)} \nfor mor information type : help [command]")
+            return "invalid"
         elif self.AC_MOD:
-            print(Style.Bold(self.AC_MOD.name))
+            self.print(Style.Bold(self.AC_MOD.name))
             self.command_viewer(self.AC_MOD.tools["all"])
             return self.AC_MOD.tools["all"]
 
         elif command.lower() in self.HELPER.keys():
             helper = self.HELPER[command.lower()]
-            print(Style.Bold(command.lower()))
+            self.print(Style.Bold(command.lower()))
             self.command_viewer(helper)
             return helper
         else:
-            print(Style.RED(f"HELPER {command} is not a valid | valid commands ar"
+            self.print(Style.RED(f"HELPER {command} is not a valid | valid commands ar"
                             f" {self.pretty_print(list(self.HELPER.keys()))}"))
-            return "invalid commands"
+            return "invalid"
 
     def save_load(self, modname):
         self.logger.info(f"Save load module {modname}")
@@ -523,7 +521,7 @@ class App(metaclass=Singleton):
         parameters = list(sig.parameters)
 
         mod_name = self.AC_MOD.name
-        print(f"\nStart function {mod_name}:{name}\n")
+        self.print(f"\nStart function {mod_name}:{name}\n")
         app_position = None
         for i, param in enumerate(parameters):
             if param == 'app':
@@ -596,11 +594,10 @@ class App(metaclass=Singleton):
             raise ValueError(f"Could not find {name} in {list(self.MOD_LIST.keys())} pleas install the module")
         return self.MOD_LIST[name.lower()]
 
-    @staticmethod
-    def command_viewer(mod_command):
+    def command_viewer(self, mod_command):
         mod_command_names = []
         mod_command_dis = []
-        print(f"\n")
+        self.print(f"\n")
         for msg in mod_command:
             if msg[0] not in mod_command_names:
                 mod_command_names.append(msg[0])
@@ -610,16 +607,20 @@ class App(metaclass=Singleton):
                 mod_command_dis[mod_command_names.index(msg[0])].append(dis)
 
         for tool_address in mod_command_names:
-            print(Style.GREEN(f"{tool_address}, "))
+            self.print(Style.GREEN(f"{tool_address}, "))
             for log_info in mod_command_dis[mod_command_names.index(tool_address)]:
-                print(Style.YELLOW(f"    {log_info}"))
-            print("\n")
+                self.print(Style.YELLOW(f"    {log_info}"))
+            self.print("\n")
 
         return mod_command_names
 
     @debug.setter
     def debug(self, value):
         self._debug = value
+
+    def print(self, text, *args, **kwargs):
+        self.logger.info(f"Output : {text}")
+        print(text, *args, **kwargs)
 
 
 def _initialize_toolBox(init_type, init_from):

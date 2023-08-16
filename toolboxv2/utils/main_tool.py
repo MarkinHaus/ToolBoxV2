@@ -1,4 +1,4 @@
-from toolboxv2.utils.toolbox import App
+from toolboxv2.utils.toolbox import App, get_app
 from toolboxv2.utils.Style import Style
 from toolboxv2.utils.tb_logger import get_logger
 
@@ -6,6 +6,7 @@ from toolboxv2.utils.tb_logger import get_logger
 class MainTool:
 
     toolID = ""
+    app = None
 
     def __init__(self, *args, **kwargs):
         self.version = kwargs["v"]
@@ -20,9 +21,12 @@ class MainTool:
         self.stuf = False
         if not hasattr(self, 'config'):
             self.config = {}
-        self.load()
+        if self.app is None:
+            self.app = get_app()
         self.ac_user_data_sto = {}
         self.description = "A toolbox mod"
+
+        self.load()
 
     def load(self):
         if self.todo:
@@ -33,13 +37,13 @@ class MainTool:
         else:
             get_logger().info(f"{self.name} no load require")
 
-        print(f"TOOL : {self.name} online")
+        self.app.print(f"TOOL : {self.name} online")
 
     def print(self, message, end="\n", **kwargs):
         if self.stuf:
             return
 
-        print(Style.style_dic[self.color] + self.name + Style.style_dic["END"] + ":", message, end=end, **kwargs)
+        self.app.print(Style.style_dic[self.color] + self.name + Style.style_dic["END"] + ":", message, end=end, **kwargs)
 
     def add_str_to_config(self, command):
         if len(command) != 2:
