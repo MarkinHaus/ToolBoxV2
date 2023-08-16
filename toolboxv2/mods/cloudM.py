@@ -116,6 +116,7 @@ class Tools(MainTool, FileHandler):
         "get_user_instance": self.get_user_instance_wrapper,
         "set_user_level": self.set_user_level,
     }
+
     self.live_user_instances = {}
     self.user_instances = {}
     self.vt = None
