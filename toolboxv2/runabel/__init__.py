@@ -14,7 +14,7 @@ def runnable_dict():
         # Überprüfe, ob die Datei eine Python-Datei ist
         if file_name == "__init__.py":
             pass
-        elif file_name.endswith('.py'):
+        elif file_name.endswith('.py') and file_name.startswith('r'):
             # Entferne die Erweiterung ".py" aus dem Dateinamen
             name = os.path.splitext(file_name)[0]
             # Lade das Modul

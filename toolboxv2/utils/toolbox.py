@@ -129,8 +129,10 @@ class App(metaclass=Singleton):
         self.logger.info("Logger initialized")
         get_logger().info(Style.GREEN("Starting Tool"))
 
+        name = prefix + '-' + node()
+
         if args.init:
-            _initialize_toolBox(args.init, args.init_file)
+            _initialize_toolBox(args.init, args.init_file, name)
 
         name = prefix + '-' + node()
         self.version = toolboxv2.__version__
@@ -201,6 +203,8 @@ class App(metaclass=Singleton):
             )
         )
 
+        self.args_sto = args
+
     @property
     def debug(self):
         return self._debug
@@ -212,9 +216,9 @@ class App(metaclass=Singleton):
         self.print(self.pretty_print(list(self.runnable.keys())))
         return self.runnable
 
-    def run_runnable(self, name, args):
+    def run_runnable(self, name):
         if name in self.runnable.keys():
-            self.runnable[args.modi.lower()](self, args)
+            self.runnable[name](self, self.args_sto)
 
     @debug.setter
     def debug(self, value):
@@ -530,7 +534,7 @@ class App(metaclass=Singleton):
         if app_position is not None:
             args = list(args)
             args.insert(app_position, self)
-        try:
+        if self.debug:
             if len(parameters) == 0:
                 res = function()
             elif len(parameters) == 1:
@@ -538,11 +542,20 @@ class App(metaclass=Singleton):
             else:
                 res = function(*args, **kwargs)
             self.logger.info(f"Execution done")
-        except Exception as e:
-            self.logger.error(Style.YELLOW(Style.Bold(f"! Function ERROR: in {mod_name}:{name} {e}")))
-            res = {'error-in': mod_name, 'error-func': name}
         else:
-            self.print_ok()
+            try:
+                if len(parameters) == 0:
+                    res = function()
+                elif len(parameters) == 1:
+                    res = function(*args)
+                else:
+                    res = function(*args, **kwargs)
+                self.logger.info(f"Execution done")
+            except Exception as e:
+                self.logger.error(Style.YELLOW(Style.Bold(f"! Function ERROR: in {mod_name}:{name} {e}")))
+                res = {'error-in': mod_name, 'error-func': name}
+            else:
+                self.print_ok()
         return res
 
     def run_any(self, module_name: str, function_name: str, command=None, **kwargs):
@@ -623,7 +636,7 @@ class App(metaclass=Singleton):
         print(text, *args, **kwargs)
 
 
-def _initialize_toolBox(init_type, init_from):
+def _initialize_toolBox(init_type, init_from, name):
     logger = get_logger()
 
     logger.info("Initialing ToolBox: " + init_type)
@@ -639,7 +652,7 @@ def _initialize_toolBox(init_type, init_from):
     else:
         data = open(init_from, 'r+').read()
 
-    fh = FileHandler(init_type + '-' + node() + ".config")
+    fh = FileHandler(name + ".config")
     fh.open_s_file_handler()
     fh.file_handler_storage.write(str(data))
     fh.file_handler_storage.close()

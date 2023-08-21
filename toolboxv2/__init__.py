@@ -8,6 +8,14 @@ from toolboxv2.utils.main_tool import MainTool
 
 from toolboxv2.runabel import runnable_dict
 
+try:
+    MODS_ERROR = None
+    import toolboxv2.mods
+    from toolboxv2.mods import *
+except ImportError as e:
+    MODS_ERROR = e
+
+
 __author__ = """Markin Hausmanns"""
 __email__ = 'Markinhausmanns@gmail.com'
 __version__ = '0.0.3'
@@ -23,6 +31,8 @@ __all__ = [
     "setup_logging",
     "get_logger",
     "runnable_dict",
+    "mods",
+    "utils"
     ]
 
 ToolBox_over: str = "root"

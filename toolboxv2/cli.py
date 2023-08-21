@@ -17,6 +17,9 @@ except ModuleNotFoundError:
 import os
 import subprocess
 
+DEFAULT_HELPER = {"help": [["Information", "version : 0.0.2", "color : GREEN", "syntax : help (in scope)", "help is available in all subsets"]], "load-mod": [["Information", "version : 0.1.0", "color : BLUE", "syntax : load-mod[filename]", "file must be in mods folder "]], "exit": [["Information", "version : 0.1.0", "color : RED", "syntax : exit", "The only way to exit in TOOL BOX"]], "..": [["Information", "version : 0.1.0", "color : MAGENTA", "syntax : ..", "Brings u Back to Main"]], "logs": [["Information", "version : 0.1.0", "color : MAGENTA", "syntax : LOGS", "show logs"]], "_hr": [["Information", "version : ----", "Hotreload all mods"]], "cls": [["Information", "version : ----", "Clear Screen"]], "mode": [["Information", "version : ----", "go in monit mode"]], "app-info": [["Information", "version : ----", "app - status - info"]], "mode:live": [["Test Function", "version : ----", "\x1b[31mCode can no loger crash\x1b[0m"]], "mode:debug": [["Test Function", "version : ----", "\x1b[31mCode can crash\x1b[0m"]], "mode:stuf": [["Test Function", "version : ----", "mmute mods on loding and prossesig\x1b[0m"]]}
+DEFAULT_MACRO = ["help", "load-mod", "exit", "_hr", "..", "cls", "mode"]
+DEFAULT_MACRO_color = {"help": "GREEN", "load-mod": "BLUE", "exit": "RED", "monit": "YELLOW", "..": "MAGENTA", "logs": "MAGENTA", "cls": "WHITE"}
 
 def create_service_file(user, group, working_dir):
     service_content = f"""[Unit]
@@ -247,6 +250,11 @@ def main():
 
     tb_app = App(args.name, args=args)
 
+    if 'cli' in args.modi:
+        tb_app.HELPER = DEFAULT_HELPER if not tb_app.HELPER else tb_app.HELPER
+        tb_app.MACRO = DEFAULT_MACRO if tb_app.MACRO == ['Exit'] else tb_app.MACRO
+        tb_app.MACRO_color = DEFAULT_MACRO_color if not tb_app.MACRO_color else tb_app.MACRO_color
+
     if args.log_editor:
         edit_logs()
         tb_app.save_exit()
@@ -268,7 +276,9 @@ def main():
         setup = input("Set up for :")
         if setup == "1":
             setup_app()
+
     runnable_dict = runnable_dict_func()
+
     if args.modi == 'api':
         tb_app.run_any('api_manager', 'start-api', ['start-api', args.name])
 

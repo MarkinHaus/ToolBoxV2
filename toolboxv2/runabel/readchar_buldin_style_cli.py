@@ -53,7 +53,7 @@ def user_input(app: App):
             command = ""
             print_command = session_history[sh_index]
 
-        elif key == b'\x08' or key == '\x7f':
+        elif key == b'\x08' or key == b'\x7f' or key == '\x08' or key == '\x7f':
             if len(command) == 0 and len(print_command) != 0:
                 command = print_command[-1]
                 command = command[:-1]
@@ -208,7 +208,7 @@ def command_runner(app, command, args):
     elif command[0] == 'run-i':
 
         if len(command) > 1:
-            app.run_runnable(command[1], args)
+            app.run_runnable(command[1])
         else:
             app.show_runnable()
 
