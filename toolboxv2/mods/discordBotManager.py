@@ -6,6 +6,7 @@ import threading
 import time
 from urllib.parse import quote_plus
 
+import aiohttp
 import discord
 import requests
 from discord.ext import commands
@@ -235,12 +236,13 @@ class Tools(commands.Bot, MainTool):
 
         if message.author == self.user:
             return
-        if message.channel.name == 'context':
-            self.context.append(message.content)
-            self.isaa.get_agent_config_class("self").context.text += message.content
-        if message.channel.name == 'augment':
-            self.isaa.init_from_augment(eval(message.content))
-        elif message.content.startswith('v+'):
+        if not isinstance(message.channel, discord.DMChannel):
+            if message.channel.name == 'context':
+                self.context.append(message.content)
+                self.isaa.get_agent_config_class("self").context.text += message.content
+            if message.channel.name == 'augment':
+                self.isaa.init_from_augment(eval(message.content))
+        if message.content.startswith('v+'):
             if len(voices) > self.voice_index:
                 self.voice_index += 1
             await message.reply(f'Confirmed at {self.voice_index}', mention_author=True)
@@ -414,7 +416,8 @@ class Tools(commands.Bot, MainTool):
             await ctx.send(f"Chain details : ```{run_chain}```")
             await ctx.send(f"Description : ```{self.isaa.agent_chain.get_discr(chain_name)}```")
             await ctx.send(f"Why : ```{dscription}```")
-            betwean_res = self.isaa.mini_task_completion(f"Genearate an Output for a aget to be spoken loud. Informations {chain_name} {dscription} tell the user why you want to run this chin :")
+            betwean_res = self.isaa.mini_task_completion(
+                f"Genearate an Output for a aget to be spoken loud. Informations {chain_name} {dscription} tell the user why you want to run this chin :")
             await eleven_labs_speech_stream(ctx, betwean_res, voice_index=self.voice_index)
             await ctx.send(f'Do you want to continue? with {chain_name}', view=view)
             # Wait for the View to stop listening for input...
@@ -551,7 +554,7 @@ class Tools(commands.Bot, MainTool):
                     self.print(f"Chin len {chain_name_}:{len(run_chain)}")
                     self.sender_que.put(f"Chin len : {len(run_chain)}")
                     if run_chain:
-                         self.isaa.describe_chain(chain_name_)
+                        self.isaa.describe_chain(chain_name_)
 
                 await self.run_isaa_with_print(ctx, func)
                 await ctx.send(f"Don")
@@ -623,17 +626,6 @@ class Tools(commands.Bot, MainTool):
 
             await ctx.send("Ok")
 
-        @self.command(name="say2", pass_context=True)
-        async def say2(ctx: commands.Context, *text: str):
-
-            await ctx.send("Running")
-            def func():
-                self.sender_que.put("#SAY#:"+str(text))
-
-            await self.run_isaa_with_print(ctx, func)
-
-            await ctx.send("Ok")
-
         @self.command(name="chat", pass_context=True)
         async def chat(ctx: commands.Context, *text: str):
 
@@ -644,7 +636,7 @@ class Tools(commands.Bot, MainTool):
                 res = self.isaa.stream_read_llm(text, self.isaa.get_agent_config_class("self").set_mode("conversation"))
                 if not isinstance(res, str):
                     res = str(res)
-                self.sender_que.put("# Isaa: "+res)
+                self.sender_que.put("# Isaa: " + res)
 
             await self.run_isaa_with_print(ctx, func)
 
@@ -660,7 +652,7 @@ class Tools(commands.Bot, MainTool):
                 res = self.isaa.stream_read_llm(text, self.isaa.get_agent_config_class("self").set_mode("conversation"))
                 if not isinstance(res, str):
                     res = str(res)
-                self.sender_que.put("#SAY#:"+res)
+                self.sender_que.put("#SAY#:" + res)
 
             await self.run_isaa_with_print(ctx, func)
 
@@ -676,7 +668,7 @@ class Tools(commands.Bot, MainTool):
                 res = self.isaa.stream_read_llm(text, self.isaa.get_agent_config_class("self").set_mode("free"))
                 if not isinstance(res, str):
                     res = str(res)
-                self.sender_que.put("#SAY#:"+res)
+                self.sender_que.put("#SAY#:" + res)
 
             await self.run_isaa_with_print(ctx, func)
 
@@ -692,7 +684,7 @@ class Tools(commands.Bot, MainTool):
 
             await ctx.send("Ok")
 
-        @self.command(name='&', pass_context=True)
+        @self.command(name='join', pass_context=True)
         async def join(ctx):
             if ctx.author.voice is None:
                 await ctx.send("Du bist nicht in einem Sprachkanal!")
@@ -703,15 +695,116 @@ class Tools(commands.Bot, MainTool):
             else:
                 await ctx.voice_client.move_to(voice_channel)
 
-        @self.command(name='#', pass_context=True)
+        @self.command(name='leave', pass_context=True)
         async def leave(ctx):
             if ctx.voice_client is not None:
                 await ctx.voice_client.disconnect()
             else:
                 await ctx.send("Ich bin nicht in einem Sprachkanal.")
 
+        @self.command(name='welcome', pass_context=True)
+        async def welcome(ctx):
+            msg = """# 🎉 Welcome to our powerful Discord bot! 🎉
 
-voices = ["27dJPQc4TXmS1pccxP0m", "VzRk86yeIgj45NCVZqJe", "e3sRAASduwyXKQwXY3ci", "onwK4e9ZLuTAKqWW03F9", "CYw3kZ02Hs0563khs1Fj", "ThT5KcBeYPX3keUQqHPh", "MF3mGyEYCl7XYWbV9V6O", "LcfcDJNUP1GQjkzn1xUU", "jsCqWAovK2LkecY7zXl4", "zcAOhNBS3c14rBihAFp1", "EXAVITQu4vr4xnSDxMaL", "9Mi9dBkaxn2pCIdAAGOB"]
+This bot is designed to help you with a variety of tasks and enhance your experience on Discord. It can listen (not voice in chat), respond to commands, interact with AI assistants like Isaa, and provide many other unique and interesting features. ✨
+
+Please follow the commands listed below to get the best results:"""
+            await ctx.send(msg)
+            msg = """🔹 join - The bot joins the voice channel and listens to the rest of the stream.
+🔹 leave - Leaves the voice channel.
+🔹 ask - Asks Isaa a question. If no matching skill is found, one is created.
+🔹 chat - Chat with a smaller model.
+🔹 context - Displays the context and status of the Isaa system.
+🔹 create - Creates a task.
+🔹 delete - Deletes a task.
+🔹 describe - Describes a task.
+🔹 google - Performs a Google search.
+🔹 help - Displays this message.
+🔹 optimize - Optimizes a task.
+🔹 price - Displays the current usage.
+🔹 run - Executes a task.
+🔹 save2em - Clears the memory.
+🔹 say - Speaks in the voice channel the user is in. If the bot is not in the channel, it joins it.
+🔹 say-in - Similar to say, but the first argument is the language to speak in.
+🔹 talk - Makes the agent talk in the background with 'say'.
+🔹 talkr - Similar to talk, but the agent can use tools.
+🔹 v+ - Selects the next voice.
+🔹 v- - Selects the previous voice.
+🔹 list - Lists all tasks.
+🔹 user-edit $Task-name - Processes a task. The first argument is the task name.
+🔹 exit - Terminates the agent.
+🔹 welcome - This msg.
+🔹 file - add a file to context in 'content' agent """
+            await ctx.send(msg)
+            msg = """Have fun trying out these commands and exploring the many features our bot has to offer! If you
+have any questions, don't hesitate to contact us. We hope to provide you with an efficient and enjoyable
+experience on Discord with our Discord bot. 🌟"""
+            await ctx.send(msg)
+
+        @self.command(name='file', pass_context=True)
+        async def read_file(ctx):
+            if not ctx.message.attachments:
+                await ctx.send("You need to send a text file with this command.")
+                return
+            attachment_url = ctx.message.attachments[0].url
+            async with aiohttp.ClientSession() as session:
+                async with session.get(attachment_url) as resp:
+                    if resp.status != 200:
+                        await ctx.send('Could not download file...')
+                        return
+                    data = await resp.text()
+            # Now you can process your 'data'
+            await ctx.send(f"data len is {len(data)}")
+
+            res = self.isaa.mas_text_summaries(data)
+            self.isaa.get_agent_config_class("content").context.text += res
+
+    async def on_member_join(self, member):
+
+        await member.send('Welcome to the server! pleas writ on the new chat the i crated on the server for u')
+        channel = await member.guild.create_text_channel(str(member.name).replace(' ', '-'))
+        await channel.send(f"Welcome {str(member.name).replace(' ', '-')} to your new channel!")
+        msg = """# 🎉 Welcome to our powerful Discord bot! 🎉
+
+ This bot is designed to help you with a variety of tasks and enhance your experience on Discord. It can listen (not voice in chat), respond to commands, interact with AI assistants like Isaa, and provide many other unique and interesting features. ✨
+
+Please follow the commands listed below to get the best results:"""
+        await channel.send(msg)
+        msg = """🔹 join - The bot joins the voice channel and listens to the rest of the stream.
+🔹 leave - Leaves the voice channel.
+🔹 ask - Asks Isaa a question. If no matching skill is found, one is created.
+🔹 chat - Chat with a smaller model.
+🔹 context - Displays the context and status of the Isaa system.
+🔹 create - Creates a task.
+🔹 delete - Deletes a task.
+🔹 describe - Describes a task.
+🔹 google - Performs a Google search.
+🔹 help - Displays this message.
+🔹 optimize - Optimizes a task.
+🔹 price - Displays the current usage.
+🔹 run - Executes a task.
+🔹 save2em - Clears the memory.
+🔹 say - Speaks in the voice channel the user is in. If the bot is not in the channel, it joins it.
+🔹 say-in - Similar to say, but the first argument is the language to speak in.
+🔹 talk - Makes the agent talk in the background with 'say'.
+🔹 talkr - Similar to talk, but the agent can use tools.
+🔹 v+ - Selects the next voice.
+🔹 v- - Selects the previous voice.
+🔹 list - Lists all tasks.
+🔹 user-edit $Task-name - Processes a task. The first argument is the task name.
+🔹 exit - Terminates the agent.
+🔹 welcome - This msg.
+🔹 file - add a file to context in 'content' agent """
+        await channel.send(msg)
+        msg = """Have fun trying out these commands and exploring the many features our bot has to offer! If you
+have any questions, don't hesitate to contact us. We hope to provide you with an efficient and enjoyable
+experience on Discord with our Discord bot. 🌟"""
+        await channel.send(msg)
+
+
+voices = ["27dJPQc4TXmS1pccxP0m", "VzRk86yeIgj45NCVZqJe", "e3sRAASduwyXKQwXY3ci", "onwK4e9ZLuTAKqWW03F9",
+          "CYw3kZ02Hs0563khs1Fj", "ThT5KcBeYPX3keUQqHPh", "MF3mGyEYCl7XYWbV9V6O", "LcfcDJNUP1GQjkzn1xUU",
+          "jsCqWAovK2LkecY7zXl4", "zcAOhNBS3c14rBihAFp1", "EXAVITQu4vr4xnSDxMaL", "9Mi9dBkaxn2pCIdAAGOB"]
 
 
 async def play_audio_stream(ctx, audio_stream):
@@ -728,7 +821,8 @@ async def play_audio_stream(ctx, audio_stream):
             await asyncio.sleep(1)
         await vc.disconnect()
 
-#GBv7mTt0atIp3Br8iCZE/98542988-5267-4148-9a9e-baa8c4f14644.mp3
+
+# GBv7mTt0atIp3Br8iCZE/98542988-5267-4148-9a9e-baa8c4f14644.mp3
 # GBv7mTt0atIp3Br8iCZE
 
 # 4VrpCbKeaHwMPrbLPOH
