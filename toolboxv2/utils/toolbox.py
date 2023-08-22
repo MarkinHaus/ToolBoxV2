@@ -230,8 +230,8 @@ class App(metaclass=Singleton):
         self._debug = value
 
     def _coppy_mod(self, content, new_mod_dir, mod_name):
-        mode = 'xb'
 
+        mode = 'xb'
         self.logger.info(f" coppy mod {mod_name} to {new_mod_dir} size : {sys.getsizeof(content) / 8388608:.3f} mb")
 
         if not os.path.exists(new_mod_dir):
