@@ -36,6 +36,7 @@ class TestIsaa(unittest.TestCase):
         'google/flan-t5-small',
         'google/flan-t5-xxl',
         'databricks/dolly-v2-3b',
+        'stabilityai/stablecode-instruct-alpha-3b',
 
         'gpt4all#GPT4All-13B-snoozy.ggmlv3.q4_0.bin',  # 5/
         'gpt4all#orca-mini-7b.ggmlv3.q4_0.bin',  # 4.5/10 :
@@ -136,7 +137,7 @@ class TestIsaa(unittest.TestCase):
         self.assertEqual(self.isaa.config['agents-name-list'], [])
         self.assertEqual(self.isaa.config['genrate_image-init'], False)
 
-    @patch('toolboxv2.mods.isaa.AgentChain')  # replace with the actual module name
+    @patch('toolboxv2.mods.isaa.isaa.AgentChain')  # replace with the actual module name
     def test_add_task(self, mock_agent_chain):
         sto = self.isaa.agent_chain
         self.isaa.agent_chain = mock_agent_chain
@@ -144,7 +145,7 @@ class TestIsaa(unittest.TestCase):
         mock_agent_chain.add_task.assert_called_once_with('test_task', 'test_task_content')
         self.isaa.agent_chain = sto
 
-    @patch('toolboxv2.mods.isaa.AgentChain')  # replace with the actual module name
+    @patch('toolboxv2.mods.isaa.isaa.AgentChain')  # replace with the actual module name
     def test_save_task(self, mock_agent_chain):
         sto = self.isaa.agent_chain
         self.isaa.agent_chain = mock_agent_chain
@@ -152,7 +153,7 @@ class TestIsaa(unittest.TestCase):
         mock_agent_chain.save_to_file.assert_called_once_with('test_task')
         self.isaa.agent_chain = sto
 
-    @patch('toolboxv2.mods.isaa.AgentChain')  # replace with the actual module name
+    @patch('toolboxv2.mods.isaa.isaa.AgentChain')  # replace with the actual module name
     def test_load_task(self, mock_agent_chain):
         sto = self.isaa.agent_chain
         self.isaa.agent_chain = mock_agent_chain
@@ -160,7 +161,7 @@ class TestIsaa(unittest.TestCase):
         mock_agent_chain.load_from_file.assert_called_once_with('test_task')
         self.isaa.agent_chain = sto
 
-    @patch('toolboxv2.mods.isaa.AgentChain')  # replace with the actual module name
+    @patch('toolboxv2.mods.isaa.isaa.AgentChain')  # replace with the actual module name
     def test_get_task(self, mock_agent_chain):
         sto = self.isaa.agent_chain
         self.isaa.agent_chain = mock_agent_chain
@@ -176,8 +177,8 @@ class TestIsaa(unittest.TestCase):
         self.assertEqual(augment, {'tools': self.isaa.tools_dict, 'Agents': 'serialized_agents',
                                    'customFunctions': 'custom_functions', 'tasks': 'tasks'})
 
-    @patch('toolboxv2.mods.isaa.Tools.init_tools')
-    @patch('toolboxv2.mods.isaa.Tools.deserialize_all')
+    @patch('toolboxv2.mods.isaa.isaa.Tools.init_tools')
+    @patch('toolboxv2.mods.isaa.isaa.Tools.deserialize_all')
     def test_init_from_augment(self, mock_deserialize_all, mock_init_tools):
         augment = {'tools':
                        {'lagChinTools': ['python_repl', 'requests_all', 'terminal', 'sleep', 'google-search',
@@ -877,6 +878,19 @@ Wenn Sie nach der Überprüfung dieser Punkte immer noch Schwierigkeiten haben, 
         self.isaa.get_agent_config_class.assert_called_once_with(name)
 
         # Fügen Sie hier weitere Überprüfungen hinzu, basierend auf dem erwarteten Verhalten der Funktion
+    def test_run_agent(self):
+        # Definieren Sie die Eingabeparameter
+
+        user_text = "test"
+        agent_tasks = [{'use': 'agent', 'name': 'test_agent', 'args': 'Hey how is it going this is a test.',
+                        'mode': 'free', 'return': '$return'}]
+        config = self.isaa.get_agent_config_class('test_agent')  # replace with an actual AgentConfig instance
+        result = self.isaa.execute_thought_chain(user_text, agent_tasks, config)
+        print(result)
+        # replace with your custom assertions
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(len(result), 2)
 
 
 class TestIsaaUnit(unittest.TestCase):
@@ -918,7 +932,7 @@ class TestIsaaUnit(unittest.TestCase):
         result = get_tool(self.app)
         self.assertEqual(result, self.app.AC_MOD)
 
-    @patch('toolboxv2.mods.isaa.Tools')  # replace 'your_module' with the actual module name
+    @patch('toolboxv2.mods.isaa.isaa.Tools')  # replace 'your_module' with the actual module name
     def test_get_tool_no_app(self, mock_tools):
         result = get_tool(None)
         mock_tools.assert_called_once()
@@ -948,8 +962,8 @@ class TestIsaaUnit(unittest.TestCase):
         show_image_in_internet(image_url, BROWSER)
         mock_system.assert_called_once_with(f'start {BROWSER} {image_url}')
 
-    @patch('toolboxv2.mods.isaa.genrate_image')
-    @patch('toolboxv2.mods.isaa.show_image_in_internet')
+    @patch('toolboxv2.mods.isaa.isaa.genrate_image')
+    @patch('toolboxv2.mods.isaa.isaa.show_image_in_internet')
     def test_image_generating_tool(self, mock_show_image, mock_generate_image):
         mock_generate_image.return_value = ['http://example.com/image.jpg']
         image_genrating_tool('prompt', self.app)
@@ -963,8 +977,8 @@ class TestWebScraping(unittest.TestCase):
         super().__init__(methodName)
         self.app = get_app("test-WebScraping")
 
-    @patch('toolboxv2.mods.isaa.get_text_summary')
-    @patch('toolboxv2.mods.isaa.get_hyperlinks')
+    @patch('toolboxv2.mods.isaa.isaa.get_text_summary')
+    @patch('toolboxv2.mods.isaa.isaa.get_hyperlinks')
     def test_browse_website(self, mock_get_hyperlinks, mock_get_text_summary):
         mock_get_text_summary.return_value = 'summary'
         mock_get_hyperlinks.return_value = ['http://example.com']
@@ -1001,8 +1015,8 @@ class TestWebScraping(unittest.TestCase):
         result = format_hyperlinks(hyperlinks)
         self.assertEqual(result, ['Test Link (http://testlink.com)'])
 
-    @patch('toolboxv2.mods.isaa.scrape_text')
-    @patch('toolboxv2.mods.isaa.scrape_links')
+    @patch('toolboxv2.mods.isaa.isaa.scrape_text')
+    @patch('toolboxv2.mods.isaa.isaa.scrape_links')
     def test_get_text_summary(self, mock_scrape_links, mock_scrape_text):
         mock_scrape_text.return_value = 'Test text'
         mock_scrape_links.return_value = ['Test Link (http://testlink.com)']
@@ -1010,7 +1024,7 @@ class TestWebScraping(unittest.TestCase):
         result = get_text_summary('http://testurl.com', 'Test question', lambda x: x)
         self.assertEqual(result, 'Result: Context ###Test text### Question ###Test question###')
 
-    @patch('toolboxv2.mods.isaa.scrape_links')
+    @patch('toolboxv2.mods.isaa.isaa.scrape_links')
     def test_get_hyperlinks(self, mock_scrape_links):
         mock_scrape_links.return_value = ['Test Link (http://testlink.com)']
 

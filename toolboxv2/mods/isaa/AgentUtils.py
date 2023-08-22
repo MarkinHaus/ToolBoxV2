@@ -1249,11 +1249,13 @@ system information's : {getSystemInfo('system is starting')}
             messages = self.a_messages
         return messages
 
-    def shorten_prompt(self, key):
+    def shorten_prompt(self, key=None, max_iteration=4):
+        if key is None:
+            key = f"{self.name}-{self.mode}"
         iteration = 0
         tokens = self.get_tokens(self.messages_sto[key])
         logging = get_logger()
-        while self.max_tokens - tokens < 10 and iteration <= 4:
+        while self.max_tokens - tokens < 10 and iteration <= max_iteration:
             logging.debug(f'Tokens: {tokens}')
             logging.info(f'Prompt is too long. Auto shortening token overflow by {(self.max_tokens - tokens) * -1}')
             iteration += 1

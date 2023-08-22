@@ -121,6 +121,8 @@ class TaskSelectionView(discord.ui.View):
             dis = chains.get_discr(_)
             if dis is None:
                 dis = _
+            if len(dis) > 100:
+                dis = dis[:96]+'...'
             options_select.append(discord.SelectOption(value=_, label=_, description=dis))
 
         async def callback_fuc(val, send):
@@ -209,15 +211,17 @@ class Tools(commands.Bot, MainTool):
             else:
                 await self.most_resent_msg.channel.send(x, delete_after=t)
 
+        loop = asyncio.get_running_loop()
+        talk = False
+        what = ""
         while running:
-
-            que_msg = self.sender_que.get()
+            que_msg = await loop.run_in_executor(None, self.sender_que.get)
             que_msg = remove_styles(que_msg)
 
             if que_msg.startswith("#SAY#:"):
                 que_msg = que_msg.replace("#SAY#:", "")
-
-                await eleven_labs_speech_stream(ctx, que_msg, voice_index=self.voice_index)
+                talk = True
+                what = que_msg
 
             if 'exit' == que_msg:
                 running = False
@@ -229,6 +233,12 @@ class Tools(commands.Bot, MainTool):
                 que_msg = que_msg[2000:]
             else:
                 await send(que_msg)
+
+            if talk:
+                talk = False
+                aceptedt = "1234567890ßqwertzuiopüasdfghjklöäyxcvbnm,.:?!´éúíóá"
+                await eleven_labs_speech_stream(ctx, ''.join(e for e in what if e.lower() in aceptedt), voice_index=self.voice_index)
+                what = ""
 
         await ctx.send("Connection closed")
 
@@ -243,13 +253,25 @@ class Tools(commands.Bot, MainTool):
             if message.channel.name == 'augment':
                 self.isaa.init_from_augment(eval(message.content))
         if message.content.startswith('v+'):
-            if len(voices) > self.voice_index:
+            if len(voices)-1 > self.voice_index:
                 self.voice_index += 1
             await message.reply(f'Confirmed at {self.voice_index}', mention_author=True)
         elif message.content.startswith('v-'):
             if self.voice_index > 0:
                 self.voice_index -= 1
             await message.reply(f'Confirmed at {self.voice_index}', mention_author=True)
+        elif message.content.startswith('v'):
+            try:
+                v = int(message.content[1:].strip())
+                if len(voices)-1 > v:
+                    self.voice_index = v
+                    await message.reply(f'Confirmed at {self.voice_index}', mention_author=True)
+                else:
+                    await message.reply(f'Max value : {len(voices)-1}', mention_author=True)
+            except ValueError:
+                pass
+                await message.reply(f'Invalid int {message.content[1:].strip()}', mention_author=True)
+
         elif message.content.startswith('exit'):
             self.isaa.on_exit()
             await message.reply('Confirmed', mention_author=True)
@@ -259,7 +281,10 @@ class Tools(commands.Bot, MainTool):
             # Assuming the message.body is storing a list
             msg = ""
             i = 0
-            for option in list(self.isaa.agent_chain.chains.keys()):
+            all_chains = list(self.isaa.agent_chain.chains.keys())
+            if len(all_chains) == 0:
+                msg = "No chains (Skills) found"
+            for option in all_chains:
                 i += 1
                 if len(msg) > 1000:
                     new_mnsg = msg + f" ... total{len(list(self.isaa.agent_chain.chains.keys()))} at {i}\n"
@@ -402,20 +427,22 @@ class Tools(commands.Bot, MainTool):
             task = ' '.join(task)
             view = Confirm()
 
+            await ctx.send(f"Searching for Matching skills", delete_after=120)
+
             chain_name, dscription = self.isaa.get_best_fitting(task)
 
             while '"' in chain_name:
                 chain_name = chain_name.replace('"', '')
 
             if not chain_name in list(self.isaa.agent_chain.chains.keys()):
-                await ctx.send(f"crating new chain")
+                await ctx.send(f"crating new chain", delete_after=120)
                 chain_name = self.isaa.create_task(task)
-                await ctx.send(f'Crated new Chain')
+                await ctx.send(f'Crated new Chain', delete_after=120)
 
             run_chain = self.isaa.agent_chain.get(chain_name)
-            await ctx.send(f"Chain details : ```{run_chain}```")
-            await ctx.send(f"Description : ```{self.isaa.agent_chain.get_discr(chain_name)}```")
-            await ctx.send(f"Why : ```{dscription}```")
+            await ctx.send(f"## Chain details : ```{run_chain}```")
+            await ctx.send(f"## Description : ```{self.isaa.agent_chain.get_discr(chain_name)}```")
+            await ctx.send(f"## Why : ```{dscription}```")
             betwean_res = self.isaa.mini_task_completion(
                 f"Genearate an Output for a aget to be spoken loud. Informations {chain_name} {dscription} tell the user why you want to run this chin :")
             await eleven_labs_speech_stream(ctx, betwean_res, voice_index=self.voice_index)
@@ -510,7 +537,7 @@ class Tools(commands.Bot, MainTool):
                 await ctx.send(f"Chin len : {len(run_chain)}")
                 res = "No chain to run"
                 if run_chain:
-                    await ctx.send(f"return : ```{run_chain}```")
+                    await ctx.send(f"chain : ```{run_chain}```")
                     await ctx.send(f"Description : ```{self.isaa.agent_chain.get_discr(chain_name_)}```")
                     await ctx.send(f"running chain ... pleas wait")
 
@@ -633,7 +660,10 @@ class Tools(commands.Bot, MainTool):
             text = ' '.join(text)
 
             def func():
-                res = self.isaa.stream_read_llm(text, self.isaa.get_agent_config_class("self").set_mode("conversation"))
+                res = self.isaa.stream_read_llm(text,
+                                                self.isaa.get_agent_config_class("self").
+                                                set_mode("free").
+                                                set_completion_mode("chat"))
                 if not isinstance(res, str):
                     res = str(res)
                 self.sender_que.put("# Isaa: " + res)
@@ -649,23 +679,10 @@ class Tools(commands.Bot, MainTool):
             text = ' '.join(text)
 
             def func():
-                res = self.isaa.stream_read_llm(text, self.isaa.get_agent_config_class("self").set_mode("conversation"))
-                if not isinstance(res, str):
-                    res = str(res)
-                self.sender_que.put("#SAY#:" + res)
-
-            await self.run_isaa_with_print(ctx, func)
-
-            await ctx.send("Ok")
-
-        @self.command(name="talkr", pass_context=True)
-        async def talk(ctx: commands.Context, *text: str):
-
-            await ctx.send("Running")
-            text = ' '.join(text)
-
-            def func():
-                res = self.isaa.stream_read_llm(text, self.isaa.get_agent_config_class("self").set_mode("free"))
+                res = self.isaa.stream_read_llm(text,
+                                                self.isaa.get_agent_config_class("self").
+                                                set_mode("free").
+                                                set_completion_mode("chat"))
                 if not isinstance(res, str):
                     res = str(res)
                 self.sender_que.put("#SAY#:" + res)
@@ -710,7 +727,7 @@ This bot is designed to help you with a variety of tasks and enhance your experi
 
 Please follow the commands listed below to get the best results:"""
             await ctx.send(msg)
-            msg = """🔹 join - The bot joins the voice channel and listens to the rest of the stream.
+            msg = """🔹 join - The bot joins the voice channel.
 🔹 leave - Leaves the voice channel.
 🔹 ask - Asks Isaa a question. If no matching skill is found, one is created.
 🔹 chat - Chat with a smaller model.
@@ -770,7 +787,7 @@ experience on Discord with our Discord bot. 🌟"""
 
 Please follow the commands listed below to get the best results:"""
         await channel.send(msg)
-        msg = """🔹 join - The bot joins the voice channel and listens to the rest of the stream.
+        msg = """🔹 join - The bot joins the voice channel.
 🔹 leave - Leaves the voice channel.
 🔹 ask - Asks Isaa a question. If no matching skill is found, one is created.
 🔹 chat - Chat with a smaller model.
@@ -809,17 +826,30 @@ voices = ["27dJPQc4TXmS1pccxP0m", "VzRk86yeIgj45NCVZqJe", "e3sRAASduwyXKQwXY3ci"
 
 async def play_audio_stream(ctx, audio_stream):
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_file:
-        temp_file.write(audio_stream.read())
+        chunk_size = 1024  # You can adjust this value depending on your needs
+        while True:
+            chunk = audio_stream.read(chunk_size)
+            if not chunk:
+                break
+            temp_file.write(chunk)
         temp_file.flush()
         if not ctx.message.author.voice:
             await ctx.send("You are not connected to a voice channel")
             return
         voice_channel = ctx.message.author.voice.channel
-        vc = await voice_channel.connect()
+        if ctx.voice_client is not None:  # bot is already connected to a voice channel
+            if ctx.voice_client.channel == voice_channel:  # bot is in the same channel as the author
+                vc = ctx.voice_client
+            else:  # bot is in a different channel, so move to author's channel
+                await ctx.voice_client.move_to(voice_channel)
+                vc = ctx.voice_client
+        else:  # bot is not connected to any voice channel, so connect to author's channel
+            vc = await voice_channel.connect()
         vc.play(discord.FFmpegPCMAudio(executable="ffmpeg", source=temp_file.name))
         while vc.is_playing():
             await asyncio.sleep(1)
-        await vc.disconnect()
+        # await vc.disconnect()
+        await ctx.send("Completed", delete_after=15)
 
 
 # GBv7mTt0atIp3Br8iCZE/98542988-5267-4148-9a9e-baa8c4f14644.mp3
@@ -828,6 +858,9 @@ async def play_audio_stream(ctx, audio_stream):
 # 4VrpCbKeaHwMPrbLPOH
 
 async def eleven_labs_speech_stream(ctx, text, voice_index=0, voices_=None, print=print):
+    if not ctx.message.author.voice:
+        await ctx.send("You are not connected to a voice channel")
+        return
     if voices_ is None:
         voices_ = voices
     tts_headers = {
@@ -846,3 +879,5 @@ async def eleven_labs_speech_stream(ctx, text, voice_index=0, voices_=None, prin
         print("Request failed with status code:", response.status_code)
         print("Response content:", response.content)
         return False
+
+

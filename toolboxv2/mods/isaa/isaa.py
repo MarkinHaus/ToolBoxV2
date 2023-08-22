@@ -1405,7 +1405,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                             "return_val:List[dict] = "
                     ,
                     "return": "$taskDict",
-                }], agent, chain_data=chain_data,
+                }], agent_execution, chain_data=chain_data,
                                                         chain_data_infos=True)
         task_list = []
         try:
@@ -1444,6 +1444,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
     def optimise_task(self, task_name):
         agent = self.get_agent_config_class("self")
+        agent_execution = self.get_agent_config_class("execution")
+        agent_execution.get_messages(create=True)
         task = self.agent_chain.get(task_name)
         optimise_genrator = [
             {
@@ -1497,7 +1499,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 "return": "$taskDict",
             },
         ]
-        res = self.execute_thought_chain(str(task), optimise_genrator, agent)
+        res = self.execute_thought_chain(str(task), optimise_genrator, agent_execution)
         task_dict = []
         if res[-1][-1][-1]:
             task_dict = anything_from_str_to_dict(res[-1][-1][-1])
@@ -2221,7 +2223,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             try:
                 llm_output = LLMChain(prompt=prompt, llm=self.get_llm_models(config.model_name)).run(text)
             except ValueError:
-                return ""
+                llm_output = "ValueError: on generation"
 
             return self.add_price_data(prompt=template,
                                        config=config,
@@ -2320,22 +2322,37 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         except openai.error.InvalidRequestError:
             self.print(f"{' ' * 30} | Retry level: {r} ", end="\r")
             with Spinner("Waiting InvalidRequestError", symbols='b'):
-                time.sleep(2)
-            if r > 1.5:
-                if config.short_mem.tokens > config.edit_text.tokens:
-                    config.short_mem.max_length = int(config.short_mem.max_length * 0.45)
-                    config.short_mem.cut()
-                if config.short_mem.tokens < config.edit_text.tokens:
-                    config.edit_text.max_length = int(config.edit_text.max_length * 0.75)
-                    config.edit_text.cut()
-                return self.stream_read_llm(text, config, r - 0.5)
+                time.sleep(1.5)
+            if r > 1.25:
+                config.short_mem.max_length -= 300
+                if config.short_mem.max_length < 0:
+                    config.short_mem.max_length = 2000
+                config.edit_text.max_length -= 300
+                if config.edit_text.max_length < 0:
+                    config.edit_text.max_length = 2000
+                config.observe_mem.max_length -= 300
+                if config.observe_mem.max_length < 0:
+                    config.observe_mem.max_length = 1000
+                config.short_mem.cut()
+                config.edit_text.cut()
+                config.observe_mem.cut()
+                return self.stream_read_llm(text, config, r - 0.25)
+            elif r > 1:
+                config.shorten_prompt()
+                return self.stream_read_llm(text, config, r - 0.25)
             elif r > .75:
+                config.get_messages(create=True)
                 return self.stream_read_llm(self.mas_text_summaries(text), config, r - 0.25)
-            elif r > 0.25:
+            elif r > 0.5:
                 config.stream = False
                 res = self.stream_read_llm(self.mas_text_summaries(text), config, r - 0.25)
                 config.stream = True
                 return res
+            elif r > 0.25:
+                config.short_mem.clear_to_collective()
+                config.edit_text.clear_to_collective()
+                config.observe_mem.cut()
+                return self.stream_read_llm(text, config, r - 0.25)
             else:
                 self.logger.error("The server is currently overloaded with other requests. Sorry about that!")
                 return "The System cannot correct the text input for the agent."
@@ -2369,7 +2386,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             ret = openai.Completion.create(
                 model=model_name,
                 prompt=config.prompt,
-                max_tokens=int(config.token_left * 0.9),
+                # max_tokens=int(config.token_left * 0.9),
                 temperature=config.temperature,
                 n=1,
                 stream=config.stream,
@@ -2585,19 +2602,24 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
     def summarize_ret_list(self, ret_list):
         chucs = []
+        print("ret_list:", ret_list)
         for i, step in enumerate(ret_list):
+            print("i, step:", i, step)
             if isinstance(step, list):
-                step_content = f"\naction {i}" + str(step[0]['use']) + ": " + str(step[0]['name'])
-                step_content += f"\ntool_input {i} " + str(step[0]['args'])
-                if step[1]:
+                step_content = ""
+                if len(step) == 2:
+                    if isinstance(step[1], str):
+                        step_content += f"\nlog {i}  input : {str(step[0])} output :  {str(step[1])}"
                     if isinstance(step[1], list):
-                        step_content += f"\nlog {i} " + str(step[1][0])
+                        step_content += f"\nlog {i}  input : {str(step[0][0])} output :  {str(step[0][1])}"
                     if isinstance(step[1], dict):
-                        if 'input' in step[1]:
+                        if 'input' in step[1].keys():
                             step_content += f"\ninput {i} " + str(step[1]['input'])
-                        if 'output' in step[1]:
+                        if 'output' in step[1].keys():
                             step_content += f"\noutput {i} " + str(step[1]['output'])
-                chucs.append(self.mas_text_summaries(step_content))
+                if len(step) > 1600:
+                    step_content = self.mas_text_summaries(step_content)
+                chucs.append(step_content)
         text = 'NoContent'
         if chucs:
             text = '\n'.join(chucs)
@@ -2741,14 +2763,12 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         if not len(run_chain):
             return "invalid Chain Namen"
 
-        task = (f"Bitte analysieren und interpretieren Sie ein gegebenes JSON-Objekt, das eine Aufgabenkette "
+        task = (f"Bitte analysieren und interpretieren Sie das gegebene JSON-Objekt, das eine Aufgabenkette "
                      "repräsentiert. Identifizieren Sie das übergeordnete Ziel, die Anwendungsfälle und die Strategie, "
                      "die durch diese Aufgabenkette dargestellt werden. Stellen Sie sicher,"
-                     " dass Ihre Analyse detailliert und präzise ist. Zusätzlich,"
-                     " erstellen Sie ein hypothetisches Szenario, in dem diese Aufgabenkette keinen Nutzen "
-                     "hat. Ihre Antwort sollte klar und präzise sein,"
+                     " dass Ihre Analyse detailliert und präzise ist. Ihre Antwort sollte klar und präzise sein,"
                      " um ein vollständiges Verständnis der Aufgabenkette und ihrer "
-                     "möglichen Einschränkungen zu ermöglichen."
+                     "möglichen Einschränkungen zu ermöglichen. Deine Antwort soll kurtz und pregnant sein Maximal 2 sätze"
                      f"zu analysierende Aufgabenkette: {run_chain}")
 
         discription = self.stream_read_llm(task, self.get_agent_config_class("think"))
@@ -2784,6 +2804,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         all_description = ""
 
         for key in self.agent_chain.chains.keys():
+            if "Task Generator" in key or "Task-Generator" in key:
+                continue
             des = self.agent_chain.get_discr(key)
             if des is None:
                 des = key
