@@ -1,13 +1,17 @@
 import asyncio
 import os
+import queue
+import tempfile
 import threading
 import time
 from urllib.parse import quote_plus
 
 import discord
+import requests
 from discord.ext import commands
 from toolboxv2 import MainTool, FileHandler, App, Style, remove_styles
 from toolboxv2.mods.isaa import Tools as isaaTools
+from toolboxv2.mods.cloudM import test_if_exists, Tools as cmTools
 
 
 class Dropdown(discord.ui.Select):
@@ -100,8 +104,10 @@ class PersistentView(discord.ui.View):
 
 
 class TaskSelectionView(discord.ui.View):
-    def __init__(self, run_chain_callback, options, selected, chains, ctx):
+    def __init__(self, run_chain_callback, options, selected, chains):
         super().__init__(timeout=60 * 15)
+        if len(options) > 23:
+            options = options[:23]
         self.options = options
         self.run_chain_callback = run_chain_callback
         self.selected = selected
@@ -118,13 +124,13 @@ class TaskSelectionView(discord.ui.View):
 
         async def callback_fuc(val, send):
             if val == "1":
-                await send("Running chain ...")
+                await send("Validate ...")
                 await run_chain_callback(selected)
             elif val == "-1":
                 return "Abort"
             else:
                 if val in options:
-                    await send(f"Running chain {val}...")
+                    await send(f"Validate {val}...")
                     await run_chain_callback(val)
                 else:
                     await send(f"invalid chain name Valid ar : {options}")
@@ -161,6 +167,8 @@ class Tools(commands.Bot, MainTool):
         self.token = ""
         self.context = []
         self.t0 = None
+        self.sender_que = None
+        self.receiver_que = None
         self.tools = {
             'all': [['Version', 'Shows current Version'],
                     ['start_bot', 'Start then Discord Bot'],
@@ -171,9 +179,12 @@ class Tools(commands.Bot, MainTool):
             'stop_bot': self.stop_bot,
             'start_bot': self.start_bot,
         }
+        self.voice_index = 0
+        self.ws_id = ""
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools, name=self.name, logs=self.logger,
                           color=self.color, on_exit=self.on_exit)
         self.isaa: isaaTools = app.get_mod('isaa')
+        self.most_resent_msg = None
 
     async def on_ready(self):
         guild = discord.utils.get(self.guilds, name='ISAA')
@@ -187,13 +198,61 @@ class Tools(commands.Bot, MainTool):
         if not discord.utils.get(guild.voice_channels, name="speak-with-isaa"):
             await guild.create_text_channel("speak-with-isaa")
 
+    async def minique_responder(self, ctx):
+        running = True
+
+        async def send(x):
+            t = 60 * ((len(x) // 100) + .4)
+            if self.most_resent_msg is None:
+                await ctx.send(x, delete_after=t)
+            else:
+                await self.most_resent_msg.channel.send(x, delete_after=t)
+
+        while running:
+
+            que_msg = self.sender_que.get()
+            que_msg = remove_styles(que_msg)
+
+            if que_msg.startswith("#SAY#:"):
+                que_msg = que_msg.replace("#SAY#:", "")
+
+                await eleven_labs_speech_stream(ctx, que_msg, voice_index=self.voice_index)
+
+            if 'exit' == que_msg:
+                running = False
+
+            f = len(que_msg) // 2000
+
+            for i in range(f):
+                await send(que_msg[:2000])
+                que_msg = que_msg[2000:]
+            else:
+                await send(que_msg)
+
+        await ctx.send("Connection closed")
+
     async def on_message(self, message):
+
         if message.author == self.user:
             return
         if message.channel.name == 'context':
             self.context.append(message.content)
-        elif message.content.startswith('hello'):
-            await message.reply('Hello!', mention_author=True)
+            self.isaa.get_agent_config_class("self").context.text += message.content
+        if message.channel.name == 'augment':
+            self.isaa.init_from_augment(eval(message.content))
+        elif message.content.startswith('v+'):
+            if len(voices) > self.voice_index:
+                self.voice_index += 1
+            await message.reply(f'Confirmed at {self.voice_index}', mention_author=True)
+        elif message.content.startswith('v-'):
+            if self.voice_index > 0:
+                self.voice_index -= 1
+            await message.reply(f'Confirmed at {self.voice_index}', mention_author=True)
+        elif message.content.startswith('exit'):
+            self.isaa.on_exit()
+            await message.reply('Confirmed', mention_author=True)
+            await self.close()
+
         elif message.content.startswith('list'):
             # Assuming the message.body is storing a list
             msg = ""
@@ -201,24 +260,27 @@ class Tools(commands.Bot, MainTool):
             for option in list(self.isaa.agent_chain.chains.keys()):
                 i += 1
                 if len(msg) > 1000:
-                    new_mnsg = msg+f" ... total{len(list(self.isaa.agent_chain.chains.keys()))} at {i}\n"
+                    new_mnsg = msg + f" ... total{len(list(self.isaa.agent_chain.chains.keys()))} at {i}\n"
                     print("LEN:", len(new_mnsg), new_mnsg)
                     await message.channel.send(new_mnsg)
                     msg = ""
-                msg += f"Name : {option}\n\nnDescription \n:{self.isaa.agent_chain.get_discr(option)}\n\n"
+                msg += f"Name : {option}\nDescription: \n{self.isaa.agent_chain.get_discr(option)}\n\n"
             await message.channel.send(msg)
             await message.channel.send("Done")
         elif message.content.startswith('user-edit'):
             # Collect the next message from the same user
             chain_name_dsd = message.content.split(' ')[-1]
-            if chain_name_dsd in list(self.isaa.agent_chain.chains.keys()):
-                await message.channel.send(f'```{self.isaa.agent_chain.get(chain_name_dsd)}```')
+            if chain_name_dsd not in list(self.isaa.agent_chain.chains.keys()):
+                await message.channel.send(
+                    f'Name {chain_name_dsd} is invalid valid ar {self.isaa.agent_chain.chains.keys()}')
+                return
+            await message.channel.send(f'```{self.isaa.agent_chain.get(chain_name_dsd)}```')
 
             def check(m):
                 return m.author == message.author and m.channel == message.channel
 
             try:
-                selection = await self.wait_for('message', timeout=60.0*15, check=check)
+                selection = await self.wait_for('message', timeout=60.0 * 15, check=check)
             except asyncio.TimeoutError:
                 await message.channel.send('Sorry, time to save your selection is up.')
             else:
@@ -227,7 +289,8 @@ class Tools(commands.Bot, MainTool):
                 self.isaa.agent_chain.add(chain_name_dsd, eval(selection.content))
 
         elif message.content:
-            self.print(self.all_commands)
+            # self.print(self.all_commands)
+            self.most_resent_msg = message
             await self.process_commands(message)
 
     def on_start(self):
@@ -242,9 +305,29 @@ class Tools(commands.Bot, MainTool):
         self.print('Version: ', self.version)
         return self.version
 
+    def setup_bot(self):
+        data = {
+            "username": "DiscordBot",
+            "email": "DiscordBot@discord.bot",
+            "password": "DiscordBot",
+            "invitation": "bot-key"
+        }
+        cloudm: cmTools = self.app.get_mod('cloudM')
+        if test_if_exists("DiscordBot", self.app):
+            self.app.run_any("DB", "set", ["bot-key", "Valid"])
+            self.ws_id = cloudm.create_user([data], self.app)
+        else:
+            self.ws_id = cloudm.log_in_user([data], self.app)
+
     def start_bot(self):
         if self.t0 is None:
+            self.isaa.global_stream_override = False
+            self.sender_que = queue.Queue()
             self.t0 = threading.Thread(target=self.run, args=(self.token,))
+            # if not self.ws_id:
+            #     self.setup_bot()
+            #     time.sleep(6)
+            # self.sender_que, self.receiver_que = self.app.run_any("WebSocketManager", "srqw", ['wss://0.0.0.0:5000/ws', self.ws_id])
             self.t0.start()
             return
         self.print("Bot is already running")
@@ -270,70 +353,69 @@ class Tools(commands.Bot, MainTool):
         del self.t0
         self.t0 = None
 
+    async def run_isaa_with_print(self, ctx, func):
+        def run_chain_func():
+            try:
+                func()
+            except Exception as e:
+                self.sender_que.put(f'Error details: {e}')
+            finally:
+                self.sender_que.put('exit')
+
+        t0 = threading.Thread(target=run_chain_func)
+
+        def printer(x, *args, **kwargs):
+            self.sender_que.put(str(x))
+
+        _p = self.isaa.print
+        self.isaa.print = printer
+        t0.start()
+        await self.minique_responder(ctx=ctx)
+        t0.join()
+        self.isaa.print = _p
+
     def add_commands(self):
 
         @self.command(name="context", pass_context=True)
         async def context(ctx):
             await ctx.channel.send(str(self.context))
+            await ctx.channel.send(f"Description : ```{self.isaa.get_augment()}```")
 
         @self.command(name="price", pass_context=True)
         async def price(ctx):
+            def func():
+                self.isaa.show_usage(self.sender_que.put)
 
-            def send_to_think(x, *args, **kwargs):
+            await self.run_isaa_with_print(ctx, func)
 
-                async def do_send(xy):
-                    await ctx.send(xy)
-
-                loop = asyncio.get_event_loop()
-                loop.run_until_complete(do_send(remove_styles(x)))
-
-            await ctx.channel.send(str(self.isaa.show_usage(send_to_think)))
+        @self.command(name="save2em", pass_context=True)
+        async def save2mem(ctx):
+            await self.run_isaa_with_print(ctx, self.isaa.save_to_mem)
+            await ctx.channel.send("Memory cleared.")
+            await ctx.channel.send("How can i help you")
 
         @self.command(name="ask", pass_context=True)
-        async def ask(ctx: commands.Context):
-            await ctx.send(f"Online Type your massage ... (start witch isaa)")
+        async def ask(ctx: commands.Context, *task: str):
 
-            def check(msg):
-                return msg.author == ctx.author and msg.channel == ctx.channel and \
-                    msg.content.startswith("isaa")
-
-            msg = await self.wait_for("message", check=check, timeout=60 * 30)
-            task = msg.content[4:]
             task = ' '.join(task)
-            """Asks the user a question to confirm something."""
-            # We create the view and assign it to a variable so we can wait for it later.
             view = Confirm()
 
-            def send_to_think(x, *args, **kwargs):
-                async def do_send(xy):
-                    channel = discord.utils.get(ctx.guild.channels, name="system")
-                    if channel is None:
-                        channel = await ctx.guild.create_text_channel("system")
-                    await channel.send(xy)
-
-                #loop = asyncio.get_event_loop()
-                #loop.run_until_complete(do_send(remove_styles(x)))
-                #loop.run_until_complete(do_send(x))
-                #if args:
-                #    loop.run_until_complete(do_send(str(args)))
-                #if kwargs:
-                #    loop.run_until_complete(do_send(str(kwargs)))
-
-            #print_sto = self.isaa.print
-            #self.isaa.print = send_to_think
-
-            chain_name = self.isaa.get_best_fitting(task)
+            chain_name, dscription = self.isaa.get_best_fitting(task)
 
             while '"' in chain_name:
                 chain_name = chain_name.replace('"', '')
 
             if not chain_name in list(self.isaa.agent_chain.chains.keys()):
+                await ctx.send(f"crating new chain")
                 chain_name = self.isaa.create_task(task)
                 await ctx.send(f'Crated new Chain')
 
             run_chain = self.isaa.agent_chain.get(chain_name)
             await ctx.send(f"Chain details : ```{run_chain}```")
             await ctx.send(f"Description : ```{self.isaa.agent_chain.get_discr(chain_name)}```")
+            await ctx.send(f"Why : ```{dscription}```")
+            betwean_res = self.isaa.mini_task_completion(f"Genearate an Output for a aget to be spoken loud. Informations {chain_name} {dscription} tell the user why you want to run this chin :")
+            await eleven_labs_speech_stream(ctx, betwean_res, voice_index=self.voice_index)
             await ctx.send(f'Do you want to continue? with {chain_name}', view=view)
             # Wait for the View to stop listening for input...
             await view.wait()
@@ -342,30 +424,33 @@ class Tools(commands.Bot, MainTool):
             elif view.value:
                 print('Confirmed...')
                 await ctx.send(f"running chain ... pleas wait")
-                res = self.isaa.execute_thought_chain(task, run_chain, self.isaa.get_agent_config_class("self"))
-                if len(res) == 2:
-                    await ctx.send(f"Proses Summary : ```{self.app.pretty_print(list(res[0]))}```")
-                    if isinstance(len(res[-1]), str):
-                        await ctx.send(f"response : ```{res[-1]}```")
-                    if isinstance(len(res[-1]), list):
-                        if isinstance(len(res[-1][-1]), str):
-                            await ctx.send(f"response : ```{res[-1][-1]}```")
 
-                #self.isaa.print = print_sto
-                await ctx.send(f"returned : ```{self.app.pretty_print(list(res))}```")
+                def func():
+                    res = self.isaa.execute_thought_chain(task, run_chain, self.isaa.get_agent_config_class("self"))
+                    self.sender_que.put(f"#SAY#:{res[0]}")
+                    if len(res) == 2:
+                        self.sender_que.put(f"Proses Summary : ```{res[0]}```")
+                        if isinstance(len(res[-1]), str):
+                            self.sender_que.put(f"response : ```{res[-1]}```")
+                        if isinstance(len(res[-1]), list):
+                            if isinstance(len(res[-1][-1]), str):
+                                self.sender_que.put(f"response : ```{res[-1][-1]}```")
+
+                    # self.isaa.print = print_sto
+                    self.sender_que.put(f"returned : ```{self.app.pretty_print(list(res))}```")
+
+                await self.run_isaa_with_print(ctx, func)
             else:
                 print('Cancelled...')
 
         @self.command(name="create", pass_context=True)
-        async def create(ctx: commands.Context):
-            await ctx.send(f"Online Type your massage ... (start witch isaa)")
-
-            def check(msg):
-                return msg.author == ctx.author and msg.channel == ctx.channel and \
-                    msg.content.startswith("isaa")
-
-            msg = await self.wait_for("message", check=check, timeout=60 * 30)
-            task = msg.content[4:]
+        async def create(ctx: commands.Context, *text: str):
+            # await ctx.send(f"Online Type your massage ... (start witch isaa)")
+            # def check(msg):
+            #     return msg.author == ctx.author and msg.channel == ctx.channel and \
+            #         msg.content.startswith("isaa")
+            # msg = await self.wait_for("message", check=check, timeout=60 * 30)
+            task = ' '.join(text)
             name = self.isaa.create_task(task)
             task_chain = self.isaa.agent_chain.get(name)
 
@@ -374,9 +459,27 @@ class Tools(commands.Bot, MainTool):
              ### task structure ```{task_chain}```"""
             await ctx.send(msg)
 
-            dis = self.isaa.describe_chain(name)
+            def run_chain_func():
+                try:
+                    dis = self.isaa.describe_chain(name)
+                    self.sender_que.put(f"return {dis}")
+                except Exception as e:
+                    self.sender_que.put(f'Error details: {e}')
+                finally:
+                    self.sender_que.put('exit')
 
-            await ctx.send(dis)
+            t0 = threading.Thread(target=run_chain_func)
+
+            def printer(x, *args, **kwargs):
+                self.sender_que.put(str(x))
+
+            _p = self.isaa.print
+            self.isaa.print = printer
+            t0.start()
+            await self.minique_responder(ctx=ctx)
+            t0.join()
+            self.isaa.print = _p
+            await ctx.send("Done")
 
         @self.command(name="google", pass_context=True)
         async def google(ctx: commands.Context, *task: str):
@@ -386,35 +489,11 @@ class Tools(commands.Bot, MainTool):
 
         @self.command(name="run", pass_context=True)
         async def run(ctx: commands.Context, *task: str):
-            await ctx.send(f"Online Type your massage ... (start witch isaa)")
 
-            def check(msg):
-                return msg.author == ctx.author and msg.channel == ctx.channel and \
-                    msg.content.startswith("isaa")
-
-            msg = await self.wait_for("message", check=check, timeout=60*30)
-            task = msg.content[4:]
+            task = ' '.join(task)
             all_chains = list(self.isaa.agent_chain.chains.keys())
             chain_name = all_chains[0]  # self.isaa.get_best_fitting(task)
             task_chain = self.isaa.agent_chain.get(chain_name)
-
-            def send_to_think(x, *args, **kwargs):
-                async def do_send(xy):
-                    channel = discord.utils.get(ctx.guild.channels, name="system")
-                    if channel is None:
-                        channel = await ctx.guild.create_text_channel("system")
-                    await channel.send(xy)
-
-                #loop = asyncio.get_event_loop()
-                #loop.run_until_complete(do_send(remove_styles(x)))
-                #loop.run_until_complete(do_send(x))
-                #if args:
-                #    loop.run_until_complete(do_send(str(args)))
-                #if kwargs:
-                #    loop.run_until_complete(do_send(str(kwargs)))
-
-            #print_sto = self.isaa.print
-            #self.isaa.print = send_to_think
 
             msg = f"""# Task
              ## ```{task}```
@@ -431,14 +510,56 @@ class Tools(commands.Bot, MainTool):
                     await ctx.send(f"return : ```{run_chain}```")
                     await ctx.send(f"Description : ```{self.isaa.agent_chain.get_discr(chain_name_)}```")
                     await ctx.send(f"running chain ... pleas wait")
-                    res = self.isaa.execute_thought_chain(task, run_chain, self.isaa.get_agent_config_class("self"))
-                    #self.isaa.print = print_sto
-                await ctx.send(f"return : ```{self.app.pretty_print(list(res))} {res}```")
 
-            await ctx.send(msg, view=TaskSelectionView(run_by_name, all_chains, chain_name, self.isaa.agent_chain, ctx))
+                    def func():
+                        res = self.isaa.execute_thought_chain(task, run_chain,
+                                                              self.isaa.get_agent_config_class("self"))
+                        self.sender_que.put(f"#SAY#:{res[0]}")
+                        self.sender_que.put(f"return : ```{res}```")
 
-        @self.command(name="edit", pass_context=True)
-        async def edit(ctx: commands.Context):
+                    await self.run_isaa_with_print(ctx, func)
+
+            await ctx.send(msg, view=TaskSelectionView(run_by_name, all_chains, chain_name, self.isaa.agent_chain))
+
+        @self.command(name="deleat", pass_context=True)
+        async def deleat(ctx: commands.Context):
+
+            all_chains = list(self.isaa.agent_chain.chains.keys())
+            chain_name = all_chains[0]
+            msg = f"""# Tasks: """
+
+            async def run_by_name(chain_name_):
+                run_chain = self.isaa.agent_chain.get(chain_name_)
+                self.print(f"Chin len {chain_name_}:{len(run_chain)}")
+                await ctx.send(f"Chin len : {len(run_chain)}")
+                if run_chain:
+                    self.isaa.agent_chain.remove(chain_name_)
+                await ctx.send(f"Don")
+
+            await ctx.send(msg, view=TaskSelectionView(run_by_name, all_chains, chain_name, self.isaa.agent_chain))
+
+        @self.command(name="describe", pass_context=True)
+        async def describe(ctx: commands.Context):
+
+            all_chains = list(self.isaa.agent_chain.chains.keys())
+            chain_name = all_chains[0]
+            msg = f"""# Tasks: """
+
+            async def run_by_name(chain_name_):
+                def func():
+                    run_chain = self.isaa.agent_chain.get(chain_name_)
+                    self.print(f"Chin len {chain_name_}:{len(run_chain)}")
+                    self.sender_que.put(f"Chin len : {len(run_chain)}")
+                    if run_chain:
+                         self.isaa.describe_chain(chain_name_)
+
+                await self.run_isaa_with_print(ctx, func)
+                await ctx.send(f"Don")
+
+            await ctx.send(msg, view=TaskSelectionView(run_by_name, all_chains, chain_name, self.isaa.agent_chain))
+
+        @self.command(name="optimise", pass_context=True)
+        async def optimise(ctx: commands.Context):
 
             all_chains = list(self.isaa.agent_chain.chains.keys())
 
@@ -449,16 +570,16 @@ class Tools(commands.Bot, MainTool):
                         channel = await ctx.guild.create_text_channel("system")
                     await channel.send(xy)
 
-                #loop = asyncio.get_event_loop()
-                #loop.run_until_complete(do_send(remove_styles(x)))
-                #loop.run_until_complete(do_send(x))
-                #if args:
+                # loop = asyncio.get_event_loop()
+                # loop.run_until_complete(do_send(remove_styles(x)))
+                # loop.run_until_complete(do_send(x))
+                # if args:
                 #    loop.run_until_complete(do_send(str(args)))
-                #if kwargs:
+                # if kwargs:
                 #    loop.run_until_complete(do_send(str(kwargs)))
 
-            #print_sto = self.isaa.print
-            #self.isaa.print = send_to_think
+            # print_sto = self.isaa.print
+            # self.isaa.print = send_to_think
 
             msg = f"""What task do you want to optimise"""
 
@@ -466,18 +587,168 @@ class Tools(commands.Bot, MainTool):
                 run_chain = self.isaa.agent_chain.get(chain_name_)
                 self.print(f"Chin len {chain_name_}:{len(run_chain)}")
                 await ctx.send(f"Chin len : {len(run_chain)}")
-                new_task_dict = ["No chain to edit"]
+
                 if run_chain:
                     await ctx.send(f"return : ```{run_chain}```")
                     await ctx.send(f"Description : ```{self.isaa.agent_chain.get_discr(chain_name_)}```")
-                    await ctx.send(f"running chain ... pleas wait")
-                    new_task_dict = self.isaa.optimise_task(chain_name_)
-                    if not new_task_dict:
-                        await ctx.send(f"Optimisation Failed")
-                        #self.isaa.print = print_sto
-                        return
-                    self.isaa.agent_chain.add_task(chain_name_+"-Optimised", new_task_dict)
-                    #self.isaa.print = print_sto
-                await ctx.send(f"return : ```{self.app.pretty_print(list(new_task_dict))} {new_task_dict}```")
+                    await ctx.send(f"optimise chain ... pleas wait")
 
-            await ctx.send(msg, view=TaskSelectionView(run_by_name, all_chains, all_chains[0], self.isaa.agent_chain, ctx))
+                    def func():
+
+                        new_task_dict = self.isaa.optimise_task(chain_name_)
+                        if not new_task_dict:
+                            self.sender_que.put(f"Optimisation Failed")
+                            # self.isaa.print = print_sto
+                            return
+                        self.isaa.agent_chain.add_task(chain_name_ + "-Optimised", new_task_dict)
+                        self.sender_que.put(
+                            f"return : ```{self.app.pretty_print(list(new_task_dict))} {new_task_dict}```")
+
+                    await self.run_isaa_with_print(ctx, func)
+
+                    # self.isaa.print = print_sto
+                await ctx.send(f"Done")
+
+            if len(all_chains) > 25:
+                all_chains = all_chains[:25]
+            await ctx.send(msg,
+                           view=TaskSelectionView(run_by_name, all_chains, all_chains[0], self.isaa.agent_chain))
+
+        @self.command(name="say", pass_context=True)
+        async def say(ctx: commands.Context, *text: str):
+
+            await ctx.send("Running")
+
+            await eleven_labs_speech_stream(ctx, ' '.join(text), voice_index=self.voice_index)
+
+            await ctx.send("Ok")
+
+        @self.command(name="say2", pass_context=True)
+        async def say2(ctx: commands.Context, *text: str):
+
+            await ctx.send("Running")
+            def func():
+                self.sender_que.put("#SAY#:"+str(text))
+
+            await self.run_isaa_with_print(ctx, func)
+
+            await ctx.send("Ok")
+
+        @self.command(name="chat", pass_context=True)
+        async def chat(ctx: commands.Context, *text: str):
+
+            await ctx.send("Running")
+            text = ' '.join(text)
+
+            def func():
+                res = self.isaa.stream_read_llm(text, self.isaa.get_agent_config_class("self").set_mode("conversation"))
+                if not isinstance(res, str):
+                    res = str(res)
+                self.sender_que.put("# Isaa: "+res)
+
+            await self.run_isaa_with_print(ctx, func)
+
+            await ctx.send("Ok")
+
+        @self.command(name="talk", pass_context=True)
+        async def talk(ctx: commands.Context, *text: str):
+
+            await ctx.send("Running")
+            text = ' '.join(text)
+
+            def func():
+                res = self.isaa.stream_read_llm(text, self.isaa.get_agent_config_class("self").set_mode("conversation"))
+                if not isinstance(res, str):
+                    res = str(res)
+                self.sender_que.put("#SAY#:"+res)
+
+            await self.run_isaa_with_print(ctx, func)
+
+            await ctx.send("Ok")
+
+        @self.command(name="talkr", pass_context=True)
+        async def talk(ctx: commands.Context, *text: str):
+
+            await ctx.send("Running")
+            text = ' '.join(text)
+
+            def func():
+                res = self.isaa.stream_read_llm(text, self.isaa.get_agent_config_class("self").set_mode("free"))
+                if not isinstance(res, str):
+                    res = str(res)
+                self.sender_que.put("#SAY#:"+res)
+
+            await self.run_isaa_with_print(ctx, func)
+
+            await ctx.send("Ok")
+
+        @self.command(name="say-in", pass_context=True)
+        async def say(ctx: commands.Context, lang: str, *text: str):
+
+            await ctx.send("Running")
+
+            translation = self.isaa.mini_task_completion(f"Translate : '''{text}'''' to :{lang}\nTranslation:")
+            await eleven_labs_speech_stream(ctx, translation, voice_index=self.voice_index)
+
+            await ctx.send("Ok")
+
+        @self.command(name='&', pass_context=True)
+        async def join(ctx):
+            if ctx.author.voice is None:
+                await ctx.send("Du bist nicht in einem Sprachkanal!")
+                return
+            voice_channel = ctx.author.voice.channel
+            if ctx.voice_client is None:
+                await voice_channel.connect()
+            else:
+                await ctx.voice_client.move_to(voice_channel)
+
+        @self.command(name='#', pass_context=True)
+        async def leave(ctx):
+            if ctx.voice_client is not None:
+                await ctx.voice_client.disconnect()
+            else:
+                await ctx.send("Ich bin nicht in einem Sprachkanal.")
+
+
+voices = ["27dJPQc4TXmS1pccxP0m", "VzRk86yeIgj45NCVZqJe", "e3sRAASduwyXKQwXY3ci", "onwK4e9ZLuTAKqWW03F9", "CYw3kZ02Hs0563khs1Fj", "ThT5KcBeYPX3keUQqHPh", "MF3mGyEYCl7XYWbV9V6O", "LcfcDJNUP1GQjkzn1xUU", "jsCqWAovK2LkecY7zXl4", "zcAOhNBS3c14rBihAFp1", "EXAVITQu4vr4xnSDxMaL", "9Mi9dBkaxn2pCIdAAGOB"]
+
+
+async def play_audio_stream(ctx, audio_stream):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_file:
+        temp_file.write(audio_stream.read())
+        temp_file.flush()
+        if not ctx.message.author.voice:
+            await ctx.send("You are not connected to a voice channel")
+            return
+        voice_channel = ctx.message.author.voice.channel
+        vc = await voice_channel.connect()
+        vc.play(discord.FFmpegPCMAudio(executable="ffmpeg", source=temp_file.name))
+        while vc.is_playing():
+            await asyncio.sleep(1)
+        await vc.disconnect()
+
+#GBv7mTt0atIp3Br8iCZE/98542988-5267-4148-9a9e-baa8c4f14644.mp3
+# GBv7mTt0atIp3Br8iCZE
+
+# 4VrpCbKeaHwMPrbLPOH
+
+async def eleven_labs_speech_stream(ctx, text, voice_index=0, voices_=None, print=print):
+    if voices_ is None:
+        voices_ = voices
+    tts_headers = {
+        "Content-Type": "application/json",
+        "xi-api-key": os.getenv("ELEVENLABS_API_KEY")
+    }
+    tts_url = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream".format(
+        voice_id=voices_[voice_index])
+    formatted_message = {"text": text}
+    response = requests.post(
+        tts_url, headers=tts_headers, json=formatted_message, stream=True)
+    if response.status_code == 200:
+        await play_audio_stream(ctx, response.raw)
+        return True
+    else:
+        print("Request failed with status code:", response.status_code)
+        print("Response content:", response.content)
+        return False

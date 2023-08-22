@@ -321,7 +321,8 @@ class Tools(MainTool, FileHandler):
   def get_user_instance(self,
                         uid: str,
                         username: str or None = None,
-                        token: str or None = None):
+                        token: str or None = None,
+                        hydrate: bool = True):
     # Test if an instance exist locally -> instance = set of data a dict
 
     instance = {
@@ -371,8 +372,8 @@ class Tools(MainTool, FileHandler):
     # # get from upper instance
     # # upper = get request ...
     # instance['save'] = upper
-
-    instance = self.hydrate_instance(instance)
+    if hydrate:
+        instance = self.hydrate_instance(instance)
     self.save_user_instances(instance)
 
     return instance
@@ -834,7 +835,7 @@ def show_version(_, app: App):
     app.MOD_LIST["db"].tools["set"](
       ["", f"user::{username}::{email}::{uid}", jwt_key])
 
-    self.get_user_instance(uid, username, jwt_key)
+    self.get_user_instance(uid, username, jwt_key, hydrate=False)
 
     return self.get_web_socket_id(uid)
 
@@ -899,7 +900,7 @@ def show_version(_, app: App):
                              gen_token_time({"v": self.version},
                                             4380), tb_token_jwt, app)
 
-    self.get_user_instance(user_data["uid"], username, jwt_key)
+    self.get_user_instance(user_data["uid"], username, jwt_key, hydrate=False)
 
     return self.get_web_socket_id(user_data["uid"])
 
@@ -913,13 +914,12 @@ def show_version(_, app: App):
     imp = ["email_waiting_list", [email]]
     tb_token_jwt = app.run_any('db', 'append_on_set', imp)
 
-    out = "My apologies Unfortunately they could not be added"
+    out = "My apologies Unfortunately you could not be added to the Waiting list."
     if tb_token_jwt == imp:
       out = "You will receive an invitation email in a few days"
 
     if "already in list" in tb_token_jwt:
-      out = "You are already in the list, please do not try to add yourself more than once. the system " \
-            "recognizes it."
+      out = "You are already in the list, please do not try to add yourself more than once."
 
     return f"{email}: {out}"
 

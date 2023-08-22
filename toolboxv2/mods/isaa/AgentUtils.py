@@ -1155,7 +1155,7 @@ system information's : {getSystemInfo('system is starting')}
         self.messages_sto = {}
         self._stream = False
         self._stream_reset = False
-        self.stop_sequence = ["\n\n\n", "Observation:", "Execute:", "Beobachtungen:"]
+        self.stop_sequence = ["\n\n\n", "Observation:", "Beobachtungen:"]
         self.completion_mode = "text"
         self.add_system_information = True
 
@@ -1168,6 +1168,16 @@ system information's : {getSystemInfo('system is starting')}
         self.init_memory()
 
         self.binary_tree: IsaaQuestionBinaryTree or None = None
+
+    def save_to_permanent_mem(self):
+        if self.short_mem is not None:
+            self.short_mem.clear_to_collective()
+        if self.edit_text is not None:
+            self.edit_text.cut()
+        if self.context is not None:
+            self.context.clear_to_collective()
+        if self.observe_mem is not None:
+            self.observe_mem.clear_to_collective()
 
     def calc_price(self, prompt: str, output: str):
         return self.ppm[0] * get_token_mini(prompt, self.model_name, self.isaa), self.ppm[1] * get_token_mini(output,
@@ -1184,7 +1194,7 @@ system information's : {getSystemInfo('system is starting')}
         mini_context = "System Context:\n" + self.observe_mem.text + self.short_mem.text + self.context.text
         if mini_context == "System Context:\n":
             mini_context += 'its Day 0 start to explore'
-        system_information = f"""
+        self.system_information = f"""
         system information's : {getSystemInfo(self.isaa.get_context_memory().get_best_fit_memory(mini_context))}
         """
 

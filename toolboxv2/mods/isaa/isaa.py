@@ -141,6 +141,7 @@ class Tools(MainTool, FileHandler):
                     ["run_create_task_cli", "run_create_task_cli", 0, "run_create_task_cli"],
                     ["run_describe_chains_cli", "run_describe_chains", 0, "run_describe_chains"],
                     ["run_auto_chain_cli", "run_auto_chain_cli", 0, "run_auto_chain_cli"],
+                    ["save_to_mem", "save_to_mem", 0, "save_to_mem"],
                     ],
             "name": "isaa",
             "Version": self.show_version,
@@ -162,6 +163,7 @@ class Tools(MainTool, FileHandler):
             "run_create_task_cli": self.run_create_task_cli,
             "run_describe_chains_cli": self.run_describe_chains,
             "run_auto_chain_cli": self.run_auto_chain_cli,
+            "save_to_mem": self.save_to_mem,
         }
         self.app_ = app
         self.print_stream = print
@@ -567,10 +569,14 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
 
         modis = command[0].data['modis']
 
-        sys.setrecursionlimit(1500)
-
         if 'global_stream_override' in modis:
             self.global_stream_override = True
+
+        self.init_isaa()
+
+    def init_isaa(self):
+
+        sys.setrecursionlimit(1500)
 
         qu_init_t = threading.Thread(target=self.init_all_pipes_default)
         qu_init_t.start()
@@ -1366,9 +1372,22 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 },
                 {
                     "use": "agent",
+                    "mode": "free",
+                    "name": "self",
+                    "args": "Finde einene Lösungs ansatz und gebe weiter information zu subject zurück"
+                            "Subject : $user-input"
+                            "informationen die das system zum Subject hat: $D-Memory.",
+                    "return": "$infos"
+                },
+            ]
+            self.agent_chain.add("Task Generator", task_generator)
+        chain_data = {}
+        res, chain_data, _ = self.execute_thought_chain(task, task_generator+[{
+                    "use": "agent",
                     "name": "think",
-                    "args": "$task Details für das format:\n"
-                            "the user input variabel is (var sign)[$](var name)[user-input] allways include the variabel"
+                    "args": "$task "
+                            "Informationen : $infos \nOnly return the task list nothing else!!\nDetails für das format:\n"
+                            "the user input variabel is (var sign)[$](var name)[user-input] allways include the variabel in the first input"
                             "Task format:\n"
                             "Keys that must be included [use,name,args,mode,return]\n"
                             "values for use ['agent', 'tool']\n"
@@ -1386,10 +1405,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                             "return_val:List[dict] = "
                     ,
                     "return": "$taskDict",
-                },
-            ]
-        chain_data = {}
-        res, chain_data, _ = self.execute_thought_chain(task, task_generator, agent, chain_data=chain_data,
+                }], agent, chain_data=chain_data,
                                                         chain_data_infos=True)
         task_list = []
         try:
@@ -2039,8 +2055,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         sum_a = self.get_agent_config_class("summary")
         sum_a.get_messages(create=True)
         return self.run_agent(sum_a,
-                              f"Produce a summarization of what happened "
-                              f"(max 1 paragraph) using the given information,validate if the task was executed successfully"
+                              f"Create an answer for the user, which will be pronounced by the user and should be short, relevant and concise. Summarize the information and output the answer."
                               f"{chain_sum_data}"
                               f"and validate the task exiqution, the task : {user_text}"), chain_ret
 
@@ -2110,7 +2125,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 uesd_mem[task['return']] = task_name
 
             chain_data[task['return']] = ret
-            chain_ret.append([task, ret])
+            chain_ret.append([task['args'], ret])
 
         return chain_data, chain_ret, uesd_mem
 
@@ -2745,6 +2760,10 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         self.agent_chain.add_discr(name, discription)
         return discription
 
+    def save_to_mem(self):
+        for name in self.config['agents-name-list']:
+            self.get_agent_config_class(agent_name=name).save_to_permanent_mem()
+
     def describe_all_chains(self):
 
         for chain_name in self.agent_chain.chains.keys():
@@ -2789,7 +2808,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         wenn keiner der ansätze passt das gebe None zurück.
         name:"""
 
-        mini_task1_res = self.stream_read_llm(mini_task1, self.get_agent_config_class("think"))
+        mini_task1_res = self.mini_task_completion(mini_task1)
 
         chain_name = mini_task1_res
         for task_name in list(self.agent_chain.chains.keys()):
@@ -2799,7 +2818,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         self.print(f"Das system schlägt {chain_name} vor")
         self.print(f"mit der beründung : {mini_task0_res}")
 
-        return chain_name
+        return chain_name, mini_task0_res
 
     def run_create_task_cli(self):
         self.print("Enter your text (empty line to finish):")
@@ -2834,7 +2853,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         self.print("Enter your text (empty line to finish):")
         task = get_multiline_input()
 
-        chain_name = self.get_best_fitting(task)
+        chain_name, begründung = self.get_best_fitting(task)
 
         if "y" not in input("Validate (y/n)"):
             return "Presses Stopped"

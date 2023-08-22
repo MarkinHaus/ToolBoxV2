@@ -113,8 +113,6 @@ class Tools(MainTool, FileHandler):
 
     def get_sender_receiver_que_ws(self, url, websocket_id):
 
-        uri = f"{url}/{websocket_id}"
-
         self.print(Style.WHITE("Starting WebSocket Builder"))
 
         send_queue = queue.Queue()
@@ -137,8 +135,8 @@ class Tools(MainTool, FileHandler):
                 await ws.send(msg_json)
                 self.print(Style.GREY("-- Sendet --"))
 
-                self.print(f"S Parsed Time ; {t0-time.time()}")
-                if t0-time.time() > (60*60)*1:
+                self.print(f"S Parsed Time ; {t0 - time.time()}")
+                if t0 - time.time() > (60 * 60) * 1:
                     ws.close()
 
             print("SENDER received exit stop running")
@@ -155,15 +153,15 @@ class Tools(MainTool, FileHandler):
                 msg = json.loads(msg_json)
                 recv_queue.put(msg)
 
-                self.print(f"R Parsed Time ; {t0-time.time()}")
-                if t0-time.time() > (60*60)*1:
+                self.print(f"R Parsed Time ; {t0 - time.time()}")
+                if t0 - time.time() > (60 * 60) * 1:
                     ws.close()
 
             print("receiver received exit call")
 
         async def websocket_handler():
 
-            with self.create_websocket(websocket_id) as websocket:
+            with self.create_websocket(websocket_id, url) as websocket:
                 send_task = asyncio.create_task(send(websocket))
                 recv_task = asyncio.create_task(receive(websocket))
                 try:
@@ -204,7 +202,6 @@ class Tools(MainTool, FileHandler):
             self.print(f"websocket not found")
         self.active_connections_client[websocket_id].close()
         del self.active_connections_client[websocket_id]
-
 
     async def connect(self, websocket: WebSocket, websocket_id):
         websocket_id_sto = await valid_id(websocket_id, self.app_id, websocket)
@@ -304,7 +301,6 @@ class Tools(MainTool, FileHandler):
 
                     await websocket.send_text(widgetText_content)
                 if action == "getPathWidget":
-
                     widgetPath_content = self.construct_render(content="./app/1/PathWidet/text.html",
                                                                element_id="widgetPath",
                                                                externals=["/app/1/PathWidet/pathWiget.js"],
@@ -327,8 +323,8 @@ class Tools(MainTool, FileHandler):
                     await websocket.send_text(drag_content)
                 if action == "getControls":
                     controller_content = self.construct_render(content="",
-                                                         element_id="editorWidget",
-                                                         externals=["/app/1/Controler/controller.js"])
+                                                               element_id="editorWidget",
+                                                               externals=["/app/1/Controler/controller.js"])
 
                     await websocket.send_text(controller_content)
                 if action == "serviceWorker":
@@ -360,9 +356,9 @@ class Tools(MainTool, FileHandler):
                         await self.send_message(json.dumps({'exit': 'exit'}), websocket, websocket_id)
 
                     home_content = self.construct_render(content="",
-                                                       element_id="main",
+                                                         element_id="main",
 
-                                                       externals=["/app/scripts/go_home.js"])
+                                                         externals=["/app/scripts/go_home.js"])
 
                     await websocket.send_text(home_content)
                 if action == "getModListAll":
@@ -380,7 +376,8 @@ class Tools(MainTool, FileHandler):
                         mod = self.app_.get_mod(mod_name)
                         return {"settings": {'mod-description': mod.description}}
                     except ValueError:
-                        content = self.construct_render(content=f"""<p id="infoText" color: style="color:var(--error-color);">Mod {mod_name} not found
+                        content = self.construct_render(
+                            content=f"""<p id="infoText" color: style="color:var(--error-color);">Mod {mod_name} not found
                         </p>
                         """, element_id="infoText")
                         return content
