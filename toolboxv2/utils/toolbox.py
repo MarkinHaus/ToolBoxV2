@@ -134,7 +134,6 @@ class App(metaclass=Singleton):
         if args.init:
             _initialize_toolBox(args.init, args.init_file, name)
 
-        name = prefix + '-' + node()
         self.version = toolboxv2.__version__
 
         self.keys = {
@@ -147,6 +146,7 @@ class App(metaclass=Singleton):
             "module-load-mode": "load~mode:",
             "comm-his": "comm-his~:",
             "develop-mode": "dev~mode~:",
+            "all_main": "all~main~:",
         }
 
         defaults = {
@@ -159,15 +159,16 @@ class App(metaclass=Singleton):
             "module-load-mode": 'I',
             "comm-his": [[]],
             "develop-mode": False,
+            "all_main": True,
         }
-
+        FileHandler.all_main = True
         self.config_fh = FileHandler(name + ".config", keys=self.keys, defaults=defaults)
         self.config_fh.load_file_handler()
 
         self._debug = debug
 
         self.runnable = {}
-
+        FileHandler.all_main = self.config_fh.get_file_handler(self.keys["all_main"])
         self._debug = self.config_fh.get_file_handler(self.keys["debug"])
         self.command_history = self.config_fh.get_file_handler(self.keys["comm-his"])
         self.dev_modi = self.config_fh.get_file_handler(self.keys["develop-mode"])

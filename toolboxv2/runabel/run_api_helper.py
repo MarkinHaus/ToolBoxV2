@@ -1,5 +1,5 @@
 NAME = "api"
 
 
-def run():
+def run(_, _1):
     return 0

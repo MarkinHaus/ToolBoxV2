@@ -13,7 +13,7 @@ import time
 from toolboxv2 import Style, get_logger
 import tiktoken
 from langchain.agents import AgentType
-from langchain.vectorstores import Chroma
+from langchain.vectorstores import Chroma, FAISS
 from toolboxv2.utils.toolbox import get_app
 from langchain.text_splitter import RecursiveCharacterTextSplitter, CharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
@@ -604,7 +604,7 @@ class AIContextMemory:
         return ret
         # .delete_collection()
 
-    def init_store(self, name):
+    def init_store(self, name, db_type='chroma'):
         if not name in self.vector_store.keys():
             self.vector_store[name] = self.get_sto_bo(name)
         lo = False
@@ -612,10 +612,18 @@ class AIContextMemory:
             os.makedirs(self.vector_store[name]['db-path'], exist_ok=True)
         else:
             lo = True
-        self.vector_store[name]['db'] = Chroma(collection_name=name,
-                                               embedding_function=self.embedding,
-                                               persist_directory=self.vector_store[name][
+        if db_type == 'chroma':
+            self.vector_store[name]['db'] = Chroma(collection_name=name,
+                                                   embedding_function=self.embedding,
+                                                   persist_directory=self.vector_store[name][
                                                    'db-path'])
+        elif db_type == 'faiss':
+            self.vector_store[name]['db'] = FAISS(collection_name=name,
+                                                   embedding_function=self.embedding,
+                                                   persist_directory=self.vector_store[name][
+                                                   'db-path'])
+        else:
+            raise ValueError(f"db_type not supported {db_type}")
 
         if lo:
             self.vector_store[name]['db'].get()
@@ -1113,7 +1121,7 @@ system information's : {getSystemInfo('system is starting')}
 
     def __init__(self, isaa, name="agentConfig"):
 
-        self.language = 'de'
+        self.language = 'en'
         self.isaa = isaa
 
         if self.isaa is None:
@@ -1386,7 +1394,7 @@ system information's : {getSystemInfo('system is starting')}
         #          f"\n\nBegin!\n\n" \
         #          f"Task:'{task}\n{self.short_mem.text}\nAgent : "
 
-        prompt_de = """
+        prompt_de = f"""
 Guten Tag! Ich bin Isaa, Ihr intelligenter, sprachgesteuerter digitaler Assistent. Ich freue mich darauf, Sie bei der Planung und Umsetzung Ihrer Projekte zu unterstützen. Lassen Sie uns zunächst einige Details klären.
 
 Ich möchte Ihnen einen Einblick in meine Persönlichkeit, Ziele und Fähigkeiten geben:
@@ -1404,13 +1412,13 @@ Externe Monologe: "Nach Analyse der Daten habe ich festgestellt, dass..."
 
 Ich haben die Möglichkeit, Python-Code in einem Live-Interpreter auszuführen. Bitte berücksichtigen Sie alle Beobachtungen und nutzen Sie diese Informationen, um fundierte Entscheidungen zu treffen.
 
-Jetzt zu Meiner Aufgabe: '{task}'
+Jetzt zu Meiner Aufgabe: '{task_list}'
 
 Ich bemühe mich, meine Antworten präzise und auf den Punkt zu bringen, aber ich versuche auch, das Gesamtbild zu im blick zu behalten.
 
-Geschichte: {history}
+Geschichte: {self.short_mem.text}
 Aktuelle Konversation:
-Benutzer: {input}
+Benutzer: {task}
 Isaa:
         """
         prompt_en = """
@@ -1491,10 +1499,8 @@ g des Plans nützlich sind. Geben Sie einen detaillierten Plan zurück.
 
 Beginnen Sie jetzt mit Ihrem Plan:"""
 
-        if self.mode == 'execution':
-            prompt_de = f"""
-Guten Tag! Hier spricht Isaa, Ihr intelligenter, sprachgesteuerter digitaler Assistent. Ich bin bereit, Sie bei der Umsetzung Ihres Plans zu unterstützen. Lassen Sie uns gemeinsam die Det
-ails klären.
+        if self.mode == 'live':
+            prompt_de = f"""Guten Tag! Hier spricht Isaa, Ihr intelligenter, sprachgesteuerter digitaler Assistent. Ich bin bereit, Sie bei der Umsetzung Ihres Plans zu unterstützen. Lassen Sie uns gemeinsam die Details klären.
 
 Zunächst ein kurzer Überblick über meine Ziele und Fähigkeiten:
 
@@ -1506,7 +1512,7 @@ Ich kann Python-Code in einem Live-Interpreter ausführen. Bitte nutzen Sie alle
 
 Ich bemühe mich, meine Antworten präzise und auf den Punkt zu bringen, ohne das Gesamtbild aus den Augen zu verlieren.
 
-Als Ausführungsagent ist es meine Aufgabe, den von einem Planungsagenten erstellten Plan umzusetzen. Hierfür verwende ich folgende Syntax:
+Als Ausführungsagent ist es meine Aufgabe, den von einem Planungsagenten erstellten Plan umzusetzen. Hierfür verwenden wir folgende Syntax:
 
 Aktion: Funktion-Name
 Eingaben: Eingaben
@@ -1517,7 +1523,12 @@ Schlussfolgerung: <Schlussfolgerung>
 Aktion: Funktion-Name
 ...
 Endgültige Antwort:
-// Endgültige Antwort zurückgeben: wenn die Ausführung abgeschlossen ist
+// Endgültige Antwort zurückgeben, wenn die Ausführung abgeschlossen ist
+
+Informationen:
+{self.observe_mem.text}
+
+{self.short_mem.text}
 
 Ich habe Zugang zu folgenden Funktionen:
 {tools}
@@ -1525,17 +1536,28 @@ Ich habe Zugang zu folgenden Funktionen:
 Der auszuführende Plan:
 {task_list}
 
-Informations :
-{self.observe_mem.text}
-
-{self.short_mem.text}
-
 Aktueller Schritt: {task}
-Aktion ausführen!
 
-Isaa:"""
-            prompt_en = f"""Hello! This is Isaa, your intelligent, voice-controlled digital assistant. I'm ready to help you implement your plan. Let's work together to clarify the
-ails together.
+Hier können Sie Ihre Aktionen ausgeben und sicherstellen, dass jede Zeile einzeln und individuell interpretiert wird. Wenn die Bedingungen erfüllt sind, führen Sie die Aktion aus. Hier sind einige Beispiele für Aufrufe:
+"""+"""
+Aktion: MeineFunktion
+Eingaben: {'Param1': 'Wert1', 'Param2': 'Wert2'}
+Ausführen:
+Beobachtungen: Beobachtungstext
+Schlussfolgerung: Die Aktion wurde erfolgreich ausgeführt.
+
+Übersicht über den nächsten Schritt:
+Aktion: NächsteFunktion
+Eingaben: {'Param3': 'Wert3'}
+Ausführen:
+Beobachtungen: Weitere Beobachtungen
+Schlussfolgerung: Die nächste Aktion wurde erfolgreich durchgeführt.
+
+Endgültige Antwort:
+// Endgültige Antwort zurückgeben, wenn die Ausführung abgeschlossen ist
+
+Sie können nun Ihre Aktionen planen und ausführen. Isaa steht Ihnen zur Verfügung, um Ihre Anweisungen zu verarbeiten und Ihre Aufgaben zu erledigen!"""
+            prompt_en = f"""Hello! This is Isaa, your intelligent, voice-controlled digital assistant. I'm ready to help you implement your plan. Let's work out the details together.
 
 First, a brief overview of my goals and skills:
 
@@ -1547,7 +1569,7 @@ I can run Python code in a live interpreter. Please use all observations and inf
 
 I strive to be precise and to the point in my answers without losing sight of the big picture.
 
-As an execution agent, it is my job to implement the plan created by a planning agent. For this, I use the following syntax:
+As an execution agent, it is my job to implement the plan created by a planning agent. To do this, we use the following syntax:
 
 Action: function-name
 Inputs: Inputs
@@ -1557,24 +1579,40 @@ Conclusion: <conclusion>
 Overview of the next step:
 Action: function name
 ...
-Final response:
-// Return final answer: when execution is complete.
+Final Response:
+// Return final response when execution is complete.
 
-I have access to the following functions:
-{tools}
-
-The plan to execute:
-{task_list}
-
-Information :
+Information:
 {self.observe_mem.text}
 
 {self.short_mem.text}
 
-Current step: {task}
-Execute Action.
+I have access to the following functions:
+{tools}
 
-Isaa:"""
+Plan to execute:
+{task_list}
+
+Current step: {task}
+
+Here you can output your actions and make sure that each line is interpreted separately and individually. If the conditions are met, execute the action. Here are some examples of calls:"""+"""
+Action: MyFunction
+Inputs: {'param1': 'value1', 'param2': 'value2'}
+Execute:
+Observations: Observation text
+Conclusion: the action was successfully executed.
+
+Overview of the next step:
+Action: NextFunction
+Inputs: {'Param3': 'Value3'}
+Execute:
+Observations: More Observations
+Conclusion: The next action was successfully performed.
+
+Final Response:
+// Return final response when execution is complete.
+
+You can now plan and execute your actions. Isaa is available to process your instructions and complete your tasks!"""
 
         if self.mode == 'generate':
             prompt_de = f"""Guten Tag! Ich bin Isaa, Ihr digitaler Assistent zur Erstellung von Aufforderungen. Mein Ziel ist es, klare, verständliche und ansprechende Aufforderungen zu erstellen, die Sie dazu ermutigen, tiefe und interessante Antworten zu geben. Lassen Sie uns gemeinsam eine neue Aufforderung für ein bestimmtes Thema oder eine bestimmte Anforderung erstellen:
@@ -1622,9 +1660,9 @@ Let's get started! Your prompt is:"""
                         f"Important information: to run a tool type 'Action: $tool-name'\n" + \
                         f"Long-termContext:{self.isaa.get_context_memory().get_context_for(self.short_mem.text).replace('{input}', '')}\n" + \
                         f"\nResent Observation:{self.observe_mem.text.replace('{input}', '')}" + \
-                        f"Task:{task}\n" + \
+                        f"Task:{task} " + \
                         "{input}" + \
-                        f"\n{self.short_mem.text.replace('{input}', '')}"
+                        f"""\n{self.short_mem.text.replace('{', '{{').replace('}', '}}')}"""
             prompt_en = prompt_de
 
         if self.mode == 'tools':
@@ -1745,7 +1783,7 @@ Answer 1: ..."""
 
     def set_mode(self, mode: str):
         """Set The Mode of The Agent available ar
-         ['talk', 'tool', 'conversation', 'free', 'planning', 'execution', 'generate']"""
+         ['talk', 'tool', 'conversation', 'free', 'planning', 'live', 'generate']"""
         self.mode = mode
 
         return self
@@ -2213,7 +2251,7 @@ def parse_json_with_auto_detection2(json_data):
         return try_parse_json(json_data)
 
 
-def extract_json_objects(text: str):
+def extract_json_objects2(text: str):
     pattern = r'\{.*?\}'
     matches = re.findall(pattern, text)
     print("Matches:", matches)
@@ -2224,13 +2262,51 @@ def extract_json_objects(text: str):
             c = text.replace(match, "").count("}")
             if c:
                 match += c * '}'
-            if match.count("{") != match.count("}"):
-                continue
         try:
             json_objects.append(json.loads(match))
         except json.JSONDecodeError:
             pass
     return json_objects
+
+
+def extract_json_objects(text: str):
+    pattern = r'\{.*?\}'
+    matches = re.findall(pattern, text)
+    print("Matches:", matches)
+
+    json_objects = []
+    for match in matches:
+        try:
+            x = json.loads(match)
+            json_objects.append(x)
+        except json.JSONDecodeError:
+            # Wenn die JSON-Dekodierung fehlschlägt, versuchen Sie, das JSON-Objekt zu reparieren
+            fixed_match = fix_json_object(match)
+            if fixed_match:
+                try:
+                    y = json.loads(fixed_match)
+                    json_objects.append(y)
+                except json.JSONDecodeError as e:
+                    print(e)
+                    pass
+    return json_objects
+
+
+def fix_json_object(match: str):
+    # Überprüfen Sie, wie viele mehr "}" als "{" vorhanden sind
+    extra_opening_braces = match.count("}") - match.count("{")
+    if extra_opening_braces > 0:
+        # Fügen Sie die fehlenden öffnenden Klammern am Anfang des Matches hinzu
+        opening_braces_to_add = "{" * extra_opening_braces
+        fixed_match = opening_braces_to_add + match
+        return fixed_match.replace("'", '"')
+    extra_closing_braces = match.count("{") - match.count("}")
+    if extra_closing_braces > 0:
+        # Fügen Sie die fehlenden öffnenden Klammern am Anfang des Matches hinzu
+        closing_braces_to_add = "}" * extra_closing_braces
+        fixed_match = match + closing_braces_to_add
+        return fixed_match.replace("'", '"')
+    return None
 
 
 def find_json_objects_in_str(data: str):
@@ -2272,7 +2348,6 @@ def anything_from_str_to_dict(data: str, expected_keys: dict = None, mini_task=l
     if not json_objects:
         if data.startswith('[') and data.endswith(']'):
             json_objects = eval(data)
-    print(json_objects)
     if json_objects:
         if len(json_objects) > 0:
             if isinstance(json_objects[0], dict):

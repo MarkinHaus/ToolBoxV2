@@ -222,18 +222,31 @@ class Tools(MainTool, FileHandler):
 
     def init_from_augment(self, augment, agent_name='self', exclude=None):
         agent = self.get_agent_config_class(agent_name)
-        tools = augment['tools']
-        agents = augment['Agents']
-        custom_functions = augment['customFunctions']
-        tasks = augment['tasks']
+        a_keys = augment.keys()
 
-        print("tools:", tools)
-        self.init_tools(agent, tools)
-        self.deserialize_all(agents, agent, exclude=exclude)
-        self.scripts.scripts = custom_functions
-        if isinstance(tasks, str):
-            tasks = json.loads(tasks)
-        self.agent_chain.load_from_dict(tasks)
+        if "tools" in a_keys:
+            tools = augment['tools']
+            print("tools:", tools)
+            self.init_tools(agent, tools)
+            self.print("tools initialized")
+
+        if "Agents" in a_keys:
+            agents = augment['Agents']
+            self.deserialize_all(agents, agent, exclude=exclude)
+            self.print("Agents crated")
+
+        if "customFunctions" in a_keys:
+            custom_functions = augment['customFunctions']
+            self.scripts.scripts = custom_functions
+            self.print("customFunctions saved")
+
+        if "tasks" in a_keys:
+            tasks = augment['tasks']
+            if isinstance(tasks, str):
+                tasks = json.loads(tasks)
+            if tasks:
+                self.agent_chain.load_from_dict(tasks)
+                self.print("tasks restored")
 
     def init_tools(self, self_agent, tools):  # not  in unit test
 
@@ -1157,12 +1170,12 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config.add_system_information = False
             config.stop_sequence = ["\n"]
 
-        if name == "execution":
+        if name == "liveInterpretation":
             config. \
-                set_mode("execution") \
+                set_mode("live") \
                 .set_max_iterations(4) \
                 .set_completion_mode("chat") \
-                .set_model_name("gpt-4-0613")
+                .set_model_name("gpt-4-0613").stream = True
 
         if name == "isaa-chat-web":
             config. \
@@ -1382,6 +1395,28 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             ]
             self.agent_chain.add("Task Generator", task_generator)
         chain_data = {}
+        """
+        "Informationen : $infos \nNur die Aufgabenliste zurückgeben, sonst nichts!!!\nDetails für das Format:\n"
+                            "die benutzereingabevariable ist (var zeichen)[$](var name)[benutzereingabe] immer die variabel in die erste eingabe einfügen"
+                            "Aufgabenformat:\n"
+                            "Schlüssel, die enthalten sein müssen [use,name,args,mode,return]\n"
+                            f "Werte für use ['agent', 'tool']\n"
+                            f "Werte für name wenn use='agent' {self.config['agents-name-list']}\n"
+                            f "Werte für name if use='tool' {tools_list}\n"
+                            "args: str = Befehl für den Agenten oder das Werkzeug"
+                            "return = optionaler Rückgabewert, speichert den Rückgabewert in einer Variablen zur späteren Verwendung expel"
+                            " $return-from-task1 -> args für nächste Aufgabe 'validate $return-from-task1'"
+                            f "if use='agent' mode = {agent.available_modes}"
+                            "return format : [task0,-*optional*-taskN... ]"
+                            "Beispiel Aufgabe:dict = {'use':'agent','name':'self','args':'Bitte stell dich vor',"
+                            "'mode':'free','return':'$return'}"
+                            "versucht, nur eine Aufgabe zurückzugeben, wenn der Betreff mehrere größere Schritte enthält"
+                            "mehrere Aufgaben in einer Liste zurückgeben."
+                            "Tipp: Variablen werden mit $ angekündigt, also ist $a eine Variable a. Variablen werden durch den "
+                            "Rückgabewert, so dass Informationen über Variablen versteckt werden können. die erste Variable, die "
+                            " "immer verfügbar ist, ist die Benutzereingabe. Imparativ"
+                            " "return_val:List[dict] = "
+        """
         res, chain_data, _ = self.execute_thought_chain(task, task_generator+[{
                     "use": "agent",
                     "name": "think",
@@ -1402,6 +1437,10 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                             "'mode':'free','return':'$return'}"
                             "try to return only one task if the subject includes mutabel bigger steppes"
                             "return multiple tasks in a list."
+                            "tip: variables are announced with $ so $a is a variable a. variables are decarated by the "
+                            "return value so information about variables can be hidden. the first variable that is "
+                            "always available is user-input. "
+                            "!!!Note that the chain must be used in the imperative to perform actions.!!!"
                             "return_val:List[dict] = "
                     ,
                     "return": "$taskDict",
@@ -1443,124 +1482,79 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         return task_name
 
     def optimise_task(self, task_name):
+        task_dict = []
+
         agent = self.get_agent_config_class("self")
         agent_execution = self.get_agent_config_class("execution")
         agent_execution.get_messages(create=True)
         task = self.agent_chain.get(task_name)
-        optimise_genrator = [
-            {
-                "use": "tool",
-                "name": "memory",
-                "args": "$user-input",
-                "return": "$D-Memory"
-            },
-            {
-                "use": "agent",
-                "name": "self",
-                "args": "Brainstorm about the users requesst $user-input find ways to improve it"
-                        " consider all avalabel information"
-                        "informationen die das system zum Subject hat: $D-Memory."
-                ,
-                "return": "$infos"
-            },
-            {
-                "use": "agent",
-                "mode": "generate",
-                "name": "self",
-                "args": "Erstelle Eine Prompt für den Nächsten Agent."
-                        "Der Agent soll eine auf das Subject angepasste task Optimireren"
-                        "Der Agent soll beachten das die Task Im korrekten json format ist. und das alle attribute"
-                        " richtig ausgewählt werden sollen. Die prompt soll auf das Subject und die informationen"
-                        " angepasst sein"
-                        "Subject : $user-input"
-                        "informationen die das system zum Subject hat: $D-Memory. $infos.",
-                "return": "$task"
-            },
-            {
-                "use": "agent",
-                "mode": "free",
-                "name": "execution",
-                "args": "$task Details für das format:\n"
-                        "Task format:\n"
-                        "Keys that must be included [use,name,args,mode,return]\n"
-                        "values for use ['agent', 'tool']\n"
-                        f"values for name if use='agent' {self.config['agents-name-list']}\n"
-                        f"values for name if use='tool' {agent.tools.keys()}\n"
-                        "args: str = command for the agent or tool"
-                        "return = optional return value, stor return value in an variabel for later use expel"
-                        " $return-from-task1 -> args for next task 'validate $return-from-task1'"
-                        f"if use='agent' mode = {agent.available_modes}"
-                        "return format : [task0,-*optional*-taskN... ]"
-                        "example task = {'use':'agent','name':'self','args':'Bitte stell dich vor',"
-                        "'mode':'free','return':'$return'}"
-                        "try to return only one task if the subject includes mutabel bigger steppes"
-                        "return multiple tasks in a list."
-                ,
-                "return": "$taskDict",
-            },
-        ]
-        res = self.execute_thought_chain(str(task), optimise_genrator, agent_execution)
-        task_dict = []
-        if res[-1][-1][-1]:
-            task_dict = anything_from_str_to_dict(res[-1][-1][-1])
-
-        return task_dict
-
-    def test_use_tools2(self, agent_text: str, config) -> tuple[bool, Any, Any]:  # TODO: mor investigation.
-        if not agent_text:
-            return False, "", ""
-
-        # Check if the input is a JSON string
-        self.logger.info("Check if the input is a JSON string")
-        self.print("Check if the input is a JSON string")
+        optimise_genrator = self.agent_chain.get("Task O Generator")
+        if not optimise_genrator:
+            optimise_genrator = [
+                {
+                    "use": "tool",
+                    "name": "memory",
+                    "args": "$user-input",
+                    "return": "$D-Memory"
+                },
+                {
+                    "use": "agent",
+                    "name": "self",
+                    "args": "Brainstorm about the users requesst $user-input find ways to improve it"
+                            " consider all avalabel information"
+                            "informationen die das system zum Subject hat: $D-Memory."
+                    ,
+                    "return": "$infos"
+                },
+                {
+                    "use": "agent",
+                    "mode": "generate",
+                    "name": "self",
+                    "args": "Erstelle Eine Prompt für den Nächsten Agent."
+                            "Der Agent soll eine auf das Subject angepasste task Optimireren"
+                            "Der Agent soll beachten das die Task Im korrekten json format ist. und das alle attribute"
+                            " richtig ausgewählt werden sollen. Die prompt soll auf das Subject und die informationen"
+                            " angepasst sein"
+                            "Subject : $user-input"
+                            "informationen die das system zum Subject hat: $D-Memory. $infos.",
+                    "return": "$task"
+                },
+            ]
+            self.agent_chain.add("Task O Generator", optimise_genrator)
+        _, data, _ = self.execute_thought_chain(str(task), optimise_genrator+[{
+                    "use": "agent",
+                    "mode": "free",
+                    "name": "execution",
+                    "args": "$task Details für das format:\n"
+                            "Task format:\n"
+                            "Keys that must be included [use,name,args,mode,return]\n"
+                            "values for use ['agent', 'tool']\n"
+                            f"values for name if use='agent' {self.config['agents-name-list']}\n"
+                            f"values for name if use='tool' {agent.tools.keys()}\n"
+                            "args: str = command for the agent or tool"
+                            "return = optional return value, stor return value in an variabel for later use expel"
+                            " $return-from-task1 -> args for next task 'validate $return-from-task1'"
+                            f"if use='agent' mode = {agent.available_modes}"
+                            "return format : [task0,-*optional*-taskN... ]"
+                            "example task = {'use':'agent','name':'self','args':'Bitte stell dich vor',"
+                            "'mode':'free','return':'$return'}"
+                            "try to return only one task if the subject includes mutabel bigger steppes"
+                            "return multiple tasks in a list."
+                    ,
+                    "return": "$taskDict",
+                }], agent_execution, chain_data_infos=True)
         try:
-            json_obj = json.loads(agent_text)
-            if "Action" in json_obj and "Inputs" in json_obj:
-                action = json_obj["Action"]
-                inputs = json_obj["Inputs"]
-                if action in config.tools.keys():
-                    return True, action, inputs
-        except json.JSONDecodeError:
-            pass
-
-        # Check if the input is a string with Action and Inputs
-        self.logger.info("Check if the input is a string with Action and Inputs")
-        self.print("Check if the input is a string with Action and Inputs")
-        action_match = re.search(r"Action:\s*(\w+)", agent_text)
-        inputs_match = re.search(r"Inputs:\s*({.*})", agent_text)
-        inputs_matchs = re.search(r"Inputs:\s*(.*)", agent_text)
-        if action_match and inputs_match:
-            action = action_match.group(1)
-            inputs = inputs_match.group(1)
-            if action in config.tools.keys():
-                return True, action, inputs
-
-        if action_match and inputs_matchs:
-            action = action_match.group(1)
-            inputs = inputs_matchs.group(1)
-            if action in config.tools.keys():
-                return True, action, inputs
-
-        if action_match:
-            action = action_match.group(1)
-            if action in config.tools.keys():
-                return True, action, ''
-
-        # Use AI function to determine the action
-        self.logger.info("Use AI function to determine the action")
-        action = self.mini_task_completion(
-            f"Is one of the tools called in this line '''{agent_text}''' Avalabel tools: {list(config.tools.keys())}? If yes, answer with the tool name, if no, then with NONE. Answer:\n")
-        action = action.strip()
-        self.logger.info(f"Use AI : {action}")
-        self.print(f"Use AI : {action}")
-        print(action in list(config.tools.keys()), list(config.tools.keys()))
-        if action in list(config.tools.keys()):
-            inputs = agent_text.split(action, 1)
-            if len(inputs):
-                inputs = inputs[1].strip().replace("Inputs: ", "")
-            return True, action, inputs
-
-        return False, "", ""
+            if '$taskDict' in data.keys():
+                task_list = chain_data['$taskDict']
+            else:
+                task_list = res[-1][-1]
+            task_dict = anything_from_str_to_dict(task_list)
+            if isinstance(task_list, dict):
+                task_dict = [task_list]
+        except ValueError as e:
+            self.print_stream(Style.RED("Error parsing auto task builder"))
+            self.logger.error(Style.RED(f"Error in auto task builder {e}"))
+        return task_dict
 
     def test_use_tools(self, agent_text: str, config: AgentConfig) -> tuple[bool, Any, Any]:
         if not agent_text:
@@ -1570,7 +1564,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         print(f"_extract_from_json, {agent_text}")
 
-        action, inputs = _extract_from_json(agent_text, config)
+        action, inputs = _extract_from_json(agent_text.replace("'", '"'), config)
         print(f"{action=}| {inputs=} {action in config.tools.keys()=}")
         if action and action in config.tools.keys():
             return True, action, inputs
@@ -1769,37 +1763,43 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         elif config.mode == "conversation":
             sto, config.add_system_information = config.add_system_information, False
             prompt = PromptTemplate(
-                input_variables=["input"],
-                template=config.prompt,
+                input_variables=["input", "history"],
+                template='{history}'+config.prompt,
+
             )
             out = ConversationChain(prompt=prompt, llm=self.get_llm_models(config.model_name)).predict(input=text)
             config.add_system_information = sto
-        elif config.mode == "execution":
+        elif config.mode == "live":
             self.logger.info(f"stream mode: {stream}")
-            out = self.stream_read_llm(text, config)
+
+            def online(line):
+                t0 = time.time()
+                self.logger.info(f"analysing repose")
+                self.logger.info(f"analysing test_use_tools")
+                with Spinner('analysing repose', symbols='+'):
+                    use_tool, func_name, command_ = self.test_use_tools(line, config)
+                self.logger.info(f"analysing test_task_done")
+                task_done = self.test_task_done(line)
+                self.logger.info(f"don analysing repose in t-{time.time() - t0}")
+                if use_tool:
+                    self.print(f"Using-tools: {func_name} {command_}")
+                    ob = self.run_tool(command_, func_name, config)
+                    config.observe_mem.text = ob
+                    line += "\nObservation: " + ob
+                if task_done:  # new task
+                    self.print(f"Task done")
+                    # self.speek("Ist die Aufgabe abgeschlossen?")
+                    if config.short_mem.tokens > 50:
+                        with Spinner('Saving work Memory', symbols='t'):
+                            config.short_mem.clear_to_collective()
+
+            if config.stream:
+                out = self.stream_read_llm(text, config, line_interpret=True, interpret=online)
+            else:
+                out = self.stream_read_llm(text, config)
+                online(out)
             if not stream:
                 self.print_stream("execution-free : " + out)
-            print()
-            config.short_mem.text = out
-            t0 = time.time()
-            self.logger.info(f"analysing repose")
-            self.logger.info(f"analysing test_use_tools")
-            with Spinner('analysing repose', symbols='+'):
-                use_tool, func_name, command_ = self.test_use_tools(out, config)
-            self.logger.info(f"analysing test_task_done")
-            task_done = self.test_task_done(out)
-            self.logger.info(f"don analysing repose in t-{time.time() - t0}")
-            if use_tool:
-                self.print(f"Using-tools: {func_name} {command_}")
-                ob = self.run_tool(command_, func_name, config)
-                config.observe_mem.text = ob
-                out += "\nObservation: " + ob
-            if task_done:  # new task
-                self.print(f"Task done")
-                # self.speek("Ist die Aufgabe abgeschlossen?")
-                if config.short_mem.tokens > 50:
-                    with Spinner('Saving work Memory', symbols='t'):
-                        config.short_mem.clear_to_collective()
 
         else:
             out = self.stream_read_llm(text, config)
@@ -2196,12 +2196,14 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         return res, res_um
 
-    def stream_read_llm(self, text, config, r=2.0):
+    def stream_read_llm(self, text, config, r=2.0, line_interpret=False, interpret=lambda x: ''):
 
         p_token_num = config.get_tokens(text)
         config.token_left = config.max_tokens - p_token_num
         self.print(f"TOKENS: {p_token_num}:{len(text)} | left = {config.token_left if config.token_left > 0 else '-'} |"
                    f" max : {config.max_tokens}")
+        llm_output = None
+
         if config.token_left < 0:
             text = self.mas_text_summaries(text)
             p_token_num = config.get_tokens(text)
@@ -2234,6 +2236,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 config.step_between = text
 
             prompt = config.prompt
+            if f'LLM-model-{config.model_name}' not in self.config.keys():
+                self.load_llm_models(config.model_name)
 
             llm_output = self.config[f'LLM-model-{config.model_name}'].generate(
                 prompt=prompt,
@@ -2247,12 +2251,13 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 n_batch=8,
             )
 
-            return self.add_price_data(prompt=prompt,
-                                       config=config,
-                                       llm_output=llm_output)
+            if not config.stream:
+                return self.add_price_data(prompt=prompt,
+                                           config=config,
+                                           llm_output=llm_output)
 
         try:
-            if not config.stream:
+            if not config.stream and llm_output is None:
                 with Spinner(
                     f"Generating response {config.name} {config.model_name} {config.mode} {config.completion_mode}"):
                     res = self.process_completion(text, config)
@@ -2262,12 +2267,16 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 self.add_price_data(prompt=config.last_prompt, config=config, llm_output=res)
                 return res
 
-            print(f"Generating response (/) stream (\\) {config.name} {config.model_name} {config.mode} "
-                  f"{config.completion_mode}")
+            if llm_output is None:
+                llm_output = self.process_completion(text, config)
+
+            # print(f"Generating response (/) stream (\\) {config.name} {config.model_name} {config.mode} "
+            #       f"{config.completion_mode}")
             min_typing_speed, max_typing_speed, res = 0.02, 0.01, ""
             try:
-                for line in self.process_completion(text,
-                                                    config):  # openai.error.InvalidRequestError if error try  is_text_completion = False
+                line_content = ""
+                results = []
+                for line in llm_output:  # openai.error.InvalidRequestError if error try  is_text_completion = False
                     ai_text = ""
 
                     if len(line) == 0 or not line:
@@ -2283,6 +2292,10 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
                     if isinstance(line, str):
                         ai_text = line
+                    line_content += ai_text
+                    if line_interpret and "\n" in ai_text:
+                        interpret(line_content)
+                        line_content = ""
 
                     for i, word in enumerate(ai_text):
                         print(word, end="", flush=True)
@@ -2746,6 +2759,12 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
     def init_cli(self, command, app):
         app.SUPER_SET += list(self.agent_chain.chains.keys())
+        self.load_keys_from_env()
+        self.init_from_augment({'tools':
+                   {'lagChinTools': ['python_repl', 'requests_all', 'terminal', 'sleep', 'google-search',
+                                     'ddg-search', 'wikipedia', 'llm-math', 'requests_get', 'requests_post',
+                                     'requests_patch', 'requests_put', 'requests_delete', 'human'], 'huggingTools': [],
+                    'Plugins': [], 'Custom': []}}, )
 
     def create_task_cli(self):
         self.print("Enter your text (empty line to finish):")
@@ -2955,7 +2974,7 @@ def initialize_gi(app: App or Tools, model_name):
         mod = app
     else:
         raise ValueError(f"Unknown app or mod type {type(app)}")
-    mod.config['genrate_image-init-in'] = model_name
+    mod.config['genrate_image-in'] = model_name
 
     if not mod.config['genrate_image-init']:
         if 'REPLICATE_API_TOKEN' not in mod.config.keys():
@@ -3130,7 +3149,6 @@ def scrape_links(url):
 
 def _extract_from_json(agent_text, config):
     try:
-        print(agent_text)
         json_obj = anything_from_str_to_dict(agent_text, {"Action": None, "Inputs": None})
         print("OBJ:::::::::", json_obj)
         if json_obj:

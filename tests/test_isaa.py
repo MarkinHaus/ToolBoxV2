@@ -12,7 +12,7 @@ from toolboxv2.utils.toolbox import get_app
 from toolboxv2.mods.isaa.isaa import (show_image_in_internet, image_genrating_tool,
                                       browse_website, get_text_summary, get_hyperlinks, scrape_text,
                                       extract_hyperlinks, format_hyperlinks, scrape_links, get_ip, get_location,
-                                      extract_code, get_tool, initialize_gi)
+                                      extract_code, get_tool, initialize_gi, _extract_from_json)
 
 
 class TestIsaa(unittest.TestCase):
@@ -56,6 +56,53 @@ class TestIsaa(unittest.TestCase):
         # Conversational and Thinking Sartegegs 7.4/10 summary classify   (q/a 1): py Lv2)
         'gpt4all#ggml-replit-code-v1-3b.bin',  # Hy ly crative # : 11.08s
     ]
+
+    modes = ["execution", "conversation", "tools", "talk", "free", "planning", "live"]
+    agents = ["self", "todolist", "search", "think", "TaskCompletion", "execution", "summary",
+              "thinkm", "code"]
+
+    augment = {'tools':
+                   {'lagChinTools': ['python_repl', 'requests_all', 'terminal', 'sleep', 'google-search',
+                                     'ddg-search', 'wikipedia', 'llm-math', 'requests_get', 'requests_post',
+                                     'requests_patch', 'requests_put', 'requests_delete'], 'huggingTools': [],
+                    'Plugins': [], 'Custom': []}, 'Agents': {
+        'self': {'name': 'self', 'mode': 'free', 'model_name': 'gpt-4', 'max_iterations': 6, 'verbose': True,
+                 'personality': "\nResourceful: Isaa is able to efficiently utilize its wide range of capabilities and resources to assist the user.\nCollaborative: Isaa is work seamlessly with other agents, tools, and systems to deliver the best possible solutions for the user.\nEmpathetic: Isaa is understand and respond to the user's needs, emotions, and preferences, providing personalized assistance.\nInquisitive: Isaa is continually seek to learn and improve its knowledge base and skills, ensuring it stays up-to-date and relevant.\nTransparent: Isaa is open and honest about its capabilities, limitations, and decision-making processes, fostering trust with the user.\nVersatile: Isaa is adaptable and flexible, capable of handling a wide variety of tasks and challenges.\n                  ",
+                 'goals': "Isaa's primary goal is to be a digital assistant designed to help the user with various tasks and challenges by leveraging its diverse set of capabilities and resources.",
+                 'token_left': 3077, 'temperature': 0.06, '_stream': False, '_stream_reset': False,
+                 'stop_sequence': ['\n\n\n', 'Execute:', 'Observation:', 'User:'], 'completion_mode': 'text',
+                 'add_system_information': True, 'init_mem_state': False, 'binary_tree': None,
+                 'agent_type': 'structured-chat-zero-shot-react-description',
+                 'tools': ['memory_search', 'search_web', 'write-production-redy-code', 'mode_switch', 'think',
+                           'image-generator', 'mini_task', 'memory', 'save_data_to_memory', 'crate_task',
+                           'optimise_task', 'execute-chain', 'Python REPL', 'terminal', 'sleep', 'Google Search',
+                           'DuckDuckGo Search', 'Wikipedia', 'Calculator', 'requests_get', 'requests_post',
+                           'requests_patch', 'requests_put', 'requests_delete'], 'task_list': [],
+                 'task_list_done': [], 'step_between': '', 'pre_task': None, 'task_index': 0},
+        'categorize': {'name': 'categorize', 'mode': 'free', 'model_name': 'gpt-3.5-turbo-0613',
+                       'max_iterations': 2, 'verbose': True, 'personality': '', 'goals': '', 'token_left': 4096,
+                       'temperature': 0.06, '_stream': False, '_stream_reset': False,
+                       'stop_sequence': ['\n\n\n', 'Observation:', 'Execute:'], 'completion_mode': 'text',
+                       'add_system_information': True, 'init_mem_state': False, 'binary_tree': None,
+                       'agent_type': 'structured-chat-zero-shot-react-description',
+                       'tools': ['memory', 'save_data_to_memory', 'crate_task', 'optimise_task'], 'task_list': [],
+                       'task_list_done': [], 'step_between': '', 'pre_task': None, 'task_index': 0},
+        'think': {'name': 'think', 'mode': 'free', 'model_name': 'gpt-4', 'max_iterations': 1, 'verbose': True,
+                  'personality': '', 'goals': '', 'token_left': 1347, 'temperature': 0.06, '_stream': True,
+                  '_stream_reset': False, 'stop_sequence': ['\n\n\n'], 'completion_mode': 'chat',
+                  'add_system_information': True, 'init_mem_state': False, 'binary_tree': None,
+                  'agent_type': 'structured-chat-zero-shot-react-description',
+                  'tools': ['memory', 'save_data_to_memory', 'crate_task', 'optimise_task'], 'task_list': [],
+                  'task_list_done': [], 'step_between': '', 'pre_task': None, 'task_index': 0},
+        'summary': {'name': 'summary', 'mode': 'free', 'model_name': 'gpt4all#ggml-model-gpt4all-falcon-q4_0.bin',
+                    'max_iterations': 1, 'verbose': True, 'personality': '', 'goals': '', 'token_left': 4096,
+                    'temperature': 0.06, '_stream': False, '_stream_reset': False, 'stop_sequence': ['\n\n'],
+                    'completion_mode': 'chat', 'add_system_information': True, 'init_mem_state': False,
+                    'binary_tree': None, 'agent_type': 'structured-chat-zero-shot-react-description',
+                    'tools': ['memory', 'save_data_to_memory', 'crate_task', 'optimise_task'], 'task_list': [],
+                    'task_list_done': [], 'step_between': '',
+                    'pre_task': 'Act as an summary expert your specialties are writing summary. you are known to think in small and detailed steps to get the right result. Your task :',
+                    'task_index': 0}}, 'customFunctions': {}, 'tasks': {}}
 
     @classmethod
     def setUpClass(cls):
@@ -180,56 +227,10 @@ class TestIsaa(unittest.TestCase):
     @patch('toolboxv2.mods.isaa.isaa.Tools.init_tools')
     @patch('toolboxv2.mods.isaa.isaa.Tools.deserialize_all')
     def test_init_from_augment(self, mock_deserialize_all, mock_init_tools):
-        augment = {'tools':
-                       {'lagChinTools': ['python_repl', 'requests_all', 'terminal', 'sleep', 'google-search',
-                                         'ddg-search', 'wikipedia', 'llm-math', 'requests_get', 'requests_post',
-                                         'requests_patch', 'requests_put', 'requests_delete'], 'huggingTools': [],
-                        'Plugins': [], 'Custom': []}, 'Agents': {
-            'self': {'name': 'self', 'mode': 'free', 'model_name': 'gpt-4', 'max_iterations': 6, 'verbose': True,
-                     'personality': "\nResourceful: Isaa is able to efficiently utilize its wide range of capabilities and resources to assist the user.\nCollaborative: Isaa is work seamlessly with other agents, tools, and systems to deliver the best possible solutions for the user.\nEmpathetic: Isaa is understand and respond to the user's needs, emotions, and preferences, providing personalized assistance.\nInquisitive: Isaa is continually seek to learn and improve its knowledge base and skills, ensuring it stays up-to-date and relevant.\nTransparent: Isaa is open and honest about its capabilities, limitations, and decision-making processes, fostering trust with the user.\nVersatile: Isaa is adaptable and flexible, capable of handling a wide variety of tasks and challenges.\n                  ",
-                     'goals': "Isaa's primary goal is to be a digital assistant designed to help the user with various tasks and challenges by leveraging its diverse set of capabilities and resources.",
-                     'token_left': 3077, 'temperature': 0.06, '_stream': False, '_stream_reset': False,
-                     'stop_sequence': ['\n\n\n', 'Execute:', 'Observation:', 'User:'], 'completion_mode': 'text',
-                     'add_system_information': True, 'init_mem_state': False, 'binary_tree': None,
-                     'agent_type': 'structured-chat-zero-shot-react-description',
-                     'tools': ['memory_search', 'search_web', 'write-production-redy-code', 'mode_switch', 'think',
-                               'image-generator', 'mini_task', 'memory', 'save_data_to_memory', 'crate_task',
-                               'optimise_task', 'execute-chain', 'Python REPL', 'terminal', 'sleep', 'Google Search',
-                               'DuckDuckGo Search', 'Wikipedia', 'Calculator', 'requests_get', 'requests_post',
-                               'requests_patch', 'requests_put', 'requests_delete'], 'task_list': [],
-                     'task_list_done': [], 'step_between': '', 'pre_task': None, 'task_index': 0},
-            'categorize': {'name': 'categorize', 'mode': 'free', 'model_name': 'gpt-3.5-turbo-0613',
-                           'max_iterations': 2, 'verbose': True, 'personality': '', 'goals': '', 'token_left': 4096,
-                           'temperature': 0.06, '_stream': False, '_stream_reset': False,
-                           'stop_sequence': ['\n\n\n', 'Observation:', 'Execute:'], 'completion_mode': 'text',
-                           'add_system_information': True, 'init_mem_state': False, 'binary_tree': None,
-                           'agent_type': 'structured-chat-zero-shot-react-description',
-                           'tools': ['memory', 'save_data_to_memory', 'crate_task', 'optimise_task'], 'task_list': [],
-                           'task_list_done': [], 'step_between': '', 'pre_task': None, 'task_index': 0},
-            'think': {'name': 'think', 'mode': 'free', 'model_name': 'gpt-4', 'max_iterations': 1, 'verbose': True,
-                      'personality': '', 'goals': '', 'token_left': 1347, 'temperature': 0.06, '_stream': True,
-                      '_stream_reset': False, 'stop_sequence': ['\n\n\n'], 'completion_mode': 'chat',
-                      'add_system_information': True, 'init_mem_state': False, 'binary_tree': None,
-                      'agent_type': 'structured-chat-zero-shot-react-description',
-                      'tools': ['memory', 'save_data_to_memory', 'crate_task', 'optimise_task'], 'task_list': [],
-                      'task_list_done': [], 'step_between': '', 'pre_task': None, 'task_index': 0},
-            'summary': {'name': 'summary', 'mode': 'free', 'model_name': 'gpt4all#ggml-model-gpt4all-falcon-q4_0.bin',
-                        'max_iterations': 1, 'verbose': True, 'personality': '', 'goals': '', 'token_left': 4096,
-                        'temperature': 0.06, '_stream': False, '_stream_reset': False, 'stop_sequence': ['\n\n'],
-                        'completion_mode': 'chat', 'add_system_information': True, 'init_mem_state': False,
-                        'binary_tree': None, 'agent_type': 'structured-chat-zero-shot-react-description',
-                        'tools': ['memory', 'save_data_to_memory', 'crate_task', 'optimise_task'], 'task_list': [],
-                        'task_list_done': [], 'step_between': '',
-                        'pre_task': 'Act as an summary expert your specialties are writing summary. you are known to think in small and detailed steps to get the right result. Your task :',
-                        'task_index': 0}}, 'customFunctions': {}, 'tasks': {'name': 'Python-unit-test', 'tasks': [
-            {'use': 'agent', 'mode': 'generate', 'name': 'self',
-             'args': "Erstelle Die Nächste Prompt für das schrieben eines unit test aufbau :  '''$user-input''',  Die prompt soll den agent auffordern eine unit test mit dem python modul unittest zu schrieben.\nfüge Konkrete code Beispiele an da der nähste agent den aufbau nicht erhält. so ist deine aufgabe auch him diesen zu\n erklären und dan agent anzuleiten für die zu testende function einen test zu schreiben geb hin dafür\n  auch die function.",
-             'return': '$task'}, {'use': 'tool', 'name': 'write-production-redy-code',
-                                  'args': 'Schreibe einen unit test und erfülle die aufgabe  Der agent soll best practise anwenden : 1. Verwenden Sie unittest, um Testfälle zu erstellen und Assertions durchzuführen.2. Schreiben Sie testbaren Code, der kleine, reine Funktionen verwendet und Abhängigkeiten injiziert.3. Dokumentieren Sie Ihre Tests, um anderen Entwicklern zu helfen, den Zweck und die Funktionalität der Tests zu verstehen.Task: $task\n\nCode: $user-input',
-                                  'return': '$return'}]}}
-        self.isaa.init_from_augment(augment)
-        mock_init_tools.assert_called_once_with(self.isaa.get_agent_config_class("self"), augment['tools'])
-        mock_deserialize_all.assert_called_once_with(augment['Agents'], self.isaa.get_agent_config_class("self"),
+
+        self.isaa.init_from_augment(self.augment)
+        mock_init_tools.assert_called_once_with(self.isaa.get_agent_config_class("self"), self.augment['tools'])
+        mock_deserialize_all.assert_called_once_with(self.augment['Agents'], self.isaa.get_agent_config_class("self"),
                                                      exclude=None)
 
     def test_serialize_all(self):
@@ -776,6 +777,118 @@ Wenn Sie nach der Überprüfung dieser Punkte immer noch Schwierigkeiten haben, 
         result = self.isaa.test_use_tools(agent_text, config)
         self.assertEqual(result, (True, 'api_run', 'Tool'))
 
+    def test_use_tools_multi_string(self):
+
+        data_set = ['Leerzeichen',
+                    '""',
+                    '"Invalid JSON"',
+                    "{'Action': 'ToolA', 'Inputs': {'Param1': 'Value1'}}",
+                    "{'Action': 'ToolB', 'Inputs': {'Param2': 'Value2'}}",
+                    "{'Action': 'ToolC', 'Inputs': {'Param3': 'Value3'}}",
+                    "Action: ToolD Inputs: {Param4: 'Value4'}",
+                    "Action: ToolE Inputs: {Param5: 'Value5'}",
+                    "Action: ToolF Inputs: {Param6: 'Value6'}",
+                    "Action: ToolG Inputs: {Param7: 'Value7'}",
+                    "Action: ToolH Inputs: {Param8: 'Value8'}",
+                    "Action: ToolI Inputs: {Param9: 'Value9'}",
+                    "Action: ToolJ Inputs: {Param10: 'Value10'}",
+                    "Action: InvalidAction Inputs: {Param11: 'Value11'}",
+                    "{'Action': 'InvalidAction', 'Inputs': {'Param12': 'Value12'}}",
+                    "Random Text Without Action and Inputs""",
+                    "Action: ToolK Inputs: {Param13: 'Value13'} Additional Text After Inputs",
+                    "{'Action': 'ToolL', 'Inputs': {'Param14': 'Value14'}} Invalid JSON",
+                    "Action: ToolM Inputs: {Param15: 'Value15'} More Text",
+                    "{'Action': 'ToolN', 'Inputs': {'Param16': 'Value16'}} More Text After JSON",
+                    '''{
+    "Action": "ToolX",
+    "Inputs": {
+        "Param1": "Value1",
+        "Param2": "Value2"
+    }
+}
+''',
+                    '''{
+    "Action": "ToolY",
+    "Inputs": {
+        "Param3": "Value3",
+        "Param4": "Value4"
+    },
+    "AdditionalData": "Invalid"
+}
+''',
+                    '''Action: ToolZ
+Inputs: Param5: Value5
+AdditionalInfo: SomeText
+'''
+                    '''This is a long text that does not contain any recognizable action or inputs.
+It is just a random description without any specific purpose.
+'''
+                    '''I'm not sure which tool to use for this task. Can you help me out?
+AI: ToolA
+Inputs: Param6: Value6, Param7: Value7
+'''
+                    ]
+        tools = [
+            "ToolA",
+            "ToolB",
+            "ToolC",
+            "ToolD",
+            "ToolE",
+            "ToolF",
+            "ToolG",
+            "ToolH",
+            "ToolI",
+            "ToolJ",
+            "ToolL",
+            "ToolM",
+            "ToolN",
+            "ToolX",
+            "ToolK",
+            "ToolY",
+            "ToolZ",
+        ]
+        action_map = [
+            False,
+            False,
+            False,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            False,
+            False,
+            False,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            False,
+            False,
+        ]
+        config = AgentConfig(name='free0', isaa=self.isaa).set_mode('free')
+        for test_tool in tools:
+            self.isaa.add_tool(test_tool, lambda x: x, "no dis", "no form", config)
+        i = 0
+        for test_test in data_set:
+            with self.subTest(TestNumber=i):
+                tool, res = _extract_from_json(test_test, config)
+                result = self.isaa.test_use_tools(test_test, config)
+                print("################################")
+                print(i, tool, res)
+                print("################################")
+                self.assertEqual(list(result)[0], action_map[i])
+
+            i += 1
+
     def test_task_done(self):
         self.assertTrue(self.isaa.test_task_done('Final Answer: answer'))
 
@@ -877,8 +990,87 @@ Wenn Sie nach der Überprüfung dieser Punkte immer noch Schwierigkeiten haben, 
         # Überprüfen Sie, ob die Methode get_agent_config_class aufgerufen wurde
         self.isaa.get_agent_config_class.assert_called_once_with(name)
 
+    def test_run_agents(self):
         # Fügen Sie hier weitere Überprüfungen hinzu, basierend auf dem erwarteten Verhalten der Funktion
-    def test_run_agent(self):
+         # "isaa-chat-web", "chain_search_memory", "chain_search_url", "chain_search_web"
+        for agent_name in self.agents:
+            with self.subTest(Agent=agent_name):
+                agent_class = self.isaa.get_agent_config_class(agent_name)
+                self.assertIsInstance(agent_class, AgentConfig)
+                result = self.isaa.run_agent(agent_class,
+                                             "das ist ein keiner test was ist deine aufgebe was kannst du?")
+                print("###################")
+                self.isaa.print(f"{agent_name}::{result}")
+                print("###################")
+
+    def test_run_agent_self_modes(self):
+        # Fügen Sie hier weitere Überprüfungen hinzu, basierend auf dem erwarteten Verhalten der Funktion
+        self.isaa.init_from_augment(self.augment)
+        agent_class = self.isaa.get_agent_config_class("self")
+        self.assertIsInstance(agent_class, AgentConfig)
+        for mode in self.modes:
+            with self.subTest(Mode=mode):
+                result = self.isaa.run_agent(agent_class,
+                                             "das ist ein keiner test was ist deine aufgebe was kannst du?",
+                                             mode_over_lode=mode)
+                print("###################")
+                self.isaa.print(f"{mode}::{result}")
+                print("###################")
+                result = self.isaa.run_agent(agent_class,
+                                             "Was ergibt 87658 - 23.6 / 12.4?",
+                                             mode_over_lode=mode)
+                print("################### Math")
+                self.isaa.print(f"{mode}: Math (87656,0968) :{result}")
+                print("################### Math")
+
+    def test_run_agent_self_stream(self):
+        # Fügen Sie hier weitere Überprüfungen hinzu, basierend auf dem erwarteten Verhalten der Funktion
+
+        self.isaa.init_from_augment(self.augment)
+        agent_class = self.isaa.get_agent_config_class("self")
+        agent_class.stream = True
+        self.assertIsInstance(agent_class, AgentConfig)
+        result = self.isaa.run_agent(agent_class,
+                                     "das ist ein keiner test was ist deine aufgebe was kannst du?",
+                                     mode_over_lode="free")
+        print("###################")
+        self.isaa.print(f"{result}")
+        print("###################")
+
+    def test_run_agent_self_modes_live(self):
+        # Fügen Sie hier weitere Überprüfungen hinzu, basierend auf dem erwarteten Verhalten der Funktion
+        self.isaa.init_from_augment(self.augment)
+        agent_class = self.isaa.get_agent_config_class("liveInterpretation")
+        self.assertIsInstance(agent_class, AgentConfig)
+        for mode in self.modes:
+            with self.subTest(Mode=self.modes):
+                result = self.isaa.run_agent(agent_class,
+                                             "das ist ein keiner test was ist deine aufgebe was kannst du?",
+                                             mode_over_lode=mode)
+                print("###################")
+                self.isaa.print(f"{mode}::{result}")
+                print("###################")
+                result = self.isaa.run_agent(agent_class,
+                                             "Was ergibt 87658 - 23.6 / 12.4?",
+                                             mode_over_lode=mode)
+                print("################### Math")
+                self.isaa.print(f"{mode}: Math (87656,0968) :{result}")
+                print("################### Math")
+
+    def test_stream_read_llm(self):
+
+        self.isaa.init_from_augment(self.augment)
+        agent_class = self.isaa.get_agent_config_class("self")
+        agent_class.stream = True
+        with self.subTest(config="default"):
+            res = self.isaa.stream_read_llm("Ich habe einen Gedanken dieser lautet :", agent_class)
+            print(res)
+        agent_class.set_model_name("gpt4all#orca-mini-3b.ggmlv3.q4_0.bin")
+        with self.subTest(config="orca"):
+            res = self.isaa.stream_read_llm("Ich habe einen Gedanken dieser lautet :", agent_class)
+            print(res)
+
+    def test_run_agentChain(self):
         # Definieren Sie die Eingabeparameter
 
         user_text = "test"
