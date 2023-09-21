@@ -87,7 +87,10 @@ class TestToolboxv2(unittest.TestCase):
 
         self.app.logger.info(Style.WHITE("Verify that the object was initialized correctly"))
         self.assertEqual(fh.file_handler_filename, "test.config")
-        self.assertEqual(fh.file_handler_file_prefix, ".config/mainTool/")
+        if fh.all_main:
+            self.assertEqual(fh.file_handler_file_prefix, ".config/MainNode/")
+        else:
+            self.assertEqual(fh.file_handler_file_prefix, ".config/mainTool/")
 
         # Open the storage file in write mode and verify that it was opened correctly
         self.app.logger.info(Style.WHITE("testStorage "))

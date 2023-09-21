@@ -15,7 +15,7 @@ from toolboxv2.mods.isaa.isaa import (show_image_in_internet, image_genrating_to
                                       extract_code, get_tool, initialize_gi, _extract_from_json)
 
 
-class TestIsaa(unittest.TestCase):
+class TestIsaaBenchmarks(unittest.TestCase):
     isaa = None
     t0 = 0
     app = None
@@ -60,6 +60,222 @@ class TestIsaa(unittest.TestCase):
     modes = ["execution", "conversation", "tools", "talk", "free", "planning", "live"]
     agents = ["self", "todolist", "search", "think", "TaskCompletion", "execution", "summary",
               "thinkm", "code"]
+
+    augment = {'tools':
+                   {'lagChinTools': ['python_repl', 'requests_all', 'terminal', 'sleep', 'google-search',
+                                     'ddg-search', 'wikipedia', 'llm-math', 'requests_get', 'requests_post',
+                                     'requests_patch', 'requests_put', 'requests_delete'], 'huggingTools': [],
+                    'Plugins': [], 'Custom': []}, 'Agents': {
+        'self': {'name': 'self', 'mode': 'free', 'model_name': 'gpt-4', 'max_iterations': 6, 'verbose': True,
+                 'personality': "\nResourceful: Isaa is able to efficiently utilize its wide range of capabilities and resources to assist the user.\nCollaborative: Isaa is work seamlessly with other agents, tools, and systems to deliver the best possible solutions for the user.\nEmpathetic: Isaa is understand and respond to the user's needs, emotions, and preferences, providing personalized assistance.\nInquisitive: Isaa is continually seek to learn and improve its knowledge base and skills, ensuring it stays up-to-date and relevant.\nTransparent: Isaa is open and honest about its capabilities, limitations, and decision-making processes, fostering trust with the user.\nVersatile: Isaa is adaptable and flexible, capable of handling a wide variety of tasks and challenges.\n                  ",
+                 'goals': "Isaa's primary goal is to be a digital assistant designed to help the user with various tasks and challenges by leveraging its diverse set of capabilities and resources.",
+                 'token_left': 3077, 'temperature': 0.06, '_stream': False, '_stream_reset': False,
+                 'stop_sequence': ['\n\n\n', 'Execute:', 'Observation:', 'User:'], 'completion_mode': 'text',
+                 'add_system_information': True, 'init_mem_state': False, 'binary_tree': None,
+                 'agent_type': 'structured-chat-zero-shot-react-description',
+                 'tools': ['memory_search', 'search_web', 'write-production-redy-code', 'mode_switch', 'think',
+                           'image-generator', 'mini_task', 'memory', 'save_data_to_memory', 'crate_task',
+                           'optimise_task', 'execute-chain', 'Python REPL', 'terminal', 'sleep', 'Google Search',
+                           'DuckDuckGo Search', 'Wikipedia', 'Calculator', 'requests_get', 'requests_post',
+                           'requests_patch', 'requests_put', 'requests_delete'], 'task_list': [],
+                 'task_list_done': [], 'step_between': '', 'pre_task': None, 'task_index': 0},
+        'categorize': {'name': 'categorize', 'mode': 'free', 'model_name': 'gpt-3.5-turbo-0613',
+                       'max_iterations': 2, 'verbose': True, 'personality': '', 'goals': '', 'token_left': 4096,
+                       'temperature': 0.06, '_stream': False, '_stream_reset': False,
+                       'stop_sequence': ['\n\n\n', 'Observation:', 'Execute:'], 'completion_mode': 'text',
+                       'add_system_information': True, 'init_mem_state': False, 'binary_tree': None,
+                       'agent_type': 'structured-chat-zero-shot-react-description',
+                       'tools': ['memory', 'save_data_to_memory', 'crate_task', 'optimise_task'], 'task_list': [],
+                       'task_list_done': [], 'step_between': '', 'pre_task': None, 'task_index': 0},
+        'think': {'name': 'think', 'mode': 'free', 'model_name': 'gpt-4', 'max_iterations': 1, 'verbose': True,
+                  'personality': '', 'goals': '', 'token_left': 1347, 'temperature': 0.06, '_stream': True,
+                  '_stream_reset': False, 'stop_sequence': ['\n\n\n'], 'completion_mode': 'chat',
+                  'add_system_information': True, 'init_mem_state': False, 'binary_tree': None,
+                  'agent_type': 'structured-chat-zero-shot-react-description',
+                  'tools': ['memory', 'save_data_to_memory', 'crate_task', 'optimise_task'], 'task_list': [],
+                  'task_list_done': [], 'step_between': '', 'pre_task': None, 'task_index': 0},
+        'summary': {'name': 'summary', 'mode': 'free', 'model_name': 'gpt4all#ggml-model-gpt4all-falcon-q4_0.bin',
+                    'max_iterations': 1, 'verbose': True, 'personality': '', 'goals': '', 'token_left': 4096,
+                    'temperature': 0.06, '_stream': False, '_stream_reset': False, 'stop_sequence': ['\n\n'],
+                    'completion_mode': 'chat', 'add_system_information': True, 'init_mem_state': False,
+                    'binary_tree': None, 'agent_type': 'structured-chat-zero-shot-react-description',
+                    'tools': ['memory', 'save_data_to_memory', 'crate_task', 'optimise_task'], 'task_list': [],
+                    'task_list_done': [], 'step_between': '',
+                    'pre_task': 'Act as an summary expert your specialties are writing summary. you are known to think in small and detailed steps to get the right result. Your task :',
+                    'task_index': 0}}, 'customFunctions': {}, 'tasks': {}}
+
+    @classmethod
+    def setUpClass(cls):
+        # Code, der einmal vor allen Tests ausgeführt wird
+        cls.t0 = time.time()
+        cls.app = App("test-TestIsaa")
+        cls.app.mlm = "I"
+        cls.app.debug = True
+        cls.app.inplace_load("isaa", "toolboxv2.mods.")
+        cls.app.new_ac_mod("isaa")
+        cls.isaa: Tools = cls.app.get_mod('isaa')
+        cls.isaa.load_keys_from_env()
+        if "OPENAI_API_KEY" in cls.isaa.config:  # in cloud 0
+            cls.models += [
+                'gpt-4', 'text-davinci-003', 'gpt-3.5-turbo-0613',
+                'text-curie-001',
+                'text-babbage-001',
+                'text-ada-001',
+                'text-davinci-edit-001',
+                'gpt-3.5-turbo-instruct',
+                # 'gpt-3.5-turbo'', 'gpt-4-0613', 'code-davinci-edit-001'  #code- usles
+            ]
+
+        if "HUGGINGFACEHUB_API_TOKEN" in cls.isaa.config:
+            cls.models += [
+                'google/flan-t5-small',  # 2/10 ~ ? Knowledge  classify ?eval? : 0.48s
+                # 'facebook/bart-large-cnn', # 0/10 spoling informtions Prompt?
+                # 'tiiuae/falcon-40b', # -1
+                'google/flan-t5-xxl',
+                # eglisch text bot not mutch context 1/10 classify  tool use json to  (q/a 2) :: 0.51s
+                'databricks/dolly-v2-3b',  # Knowledge 0/10 : 0.57s
+                ## 'stabilityai/FreeWilly2', # to big
+                ## 'jondurbin/airoboros-l2-70b-gpt4-1.4.1',
+                ## 'TheBloke/llama-2-70b-Guanaco-QLoRA-fp16',
+                ## 'TheBloke/gpt4-alpaca-lora_mlp-65B-HF',
+                ## 'meta-llama/Llama-2-70b-hf',
+                ## 'TheBloke/guanaco-65B-HF',
+                ## 'huggyllama/llama-65b',
+                # 'NousResearch/Nous-Hermes-Llama2-13b', # slow af | to big  No output
+                # 'YeungNLP/firefly-llama2-13b', # slow ... nop
+                # 'mosaicml/mpt-30b-chat',
+                # 'openaccess-ai-collective/wizard-mega-13b',
+                # 'deutsche-telekom/bert-multi-english-german-squad2',
+                # conversation 'PygmalionAI/pygmalion-6b',
+                # 'meta-llama/Llama-2-7b',
+                'knkarthick/MEETING_SUMMARY',  # summary (q/a 12 : 0.20s
+                # 'TheBloke/OpenAssistant-Llama2-13B-Orca-8K-3319-GGML',
+                # 'TheBloke/Llama-2-7b-chat-fp16',
+                # 'TheBloke/open-llama-7B-v2-open-instruct-GPTQ',
+                # 'TheBloke/open-llama-13b-open-instruct-GPTQ',
+                # 'TheBloke/falcon-7b-instruct-GPTQ',
+                # 'TheBloke/Llama-2-7b-Chat-GPTQ',
+                'stabilityai/stablecode-instruct-alpha-3b'
+            ]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.app.remove_all_modules()
+        cls.app.save_exit()
+        cls.app.exit()
+        cls.app.logger.info(f"Accomplished in {time.time() - cls.t0}")
+
+    def setUp(self):
+        self.app_mock = Mock()
+        self.isaa = self.app.get_mod('isaa')
+
+    def tearDown(self):
+        self.isaa._on_exit()
+        self.app.remove_mod('isaa')
+
+    def _generator_get_all_agent_mode_variants(self, e_modes=None, e_agents=None, a_only=False, m_only=False, do=True):
+        if not do:
+            return []
+        if e_agents is None:
+            e_agents = []
+        if e_modes is None:
+            e_modes = []
+        if a_only:
+            agents = e_agents
+        else:
+            agents = TestIsaa.agents
+            for e_a in e_agents:
+                if e_a in agents:
+                    agents.remove(e_a)
+        if m_only:
+            modes = e_modes
+        else:
+            modes = TestIsaa.modes
+            for e_m in e_modes:
+                if e_m in modes:
+                    modes.remove(e_m)
+        for agent_name in agents:
+            with self.subTest(Agent=agent_name):
+                agent_class = self.isaa.get_agent_config_class(agent_name)
+                self.assertIsInstance(agent_class, AgentConfig)
+                for mode in modes:
+                    with self.subTest(Mode=mode):
+                        agent_class.set_mode(mode)
+                        self.assertEqual(agent_class.mode, mode)
+                        yield agent_class
+
+    def test_show_generator(self):
+        for agent in self._generator_get_all_agent_mode_variants():
+            self.assertIsInstance(agent, AgentConfig)
+            print(f"Agent: {agent.name}, mode: {agent.mode}, c mode: {agent.completion_mode}, ppm: {agent.ppm}")
+        for agent in self._generator_get_all_agent_mode_variants(m_only=True, e_modes=["tools", "execution", "live"]):
+            self.assertIsInstance(agent, AgentConfig)
+            print(f"Agent: {agent.name}, mode: {agent.mode}, c mode: {agent.completion_mode}, ppm: {agent.ppm}")
+            self.assertNotEqual(agent.mode, "planning")
+
+    def test_best_fit_carte_config(self):
+
+        allse = []
+
+        for agent in self._generator_get_all_agent_mode_variants(m_only=True, a_only=True, e_modes=["execution"],
+                                                                 e_agents=["execution", "thinkm"], do=False):
+            chain = self.isaa.create_task(
+                "Erstelle eine Chain die dynamisch das web nach einer bestimmten information durchsucht", agent)
+
+            reson = self.isaa.stream_read_llm(
+                f"Bewerte diese Aufgeben Kette mit einer Punk zahl von 1 bis 100 und begründe diese. Das ziel : Erstelle eine Chain die dynamisch das web nach einer bestimmten information durchsucht Die erstellte und zubewetende chain :'{chain}'",
+                agent)
+            allse.append([reson, f"Agent: {agent.name}, mode: {agent.mode}", chain])
+            print(
+                f"Agent: {agent.name}, mode: {agent.mode}, c mode: {agent.completion_mode}, reson: {reson}, chain: {chain}")
+
+        print(allse)
+
+
+class TestIsaa(unittest.TestCase):
+    isaa = None
+    t0 = 0
+    app = None
+
+    not_run = [
+        'gpt-4',
+        'gpt-3.5-turbo',
+        'gpt-3.5-turbo-0613',
+        'text-davinci-003',
+        'gpt-4-0613',
+        'code-davinci-edit-001',
+        'text-curie-001',
+        'text-babbage-001',
+        'text-ada-001',
+        'text-davinci-edit-001',
+        'gpt-3.5-turbo-instruct',
+
+        'google/flan-t5-small',
+        'google/flan-t5-xxl',
+        'databricks/dolly-v2-3b',
+        'stabilityai/stablecode-instruct-alpha-3b',
+
+        'gpt4all#GPT4All-13B-snoozy.ggmlv3.q4_0.bin',  # 5/
+        'gpt4all#orca-mini-7b.ggmlv3.q4_0.bin',  # 4.5/10 :
+        'gpt4all#orca-mini-3b.ggmlv3.q4_0.bin',  # for comm
+        'gpt4all#wizardLM-13B-Uncensored.ggmlv3.q4_0.bin',
+        'gpt4all#ggml-replit-code-v1-3b.bin',  # Hy ly crati
+        'knkarthick/MEETING_SUMMARY'
+    ]
+
+    models = [
+        'gpt4all#GPT4All-13B-snoozy.ggmlv3.q4_0.bin',  # 5/10 (summary/classify/pl_lv2 in : 13.75s
+        'gpt4all#orca-mini-7b.ggmlv3.q4_0.bin',  # : 7.17s
+        # 4.5/10 : Hily spesific if you have any questions related to programming or computer science, feel free to ask me! , classify
+        'gpt4all#orca-mini-3b.ggmlv3.q4_0.bin',  # : 3.76s
+        # for command exection and evalation prosseses 6/10 context classify (tool use) qa code summ
+        'gpt4all#wizardLM-13B-Uncensored.ggmlv3.q4_0.bin',  # : 13.62s
+        # Conversational and Thinking Sartegegs 7.4/10 summary classify   (q/a 1): py Lv2)
+        'gpt4all#ggml-replit-code-v1-3b.bin',  # Hy ly crative # : 11.08s
+    ]
+
+    modes = []  # ["conversation", "tools", "talk", "free", "planning", "live"]
+    agents = []  # ["self", "todolist", "search", "think", "TaskCompletion", "execution", "summary", "thinkm", "code"]
 
     augment = {'tools':
                    {'lagChinTools': ['python_repl', 'requests_all', 'terminal', 'sleep', 'google-search',
@@ -992,7 +1208,7 @@ Inputs: Param6: Value6, Param7: Value7
 
     def test_run_agents(self):
         # Fügen Sie hier weitere Überprüfungen hinzu, basierend auf dem erwarteten Verhalten der Funktion
-         # "isaa-chat-web", "chain_search_memory", "chain_search_url", "chain_search_web"
+        # "isaa-chat-web", "chain_search_memory", "chain_search_url", "chain_search_web"
         for agent_name in self.agents:
             with self.subTest(Agent=agent_name):
                 agent_class = self.isaa.get_agent_config_class(agent_name)
@@ -1043,7 +1259,7 @@ Inputs: Param6: Value6, Param7: Value7
         agent_class = self.isaa.get_agent_config_class("liveInterpretation")
         self.assertIsInstance(agent_class, AgentConfig)
         for mode in self.modes:
-            with self.subTest(Mode=self.modes):
+            with self.subTest(Mode=mode):
                 result = self.isaa.run_agent(agent_class,
                                              "das ist ein keiner test was ist deine aufgebe was kannst du?",
                                              mode_over_lode=mode)
@@ -1056,6 +1272,36 @@ Inputs: Param6: Value6, Param7: Value7
                 print("################### Math")
                 self.isaa.print(f"{mode}: Math (87656,0968) :{result}")
                 print("################### Math")
+
+    def test_run_agent_self_tools(self):
+        # Fügen Sie hier weitere Überprüfungen hinzu, basierend auf dem erwarteten Verhalten der Funktion
+        agent_name = "tools-test"
+        self.isaa.init_from_augment(self.augment, agent_name)
+        agent_class = self.isaa.get_agent_config_class(agent_name)
+        self.assertIsInstance(agent_class, AgentConfig)
+
+        result = self.isaa.run_agent(agent_class,
+                                     "suche im web wie alt Barak obama ist und wie viel älter er als seine frau ist")
+        print("###################")
+        self.isaa.print(f"::{result}")
+        print("###################")
+        print(agent_class.observe_mem.text)
+
+    def test_run_agent_self_live(self):
+        # Fügen Sie hier weitere Überprüfungen hinzu, basierend auf dem erwarteten Verhalten der Funktion
+        agent_name = "liveInterpretation"
+        self.isaa.init_from_augment(self.augment, agent_name)
+        agent_class = self.isaa.get_agent_config_class(agent_name)
+        self.assertIsInstance(agent_class, AgentConfig)
+
+        result = self.isaa.run_agent(agent_class,
+                                     "Take action  ; f(x) = x^3 - 3x^2 + 2x - 1.  Find the critical points of this "
+                                     "function and determine whether they are local minima, local maxima, "
+                                     "or saddle points. Also, find the intervals of increase and decrease.", r=4)
+        print("###################")
+        self.isaa.print(f"::{result}")
+        print("###################")
+        print(agent_class.observe_mem.text)
 
     def test_stream_read_llm(self):
 

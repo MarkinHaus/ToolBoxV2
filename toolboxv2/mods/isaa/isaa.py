@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import random
 import shlex
 import sys
@@ -16,6 +17,7 @@ from duckduckgo_search import ddg, ddg_answers, ddg_news
 from langchain import PromptTemplate, LLMChain, OpenAI, HuggingFaceHub, ConversationChain, GoogleSearchAPIWrapper
 from langchain.agents import initialize_agent, tool as LCtool, load_tools, load_huggingface_tool
 from langchain.chains import ConversationalRetrievalChain
+from langchain.agents.agent_toolkits import FileManagementToolkit
 # Model
 from langchain.chat_models import ChatOpenAI
 from langchain.tools import AIPluginTool
@@ -106,7 +108,12 @@ class Tools(MainTool, FileHandler):
         self.logger: logging.Logger or None = app.logger if app else None
         self.color = "VIOLET2"
         self.config = {'genrate_image-init': False,
-                       'agents-name-list': []
+                       'agents-name-list': [],
+        "DEFAULTMODEL0" : "gpt-4",
+        "DEFAULTMODEL1" : "gpt-3.5-turbo-0613",
+        "DEFAULTMODEL2" : "text-davinci-003",
+        "DEFAULTMODELCODE" : "code-davinci-edit-001",
+        "DEFAULTMODELSUMMERY" : "text-curie-001",
                        }
         self.per_data = {}
         self.keys = {
@@ -136,6 +143,7 @@ class Tools(MainTool, FileHandler):
                     ["generate_task", "generate_task", 0, "generate_task"],
                     ["init_cli", "init_cli", 0, "init_cli"],
                     ["run_chain_cli", "run_chain_cli", 0, "run_chain_cli"],
+                    ["remove_chain_cli", "remove_chain_cli", 0, "remove_chain_cli"],
                     ["create_task_cli", "create_task_cli", 0, "create_task_cli"],
                     ["optimise_task_cli", "optimise_task_cli", 0, "optimise_task_cli"],
                     ["run_create_task_cli", "run_create_task_cli", 0, "run_create_task_cli"],
@@ -158,6 +166,7 @@ class Tools(MainTool, FileHandler):
             "generate_task": self.generate_task,
             "init_cli": self.init_cli,
             "run_chain_cli": self.run_chain_cli,
+            "remove_chain_cli": self.remove_chain_cli,
             "create_task_cli": self.create_task_cli,
             "optimise_task_cli": self.optimise_task_cli,
             "run_create_task_cli": self.run_create_task_cli,
@@ -165,6 +174,7 @@ class Tools(MainTool, FileHandler):
             "run_auto_chain_cli": self.run_auto_chain_cli,
             "save_to_mem": self.save_to_mem,
         }
+        self.working_directory = "C:\\Users\\Markin\\Isaa"
         self.app_ = app
         self.print_stream = print
         self.agent_collective_senses = False
@@ -294,6 +304,13 @@ class Tools(MainTool, FileHandler):
         #    "Plugins": ["https://nla.zapier.com/.well-known/ai-plugin.json"],
         #    "Custom": [],
         # }
+
+        if 'Plugins' not in tools.keys():
+            tools['Plugins'] = []
+        if 'lagChinTools' not in tools.keys():
+            tools['lagChinTools'] = []
+        if 'huggingTools' not in tools.keys():
+            tools['huggingTools'] = []
 
         for plugin_url in tools['Plugins']:
             get_logger().info(Style.BLUE(f"Try opening plugin from : {plugin_url}"))
@@ -661,6 +678,11 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
         self.config['SERP_API_KEY'] = os.getenv('SERP_API_KEY')
         self.config['PINECONE_API_KEY'] = os.getenv('PINECONE_API_KEY')
         self.config['PINECONE_API_ENV'] = os.getenv('PINECONE_API_ENV')
+        self.config['DEFAULTMODEL0'] = os.getenv("DEFAULTMODEL0", "gpt-4")
+        self.config['DEFAULTMODEL1'] = os.getenv("DEFAULTMODEL1", "gpt-3.5-turbo-0613")
+        self.config['DEFAULTMODEL2'] = os.getenv("DEFAULTMODEL2", "text-davinci-003")
+        self.config['DEFAULTMODELCODE'] = os.getenv("DEFAULTMODELCODE", "code-davinci-edit-001")
+        self.config['DEFAULTMODELSUMMERY'] = os.getenv("DEFAULTMODELSUMMERY", "text-curie-001")
 
     def webInstall(self, user_instance, construct_render) -> str:
         self.print('Installing')
@@ -688,6 +710,7 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
         self.price['price_consumption'] = 0
 
         self.config['price'] = self.price
+        self.config['augment'] = self.get_augment()
         time.sleep(0.2)
         for key in list(self.config.keys()):
             if key.startswith("LLM-model-"):
@@ -1013,7 +1036,7 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
 
         if name == "self":
             config.mode = "free"
-            config.model_name = "gpt-4"
+            config.model_name = self.config['DEFAULTMODEL0'] # "gpt-4"
             config.max_iterations = 6
             config.personality = """
 Resourceful: Isaa is able to efficiently utilize its wide range of capabilities and resources to assist the user.
@@ -1062,11 +1085,11 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 tools[key] = {"func": _tool, "description": _tool.description, "format": f"{key}({_tool.args})"}
             config. \
                 set_mode("tools") \
-                .set_model_name("gpt-3.5-turbo-0613") \
+                .set_model_name(self.config['DEFAULTMODEL1']) \
                 .set_max_iterations(4) \
                 .set_completion_mode("chat") \
                 .set_tools(tools)
-
+        # "gpt-3.5-turbo-0613"
         if name == "todolist":
 
             def priorisirung(x):
@@ -1076,7 +1099,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 return run_agent(config.name, x, mode_over_lode="talk")
 
             config. \
-                set_model_name("gpt-3.5-turbo"). \
+                set_model_name(self.config['DEFAULTMODEL1']). \
                 set_max_iterations(4). \
                 set_mode('tools'). \
                 set_tools({"Thinck": {"func": lambda x: priorisirung(x),
@@ -1108,8 +1131,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config.short_mem.max_length = 3000
 
         if name == "search":
-            config.mode = "execution"
-            config.model_name = "gpt-3.5-turbo-0613"
+            config.mode = "tools"
+            config.model_name = self.config['DEFAULTMODEL1']
             config.completion_mode = "chat"
             config.set_agent_type("zero-shot-react-description")
             config.max_iterations = 6
@@ -1157,7 +1180,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             config. \
                 set_mode("free") \
                 .set_max_iterations(1) \
-                .set_completion_mode("chat").set_model_name("gpt-4")
+                .set_completion_mode("chat").set_model_name(self.config['DEFAULTMODEL0'])
 
             config.stop_sequence = ["\n\n\n"]
 
@@ -1166,7 +1189,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 set_mode("free") \
                 .set_max_iterations(1) \
                 .set_completion_mode("text") \
-                .set_model_name("text-davinci-003")
+                .set_model_name(self.config['DEFAULTMODEL2'])
             config.add_system_information = False
             config.stop_sequence = ["\n"]
 
@@ -1175,7 +1198,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 set_mode("live") \
                 .set_max_iterations(4) \
                 .set_completion_mode("chat") \
-                .set_model_name("gpt-4-0613").stream = True
+                .set_model_name(self.config['DEFAULTMODEL0']).stream = True
+            config.stop_sequence = ["!X!"]
 
         if name == "isaa-chat-web":
             config. \
@@ -1188,9 +1212,9 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 set_mode("free") \
                 .set_max_iterations(2) \
                 .set_completion_mode("text") \
-                .set_model_name('text-curie-001') \
+                .set_model_name(self.config['DEFAULTMODELSUMMERY']) \
                 .set_pre_task("Write a Summary of the following text :")
-
+            # 'text-curie-001'
             # text-davinci-003 text-babbage-001 curie
             config.stop_sequence = ["\n\n\n"]
             config.stream = False
@@ -1199,7 +1223,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         if name == "thinkm":
             config. \
                 set_mode("free") \
-                .set_model_name("gpt-3.5-turbo-0613") \
+                .set_model_name(self.config['DEFAULTMODEL1']) \
                 .set_max_iterations(1) \
                 .set_completion_mode("chat")
 
@@ -1208,14 +1232,14 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         if name == "code":
             config. \
                 set_mode("free") \
-                .set_model_name("code-davinci-edit-001") \
+                .set_model_name(self.config['DEFAULTMODELCODE']) \
                 .set_max_iterations(3) \
                 .set_completion_mode("edit")
 
         if name.startswith("chain_search"):
 
             config.mode = "tools"
-            config.model_name = "gpt-3.5-turbo"
+            config.model_name = self.config['DEFAULTMODEL1']
 
             config.set_agent_type("self-ask-with-search")
             config.max_iterations = 4
@@ -1297,10 +1321,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
             return 'added to memory'
 
-        def crate_task_wrapper(task, *args):
+        def crate_task_wrapper(task):
             if task:
-                if args:
-                    task += ' '.join(args)
                 self.print(Style.GREEN("Crating Task"))
                 return self.create_task(task)
             self.print(Style.YELLOW("Not Task specified"))
@@ -1316,14 +1338,27 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                       "save_data_to_memory(<store_information>)",
                       config)
 
-        self.add_tool("crate_task", lambda x: crate_task_wrapper(x),
+        self.add_tool("crate_task_chain", crate_task_wrapper,
                       "tool to crate a task for a subject input subject:str",
-                      "crate_task(<subject>)",
+                      "crate_task_chain(<subject>)",
                       config)
 
-        self.add_tool("optimise_task", lambda x: self.optimise_task(x), "tool to optimise a task enter task name",
-                      "optimise_task(<subject>)",
+        self.add_tool("optimise_task_chain", self.optimise_task, "tool to optimise a task enter task name",
+                      "optimise_task_chain(<subject>)",
                       config)
+
+        self.add_tool("run_task_chain", lambda name: self.run_chain_on_name(name, "$user-input"), "tool to run a crated chain"
+                                                                                 " with an task as objective",
+                      "run_task_chain(<chain_name>,<objective>)",
+                      config)
+
+        toolkit = FileManagementToolkit(
+            root_dir=str(self.working_directory)
+        )  # If you don't provide a root_dir, operations will default to the current working directory
+        for file_tool in toolkit.get_tools():
+            self.lang_chain_tools_dict[file_tool.name] = file_tool
+
+        self.add_lang_chain_tools_to_agent(config, config.tools)
 
         return config
 
@@ -1352,9 +1387,11 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         agent = self.get_agent_config_class("TaskCompletion")
         return self.stream_read_llm(mini_task, agent)
 
-    def create_task(self, task: str):
+    def create_task(self, task: str, agent_execution=None):
         agent = self.get_agent_config_class("self")
-        agent_execution = self.get_agent_config_class("execution")
+        if agent_execution is None:
+            agent_execution = self.get_agent_config_class("create_task")
+            agent_execution.set_mode("free")
         agent_execution.get_messages(create=True)
 
         tools_list = list(agent.tools.keys())
@@ -1417,34 +1454,32 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                             " "immer verfügbar ist, ist die Benutzereingabe. Imparativ"
                             " "return_val:List[dict] = "
         """
-        res, chain_data, _ = self.execute_thought_chain(task, task_generator+[{
-                    "use": "agent",
-                    "name": "think",
-                    "args": "$task "
-                            "Informationen : $infos \nOnly return the task list nothing else!!\nDetails für das format:\n"
-                            "the user input variabel is (var sign)[$](var name)[user-input] allways include the variabel in the first input"
-                            "Task format:\n"
-                            "Keys that must be included [use,name,args,mode,return]\n"
-                            "values for use ['agent', 'tool']\n"
-                            f"values for name if use='agent' {self.config['agents-name-list']}\n"
-                            f"values for name if use='tool' {tools_list}\n"
-                            "args: str = command for the agent or tool"
-                            "return = optional return value, stor return value in an variabel for later use expel"
-                            " $return-from-task1 -> args for next task 'validate $return-from-task1'"
-                            f"if use='agent' mode = {agent.available_modes}"
-                            "return format : [task0,-*optional*-taskN... ]"
-                            "example task:dict = {'use':'agent','name':'self','args':'Bitte stell dich vor',"
-                            "'mode':'free','return':'$return'}"
-                            "try to return only one task if the subject includes mutabel bigger steppes"
-                            "return multiple tasks in a list."
-                            "tip: variables are announced with $ so $a is a variable a. variables are decarated by the "
-                            "return value so information about variables can be hidden. the first variable that is "
-                            "always available is user-input. "
-                            "!!!Note that the chain must be used in the imperative to perform actions.!!!"
-                            "return_val:List[dict] = "
-                    ,
-                    "return": "$taskDict",
-                }], agent_execution, chain_data=chain_data,
+        res, chain_data, _ = self.execute_thought_chain(task, task_generator + [{
+            "use": "agent",
+            "name": "think",
+            "args": "$task "
+                    "Informationen : $infos \nOnly return the task list nothing else!!\nDetails für das format:\n"
+                    "the user input variabel is (var sign)[$](var name)[user-input] allways include the variabel in the first input.\n"
+                    "Task format:\n"
+                    "Keys that must be included [use,name,args,mode,return]\n"
+                    "values for use ['agent', 'tool']\n"
+                    f"values for name if use='agent' {self.config['agents-name-list']}\n"
+                    f"values for name if use='tool' {tools_list}\n"
+                    "args: str = command for the agent or tool"
+                    "return = optional return value, stor return value in an variabel for later use expel"
+                    " $return-from-task1 -> args for next task 'validate $return-from-task1'"
+                    f"if use='agent' mode = {agent.available_modes}"
+                    "return format : [task0,-*optional*-taskN... ]"
+                    "try to return only one task if the subject includes mutabel bigger steppes"
+                    "return multiple tasks in a list."
+                    "tip: variables are announced with $ so $a is a variable. variables are decarated by the "
+                    "return value. the first variable is "
+                    "always user-input use it! Must use variables in the args keyword!!"
+                    "!!!Note that the chain must be written in the imperative.!!!\n"
+                    "return_val:List[dict] = "
+            ,
+            "return": "$taskDict",
+        }], agent_execution, chain_data=chain_data,
                                                         chain_data_infos=True)
         task_list = []
         try:
@@ -1485,7 +1520,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         task_dict = []
 
         agent = self.get_agent_config_class("self")
-        agent_execution = self.get_agent_config_class("execution")
+        agent_execution = self.get_agent_config_class("optimise_task")
         agent_execution.get_messages(create=True)
         task = self.agent_chain.get(task_name)
         optimise_genrator = self.agent_chain.get("Task O Generator")
@@ -1521,28 +1556,28 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 },
             ]
             self.agent_chain.add("Task O Generator", optimise_genrator)
-        _, data, _ = self.execute_thought_chain(str(task), optimise_genrator+[{
-                    "use": "agent",
-                    "mode": "free",
-                    "name": "execution",
-                    "args": "$task Details für das format:\n"
-                            "Task format:\n"
-                            "Keys that must be included [use,name,args,mode,return]\n"
-                            "values for use ['agent', 'tool']\n"
-                            f"values for name if use='agent' {self.config['agents-name-list']}\n"
-                            f"values for name if use='tool' {agent.tools.keys()}\n"
-                            "args: str = command for the agent or tool"
-                            "return = optional return value, stor return value in an variabel for later use expel"
-                            " $return-from-task1 -> args for next task 'validate $return-from-task1'"
-                            f"if use='agent' mode = {agent.available_modes}"
-                            "return format : [task0,-*optional*-taskN... ]"
-                            "example task = {'use':'agent','name':'self','args':'Bitte stell dich vor',"
-                            "'mode':'free','return':'$return'}"
-                            "try to return only one task if the subject includes mutabel bigger steppes"
-                            "return multiple tasks in a list."
-                    ,
-                    "return": "$taskDict",
-                }], agent_execution, chain_data_infos=True)
+        _, data, _ = self.execute_thought_chain(str(task), optimise_genrator + [{
+            "use": "agent",
+            "mode": "free",
+            "name": "execution",
+            "args": "$task Details für das format:\n"
+                    "Task format:\n"
+                    "Keys that must be included [use,name,args,mode,return]\n"
+                    "values for use ['agent', 'tool']\n"
+                    f"values for name if use='agent' {self.config['agents-name-list']}\n"
+                    f"values for name if use='tool' {agent.tools.keys()}\n"
+                    "args: str = command for the agent or tool"
+                    "return = optional return value, stor return value in an variabel for later use expel"
+                    " $return-from-task1 -> args for next task 'validate $return-from-task1'"
+                    f"if use='agent' mode = {agent.available_modes}"
+                    "return format : [task0,-*optional*-taskN... ]"
+                    "example task = {'use':'agent','name':'self','args':'Bitte stell dich vor',"
+                    "'mode':'free','return':'$return'}"
+                    "try to return only one task if the subject includes mutabel bigger steppes"
+                    "return multiple tasks in a list."
+            ,
+            "return": "$taskDict",
+        }], agent_execution, chain_data_infos=True)
         try:
             if '$taskDict' in data.keys():
                 task_list = chain_data['$taskDict']
@@ -1562,22 +1597,22 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         self.logger.info("Start testing tools")
 
-        print(f"_extract_from_json, {agent_text}")
+        # print(f"_extract_from_json, {agent_text}")
 
         action, inputs = _extract_from_json(agent_text.replace("'", '"'), config)
-        print(f"{action=}| {inputs=} {action in config.tools.keys()=}")
+        # print(f"{action=}| {inputs=} {action in config.tools.keys()=}")
         if action and action in config.tools.keys():
             return True, action, inputs
 
-        print("_extract_from_string")
+        # print("_extract_from_string")
         action, inputs = _extract_from_string(agent_text, config)
-        print(f"{action=}| {inputs=} {action in config.tools.keys()=}")
+        # print(f"{action=}| {inputs=} {action in config.tools.keys()=}")
         if action and action in config.tools.keys():
             return True, action, inputs
 
-        print("_extract_from_string")
+        # print("_extract_from_string")
         action, inputs = _extract_from_string_de(agent_text, config)
-        print(f"{action=}| {inputs=} {action in config.tools.keys()=}")
+        # print(f"{action=}| {inputs=} {action in config.tools.keys()=}")
         if action and action in config.tools.keys():
             return True, action, inputs
 
@@ -1587,7 +1622,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         action = action.strip()
         self.logger.info(f"Use AI : {action}")
         self.print(f"Use AI : {action}")
-        print(action in list(config.tools.keys()), list(config.tools.keys()))
+        # print(action in list(config.tools.keys()), list(config.tools.keys()))
         if action in list(config.tools.keys()):
             inputs = agent_text.split(action, 1)
             if len(inputs):
@@ -1621,7 +1656,14 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
     @staticmethod
     def parse_arguments(command: str):
         try:
-            args = json.loads(command)
+            if isinstance(command, str):
+                args = json.loads(command)
+            elif isinstance(command, dict):
+                args = command
+            elif isinstance(command, list):
+                return command, {}
+            else:
+                raise json.JSONDecodeError
             if isinstance(args, dict):
                 return (), args
             return (args,), {}
@@ -1684,7 +1726,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         return observation
 
-    def run_agent(self, name: str or AgentConfig, text: str, mode_over_lode: str or None = None):
+    def run_agent(self, name: str or AgentConfig, text: str, mode_over_lode: str or None = None, r=2):
         config = None
         if isinstance(name, str):
             config = self.get_agent_config_class(name)
@@ -1701,7 +1743,6 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         # print("AGENT:CONFIG"+str(config)+"ENDE\n\n\n")
 
         out = "Invalid configuration\n"
-        system = ""
         stream = config.stream
         self.logger.info(f"stream mode: {stream} mode : {config.mode}")
         if config.mode == "talk":
@@ -1752,11 +1793,15 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             #                           max_iterations=config.max_iterations).run(text)
             #    print(out)
             # else:
-            out = initialize_agent(tools, prompt=prompt,
-                                   llm=self.get_llm_models(config.model_name),
-                                   agent=agent_type, verbose=config.verbose,
-                                   return_intermediate_steps=True,
-                                   max_iterations=config.max_iterations)(text)
+            try:
+                out = initialize_agent(tools, prompt=prompt,
+                                       llm=self.get_llm_models(config.model_name),
+                                       agent=agent_type, verbose=config.verbose,
+                                       return_intermediate_steps=True,
+                                       max_iterations=config.max_iterations)(text)
+            except Exception:
+                if r > 0:
+                    return self.run_agent(name, text+"\nFocus on using the rigt input for the actions som take just a string as input", r=r-1)
             if agent_type not in ["structured-chat-zero-shot-react-description"]:
                 out = self.summarize_dict(out, config)
             config.add_system_information = sto
@@ -1764,7 +1809,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             sto, config.add_system_information = config.add_system_information, False
             prompt = PromptTemplate(
                 input_variables=["input", "history"],
-                template='{history}'+config.prompt,
+                template='{history}' + config.prompt,
 
             )
             out = ConversationChain(prompt=prompt, llm=self.get_llm_models(config.model_name)).predict(input=text)
@@ -1772,35 +1817,67 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         elif config.mode == "live":
             self.logger.info(f"stream mode: {stream}")
 
+            all_description = ""
+
+            for key in self.agent_chain.chains.keys():
+                if "Task Generator" in key or "Task-Generator" in key:
+                    continue
+                des = self.agent_chain.get_discr(key)
+                if des is None:
+                    des = key
+                all_description += f"NAME:{key} \nUse case:{des}"
+
+            config.capabilities = all_description
+            config.onLiveMode = ""
+
+            def olivemode(line: str):
+                modes = ["ACTION:", "TALK:", "SPEAK:", "THINK:", "PLAN:"]
+                for mode in modes:
+                    if mode in line.upper() or line.startswith('{'):
+                        config.onLiveMode = mode
+                        return mode
+                if config.onLiveMode:
+                    return config.onLiveMode
+                return False
+
             def online(line):
-                t0 = time.time()
-                self.logger.info(f"analysing repose")
-                self.logger.info(f"analysing test_use_tools")
-                with Spinner('analysing repose', symbols='+'):
+                mode = olivemode(line)
+                if not mode:
+                    return
+
+                self.print("Mode: " + mode)
+
+                if mode == "ACTION:":
                     use_tool, func_name, command_ = self.test_use_tools(line, config)
-                self.logger.info(f"analysing test_task_done")
-                task_done = self.test_task_done(line)
-                self.logger.info(f"don analysing repose in t-{time.time() - t0}")
-                if use_tool:
-                    self.print(f"Using-tools: {func_name} {command_}")
-                    ob = self.run_tool(command_, func_name, config)
-                    config.observe_mem.text = ob
-                    line += "\nObservation: " + ob
-                if task_done:  # new task
-                    self.print(f"Task done")
-                    # self.speek("Ist die Aufgabe abgeschlossen?")
-                    if config.short_mem.tokens > 50:
-                        with Spinner('Saving work Memory', symbols='t'):
+                    self.logger.info(f"analysing test_task_done")
+                    task_done = self.test_task_done(line)
+                    if use_tool:
+                        self.print(f"Using-tools: {func_name} {command_}")
+                        ob = self.run_tool(command_, func_name, config)
+                        config.observe_mem.text = ob
+                        self.print(f"Observation: {ob}")
+                        config.onLiveMode = ""
+                    if task_done:  # new task
+                        self.print(f"Task done")
+                        # self.speek("Ist die Aufgabe abgeschlossen?")
+                        if config.short_mem.tokens > 50:
                             config.short_mem.clear_to_collective()
+                        config.onLiveMode = ""
+                if mode == "PLAN:":
+                    config.task_list.append(line)
 
             if config.stream:
                 out = self.stream_read_llm(text, config, line_interpret=True, interpret=online)
+                if not "\n" in out:
+                    online(out)
             else:
                 out = self.stream_read_llm(text, config)
                 online(out)
             if not stream:
                 self.print_stream("execution-free : " + out)
 
+            if out.endswith("EVAL") and r:
+                self.run_agent(name, "EVAL from observation", r=r-1)
         else:
             out = self.stream_read_llm(text, config)
             if not stream:
@@ -2293,7 +2370,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                     if isinstance(line, str):
                         ai_text = line
                     line_content += ai_text
-                    if line_interpret and "\n" in ai_text:
+                    if line_interpret and "\n" in line_content:
                         interpret(line_content)
                         line_content = ""
 
@@ -2307,6 +2384,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                         min_typing_speed = min_typing_speed * 0.07
                         max_typing_speed = max_typing_speed * 0.06
                     res += str(ai_text)
+                if line_interpret and line_content:
+                    interpret(line_content)
             except requests.exceptions.ChunkedEncodingError as ex:
                 print(f"Invalid chunk encoding {str(ex)}")
                 self.print(f"{' ' * 30} | Retry level: {r} ", end="\r")
@@ -2370,9 +2449,9 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 self.logger.error("The server is currently overloaded with other requests. Sorry about that!")
                 return "The System cannot correct the text input for the agent."
 
-        except Exception as e:
-            self.logger.error(str(e))
-            return "*Error*"
+        #except Exception as e:
+        #    self.logger.error(str(e))
+        #    return "*Error*"
 
     @staticmethod
     def process_completion(text, config: AgentConfig):
@@ -2760,11 +2839,36 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
     def init_cli(self, command, app):
         app.SUPER_SET += list(self.agent_chain.chains.keys())
         self.load_keys_from_env()
+        if "augment" in self.config.keys():
+            self.init_from_augment(self.config['augment'])
+            self.print("Initialized from config augment")
+            if 'tools' in self.config['augment'].keys():
+                if self.config['augment']['tools']:
+                    return
         self.init_from_augment({'tools':
-                   {'lagChinTools': ['python_repl', 'requests_all', 'terminal', 'sleep', 'google-search',
-                                     'ddg-search', 'wikipedia', 'llm-math', 'requests_get', 'requests_post',
-                                     'requests_patch', 'requests_put', 'requests_delete', 'human'], 'huggingTools': [],
-                    'Plugins': [], 'Custom': []}}, )
+                                    {'lagChinTools': ['python_repl', 'requests_all', 'terminal', 'sleep',
+                                                      'google-search',
+                                                      'ddg-search', 'wikipedia', 'llm-math', 'requests_get',
+                                                      'requests_post',
+                                                      'requests_patch', 'requests_put', 'requests_delete', 'human'],
+                                     'huggingTools': [],
+                                     'Plugins': [], 'Custom': []}}, 'tools')
+        self.init_from_augment({'tools':
+                                    {'lagChinTools': ['python_repl', 'requests_all', 'terminal', 'sleep',
+                                                      'google-search',
+                                                      'ddg-search', 'wikipedia', 'llm-math', 'requests_get',
+                                                      'requests_post',
+                                                      'requests_patch', 'requests_put', 'requests_delete', 'human'],
+                                     'huggingTools': [],
+                                     'Plugins': [], 'Custom': []}}, 'self')
+        self.init_from_augment({'tools':
+                                    {'lagChinTools': ['python_repl', 'requests_all', 'terminal', 'sleep',
+                                                      'google-search',
+                                                      'ddg-search', 'wikipedia', 'llm-math', 'requests_get',
+                                                      'requests_post',
+                                                      'requests_patch', 'requests_put', 'requests_delete', 'human'],
+                                     'huggingTools': [],
+                                     'Plugins': [], 'Custom': []}}, 'liveInterpretation')
 
     def create_task_cli(self):
         self.print("Enter your text (empty line to finish):")
@@ -2783,12 +2887,12 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             return "invalid Chain Namen"
 
         task = (f"Bitte analysieren und interpretieren Sie das gegebene JSON-Objekt, das eine Aufgabenkette "
-                     "repräsentiert. Identifizieren Sie das übergeordnete Ziel, die Anwendungsfälle und die Strategie, "
-                     "die durch diese Aufgabenkette dargestellt werden. Stellen Sie sicher,"
-                     " dass Ihre Analyse detailliert und präzise ist. Ihre Antwort sollte klar und präzise sein,"
-                     " um ein vollständiges Verständnis der Aufgabenkette und ihrer "
-                     "möglichen Einschränkungen zu ermöglichen. Deine Antwort soll kurtz und pregnant sein Maximal 2 sätze"
-                     f"zu analysierende Aufgabenkette: {run_chain}")
+                "repräsentiert. Identifizieren Sie das übergeordnete Ziel, die Anwendungsfälle und die Strategie, "
+                "die durch diese Aufgabenkette dargestellt werden. Stellen Sie sicher,"
+                " dass Ihre Analyse detailliert und präzise ist. Ihre Antwort sollte klar und präzise sein,"
+                " um ein vollständiges Verständnis der Aufgabenkette und ihrer "
+                "möglichen Einschränkungen zu ermöglichen. Deine Antwort soll kurtz und pregnant sein Maximal 2 sätze"
+                f"zu analysierende Aufgabenkette: {run_chain}")
 
         discription = self.stream_read_llm(task, self.get_agent_config_class("think"))
 
@@ -2830,7 +2934,6 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 des = key
             all_description += f"NAME:{key} \nUse case:{des}"
 
-
         mini_task0 = f"""Bitte durchsuchen Sie eine Liste von Aufgabenketten oder Lösungsansätzen und identifizieren
         Sie die beste Option für ein bestimmtes Thema oder Problem. Berücksichtigen Sie dabei die spezifischen
         Anforderungen und Ziele des Themas. Ihre Analyse sollte gründlich und detailliert sein, um die Stärken und
@@ -2867,6 +2970,14 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         name = self.create_task(task=task)
         self.print(f"New Task Crated name : {name}")
 
+    def remove_chain_cli(self):
+        all_chains = list(self.agent_chain.chains.keys())
+        if not all_chains:
+            return "No Cains Installed or loaded"
+
+        chain_name = choiceList(all_chains, self.print)
+        self.agent_chain.remove(chain_name)
+
     def run_chain_cli(self):
         all_chains = list(self.agent_chain.chains.keys())
         if not all_chains:
@@ -2894,13 +3005,20 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         self.print("Enter your text (empty line to finish):")
         task = get_multiline_input()
 
+        return self.run_auto_chain(task)
+
+    def run_auto_chain(self, task):
+
         chain_name, begründung = self.get_best_fitting(task)
 
         if "y" not in input("Validate (y/n)"):
             return "Presses Stopped"
 
         self.print(f"Starting Chin : {chain_name}")
-        run_chain = self.agent_chain.get(chain_name)
+        return self.run_chain_on_name(chain_name, task)
+
+    def run_chain_on_name(self, name, task):
+        run_chain = self.agent_chain.get(name)
         self.print(f"Chin len : {len(run_chain)}")
 
         if run_chain:
@@ -3150,7 +3268,7 @@ def scrape_links(url):
 def _extract_from_json(agent_text, config):
     try:
         json_obj = anything_from_str_to_dict(agent_text, {"Action": None, "Inputs": None})
-        print("OBJ:::::::::", json_obj)
+        # print("OBJ:::::::::", json_obj)
         if json_obj:
             json_obj = json_obj[0]
             if not isinstance(json_obj, dict):

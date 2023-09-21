@@ -277,6 +277,9 @@ class App(metaclass=Singleton):
             self.remove_mod(mod_name)
         mod = import_module(loc + mod_name)
         mod = getattr(mod, "Tools")
+        return self.save_initialized_module(mod)
+
+    def save_initialized_module(self, mod):
         mod = mod(app=self)
         mod_name = mod.name
         self.save_init_mod(mod_name, mod)

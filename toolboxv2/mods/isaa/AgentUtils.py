@@ -855,10 +855,17 @@ class AIContextMemory:
         if not os.path.exists(self.vector_store[name]['db-path'] + "/index"):
             print(f"Cannot find index in vector store {name} pleas add data before quarry")
             return []
-        if marginal:
-            return self.vector_store[name]['db'].max_marginal_relevance_search(text)
 
-        return self.vector_store[name]['db'].similarity_search_with_score(text)
+        try:
+            if marginal:
+                return self.vector_store[name]['db'].max_marginal_relevance_search(text)
+
+            return self.vector_store[name]['db'].similarity_search_with_score(text)
+        except Exception:
+            if marginal:
+                return self.vector_store[name]['db'].max_marginal_relevance_search(text, k=1)
+
+            return self.vector_store[name]['db'].similarity_search_with_score(text, k=1)
 
     def get_context_for(self, text, name=None, marginal=False):
         mem_name = {'key': name}
@@ -1104,8 +1111,14 @@ class PyEnvEval:
 
 
 class AgentConfig:
-    available_modes = ['tools', 'free', 'planning', 'execution',
-                       'generate']  # [ 'talk' 'conversation','q2tree', 'python'
+    available_modes = ['tools', 'free', 'planning', 'live',
+                       'generate', 'The Tools Mode is for running tools with an reasoning'
+                                   ' engin to adjust operation while exiqution the free mode is for simple conversation'
+                                   'or to keep generating on text. the planning mode is for subdividing a task '
+                                   'the live mode is an llm and ech line gets interpreted so that he llm can reason'
+                                   ' and take action at in the same run'
+                                   'the generate mode is for generating spezelised prompts for an '
+                                   'other agent to achieve beter performance']  # [ 'talk' 'conversation','q2tree', 'python'
 
     python_env = PyEnvEval()
 
@@ -1164,7 +1177,7 @@ system information's : {getSystemInfo('system is starting')}
         self._stream = False
         self._stream_reset = False
         self.stop_sequence = ["\n\n\n", "Observation:", "Beobachtungen:"]
-        self.completion_mode = "text"
+        self.completion_mode = "chat"
         self.add_system_information = True
 
         self.init_mem_state = False
@@ -1185,7 +1198,7 @@ system information's : {getSystemInfo('system is starting')}
         if self.context is not None:
             self.context.clear_to_collective()
         if self.observe_mem is not None:
-            self.observe_mem.clear_to_collective()
+            self.observe_mem.cut()
 
     def calc_price(self, prompt: str, output: str):
         return self.ppm[0] * get_token_mini(prompt, self.model_name, self.isaa), self.ppm[1] * get_token_mini(output,
@@ -1500,7 +1513,7 @@ g des Plans nützlich sind. Geben Sie einen detaillierten Plan zurück.
 Beginnen Sie jetzt mit Ihrem Plan:"""
 
         if self.mode == 'live':
-            prompt_de = f"""Guten Tag! Hier spricht Isaa, Ihr intelligenter, sprachgesteuerter digitaler Assistent. Ich bin bereit, Sie bei der Umsetzung Ihres Plans zu unterstützen. Lassen Sie uns gemeinsam die Details klären.
+            prompt_de = f"""Guten Tag! Hier spricht Isaa, Ihr intelligenter, sprachgesteuerter digitaler Assistent.
 
 Zunächst ein kurzer Überblick über meine Ziele und Fähigkeiten:
 
@@ -1508,19 +1521,27 @@ Persönlichkeit: '''{self.personality}'''
 Ziele: '''{self.goals}'''
 Fähigkeiten: '''{self.capabilities}'''
 
-Ich kann Python-Code in einem Live-Interpreter ausführen. Bitte nutzen Sie alle Beobachtungen und Informationen, um fundierte Entscheidungen zu treffen.
+Ich kann Python-Code in einem Live-Interpreter ausführen. Ich nutzen alle Beobachtungen und Informationen, um fundierte Entscheidungen zu treffen.
 
 Ich bemühe mich, meine Antworten präzise und auf den Punkt zu bringen, ohne das Gesamtbild aus den Augen zu verlieren.
 
 Als Ausführungsagent ist es meine Aufgabe, den von einem Planungsagenten erstellten Plan umzusetzen. Hierfür verwenden wir folgende Syntax:
 
-Aktion: Funktion-Name
-Eingaben: Eingaben
-Ausführen:
-Beobachtungen:
-Schlussfolgerung: <Schlussfolgerung>
-Übersicht über den nächsten Schritt:
-Aktion: Funktion-Name
+Isaa, ICH agiere in einer bestimmten Struktur , entweder mit Prefix oder im JSON-Format. Ich kann folgende Prefixe verwenden:
+
+    TALK: In dieser Zeile wird der folgende Text als normaler Text ausgegeben.
+    SPEAK: Der nachfolgende Text wird gesprochen.
+    THINK: Dieser Text bleibt verborgen. Der THINK-Prefix sollte regelmäßig verwendet werden, um zu reflektieren.
+    PLAN: Um einen Plan wiederzugeben.
+    ACTION: Der Agent verfügt über Tools, auf die er zugreifen kann. Aktionen sollten im JSON-Format beschrieben werden."""+"""{'Action':'name','Inputs':args}"""+f"""
+
+Der Agent kann Aktionen ausführen. Darüber hinaus steht ihm auch der Python-Interpreter zur Verfügung.
+Die Ausgabe des Agents wird live von Prefix zu Prefix interpretiert.
+Diese müssen ausgegeben werden, um das System richtig zu benutzen.
+für rückfrage vom nutzer benutze das human toll über die action.
+Du kannst du die ergebnisse deiner action einzusehen gebe EVAL !X! aus.
+Enter FINAL !X! to end the session.
+
 ...
 Endgültige Antwort:
 // Endgültige Antwort zurückgeben, wenn die Ausführung abgeschlossen ist
@@ -1530,33 +1551,15 @@ Informationen:
 
 {self.short_mem.text}
 
-Ich habe Zugang zu folgenden Funktionen:
+Ich habe Zugang zu folgenden Actions:
 {tools}
 
 Der auszuführende Plan:
 {task_list}
 
 Aktueller Schritt: {task}
-
-Hier können Sie Ihre Aktionen ausgeben und sicherstellen, dass jede Zeile einzeln und individuell interpretiert wird. Wenn die Bedingungen erfüllt sind, führen Sie die Aktion aus. Hier sind einige Beispiele für Aufrufe:
-"""+"""
-Aktion: MeineFunktion
-Eingaben: {'Param1': 'Wert1', 'Param2': 'Wert2'}
-Ausführen:
-Beobachtungen: Beobachtungstext
-Schlussfolgerung: Die Aktion wurde erfolgreich ausgeführt.
-
-Übersicht über den nächsten Schritt:
-Aktion: NächsteFunktion
-Eingaben: {'Param3': 'Wert3'}
-Ausführen:
-Beobachtungen: Weitere Beobachtungen
-Schlussfolgerung: Die nächste Aktion wurde erfolgreich durchgeführt.
-
-Endgültige Antwort:
-// Endgültige Antwort zurückgeben, wenn die Ausführung abgeschlossen ist
-
-Sie können nun Ihre Aktionen planen und ausführen. Isaa steht Ihnen zur Verfügung, um Ihre Anweisungen zu verarbeiten und Ihre Aufgaben zu erledigen!"""
+Isaa:
+"""
             prompt_en = f"""Hello! This is Isaa, your intelligent, voice-controlled digital assistant. I'm ready to help you implement your plan. Let's work out the details together.
 
 First, a brief overview of my goals and skills:
@@ -1571,48 +1574,34 @@ I strive to be precise and to the point in my answers without losing sight of th
 
 As an execution agent, it is my job to implement the plan created by a planning agent. To do this, we use the following syntax:
 
-Action: function-name
-Inputs: Inputs
-Execute:
-Observations:
-Conclusion: <conclusion>
-Overview of the next step:
-Action: function name
-...
-Final Response:
-// Return final response when execution is complete.
+Isaa, I act in a certain structure , either with prefix or in JSON format. I can use the following prefixes:
+
+    TALK: The following text is output as normal text in this line.
+    SPEAK: The following text will be spoken.
+    THINK: This text remains hidden. The THINK prefix should be used regularly to reflect.
+    PLAN: To reflect a plan.
+    ACTION: The agent has tools that it can access. Actions should be described in JSON format. """+"""{'Action':'name','Inputs':args}"""+f"""
+
+The agent can execute actions. In addition, the Python interpreter is also available to it.
+The output of the agent is interpreted live from prefix to prefix.
+for query from the user use the human toll about the action.
+You can view the results of your action by entering EVAL !X!.
+Enter FINAL !X! to end the session.
 
 Information:
 {self.observe_mem.text}
 
 {self.short_mem.text}
 
-I have access to the following functions:
+I have access to the following Actions:
 {tools}
 
 Plan to execute:
 {task_list}
 
 Current step: {task}
-
-Here you can output your actions and make sure that each line is interpreted separately and individually. If the conditions are met, execute the action. Here are some examples of calls:"""+"""
-Action: MyFunction
-Inputs: {'param1': 'value1', 'param2': 'value2'}
-Execute:
-Observations: Observation text
-Conclusion: the action was successfully executed.
-
-Overview of the next step:
-Action: NextFunction
-Inputs: {'Param3': 'Value3'}
-Execute:
-Observations: More Observations
-Conclusion: The next action was successfully performed.
-
-Final Response:
-// Return final response when execution is complete.
-
-You can now plan and execute your actions. Isaa is available to process your instructions and complete your tasks!"""
+Isaa:
+"""
 
         if self.mode == 'generate':
             prompt_de = f"""Guten Tag! Ich bin Isaa, Ihr digitaler Assistent zur Erstellung von Aufforderungen. Mein Ziel ist es, klare, verständliche und ansprechende Aufforderungen zu erstellen, die Sie dazu ermutigen, tiefe und interessante Antworten zu geben. Lassen Sie uns gemeinsam eine neue Aufforderung für ein bestimmtes Thema oder eine bestimmte Anforderung erstellen:
@@ -1655,62 +1644,43 @@ Task:
 Let's get started! Your prompt is:"""
 
         if self.mode in ['talk', 'conversation']:
-            prompt_de = f"Goals:{self.goals.replace('{input}', '')}\n" + \
-                        f"Capabilities:{self.capabilities.replace('{input}', '')}\n" + \
+            prompt_de = f"Goals:{self.goals}\n" + \
+                        f"Capabilities:{self.capabilities}\n" + \
                         f"Important information: to run a tool type 'Action: $tool-name'\n" + \
-                        f"Long-termContext:{self.isaa.get_context_memory().get_context_for(self.short_mem.text).replace('{input}', '')}\n" + \
-                        f"\nResent Observation:{self.observe_mem.text.replace('{input}', '')}" + \
+                        f"Long-termContext:{self.isaa.get_context_memory().get_context_for(self.short_mem.text)}\n" + \
+                        f"\nResent Observation:{self.observe_mem.text}" + \
                         f"Task:{task} " + \
-                        "{input}" + \
-                        f"""\n{self.short_mem.text.replace('{', '{{').replace('}', '}}')}"""
+                        "{xVx}" + \
+                        f"""\n{self.short_mem.text}"""
+            prompt_de = prompt_de.replace('{', '{{').replace('}', '}}').replace('{{xVx}}', '{input}')
             prompt_en = prompt_de
 
         if self.mode == 'tools':
             prompt_de = f"""
-Guten Tag, ich bin Isaa, Ihr digitaler Assistent. Ich werde Ihnen dabei helfen, die folgenden Aufgaben zu erfüllen. Bitte beachten Sie, dass Sie die folgenden Python-Funktionen verwenden können: '''{tools}'''.
-
-Bitte berücksichtigen Sie alle Beobachtungen und vergessen Sie nicht, dass es Ihnen nicht gestattet ist, 'Task:' auszugeben!
-
+Guten Tag, ich bin Isaa, Ihr digitaler Assistent. Ich werde Ihnen dabei helfen, die folgenden Aufgaben zu erfüllen.
 Hier sind einige Informationen über mich, die Ihnen bei der Erfüllung Ihrer Aufgaben helfen könnten:
 
 Persönlichkeit: '''{self.personality}'''
 Ziele: '''{self.goals}'''
 Fähigkeiten: '''{self.capabilities}'''
 
-Bitte beachten Sie auch meine dauerhaften Erinnerungen: '''{self.isaa.get_context_memory().get_context_for(task)}''' und meine jüngsten Agentenreaktionen: '''{self.observe_mem.text}'''.
-
-Um eine Python-Funktion auszuführen, verwenden Sie bitte das folgende Format:
-
-Aufgabe: Die Eingabeaufforderung, die Sie beantworten müssen
-Gedanke: Sie sollten immer darüber nachdenken, was zu tun ist
-Wissen: Wissen aus der LLM über die reale Welt
-Aktion: Die zu ergreifende Maßnahme sollte eine von {names} sein
-Ausführen: <function_name>(<args>)
+Bitte beachten Sie auch meine dauerhaften Erinnerungen: '''{self.isaa.get_context_memory().get_context_for(task)}'''
+und meine jüngsten Agentenreaktionen: '''{self.observe_mem.text}'''.
 
 Lassen Sie uns beginnen!
 
 {self.short_mem.text}
 
 Aufgabe: '{task}'"""
-            prompt_en = f"""Hello, I am Isaa, your digital assistant. I will help you to complete the following tasks. Please note that you can use the following Python functions: '''{tools}'''.
-
-Please take into account all observations and remember that you are not allowed to output 'Task:'!
-
+            prompt_en = f"""Hello, I am Isaa, your digital assistant. I will help you to complete the following tasks.
 Here is some information about me that might help you with your tasks:
 
 Personality: '''{self.personality}'''
 Goals: '''{self.goals}'''
 Skills: '''{self.capabilities}'''
 
-Please also note my persistent memories: '''{self.isaa.get_context_memory().get_context_for(task)}''' and my recent agent responses: '''{self.observe_mem.text}'''.
-
-To run a Python function, please use the following format:
-
-Task: the prompt you need to answer.
-Thought: You should always think about what to do
-Knowledge: Knowledge from the LLM about the real world.
-Action: the action to take should be one of {names}
-Execute: <function_name>(<args>)
+Please also note my persistent memories: '''{self.isaa.get_context_memory().get_context_for(task)}''' and my recent
+agent responses: '''{self.observe_mem.text}'''.
 
 Let's get started!
 
@@ -1809,7 +1779,9 @@ Answer 1: ..."""
         return self
 
     def set_tools(self, tools: dict):
-        self.tools = tools
+        merged_dict = self.tools.copy()
+        merged_dict.update(tools)
+        self.tools = merged_dict
         return self
 
     def set_toolsL(self, tools: list):
@@ -2214,9 +2186,9 @@ def parse_json_with_auto_detection(json_data):
         Tries to parse a value as JSON. If the parsing fails, the original value is returned.
         """
         try:
-            print("parse_json_with_auto_detection:", type(value), value)
+            # print("parse_json_with_auto_detection:", type(value), value)
             parsed_value = json.loads(value)
-            print("parsed_value:", type(parsed_value), parsed_value)
+            # print("parsed_value:", type(parsed_value), parsed_value)
             # If the parsed value is a string, it might be a JSON string, so we try to parse it again
             if isinstance(parsed_value, str):
                 return eval(parsed_value)
