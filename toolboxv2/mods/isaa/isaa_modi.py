@@ -866,7 +866,10 @@ def add_skills(isaa, self_agent_config):
 
 def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
               isaa_print=False, python_test=False, init_mem=False, init_pipe=False, join_now=False,
-              global_stream_override=False, chain_runner=False):
+              global_stream_override=False, chain_runner=False, agents_default=None):
+
+    if agents_default is None:
+        agents_default = ["tools", "think", "search", "todolist"]
     chain_h = {}
 
     if calendar:
@@ -885,7 +888,6 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
         # min_ = test_amplitude_for_talk_mode(sek=5)
         # print("Done Testing : " + str(min_)) ##chad
         min_ = 0
-        app.logger.info("Init calendar")
         # init setup
 
         app.logger.info("Init audio")
@@ -894,7 +896,7 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
         app.new_ac_mod("isaa_audio")
 
         # speech = app.AC_MOD.speech
-        app.AC_MOD.generate_cache_from_history()
+        # app.AC_MOD.generate_cache_from_history()
 
     app.logger.info("Init Isaa")
     app.save_load("isaa")
@@ -942,109 +944,6 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
 
         isaa.add_tool("Calender", run_calender_agent,
                       "a tool to use the calender and mange user task todos und meetings", "Calender(<task>)",
-                      self_agent_config)
-
-    if create:
-        def text_to_dict(text: str or dict) -> dict:
-            data_dict = {
-                'Personal': None,
-                'Goals': None,
-                'Task': None,
-                'Name': None,
-                'Capabilities': None,
-                'Mode': None,
-            }
-            if isinstance(text, dict):
-                data_dict = dict(data_dict, **text)
-            else:
-                text = text.split('\n')
-                for line_ in text:
-                    line_ = line_.split(',')
-                    for line in line_:
-                        key_value = line.strip().split(':')
-                        if len(key_value) >= 2:
-                            key = key_value[-2].strip()
-                        value = key_value[-1].strip()
-                        if key in 'Name' or key.endswith("Name") or key.startswith("Name"):
-                            data_dict['Name'] = value
-                        elif key == 'Mode':
-                            data_dict['Mode'] = value
-                        elif key == 'Task':
-                            data_dict['Task'] = value
-                        elif key == 'Personal':
-                            data_dict['Personal'] = value
-                        elif key == 'Goals':
-                            data_dict['Goals'] = value
-                        elif key == 'Capabilities':
-                            data_dict['Capabilities'] = value
-
-            return data_dict
-
-        def create_agent(x: str or dict) -> str:
-
-            """
-    The create_agent function takes a single string argument x, which is expected to contain a set of key-value pairs separated by colons (:). These pairs specify various attributes of an agent that is to be created and run.
-
-    The function parses the input string x and extracts the values associated with the following keys:
-
-        Name: The name of the agent to be created. This key is required and must be present in the input string.
-        Mode: The mode in which the agent is to be run. This is an optional key. available ar [free, execution]
-        Task: The task that the agent is to perform. This is an optional key.
-        Personal: The personality of the agent. This is an optional key.
-        Goals: The goals of the agent. This is an optional key.
-        Capabilities: The capabilities of the agent. This is an optional key.
-
-    The function then creates an AgentConfig object with the specified name and sets its personality, goals, and capabilities attributes to the values associated with the corresponding keys, if those keys were present in the input string."""
-            # personal: Optional[str] = None
-            # goals: Optional[str] = None
-            # task: Optional[str] = None
-            # name: Optional[str] = None
-            # capabilities: Optional[str] = None
-            # mode: Optional[str] = None
-            data = text_to_dict(x)
-
-            if not data['Name']:
-                return "ValueError('Agent name must be specified.')"
-
-            agent_config: AgentConfig = isaa.get_agent_config_class(data['Name'])
-            agent_config.tools = self_agent_config.tools
-
-            if data['Personal'] is not None:
-                agent_config.personality = data['Personal']
-
-            if data['Goals'] is not None:
-                agent_config.goals = data['Goals']
-
-            if data['Capabilities'] is not None:
-                agent_config.capabilities = data['Capabilities']
-
-            if data['Task'] is not None:
-                return isaa.run_agent(agent_config, data['Task'], mode_over_lode=data['Mode'])
-
-            return f"Agent {data['Name']} created."
-
-        isaa.add_tool("spawn_agent", create_agent,
-                      "The create_agent function takes a single string argument x, which is expected to contain a set of key-value pairs separated by colons (:). These pairs specify various attributes of an agent that is to be created and run. use agent to divde taskes"
-                      , """The function parses the input string x and extracts the values associated with the following keys:
-
-               Name: The name of the agent to be created. This key is required and must be present in the input string.
-               Mode: The mode in which the agent is to be run. This is an optional key. available ar [free, tools, talk]
-               Task: The task that the agent is to perform. This is an optional key.
-               Personal: The personality of the agent. This is an optional key.
-               Goals: The goals of the agent. This is an optional key.
-               Capabilities: The capabilities of the agent. This is an optional key.
-
-           The function then creates an AgentConfig object with the specified name and sets its personality, goals, and capabilities attributes to the values associated with the corresponding keys, if those keys were present in the input string.""",
-                      self_agent_config)
-        isaa.add_tool("use_agent", create_agent,
-                      "The use_agent function takes a single string argument x, which is expected to contain a set of key-value pairs separated by colons (:). These pairs specify various attributes of an agent. use agent to divde taskes and iter act with an agent the key Task is needed!"
-                      , """The function parses the input string x and extracts the values associated with the following keys:
-
-               Name: The name of the agent to be created. This key is required and must be present in the input string.
-               Mode: The mode in which the agent is to be run. This is an optional key. available ar [free, tools, talk]
-               Task: The task that the agent is to perform. This is an optional key.
-
-           The function then runs the Agent with the specified name.""",
                       self_agent_config)
 
     if ide:
@@ -1099,105 +998,11 @@ def init_isaa(app, speak_mode=False, calendar=False, ide=False, create=False,
                       lagchaintool=True)
         isaa.add_tool("modify_file", modify_file, f"modify_file(file_path, content)", modify_file.__doc__, self_agent_config)
 
-    if chain_runner:
-        chain_instance: AgentChain = isaa.get_chain()
-        agent_categorize_config: AgentConfig = isaa.get_agent_config_class("categorize")
-        agent_categorize_config \
-            .set_mode('free') \
-            .set_completion_mode('text') \
-            .stream = False
-
-        def chain_helper(x):
-            chain_instance.load_from_file()
-
-            res = isaa.run_agent(agent_categorize_config, f"What chain '{str(chain_instance)}'"
-                                                          f" \nis fitting for this input '{x}'\n"
-                                                          f"Only return the correct name or None\nName: ")
-            res = res.strip()
-            if res.lower() == 'none':
-                res = "I cant find a fitting chain"
-
-            infos = '\n'.join([f'{item[0]} ID: {item[1]}' for item in list(zip(chain_instance.chains.keys(),
-                                                                               range(
-                                                                                   len(chain_instance.chains.keys()))))])
-            user_vlidation = input(f"Isaa whats to use : '{res}'\n"
-                                   f"if its the chain is wrong type the corresponding number {infos}\n"
-                                   f"other wise live black\nInput: ")
-            do_task = False
-            chain = ''
-            evaluation = 'evaluation error'
-            if user_vlidation in ['y', '']:
-                do_task = True
-                chain = res
-            elif user_vlidation in [str(z) for z in range(len(chain_instance.chains.keys()))]:
-                user_vlidation = int(user_vlidation)
-                chain = list(chain_instance.chains.keys())[user_vlidation]
-                do_task = True
-            else:
-                do_task = False
-                evaluation = "Invalid user input"
-
-            if do_task:
-                evaluation, chain_ret = isaa.execute_thought_chain(
-                    x, chain_instance.get(chain), self_agent_config)
-
-            return evaluation
-
-        isaa.add_tool("execute-chain", chain_helper, "input and details for the chain", '', self_agent_config)
-
-    if python_test:
-        st = ShellTool()
-        python_repl = PythonREPL()
-        isaa.add_tool("Shell", st, f"Read({st.args})", st.description, self_agent_config, lagchaintool=True)
-        isaa.add_tool("eval-python-code", python_repl.run, "PythonREPL to eval python code", '', self_agent_config)
-
-        isaa.add_tool("write-production-ready-code", lambda x: isaa.run_agent(self_agent_config, 'Act as a Programming '
-                                                                                                 'expert your '
-                                                                                                 'specialties are '
-                                                                                                 'Programming. you are '
-                                                                                                 'known to think in '
-                                                                                                 'small and detailed '
-                                                                                                 'steps to get the '
-                                                                                                 'right result. write '
-                                                                                                 'and production redy '
-                                                                                                 'code for :' + x,
-                                                                              mode_over_lode='free')
-                      , "generate code via function not so effective", '', self_agent_config)
     if speak_mode:
         isaa.speak = speak
 
-    mem = isaa.get_context_memory()
-
-    def get_relevant_informations(x):
-        ress = mem.get_context_for(x)
-
-        res = isaa.run_agent(isaa.get_agent_config_class('summary'),
-                             f"write a summary related to {x}\n\nInformation's :{ress}")
-
-        if res:
-            return res
-
-        return ress
-
-    def ad_data(x, *args):
-        if args:
-            if isinstance(x, str):
-             x = [x].append(args)
-            if isinstance(x, list):
-             x = x.append(args)
-        mem.add_data('main', x)
-
-        return 'added to memory'
-
-    isaa.add_tool("memory", get_relevant_informations, "a tool to get similar information from your memories."
-                                                       " useful to get similar data. ", "memory(<related_information>)",
-                  self_agent_config)
-
-    isaa.add_tool("save_data_to_memory", ad_data, "tool to save data to memory,"
-                                                  " write the data as specific"
-                                                  " and accurate as possible.",
-                  "save_data_to_memory(<store_information>)",
-                  self_agent_config)
+    for a_n in agents_default:
+        isaa.get_agent_config_class(a_n)
 
     chains = isaa.get_chain(None, hydrate(chain_h))
     if chain_runner:

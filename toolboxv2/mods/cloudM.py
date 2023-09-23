@@ -481,7 +481,7 @@ class Tools(MainTool, FileHandler):
   def load_open_file(self):
     self.logger.info("Starting cloudM")
     self.load_file_handler()
-    self.get_version()
+    # self.get_version()
 
   def on_exit(self):
     self.save_file_handler()

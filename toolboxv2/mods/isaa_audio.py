@@ -568,8 +568,21 @@ def init_live_transcript(model="jonatasgrosman/wav2vec2-large-xlsr-53-german",
             stream.close()
             audio.terminate()
 
+    def pipe_generator():
+        def helper_runner(audio_file_name):
+            with open(audio_file_name, "rb") as audio_file:
+                return openai.Audio.translate(model, audio_file)
 
-    pipe = pipeline("automatic-speech-recognition", model)
+        if "/" in model:
+            return pipeline("automatic-speech-recognition", model)
+
+        elif "-" in model:
+            return helper_runner
+
+        else:
+            raise ValueError(f"pipe_generator : model is not suppertet : {model}")
+
+    pipe = pipe_generator()
 
     if rate <= 0:
         raise ValueError("rate must be bigger then 0 best rate: 44100 | 16000")
@@ -705,7 +718,8 @@ def init_live_transcript(model="jonatasgrosman/wav2vec2-large-xlsr-53-german",
                             res_que.put(result)
                             logger.info(
                                 Style.ITALIC(
-                                    Style.Bold(f"T1 Don in {time.time() - t0:.3f} chars {len(result)} ")))
+                                    Style.Bold(f"T1 Don in {time.time() - t0:.3f} chars {len(result)} :"
+                                               f" {Style.GREY(result[:10])}..")))
 
                 logger.info(
                     Style.ITALIC(
@@ -721,3 +735,4 @@ def init_live_transcript(model="jonatasgrosman/wav2vec2-large-xlsr-53-german",
 # 43 0.26
 # 49 .29
 # 39 0.3
+

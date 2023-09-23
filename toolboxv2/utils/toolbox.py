@@ -39,6 +39,7 @@ class AppArgs:
     host = '0.0.0.0'
     load_all_mod_in_files = False
     live = False
+    mm = False
 
     def default(self):
         return self
@@ -161,7 +162,7 @@ class App(metaclass=Singleton):
             "develop-mode": False,
             "all_main": True,
         }
-        FileHandler.all_main = True
+        FileHandler.all_main = args.mm
         self.config_fh = FileHandler(name + ".config", keys=self.keys, defaults=defaults)
         self.config_fh.load_file_handler()
 

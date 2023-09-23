@@ -364,12 +364,12 @@ class AgentChain:
     def add_discr(self, name, dis):
         name = self.format_name(name)
         if name in self.chains.keys():
-            self.chains_dis[name+'-dis'] = dis
+            self.chains_dis[name + '-dis'] = dis
 
     def get_discr(self, name):
         name = self.format_name(name)
-        if name+'-dis' in self.chains_dis.keys():
-            return self.chains_dis[name+'-dis']
+        if name + '-dis' in self.chains_dis.keys():
+            return self.chains_dis[name + '-dis']
         return None
 
     def init_chain(self, name):
@@ -454,6 +454,66 @@ class AgentChain:
                     self.add_discr(chain_name, chain_data['dis'])
             except Exception as e:
                 print(Style.RED(f"Beim Laden der Datei '{file_path}' ist ein Fehler aufgetreten: {e}"))
+        if len(self.chains.keys()) == 0:
+            print("\n================================\nloading default chains")
+            self.add("toolRunner", [
+                    {
+                        "use": "agent",
+                        "name": "tools",
+                        "args": "$user-input",
+                        "return": "$return"
+                    }
+                ])
+            self.add("toolRunnerMission", [
+                    {
+                        "use": "agent",
+                        "name": "tools",
+                        "args": "As a highly skilled and autonomous agent, your task is to achieve a complex mission. "
+                                "However, you will not directly execute the tasks yourself. Your role is to act as a "
+                                "supervisor and create chains of agents to successfully accomplish the mission. Your "
+                                "main responsibility is to ensure that the mission's objectives are achieved. your "
+                                "mission : $user-input",
+                        "return": "$return"
+                    }
+                ])
+            self.add("liveRunner", [
+                    {
+                        "use": "agent",
+                        "name": "liveInterpretation",
+                        "args": "$user-input",
+                        "return": "$return"
+                    }
+                ])
+            self.add("SelfRunner", [
+                    {
+                        "use": "agent",
+                        "name": "self",
+                        "mode": "conversation",
+                        "args": "$user-input",
+                        "return": "$return"
+                    }
+                ])
+            self.add("liveRunnerMission", [
+                    {
+                        "use": "agent",
+                        "name": "liveInterpretation",
+                        "args": "As a highly skilled and autonomous agent, your task is to achieve a complex mission. "
+                                "However, you will not directly execute the tasks yourself. Your role is to act as a "
+                                "supervisor and create chains of agents to successfully accomplish the mission. Your "
+                                "main responsibility is to ensure that the mission's objectives are achieved. your "
+                                "mission : $user-input",
+                        "return": "$return"
+                    }
+                ])
+            self.add("PromptDesigner", [
+                    {
+                        "use": "agent",
+                        "name": "self",
+                        "mode": "generate",
+                        "args": "$user-input",
+                        "return": "$return"
+                    }
+                ])
         print(f"--------------------------------")
         print(
             f"\n================================\nChainsLoaded : {len(self.chains.keys())}\n================================\n")
@@ -616,12 +676,12 @@ class AIContextMemory:
             self.vector_store[name]['db'] = Chroma(collection_name=name,
                                                    embedding_function=self.embedding,
                                                    persist_directory=self.vector_store[name][
-                                                   'db-path'])
+                                                       'db-path'])
         elif db_type == 'faiss':
             self.vector_store[name]['db'] = FAISS(collection_name=name,
-                                                   embedding_function=self.embedding,
-                                                   persist_directory=self.vector_store[name][
-                                                   'db-path'])
+                                                  embedding_function=self.embedding,
+                                                  persist_directory=self.vector_store[name][
+                                                      'db-path'])
         else:
             raise ValueError(f"db_type not supported {db_type}")
 
@@ -1134,6 +1194,10 @@ system information's : {getSystemInfo('system is starting')}
 
     def __init__(self, isaa, name="agentConfig"):
 
+        self.custom_tools = []
+        self.hugging_tools = []
+        self.lag_chin_tools = []
+        self.plugins = []
         self.language = 'en'
         self.isaa = isaa
 
@@ -1155,7 +1219,6 @@ system information's : {getSystemInfo('system is starting')}
             # "test_tool": {"func": lambda x: x, "description": "only for testing if tools are available",
             #              "format": "test_tool(input:str):"}
         }
-        self.toolsL = []
 
         self.last_prompt = ""
 
@@ -1358,9 +1421,9 @@ system information's : {getSystemInfo('system is starting')}
 
         pl = self.get_tokens(prompt)
         token_left = self.max_tokens - pl
-        print("TOKEN LEFT : ", token_left, "Token in Prompt :", pl, "Max tokens :", self.max_tokens)
-        print(f"Model is using : {pl} tokens max context : {self.max_tokens}"
-              f" usage : {(pl * 100) / self.max_tokens :.2f}% ")
+        # print("TOKEN LEFT : ", token_left, "Token in Prompt :", pl, "Max tokens :", self.max_tokens)
+        # print(f"Model is using : {pl} tokens max context : {self.max_tokens}"
+        #       f" usage : {(pl * 100) / self.max_tokens :.2f}% ")
         if pl > self.max_tokens:
             self.short_mem.cut()
         if token_left < 0:
@@ -1521,34 +1584,35 @@ Persönlichkeit: '''{self.personality}'''
 Ziele: '''{self.goals}'''
 Fähigkeiten: '''{self.capabilities}'''
 
-Ich kann Python-Code in einem Live-Interpreter ausführen. Ich nutzen alle Beobachtungen und Informationen, um fundierte Entscheidungen zu treffen.
+Ich nutzen alle Beobachtungen und Informationen, um fundierte Entscheidungen zu treffen.
 
 Ich bemühe mich, meine Antworten präzise und auf den Punkt zu bringen, ohne das Gesamtbild aus den Augen zu verlieren.
 
 Als Ausführungsagent ist es meine Aufgabe, den von einem Planungsagenten erstellten Plan umzusetzen. Hierfür verwenden wir folgende Syntax:
 
-Isaa, ICH agiere in einer bestimmten Struktur , entweder mit Prefix oder im JSON-Format. Ich kann folgende Prefixe verwenden:
+Isaa, ICH agiere in einer bestimmten Prefix Struktur. Ich kann folgende Prefixe verwenden:
 
     TALK: In dieser Zeile wird der folgende Text als normaler Text ausgegeben.
     SPEAK: Der nachfolgende Text wird gesprochen.
     THINK: Dieser Text bleibt verborgen. Der THINK-Prefix sollte regelmäßig verwendet werden, um zu reflektieren.
-    PLAN: Um einen Plan wiederzugeben.
-    ACTION: Der Agent verfügt über Tools, auf die er zugreifen kann. Aktionen sollten im JSON-Format beschrieben werden."""+"""{'Action':'name','Inputs':args}"""+f"""
+    PLAN: Um einen Plan wiederzugeben. und zu sichern
+    ACTION: Der Agent verfügt über Tools, auf die er zugreifen kann. Aktionen sollten im JSON-Format beschrieben werden.""" + """{'Action':'name','Inputs':args}""" + f"""
 
-Der Agent kann Aktionen ausführen. Darüber hinaus steht ihm auch der Python-Interpreter zur Verfügung.
+Der Agent muss Aktionen ausführen.
 Die Ausgabe des Agents wird live von Prefix zu Prefix interpretiert.
 Diese müssen ausgegeben werden, um das System richtig zu benutzen.
 für rückfrage vom nutzer benutze das human toll über die action.
-Du kannst du die ergebnisse deiner action einzusehen gebe EVAL !X! aus.
-Enter FINAL !X! to end the session.
+Wenn die Keine Action aus führst stirbt deine instanz diene memory's und erfahrungen werden gespeichert.
+benutze vor jeder aktion think ! benutze speak um den nutzer auf dem laufenden zu halten!
 
-...
-Endgültige Antwort:
-// Endgültige Antwort zurückgeben, wenn die Ausführung abgeschlossen ist
+tips: Benutze vor jeder action THINK:
+um den plan erfolgreich auszuführen. um das missions ziel zu erreichen.
+füge immer den namen der aktion hinzu um diese auszuführen.
 
-Informationen:
+Observations:
 {self.observe_mem.text}
 
+Informationen:
 {self.short_mem.text}
 
 Ich habe Zugang zu folgenden Actions:
@@ -1568,25 +1632,29 @@ Personality: '''{self.personality}'''
 Goals: '''{self.goals}'''
 Skills: '''{self.capabilities}'''
 
-I can run Python code in a live interpreter. Please use all observations and information to make informed decisions.
+I use all observations and information to make informed decisions.
 
 I strive to be precise and to the point in my answers without losing sight of the big picture.
 
 As an execution agent, it is my job to implement the plan created by a planning agent. To do this, we use the following syntax:
 
-Isaa, I act in a certain structure , either with prefix or in JSON format. I can use the following prefixes:
+Isaa, I act in a certain prefix structure. I can use the following prefixes:
 
     TALK: The following text is output as normal text in this line.
     SPEAK: The following text will be spoken.
     THINK: This text remains hidden. The THINK prefix should be used regularly to reflect.
     PLAN: To reflect a plan.
-    ACTION: The agent has tools that it can access. Actions should be described in JSON format. """+"""{'Action':'name','Inputs':args}"""+f"""
+    ACTION: The agent has tools that it can access. Actions should be described in JSON format. """ + """{'Action':'name','Inputs':args}""" + f"""
 
-The agent can execute actions. In addition, the Python interpreter is also available to it.
+The agent will execute actions.
 The output of the agent is interpreted live from prefix to prefix.
 for query from the user use the human toll about the action.
-You can view the results of your action by entering EVAL !X!.
-Enter FINAL !X! to end the session.
+If you do not perform any action, your instance will die and experience,memory s will be saved.
+use think before every action !
+use speak to keep the user up to date.
+
+tip: always use THINK before Action to ensure to stay on track for the mission.
+always add the name of the action to call it !!!
 
 Information:
 {self.observe_mem.text}
@@ -1779,13 +1847,7 @@ Answer 1: ..."""
         return self
 
     def set_tools(self, tools: dict):
-        merged_dict = self.tools.copy()
-        merged_dict.update(tools)
-        self.tools = merged_dict
-        return self
-
-    def set_toolsL(self, tools: list):
-        self.toolsL = tools
+        self.tools = {**self.tools, **tools}
         return self
 
     def add_tool(self, tool_name: str, func: callable, description: str, format_: str):
@@ -1892,6 +1954,10 @@ Answer 1: ..."""
 
             'binary_tree': bt,
             'agent_type': self.__dict__['agent_type'],
+            'Plugins': self.plugins,
+            'lagChinTools': self.lag_chin_tools,
+            'huggingTools': self.hugging_tools,
+            'customTools': self.custom_tools,
             'tools': tools,
 
             'task_list': self.__dict__['task_list'],
@@ -1929,9 +1995,27 @@ Answer 1: ..."""
                 except ValueError:
                     pass
                 continue
-            if key == 'tools' and value:
+            if key == 'customTools' and value:
                 if agent_config.name != 'self':
-                    agent_config.set_tools(value)
+                    print(value)
+                    agent_config.custom_tools = value
+                continue
+            if key == 'plugins' and value:
+                if agent_config.name != 'self':
+                    print(value)
+                    agent_config.set_plugins = value
+                continue
+            if key == 'lagChinTools' and value:
+                if agent_config.name != 'self':
+                    print(value)
+                    agent_config.set_lag_chin_tools = value
+                continue
+            if key == 'huggingTools' and value:
+                if agent_config.name != 'self':
+                    print(value)
+                    agent_config.set_hugging_tools = value
+                continue
+            if key == 'tools' and value:
                 continue
             setattr(agent_config, key, value)
 

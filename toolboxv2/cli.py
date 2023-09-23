@@ -123,6 +123,10 @@ def parse_args():
                         help="Isaa speak mode",
                         action="store_true")
 
+    parser.add_argument("--mm",
+                        help="all Main all files ar saved in Main Node",
+                        action="store_true")
+
     parser.add_argument('-mvn', '--mod-version-name',
                         metavar="name",
                         type=str,
