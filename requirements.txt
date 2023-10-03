@@ -24,4 +24,4 @@ torch>=2.0.0
 tiktoken>=0.3.3
 pinecone-client>=2.2.1
 gpt4all>=1.0.8
-
+Pebble>=5.0.3
