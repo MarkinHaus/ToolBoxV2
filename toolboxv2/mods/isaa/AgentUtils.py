@@ -800,6 +800,8 @@ class AIContextMemory:
             #    self.vector_store[name]['db'].add_texts(self.vector_store[name]['text'][l:])
             for vec in self.embedding.embed_documents(self.vector_store[name]['text']):
                 self.vector_store[name]['vectors'].append(vec)
+        else:
+            raise ValueError(f"vector_store not updated invalid type {type(self.vector_store[name]['text'])}")
 
         data = self.vector_store[name]['text']
         if isinstance(data, str):

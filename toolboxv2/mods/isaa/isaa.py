@@ -6,7 +6,7 @@ import threading
 import time
 import uuid
 from inspect import signature
-from typing import Any
+from typing import Any, Tuple
 
 import openai
 import replicate
@@ -1698,7 +1698,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             self.logger.error(Style.RED(f"Error in auto task builder {e}"))
         return task_dict
 
-    def test_use_tools(self, agent_text: str, config: AgentConfig) -> tuple[bool, Any, Any]:
+    def test_use_tools(self, agent_text: str, config: AgentConfig) -> Tuple[bool, Any, Any]:
         if not agent_text:
             return False, "", ""
 
