@@ -3,10 +3,12 @@ on:
         branches:
             - light-tb
             - mod-server
+            - master
     pull_request:
         branches:
             - light-tb
             - mod-server
+            - master
 
 name: build
 jobs:
