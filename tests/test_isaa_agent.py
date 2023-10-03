@@ -5,7 +5,7 @@ import unittest
 
 from langchain.vectorstores.base import VectorStoreRetriever
 
-from toolboxv2 import App
+from toolboxv2 import App, get_logger
 from toolboxv2.mods.isaa.AgentUtils import AIContextMemory, ObservationMemory, ShortTermMemory, MemoryModel, \
     PyEnvEval, get_token_mini, get_max_token_fom_model_name, get_price, AgentConfig, anything_from_str_to_dict, \
     parse_json_with_auto_detection, AgentChain
@@ -91,16 +91,16 @@ class TestAIContextMemory(unittest.TestCase):
 
     def test_search(self):
         self.ai_context_memory.add_data('test', ['data1234567890'])
-        print("test_search",self.ai_context_memory.vector_store['test']['vectors'])
+        get_logger().info(f"test_search {self.ai_context_memory.vector_store['test']['vectors']=}")
         result = self.ai_context_memory.search('test', 'data')
-        print("test_search",result)
+        get_logger().info(f"test_search {result=}")
         self.assertEqual(result[0][0].page_content, 'data1234567890')
 
     def test_get_context_for(self):
         self.ai_context_memory.add_data('test', ['data1234567890'])
-        print("test_get_context_for", self.ai_context_memory.vector_store['test']['vectors'])
+        get_logger().info(f"test_get_context_for {self.ai_context_memory.vector_store['test']['vectors']=}")
         result = self.ai_context_memory.get_context_for('data')
-        print("test_get_context_for", result)
+        get_logger().info(f"test_get_context_for {result=}")
         self.assertIn('data1234567890', result)
 
 
