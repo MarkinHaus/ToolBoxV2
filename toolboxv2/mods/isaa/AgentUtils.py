@@ -22,7 +22,7 @@ from langchain.embeddings import HuggingFaceEmbeddings
 # Data Science
 import numpy as np
 from sklearn.cluster import KMeans, AgglomerativeClustering
-import platform, socket, re, uuid, json, psutil
+import platform, socket, re, json
 from transformers import AutoTokenizer
 
 
