@@ -869,12 +869,12 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
 
         return function
 
-    def free_llm_model(self, names: list[str]):
+    def free_llm_model(self, names: List[str]):
         for model in names:
             self.initstate[f'LLM-model-{model}-init'] = False
             del self.config[f'LLM-model-{model}']
 
-    def load_llm_models(self, names: list[str]):
+    def load_llm_models(self, names: List[str]):
         for model in names:
             if f'LLM-model-{model}-init' not in self.initstate.keys():
                 self.initstate[f'LLM-model-{model}-init'] = False
@@ -1182,7 +1182,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 #    , "format": "chain_search_memory(<task>)"},
             }
 
-            config.task_list: list[str] = ["Erfülle die Aufgae in so wenigen Schritten und so Bedacht wie Möglich"]
+            config.task_list: List[str] = ["Erfülle die Aufgae in so wenigen Schritten und so Bedacht wie Möglich"]
 
         if name == "think":
             config. \
@@ -2934,7 +2934,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         # if text:
         #     chucks.append(text)
 
-        chunks: list[str] = splitter.split_text(text)
+        chunks: List[str] = splitter.split_text(text)
         i = 0
         max_iter = int(len(chunks) * 1.2)
         while i < len(chunks) and max_iter > 0:

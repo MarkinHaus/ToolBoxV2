@@ -1,16 +1,13 @@
 from json import JSONDecodeError
-from typing import Union, Dict, Any, List
+from typing import List
 
-from langchain import PromptTemplate
 from pebble import concurrent
 import math
 from datetime import datetime
 import subprocess
 import pickle
 import requests
-from duckduckgo_search import ddg_suggestions
 import os
-import time
 from toolboxv2 import Style, get_logger
 import tiktoken
 from langchain.agents import AgentType
@@ -755,7 +752,7 @@ class AIContextMemory:
         return i
 
     @staticmethod
-    def cleanup_list(data: list[str]):
+    def cleanup_list(data: List[str]):
 
         result = []
 
@@ -986,11 +983,11 @@ class AIContextMemory:
 
 
 class ObservationMemory:
-    memory_data: list[dict] = []
+    memory_data: List[dict] = []
     max_length: int = 1000
     model_name: str = MemoryModel
 
-    add_to_static: list[dict] = []
+    add_to_static: List[dict] = []
 
     isaa = None
 
@@ -1067,11 +1064,11 @@ class ObservationMemory:
 
 
 class ShortTermMemory:
-    memory_data: list[dict] = []
+    memory_data: List[dict] = []
     max_length: int = 2000
     model_name: str = MemoryModel
 
-    add_to_static: list[dict] = []
+    add_to_static: List[dict] = []
 
     lines_ = []
 
@@ -1250,8 +1247,8 @@ system information's : {getSystemInfo('system is starting')}
 
         self.last_prompt = ""
 
-        self.task_list: list[str] = []
-        self.task_list_done: list[str] = []
+        self.task_list: List[str] = []
+        self.task_list_done: List[str] = []
         self.step_between: str = ""
 
         self.pre_task: str or None = None
@@ -2322,7 +2319,7 @@ def get_max_token_fom_model_name(model: str) -> int:
     return fit
 
 
-def get_price(fit: int) -> list[float]:
+def get_price(fit: int) -> List[float]:
     model_dict = _get_all_model_dict_price_token_limit_approximation()
     ppt = [0.0004, 0.0016]
 
