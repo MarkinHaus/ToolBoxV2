@@ -703,14 +703,12 @@ class AIContextMemory:
         if db_type == 'chroma':
             self.vector_store[name]['db'] = Chroma(collection_name=name,
                                                    embedding_function=self.embedding,
-                                                   persist_directory=self.vector_store[name][
-                                                       'db-path'],
+                                                   persist_directory=self.vector_store[name]['db-path'],
                                                    client_settings=ChromaSettings(anonymized_telemetry=False))
         elif db_type == 'faiss':
             self.vector_store[name]['db'] = FAISS(collection_name=name,
                                                   embedding_function=self.embedding,
-                                                  persist_directory=self.vector_store[name][
-                                                      'db-path'])
+                                                  persist_directory=self.vector_store[name]['db-path'])
         else:
             raise ValueError(f"db_type not supported {db_type}")
 

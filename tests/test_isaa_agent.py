@@ -91,12 +91,16 @@ class TestAIContextMemory(unittest.TestCase):
 
     def test_search(self):
         self.ai_context_memory.add_data('test', ['data1234567890'])
+        print("test_search",self.ai_context_memory.vector_store['test']['vectors'])
         result = self.ai_context_memory.search('test', 'data')
+        print("test_search",result)
         self.assertEqual(result[0][0].page_content, 'data1234567890')
 
     def test_get_context_for(self):
         self.ai_context_memory.add_data('test', ['data1234567890'])
+        print("test_get_context_for", self.ai_context_memory.vector_store['test']['vectors'])
         result = self.ai_context_memory.get_context_for('data')
+        print("test_get_context_for", result)
         self.assertIn('data1234567890', result)
 
 
