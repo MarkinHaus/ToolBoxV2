@@ -1,6 +1,7 @@
 from json import JSONDecodeError
 from typing import Union, Dict, Any, List
 
+from langchain import PromptTemplate
 from pebble import concurrent
 import math
 from datetime import datetime
@@ -14,6 +15,7 @@ from toolboxv2 import Style, get_logger
 import tiktoken
 from langchain.agents import AgentType
 from langchain.vectorstores import Chroma, FAISS
+from chromadb.config import Settings as ChromaSettings
 from toolboxv2.utils.toolbox import get_app
 from langchain.text_splitter import RecursiveCharacterTextSplitter, CharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
@@ -22,6 +24,25 @@ import numpy as np
 from sklearn.cluster import KMeans, AgglomerativeClustering
 import platform, socket, re, uuid, json, psutil
 from transformers import AutoTokenizer
+
+
+def dilate_string(text, split_param, remove_every_x, start_index):
+    substrings = ""
+    # Split the string based on the split parameter
+    if split_param == 0:
+        substrings = text.split(" ")
+    elif split_param == 1:
+        substrings = text.split("\n")
+    elif split_param == 2:
+        substrings = text.split(". ")
+    elif split_param == 3:
+        substrings = text.split("\n\n")
+    # Remove every x item starting from the start index
+    del substrings[start_index::remove_every_x]
+    # Join the remaining substrings back together
+    final_string = " ".join(substrings)
+    return final_string
+
 
 # add data classes
 pipeline_arr = [
@@ -409,7 +430,7 @@ class AgentChain:
                     print(f"Die Aufgabe {task_idx} 'name'-Schlüssel.")
                 if "args" not in task:
                     e += 1
-                    print(f"Die Aufgabe {task_idx}  hat keinen 'args'-Schlüssel.")
+                    print(f"Die Aufgabe {task_idx} hat keinen 'args'-Schlüssel.")
             return e
 
         for chain_name, tasks in self.chains.items():
@@ -454,66 +475,76 @@ class AgentChain:
                     self.add_discr(chain_name, chain_data['dis'])
             except Exception as e:
                 print(Style.RED(f"Beim Laden der Datei '{file_path}' ist ein Fehler aufgetreten: {e}"))
-        if len(self.chains.keys()) == 0:
-            print("\n================================\nloading default chains")
+        if "toolRunner" not in self.chains.keys():
+            print("loading default chain toolRunner")
             self.add("toolRunner", [
-                    {
-                        "use": "agent",
-                        "name": "tools",
-                        "args": "$user-input",
-                        "return": "$return"
-                    }
-                ])
+                {
+                    "use": "agent",
+                    "name": "tools",
+                    "args": "$user-input",
+                    "return": "$return"
+                }
+            ])
+        if "toolRunnerMission" not in self.chains.keys():
+            print("loading default chain toolRunnerMission")
             self.add("toolRunnerMission", [
-                    {
-                        "use": "agent",
-                        "name": "tools",
-                        "args": "As a highly skilled and autonomous agent, your task is to achieve a complex mission. "
-                                "However, you will not directly execute the tasks yourself. Your role is to act as a "
-                                "supervisor and create chains of agents to successfully accomplish the mission. Your "
-                                "main responsibility is to ensure that the mission's objectives are achieved. your "
-                                "mission : $user-input",
-                        "return": "$return"
-                    }
-                ])
+                {
+                    "use": "agent",
+                    "name": "tools",
+                    "args": "As a highly skilled and autonomous agent, your task is to achieve a complex mission. "
+                            "However, you will not directly execute the tasks yourself. Your role is to act as a "
+                            "supervisor and create chains of agents to successfully accomplish the mission. Your "
+                            "main responsibility is to ensure that the mission's objectives are achieved. your "
+                            "mission : $user-input",
+                    "return": "$return"
+                }
+            ])
+        if "liveRunner" not in self.chains.keys():
+            print("loading default chain liveRunner")
             self.add("liveRunner", [
-                    {
-                        "use": "agent",
-                        "name": "liveInterpretation",
-                        "args": "$user-input",
-                        "return": "$return"
-                    }
-                ])
+                {
+                    "use": "agent",
+                    "name": "liveInterpretation",
+                    "args": "$user-input",
+                    "return": "$return"
+                }
+            ])
+        if "SelfRunner" not in self.chains.keys():
+            print("loading default chain SelfRunner")
             self.add("SelfRunner", [
-                    {
-                        "use": "agent",
-                        "name": "self",
-                        "mode": "conversation",
-                        "args": "$user-input",
-                        "return": "$return"
-                    }
-                ])
+                {
+                    "use": "agent",
+                    "name": "self",
+                    "mode": "conversation",
+                    "args": "$user-input",
+                    "return": "$return"
+                }
+            ])
+        if "liveRunnerMission" not in self.chains.keys():
+            print("loading default chain liveRunnerMission")
             self.add("liveRunnerMission", [
-                    {
-                        "use": "agent",
-                        "name": "liveInterpretation",
-                        "args": "As a highly skilled and autonomous agent, your task is to achieve a complex mission. "
-                                "However, you will not directly execute the tasks yourself. Your role is to act as a "
-                                "supervisor and create chains of agents to successfully accomplish the mission. Your "
-                                "main responsibility is to ensure that the mission's objectives are achieved. your "
-                                "mission : $user-input",
-                        "return": "$return"
-                    }
-                ])
+                {
+                    "use": "agent",
+                    "name": "liveInterpretation",
+                    "args": "As a highly skilled and autonomous agent, your task is to achieve a complex mission. "
+                            "However, you will not directly execute the tasks yourself. Your role is to act as a "
+                            "supervisor and create chains of agents to successfully accomplish the mission. Your "
+                            "main responsibility is to ensure that the mission's objectives are achieved. your "
+                            "mission : $user-input",
+                    "return": "$return"
+                }
+            ])
+        if "PromptDesigner" not in self.chains.keys():
+            print("loading default chain PromptDesigner")
             self.add("PromptDesigner", [
-                    {
-                        "use": "agent",
-                        "name": "self",
-                        "mode": "generate",
-                        "args": "$user-input",
-                        "return": "$return"
-                    }
-                ])
+                {
+                    "use": "agent",
+                    "name": "self",
+                    "mode": "generate",
+                    "args": "$user-input",
+                    "return": "$return"
+                }
+            ])
         print(f"--------------------------------")
         print(
             f"\n================================\nChainsLoaded : {len(self.chains.keys())}\n================================\n")
@@ -567,7 +598,7 @@ class AgentChain:
         print(f"--------------------------------")
         for name, tasks in chains_to_save.items():
             file_path = os.path.join(self.directory, f"{name}.json")
-            chain_data = {"name": name, "tasks": tasks}
+            chain_data = {"name": name, "tasks": tasks, "dis": self.get_discr(name)}
 
             try:
                 with open(file_path, "w", encoding='utf-8') as f:
@@ -676,7 +707,8 @@ class AIContextMemory:
             self.vector_store[name]['db'] = Chroma(collection_name=name,
                                                    embedding_function=self.embedding,
                                                    persist_directory=self.vector_store[name][
-                                                       'db-path'])
+                                                       'db-path'],
+                                                   client_settings=ChromaSettings(anonymized_telemetry=False))
         elif db_type == 'faiss':
             self.vector_store[name]['db'] = FAISS(collection_name=name,
                                                   embedding_function=self.embedding,
@@ -1019,7 +1051,7 @@ class ObservationMemory:
             if len(self.memory_data) == 0:
                 break
             # print("Tokens in ShortTermMemory:", self.tokens, end=" | ")
-            memory = self.memory_data[-1]
+            memory = self.memory_data[0]
             self.add_to_static.append(memory)
             tok += memory['token-count']
             self.tokens -= memory['token-count']
@@ -1074,8 +1106,9 @@ class ShortTermMemory:
             if len(self.memory_data) == 0:
                 break
             # print("Tokens in ShortTermMemory:", self.tokens, end=" | ")
-            memory = self.memory_data[-1]
+            memory = self.memory_data[0]
             if memory == last_mem:
+                self.memory_data.remove(memory)
                 continue
             last_mem = memory
             self.add_to_static.append(memory)
@@ -1109,7 +1142,8 @@ class ShortTermMemory:
 
         for memory in self.memory_data:
             memorys += memory['data'] + '\n'
-
+        if len(memorys) > 10000:
+            memorys = dilate_string(memorys, 0, 2, 0)
         return memorys
 
     @text.setter
@@ -1171,14 +1205,8 @@ class PyEnvEval:
 
 
 class AgentConfig:
-    available_modes = ['tools', 'free', 'planning', 'live',
-                       'generate', 'The Tools Mode is for running tools with an reasoning'
-                                   ' engin to adjust operation while exiqution the free mode is for simple conversation'
-                                   'or to keep generating on text. the planning mode is for subdividing a task '
-                                   'the live mode is an llm and ech line gets interpreted so that he llm can reason'
-                                   ' and take action at in the same run'
-                                   'the generate mode is for generating spezelised prompts for an '
-                                   'other agent to achieve beter performance']  # [ 'talk' 'conversation','q2tree', 'python'
+    available_modes = ['tools', 'planning', 'live',
+                       'generate']  # [ 'talk' 'conversation','q2tree', 'python'
 
     python_env = PyEnvEval()
 
@@ -1279,8 +1307,8 @@ system information's : {getSystemInfo('system is starting')}
         if mini_context == "System Context:\n":
             mini_context += 'its Day 0 start to explore'
         self.system_information = f"""
-        system information's : {getSystemInfo(self.isaa.get_context_memory().get_best_fit_memory(mini_context))}
-        """
+system information's : {getSystemInfo(self.isaa.get_context_memory().get_best_fit_memory(mini_context))}
+"""
 
     def task(self, reset_step=False):
         task = ''
@@ -1337,14 +1365,27 @@ system information's : {getSystemInfo('system is starting')}
         if key is None:
             key = f"{self.name}-{self.mode}"
         iteration = 0
+        if key not in self.messages_sto.keys():
+            self.get_messages(create=True)
         tokens = self.get_tokens(self.messages_sto[key])
         logging = get_logger()
-        while self.max_tokens - tokens < 10 and iteration <= max_iteration:
+        while self.max_tokens - tokens < 50 and iteration <= max_iteration:
             logging.debug(f'Tokens: {tokens}')
             logging.info(f'Prompt is too long. Auto shortening token overflow by {(self.max_tokens - tokens) * -1}')
-            iteration += 1
-            self.messages_sto[key] = []
-            self.init_message(key)
+
+            if iteration > 0:
+                temp_message = []
+                for msg in self.messages_sto[key]:
+                    temp_message.append({'role': msg['role'], 'content': dilate_string(msg['content'], 1, 2, 0)})
+                logging.info(f"Temp message: {temp_message}")
+                self.messages_sto[key] = temp_message
+
+            if iteration > 1:
+                temp_message = []
+                for msg in self.messages_sto[key]:
+                    temp_message.append({'role': msg['role'], 'content': dilate_string(msg['content'], 0, 2, 0)})
+                logging.info(f"Temp message: {temp_message}")
+                self.messages_sto[key] = temp_message
 
             if iteration > 2:
                 temp_message = []
@@ -1365,10 +1406,13 @@ system information's : {getSystemInfo('system is starting')}
                 self.messages_sto[key] = temp_message
 
             if iteration > 4:
-                self.messages_sto[key] = [self.messages_sto[key][-1]]
+                self.messages_sto[key] = self.messages_sto[key][0::2]
 
             tokens = self.get_tokens(self.messages_sto[key])
+            iteration += 1
 
+        if self.completion_mode == "chat":
+            return self.messages_sto[key]
         last_prompt = '\n'.join(msg['content'] for msg in self.messages_sto[key])
         return last_prompt
 
@@ -1378,31 +1422,6 @@ system information's : {getSystemInfo('system is starting')}
 
         if key not in self.messages_sto.keys():
             self.init_message(key)
-
-        # i = 0
-        # tokens = self.get_tokens(self.messages_sto[key])
-        # print("Tokens:", tokens)
-        # while self.max_tokens - tokens < 10:
-        #     print(f"Prompt is to log auto shorter token overflow by {(self.max_tokens - tokens) * -1}")
-        #     i += 1
-        #     self.messages_sto[key] = []
-        #     self.init_message(key)
-        #     if i > 2:
-        #         temp_message = []
-        #         mas_text_sum = self.isaa.mas_text_summaries
-        #         for msg in self.messages_sto[key]:
-        #             temp_message.append({'role': msg['role'], 'content': mas_text_sum(msg['content'])})
-        #         print(temp_message)
-        #         self.messages_sto[key] = temp_message
-        #     if i > 4:
-        #         self.messages_sto[key] = [self.messages_sto[key][-1]]
-        #         break
-        #
-        #     tokens = self.get_tokens(self.messages_sto[key])
-        #
-        # last_prompt = ""
-        # for msg in self.messages_sto[key]:
-        #     last_prompt += msg['content']
 
         self.last_prompt = self.shorten_prompt(key)
 
@@ -1434,6 +1453,56 @@ system information's : {getSystemInfo('system is starting')}
         self.last_prompt = prompt
         self.consumption += self.ppm[0] * pl
         return prompt
+
+    def get_specific_prompt(self, text):
+
+        if '/' in self.model_name:
+
+            if self.mode == "conversation":
+                sto, self.add_system_information = self.add_system_information, False
+                prompt = self.prompt.replace('{', '}}').replace('}', '{{')
+                self.add_system_information = sto
+                return prompt
+            # Prepare a template for the prompt
+            return self.prompt.replace('{', '{{').replace('}', '}}')
+
+        elif self.model_name.startswith('gpt4all#'):
+            # Use the provided prompt
+            return self.prompt
+
+        elif self.mode in ["talk", "tools", "conversation"]:
+            if len(self.task_list) == 0 and len(text) != 0:
+                self.step_between = text
+            # Use the provided prompt
+            return self.prompt.replace('{', '{{').replace('}', '}}')
+
+        elif self.completion_mode == 'chat':
+            if len(self.task_list) == 0 and len(text) != 0:
+                self.step_between = text
+            # Prepare a chat-like conversation prompt
+            messages = self.get_messages(create=False)
+            if not messages:
+                messages = self.get_messages(create=True)
+            if text:
+                self.add_message("user", text)
+
+            return messages
+
+        elif self.completion_mode == 'text':
+            if len(self.task_list) == 0 and len(text) != 0:
+                self.step_between = text
+            # Use the provided prompt
+            return self.prompt
+
+        elif self.completion_mode == 'edit':
+            # Prepare an edit prompt
+            if not self.edit_text.text:
+                self.edit_text.text = self.short_mem.text
+            return text
+
+        else:
+            # Default: Use the provided prompt
+            return self.prompt
 
     def __str__(self):
 
@@ -1497,7 +1566,7 @@ Aktuelle Konversation:
 Benutzer: {task}
 Isaa:
         """
-        prompt_en = """
+        prompt_en = f"""
 Hello! I'm Isaa, your intelligent, voice-controlled digital assistant. I look forward to helping you plan and implement your projects. First, let's clarify some details.
 
 I'd like to give you an insight into my personality, goals and skills:
@@ -1515,13 +1584,13 @@ External monologues: "After analyzing the data, I have determined that..."
 
 I have the ability to run Python code in a live interpreter. Please consider all observations and use this information to make informed decisions.
 
-Now for My Task: '{task}'
+Now for My Task: '{task_list}'
 
 I try to be precise and to the point in my answers, but I also try to keep the big picture in mind.
 
-History: {history}
+History: {self.short_mem.text}
 Current conversation:
-{input}
+User: {task}
 Isaa:
         """
 
@@ -1592,10 +1661,10 @@ Als Ausführungsagent ist es meine Aufgabe, den von einem Planungsagenten erstel
 
 Isaa, ICH agiere in einer bestimmten Prefix Struktur. Ich kann folgende Prefixe verwenden:
 
-    TALK: In dieser Zeile wird der folgende Text als normaler Text ausgegeben.
+    ASK: In dieser Zeile soll der folgende Text eine frage für den nutzer enthalten. frage den nutzer nur in notwendigen ausnahme situationen.
     SPEAK: Der nachfolgende Text wird gesprochen.
     THINK: Dieser Text bleibt verborgen. Der THINK-Prefix sollte regelmäßig verwendet werden, um zu reflektieren.
-    PLAN: Um einen Plan wiederzugeben. und zu sichern
+    PLAN: Um einen Plan wiederzugeben und zu sichern
     ACTION: Der Agent verfügt über Tools, auf die er zugreifen kann. Aktionen sollten im JSON-Format beschrieben werden.""" + """{'Action':'name','Inputs':args}""" + f"""
 
 Der Agent muss Aktionen ausführen.
@@ -1603,12 +1672,16 @@ Die Ausgabe des Agents wird live von Prefix zu Prefix interpretiert.
 Diese müssen ausgegeben werden, um das System richtig zu benutzen.
 für rückfrage vom nutzer benutze das human toll über die action.
 Wenn die Keine Action aus führst stirbt deine instanz diene memory's und erfahrungen werden gespeichert.
-benutze vor jeder aktion think ! benutze speak um den nutzer auf dem laufenden zu halten!
+Benutze vor jeder aktion think nehme dir einige minuten zeit um deine Gedanken zu sortieren und dein wissen und beobachtungen mit einzubinden!
 
 tips: Benutze vor jeder action THINK:
 um den plan erfolgreich auszuführen. um das missions ziel zu erreichen.
 füge immer den namen der aktion hinzu um diese auszuführen.
 
+beispiels aktions aufruf
+ACTION:""" + """{'Action':'memory','Inputs':'gebe mir information über meine bisherigen aufgaben'}""" + f"""
+
+DU Must nach jeder ACTION und ASK die stop sequenz !X! ausgeben um das system richtig zu verwenden!!!!
 Observations:
 {self.observe_mem.text}
 
@@ -1640,22 +1713,24 @@ As an execution agent, it is my job to implement the plan created by a planning 
 
 Isaa, I act in a certain prefix structure. I can use the following prefixes:
 
-    TALK: The following text is output as normal text in this line.
+    ASK: In this line the following text should contain a question for the user. ask the user only in necessary special situations.
     SPEAK: The following text will be spoken.
     THINK: This text remains hidden. The THINK prefix should be used regularly to reflect.
     PLAN: To reflect a plan.
     ACTION: The agent has tools that it can access. Actions should be described in JSON format. """ + """{'Action':'name','Inputs':args}""" + f"""
 
-The agent will execute actions.
+The agent must execute actions.
 The output of the agent is interpreted live from prefix to prefix.
 for query from the user use the human toll about the action.
 If you do not perform any action, your instance will die and experience,memory s will be saved.
-use think before every action !
-use speak to keep the user up to date.
+Before each action, use think take a few minutes to sort out your thoughts and incorporate your knowledge and observations!
 
 tip: always use THINK before Action to ensure to stay on track for the mission.
 always add the name of the action to call it !!!
 
+example action call
+ACTION:""" + """{'Action':'memory','Inputs':'give me information about my previous tasks'}""" + f"""
+YOU MUST output the stop sequence !X! after each ACTION and ASK prefixes, to use the system correctly!!!!
 Information:
 {self.observe_mem.text}
 
@@ -1717,10 +1792,9 @@ Let's get started! Your prompt is:"""
                         f"Important information: to run a tool type 'Action: $tool-name'\n" + \
                         f"Long-termContext:{self.isaa.get_context_memory().get_context_for(self.short_mem.text)}\n" + \
                         f"\nResent Observation:{self.observe_mem.text}" + \
-                        f"Task:{task} " + \
-                        "{xVx}" + \
+                        f"UserInput:{task} \n" + \
                         f"""\n{self.short_mem.text}"""
-            prompt_de = prompt_de.replace('{', '{{').replace('}', '}}').replace('{{xVx}}', '{input}')
+            prompt_de = prompt_de.replace('{', '{{').replace('}', '}}')  # .replace('{{xVx}}', '{input}')
             prompt_en = prompt_de
 
         if self.mode == 'tools':
@@ -1864,6 +1938,8 @@ Answer 1: ..."""
         return self
 
     def set_max_iterations(self, max_iterations: int):
+        if max_iterations > 18:
+            raise ValueError("max_iterations must be less than 18")
         self.max_iterations = max_iterations
         return self
 
@@ -1872,10 +1948,16 @@ Answer 1: ..."""
         return self
 
     def set_personality(self, personality: str):
+        len_pers = self.get_tokens(personality, only_len=True)
+        if len_pers / 6 > self.max_tokens:
+            personality = dilate_string(personality, 0, 4, 0)
         self.personality = personality
         return self
 
     def set_goals(self, goals: str):
+        len_pers = self.get_tokens(goals, only_len=True)
+        if len_pers / 6 > self.max_tokens:
+            goals = dilate_string(goals, 0, 4, 0)
         self.goals = goals
         return self
 
@@ -1901,6 +1983,11 @@ Answer 1: ..."""
         self.max_tokens = get_max_token_fom_model_name(self.model_name)
         self.token_left = self.max_tokens
         self.ppm = get_price(self.max_tokens)
+        if self.completion_mode == 'chat' and 'text' in self.model_name:
+            self.completion_mode = 'text'
+        if self.completion_mode != 'chat' and (self.model_name.startswith('gpt-3.5') or self.model_name.startswith('gpt-4')):
+            self.completion_mode = 'chat'
+
         return self
 
     def save_to_file(self, file_path=None):
@@ -2022,6 +2109,8 @@ Answer 1: ..."""
         return agent_config
 
     def get_tokens(self, text, only_len=True):
+        if isinstance(text, list):
+            text = '\n'.join(msg['content'] for msg in text)
         tokens = get_token_mini(text, self.model_name, self.isaa, only_len)
         if only_len:
             if tokens == 0:
@@ -2029,8 +2118,19 @@ Answer 1: ..."""
         return tokens
 
 
-def get_token_mini(text, model_name=None, isaa=None, only_len=True):
+def get_token_mini(text: str, model_name=None, isaa=None, only_len=True):
     logger = get_logger()
+
+    if isinstance(text, list):
+        text = '\n'.join(
+            msg['content'] if 'content' in msg.keys() else msg['output'] if 'output' in msg.keys() else '' for msg in
+            text)
+
+    if isinstance(text, dict):
+        text = text['content'] if 'content' in text.keys() else text['output'] if 'output' in text.keys() else ''
+
+    if not isinstance(text, str):
+        raise ValueError(f"text must be a string text is {type(text)}, {text}")
 
     if not text or len(text) == 0:
         if only_len:
@@ -2195,6 +2295,7 @@ def _get_all_model_dict_price_token_limit_approximation():
 
         # concrete :
         'gpt4all#ggml-model-gpt4all-falcon-q4_0.bin': 2048,
+        'gpt4all#orca-mini-3b.ggmlv3.q4_0.bin': 2048,
     }
 
     for i in range(1, 120):
@@ -2255,6 +2356,9 @@ def get_json_from_json_str(json_str: str, repeat: int = 1) -> dict or None:
             json_str = json_str[:unesc] + r'\"' + json_str[unesc + 1:]
             closg = json_str.find(r'"', unesc + 2)
             json_str = json_str[:closg] + r'\"' + json_str[closg + 1:]
+        new = fix_json_object(json_str)
+        if new is not None:
+            json_str = new
     get_logger().info(f"Unable to parse JSON string after {json_str}")
     return None
 
@@ -2279,7 +2383,7 @@ def parse_json_with_auto_detection(json_data):
             else:
                 return parsed_value
         except Exception as e:
-            logging.warning(f"Failed to parse value as JSON: {value}. Exception: {e}")
+            # logging.warning(f"Failed to parse value as JSON: {value}. Exception: {e}")
             return value
 
     logging = get_logger()
@@ -2307,44 +2411,44 @@ def parse_json_with_auto_detection2(json_data):
         return try_parse_json(json_data)
 
 
-def extract_json_objects2(text: str):
+def extract_json_objects(text: str, matches_only=False):
     pattern = r'\{.*?\}'
-    matches = re.findall(pattern, text)
-    print("Matches:", matches)
-
+    matches = re.findall(pattern, text.replace("'{", '{').replace("}'", '}').replace('"', "'").replace("':'", '":"').replace("': '",
+                                                                                                           '": "').replace(
+        "','", '","').replace("', '", '", "').replace("{'", '{"').replace("'}", '"}').replace("':{", '":{').replace("' :{", '" :{').replace("': {", '": {'),
+                         flags=re.DOTALL)
     json_objects = []
-    for match in matches:
-        if match.count("{") != match.count("}"):
-            c = text.replace(match, "").count("}")
-            if c:
-                match += c * '}'
-        try:
-            json_objects.append(json.loads(match))
-        except json.JSONDecodeError:
-            pass
-    return json_objects
+    print(matches)
+    if matches_only:
+        return matches
 
-
-def extract_json_objects(text: str):
-    pattern = r'\{.*?\}'
-    matches = re.findall(pattern, text)
-    print("Matches:", matches)
-
-    json_objects = []
     for match in matches:
         try:
             x = json.loads(match)
             json_objects.append(x)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e1:
             # Wenn die JSON-Dekodierung fehlschlägt, versuchen Sie, das JSON-Objekt zu reparieren
             fixed_match = fix_json_object(match)
+            print(f"{fixed_match=}")
             if fixed_match:
                 try:
                     y = json.loads(fixed_match)
                     json_objects.append(y)
                 except json.JSONDecodeError as e:
                     print(e)
-                    pass
+                    try:
+                        y = json.loads(fixed_match.replace("\n", "#New-Line#"))
+                        for k in y.keys():
+                            if isinstance(y[k], str):
+                                y[k] = y[k].replace("#New-Line#", "\n")
+                            if isinstance(y[k], dict):
+                                for k1 in y[k].keys():
+                                    if isinstance(y[k][k1], str):
+                                        y[k][k1] = y[k][k1].replace("#New-Line#", "\n")
+                        json_objects.append(y)
+                    except json.JSONDecodeError as e:
+                        print(e)
+                        pass
     return json_objects
 
 
@@ -2355,15 +2459,14 @@ def fix_json_object(match: str):
         # Fügen Sie die fehlenden öffnenden Klammern am Anfang des Matches hinzu
         opening_braces_to_add = "{" * extra_opening_braces
         fixed_match = opening_braces_to_add + match
-        return fixed_match.replace("'", '"')
+        return fixed_match
     extra_closing_braces = match.count("{") - match.count("}")
     if extra_closing_braces > 0:
         # Fügen Sie die fehlenden öffnenden Klammern am Anfang des Matches hinzu
         closing_braces_to_add = "}" * extra_closing_braces
         fixed_match = match + closing_braces_to_add
-        return fixed_match.replace("'", '"')
+        return fixed_match
     return None
-
 
 def find_json_objects_in_str(data: str):
     """
@@ -2371,7 +2474,6 @@ def find_json_objects_in_str(data: str):
     Gibt eine Liste von JSON-Objekten zurück, die im String gefunden wurden.
     """
     json_objects = extract_json_objects(data)
-    print("json_objects", json_objects, type(json_objects))
     return [get_json_from_json_str(ob, 10) for ob in json_objects if get_json_from_json_str(ob, 10) is not None]
 
 
@@ -2408,15 +2510,12 @@ def anything_from_str_to_dict(data: str, expected_keys: dict = None, mini_task=l
         if len(json_objects) > 0:
             if isinstance(json_objects[0], dict):
                 result.extend([{**expected_keys, **ob} for ob in json_objects])
-
     if not result:
         completed_object = complete_json_object(data, mini_task)
         if completed_object is not None:
             result.append(completed_object)
-
     if len(result) == 0 and expected_keys:
         result = [{list(expected_keys.keys())[0]: data}]
-
     for res in result:
         for key, value in expected_keys.items():
             if key not in res:
@@ -2452,3 +2551,4 @@ else:
 
     if info_sys != SystemInfos:
         SystemInfos = info_sys
+

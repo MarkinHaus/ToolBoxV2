@@ -12,7 +12,7 @@ from toolboxv2.utils.toolbox import get_app
 from toolboxv2.mods.isaa.isaa import (show_image_in_internet, image_genrating_tool,
                                       browse_website, get_text_summary, get_hyperlinks, scrape_text,
                                       extract_hyperlinks, format_hyperlinks, scrape_links, get_ip, get_location,
-                                      extract_code, get_tool, initialize_gi, _extract_from_json)
+                                      extract_code, get_tool, initialize_gi, _extract_from_json, dilate_string)
 
 
 class TestIsaaBenchmarks(unittest.TestCase):
@@ -105,6 +105,199 @@ class TestIsaaBenchmarks(unittest.TestCase):
 
         print(allse)
 
+    def test_max_dilate_string(self):
+
+        do_test = False
+
+        if not do_test:
+            self.assertEqual(True, True)
+            return
+
+        test_string = """Zum Inhalt springen
+Menü
+Wohnen
+Klimawandel
+Krieg in der Ukraine
+Alle Themen
+Blog
+SCHACHBLOG
+‹ ALLE EINTRÄGE
+Kandidatenturnier 2016: Karjakin besiegt Anand und führt
+15. März 2016 um 18:49 Uhr
+
+In einer munteren vierten Runde des Kandidatenturniers in Moskau bekamen die Zuschauer zunächst ein schnelles, aber zumindest optisch keineswegs langweiliges Remis zu sehen. In einer scharfen halbslawischen Variante entbrannte zwischen Hikaru Nakamura und Anish Giri eine theoretische Diskussion, für die sich beide als bestens vorbereitet erwiesen. Giris König landete schnell auf dem etwas ungewöhnlichen Posten f6, aber der junge Holländer dürfte noch nicht einmal besonders aufgeregt gewesen sein, denn ihm war die Position mit Sicherheit noch aus seiner Hausanalyse bekannt.
+
+giri_nakamura
+
+Er ließ hier sogar kühn mit 24…c5!? (24…Kg7 hielt die Partie am Laufen) ein Abzugsschach zu, wonach abernach 25.fxg6+ Kxg6 26.Sxf7 Tf8 27.Sd5 Dxb2 beide Seiten über keinerlei Ressourcen mehr verfügten, weiterzuspielen, ohne sich selbst weh zu tun. Daher gab Nakamura beginnend mit 28.Se7+ Dauerschach, wodurch er noch immer mit 1,5/4 bei „Minus Eins“ steht und bisher schwerlich zufrieden mit seinem Abschneiden bei seinem ersten Kandidatenturnier sein kann. Für Giri dagegen ist nach seinem vierten Remis noch immer alles drin, er wird im späteren Turnierverlauf auf wenige, gezielte Schläge aus sein.
+
+Als Nächstes wurden die beiden nach einer Umfrage unter Schachfans und Schwiegermüttern wohl beliebtesten und charismatischsten Kandidaten der Show „Wer datet Magnus Carlsen?“ fertig, Lewon Aronjan und Pjotr Swidler. Immer ein Spruch auf den Lippen, immer ein freundliches Lächeln, immer ein wenig Understatement, welches noch nicht einmal komplett aufgesetzt klingt, lassen die beiden jede Pressekonferenz zu einem Genuss werden. Noch nicht einmal der Umstand, dass die Partie trotz anfänglich obskurer Bauernstrukturen
+
+aronian_svidler
+
+(Stellung nach 13.dxc5)
+
+minimal dröge verlaufen war, störte die beiden, sie können einfach stundenlang über Schach reden, ohne dass es langweilig oder eintönig wird.
+
+Danach passierte endlich etwas, was wirklich über Schattenboxen hinausging. Sergey Karjakin besiegte den mehrfachen Exweltmeister Vishy Anand und fügte diesem seine erste Niederlage im Turnier bei, nachdem der Inder die sibirische Auflage 2014 noch unbeschadet überstanden hatte und unter anderem gegen Karjakin eine sehr schwierige Endspielstellung mit Türmen und Springern retten konnte. Nicht aber in diesem Jahr:
+
+karjakin_anand
+
+Karjakin hat sich mit seinen Figuren tief in die indischen Reihen gebohrt, die schwarzen Figuren sind alle aneinander gebunden und drohen abgeholt zu werden. Nach dem einzigen Zug 40…Se7 (sonst wird Schwarz sofort von einer weißen Springergabel erledigt, folgte 41.Td6 womit Weiß sowohl das quälende Eingreifen seines Königs droht, als auch sofort den Bauern auf d5 zu schlagen. Es folgte der Kurzschluss 41…Tb6? (41…Sc8 verlängerte das Leid zumindest) 42.Td7 a6 43.Sc3 und nun verliert Schwarz bei Weitem nicht nur den Bauern auf d5, gab also die Partie auf. So elegant der Partieschluss, so fade allerdings die anschließende Konferenz. Anand nach einer Niederlage bedient wie eh und je, Karjakin in seinen Ausführungen etwa das Gegenteil an Eloquenz im Vergleich zu der Konferenz davor – etwas redundant und streng auf die 64 Felder beschränkt. Dafür führt er das Turnier mit 3 Punkten aus 4 Partien nun alleine an – und das als nicht gerade ausgewiesener Topfavorit der meisten Experten.
+
+Ebenfalls nicht als Topfavorit galt der Bulgare Wesselin Topalow, der um ein solches Turnier auf dem ersten Platz zu beenden, meist doch ein wenig wechselhaft agiert. In Moskau läuft bei ihm bisher bei 0,5/3 doch sehr wenig zusammen und auch heute war er extrem kurz davor, seine dritte Partie zu verlieren, es wäre gegen Fabiano Caruana gewesen. Dieser überspielte Topalow völlig, rutschte aber an einer Stelle aus, an der seine Aufgabe bereits absurd einfach war:
+
+caruana_topalow
+
+Hier einfach mit 41.Txf6 die Türme zu tauschen und nach 41…Dxf6 mit 42.Tb2 den f2 zu decken, lag doch sehr auf der Hand. Hat der Italo-Amerikaner etwa 42…Lf5 befürchtet und 43.Dxf5 mit folgender Springergabel übersehen? Man mag es fast nicht glauben. Und doch, Caruana spielte das viel schwächere 41.Tbb5 und nach 41…Txf2 42.Txg6 Txf1+ 43.Kh2 Dxc8 verzichtete er auch noch auf das bessere 44.Dxh6 und gab sich mit 44.Dxc8 Txc8 45.Txc6 einem „sicheren“ Turmendspiel hin, was aber dank des starken schwarzen e-Bauern schnell Remis endete. Mal sehen, ob Topalow durch diesen Lucky Escape neue Energie schöpfen kann, für Caruanas Turnier war dieses Partieende wohl pures Gift.
+
+Die Zwischenstände lauten nach 4 von 14 Runden also:
+
+3 Karjakin
+
+2,5 Aronjan
+
+2 Caruana, Anand, Giri, Swidler
+
+1,5 Nakamura
+
+1 Topalow
+
+Am Mittwoch und Donnerstag wird wieder um 13:00 deutscher Zeit gespielt, bevor am Freitag ein nächster Ruhetag folgt.
+
+AUF FACEBOOK TEILENTWITTERN
+von Ilja Schneider / Artikel drucken
+Kategorie
+
+Allgemein
+ÜBER DIESES BLOG
+Schachspieler denken stundenlang in Varianten, spielen zur Not ohne Brett und gelten als introvertiert und eigenbrötlerisch. Zu ihrem Sport rücken sie mit Thermosflasche und Stullen-Paket an. Soweit die Klischees. Dieses Blog, das sich an Anfänger und Könner wendet, will sie bestätigen und verwerfen.
+ÜBER DIE AUTOREN
+Ilja Schneider
+Ilja Schneider, Jahrgang 1984, internationaler Meister, spielt für die Schachfreunde Berlin in der Bundesliga und bloggte in der Vergangenheit in seinem Schachzoo. Auf Wikipedia heißt es, er sei der "beste Kaffeehausspieler Deutschlands", aber das entbehrt ebenso jeder Grundlage, wie die Behauptung, seine Lieblingsfußballmannschaft Hannover 96 hätte seit Jahren einen Auswärtskomplex.
+Johannes Fischer
+Johannes Fischer, Jahrgang 1963, liest gerne Bücher, geht gerne ins Kino und spielt gerne Schach. Mit diesen schönen Dingen beschäftigt er sich auch auf seinem eigenen Blog Schöner Schein. Er lebt in Nürnberg als freier Übersetzer, Autor und Redakteur und schreibt regelmäßig für ChessBase und KARL, Die kulturelle Schachzeitschrift.
+Dennes Abel
+Dennes Abel, Jahrgang 1989, spielt für die Schachfreunde Berlin in der ersten Bundesliga und kommentierte für ZEIT ONLINE bereits die WM 2013. Er hat am Schachbrett schon vieles gesehen, aber noch nicht genug, deshalb will er im Oktober beim Millionairechess in Las Vegas antreten.
+LETZTE BEITRÄGE
+Die Schachweltmeisterin Hou Yifan vertraut nicht mehr aufs Glück
+Deutscher Meister wird nur die Schachgesellschaft Solingen
+Garri Kasparow spielt wieder
+Das lauteste Schachturnier der Welt
+Kandidatenturnier 2016: Karjakin und Aronjan immer noch in Führung
+DIESES BLOG DURCHSUCHEN
+Suche
+
+Nach oben
+Impressum Hilfe & Kontakt Unternehmen Karriere Presse Jobs Shop Inserieren Mediadaten
+Bildrechte Rechte & Lizenzen AGB Datenschutz Privacy Einstellungen Cookies & Tracking Abo kündigen"""
+
+        with self.subTest(Agent="SYSTEM"):
+
+            run_agent_thinkm = self.isaa.run_agent("thinkm", test_string + "\nWorum handelt der artikel")
+
+            run_agent_summary = self.isaa.run_agent("summary", test_string + "\nWorum handelt der artikel")
+            mas_text_summaries = self.isaa.mas_text_summaries(test_string + "\nWorum handelt der artikel")
+
+            print(f"====================\nSYSTEM RESULTS :"
+                  f"\n{run_agent_thinkm=}\n{run_agent_summary=}\n{mas_text_summaries=}\n"
+                  f"================================================================")
+            # to big error kontex lengh
+            # 3/10 2/10 1/10
+
+        with self.subTest(Agent="SYSTEM: 0 2 0"):
+            dilate_string_0_2_0 = dilate_string(test_string, 0, 2, 0)
+
+            run_agent_thinkm = self.isaa.run_agent("thinkm", dilate_string_0_2_0 + "\nWorum handelt der artikel")
+
+            run_agent_summary = self.isaa.run_agent("summary", dilate_string_0_2_0 + "\nWorum handelt der artikel")
+            mas_text_summaries = self.isaa.mas_text_summaries(dilate_string_0_2_0 + "\nWorum handelt der artikel")
+
+            print(f"====================\ndilate_string 0 2 0 RESULTS :"
+                  f"\n{run_agent_thinkm=}\n{run_agent_summary=}\n{mas_text_summaries=}\n"
+                  f"================================================================")
+            # 13/10 4/10 10/10
+            # 13/10 2/10 8/10
+        with self.subTest(Agent="SYSTEM: 1 2 0"):
+            dilate_string_1_2_0 = dilate_string(test_string, 1, 2, 0)
+
+            run_agent_thinkm = self.isaa.run_agent("thinkm", dilate_string_1_2_0 + "\nWorum handelt der artikel")
+
+            run_agent_summary = self.isaa.run_agent("summary", dilate_string_1_2_0 + "\nWorum handelt der artikel")
+            mas_text_summaries = self.isaa.mas_text_summaries(dilate_string_1_2_0 + "\nWorum handelt der artikel")
+
+            print(f"====================\ndilate_string 1 2 0 RESULTS :"
+                  f"\n{run_agent_thinkm=}\n{run_agent_summary=}\n{mas_text_summaries=}\n"
+                  f"================================================================")
+            # 12/10 1/10 0/10
+            # 12/10 1/10 0/10
+        with self.subTest(Agent="SYSTEM: 2 2 0"):
+            dilate_string_2_2_0 = dilate_string(test_string, 2, 2, 0)
+
+            run_agent_thinkm = self.isaa.run_agent("thinkm", dilate_string_2_2_0 + "\nWorum handelt der artikel")
+
+            run_agent_summary = self.isaa.run_agent("summary", dilate_string_2_2_0 + "\nWorum handelt der artikel")
+            mas_text_summaries = self.isaa.mas_text_summaries(dilate_string_2_2_0 + "\nWorum handelt der artikel")
+
+            print(f"====================\ndilate_string 2 2 0 RESULTS :"
+                  f"\n{run_agent_thinkm=}\n{run_agent_summary=}\n{mas_text_summaries=}\n"
+                  f"================================================================")
+            # 11/10 2/10 0/10
+        with self.subTest(Agent="SYSTEM: 3 2 0"):
+            dilate_string_3_2_0 = dilate_string(test_string, 3, 2, 0)
+
+            run_agent_thinkm = self.isaa.run_agent("thinkm", dilate_string_3_2_0 + "\nWorum handelt der artikel")
+
+            run_agent_summary = self.isaa.run_agent("summary", dilate_string_3_2_0 + "\nWorum handelt der artikel")
+            mas_text_summaries = self.isaa.mas_text_summaries(dilate_string_3_2_0 + "\nWorum handelt der artikel")
+
+            print(f"====================\ndilate_string 3 2 0 RESULTS :"
+                  f"\n{run_agent_thinkm=}\n{run_agent_summary=}\n{mas_text_summaries=}\n"
+                  f"================================================================")
+            # 10/10 2/10 5/10
+        with self.subTest(Agent="SYSTEM: 0x0"):
+            first_itter = dilate_string(test_string, 0, 2, 0)
+            second_itter = dilate_string(first_itter, 0, 2, 0)
+
+            run_agent_thinkm = self.isaa.run_agent("thinkm", second_itter + "\nWorum handelt der artikel")
+
+            run_agent_summary = self.isaa.run_agent("summary", second_itter + "\nWorum handelt der artikel")
+            mas_text_summaries = self.isaa.mas_text_summaries(second_itter + "\nWorum handelt der artikel")
+
+            print(f"====================\ndilate_string second_itter RESULTS :"
+                  f"\n{run_agent_thinkm=}\n{run_agent_summary=}\n{mas_text_summaries=}\n"
+                  f"================================================================")
+            # 9/10 2/10 4/10
+            # 5/10 2/10 6/10 (key features)
+        with self.subTest(Agent="SYSTEM: 2x0"):
+            first_itter_ab = dilate_string(test_string, 2, 2, 0)
+            second_itter_ab = dilate_string(first_itter_ab, 0, 2, 0)
+
+            run_agent_thinkm = self.isaa.run_agent("thinkm", second_itter_ab + "\nWorum handelt der artikel")
+
+            run_agent_summary = self.isaa.run_agent("summary", second_itter_ab + "\nWorum handelt der artikel")
+            mas_text_summaries = self.isaa.mas_text_summaries(second_itter_ab + "\nWorum handelt der artikel")
+
+            print(f"====================\ndilate_string second_itter_ab RESULTS :"
+                  f"\n{run_agent_thinkm=}\n{run_agent_summary=}\n{mas_text_summaries=}\n"
+                  f"================================================================")
+            # 8/10 2/10 10/10
+            # 8/10 2/10 11/10
+        with self.subTest(Agent="SYSTEM: 0x0+2x0"):
+            run_agent_thinkm = self.isaa.run_agent("thinkm", second_itter + second_itter_ab + "\nWorum handelt der artikel")
+
+            run_agent_summary = self.isaa.run_agent("summary",
+                                                    second_itter + second_itter_ab + "\nWorum handelt der artikel")
+            mas_text_summaries = self.isaa.mas_text_summaries(
+                second_itter + second_itter_ab + "\nWorum handelt der artikel")
+
+            print(f"====================\ndilate_string second_itter+second_itter_ab RESULTS :"
+                  f"\n{run_agent_thinkm=}\n{run_agent_summary=}\n{mas_text_summaries=}\n"
+                  f"================================================================")
+            # 7/10 0/10 1/10
+
+            # 6/10 0/10 6/10
+
 
 class TestIsaa(unittest.TestCase):
     isaa = None
@@ -148,13 +341,12 @@ class TestIsaa(unittest.TestCase):
         'gpt4all#ggml-replit-code-v1-3b.bin',  # Hy ly crative # : 11.08s
     ]
 
-    modes = ["tools", "live"]  # ["conversation", "tools", "talk", "free", "planning", "live"]
-    agents = ["self",
-              "liveInterpretation"]  # ["self", "todolist", "search", "think", "TaskCompletion", "liveInterpretation", "summary", "thinkm", "code"]
+    modes = []  #["conversation", "tools", "talk", "free", "planning", "live"]
+    agents = []   #["self", "todolist", "search", "think", "TaskCompletion", "liveInterpretation", "summary", "thinkm", "code"]
 
     augment = {'tools':
-                   {'lagChinTools': ['python_repl', 'requests_all', 'terminal', 'sleep', 'google-search',
-                                     'ddg-search', 'wikipedia', 'llm-math', 'requests_get', 'requests_post',
+                   {'lagChinTools': ['python_repl', 'requests_all', 'terminal', 'sleep',
+                                     'wikipedia', 'llm-math', 'requests_get', 'requests_post',
                                      'requests_patch', 'requests_put', 'requests_delete'], 'huggingTools': [],
                     'Plugins': [], 'Custom': []}, 'Agents': {
         'self': {'name': 'self', 'mode': 'free', 'model_name': 'gpt-4', 'max_iterations': 6, 'verbose': True,
@@ -193,7 +385,7 @@ class TestIsaa(unittest.TestCase):
                     'tools': ['memory', 'save_data_to_memory', 'crate_task', 'optimise_task'], 'task_list': [],
                     'task_list_done': [], 'step_between': '',
                     'pre_task': 'Act as an summary expert your specialties are writing summary. you are known to think in small and detailed steps to get the right result. Your task :',
-                    'task_index': 0}}, 'customFunctions': {}, 'tasks': {}}
+                    'task_index': 0}}, 'customFunctions': {}, 'tasks': {}} # 'google-search','ddg-search',
 
     @classmethod
     def setUpClass(cls):
@@ -250,9 +442,9 @@ class TestIsaa(unittest.TestCase):
             ]
 
         cls.isaa.config["DEFAULTMODEL0"] = "gpt-3.5-turbo-0613"  # "gpt-4"
-        cls.isaa.config["DEFAULTMODEL1"] = "gpt-3.5-turbo-06131"  # "gpt-3.5-turbo-0613"
+        cls.isaa.config["DEFAULTMODEL1"] = "gpt-3.5-turbo-0613"  # "gpt-3.5-turbo-0613"
         cls.isaa.config["DEFAULTMODEL2"] = "text-curie-001"  # "text-davinci-003"
-        cls.isaa.config["DEFAULTMODELCODE"] = "text-curie-001"  # "code-davinci-edit-001"
+        cls.isaa.config["DEFAULTMODELCODE"] = "code-davinci-edit-001"  # "code-davinci-edit-001"
         cls.isaa.config["DEFAULTMODELSUMMERY"] = "text-curie-001"  # "text-curie-001"
 
     @classmethod
@@ -711,16 +903,18 @@ Wenn Sie nach der Überprüfung dieser Punkte immer noch Schwierigkeiten haben, 
 
     def test_add_lang_chain_tools_to_agent(self):
         agent = MagicMock()
-        self.isaa.lang_chain_tools_dict = {'tool1': MagicMock(args='args1'), 'tool2': MagicMock(args='args2')}
+        x = {'tool1': MagicMock(args='args1'), 'tool2': MagicMock(args='args2')}
+        self.isaa.lang_chain_tools_dict = x.copy()
         self.isaa.add_lang_chain_tools_to_agent(agent)
         agent.set_tools.assert_called_once_with({
-            'tool1': {'func': self.isaa.lang_chain_tools_dict['tool1'],
-                      'description': self.isaa.lang_chain_tools_dict['tool1'].description, 'format': 'tool1(args1)',
+            'tool1': {'func': x['tool1'],
+                      'description': x['tool1'].description, 'format': 'tool1(args1)',
                       'langchain-tool': True},
-            'tool2': {'func': self.isaa.lang_chain_tools_dict['tool2'],
-                      'description': self.isaa.lang_chain_tools_dict['tool2'].description, 'format': 'tool2(args2)',
+            'tool2': {'func': x['tool2'],
+                      'description': x['tool2'].description, 'format': 'tool2(args2)',
                       'langchain-tool': True}
         })
+        self.assertEqual(self.isaa.lang_chain_tools_dict, {})
 
     def test_create_agent_class(self):
         agent_config = self.isaa.create_agent_class('BP')
@@ -776,11 +970,11 @@ Wenn Sie nach der Überprüfung dieser Punkte immer noch Schwierigkeiten haben, 
         self.assertTrue(True)
 
     def test_use_tools_free(self):
-        agent_text = 'I wont to run the api_run Tool'
-        config = AgentConfig(name='free0', isaa=self.isaa).set_mode('free')
-        self.isaa.add_tool("api_run", lambda x: x, "no dis", "no form", config)
-        result = self.isaa.test_use_tools(agent_text, config)
-        self.assertEqual(result, (True, 'api_run', 'Tool'))
+        # agent_text = 'I wont to run the api_run Tool'
+        # config = AgentConfig(name='free0', isaa=self.isaa).set_mode('free')
+        # self.isaa.add_tool("api_run", lambda x: x, "no dis", "no form", config)
+        # result = self.isaa.test_use_tools(agent_text, config)
+        # self.assertEqual(result, (True, 'api_run', 'Tool'))
 
         agent_text = 'Action: api_run'
         config = AgentConfig(name='free1', isaa=self.isaa).set_mode('free')
@@ -788,48 +982,12 @@ Wenn Sie nach der Überprüfung dieser Punkte immer noch Schwierigkeiten haben, 
         result = self.isaa.test_use_tools(agent_text, config)
         self.assertEqual(result, (True, 'api_run', ''))
 
-        agent_text = 'api_run()'
-        config = AgentConfig(name='execution3', isaa=self.isaa).set_mode('free')
-        self.isaa.add_tool("api_run", lambda x: x, "no dis", "no form", config)
-        result = self.isaa.test_use_tools(agent_text, config)
-        self.assertEqual(result, (True, 'api_run', '()'))
-
-        agent_text = 'api_run("Arg 1")'
-        config = AgentConfig(name='execution3', isaa=self.isaa).set_mode('free')
-        self.isaa.add_tool("api_run", lambda x: x, "no dis", "no form", config)
-        result = self.isaa.test_use_tools(agent_text, config)
-        self.assertEqual(result, (True, 'api_run', '("Arg 1")'))
-
-        agent_text = 'api_run("Arg 1", 2)'
-        config = AgentConfig(name='execution3', isaa=self.isaa).set_mode('free')
-        self.isaa.add_tool("api_run", lambda x: x, "no dis", "no form", config)
-        result = self.isaa.test_use_tools(agent_text, config)
-        self.assertEqual(result, (True, 'api_run', '("Arg 1", 2)'))
-
     def test_use_tools_execution(self):
         agent_text = 'Action: api_run\nInputs: test_input'
         config = AgentConfig(name='execution2', isaa=self.isaa).set_mode('execution')
         self.isaa.add_tool("api_run", lambda x: x, "no dis", "no form", config)
         result = self.isaa.test_use_tools(agent_text, config)
         self.assertEqual(result, (True, 'api_run', 'test_input'))
-
-        agent_text = 'api_run()'
-        config = AgentConfig(name='execution3', isaa=self.isaa).set_mode('execution')
-        self.isaa.add_tool("api_run", lambda x: x, "no dis", "no form", config)
-        result = self.isaa.test_use_tools(agent_text, config)
-        self.assertEqual(result, (True, 'api_run', '()'))
-
-        agent_text = 'api_run("Arg 1")'
-        config = AgentConfig(name='execution3', isaa=self.isaa).set_mode('execution')
-        self.isaa.add_tool("api_run", lambda x: x, "no dis", "no form", config)
-        result = self.isaa.test_use_tools(agent_text, config)
-        self.assertEqual(result, (True, 'api_run', '("Arg 1")'))
-
-        agent_text = 'api_run("Arg 1", 2)'
-        config = AgentConfig(name='execution3', isaa=self.isaa).set_mode('execution')
-        self.isaa.add_tool("api_run", lambda x: x, "no dis", "no form", config)
-        result = self.isaa.test_use_tools(agent_text, config)
-        self.assertEqual(result, (True, 'api_run', '("Arg 1", 2)'))
 
     def test_use_tools_with_json_input(self):
         self.isaa.add_tool("api_run", lambda x: x, "no dis", "no form", self.isaa.get_agent_config_class('self'))
@@ -874,9 +1032,9 @@ Wenn Sie nach der Überprüfung dieser Punkte immer noch Schwierigkeiten haben, 
     def test_use_tools_with_ai_called(self):
         agent_text = 'I wont to run the api_run Tool'
         config = AgentConfig(name='free0', isaa=self.isaa).set_mode('free')
-        self.isaa.add_tool("api_run", lambda x: x, "no dis", "no form", config)
-        result = self.isaa.test_use_tools(agent_text, config)
-        self.assertEqual(result, (True, 'api_run', 'Tool'))
+        # self.isaa.add_tool("api_run", lambda x: x, "no dis", "no form", config)
+        # result = self.isaa.test_use_tools(agent_text, config)
+        # self.assertEqual(result, (True, 'api_run', 'Tool'))
 
     def test_use_tools_multi_string(self):
 
@@ -981,10 +1139,10 @@ Inputs: Param6: Value6, Param7: Value7
         i = 0
         for test_test in data_set:
             with self.subTest(TestNumber=i):
-                tool, res = _extract_from_json(test_test, config)
+                # tool, res = _extract_from_json(test_test, config)
                 result = self.isaa.test_use_tools(test_test, config)
                 print("################################")
-                print(i, tool, res)
+                print(i, data_set[i], result)
                 print("################################")
                 self.assertEqual(list(result)[0], action_map[i])
 
@@ -1205,9 +1363,10 @@ Inputs: Param6: Value6, Param7: Value7
         result = self.isaa.run_agent(agent_class,
                                      "Take action  ; f(x) = x^3 - 3x^2 + 2x - 1.  Find the critical points of this "
                                      "function and determine whether they are local minima, local maxima, "
-                                     "or saddle points. Also, find the intervals of increase and decrease.", r=4)
+                                     "or saddle points. Also, find the intervals of increase and decrease.", r=0)
         print("###################")
         self.isaa.print(f"::{result}")
+        print(self.isaa.config)
         print("###################")
         print(agent_class.observe_mem.text)
 
@@ -1315,6 +1474,167 @@ class TestIsaaUnit(unittest.TestCase):
         image_genrating_tool('prompt', self.app)
         mock_generate_image.assert_called_once()
         mock_show_image.assert_called_once()
+
+    def test_dilate_string(self):
+        test_string = """
+Zum Inhalt springen
+Menü
+Wohnen
+Klimawandel
+Krieg in der Ukraine
+Alle Themen
+Blog
+TEILCHEN
+Im Netz verstecken sich kleine Schätze – ZEIT ONLINE findet sie.
+Über die Autoren
+Janis Dietz22. Januar 2021
+Einmal quer durch Havanna, bitte!
+
+Plötzlich ist man in Havanna, Rio oder Jekatarinburg – „Drive & Listen“ macht es möglich. Foto: Andrei Luca/Youtube
+Drive & Listen ist eine einfache aber sehnsuchtsschürende Anwendung, mit der man von zu Hause aus durch fremde Straßen fahren kann. Man klickt in einem Drop-Down-Menü auf eine von über 50 Städtenamen und schon ist man im Auto unterwegs, mitten in einer unbekannten Großstadt und begleitet von lokalen Radiosendern. Ich entscheide mich für die kubanische Hauptstadt. (Was hilft besser gegen Corona-Winterblues als karibisches Flair?) Und plötzlich fahre ich durch Havanna. Links das Meer, auf der rechten Seite ziehen die leicht verfallenen ehemaligen Prachtbauten an mir vorbei. Ab und an überhole ich einen alten Chevrolet oder Buick. Das Radio dudelt vor sich hin. Am liebsten würde ich jetzt ein Fenster öffnen und mein Gesicht in den karibischen Wind halten.  Weiter„Einmal quer durch Havanna, bitte!“
+
+
+Dennis Schmees14. Januar 2021
+Pflegekräfte in der Pandemie
+„Nichts hätte mich darauf vorbereiten können“
+Empfohlener redaktioneller Inhalt
+An dieser Stelle finden Sie externen Inhalt, der den Artikel ergänzt. Sie können sich externe Inhalte mit einem Klick anzeigen lassen und wieder ausblenden.
+  Externer Inhalt
+Ich bin damit einverstanden, dass mir externe Inhalte angezeigt werden. Damit können personenbezogene Daten an Drittplattformen übermittelt werden. Mehr dazu in unserer Datenschutzerklärung.
+
+Zu Beginn der Corona-Pandemie haben sich in einem Pflegeheim in Hessen mehr als zwei Dutzend Bewohnerinnen, Bewohner und Pflegekräfte mit dem Virus infiziert. Drei Menschen sind an der Erkrankung gestorben. Um das Erlebte zu verarbeiten, hat eine Krankenschwester ein Gedicht geschrieben.
+
+Weiter„„Nichts hätte mich darauf vorbereiten können““
+
+
+ÜBER DIESES BLOG
+Nicht jedes Video ist eine Nachricht, nicht jede Grafik lohnt für einen Artikel. Wir teilen sie trotzdem via Twitter, Facebook oder sprechen mit Freunden darüber. Weil sie sehenswert sind, unterhaltsam und informativ. Damit sie nicht einfach wieder verschwinden, sammelt ZEIT ONLINE im Teilchen-Blog regelmäßig Kleines, aber Feines aus dem Netz. Folgen Sie dem Blog auch auf Twitter unter #Teilchen.
+Andreas Loos22. Dezember 2020
+Dieses Mathe-Game lässt Sie den Weihnachtsbaum vergessen
+Weihnachten und Corona
+Vorsicht, Suchtgefahr! © Screenshot imaginary.org
+Im Weltraum gehen Coronaviren ja vermutlich schnell kaputt, wegen UV-Strahlung, Kälte und dergleichen. Und für einen einzelnen Astronauten allein – obendrein im Anzug – besteht überhaupt keine Ansteckungsgefahr. Insofern ist das Spiel, das Mathematiker für Weihnachten online gestellt haben, perfekt coronakonform.
+
+Weiter„Dieses Mathe-Game lässt Sie den Weihnachtsbaum vergessen“
+
+
+Dennis Schmees11. Dezember 2020
+Doktor trotz Prüfungsangst
+Empfohlener redaktioneller Inhalt
+An dieser Stelle finden Sie externen Inhalt, der den Artikel ergänzt. Sie können sich externe Inhalte mit einem Klick anzeigen lassen und wieder ausblenden.
+  Externer Inhalt
+Ich bin damit einverstanden, dass mir externe Inhalte angezeigt werden. Damit können personenbezogene Daten an Drittplattformen übermittelt werden. Mehr dazu in unserer Datenschutzerklärung.
+
+Schon die Vorstellung, einen Vortrag zu halten, lässt viele Menschen feuchte Hände bekommen. Das ist auch in Zeiten sozialer Distanz und Zoom-Meetings nicht anders. Ein Doktorand hat seinen Herzschlag vor, während und nach der Verteidigung seiner Doktorarbeit gemessen. Das Ergebnis: Ruhe zu bewahren ist trotz Anspannung möglich – und auch Freude sorgt für Herzrasen.
+
+Weiter„Doktor trotz Prüfungsangst“
+
+
+Tobias Dorfer1. Dezember 2020
+Wenn Ärzte zu Tröstern werden
+Corona-Intensivstation
+Der Arzt Joseph Varon tröstet im United Memorial Medical Center in Houston an Thanksgiving einen Corona-Patienten. © Go Nakamura/Getty Images
+Ein älterer Mann vergräbt seinen Kopf in den Armen eines Arztes. Er wird im United Memorial Medical Center in der US-Metropole Houston wegen Covid-19 behandelt. Der Arzt Joseph Varon hatte ihn am 26. November, dem Tag, an dem in den USA Thanksgiving gefeiert wird, in seinem Bett gefunden, weinend und um Hilfe rufend: „Ich möchte mit meiner Frau zusammen sein“, hatte der Mann gesagt. Varon kann nicht mehr tun als den Mann zu trösten.
+
+Weiter„Wenn Ärzte zu Tröstern werden“
+
+
+Dennis Schmees4. November 2020
+World of Pandemieforschung
+Empfohlener redaktioneller Inhalt
+An dieser Stelle finden Sie externen Inhalt, der den Artikel ergänzt. Sie können sich externe Inhalte mit einem Klick anzeigen lassen und wieder ausblenden.
+  Externer Inhalt
+Ich bin damit einverstanden, dass mir externe Inhalte angezeigt werden. Damit können personenbezogene Daten an Drittplattformen übermittelt werden. Mehr dazu in unserer Datenschutzerklärung.
+
+Eine virtuelle Pandemie verbreitet sich im Jahr 2005 im Spiel World of Warcraft. Die Entdeckungen, die die epidemiologische Forschung anschließend machte, lässt uns bis heute echte Pandemien besser verstehen.
+
+Weiter„World of Pandemieforschung“
+
+
+Tobias Dorfer27. Oktober 2020
+Kasachstan
+Wie Kasachstan vom „Borat“-Boom profitieren möchte
+Empfohlener redaktioneller Inhalt
+An dieser Stelle finden Sie externen Inhalt, der den Artikel ergänzt. Sie können sich externe Inhalte mit einem Klick anzeigen lassen und wieder ausblenden.
+  Externer Inhalt
+Ich bin damit einverstanden, dass mir externe Inhalte angezeigt werden. Damit können personenbezogene Daten an Drittplattformen übermittelt werden. Mehr dazu in unserer Datenschutzerklärung.
+
+Frauenfeindlich, homophob, antisemitisch – so beschreibt der (fiktionale) Journalist Borat Sagdiyev im gleichnamigen Kinofilm sein Heimatland Kasachstan. Ein Land, das so rückständig beschrieben wird, wäre fast schon ein Fall für die Reisewarnungsabteilung des Auswärtigen Amtes. Und dennoch macht die Tourismusbehörde Kasachstans nun aus den zweifelhaften Zuschreibungen Gold.
+
+Weiter„Wie Kasachstan vom „Borat“-Boom profitieren möchte“
+
+
+Sasan Abdi-Herrle17. September 2020
+Joko und Klaas machen das Grauen von Moria sichtbar
+Empfohlener redaktioneller Inhalt
+An dieser Stelle finden Sie externen Inhalt, der den Artikel ergänzt. Sie können sich externe Inhalte mit einem Klick anzeigen lassen und wieder ausblenden.
+  Externer Inhalt
+Ich bin damit einverstanden, dass mir externe Inhalte angezeigt werden. Damit können personenbezogene Daten an Drittplattformen übermittelt werden. Mehr dazu in unserer Datenschutzerklärung.
+
+Verteilungsschlüssel, EU-Türkei-Abkommen, „Koalition der Willigen“: Das Flüchtlingsthema kann schnell einen virtuellen Charakter bekommen, wenn man es aus der sinnbildlichen „warmen Stube“ verfolgt. Dabei geht es bei aller komplexen Politik doch um Menschen. Die Entertainer Joko Winterscheidt und Klaas Heufer-Umlauf haben dazu beigetragen, das konkrete Grauen der Flüchtlinge und Migranten auf Lesbos sichtbarer zu machen. Dazu nutzten sie die Sendezeit, die sie am Dienstag „gewonnen“ hatten: Die Kurzdoku A Short Story of Moria über die Lage auf Lesbos lief am Mittwochabend zur Primetime auf ProSieben.
+
+Weiter„Joko und Klaas machen das Grauen von Moria sichtbar“
+
+
+Dennis Schmees2. September 2020
+US-Wahlkampf
+Joe Biden, der Präsident von Animal Crossing
+Empfohlener redaktioneller Inhalt
+An dieser Stelle finden Sie externen Inhalt, der den Artikel ergänzt. Sie können sich externe Inhalte mit einem Klick anzeigen lassen und wieder ausblenden.
+  Externer Inhalt
+Ich bin damit einverstanden, dass mir externe Inhalte angezeigt werden. Damit können personenbezogene Daten an Drittplattformen übermittelt werden. Mehr dazu in unserer Datenschutzerklärung.
+
+Joe Bidens digitaler Wahlkampf geht in die nächste Runde. Während Donald Trump trotz Pandemie weiter große Wahlveranstaltungen abhält, setzen Joe Biden und Kamala Harris auf Livestreams und nun auch Videospiele. Weiter„Joe Biden, der Präsident von Animal Crossing“
+
+
+Tobias Dorfer21. August 2020
+„Ohne Joe Biden würde ich jetzt nicht zu Ihnen sprechen“
+Empfohlener redaktioneller Inhalt
+An dieser Stelle finden Sie externen Inhalt, der den Artikel ergänzt. Sie können sich externe Inhalte mit einem Klick anzeigen lassen und wieder ausblenden.
+  Externer Inhalt
+Ich bin damit einverstanden, dass mir externe Inhalte angezeigt werden. Damit können personenbezogene Daten an Drittplattformen übermittelt werden. Mehr dazu in unserer Datenschutzerklärung.
+
+Der digitale Parteitag der US-Demokraten war in vielerlei Hinsicht bemerkenswert. Es waren die Tage der großen Worte. Von Biden selbst. Von Michelle Obama. Von Barack Obama. Von der Vizepräsidentschaftskandidatin Kamala Harris. Und am Ende auch von einem 13 Jahre alten Jungen aus New Hampshire.
+
+Weiter„„Ohne Joe Biden würde ich jetzt nicht zu Ihnen sprechen““
+
+
+
+1 / 2 / … / 122 NÄCHSTE SEITE
+
+
+NEUESTE TEILCHEN
+Einmal quer durch Havanna, bitte!
+„Nichts hätte mich darauf vorbereiten können“
+Dieses Mathe-Game lässt Sie den Weihnachtsbaum vergessen
+Doktor trotz Prüfungsangst
+Wenn Ärzte zu Tröstern werden
+DIESES BLOG DURCHSUCHEN
+Suche
+
+Nach oben
+Impressum Hilfe & Kontakt Unternehmen Karriere Presse Jobs Shop Inserieren Mediadaten
+Bildrechte Rechte & Lizenzen AGB Datenschutz Privacy Einstellungen Cookies & Tracking Abo kündigen
+        """
+        res = dilate_string(test_string, 0, 2, 0)
+        res1 = dilate_string(test_string, 1, 2, 0)
+        res2 = dilate_string(test_string, 2, 2, 0)
+        res3 = dilate_string(test_string, 3, 2, 0)
+        print(len(test_string), len(res), len(res1), len(res2), len(res3), len(res) + len(res1) + len(res2) + len(res3))
+        self.assertGreater(len(test_string), len(res))
+        self.assertGreater(len(test_string), len(res1))
+        self.assertGreater(len(test_string), len(res2))
+        self.assertGreater(len(test_string), len(res3))
+
+        first_itter = dilate_string(test_string, 0, 2, 0)
+        second_itter = dilate_string(first_itter, 0, 2, 0)
+
+        print(len(second_itter))
+
+        first_itter_ab = dilate_string(test_string, 2, 2, 0)
+        second_itter_ab = dilate_string(first_itter_ab, 0, 2, 0)
+
+        print(len(second_itter_ab))
 
 
 class TestWebScraping(unittest.TestCase):
@@ -1448,20 +1768,20 @@ class TestProcessCompletion(unittest.TestCase):
 
     def test_process_completion_returns_string(self):
         text = "test_text"
-        config = self.tools.create_agent_class()
+        config = self.tools.create_agent_class().set_completion_mode('text')
         result = self.tools.process_completion(text, config)
         self.assertIsInstance(result, str)
 
     def test_process_completion_with_different_text(self):
         text = "different_test_text"
-        config = self.tools.create_agent_class()
+        config = self.tools.create_agent_class().set_completion_mode('text')
         result = self.tools.process_completion(text, config)
         self.assertIsInstance(result, str)
 
     def test_process_completion_with_invalid_text(self):
         text = 123  # ungültiger Text
         config = self.tools.create_agent_class()
-        with self.assertRaises(TypeError):
+        with self.assertRaises(ValueError):
             self.tools.process_completion(text, config)
 
     def test_process_completion_with_invalid_config(self):

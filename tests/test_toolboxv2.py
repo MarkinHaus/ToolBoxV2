@@ -124,7 +124,10 @@ class TestToolboxv2(unittest.TestCase):
         fh2 = FileHandler("test.config", keys={"TestKey": "test~~~~~:"}, defaults={"TestKey": "Default"})
         # Verify that the object was initialized correctly
         self.assertEqual(fh2.file_handler_filename, "test.config")
-        self.assertEqual(fh2.file_handler_file_prefix, ".config/mainTool/")
+        if fh2.all_main:
+            self.assertEqual(fh2.file_handler_file_prefix, ".config/MainNode/")
+        else:
+            self.assertEqual(fh2.file_handler_file_prefix, ".config/mainTool/")
 
         # Open the storage file in write mode and verify that it was opened correctly
         self.assertIsNone(fh2.file_handler_storage)

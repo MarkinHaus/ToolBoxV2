@@ -155,9 +155,11 @@ Ask questions to help to find a decisions or recommendations.
             if 'x' in user_i:
                 alive = False
                 user_text = ''
+                continue
 
             if 'r' in user_i:
                 user_text = ''
+                continue
 
             if 's' in user_i:
                 comm('stop')

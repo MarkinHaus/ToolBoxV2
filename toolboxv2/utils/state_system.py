@@ -134,7 +134,10 @@ def get_state_from_app(app: App):
 
     for file_name, file_data in state.mods.items():
         file_data.provider = "git"
-        file_data.version = app.get_mod(file_name.replace(".py", "")).version if file_name != "__init__.py" else app.version
+        try:
+            file_data.version = app.get_mod(file_name.replace(".py", "")).version if file_name != "__init__.py" else app.version
+        except Exception:
+            file_data.version = "dependency"
         file_data.url = simple_core_hub_url+file_name
 
     return state

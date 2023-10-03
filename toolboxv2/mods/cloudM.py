@@ -165,7 +165,7 @@ class Tools(MainTool, FileHandler):
         return
     db.clean_db()
     i = 0
-    for key in db.rcon.scan_iter():
+    for _ in db.rcon.scan_iter():
       i += 1
 
     if i != 0:

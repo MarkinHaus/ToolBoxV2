@@ -50,6 +50,7 @@ except ImportError:
 import numpy as np
 
 voices = ["ErXwobaYiN019PkySvjV", "EXAVITQu4vr4xnSDxMaL", "9Mi9dBkaxn2pCIdAAGOB"]
+_most_recent_text_spoken_to_user_via_speech_stream_isaa_audio_ = ""
 
 
 class Tools(MainTool, FileHandler):
@@ -72,10 +73,11 @@ class Tools(MainTool, FileHandler):
         }
         self.tools = {
             "all": [["Version", "Shows current Version"],
-                    ["Run", "Starts Inference"],
+                    ["init", "Starts Speech for isaa"],
                     ],
             "name": "isaa",
             "Version": self.show_version,
+            "init": self.init_speech,
         }
 
         FileHandler.__init__(self, "issaAuDi.config", app.id if app else __name__)
@@ -133,9 +135,20 @@ class Tools(MainTool, FileHandler):
                 else:
                     return eleven_labs_speech(chuck, voice_index)
 
+    def init_speech(self, _, app):
+        isaa = app.get_mod("isaa")
+        isaa.speak = self.speech_stream
+        self.print("speech initialized")
+
 
 def speech_stream(text, voice_index=0, use_cache=True):
+    global _most_recent_text_spoken_to_user_via_speech_stream_isaa_audio_
     chucks = []
+    if not text:
+        return False
+    if text == _most_recent_text_spoken_to_user_via_speech_stream_isaa_audio_:
+        return False
+    _most_recent_text_spoken_to_user_via_speech_stream_isaa_audio_ = text
     while len(text) > 800:
         chucks.append(text[:800])
         text = text[800:]

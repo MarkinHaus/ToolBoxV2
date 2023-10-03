@@ -58,6 +58,10 @@ class TestCloudM(unittest.TestCase):
         self.assertEqual(res, "0.0.1")
 
     def test_new_module(self):
+        try:
+            os.remove("./mods_dev/test_module.py")
+        except FileNotFoundError:
+            pass
         comd = ["", "test_module"]
         res = self.app.run_function("NEW", comd)
         self.assertTrue(res)

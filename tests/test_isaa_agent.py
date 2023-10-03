@@ -101,7 +101,6 @@ class TestAIContextMemory(unittest.TestCase):
 
 
 class TestObservationMemory(unittest.TestCase):
-
     t0 = None
     observation_memory = None
     isaa = None
@@ -154,7 +153,6 @@ class TestObservationMemory(unittest.TestCase):
 
 
 class TestShortTermMemory(unittest.TestCase):
-
     short_term_memory = None
     t0 = None
     name = "TestShortTermMemory"
@@ -309,7 +307,6 @@ class TestAgentUtilFunctions(unittest.TestCase):
 
 
 class TestAgentConfig(unittest.TestCase):
-
     agent_config = None
     t0 = None
     isaa = None
@@ -434,7 +431,8 @@ class TestAnythingFromStrToDict(unittest.TestCase):
         data = '{"key1": "value1"} {"key2": "value2"}'
         expected_keys = {"expected_key": "expected_value"}
         result = anything_from_str_to_dict(data, expected_keys)
-        self.assertEqual(result, [{"expected_key": "expected_value", "key1": "value1"}, {"expected_key": "expected_value", "key2": "value2"}])
+        self.assertEqual(result, [{"expected_key": "expected_value", "key1": "value1"},
+                                  {"expected_key": "expected_value", "key2": "value2"}])
 
     def test_case_1(self):
         # Arrange
@@ -464,7 +462,8 @@ class TestAnythingFromStrToDict(unittest.TestCase):
         # Arrange
         input_data = '{"key": "value"} {"key2": "value2"}'
         expected_keys = {"expected_key": "expected_value"}
-        expected_output = [{"key": "value", "expected_key": "expected_value"}, {"key2": "value2", "expected_key": "expected_value"}]
+        expected_output = [{"key": "value", "expected_key": "expected_value"},
+                           {"key2": "value2", "expected_key": "expected_value"}]
 
         # Act
         actual_output = anything_from_str_to_dict(input_data, expected_keys)
@@ -472,12 +471,51 @@ class TestAnythingFromStrToDict(unittest.TestCase):
         # Assert
         self.assertEqual(actual_output, expected_output)
 
+    def test_case_4(self):
+        input_data = " {'Action':'find','Inputs':{'directory':'.','pattern':'mods//isaa'}}"
+        expected_output = [{'Action': 'find', 'Inputs': {'directory': '.', 'pattern': 'mods//isaa'}}]
+
+        # Act
+        actual_output = anything_from_str_to_dict(input_data)
+
+        # Assert
+        self.assertEqual(actual_output, expected_output)
+
+    def test_live_input(self):
+        expected_keys = {"Action": "", "Inputs": ""}
+        test_json = """{'Action':'spawn_agent','Inputs':'{"Name": "Environment_Exploration_Agent","Personal":"Resourceful, Collaborative, Inquisitive", "Goals": "Explore the environment and the source code folder \'toolboxv2\'", "Capabilities": "Skills in file and directory exploration"}'}"""
+        expected_result = [{'Action': 'spawn_agent', 'Inputs': {"Name": "Environment_Exploration_Agent",
+                                                                "Personal": "Resourceful, Collaborative, Inquisitive",
+                                                                "Goals": "Explore the environment and the source code folder \'toolboxv2\'",
+                                                                "Capabilities": "Skills in file and directory exploration"}}]
+        actual_result = anything_from_str_to_dict(test_json, expected_keys)
+
+        print(actual_result, type(actual_result))
+
+        # Assert
+        self.assertEqual(expected_result, actual_result)
+
+    def test_live_input_python_file(self):
+        expected_keys = {"Action": "", "Inputs": ""}
+        test_json = """{'Action':'write','Inputs':{'filename':'list_files.py','text':'import os\n\ndef list_files(path):\n    return [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]\n\ndef list_folders(path):\n    return [f for f in os.listdir(path) if os.path.isdir(os.path.join(path, f))]\n\ndef list_hidden(path):\n    return [f for f in os.listdir(path) if f.startswith(".")]\n'}}"""
+        expected_result = [{'Action': 'write', 'Inputs': {'filename': 'list_files.py',
+                                                          'text': 'import os\n\ndef list_files(path):\n    return [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]\n\ndef list_folders(path):\n    return [f for f in os.listdir(path) if os.path.isdir(os.path.join(path, f))]\n\ndef list_hidden(path):\n    return [f for f in os.listdir(path) if f.startswith(\'.\')]\n'}}]
+        actual_result = anything_from_str_to_dict(test_json, expected_keys)
+
+        print(actual_result, type(actual_result))
+
+        # Assert
+        self.assertEqual(expected_result[0]['Action'], actual_result[0]['Action'])
+        self.assertEqual(expected_result[0]['Inputs']['text'], actual_result[0]['Inputs']['text'])
+        self.assertEqual(expected_result[0]['Inputs']['filename'], actual_result[0]['Inputs']['filename'])
+
 
 class TestParseJsonWithAutoDetection(unittest.TestCase):
     def test_dictionary(self):
         json_string = '{"name": "John", "age": 30, "city": "New York"}'
         expected_result = {"name": "John", "age": 30, "city": "New York"}
         self.assertEqual(parse_json_with_auto_detection(json_string), expected_result)
+
     def test_dictionary_in_d(self):
         json_string = '{"name": "John", "age": 30, "citys": {"city": "New York"}}'
         expected_result = {"name": "John", "age": 30, "citys": {"city": "New York"}}
