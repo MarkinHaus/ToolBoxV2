@@ -1,4 +1,5 @@
 import json
+import sys
 import time
 import unittest
 from unittest.mock import patch, Mock, MagicMock
@@ -1348,10 +1349,12 @@ Inputs: Param6: Value6, Param7: Value7
 
         result = self.isaa.run_agent(agent_class,
                                      "suche im web wie alt Barak obama ist und wie viel älter er als seine frau ist")
-        print("###################")
-        self.isaa.print(f"::{result}")
-        print("###################")
-        print(agent_class.observe_mem.text)
+        # print("###################")
+        # self.isaa.print(f"::{result}")
+        # print("###################")
+        # print(agent_class.observe_mem.text)
+        self.assertIsInstance(result, str)
+        self.assertGreater(len(result), 10)
 
     def test_run_agent_self_live(self):
         # Fügen Sie hier weitere Überprüfungen hinzu, basierend auf dem erwarteten Verhalten der Funktion
@@ -1360,15 +1363,20 @@ Inputs: Param6: Value6, Param7: Value7
         agent_class = self.isaa.get_agent_config_class(agent_name)
         self.assertIsInstance(agent_class, AgentConfig)
 
+        if 'unittest' in sys.argv[0]:
+            self.isaa.print_stream = lambda x, *args, **kwargs: ''
+
         result = self.isaa.run_agent(agent_class,
                                      "Take action  ; f(x) = x^3 - 3x^2 + 2x - 1.  Find the critical points of this "
                                      "function and determine whether they are local minima, local maxima, "
                                      "or saddle points. Also, find the intervals of increase and decrease.", r=0)
-        print("###################")
-        self.isaa.print(f"::{result}")
-        print(self.isaa.config)
-        print("###################")
-        print(agent_class.observe_mem.text)
+        # print("###################")
+        # self.isaa.print(f"::{result}")
+        # print(self.isaa.config)
+        # print("###################")
+        # print(agent_class.observe_mem.text)
+        self.assertIsInstance(result, str)
+        self.assertGreater(len(result), 100)
 
     def test_stream_read_llm(self):
 
