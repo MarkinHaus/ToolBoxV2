@@ -2032,19 +2032,21 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             #    print(out)
             # else:
             # try:
-            text, prompt = self.short_prompt_text(text, prompt=prompt, config=config, prompt_token_margin=600)
+            text, prompt = self.short_prompt_text(text, prompt=prompt, config=config, prompt_token_margin=800)
             if not isinstance(prompt, str):
                 prompt = str(prompt).replace('{', '{{').replace('}', '}}')
             prompt_llm = PromptTemplate(
                 input_variables=["input"],
                 template=prompt + '{input}',
             )
-            out = initialize_agent(tools, prompt=prompt_llm,
-                                   llm=self.get_llm_models(config.model_name),
-                                   agent=agent_type, verbose=config.verbose,
-                                   return_intermediate_steps=True,
-                                   max_iterations=config.max_iterations)(text)
-            # except Exception as e:
+            try:
+                out = initialize_agent(tools, prompt=prompt_llm,
+                                       llm=self.get_llm_models(config.model_name),
+                                       agent=agent_type, verbose=config.verbose,
+                                       return_intermediate_steps=True,
+                                       max_iterations=config.max_iterations)(text)
+            except Exception as e:
+                out = f"The Task was to complex for the agent an error occurred {str(e)}"
             #    out = "An Error Accrued: "+str(e)
             #    if r > 0:
             #        return self.run_agent(name,
