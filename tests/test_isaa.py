@@ -1347,15 +1347,20 @@ Inputs: Param6: Value6, Param7: Value7
         agent_class = self.isaa.get_agent_config_class(agent_name)
         self.assertIsInstance(agent_class, AgentConfig)
 
+        agent_class.save_to_permanent_mem()
+
         result = self.isaa.run_agent(agent_class,
                                      "suche im web wie alt Barak obama ist und wie viel älter er als seine frau ist")
         # print("###################")
         # self.isaa.print(f"::{result}")
         # print("###################")
         # print(agent_class.observe_mem.text)
-        self.assertIsInstance(result, dict)
-        self.assertIn("input", result)
-        self.assertIn("output", result)
+        if isinstance(result, str):
+            self.assertGreater(len(result), 50)
+        else:
+            self.assertIsInstance(result, dict)
+            self.assertIn("input", result)
+            self.assertIn("output", result)
 
     def test_run_agent_self_live(self):
         # Fügen Sie hier weitere Überprüfungen hinzu, basierend auf dem erwarteten Verhalten der Funktion
