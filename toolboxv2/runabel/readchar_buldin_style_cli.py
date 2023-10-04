@@ -27,7 +27,7 @@ def user_input(app: App):
         key = readchar.readkey()
 
         if key == b'\x05' or key == '\x05':
-            print('\033[?25h', end="")
+            print('\033[?', end="")
             get_input = False
             command = "EXIT"
 

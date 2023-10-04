@@ -456,7 +456,7 @@ class App(metaclass=Singleton):
         self.exit_all_modules()
         self.logger.info("Exiting ToolBox")
         self.print(Style.Bold(Style.CYAN("OK - EXIT ")))
-        self.print('\033[?25h', end="")
+        self.print('\033[?', end="")
         self.alive = False
         self.config_fh.save_file_handler()
 

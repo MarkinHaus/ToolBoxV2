@@ -951,9 +951,9 @@ class AIContextMemory:
             logger.warning(f"no DB found for {name}")
             return []
 
-        if not os.path.exists(self.vector_store[name]['db-path'] + "/index"):
-            logger.warning(f"Cannot find index in vector store {name} pleas add data before quarry")
-            return []
+        # if not os.path.exists(self.vector_store[name]['db-path'] + "/index"):
+        #     logger.warning(f"Cannot find index in vector store {name} pleas add data before quarry")
+        #     return []
 
         try:
             if marginal:
