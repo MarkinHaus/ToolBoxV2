@@ -2681,12 +2681,12 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                         data = line['choices'][0]
 
                         if "text" in data.keys():
-                            ai_text = line['choices'][0]['text'].encode("utf-8")
+                            ai_text = line['choices'][0]['text']
                         elif "content" in data['delta'].keys():
-                            ai_text = line['choices'][0]['delta']['content'].encode("utf-8")
+                            ai_text = line['choices'][0]['delta']['content']
 
                     if isinstance(line, str):
-                        ai_text = line.encode("utf-8")
+                        ai_text = line
                     line_content += ai_text
                     if line_interpret and "\n" in line_content:
                         if interpret(line_content):
