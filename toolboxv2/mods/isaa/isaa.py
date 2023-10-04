@@ -2032,6 +2032,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             #    print(out)
             # else:
             # try:
+            text, prompt = self.short_prompt_text(text, prompt=prompt, config=config, prompt_token_margin=600)
             if not isinstance(prompt, str):
                 prompt = str(prompt).replace('{', '{{').replace('}', '}}')
             prompt_llm = PromptTemplate(
@@ -2680,12 +2681,12 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                         data = line['choices'][0]
 
                         if "text" in data.keys():
-                            ai_text = line['choices'][0]['text']
+                            ai_text = line['choices'][0]['text'].encode("utf-8")
                         elif "content" in data['delta'].keys():
-                            ai_text = line['choices'][0]['delta']['content']
+                            ai_text = line['choices'][0]['delta']['content'].encode("utf-8")
 
                     if isinstance(line, str):
-                        ai_text = line
+                        ai_text = line.encode("utf-8")
                     line_content += ai_text
                     if line_interpret and "\n" in line_content:
                         if interpret(line_content):
@@ -2695,9 +2696,10 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                     for i, word in enumerate(ai_text):
                         if not word:
                             continue
-                        print(word, end="", flush=True)
                         if self.print_stream != print:
                             self.print_stream({'isaa-text': word})
+                        else:
+                            print(word, end="", flush=True)
                         typing_speed = random.uniform(min_typing_speed, max_typing_speed)
                         time.sleep(typing_speed)
                         # type faster after each word

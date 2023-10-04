@@ -90,17 +90,20 @@ class TestAIContextMemory(unittest.TestCase):
         self.assertIsInstance(result, VectorStoreRetriever)
 
     def test_search(self):
-        self.ai_context_memory.add_data('test', ['data1234567890'])
-        get_logger().info(f"test_search {self.ai_context_memory.vector_store['test']['vectors']=}")
-        result = self.ai_context_memory.search('test', 'data')
+        self.ai_context_memory.add_data('test2', ['data1234567890'])
+        get_logger().info(f"test_search {self.ai_context_memory.vector_store['test2']['vectors']=}")
+        result = self.ai_context_memory.search('test2', 'data')
         get_logger().info(f"test_search {result=}")
+        get_logger().info(f"test_search {self.ai_context_memory.vector_store['test2']['full-text-len'] =}")
+        print(result)
         self.assertEqual(result[0][0].page_content, 'data1234567890')
 
     def test_get_context_for(self):
-        self.ai_context_memory.add_data('test', ['data1234567890'])
-        get_logger().info(f"test_get_context_for {self.ai_context_memory.vector_store['test']['vectors']=}")
+        self.ai_context_memory.add_data('test3', ['data1234567890'])
+        get_logger().info(f"test_get_context_for {self.ai_context_memory.vector_store['test3']['vectors']=}")
         result = self.ai_context_memory.get_context_for('data')
         get_logger().info(f"test_get_context_for {result=}")
+        print(result)
         self.assertIn('data1234567890', result)
 
 

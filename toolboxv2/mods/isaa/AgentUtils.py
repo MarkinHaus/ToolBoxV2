@@ -8,12 +8,12 @@ import subprocess
 import pickle
 import requests
 import os
-from toolboxv2 import Style, get_logger
 import tiktoken
 from langchain.agents import AgentType
 from langchain.vectorstores import Chroma, FAISS
 from chromadb.config import Settings as ChromaSettings
-from toolboxv2.utils.toolbox import get_app
+from ..__init__ import get_app
+from ..__init__ import Style, get_logger
 from langchain.text_splitter import RecursiveCharacterTextSplitter, CharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
 # Data Science
@@ -763,10 +763,14 @@ class AIContextMemory:
 
     def add_data(self, name, data=None):
 
+        logger = get_logger()
+
         if name not in self.vector_store.keys():
+            logger.info(f"init_store {name}")
             self.init_store(name)
 
         if not self.vector_store[name]['db']:
+            logger.info(f"init_store (DB) {name}")
             self.init_store(name)
 
         if data:
@@ -776,14 +780,17 @@ class AIContextMemory:
                 self.vector_store[name]['text'] += data
 
         if len(self.vector_store[name]['text']) < 1:
+            logger.warning(f"no text-data found for {name}")
             return
 
         if (not self.vector_store[name]['text']) or len(self.vector_store[name]['text']) == 0:
+            logger.warning(f"no text-data found for {name}")
             return
 
         if isinstance(self.vector_store[name]['text'], list):
             self.vector_store[name]['text'] = self.cleanup_list(self.vector_store[name]['text'])
             if len(self.vector_store[name]['text']) < 1:
+                logger.warning(f"no text-data found for {name}")
                 return
             # try:
             if len(self.vector_store[name]['text']) > 2512:
@@ -934,15 +941,18 @@ class AIContextMemory:
 
     def search(self, name, text, marginal=False):
 
+        logger = get_logger()
+
         if not name in self.vector_store.keys():
             self.vector_store[name] = self.get_sto_bo(name)
 
         if self.vector_store[name]['db'] is None:
             self.init_store(name)
+            logger.warning(f"no DB found for {name}")
             return []
 
         if not os.path.exists(self.vector_store[name]['db-path'] + "/index"):
-            print(f"Cannot find index in vector store {name} pleas add data before quarry")
+            logger.warning(f"Cannot find index in vector store {name} pleas add data before quarry")
             return []
 
         try:
@@ -1304,7 +1314,7 @@ system information's : {getSystemInfo('system is starting')}
         if mini_context == "System Context:\n":
             mini_context += 'its Day 0 start to explore'
         self.system_information = f"""
-system information's : {getSystemInfo(self.isaa.get_context_memory().get_best_fit_memory(mini_context))}
+system information's : {getSystemInfo(self.isaa.get_context_memory().get_context_for(mini_context))}
 """
 
     def task(self, reset_step=False):
@@ -1433,7 +1443,12 @@ system information's : {getSystemInfo(self.isaa.get_context_memory().get_best_fi
         if not self.observe_mem.model_name:
             self.observe_mem.model_name = self.model_name
 
-        prompt = (self.system_information if self.add_system_information else '') + self.get_prompt()
+        prompt = ""
+        if self.add_system_information and self.name != "summary":
+            get_logger().info(f"ADDING SYSTEM INFORMATION to Agent {self.name}")
+            prompt = self.system_information
+
+        prompt += self.get_prompt()
 
         pl = self.get_tokens(prompt)
         token_left = self.max_tokens - pl
