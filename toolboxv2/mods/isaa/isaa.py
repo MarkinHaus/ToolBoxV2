@@ -2045,6 +2045,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                                        agent=agent_type, verbose=config.verbose,
                                        return_intermediate_steps=True,
                                        max_iterations=config.max_iterations)(text)
+                if agent_type not in ["structured-chat-zero-shot-react-description"]:
+                    out = self.summarize_dict(out, config)
             except Exception as e:
                 out = f"The Task was to complex for the agent an error occurred {str(e)}"
             #    out = "An Error Accrued: "+str(e)
@@ -2053,8 +2055,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             #                              text + str(
             #                                  e) + "\nFocus on using the rigt input for the actions som take just a string as input",
             #                              r=r - 1)
-            if agent_type not in ["structured-chat-zero-shot-react-description"]:
-                out = self.summarize_dict(out, config)
+
         elif config.mode == "conversation":
 
             text, prompt = self.short_prompt_text(text, prompt=prompt, config=config, prompt_token_margin=1000)
