@@ -2629,8 +2629,6 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                                        llm_output=llm_output)
 
         elif config.model_name.startswith('gpt4all#'):
-            if text:
-                config.step_between = text
 
             if f'LLM-model-{config.model_name}' not in self.config.keys():
                 self.load_llm_models(config.model_name)

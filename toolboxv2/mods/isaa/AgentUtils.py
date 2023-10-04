@@ -1479,6 +1479,8 @@ system information's : {getSystemInfo(self.isaa.get_context_memory().get_context
             return self.prompt.replace('{', '{{').replace('}', '}}')
 
         elif self.model_name.startswith('gpt4all#'):
+            if len(self.task_list) == 0 and len(text) != 0:
+                self.step_between = text
             # Use the provided prompt
             return self.prompt
 

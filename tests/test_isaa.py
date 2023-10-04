@@ -1353,8 +1353,9 @@ Inputs: Param6: Value6, Param7: Value7
         # self.isaa.print(f"::{result}")
         # print("###################")
         # print(agent_class.observe_mem.text)
-        self.assertIsInstance(result, str)
-        self.assertGreater(len(result), 10)
+        self.assertIsInstance(result, dict)
+        self.assertIn("input", result)
+        self.assertIn("output", result)
 
     def test_run_agent_self_live(self):
         # Fügen Sie hier weitere Überprüfungen hinzu, basierend auf dem erwarteten Verhalten der Funktion
@@ -1388,7 +1389,7 @@ Inputs: Param6: Value6, Param7: Value7
             print(res)
         agent_class.set_model_name("gpt4all#orca-mini-3b.ggmlv3.q4_0.bin")
         with self.subTest(config="orca"):
-            res = self.isaa.stream_read_llm("Ich habe einen Gedanken dieser lautet :", agent_class)
+            res = self.isaa.stream_read_llm("", agent_class, prompt="Ich habe einen Gedanken dieser lautet : ")
             print(res)
 
     def test_run_agentChain(self):
