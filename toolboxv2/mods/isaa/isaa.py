@@ -174,7 +174,7 @@ class Tools(MainTool, FileHandler):
             "save_to_mem": self.save_to_mem,
             "set_local_files_tools": self.set_local_files_tools,
         }
-        self.working_directory = "C:\\Users\\Markin\\Isaa"
+        self.working_directory = os.getenv('ISAA_WORKING_PATH')
         self.app_ = app
         self.print_stream = print
         self.agent_collective_senses = False
@@ -1785,6 +1785,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             command = json.dumps(command)
         if isinstance(command, list):
             args = command
+        if not isinstance(command, str):
+            command = str(command)
 
         if "{" in command and "}" in command:
             s = {}
@@ -1960,7 +1962,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             if len(text) > config.max_tokens * 0.75:
                 text = self.mas_text_summaries(text)
 
-            prompt = config.shorten_prompt(max_iteration=int(factor+0.2))
+            prompt = config.shorten_prompt(max_iteration=int(factor+2.2))
             prompt_len_new = config.get_tokens(prompt, only_len=True)
 
             if '/' in config.model_name:
@@ -2158,9 +2160,9 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
                 print()
                 self.print(f"=================== Enter Turn : {turn} of {config.max_iterations} =================\n")
-                if turn > config.max_iterations//2:
-                    if input("ENTER Something to stop the agent: or press enter to prosed"):
-                        break
+                # if turn > config.max_iterations//2:
+                #     if input("ENTER Something to stop the agent: or press enter to prosed"):
+                #         break
 
                 if config.stream:
                     out = self.stream_read_llm(text, config, line_interpret=True, interpret=online, prompt=prompt)
@@ -2852,9 +2854,9 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         summary_chucks = ""
 
         # 4X the input
-        if len(text) > min_length*6:
+        if len(text) > min_length*20:
             text = dilate_string(text, 2, 2, 0)
-        if len(text) > min_length*4:
+        if len(text) > min_length*10:
             text = dilate_string(text, 0, 2, 0)
 
         if 'text-splitter0-init' not in self.config.keys():
@@ -3203,6 +3205,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
     def optimise_task_cli(self):
         all_chains = list(self.agent_chain.chains.keys())
         chain_name = choiceList(all_chains, self.print)
+        if chain_name == "None":
+            return
         new_chain = self.optimise_task(chain_name)
         self.print(new_chain)
 
@@ -3301,6 +3305,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             return "No Cains Installed or loaded"
 
         chain_name = choiceList(all_chains, self.print)
+        if chain_name == "None":
+            return
         self.agent_chain.remove(chain_name)
 
     def run_chain_cli(self):
@@ -3309,6 +3315,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             return "No Cains Installed or loaded"
 
         chain_name = choiceList(all_chains, self.print)
+        if chain_name == "None":
+            return
         self.print("Enter your text (empty line to finish):")
         task = get_multiline_input()
         self.print(f"Starting Chin : {chain_name}")
@@ -3398,6 +3406,7 @@ def get_multiline_input():
 
 
 def choiceList(all_chains, print_=print, input_=input, do_INQUIRER=True):
+    all_chains += ['None']
     if INQUIRER and do_INQUIRER:
 
         questions = [
@@ -3412,7 +3421,7 @@ def choiceList(all_chains, print_=print, input_=input, do_INQUIRER=True):
         choice = input_(f"{all_chains} select one (q) to quit:")
         while choice not in all_chains:
             if choice.lower() == 'q':
-                return "Quiet"
+                return "None"
             print_("Invalid Chain name")
             choice = input_(f"{all_chains} select one (q) to quit:")
     return choice

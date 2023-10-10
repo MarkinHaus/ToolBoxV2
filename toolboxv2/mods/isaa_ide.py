@@ -210,11 +210,11 @@ class Tools(MainTool):
                 if fnmatch.fnmatch(basename, pattern):
                     filename = os.path.join(root, basename)
                     self.print(f'Found file: {filename}')
-                    findings.append(filename)
+                    findings.append(filename.replace(self.scope, ""))
             for basename in dirs:
                 if fnmatch.fnmatch(basename, pattern):
                     folder_name = os.path.join(root, basename)
-                    findings.append(folder_name)
+                    findings.append(folder_name.replace(self.scope, ""))
         if not findings:
             self.print('No files found that match the pattern.')
             return 'No files found that match the pattern.'

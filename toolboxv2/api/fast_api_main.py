@@ -52,10 +52,10 @@ async def index():
     # return "Willkommen bei Simple V0 powered by ToolBoxV2-0.0.3"
 
 
-@app.get("/exit")
-async def exit_code():
-    tb_app.exit()
-    exit(0)
+# @app.get("/exit")
+# async def exit_code():
+#     tb_app.exit()
+#     exit(0)
 
 
 @app.get("/HotReload")

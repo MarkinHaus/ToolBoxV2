@@ -1,10 +1,10 @@
 import os
 import platform
 
-from fastapi import APIRouter
+from fastapi import APIRouter, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
-from toolboxv2 import get_logger
+from toolboxv2 import get_logger, App, get_app
 
 router = APIRouter(
     prefix="/install",
@@ -12,6 +12,28 @@ router = APIRouter(
 
 TB_DIR = os.getcwd()
 
+@router.post("/upload-file/")
+async def create_upload_file(file: UploadFile):
+    tb_app: App = get_app()
+    if tb_app.debug:
+        do = False
+        try:
+            tb_app.load_mod(file.filename.split(".py")[0])
+        except ModuleNotFoundError:
+            do = True
+
+        if do:
+            try:
+                with open("./mods/" + file.filename, 'wb') as f:
+                    while contents := file.file.read(1024 * 1024):
+                        f.write(contents)
+            except Exception:
+                return {"res": "There was an error uploading the file"}
+            finally:
+                file.file.close()
+
+            return {"res": f"Successfully uploaded {file.filename}"}
+    return {"res": "not avalable"}
 
 @router.get("/{file_name}")
 def download_file(file_name: str):

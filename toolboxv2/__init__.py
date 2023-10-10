@@ -18,7 +18,7 @@ except ImportError as e:
 
 __author__ = """Markin Hausmanns"""
 __email__ = 'Markinhausmanns@gmail.com'
-__version__ = '0.0.3'
+__version__ = '0.1.1'
 __all__ = [
     "__version__",
     "App",

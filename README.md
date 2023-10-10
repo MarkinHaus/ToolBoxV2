@@ -1,4 +1,4 @@
-# ToolBoxV2
+ # ToolBoxV2
 
 
 [![image](https://img.shields.io/pypi/v/ToolBoxV2.svg)](https://pypi.python.org/pypi/ToolBoxV2)
@@ -97,10 +97,9 @@ cloudM create-account
 ~~~~~~
 ~DESKTOP-GIT:CLOUDM@>login {username} {password}
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
-- or ( in v 0.0.2)
-~~~~~~
-~DESKTOP-GIT:CLOUDM@>login {token}
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+** ToolBox is a command line interface for interactions with the ToolBox Network. It provides a command line interface for easy and efficient interactions with the ToolBox Network. With ToolBox, you can interact with the ToolBox Network, a network of tools and resources for various tasks. ToolBox is designed to be easy to use and is extensible. You can add your own tools and resources to the ToolBox Network. **
+
 
 ## Credits
 

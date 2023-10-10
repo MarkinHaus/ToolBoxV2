@@ -74,7 +74,6 @@ class Tools(MainTool, FileHandler):
 
     def on_start(self):
         version_command = os.getenv("DB_CONNACTION_URI")
-        print(version_command)
         if version_command is not None and version_command != 'redis://default:id@url.com:port':
             self.rcon = redis.from_url(version_command)
         else:

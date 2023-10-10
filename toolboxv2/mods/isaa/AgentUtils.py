@@ -2482,6 +2482,7 @@ def fix_json_object(match: str):
         return fixed_match
     return None
 
+
 def find_json_objects_in_str(data: str):
     """
     Sucht nach JSON-Objekten innerhalb eines Strings.

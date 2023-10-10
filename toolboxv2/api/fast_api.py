@@ -121,32 +121,7 @@ async def post_mod_run(data: PostRequest, mod: str, name: str, command: Union[st
         if (res.startswith('{') or res.startswith('[')) or res.startswith('"[') or res.startswith('"{') \
             or res.startswith('\"[') or res.startswith('\"{') or res.startswith('b"[') or res.startswith('b"{'):
             res = eval(res)
-
     return {"res": res}
-
-
-@router.post("/upload-file/")
-async def create_upload_file(file: UploadFile):
-    tb_app: App = get_app()
-    if tb_app.debug:
-        do = False
-        try:
-            tb_app.load_mod(file.filename.split(".py")[0])
-        except ModuleNotFoundError:
-            do = True
-
-        if do:
-            try:
-                with open("./mods/" + file.filename, 'wb') as f:
-                    while contents := file.file.read(1024 * 1024):
-                        f.write(contents)
-            except Exception:
-                return {"res": "There was an error uploading the file"}
-            finally:
-                file.file.close()
-
-            return {"res": f"Successfully uploaded {file.filename}"}
-    return {"res": "not avalable"}
 
 
 if __name__ == 'fast_api':  # do stuw withe ovner to secure ur self
