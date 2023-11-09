@@ -11,7 +11,7 @@ class TestVirtualizationTool(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Code, der einmal vor allen Tests ausgeführt wird
-        cls.t0 = time.time()
+        cls.t0 = time.perf_counter()
         cls.app = App('test-VirtualizationTool')
         cls.app.mlm = "I"
         cls.app.debug = True
@@ -26,7 +26,7 @@ class TestVirtualizationTool(unittest.TestCase):
         cls.app.remove_all_modules()
         cls.app.save_exit()
         cls.app.exit()
-        cls.app.logger.info(f'Accomplished in {time.time() - cls.t0}')
+        cls.app.logger.info(f'Accomplished in {time.perf_counter() - cls.t0}')
 
     def test_show_version(self):
         expected_version = "0.0.2"

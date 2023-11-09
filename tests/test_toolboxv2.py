@@ -23,7 +23,7 @@ class TestToolboxv2(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Code, der einmal vor allen Tests ausgeführt wird
-        cls.t0 = time.time()
+        cls.t0 = time.perf_counter()
         cls.app = App("test")
         cls.app.mlm = "I"
         cls.app.debug = True
@@ -32,7 +32,7 @@ class TestToolboxv2(unittest.TestCase):
     def tearDownClass(cls):
         cls.app.save_exit()
         cls.app.exit()
-        cls.app.logger.info(f"Accomplished in {time.time() - cls.t0}")
+        cls.app.logger.info(f"Accomplished in {time.perf_counter() - cls.t0}")
 
     def setUp(self):
         self.app.logger.info(Style.BEIGEBG(f"Next Test"))
@@ -45,7 +45,7 @@ class TestToolboxv2(unittest.TestCase):
         self.app.logger.info(Style.BEIGEBG(f"tearDown"))
 
     def test_crypt(self):
-        t0 = time.time()
+        t0 = time.perf_counter()
         self.app.logger.info(Style.GREYBG("Testing crypt"))
         test_string = "1234567890"
         code = Code()
@@ -57,13 +57,13 @@ class TestToolboxv2(unittest.TestCase):
 
         self.app.logger.info(Style.WHITE("decode test string"))
         out_string = code.decode_code(encode_string)
-        self.app.logger.info(f" {test_string=} {encode_string=} {out_string=} don in {time.time() - t0}")
+        self.app.logger.info(f" {test_string=} {encode_string=} {out_string=} don in {time.perf_counter() - t0}")
 
         self.app.logger.info(Style.WHITE("Test if test_string and out_string are equal"))
         self.assertEqual(test_string, out_string)
 
     def test_file_handler(self):
-        t0 = time.time()
+        t0 = time.perf_counter()
         self.app.logger.info(Style.GREYBG("Testing file handler"))
         self.fh_test("")
         self.fh_test(0)
@@ -77,10 +77,10 @@ class TestToolboxv2(unittest.TestCase):
         self.fh_test({"test": "test", "value": -1})
         self.fh_test((0, 0, 0, 0))
 
-        self.app.logger.info(Style.WHITE(f"finish testing in {time.time()-t0}"))
+        self.app.logger.info(Style.WHITE(f"finish testing in {time.perf_counter()-t0}"))
 
     def fh_test(self, test_value):
-        t0 = time.time()
+        t0 = time.perf_counter()
         self.app.logger.info(Style.GREYBG(f"Testing value : {test_value} of type : {type(test_value)}"))
         self.app.logger.info(Style.WHITE("initialized file handler"))
         fh = FileHandler("test.config", keys={"TestKey": "test~~~~~:"}, defaults={"TestKey": "Default"})
@@ -140,7 +140,7 @@ class TestToolboxv2(unittest.TestCase):
 
         self.assertEqual(value, test_value)
         self.app.logger.info(Style.WHITE("success"))
-        self.app.logger.info(f"don testing FileHandler in {time.time() - t0}")
+        self.app.logger.info(f"don testing FileHandler in {time.perf_counter() - t0}")
         self.app.logger.info(Style.WHITE("cleaning up"))
         fh2.delete_file()
 
