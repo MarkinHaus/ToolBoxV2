@@ -20,6 +20,7 @@ from langchain.agents.agent_toolkits import FileManagementToolkit
 # Model
 from langchain.chat_models import ChatOpenAI
 from langchain.tools import AIPluginTool
+from litellm.utils import trim_messages
 from transformers import pipeline
 import gpt4all
 from .AgentUtils import *
@@ -129,7 +130,7 @@ class Tools(MainTool, FileHandler):
             "all": [["Version", "Shows current Version"],
                     ["api_run", "name inputs"],
                     ["add_api_key", "Adds API Key"],
-                    ["image", "genarate image input"],
+                    ["imageP", "genarate image input"],
                     ["api_initIsaa", "init isaa wit dif functions", 0, 'init_isaa_wrapper'],
                     ["add_task", "Agent Chin add - Task"],
                     ["api_save_task", "Agent Chin save - Task", 0, "save_task"],
@@ -153,7 +154,7 @@ class Tools(MainTool, FileHandler):
             "name": "isaa",
             "Version": self.show_version,
             "api_run": self.run_isaa_wrapper,
-            "image": self.genrate_image_wrapper,
+            "imageP": self.genrate_image_wrapper,
             "api_initIsaa": self.init_isaa_wrapper,
             "api_start_widget": self.start_widget,
             "add_task": self.add_task,
@@ -183,7 +184,7 @@ class Tools(MainTool, FileHandler):
         self.lang_chain_tools_dict = {}
         self.agent_chain = AgentChain(directory=f".data/{app.id}{extra_path}/chains")
         self.agent_memory = AIContextMemory(extra_path=extra_path)
-        self.summarization_mode = 2  # 0 to 3  0 huggingface 1 text 2 opnai 3 gpt
+        self.summarization_mode = 0  # 0 to 3  0 huggingface 1 text 2 opnai 3 gpt
         self.summarization_limiter = 102000
         self.speak = lambda x, *args, **kwargs: x
         self.scripts = Scripts(f".data/{app.id}{extra_path}/ScriptFile")
@@ -458,11 +459,12 @@ div h1, div h2, div h3, div h4, div h5, div h6 {
 }
 ```"""
 
-    def genrate_image_wrapper(self, command):
-        if len(command) != 1:
-            return "Unknown command"
+    def genrate_image_wrapper(self):
 
-        return self.genrate_image(command[0], self.app_)
+        self.print("Generate prompt :")
+        prompt = get_multiline_input()
+
+        return self.genrate_image(prompt, self.app_)
 
     def get_use(self, command, app):
 
@@ -1931,7 +1933,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
 
         return observation
 
-    def short_prompt_text(self, text, prompt=None, config: str or AgentConfig="self", prompt_token_margin=200):
+    def short_prompt_text(self, text, prompt=None, config: str or AgentConfig = "self", prompt_token_margin=200):
 
         if isinstance(config, str):
             config = self.get_agent_config_class(config)
@@ -1962,7 +1964,7 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             if len(text) > config.max_tokens * 0.75:
                 text = self.mas_text_summaries(text)
 
-            prompt = config.shorten_prompt(max_iteration=int(factor+2.2))
+            prompt = config.shorten_prompt(max_iteration=int(factor + 2.2))
             prompt_len_new = config.get_tokens(prompt, only_len=True)
 
             if '/' in config.model_name:
@@ -1972,6 +1974,64 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
             self.print(f"Prompt scale down by {prompt_len / prompt_len_new:.2f}X {(prompt_len_new, config.max_tokens)}")
 
         return text, prompt
+
+    def short_prompt_messages(self, messages, get_tokens, max_tokens, prompt_token_margin=200, max_iteration=5):
+
+        # Step 2: Handle prompt length
+        prompt_len = get_tokens(messages)
+        prompt_len_new = prompt_len
+        if prompt_len > max_tokens - prompt_token_margin:
+            factor = prompt_len // max_tokens
+            self.print(f"Context length exceeded by {factor:.2f}X {(prompt_len, max_tokens)}")
+            iteration = 0
+            while max_tokens - prompt_len < 50 and iteration <= min(max_iteration, factor):
+                logging.debug(f'Tokens: {prompt_len}')
+                logging.info(f'Prompt is too long. Auto shortening token overflow by {(max_tokens - prompt_len) * -1}')
+
+                if iteration > 0:
+                    temp_message = []
+                    for msg in messages:
+                        temp_message.append({'role': msg['role'], 'content': dilate_string(msg['content'], 1, 2, 0)})
+                    logging.info(f"Temp message: {temp_message}")
+                    messages = temp_message
+
+                if iteration > 1:
+                    temp_message = []
+                    for msg in messages:
+                        temp_message.append({'role': msg['role'], 'content': dilate_string(msg['content'], 0, 2, 0)})
+                    logging.info(f"Temp message: {temp_message}")
+                    messages = temp_message
+
+                if iteration > 2:
+                    temp_message = []
+                    mas_text_sum = self.mas_text_summaries
+                    for msg in messages:
+                        temp_message.append({'role': msg['role'], 'content': mas_text_sum(msg['content'])})
+                    logging.info(f"Temp message: {temp_message}")
+                    messages = temp_message
+
+                if iteration > 3:
+                    temp_message = []
+                    mini_task_com = self.mini_task_completion
+                    for msg in messages:
+                        important_info = mini_task_com(
+                            f"Was ist die wichtigste Information in {msg['content']}")
+                        temp_message.append({'role': msg['role'], 'content': important_info})
+                    logging.info(f"Temp message: {temp_message}")
+                    messages = temp_message
+
+                if iteration > 4:
+                    messages = trim_messages(messages, max_tokens=max_tokens, trim_ratio=0.75-(iteration-4)*0.25)
+
+                prompt_len_new = get_tokens(messages, only_len=True)
+                iteration += 1
+
+                if iteration > 9:
+                    break
+
+            self.print(f"Prompt scale down by {prompt_len / prompt_len_new:.2f}X {(prompt_len_new, max_tokens)}")
+
+        return messages
 
     def run_agent(self, name: str or AgentConfig, text: str, mode_over_lode: str or None = None,
                   r=2.0,
@@ -2179,6 +2239,15 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                 config.add_message("assistant", self.mas_text_summaries(out))
 
                 text, prompt = self.short_prompt_text(text, config=config, prompt_token_margin=prompt_token_margin)
+
+                if "The task has been completed.".lower() in out:
+                    break
+
+                if "task" in out and "been" in out and "completed" in out and turn > config.max_iterations // 2:
+                    break
+
+                if not out:
+                    break
 
                 if out.endswith("EVAL") and r:
                     continue
@@ -2854,9 +2923,9 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
         summary_chucks = ""
 
         # 4X the input
-        if len(text) > min_length*20:
+        if len(text) > min_length * 20:
             text = dilate_string(text, 2, 2, 0)
-        if len(text) > min_length*10:
+        if len(text) > min_length * 10:
             text = dilate_string(text, 0, 2, 0)
 
         if 'text-splitter0-init' not in self.config.keys():
@@ -3179,7 +3248,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                                                       'requests_post',
                                                       'requests_patch', 'requests_put', 'requests_delete', 'human'],
                                      'huggingTools': [],
-                                     'Plugins': [], 'Custom': []}}, 'tools', exclude=['task_list', 'task_list_done', 'step_between', 'pre_task', 'task_index'])
+                                     'Plugins': [], 'Custom': []}}, 'tools',
+                               exclude=['task_list', 'task_list_done', 'step_between', 'pre_task', 'task_index'])
         self.init_from_augment({'tools':
                                     {'lagChinTools': ['python_repl', 'requests_all', 'terminal', 'sleep',
                                                       'google-search',
@@ -3187,7 +3257,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                                                       'requests_post',
                                                       'requests_patch', 'requests_put', 'requests_delete', 'human'],
                                      'huggingTools': [],
-                                     'Plugins': [], 'Custom': []}}, 'self', exclude=['task_list', 'task_list_done', 'step_between', 'pre_task', 'task_index'])
+                                     'Plugins': [], 'Custom': []}}, 'self',
+                               exclude=['task_list', 'task_list_done', 'step_between', 'pre_task', 'task_index'])
         self.init_from_augment({'tools':
                                     {'lagChinTools': ['python_repl', 'requests_all', 'terminal', 'sleep',
                                                       'google-search',
@@ -3195,7 +3266,8 @@ Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of
                                                       'requests_post',
                                                       'requests_patch', 'requests_put', 'requests_delete', 'human'],
                                      'huggingTools': [],
-                                     'Plugins': [], 'Custom': []}}, 'liveInterpretation', exclude=['task_list', 'task_list_done', 'step_between', 'pre_task', 'task_index'])
+                                     'Plugins': [], 'Custom': []}}, 'liveInterpretation',
+                               exclude=['task_list', 'task_list_done', 'step_between', 'pre_task', 'task_index'])
 
     def create_task_cli(self):
         self.print("Enter your text (empty line to finish):")
@@ -3501,7 +3573,7 @@ def show_image_in_internet(images_url, browser=BROWSER):
         os.system(f'start {browser} {image_url}')
 
 
-def image_genrating_tool(prompt, app):
+def image_genrating_tool(prompt, app, model="stability-ai/stable-diffusion"):
     app.logger.info("Extracting data from prompt")
     app.logger.info("Splitting data")
     if '|' in prompt:
@@ -3537,7 +3609,7 @@ def image_genrating_tool(prompt, app):
         inputs = prompt
 
     print(f"Generating Image")
-    images = genrate_image(inputs, app)
+    images = genrate_image(inputs, app, model=model)
 
     print(f"Showing Images")
 

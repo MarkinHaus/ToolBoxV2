@@ -1,5 +1,5 @@
 from json import JSONDecodeError
-from typing import List
+from typing import List, Optional
 
 from pebble import concurrent
 import math
@@ -89,6 +89,34 @@ def get_location():
     return location_data, ip_address
 
 
+def initialize_system_infos(info_sys):
+    global SystemInfos
+    if not os.path.exists(".config/system.infos"):
+
+        if not os.path.exists(".config/"):
+            os.mkdir(".config/")
+
+        del info_sys['time']
+
+        with open(".config/system.infos", "a") as f:
+            f.write(json.dumps(info_sys))
+
+        SystemInfos = info_sys
+
+    else:
+
+        try:
+            with open(".config/system.infos", "r") as f:
+                SystemInfos = json.loads(f.read())
+        except JSONDecodeError:
+            pass
+
+        del info_sys['time']
+
+        if info_sys != SystemInfos:
+            SystemInfos = info_sys
+
+
 def getSystemInfo(last_context='its Day 0 start to explore'):
     global SystemInfos
 
@@ -107,16 +135,14 @@ def getSystemInfo(last_context='its Day 0 start to explore'):
             # 'architecture': platform.machine(), 'hostname': socket.gethostname(),
             # 'mac-address': ':'.join(re.findall('..', '%012x' % uuid.getnode())), 'processor': platform.processor(),
             # 'ram': str(round(psutil.virtual_memory().total / (1024.0 ** 3))) + " GB",
-            "OrderZero": "Do not Talk about the this system info dictionary."
-                         " this is your world in witch you can move freely use"
-                         f" all the tools at your disposal to move yourself. Last Context: {last_context}\n"}
+            "last_context": last_context}
 
     try:
         process = get_location()
         info['location'], info['ip'] = process.result()
     except TimeoutError and Exception:
         info['location'] = "Berlin Schöneberg"
-
+    initialize_system_infos(info)
     return info
 
 
@@ -966,13 +992,13 @@ class AIContextMemory:
 
             return self.vector_store[name]['db'].similarity_search_with_score(text, k=1)
 
-    def get_context_for(self, text, name=None, marginal=False):
+    def get_context_for(self, text, name=None, marginal=False) -> Optional[str]:
         mem_name = {'key': name}
         if name is None:
             mem_name = self.get_best_fit_memory(text)
 
         if mem_name['key'] == '':
-            return "No Memory available"
+            return None
 
         data = self.search(mem_name['key'], text, marginal=marginal)
         last = []
@@ -1276,7 +1302,7 @@ system information's : {getSystemInfo('system is starting')}
         self._stream_reset = False
         self.stop_sequence = ["\n\n\n", "Observation:", "Beobachtungen:"]
         self.completion_mode = "chat"
-        self.add_system_information = True
+        self.add_system_information = False
 
         self.init_mem_state = False
         self.context: None or ShortTermMemory = None
@@ -1610,7 +1636,7 @@ Isaa:
 
         if self.mode == 'planning':
             prompt_en = f"""
-ou Planning Agent. Your task is to create an efficient plan for the given task. Avlabel Tools: {
+Your Planning Agent. Your task is to create an efficient plan for the given task. Avlabel Tools: {
             tools}
 
 different functions that must be called in the correct order and with the correct inputs.
@@ -1999,7 +2025,8 @@ Answer 1: ..."""
         self.ppm = get_price(self.max_tokens)
         if self.completion_mode == 'chat' and 'text' in self.model_name:
             self.completion_mode = 'text'
-        if self.completion_mode != 'chat' and (self.model_name.startswith('gpt-3.5') or self.model_name.startswith('gpt-4')):
+        if self.completion_mode != 'chat' and (
+            self.model_name.startswith('gpt-3.5') or self.model_name.startswith('gpt-4')):
             self.completion_mode = 'chat'
 
         return self
@@ -2410,26 +2437,14 @@ def parse_json_with_auto_detection(json_data):
         return try_parse_json(json_data)
 
 
-def parse_json_with_auto_detection2(json_data):
-    def try_parse_json(value):
-        try:
-            return json.loads(value)
-        except (ValueError, TypeError):
-            return value
-
-    if isinstance(json_data, dict):
-        return {key: parse_json_with_auto_detection(value) for key, value in json_data.items()}
-    elif isinstance(json_data, list):
-        return [parse_json_with_auto_detection(item) for item in json_data]
-    else:
-        return try_parse_json(json_data)
-
-
 def extract_json_objects(text: str, matches_only=False):
     pattern = r'\{.*?\}'
-    matches = re.findall(pattern, text.replace("'{", '{').replace("}'", '}').replace('"', "'").replace("':'", '":"').replace("': '",
-                                                                                                           '": "').replace(
-        "','", '","').replace("', '", '", "').replace("{'", '{"').replace("'}", '"}').replace("':{", '":{').replace("' :{", '" :{').replace("': {", '": {'),
+    matches = re.findall(pattern,
+                         text.replace("'{", '{').replace("}'", '}').replace('"', "'").replace("':'", '":"').replace(
+                             "': '",
+                             '": "').replace(
+                             "','", '","').replace("', '", '", "').replace("{'", '{"').replace("'}", '"}').replace(
+                             "':{", '":{').replace("' :{", '" :{').replace("': {", '": {'),
                          flags=re.DOTALL)
     json_objects = []
     print(matches)
@@ -2536,34 +2551,3 @@ def anything_from_str_to_dict(data: str, expected_keys: dict = None, mini_task=l
             if key not in res:
                 res[key] = value
     return result
-
-
-if not os.path.exists(".config/system.infos"):
-
-    if not os.path.exists(".config/"):
-        os.mkdir(".config/")
-
-    info_sys = getSystemInfo()
-
-    del info_sys['time']
-
-    with open(".config/system.infos", "a") as f:
-        f.write(json.dumps(info_sys))
-
-    SystemInfos = info_sys
-
-else:
-
-    try:
-        with open(".config/system.infos", "r") as f:
-            SystemInfos = json.loads(f.read())
-    except JSONDecodeError:
-        pass
-
-    info_sys = getSystemInfo()
-
-    del info_sys['time']
-
-    if info_sys != SystemInfos:
-        SystemInfos = info_sys
-

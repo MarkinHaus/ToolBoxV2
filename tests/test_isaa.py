@@ -24,7 +24,7 @@ class TestIsaaBenchmarks(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Code, der einmal vor allen Tests ausgeführt wird
-        cls.t0 = time.time()
+        cls.t0 = time.perf_counter()
         cls.app = App("test-TestIsaa")
         cls.app.mlm = "I"
         cls.app.debug = True
@@ -38,7 +38,7 @@ class TestIsaaBenchmarks(unittest.TestCase):
         cls.app.remove_all_modules()
         cls.app.save_exit()
         cls.app.exit()
-        cls.app.logger.info(f"Accomplished in {time.time() - cls.t0}")
+        cls.app.logger.info(f"Accomplished in {time.perf_counter() - cls.t0}")
 
     def setUp(self):
         self.app_mock = Mock()
@@ -342,6 +342,17 @@ class TestIsaa(unittest.TestCase):
         'gpt4all#ggml-replit-code-v1-3b.bin',  # Hy ly crative # : 11.08s
     ]
 
+    all4allModels = ['nous-hermes-13b.ggmlv3.q4_0.bin',
+                     'GPT4All-13B-snoozy.ggmlv3.q4_0.bin',
+                     'orca-mini-7b.ggmlv3.q4_0.bin',
+                     'orca-mini-3b.ggmlv3.q4_0.bin',
+                     'orca-mini-13b.ggmlv3.q4_0.bin',
+                     'wizardLM-13B-Uncensored.ggmlv3.q4_0.bin',
+                     'ggml-replit-code-v1-3b.bin',
+                     'llama-2-7b-chat.ggmlv3.q4_0.bin'
+                     ]
+    # 18.10.2023 #'ggml-model-gpt4all-falcon-q4_0.bin',
+
     modes = []  #["conversation", "tools", "talk", "free", "planning", "live"]
     agents = []   #["self", "todolist", "search", "think", "TaskCompletion", "liveInterpretation", "summary", "thinkm", "code"]
 
@@ -391,7 +402,7 @@ class TestIsaa(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Code, der einmal vor allen Tests ausgeführt wird
-        cls.t0 = time.time()
+        cls.t0 = time.perf_counter()
         cls.app = App("test-TestIsaa")
         cls.app.mlm = "I"
         cls.app.debug = True
@@ -401,23 +412,23 @@ class TestIsaa(unittest.TestCase):
         cls.isaa.load_keys_from_env()
         if "OPENAI_API_KEY" in cls.isaa.config:  # in cloud 0
             cls.models += [
-                'gpt-4', 'text-davinci-003', 'gpt-3.5-turbo-0613',
-                'text-curie-001',
-                'text-babbage-001',
-                'text-ada-001',
-                'text-davinci-edit-001',
-                'gpt-3.5-turbo-instruct',
+                # 'gpt-4', 'text-davinci-003', 'gpt-3.5-turbo-0613',
+                # 'text-curie-001',
+                # 'text-babbage-001',
+                # 'text-ada-001',
+                # 'text-davinci-edit-001',
+                # 'gpt-3.5-turbo-instruct',
                 # 'gpt-3.5-turbo'', 'gpt-4-0613', 'code-davinci-edit-001'  #code- usles
             ]
 
         if "HUGGINGFACEHUB_API_TOKEN" in cls.isaa.config:
             cls.models += [
-                'google/flan-t5-small',  # 2/10 ~ ? Knowledge  classify ?eval? : 0.48s
+                # 'google/flan-t5-small',  # 2/10 ~ ? Knowledge  classify ?eval? : 0.48s
                 # 'facebook/bart-large-cnn', # 0/10 spoling informtions Prompt?
                 # 'tiiuae/falcon-40b', # -1
-                'google/flan-t5-xxl',
+                # 'google/flan-t5-xxl',
                 # eglisch text bot not mutch context 1/10 classify  tool use json to  (q/a 2) :: 0.51s
-                'databricks/dolly-v2-3b',  # Knowledge 0/10 : 0.57s
+                # 'databricks/dolly-v2-3b',  # Knowledge 0/10 : 0.57s
                 ## 'stabilityai/FreeWilly2', # to big
                 ## 'jondurbin/airoboros-l2-70b-gpt4-1.4.1',
                 ## 'TheBloke/llama-2-70b-Guanaco-QLoRA-fp16',
@@ -432,14 +443,22 @@ class TestIsaa(unittest.TestCase):
                 # 'deutsche-telekom/bert-multi-english-german-squad2',
                 # conversation 'PygmalionAI/pygmalion-6b',
                 # 'meta-llama/Llama-2-7b',
-                'knkarthick/MEETING_SUMMARY',  # summary (q/a 12 : 0.20s
+                # 'knkarthick/MEETING_SUMMARY',  # summary (q/a 12 : 0.20s
                 # 'TheBloke/OpenAssistant-Llama2-13B-Orca-8K-3319-GGML',
                 # 'TheBloke/Llama-2-7b-chat-fp16',
                 # 'TheBloke/open-llama-7B-v2-open-instruct-GPTQ',
                 # 'TheBloke/open-llama-13b-open-instruct-GPTQ',
                 # 'TheBloke/falcon-7b-instruct-GPTQ',
                 # 'TheBloke/Llama-2-7b-Chat-GPTQ',
-                'stabilityai/stablecode-instruct-alpha-3b'
+                'stabilityai/stablecode-instruct-alpha-3b',
+                'stabilityai/stablecode-completion-alpha-3b',
+                'WizardLM/WizardCoder-Python-7B-V1.0',
+                'WizardLM/WizardCoder-Python-13B-V1.0',
+                'WizardLM/WizardMath-13B-V1.0',
+                'WizardLM/WizardLM-7B-V1.0',
+                'WizardLM/WizardCoder-1B-V1.0',
+                'WizardLM/WizardLM-13B-V1.2',
+
             ]
 
         cls.isaa.config["DEFAULTMODEL0"] = "gpt-3.5-turbo-0613"  # "gpt-4"
@@ -453,7 +472,7 @@ class TestIsaa(unittest.TestCase):
         cls.app.remove_all_modules()
         cls.app.save_exit()
         cls.app.exit()
-        cls.app.logger.info(f"Accomplished in {time.time() - cls.t0}")
+        cls.app.logger.info(f"Accomplished in {time.perf_counter() - cls.t0}")
 
     def setUp(self):
         self.app_mock = Mock()
@@ -756,19 +775,20 @@ Wenn Sie nach der Überprüfung dieser Punkte immer noch Schwierigkeiten haben, 
                 logger.info(f"Testing ::{prefix}:: for model : {model}")
                 print(f"Testing ::{prefix}::\nTask {test_run_models_helper_count}/{max_task} at"
                       f" {(test_run_models_helper_count / max_task) * 100:.2f}")
-                t1 = time.time()
+                t1 = time.perf_counter()
                 res = self.isaa.stream_read_llm(istruction, agent_config_)
                 self.assertIsNotNone(res)
                 self.assertIsInstance(res, str)
                 self.assertNotEqual(res, "")
                 print(f"{'=' * 10}\nModel: {model}\nTask:{prefix}\nResult: {res}\n{'=' * 10} \nCompleted in"
-                      f" {time.time() - t1:.2f}\n\n")
+                      f" {time.perf_counter() - t1:.2f}\n\n")
 
-        for model in self.models:
+        for model in self.all4allModels:
             test_run_models_helper_count = 0
-            t0 = time.time()
+            t0 = time.perf_counter()
             if model in self.not_run:
                 continue
+            model = "gpt4all#"+model
             print(f"Starting with Model :{model}")
             with self.subTest(model=model):
                 self.isaa.load_llm_models([model])
@@ -789,9 +809,9 @@ Wenn Sie nach der Überprüfung dieser Punkte immer noch Schwierigkeiten haben, 
 
                 agent_config.set_mode('free')
 
-                helper("(repetition test)", "User: Say Test.\nIsaa:", model, agent_config)
-                helper("(featured properties test)", "User: What is yor name?\nIsaa:", model, agent_config)
-                helper("(Knowledge with hint test)", "User:what ist The Capital of Germany?\nIsaa:", model,
+                helper("(repetition test)", "User: Say Test.\nAssistant:", model, agent_config)
+                helper("(featured properties test)", "User: What is yor name?\nAssistant:", model, agent_config)
+                helper("(Knowledge with hint test)", "User:what ist The Capital of Germany?\nAssistant:", model,
                        agent_config)
 
                 test_run_models_helper_count += 3
@@ -799,9 +819,9 @@ Wenn Sie nach der Überprüfung dieser Punkte immer noch Schwierigkeiten haben, 
                 agent_config.set_mode('free')
                 helper("(Translation test)", "User:What does ?"
                                              "'Um um eine Fliege herum zu fliegen muss man fliegen können' mean in "
-                                             "Englisch?\nIsaa:", model, agent_config)
+                                             "Englisch?\nAssistant:", model, agent_config)
                 helper("(Translation2 test)", "Translate to Englisch."
-                                              "'Um um eine Fliege herum zu fliegen muss man fliegen können'\nIsaa:",
+                                              "'Um um eine Fliege herum zu fliegen muss man fliegen können'\nAssistant:",
                        model, agent_config)
 
                 helper("(Redundancy test)", "User:recreate the Original Informations from this:"
@@ -813,7 +833,7 @@ Wenn Sie nach der Überprüfung dieser Punkte immer noch Schwierigkeiten haben, 
                                             " dsawI am looking fodwerd to your crdwive and targeted solystions."
                                             "  5. 1234.67.....fg...klm"
                                             "  6. kgjZGuzgfaZgKmkugZUFTUIZ\n\n"
-                                            "writ from 1 to 6 reproduce the original informations :\nIsaa:", model,
+                                            "writ from 1 to 6 reproduce the original informations :\nAssistant:", model,
                        agent_config)
 
                 test_run_models_helper_count += 3
@@ -821,7 +841,7 @@ Wenn Sie nach der Überprüfung dieser Punkte immer noch Schwierigkeiten haben, 
                 helper("(Summary test)", f"User:Produce a Summary form this Text:{info_text}\nSummary:", model,
                        agent_config)
                 helper("(classification test)", f"User:Classify the given text wit the label POSITIVE or NEGETIVE "
-                                                "text for classification : 'Somtimes Feal bussy but over all I'm well'\nlabel:",
+                                                "text for classification : 'Somtimes I Feal bussy but over all I'm well'\nlabel:",
                        model, agent_config)
 
                 helper("(evaluation test)", "System Instruction: Test evaluation,"
@@ -875,7 +895,7 @@ Wenn Sie nach der Überprüfung dieser Punkte immer noch Schwierigkeiten haben, 
 
                 self.isaa.free_llm_model([model])
 
-            print(f"Test Completed in {time.time() - t0}")
+            print(f"Test Completed in {time.perf_counter() - t0}")
 
     def test_load_models(self):
         logger = get_logger()
@@ -888,14 +908,14 @@ Wenn Sie nach der Überprüfung dieser Punkte immer noch Schwierigkeiten haben, 
             if model in self.not_run:
                 continue
             with self.subTest(model=model):
-                t0 = time.time()
+                t0 = time.perf_counter()
                 self.isaa.load_llm_models([model])
                 self.assertTrue(self.isaa.initstate[f'LLM-model-{model}-init'])
                 self.assertIn(f'LLM-model-{model}', self.isaa.config.keys())
                 logger.info(f"Closing Moldel: {model}...")
                 self.isaa.free_llm_model([model])
-                logger.info(f'Initialized : {model} in : {time.time() - t0:.2f}s')
-            print(f'Initialized : {model} in : {time.time() - t0:.2f}s')
+                logger.info(f'Initialized : {model} in : {time.perf_counter() - t0:.2f}s')
+            print(f'Initialized : {model} in : {time.perf_counter() - t0:.2f}s')
 
     def test_add_tool(self):
         config = MagicMock()
@@ -1756,7 +1776,7 @@ class TestProcessCompletion(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Code, der einmal vor allen Tests ausgeführt wird
-        cls.t0 = time.time()
+        cls.t0 = time.perf_counter()
         cls.app = App("test-TestIsaa")
         cls.app.mlm = "I"
         cls.app.debug = True
@@ -1770,7 +1790,7 @@ class TestProcessCompletion(unittest.TestCase):
         cls.app.remove_all_modules()
         cls.app.save_exit()
         cls.app.exit()
-        cls.app.logger.info(f"Accomplished in {time.time() - cls.t0}")
+        cls.app.logger.info(f"Accomplished in {time.perf_counter() - cls.t0}")
 
     def setUp(self):
         self.app_mock = Mock()

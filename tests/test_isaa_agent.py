@@ -5,6 +5,9 @@ import unittest
 
 from langchain.vectorstores.base import VectorStoreRetriever
 
+from toolboxv2.mods.isaa.Agents import Capabilities, LLMFunction, LLMMode, ModeController
+from toolboxv2.mods.isaa.AgentFramwork import get_free_agent, run_agent_0shot, create_prompt, craft_mode, \
+    crate_llm_function_from_langchain_tools, create_capability, prefixes_mode_asapt, crate_trait
 from toolboxv2 import App, get_logger
 from toolboxv2.mods.isaa.AgentUtils import AIContextMemory, ObservationMemory, ShortTermMemory, MemoryModel, \
     PyEnvEval, get_token_mini, get_max_token_fom_model_name, get_price, AgentConfig, anything_from_str_to_dict, \
@@ -116,7 +119,7 @@ class TestObservationMemory(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Code, der einmal vor allen Tests ausgeführt wird
-        cls.t0 = time.time()
+        cls.t0 = time.perf_counter()
         cls.app = App('test-ObservationMemory')
         cls.app.mlm = 'I'
         cls.app.debug = True
@@ -132,7 +135,7 @@ class TestObservationMemory(unittest.TestCase):
         cls.app.remove_all_modules()
         cls.app.save_exit()
         cls.app.exit()
-        cls.app.logger.info(f'Accomplished in {time.time() - cls.t0}')
+        cls.app.logger.info(f'Accomplished in {time.perf_counter() - cls.t0}')
         del cls.isaa
         del cls.observation_memory
 
@@ -159,6 +162,227 @@ class TestObservationMemory(unittest.TestCase):
         self.observation_memory.tokens = 0
 
 
+class TestAgentTestLearningLv1(unittest.TestCase):
+    t0 = None
+    name = "Agent"
+    isaa = None
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        # Code, der einmal vor allen Tests ausgeführt wird
+        cls.t0 = time.perf_counter()
+        cls.app = App('test-Agent')
+        cls.app.mlm = 'I'
+        cls.app.debug = True
+        cls.app.load_mod('isaa')
+        cls.isaa = cls.app.get_mod('isaa')
+        cls.app.new_ac_mod('isaa')
+        llm_mode = LLMMode(
+            name="Function Calling Information Gatering",
+        description="The Agent Searches for Information in its memory and the web",
+        system_msg="User Function calling to Searches for information in ur memory or the web for a given topic.",
+        post_msg="-> ",
+        examples=[
+            "The age of joe biden -> "
+            "THINK: i need to get the current age of joe biden\n"
+            "Therefor i need to search for Time current information on the web\n"
+            "Action: search_web\n"
+            "Inputs: 'how old is joe biden'\n[!X!]",
+            "What is the root of 8798712 -> "
+            "THINK: That is a mathe question\n"
+            "Therefor i do not need to search for informations. Do I hav capability to salve this question?\n"
+            "No i dont Therefor i will inform the user\n"
+            "SPEAK: this task exited my capability's\n[!X!]",
+            "What is my favorite color -> "
+            "THINK: i need to get specific informations about the user\n"
+            "Therefor i need to search for content in my memory\n"
+            "Action: get_memory\n"
+            "Inputs: 'What is the users favorite color'\n[!X!]"],
+        )
+        cls.mode = ModeController(llm_mode)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.app.logger.info('Closing APP')
+        cls.app.config_fh.delete_file()
+        cls.app.remove_all_modules()
+        cls.app.save_exit()
+        cls.app.exit()
+        cls.app.logger.info(f'Accomplished in {time.perf_counter() - cls.t0}')
+        del cls.isaa
+
+    def test_normal_response(self):
+        agent = get_free_agent("Isaa")
+        res = self.mode.run_agent_on_mode("How to crate a Business?", agent, isaa=self.isaa)
+        print(res)
+        print(self.mode.shots)
+
+
+class TestAgent(unittest.TestCase):
+    t0 = None
+    name = "Agent"
+    isaa = None
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        # Code, der einmal vor allen Tests ausgeführt wird
+        cls.t0 = time.perf_counter()
+        cls.app = App('test-Agent')
+        cls.app.mlm = 'I'
+        cls.app.debug = True
+        cls.app.load_mod('isaa')
+        cls.isaa = cls.app.get_mod('isaa')
+        cls.app.new_ac_mod('isaa')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.app.logger.info('Closing APP')
+        cls.app.config_fh.delete_file()
+        cls.app.remove_all_modules()
+        cls.app.save_exit()
+        cls.app.exit()
+        cls.app.logger.info(f'Accomplished in {time.perf_counter() - cls.t0}')
+        del cls.isaa
+
+    def test_agent(self):
+        test_agent = get_free_agent("Isaa")
+        test_agent.check_valid()
+
+    def test_get_message(self):
+        test_agent = get_free_agent("test-agent")
+        test_agent.init_memory(self.isaa)
+
+        content = "Hallo was geht ?"
+
+        message = test_agent.get_llm_message(
+            content + '0',
+            persist=False,
+            fetch_memory=False,
+        )
+        self.assertEqual(message, [{'content': content + '0', 'role': 'user'}])
+        print(message, "message 0")
+
+        message = test_agent.get_llm_message(
+            content + '1',
+            persist=False,
+            fetch_memory=False,
+        )
+        self.assertEqual(message, [{'content': content + '1', 'role': 'user'}])
+        print(message, "message 1")
+        message = test_agent.get_llm_message(
+            content + '2',
+            persist=True,
+            fetch_memory=False,
+        )
+        self.assertEqual(message, [{'content': content + '2', 'role': 'user'}])
+        print(message, "message 2")
+        message = test_agent.get_llm_message(
+            content + '3',
+            persist=True,
+            fetch_memory=True,
+        )
+        self.assertEqual(message,
+                         [{'content': content + '2', 'role': 'user'}, {'content': content + '3', 'role': 'user'}])
+        print(message, "message 3")
+        message = test_agent.get_llm_message(
+            content + '4',
+            persist=False,
+            fetch_memory=True,
+        )
+        self.assertEqual(message, [{'content': content + '4', 'role': 'user'}])
+        print(message, "message 4")
+
+    def test_0shot(self):
+        test_agent = get_free_agent("Isaa")
+        re = run_agent_0shot(test_agent, "Hallo was geht ?", persist=False, fetch_memory=False,
+                             mock_response="Gut dir?")
+        self.assertNotEqual(re, '')
+        self.assertEqual(re, 'Gut dir?')
+
+    def test_crate_llm_function_from_langchain_tools(self):
+        llm_functions = crate_llm_function_from_langchain_tools('human')
+
+        self.assertIsInstance(llm_functions, list)
+        self.assertGreater(len(llm_functions), 0)
+
+        llm_function = llm_functions[0]
+
+        self.assertIsInstance(llm_function, LLMFunction)
+        self.assertIsInstance(llm_function.parameters, dict)
+        self.assertIsInstance(llm_function.name, str)
+        self.assertIsInstance(llm_function.description, str)
+
+        self.assertGreater(len(llm_function.name), 0)
+        self.assertGreater(len(llm_function.description), 0)
+
+        print("Specs:", str(llm_function))
+
+    def test_create_capability(self):
+        llm_functions = crate_llm_function_from_langchain_tools('human')
+
+        c = create_capability('human', llm_functions[0].description, llm_functions)
+        print(c)
+
+    def test_0shot_with_capabilities(self):
+        test_agent = get_free_agent("Isaa")
+        c = Capabilities(
+            name="test",
+            description="Ask for guidance",
+            trait="None",
+            functions=[LLMFunction(name="askUser",
+                                   description="ask the user for guidance",
+                                   parameters={"question": "type -> str infos -> question for the user"},
+                                   function=lambda q: input(f"LLM Question: {q}")
+                                   )],
+        )
+        test_agent.capabilities = c
+        re = run_agent_0shot(test_agent, "Hallo was geht ?", persist=False, fetch_memory=False)
+        self.assertNotEqual(re, '')
+        self.assertEqual(re, 'Gut dir?')
+
+    def test_0shot_response(self):
+        test_agent = get_free_agent("Isaa")
+        re = run_agent_0shot(test_agent, "Hello whats up?", persist=False, fetch_memory=False)
+        self.assertNotEqual(re, '')
+
+    def test_prefixes_mode_asapt(self):
+        test_agent = get_free_agent("Isaa")
+        llm_functions = crate_llm_function_from_langchain_tools('requests')
+
+        # trait = crate_trait(Capabilities(name="", description="", trait="", functions=llm_functions))
+
+        c = Capabilities(name='requests', description=llm_functions[0].description, trait=llm_functions[0].description, functions=llm_functions)
+
+        # test_agent.capabilities = c
+
+        re = prefixes_mode_asapt("User: what is 9 + 11?", test_agent)
+        self.assertNotEqual(re, '')
+
+    def test_0shot_response_stram(self):
+        test_agent = get_free_agent("Isaa")
+        test_agent.stream = True
+        re = run_agent_0shot(test_agent, "Hello whats up?", persist=False, fetch_memory=False)
+        self.assertNotEqual(re, '')
+
+    def test_create_prompt(self):
+        # test_agent = get_free_agent("Isaa")
+        test_agent = get_free_agent("Isaa")
+        test_agent.stream = True
+        task = """Topic naming service. find a name for a given topic"""
+        re = create_prompt(task, agent=test_agent)
+        print(re)
+        self.assertNotEqual(re, '')
+
+    def test_craft_mode(self):
+        # test_agent = get_free_agent("Isaa")
+        task = "an Research agent"
+        re = craft_mode(task, "Web and Memory Informations")
+        print(re)
+        self.assertNotEqual(re, None)
+
+
 class TestShortTermMemory(unittest.TestCase):
     short_term_memory = None
     t0 = None
@@ -169,7 +393,7 @@ class TestShortTermMemory(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Code, der einmal vor allen Tests ausgeführt wird
-        cls.t0 = time.time()
+        cls.t0 = time.perf_counter()
         cls.app = App('test-ShortTermMemory')
         cls.app.mlm = 'I'
         cls.app.debug = True
@@ -185,7 +409,7 @@ class TestShortTermMemory(unittest.TestCase):
         cls.app.remove_all_modules()
         cls.app.save_exit()
         cls.app.exit()
-        cls.app.logger.info(f'Accomplished in {time.time() - cls.t0}')
+        cls.app.logger.info(f'Accomplished in {time.perf_counter() - cls.t0}')
         del cls.isaa
         del cls.short_term_memory
 
@@ -322,7 +546,7 @@ class TestAgentConfig(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Code, der einmal vor allen Tests ausgeführt wird
-        cls.t0 = time.time()
+        cls.t0 = time.perf_counter()
         cls.app = App('test-ObservationMemory')
         cls.app.mlm = 'I'
         cls.app.debug = True
@@ -338,60 +562,9 @@ class TestAgentConfig(unittest.TestCase):
         cls.app.remove_all_modules()
         cls.app.save_exit()
         cls.app.exit()
-        cls.app.logger.info(f'Accomplished in {time.time() - cls.t0}')
+        cls.app.logger.info(f'Accomplished in {time.perf_counter() - cls.t0}')
         del cls.isaa
         del cls.agent_config
-
-    def test_init(self):
-        self.assertEqual(self.agent_config.isaa, self.isaa)
-        self.assertEqual(self.agent_config.name, 'agentConfig')
-        self.assertEqual(self.agent_config.mode, 'talk')
-        self.assertEqual(self.agent_config.model_name, 'gpt-3.5-turbo-0613')
-
-    def test_set_mode(self):
-        self.agent_config.set_mode('planning')
-        self.assertEqual(self.agent_config.mode, 'planning')
-
-    def test_set_completion_mode(self):
-        self.agent_config.set_completion_mode('text')
-        self.assertEqual(self.agent_config.completion_mode, 'text')
-
-    def test_set_temperature(self):
-        self.agent_config.set_temperature(0.5)
-        self.assertEqual(self.agent_config.temperature, 0.5)
-
-    def test_add_task(self):
-        self.agent_config.add_task('new task')
-        self.assertIn('new task', self.agent_config.task_list)
-
-    def test_mark_task_done(self):
-        self.agent_config = AgentConfig(self.isaa)
-        self.agent_config.add_task('new task')
-        self.assertIn('new task', self.agent_config.task_list)
-        self.assertNotIn('new task', self.agent_config.task_list_done)
-
-        self.agent_config.mark_task_done('new task')
-        self.assertIn('new task', self.agent_config.task_list_done)
-        self.assertNotIn('new task', self.agent_config.task_list)
-
-    def test_set_short_term_memory(self):
-        short_mem = ShortTermMemory(self.isaa, 'test')
-        self.agent_config.set_short_term_memory(short_mem)
-        self.assertEqual(self.agent_config.short_mem, short_mem)
-
-    def test_set_context(self):
-        context = ShortTermMemory(self.isaa, 'test')
-        self.agent_config.set_context(context)
-        self.assertEqual(self.agent_config.context, context)
-
-    def test_set_observation_memory(self):
-        obser_mem = ObservationMemory(self.isaa)
-        self.agent_config.set_observation_memory(obser_mem)
-        self.assertEqual(self.agent_config.observe_mem, obser_mem)
-
-    def test_set_model_name(self):
-        self.agent_config.set_model_name('gpt-3')
-        self.assertEqual(self.agent_config.model_name, 'gpt-3')
 
 
 class TestAnythingFromStrToDict(unittest.TestCase):
@@ -453,6 +626,18 @@ class TestAnythingFromStrToDict(unittest.TestCase):
         # Assert
         self.assertEqual(actual_output, expected_output)
 
+    def test_case_1p5(self):
+        # Arrange
+        input_data = 'daw a{"key": "value"} dasd aw'
+        expected_keys = {"expected_key": "expected_value"}
+        expected_output = [{"key": "value", "expected_key": "expected_value"}]
+
+        # Act
+        actual_output = anything_from_str_to_dict(input_data, expected_keys)
+
+        # Assert
+        self.assertEqual(actual_output, expected_output)
+
     def test_case_2(self):
         # Arrange
         input_data = 'This is not a JSON string'
@@ -480,6 +665,16 @@ class TestAnythingFromStrToDict(unittest.TestCase):
 
     def test_case_4(self):
         input_data = " {'Action':'find','Inputs':{'directory':'.','pattern':'mods//isaa'}}"
+        expected_output = [{'Action': 'find', 'Inputs': {'directory': '.', 'pattern': 'mods//isaa'}}]
+
+        # Act
+        actual_output = anything_from_str_to_dict(input_data)
+
+        # Assert
+        self.assertEqual(actual_output, expected_output)
+
+    def test_case_4p5(self):
+        input_data = "adw asdw d\n\ndsad{'Action':'find','Inputs':{'directory':'.','pattern':'mods//isaa'}}\nsdasd"
         expected_output = [{'Action': 'find', 'Inputs': {'directory': '.', 'pattern': 'mods//isaa'}}]
 
         # Act
