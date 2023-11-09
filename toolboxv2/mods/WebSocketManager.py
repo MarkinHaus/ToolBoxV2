@@ -29,7 +29,7 @@ async def valid_id(ws_id, id_v, websocket=None):
 class Tools(MainTool, FileHandler):
 
     def __init__(self, app=None):
-        self.version = "0.0.2"
+        self.version = "0.0.3"
         self.name = "WebSocketManager"
         self.logger: logging.Logger or None = app.logger if app else None
         if app is None:
@@ -120,7 +120,7 @@ class Tools(MainTool, FileHandler):
         loop = asyncio.new_event_loop()
 
         async def send(ws):
-            t0 = time.time()
+            t0 = time.perf_counter()
             running = True
             while running:
                 msg = await loop.run_in_executor(None, send_queue.get)
@@ -135,14 +135,14 @@ class Tools(MainTool, FileHandler):
                 await ws.send(msg_json)
                 self.print(Style.GREY("-- Sendet --"))
 
-                self.print(f"S Parsed Time ; {t0 - time.time()}")
-                if t0 - time.time() > (60 * 60) * 1:
+                self.print(f"S Parsed Time ; {t0 - time.perf_counter()}")
+                if t0 - time.perf_counter() > (60 * 60) * 1:
                     ws.close()
 
             print("SENDER received exit stop running")
 
         async def receive(ws):
-            t0 = time.time()
+            t0 = time.perf_counter()
             running = True
             while running:
                 msg_json = await ws.recv()
@@ -153,8 +153,8 @@ class Tools(MainTool, FileHandler):
                 msg = json.loads(msg_json)
                 recv_queue.put(msg)
 
-                self.print(f"R Parsed Time ; {t0 - time.time()}")
-                if t0 - time.time() > (60 * 60) * 1:
+                self.print(f"R Parsed Time ; {t0 - time.perf_counter()}")
+                if t0 - time.perf_counter() > (60 * 60) * 1:
                     ws.close()
 
             print("receiver received exit call")
