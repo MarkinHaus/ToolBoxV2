@@ -144,7 +144,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         if self.t0:
             self.t0.join()
-            self.t0 = 0
+            self.t0 = None
         # os.remove(f"app/api_pid_{command[1]}")
 
     def restart_api(self, command, app: App):

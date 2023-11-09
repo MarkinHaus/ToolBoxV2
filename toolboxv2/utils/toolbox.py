@@ -1,4 +1,5 @@
 """Main module."""
+import concurrent.futures
 import os
 import sys
 import time
@@ -79,7 +80,7 @@ class Singleton(type):
 class App(metaclass=Singleton):
     def __init__(self, prefix: str = "", args=AppArgs().default()):
 
-        t0 = time.time()
+        t0 = time.perf_counter()
         abspath = os.path.abspath(__file__)
         self.system_flag = system()  # Linux: Linux Mac: Darwin Windows: Windows
         if self.system_flag == "Darwin" or self.system_flag == "Linux":
@@ -201,7 +202,7 @@ class App(metaclass=Singleton):
 
         self.logger.info(
             Style.GREEN(
-                f"Finish init up in t-{time.time() - t0}s"
+                f"Finish init up in t-{time.perf_counter() - t0}s"
             )
         )
 
@@ -335,25 +336,19 @@ class App(metaclass=Singleton):
             raise ValueError(f"config mlm must bee I (inplace load) or C (coppy to runtime load) is {self.mlm=}")
 
     def load_all_mods_in_file(self, working_dir="mods"):
-
-        t0 = time.time()
-
-        iter_res = self.get_all_mods(working_dir)
-
+        t0 = time.perf_counter()
         opened = 0
-        for mod in iter_res:
-            opened += 1
-            self.logger.info(f"Loading module : {mod}")
-            if self.debug:
-                self.load_mod(mod)
-            else:
-                try:
-                    self.load_mod(mod)
-                except Exception as e:
-                    self.logger.error(Style.RED("Error") + f" loading module {mod} {e}")
+        # Get the list of all modules
+        module_list = self.get_all_mods(working_dir)
 
-        self.logger.info(f"opened  : {opened} modules in t-{time.time() - t0}s")
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            # Load modules in parallel using threads
+            futures = {executor.submit(self.load_mod, mod) for mod in module_list}
 
+            for future in concurrent.futures.as_completed(futures):
+                opened += 1
+
+        self.logger.info(f"Opened {opened} modules in {time.perf_counter() - t0:.2f}s")
         return True
 
     def get_all_mods(self, working_dir="mods"):
@@ -375,8 +370,8 @@ class App(metaclass=Singleton):
         def do_helper(_mod):
             if "mainTool" in _mod:
                 return False
-            if not _mod.endswith(".py"):
-                return False
+            # if not _mod.endswith(".py"):
+            #     return False
             if _mod.startswith("__"):
                 return False
             if _mod.startswith("test_"):
@@ -384,7 +379,9 @@ class App(metaclass=Singleton):
             return True
 
         def r_endings(word: str):
-            return word[:-3]
+            if word.endswith(".py"):
+                return word[:-3]
+            return word
 
         return list(map(r_endings, filter(do_helper, res)))
 
