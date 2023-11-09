@@ -488,13 +488,13 @@ def get_audio_transcribe(seconds=30,
         if amplitude < amplitude_min:
             # If the person has stopped speaking, update the silence duration
             if speak_start_time is not None:
-                speak_duration += time.time() - speak_start_time
+                speak_duration += time.perf_counter() - speak_start_time
                 speak_start_time = None
             silence_duration += int(rate / 10) / rate
         else:
             # If the person has started speaking, update the speaking duration
             if speak_start_time is None:
-                speak_start_time = time.time()
+                speak_start_time = time.perf_counter()
                 silence_duration = 0
             speak_duration += int(rate / 10) / rate
 
@@ -660,13 +660,13 @@ def init_live_transcript(model="jonatasgrosman/wav2vec2-large-xlsr-53-german",
                         if amplitude < amplitude_min:
                             # If the person has stopped speaking, update the silence duration
                             if speak_start_time is not None:
-                                speak_duration += time.time() - speak_start_time
+                                speak_duration += time.perf_counter() - speak_start_time
                                 speak_start_time = None
                             silence_duration += int(rate / 10) / rate
                         else:
                             # If the person has started speaking, update the speaking duration
                             if speak_start_time is None:
-                                speak_start_time = time.time()
+                                speak_start_time = time.perf_counter()
                             speak_duration += int(rate / 10) / rate
                         # print( f"[speak_duration] : {speak_duration:.2f} [silence_duration] : {
                         # silence_duration:.2f} [amplitude] : {amplitude:.2f}", end="\r")
@@ -721,7 +721,7 @@ def init_live_transcript(model="jonatasgrosman/wav2vec2-large-xlsr-53-german",
 
                     if transcribe:
                         if not audio_files_que.empty():
-                            t0 = time.time()
+                            t0 = time.perf_counter()
                             index = audio_files_que.get()
                             ac_temp = temp[index]
                             logger.info(
@@ -731,7 +731,7 @@ def init_live_transcript(model="jonatasgrosman/wav2vec2-large-xlsr-53-german",
                             res_que.put(result)
                             logger.info(
                                 Style.ITALIC(
-                                    Style.Bold(f"T1 Don in {time.time() - t0:.3f} chars {len(result)} :"
+                                    Style.Bold(f"T1 Don in {time.perf_counter() - t0:.3f} chars {len(result)} :"
                                                f" {Style.GREY(result[:10])}..")))
 
                 logger.info(

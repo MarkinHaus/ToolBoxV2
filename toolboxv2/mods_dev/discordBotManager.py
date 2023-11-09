@@ -10,7 +10,7 @@ import aiohttp
 import discord
 import requests
 from discord.ext import commands
-from toolboxv2 import MainTool, FileHandler, App, Style, remove_styles
+from toolboxv2 import MainTool, remove_styles
 from toolboxv2.mods.isaa import Tools as isaaTools
 from toolboxv2.mods.cloudM import test_if_exists, Tools as cmTools
 
