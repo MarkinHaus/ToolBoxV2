@@ -1082,7 +1082,7 @@ def installer(url):
         filename = os.path.basename(runnable_url)
         urllib.request.urlretrieve(runnable_url, f"runable/{filename}")
 
-    shutil.unpack_archive(data["additional-dirs"], "../")
+    shutil.unpack_archive(data["additional-dirs"], "/")
 
     # Herunterladen der Requirements-Datei
     requirements_url = data["requirements"]
@@ -1145,80 +1145,3 @@ def delete_package(url):
     # Löschen der heruntergeladenen Requirements-Datei
     os.remove(requirements_filename)
     os.remove(temp_requirements_file.name)
-
-
-import os
-import subprocess
-
-
-def create_submodule(submodule_name, root_folder='./../', remote=False, remote_url=''):
-    # Change directory to the root_folder
-    os.chdir(root_folder)
-
-    # Create a new submodule
-    subprocess.run(['git', 'submodule', 'add', submodule_name])
-
-    # Initialize and update submodules
-    subprocess.run(['git', 'submodule', 'init'])
-    subprocess.run(['git', 'submodule', 'update', '--recursive'])
-
-    if remote:
-        # Change directory to the submodule folder
-        submodule_folder = os.path.join(root_folder, submodule_name)
-        os.chdir(submodule_folder)
-
-        # Create a new repository if remote is specified
-        subprocess.run(['git', 'init'])
-        subprocess.run(['git', 'add', '.'])
-        subprocess.run(['git', 'commit', '-m', 'Initial commit with submodule'])
-
-        # Add a remote repository
-        subprocess.run(['git', 'remote', 'add', 'origin', remote_url])
-
-        # Push to the remote repository
-        subprocess.run(['git', 'push', '-u', 'origin', 'master'])
-
-
-def update_submodule(root_folder='./../'):
-    # Change directory to the root_folder
-    os.chdir(root_folder)
-
-    # Update submodules
-    subprocess.run(['git', 'submodule', 'update', '--recursive', '--remote'])
-
-
-def upload_submodule(root_folder='./../'):
-    # Change directory to the root_folder
-    os.chdir(root_folder)
-
-    # Push changes to the remote repository
-    subprocess.run(['git', 'submodule', 'foreach', '--recursive', 'git', 'push'])
-
-
-def remove_submodule(submodule_name, root_folder='./../'):
-    # Change directory to the root_folder
-    os.chdir(root_folder)
-
-    # Remove the submodule from the parent repository
-    subprocess.run(['git', 'submodule', 'deinit', '-f', submodule_name])
-    subprocess.run(['git', 'rm', '-rf', submodule_name])
-    subprocess.run(['rm', '-rf', '.git/modules/' + submodule_name])
-    subprocess.run(['git', 'commit', '-m', 'Remove submodule ' + submodule_name])
-
-
-if __name__ == '__main__':
-    root_folder = r'C:\Users\Markin\Workspace\ToolBoxV2'
-    submodule_name = r'.\toolboxv2\mods\CloudM'
-    remote_url = 'https://github.com/MarkinHaus/CloudM.git'
-
-    # Create a new submodule with or without remote
-    create_submodule(submodule_name, root_folder, remote=False, remote_url=remote_url)
-
-    # Update submodules
-    update_submodule(root_folder)
-
-    # Upload changes to the remote repository
-    upload_submodule(root_folder)
-
-    # Remove submodule from the parent repository
-    remove_submodule(submodule_name, root_folder)
