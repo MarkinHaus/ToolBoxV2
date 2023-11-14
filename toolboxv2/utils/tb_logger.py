@@ -21,6 +21,7 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
     logs_directory = "../logs"
     if not os.path.exists(logs_directory):
         os.makedirs(logs_directory, exist_ok=True)
+    if not os.path.exists(logs_directory+"/Logs.info"):
         open(f"{logs_directory}/Logs.info", "a").close()
 
     loggerNameOfToolboxv2 = name

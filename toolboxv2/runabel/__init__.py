@@ -5,7 +5,7 @@ import time
 
 # Erstelle ein leeres Wörterbuch
 
-def runnable_dict():
+def runnable_dict(s='.py'):
     runnable_dict_ = {}
 
     # Erhalte den Pfad zum aktuellen Verzeichnis
@@ -16,7 +16,7 @@ def runnable_dict():
         # Überprüfe, ob die Datei eine Python-Datei ist
         if file_name == "__init__.py":
             pass
-        elif file_name.endswith('.py'):
+        elif file_name.endswith('.py') and s in file_name:
             # Entferne die Erweiterung ".py" aus dem Dateinamen
             name = os.path.splitext(file_name)[0]
             # Lade das Modul

@@ -13,7 +13,7 @@ RUN apt-get install -y git
 WORKDIR /app
 
 # Clone the git repo into the docker container
-RUN git clone -b light-tb https://github.com/MarkinHaus/ToolBoxV2.git
+RUN git clone https://github.com/MarkinHaus/ToolBoxV2.git
 
 #WORKDIR /ToolBoxV2/
 

@@ -27,20 +27,29 @@ load_dotenv()
 
 class AppArgs:
     init = None
-    init_file = None
-    update = False
-    update_mod = None,
-    delete_ToolBoxV2 = None
-    delete_mod = None
+    init_file = 'init.config'
     get_version = False
+    mm = False
+    sm = False
+    lm = False
+    modi = 'cli'
+    kill = False
+    remote = False
+    remote_direct_key = None
+    background_application = False
+    docker = False
+    install = None
+    remove = None
+    update = None
     mod_version_name = 'mainTool'
     name = 'main'
-    modi = 'cli'
-    port = 68945
+    port = 8000
     host = '0.0.0.0'
     load_all_mod_in_files = False
-    live = False
-    mm = False
+    mods_folder = 'toolboxv2.mods.'
+    debug = None
+    test = None
+    profiler = None
 
     def default(self):
         return self
@@ -111,21 +120,22 @@ class App(metaclass=Singleton):
 
         print(f"Starting ToolBox as {prefix} from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 
-        debug = False
-
-        if "test" in prefix:
+        if "test" in prefix and not args.debug:
             self.logger, self.logging_filename = setup_logging(logging.NOTSET, name="toolbox-test", interminal=True,
-                          file_level=logging.NOTSET)
-        elif "live" in prefix:
+                                                               file_level=logging.NOTSET)
+        elif "live" in prefix and not args.debug:
             self.logger, self.logging_filename = setup_logging(logging.DEBUG, name="toolbox-debug", interminal=True,
-                          file_level=logging.WARNING)
-            #setup_logging(logging.WARNING, name="toolbox-live", is_online=True
+                                                               file_level=logging.WARNING)
+            # setup_logging(logging.WARNING, name="toolbox-live", is_online=True
             #              , online_level=logging.WARNING).info("Logger initialized")
         elif "debug" in prefix:
             prefix = prefix.replace("-debug", '').replace("debug", '')
             self.logger, self.logging_filename = setup_logging(logging.DEBUG, name="toolbox-debug", interminal=True,
-                          file_level=logging.WARNING)
-            debug = True
+                                                               file_level=logging.WARNING)
+        elif args.debug:
+            self.logger, self.logging_filename = setup_logging(logging.DEBUG, name=f"toolbox-{prefix}-debug",
+                                                               interminal=True,
+                                                               file_level=logging.DEBUG)
         else:
             self.logger, self.logging_filename = setup_logging(logging.ERROR, name=f"toolbox-{prefix}")
         self.logger.info("Logger initialized")
@@ -133,7 +143,7 @@ class App(metaclass=Singleton):
 
         name = prefix + '-' + node()
 
-        if args.init:
+        if args.init and args.init is not None:
             _initialize_toolBox(args.init, args.init_file, name)
 
         self.version = toolboxv2.__version__
@@ -155,7 +165,7 @@ class App(metaclass=Singleton):
             "MACRO": ['Exit'],
             "MACRO_C": {},
             "HELPER": {},
-            "debug": not args.live,
+            "debug": args.debug,
             "id": name,
             "st-load": False,
             "module-load-mode": 'I',
@@ -167,11 +177,10 @@ class App(metaclass=Singleton):
         self.config_fh = FileHandler(name + ".config", keys=self.keys, defaults=defaults)
         self.config_fh.load_file_handler()
 
-        self._debug = debug
+        self._debug = args.debug
 
         self.runnable = {}
         FileHandler.all_main = self.config_fh.get_file_handler(self.keys["all_main"])
-        self._debug = self.config_fh.get_file_handler(self.keys["debug"])
         self.command_history = self.config_fh.get_file_handler(self.keys["comm-his"])
         self.dev_modi = self.config_fh.get_file_handler(self.keys["develop-mode"])
         self.MACRO = self.config_fh.get_file_handler(self.keys["MACRO"])
@@ -452,7 +461,7 @@ class App(metaclass=Singleton):
     def exit(self):
         self.exit_all_modules()
         self.logger.info("Exiting ToolBox")
-        self.print(Style.Bold(Style.CYAN("OK - EXIT ")))
+        self.print(Style.Bold(Style.CYAN("EXIT See U")))
         self.print('\033', end="")
         self.alive = False
         self.config_fh.save_file_handler()
@@ -473,7 +482,7 @@ class App(metaclass=Singleton):
             return helper
         else:
             self.print(Style.RED(f"HELPER {command} is not a valid | valid commands ar"
-                            f" {self.pretty_print(list(self.HELPER.keys()))}"))
+                                 f" {self.pretty_print(list(self.HELPER.keys()))}"))
             return "invalid"
 
     def save_load(self, modname):
@@ -513,12 +522,12 @@ class App(metaclass=Singleton):
             self.logger.error(Style.RED(f"AttributeError: {e} has no file handler 404"))
         return None
 
-    def run_function(self, name, *args, **kwargs):
-        self.logger.info(f"Start setup for: {name} function mod:{self.AC_MOD.name}")
+    def run_function(self, mod_function_name, *args, **kwargs):
+        self.logger.info(f"Start setup for: {mod_function_name} function mod:{self.AC_MOD.name}")
 
-        function = self._get_function(name)
+        function = self._get_function(mod_function_name)
         if not function:
-            self.logger.debug(Style.RED(f"Function {name} not found in {self.AC_MOD.name}"))
+            self.logger.debug(Style.RED(f"Function {mod_function_name} not found in {self.AC_MOD.name}"))
             return False
 
         self.logger.info(f"Profiling function")
@@ -527,7 +536,7 @@ class App(metaclass=Singleton):
         parameters = list(sig.parameters)
 
         mod_name = self.AC_MOD.name
-        self.print(f"\nStart function {mod_name}:{name}\n")
+        self.print(f"\nStart function {mod_name}:{mod_function_name}\n")
         app_position = None
         for i, param in enumerate(parameters):
             if param == 'app':
@@ -542,6 +551,7 @@ class App(metaclass=Singleton):
             elif len(parameters) == 1:
                 res = function(*args)
             else:
+
                 res = function(*args, **kwargs)
             self.logger.info(f"Execution done")
         else:
@@ -554,16 +564,19 @@ class App(metaclass=Singleton):
                     res = function(*args, **kwargs)
                 self.logger.info(f"Execution done")
             except Exception as e:
-                self.logger.error(Style.YELLOW(Style.Bold(f"! Function ERROR: in {mod_name}:{name} {e}")))
-                res = {'error-in': mod_name, 'error-func': name}
+                self.logger.error(Style.YELLOW(Style.Bold(f"! Function ERROR: in {mod_name}:{mod_function_name} {e}")))
+                res = {'error-in': mod_name, 'error-func': mod_function_name}
             else:
                 self.print_ok()
         return res
 
     def run_any(self, module_name: str, function_name: str, command=None, **kwargs):
 
-        if command is None:
+        if command is "":
             command = [ApiOb(), ""]
+
+        if command is None:
+            command = []
 
         do_sto = self.AC_MOD is not None
         ac_sto = ""
@@ -576,7 +589,8 @@ class App(metaclass=Singleton):
 
         if ac_sto != module_name:
             self.new_ac_mod(module_name)
-        res = self.run_function(function_name, command, **kwargs)
+
+        res = self.run_function(function_name, *command, **kwargs)
 
         if do_sto:
             self.new_ac_mod(ac_sto)
@@ -634,7 +648,7 @@ class App(metaclass=Singleton):
         self._debug = value
 
     def print(self, text, *args, **kwargs):
-        self.logger.info(f"Output : {text}")
+        #self.logger.info(f"Output : {text}")
         print(text, *args, **kwargs)
 
 
@@ -662,11 +676,11 @@ def _initialize_toolBox(init_type, init_from, name):
     logger.info("Done!")
 
 
-def get_app(name=None) -> App:
+def get_app(name=None, args=AppArgs().default()) -> App:
     logger = get_logger()
     logger.info(Style.GREYBG(f"get app requested name: {name}"))
     if name:
-        app = App(name)
+        app = App(name, args=args)
     else:
         app = App()
     logger.info(Style.Bold(f"App instance, returned ID: {app.id}"))
