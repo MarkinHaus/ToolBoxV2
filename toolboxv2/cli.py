@@ -233,88 +233,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def parse_args_():
-    parser = argparse.ArgumentParser(description="Welcome to the ToolBox cli")
-
-    parser.add_argument("-init",
-                        help="ToolBoxV2 init (name) -> default : -n name = main")
-
-    parser.add_argument('-f', '--init-file',
-                        type=str,
-                        default="init.config",
-                        help="optional init flag init from config file or url")
-
-    parser.add_argument("-update",
-                        help="update ToolBox",
-                        action="store_true")
-
-    parser.add_argument("--update-mod",
-                        help="update ToolBox mod", )
-
-    parser.add_argument("--delete-ToolBoxV2",
-                        help="delete ToolBox or mod | ToolBoxV2 --delete-ToolBoxV2 ",
-                        nargs=2,
-                        choices=["all" "cli", "dev", "api", 'config', 'data', 'src', 'all'])
-
-    parser.add_argument("--delete-mod",
-                        help="delete ToolBoxV2 mod | ToolBox --delete-mod (mod-name)")
-
-    parser.add_argument("-v", "--get-version",
-                        help="get version of ToolBox | ToolBoxV2 -v -n (mod-name)",
-                        action="store_true")
-
-    parser.add_argument("--speak",
-                        help="Isaa speak mode",
-                        action="store_true")
-
-    parser.add_argument("--mm",
-                        help="all Main all files ar saved in Main Node",
-                        action="store_true")
-
-    parser.add_argument('-mvn', '--mod-version-name',
-                        metavar="name",
-                        type=str,
-                        help="Name of mod",
-                        default="mainTool")
-
-    parser.add_argument('-n', '--name',
-                        metavar="name",
-                        type=str,
-                        help="Name of ToolBox",
-                        default="main")
-
-    parser.add_argument("-m", "--modi",
-                        type=str,
-                        help="Start ToolBox in different modes",
-                        default="cli")
-
-    parser.add_argument("-p", "--port",
-                        metavar="port",
-                        type=int,
-                        help="Specify a port for dev | api",
-                        default=8000)  # 1268945
-
-    parser.add_argument("-w", "--host",
-                        metavar="host",
-                        type=str,
-                        help="Specify a host for dev | api",
-                        default="0.0.0.0")
-
-    parser.add_argument("-l", "--load-all-mod-in-files",
-                        help="yeah",
-                        action="store_true")
-
-    parser.add_argument("--log-editor",
-                        help="yeah",
-                        action="store_true")
-
-    parser.add_argument("--live",
-                        help="yeah",
-                        action="store_true")
-
-    return parser.parse_args()
-
-
 def edit_logs():
     name = input(f"Name of logger \ndefault {loggerNameOfToolboxv2}\n:")
     name = name if name else loggerNameOfToolboxv2
@@ -402,11 +320,13 @@ def main():
     # profiler=None
     # )
 
-    print(args)
+    # print(args)
 
     app_pid = str(os.getpid())
 
     tb_app = get_app(args.name, args=args)
+
+    pid_file = f"{tb_app.start_dir}/{tb_app.config_fh.file_handler_file_prefix}{args.modi}-{args.name}.pid"
 
     if args.background_application and system() == "Windows":
         show_console(False)
@@ -466,11 +386,10 @@ def main():
         runnable_dict['docker'](tb_app, args)
 
     elif args.kill:
-        if not os.path.exists(
-            f"{tb_app.start_dir}/{tb_app.config_fh.file_handler_file_prefix}{args.modi}-{args.name}.pid"):
+        if not os.path.exists(pid_file):
             print("You must first run the mode")
         else:
-            with open(f"{tb_app.start_dir}/{tb_app.config_fh.file_handler_file_prefix}{args.modi}-{args.name}.pid",
+            with open(pid_file,
                       "r") as f:
                 app_pid = f.read()
             print(f"Exit app {app_pid}")
@@ -485,6 +404,9 @@ def main():
     if tb_app.alive:
         tb_app.save_exit()
         tb_app.exit()
+
+    if os.path.exists(pid_file):
+        os.remove(pid_file)
 
     # print(
     #    f"\n\nPython-loc: {init_args[0]}\nCli-loc: {init_args[1]}\nargs: {tb_app.pretty_print(init_args[2:])}")

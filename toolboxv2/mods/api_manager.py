@@ -115,12 +115,15 @@ class Tools(MainTool, FileHandler):  # FileHandler
         self.print(app.pretty_print(api_data))
         self.print(api_data)
         g = f"uvicorn toolboxv2.api.fast_api_main:app --host {api_data['host']}" \
-            f" --port {api_data['port']} --header data:{api_name}.config:{api_name} {'--reload' if 'reload' in app.id else ''}"
+            f" --port {api_data['port']} --header data:{len(list(self.app.MOD_LIST.keys()))}:{api_name} {'--reload' if 'reload' in app.id else ''}"
 
-        if self.t0 is None and 'main' in app.id:
+        print(g)
+
+        if self.t0 is None:
             self.t0 = threading.Thread(target=os.system, args=(g,))
             self.t0.start()
             return
+
         os.system(g)
 
     def stop_api(self, command):

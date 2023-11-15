@@ -40,7 +40,7 @@ def run(app: App, args: AppArgs):
     status = 'unknown'
 
     client = app.run_any('SocketManager', 'create_socket',
-                         name="demon", host="localhost", port=62436, type_id=SocketType.client,
+                         name="demon", host="localhost" if args.host == '0.0.0.0' else args.host, port=62436, type_id=SocketType.client,
                          max_connections=-1,
                          endpoint_port=None,
                          return_full_object=True)
@@ -53,7 +53,7 @@ def run(app: App, args: AppArgs):
     else:
         status = 'server'
         app.run_any('SocketManager', 'tbSocketController',
-                    name="demon", host='0.0.0.0', port=62436)
+                    name="demon", host=args.host, port=62436)
 
     if status != 'client':
         app.logger.info(f"closing demon {app.id}'{status}'")

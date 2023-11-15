@@ -2,6 +2,7 @@ import io
 import os
 import sys
 import tempfile
+import uuid
 
 from toolboxv2 import App, AppArgs, Spinner
 from toolboxv2.mods.dockerEnv import Tools
@@ -9,44 +10,68 @@ from toolboxv2.mods.dockerEnv import Tools
 NAME = 'docker'
 
 
-def build_docker_file(docker_env, init_args):
-    file_data = """# Use an official Python runtime as a parent image
-FROM python:3.9-slim
+def get_multiline_input(x):
+    print(x)
+    print("exit with empty line")
+    lines = []
 
-MAINTAINER Markin Hausmanns MarkinHausmanns@gmail.com
-
-# Update aptitude with new repo
-RUN apt-get update
-
-# Install software
-RUN apt-get install -y git
-
-# Set the working directory in the container to /app
-WORKDIR /app
-
-# Clone the git repo into the docker container
-RUN git clone https://github.com/MarkinHaus/ToolBoxV2.git
-
-#WORKDIR /ToolBoxV2/
+    while True:
+        line = input()
+        if line:
+            lines.append(line)
+        else:
+            break
+    return "\n".join(lines)
 
 
-# Install any needed packages specified in requirements.txt
-RUN pip install -e ./ToolBoxV2/
+def build_docker_image():
+    print("Willkommen zum Docker-Image-Erstellungsassistenten!")
 
-#RUN npm install ./ToolBoxV2/toolboxv2/app/node_modules/.package-lock.json
-# Make port 5000 available to the world outside this container
-EXPOSE 5001:5001
-"""
+    # Schritt 1: Base Image angeben
+    base_image = input("Schritt 1: Geben Sie das Base Image an (z.B. ubuntu:latest): ")
 
-    string_io = io.StringIO()
+    # Schritt 2: Arbeitsverzeichnis (Workdir) festlegen
+    workdir = input("Schritt 2: Geben Sie das Arbeitsverzeichnis (Workdir) an: ")
 
-    # Write the string 'x' into the io.StringIO object
-    string_io.write(file_data)
+    # Schritt 3: Quellcode-Quelle (Git oder Lokal) wählen
+    source_type = input("Schritt 3: Wählen Sie die Quellcode-Quelle (git/local): ").lower()
+    git_repository = ""
+    local_path = ""
+    if 'g' in source_type:
+        git_repository = input("Geben Sie die Git-Repository-URL an: ")
+    else:
+        local_path = input("Geben Sie den Pfad zum lokalen Quellcode an: ")
+
+    # Schritt 4: Exponierte Ports angeben
+    exposed_ports = input("Schritt 4: Geben Sie die zu exposenden Ports an (kommagetrennt, z.B. 80,443): ")
+
+    # Schritt 5: Netzwerkeinstellungen
+    # network_mode = input("Schritt 5: Geben Sie den Netzwerkmodus an (default/bridge/host): ")
+
+    # Schritt 6: Benutzerdefinierte Befehle für das Image
+    custom_commands = get_multiline_input(
+        "Schritt 6: Geben Sie benutzerdefinierte Befehle für das Image ein (optional): ")
+
+    # Dockerfile erstellen
+    dockerfile_content = f"""
+    FROM {base_image}
+    # Update aptitude with new repo
+    RUN apt-get update
+    # Install software
+    RUN apt-get install -y git
+    WORKDIR {workdir}
+    {"RUN git clone " + git_repository + " ." if source_type == "git" else "COPY " + local_path + " ."}
+    EXPOSE {exposed_ports}
+    USER root
+    {custom_commands}
+    """
+
+    return dockerfile_content
 
 
 def run(app: App, args: AppArgs):
     file_data = """# Use an official Python runtime as a parent image
-    FROM python:3.9-slim
+    FROM python:3.9
 
     MAINTAINER Markin Hausmanns MarkinHausmanns@gmail.com
 
@@ -74,15 +99,21 @@ def run(app: App, args: AppArgs):
     EXPOSE 62435:62435
     """
 
-
     try:
         init_args = " ".join(sys.orig_argv)
     except AttributeError:
         init_args = "python3 "
         init_args += " ".join(sys.argv)
-    init_args_s = "toolboxv2 "+str(" ".join(init_args.split(' ')[2:])).replace('--docker', '')
+    init_args_s = "toolboxv2 " + str(" ".join(init_args.split(' ')[2:])).replace('--docker', '')
     print(init_args_s)
-    file_data += f"\nCMD {init_args_s}"
+    custom = False
+    if not app.id.startswith('main'):
+        if 'y' in input("Do you want to build a custom image y/n").lower():
+            custom = True
+            file_data = build_docker_image()
+
+    if not custom:
+        file_data += f"\nCMD {init_args_s}"
 
     # Write the string 'x' into the io.StringIO object
 
@@ -93,23 +124,12 @@ def run(app: App, args: AppArgs):
     from contextlib import closing
     from io import BytesIO
 
-    filename = 'DockerFile'
+    img_name = (app.id + '-dockerImage-' + str(uuid.uuid4())).lower()
 
-    with tempfile.NamedTemporaryFile(delete=False, mode='w', encoding='utf-8') as temp_file:
-        temp_file.write(file_data)
-        temp_path = temp_file.name
+    img = docker_env.build_custom_images(img_name, file_data)
 
-    # Now you can use temp_path as the path variable
-
-    # For example, let's print the contents of the file
-    with Spinner(message=f"Building Docker file {(app.id + '-dockerImage').lower()}", symbols="c"):
-        os.system(f"docker build -f {temp_path} -t {(app.id + '-dockerImage').lower()} .")
-        # img = docker_env.build_custom_images("./", temp_path, (app.id + '-dockerImage').lower(), False)
-
-#
-#    ## Delete the temporary file
-    os.remove(temp_path)
-    #print(f"Temporary file deleted. {temp_path}")
-
-
-    container_id = docker_env.create_container((app.id + '-dockerImage').lower(), (app.id + '-dockerContainer').lower(), entrypoint=init_args.split(' '))
+    if not custom:
+        container_id = docker_env.create_container(img_name, (app.id + '-dockerContainer' + str(uuid.uuid4())).lower(),
+                                                   entrypoint=init_args_s.split(' '))
+    else:
+        container_id = docker_env.create_container(img_name, (app.id + '-dockerContainer' + str(uuid.uuid4())).lower())

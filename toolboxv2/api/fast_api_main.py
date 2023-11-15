@@ -1,12 +1,12 @@
 import json
 import os
-
+from inspect import signature
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 from fastapi.responses import RedirectResponse
 from toolboxv2 import App
 
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import FastAPI, Request, WebSocket, APIRouter
 import sys
 import time
 from fastapi.middleware.cors import CORSMiddleware
@@ -102,16 +102,21 @@ async def websocket_endpoint(websocket: WebSocket, ws_id: str):
 print("API: ", __name__)  # https://www.youtube.com/watch?v=_Im4_3Z1NxQ watch NOW
 if __name__ == 'toolboxv2.api.fast_api_main':
 
-    config_file = "api.config"
+    config_file = ".config"
     id_name = ""
-
+    mods_list = []
     for i in sys.argv[2:]:
         if i.startswith('data'):
             d = i.split(':')
-            config_file = d[1]
+            mods_list_len = d[1]
             id_name = d[2]
+            config_file = id_name+config_file
 
     tb_app = get_app(id_name)
+
+    for mod in mods_list:
+        tb_app.get_mod(mod)
+
     if id_name == tb_app.id:
         print("🟢 START")
     with open(f"./.data/api_pid_{id_name}", "w") as f:
@@ -123,6 +128,9 @@ if __name__ == 'toolboxv2.api.fast_api_main':
 
     tb_app.save_load("WebSocketManager")
     tb_app.new_ac_mod("WebSocketManager")
+
+    tb_app.load_all_mods_in_file()
+
     manager = tb_app.AC_MOD
 
     from .fast_api_install import router as install_router
@@ -135,3 +143,24 @@ if __name__ == 'toolboxv2.api.fast_api_main':
 
     app.include_router(app_router)
     app.include_router(api_router)
+
+    for mod_name, mod in tb_app.MOD_LIST.items():
+        router = APIRouter(
+            prefix=f"/{mod_name}",
+            tags=["token"],
+            # dependencies=[Depends(get_token_header)],
+            # responses={404: {"description": "Not found"}},
+        )
+
+        for fuc in mod.tools.get('all'):
+            if len(fuc) == 2:
+                print(mod_name, fuc)
+                if fuc[0].startswith('api_'):
+                    tb_func = mod.tools.get(fuc[0])
+                    if tb_func:
+                        if len(list(signature(tb_func).parameters)):
+                            router.post('/'+fuc[0].replace('api_', ''))(tb_func)
+                        else:
+                            router.get('/' + fuc[0].replace('api_', ''))(tb_func)
+
+        app.include_router(router)

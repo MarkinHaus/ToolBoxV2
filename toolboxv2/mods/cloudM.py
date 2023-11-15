@@ -89,8 +89,7 @@ class Tools(MainTool, FileHandler):
                 ["set_user_level", "set_user_level only programmatic", math.inf],
                 ["make_installable", "crate pack for toolbox"],
             ],
-            "name":
-                "cloudM",
+            "name": "cloudM",
             "Version": self.show_version,
             "api_Version": self.show_version,
             "NEW": self.new_module,

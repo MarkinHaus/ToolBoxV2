@@ -590,7 +590,7 @@ class App(metaclass=Singleton):
         if ac_sto != module_name:
             self.new_ac_mod(module_name)
 
-        res = self.run_function(function_name, *command, **kwargs)
+        res = self.run_function(function_name, command, **kwargs)
 
         if do_sto:
             self.new_ac_mod(ac_sto)

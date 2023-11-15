@@ -1,12 +1,13 @@
 import logging
 import os
+import tempfile
 import time
 from typing import Optional
 
 import docker
 from docker.models.containers import Container
 
-from toolboxv2 import MainTool, FileHandler, App, Style
+from toolboxv2 import MainTool, FileHandler, App, Style, Spinner
 
 
 class Tools(MainTool, FileHandler):
@@ -18,7 +19,7 @@ class Tools(MainTool, FileHandler):
         self.color = "WHITE"
         self.keys = {}
         self.tools = {
-            "all": [["Version", "Shows current Version"],["build_custom_images", "Shows current Version"]],
+            "all": [["Version", "Shows current Version"], ["build_custom_images", "Shows current Version"]],
             "name": "dockerEnv",
             "Version": self.show_version,
             "build_custom_images": self.build_custom_images,
@@ -48,28 +49,27 @@ class Tools(MainTool, FileHandler):
         for container in containers:
             self.print(f"Container: {container.name}")
 
-    def build_custom_images(self, init_path, dockerfile, tag, custom_images=False):
+    def build_custom_images(self, img_name: str, file_data: str or None = None, path: str or None = None):
 
-        if custom_images:
+        if path is not None:
+            self.print("Using existing file")
+            temp_path = path
+        elif file_data is not None:
+            self.print("Cratering temporary file")
+            with tempfile.NamedTemporaryFile(delete=False, mode='w', encoding='utf-8') as temp_file:
+                temp_file.write(file_data)
+                temp_path = temp_file.name
+        else:
+            raise ValueError("Optional pars file_data or path not both")
 
-            image, logs = self.client.images.build(
-                custom_context=True,
-                fileobj=dockerfile,
-                # path=init_path,
-                tag=tag,
-                rm=True
-            )
-            self.logger.info(f"Created custom Image Logs: {logs}")
-            return image
+        with Spinner(message=f"Building Docker image name: {img_name}", symbols="c"):
+            os.system(f"docker build -f {temp_path} -t {img_name} .")
 
-        image, logs = self.client.images.build(
-            dockerfile=dockerfile,
-            path=init_path,
-            tag=tag,
-            rm=True
-        )
-        self.logger.info(f"Created custom Image Logs: {logs}")
-        return image
+        if file_data is not None:
+            os.remove(temp_path)
+
+        return img_name
+
 
     def start_container(self, name):
         container = self.get_container(name)
@@ -128,7 +128,8 @@ class Tools(MainTool, FileHandler):
         if exit_code == 0:
             self.commit_container(container, f"Initialized with Git Repo from {git_repo_url}")
             return
-        self.logger.warning(f"Git repository was not initialized properly starts code: {exit_code} informations: {output}")
+        self.logger.warning(
+            f"Git repository was not initialized properly starts code: {exit_code} informations: {output}")
 
     def run_command_in_container(self, container, command, stream=False):
         if isinstance(container, str):
@@ -168,7 +169,6 @@ class Tools(MainTool, FileHandler):
 
         self.print(container.diff())
 
-
         # commit_id = container.commit(message=message)
         # return commit_id
 
@@ -178,7 +178,6 @@ class Tools(MainTool, FileHandler):
         # put_archive
 
         self.print(container.get_archive())
-
 
         commit_id = container.commit(message=message)
         return commit_id
@@ -212,5 +211,3 @@ class Tools(MainTool, FileHandler):
             self.print(container.diff())
 
         self.stop_container(container_id)
-
-
