@@ -110,6 +110,7 @@ def run(app: App, args: AppArgs):
     for i in init_args_s:
         if i:
             temp_comm.append(i)
+
     init_args_s = temp_comm
     print(init_args_s)
     custom = False
@@ -119,7 +120,9 @@ def run(app: App, args: AppArgs):
             file_data = build_docker_image()
 
     if not custom:
-        file_data += f"\nCMD {init_args_s}"
+        file_data += f"\nCMD "
+        for i in init_args_s:
+            file_data += f"{i} "
 
     # Write the string 'x' into the io.StringIO object
 
