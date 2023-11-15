@@ -572,7 +572,7 @@ class App(metaclass=Singleton):
 
     def run_any(self, module_name: str, function_name: str, command=None, **kwargs):
 
-        if command is "":
+        if command == "":
             command = [ApiOb(), ""]
 
         if command is None:

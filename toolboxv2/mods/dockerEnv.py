@@ -71,7 +71,7 @@ class Tools(MainTool, FileHandler):
             raise ValueError("Optional pars file_data or path not both")
 
         with Spinner(message=f"Building Docker image name: {img_name}", symbols="c"):
-            os.system(f"docker build -f {temp_path} -t {img_name} .")
+            os.system(f"docker build --no-cache -f {temp_path} -t {img_name} .")
 
         if file_data is not None:
             os.remove(temp_path)
@@ -106,7 +106,7 @@ class Tools(MainTool, FileHandler):
         container = self.get_container(name)
         container.pause()
 
-    def create_container(self, image, name, git_repo_url=None, entrypoint=None):
+    def create_container(self, image, name, ports=None, entrypoint=None):
 
         if entrypoint is None:
             entrypoint = ["tail", "-f", "/dev/null"]
@@ -119,12 +119,9 @@ class Tools(MainTool, FileHandler):
             pass
 
         if container is None:
-            container = self.client.containers.run(image, name=name, detach=True, entrypoint=entrypoint)
+            container = self.client.containers.run(image, name=name, detach=True, entrypoint=entrypoint, ports=ports)
 
             self.print(f"Running container : Status {container.status} E {entrypoint}")
-
-        if git_repo_url:
-            self.init_with_git_repo(container, git_repo_url)
 
         return container.id
 
