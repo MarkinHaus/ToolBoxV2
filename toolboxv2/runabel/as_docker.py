@@ -113,7 +113,7 @@ def run(app: App, args: AppArgs):
             file_data = build_docker_image()
 
     if not custom:
-        file_data += f"\nCMD {init_args_s}"
+        file_data += f"\nCMD {init_args_s.split(' ')}"
 
     # Write the string 'x' into the io.StringIO object
 

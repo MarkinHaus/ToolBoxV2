@@ -22,6 +22,7 @@ from tqdm import tqdm
 import jwt
 import requests
 from toolboxv2 import MainTool, FileHandler, App, Style, ToolBox_over
+from toolboxv2.api.util import PostRequest
 from toolboxv2.utils.Style import extract_json_strings
 from toolboxv2.utils.toolbox import get_app
 
@@ -37,9 +38,9 @@ class Tools(MainTool, FileHandler):
         self.name = "cloudM"
         self.logger: logging.Logger or None = app.logger if app else None
         self.color = "CYAN"
-        self.app_ = app
+        self.app = app
         if app is None:
-            self.app_ = get_app()
+            self.app = get_app()
 
         self.keys = {
             "URL": "comm-vcd~~",
@@ -98,11 +99,11 @@ class Tools(MainTool, FileHandler):
             "first-web-connection": self.add_url_con,
             "create-account": self.create_account,
             "login": self.log_in,
-            "api_create_user": self.create_user,
-            "api_log_in_user": self.log_in_user,
+            "api_create_user": self.api_create_user,
+            "api_log_in_user": self.api_log_in_user,
             "api_log_out_user": self.log_out_user,
-            "api_email_waiting_list": self.email_waiting_list,
-            "api_validate_jwt": self.validate_jwt,
+            "api_email_waiting_list": self.api_email_waiting_list,
+            "api_validate_jwt": self.api_validate_jwt,
             "validate_jwt": self.validate_jwt
             , "download_api_files": self.download_api_files,
             "#update-core": self.update_core,
@@ -198,11 +199,11 @@ class Tools(MainTool, FileHandler):
         # app . key generator
         # app . hash pepper and Salting
         # app . key generator
-        self.print(f"APP:{self.app_.id} generated from VTInstance:")
+        self.print(f"APP:{self.app.id} generated from VTInstance:")
         return vt_id
 
     def get_web_socket_id(self, uid):
-        ws_id = self.app_.id + uid + 'CloudM-Signed'
+        ws_id = self.app.id + uid + 'CloudM-Signed'
         # app . key generator
         # app . hash pepper and Salting
         # app . key generator
@@ -215,7 +216,7 @@ class Tools(MainTool, FileHandler):
             return "User instance not found"
         instance = self.live_user_instances[self.get_si_id(uid)]
         self.user_instances[instance['SiID']] = instance['webSocketID']
-        self.app_.run_any(
+        self.app.run_any(
             'db', 'set',
             ['', f"User::Instance::{uid}",
              json.dumps({"saves": instance['save']})])
@@ -239,8 +240,8 @@ class Tools(MainTool, FileHandler):
         ws_id = command[0]
         self.logger.info(f"validate_ws_id 1 {len(self.user_instances)}")
         if len(self.user_instances) == 0:
-            data = self.app_.run_any('db', 'get',
-                                     [f"user_instances::{self.app_.id}"])
+            data = self.app.run_any('db', 'get',
+                                    [f"user_instances::{self.app.id}"])
             self.logger.info(f"validate_ws_id 2 {type(data)} {data}")
             if isinstance(data, str):
                 try:
@@ -264,7 +265,7 @@ class Tools(MainTool, FileHandler):
             del self.live_user_instances[si_id]
 
         del self.user_instances[si_id]
-        self.app_.run_any('db', 'del', ['', f"User::Instance::{uid}"])
+        self.app.run_any('db', 'del', ['', f"User::Instance::{uid}"])
         return "Instance deleted successfully"
 
     def set_user_level(self, command):
@@ -303,9 +304,9 @@ class Tools(MainTool, FileHandler):
         self.logger.info("Saving instance")
         self.user_instances[instance['SiID']] = instance['webSocketID']
         self.live_user_instances[instance['SiID']] = instance
-        self.app_.run_any(
+        self.app.run_any(
             'db', 'set',
-            [f"user_instances::{self.app_.id}",
+            [f"user_instances::{self.app.id}",
              json.dumps(self.user_instances)])
 
     def get_instance_si_id(self, command):
@@ -351,7 +352,7 @@ class Tools(MainTool, FileHandler):
         ):  # der nutzer ist der server instanz bekannt
             instance['webSocketID'] = self.user_instances[instance['SiID']]
 
-        chash_data = self.app_.run_any('db', 'get', [f"User::Instance::{uid}"])
+        chash_data = self.app.run_any('db', 'get', [f"User::Instance::{uid}"])
         if chash_data:
             self.print(chash_data)
             try:
@@ -378,29 +379,29 @@ class Tools(MainTool, FileHandler):
         return instance
 
     def get_restrictor(self):
-        self.print(f"GET Restrictor {self.app_.id}")
+        self.print(f"GET Restrictor {self.app.id}")
 
         if self.rt is not None:
             return self.rt
 
-        if not self.app_.mod_online("Restrictor"):
-            self.rt = self.app_.inplace_load("Restrictor")
+        if not self.app.mod_online("Restrictor"):
+            self.rt = self.app.inplace_load("Restrictor")
             return self.rt
-        self.app_.new_ac_mod("Restrictor")
-        self.rt = self.app_.AC_MOD
+        self.app.new_ac_mod("Restrictor")
+        self.rt = self.app.AC_MOD
         return self.rt
 
     def get_virtualization(self):
-        self.print(f"GET Virtualization {self.app_.id}")
+        self.print(f"GET Virtualization {self.app.id}")
 
         if self.vt is not None:
             return self.vt
 
-        if not self.app_.mod_online("VirtualizationTool"):
-            self.vt = self.app_.inplace_load("VirtualizationTool")
+        if not self.app.mod_online("VirtualizationTool"):
+            self.vt = self.app.inplace_load("VirtualizationTool")
             return self.vt
-        self.app_.new_ac_mod("VirtualizationTool")
-        self.vt = self.app_.AC_MOD
+        self.app.new_ac_mod("VirtualizationTool")
+        self.vt = self.app.AC_MOD
         return self.vt
 
     def hydrate_instance(self, instance):
@@ -449,8 +450,8 @@ class Tools(MainTool, FileHandler):
                 endpoint_len = len(endpoint)
                 endpoint_level = 0
                 endpoint_func_name = endpoint_name
-                by = ToolBox_over + self.app_.id
-                resid = self.app_.id + "resid"
+                by = ToolBox_over + self.app.id
+                resid = self.app.id + "resid"
 
                 if endpoint_name.startswith("api_"):
                     endpoint_func_name = endpoint_name[4:]
@@ -670,13 +671,13 @@ def show_version(_, app: App):
             self.print(Style.RED(f"Error download : {e}"))
         return False
 
-    def download_api_files(self, command, app: App):
+    def download_api_files(self, command):
         filename = command[0]
         if ".." in filename:
             return "invalid command"
         self.print("download_api_files : ", filename)
 
-        mds = app.get_all_mods()
+        mds = self.app.get_all_mods()
         if filename in mds:
             self.logger.info(f"returning module {filename}")
             with open("./mods/" + filename + ".py", "rb") as f:
@@ -800,6 +801,9 @@ def show_version(_, app: App):
             os.system("git fetch --all")
             os.system("git reset --hard origin/master")
         exit(0)
+
+    def api_create_user(self, data: PostRequest, command):
+        return self.create_user([data, command], self.app)
 
     def create_user(self, command, app: App):
 
@@ -960,6 +964,15 @@ def show_version(_, app: App):
             res = r.json()
 
         return res
+
+    def api_log_in_user(self, data: PostRequest, command):
+        return self.log_in_user([data, command], self.app)
+
+    def api_email_waiting_list(self, data: PostRequest, command):
+        return self.email_waiting_list([data, command], self.app)
+
+    def api_validate_jwt(self, data: PostRequest, command):
+        return self.validate_jwt([data, command], self.app)
 
 
 def test_if_exists(name: str, app: App):
