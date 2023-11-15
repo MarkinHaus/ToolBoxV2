@@ -229,6 +229,11 @@ class TestCloudM(unittest.TestCase):
         self.assertEqual(self.tool.user_instances, {})
         self.assertEqual(self.tool.live_user_instances, {})
 
+    def test_create_mod_snapshot(self):
+        data = self.tool.save_mod_snapshot('cloudM.py')
+        print(data)
+        self.assertTrue(True)
+
 # def test_upload(self):
 #   comd = ["", "test_module"]
 #   res = self.app.run_function("NEW", command=comd)

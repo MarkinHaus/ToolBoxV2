@@ -134,6 +134,6 @@ def run(app: App, args: AppArgs):
 
     if not custom:
         container_id = docker_env.create_container(img_name, (app.id + '-dockerContainer' + str(uuid.uuid4())).lower(),
-                                                   entrypoint=init_args_s, ports={'5000/tcp': 50000, '5000/udp': 50001})
+                                                   entrypoint=init_args_s, ports={'5000/tcp': 5000, '5000/udp': 5001})
     else:
         container_id = docker_env.create_container(img_name, (app.id + '-dockerContainer' + str(uuid.uuid4())).lower())

@@ -103,14 +103,21 @@ def process_files(directory: str) -> TbState:
     return state
 
 
-def get_state_from_app(app: App):
+def get_state_from_app(app: App, simple_core_hub_url="https://SimpleCoreHub.com/Mods/",
+    github_url = "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/"):
+
+    if simple_core_hub_url[-1] != '/':
+        simple_core_hub_url += '/'
+
+    simple_core_hub_url += 'api/install/'
+
+    if github_url[-1] != '/':
+        github_url += '/'
 
     state: TbState = process_files(app.start_dir)
 
     # and unit information
     # current time being units ar installed and managed via GitHub
-
-    github_url = "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/"
 
     for file_name, file_data in state.utils.items():
         file_data.provider = "git"
@@ -129,8 +136,6 @@ def get_state_from_app(app: App):
 
     # and mods information
     # current time being mods ar installed and managed via SimpleCoreHub.com
-
-    simple_core_hub_url = "https://SimpleCoreHub.com/Mods/"
 
     for file_name, file_data in state.mods.items():
         file_data.provider = "git"

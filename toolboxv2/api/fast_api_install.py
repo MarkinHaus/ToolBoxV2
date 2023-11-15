@@ -10,8 +10,6 @@ router = APIRouter(
     prefix="/install",
 )
 
-TB_DIR = os.getcwd()
-
 @router.post("/upload-file/")
 async def create_upload_file(file: UploadFile):
     tb_app: App = get_app()
@@ -37,6 +35,7 @@ async def create_upload_file(file: UploadFile):
 
 @router.get("/{file_name}")
 def download_file(file_name: str):
+    TB_DIR = get_app().start_dir
     if platform.system() == "Darwin" or platform.system() == "Linux":
         directory = file_name.split("/")
     else:
@@ -55,7 +54,7 @@ def download_file(file_name: str):
     if len(directory) > 1:
         directory = directory[0]
 
-        if directory not in ["mods", "runnable", "tests", "data", "requirements", "pconfig", "utils"]:
+        if directory not in ["mods", "runnable", "tests", "data", "requirements", "pconfig", "utils", "installer"]:
             get_logger().warning(f"{file_path} not public")
             return JSONResponse(content={"message": f"directory not public {directory}"}, status_code=100)
 

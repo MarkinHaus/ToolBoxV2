@@ -24,6 +24,7 @@ import requests
 from toolboxv2 import MainTool, FileHandler, App, Style, ToolBox_over
 from toolboxv2.api.util import PostRequest
 from toolboxv2.utils.Style import extract_json_strings
+from toolboxv2.utils.state_system import get_state_from_app, TbState
 from toolboxv2.utils.toolbox import get_app
 
 from toolboxv2.mods import Restrictor, VirtualizationTool, welcome
@@ -974,6 +975,47 @@ def show_version(_, app: App):
     def api_validate_jwt(self, data: PostRequest, command):
         return self.validate_jwt([data, command], self.app)
 
+    def save_mod_snapshot(self, mod_name, provider=None):
+        if provider is None:
+            provider = self.get_file_handler(self.keys["URL"])
+        tb_state: TbState = get_state_from_app(self.app, simple_core_hub_url=provider)
+        mod_data = tb_state.mods.get(mod_name)
+        if mod_data is None:
+            mod_data = tb_state.mods.get(mod_name+".py")
+
+        if mod_data is None:
+            self.print(f"Valid ar : {list(tb_state.mods.keys())}")
+            return None
+
+        if not os.path.exists("./installer"):
+            os.mkdir("./installer")
+
+        json_data = {"Name": mod_name,
+                     "mods": [mod_data.url],
+                     "runnable": None,
+                     "requirements": None,
+                     "additional-dirs": None,
+                     mod_name: {
+                         "version": mod_data.version,
+                         "shasum": mod_data.shasum,
+                         "provider": mod_data.provider,
+                         "url": mod_data.url
+                     }}
+        installer_path = f"./installer/{mod_name}-installer.json"
+        if os.path.exists(installer_path):
+            with open(installer_path, "r") as installer_file:
+                file_data: dict = json.load(installer_file)
+                if len(file_data.get('mods', [])) > 1:
+                    file_data['mods'].append(mod_data.url)
+                file_data[mod_name] = json_data[mod_name]
+
+                json_data = file_data
+
+        with open(installer_path, "a") as installer_file:
+            json.dump(json_data, installer_file)
+
+        return json_data
+
 
 def test_if_exists(name: str, app: App):
     if "db" not in list(app.MOD_LIST.keys()):
@@ -1090,20 +1132,25 @@ def installer(url):
         filename = os.path.basename(mod_url)
         urllib.request.urlretrieve(mod_url, f"mods/{filename}")
 
-    for runnable_url in tqdm(data["runnable"], desc="Runnables herunterladen"):
-        filename = os.path.basename(runnable_url)
-        urllib.request.urlretrieve(runnable_url, f"runable/{filename}")
+    runnable = data.get("runnable")
+    if runnable is not None:
+        for runnable_url in tqdm(runnable, desc="Runnables herunterladen"):
+            filename = os.path.basename(runnable_url)
+            urllib.request.urlretrieve(runnable_url, f"runable/{filename}")
 
-    shutil.unpack_archive(data["additional-dirs"], "/")
+    additional_dirs = data.get("additional-dirs")
+    if additional_dirs is not None:
+        shutil.unpack_archive(additional_dirs, "/")
 
     # Herunterladen der Requirements-Datei
-    requirements_url = data["requirements"]
-    requirements_filename = f"{data['Name']}-requirements.txt"
-    urllib.request.urlretrieve(requirements_url, requirements_filename)
+    requirements_url = data.get("requirements")
+    if requirements_url is not None:
+        requirements_filename = f"{data['Name']}-requirements.txt"
+        urllib.request.urlretrieve(requirements_url, requirements_filename)
 
-    # Installieren der Requirements mit pip
-    subprocess.check_call(
-        [sys.executable, "-m", "pip", "install", "-r", requirements_filename])
+        # Installieren der Requirements mit pip
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "-r", requirements_filename])
 
 
 def delete_package(url):
