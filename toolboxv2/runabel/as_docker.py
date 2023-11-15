@@ -5,7 +5,7 @@ import tempfile
 import uuid
 
 from toolboxv2 import App, AppArgs, Spinner
-from toolboxv2.mods.dockerEnv import Tools
+#from toolboxv2.mods.dockerEnv import Tools
 
 NAME = 'docker'
 
@@ -91,7 +91,7 @@ def run(app: App, args: AppArgs):
 
 
     # Install any needed packages specified in requirements.txt
-    RUN pip install ./ToolBoxV2/
+    RUN pip install -e ./ToolBoxV2/
 
     #RUN npm install ./ToolBoxV2/toolboxv2/app/node_modules/.package-lock.json
     # Make port 5000, 62435 available to the world outside this container
@@ -126,12 +126,7 @@ def run(app: App, args: AppArgs):
 
     # Write the string 'x' into the io.StringIO object
 
-    docker_env: Tools = app.get_mod('dockerEnv')
-
-    import tarfile
-    import time
-    from contextlib import closing
-    from io import BytesIO
+    docker_env = app.get_mod('dockerEnv')
 
     img_name = (app.id + '-dockerImage-' + str(uuid.uuid4())).lower()
 
