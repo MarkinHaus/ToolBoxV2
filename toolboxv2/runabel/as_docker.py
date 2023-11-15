@@ -105,6 +105,12 @@ def run(app: App, args: AppArgs):
         init_args = "python3 "
         init_args += " ".join(sys.argv)
     init_args_s = "toolboxv2 " + str(" ".join(init_args.split(' ')[2:])).replace('--docker', '')
+    init_args_s = init_args_s.split(' ')
+    temp_comm = []
+    for i in init_args_s:
+        if i:
+            temp_comm.append(i)
+    init_args_s = temp_comm
     print(init_args_s)
     custom = False
     if not app.id.startswith('main'):
@@ -113,7 +119,7 @@ def run(app: App, args: AppArgs):
             file_data = build_docker_image()
 
     if not custom:
-        file_data += f"\nCMD {init_args_s.split(' ')}"
+        file_data += f"\nCMD {init_args_s}"
 
     # Write the string 'x' into the io.StringIO object
 
@@ -130,6 +136,6 @@ def run(app: App, args: AppArgs):
 
     if not custom:
         container_id = docker_env.create_container(img_name, (app.id + '-dockerContainer' + str(uuid.uuid4())).lower(),
-                                                   entrypoint=init_args_s.split(' '))
+                                                   entrypoint=init_args_s)
     else:
         container_id = docker_env.create_container(img_name, (app.id + '-dockerContainer' + str(uuid.uuid4())).lower())

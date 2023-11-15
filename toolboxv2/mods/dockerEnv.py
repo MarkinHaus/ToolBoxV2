@@ -4,8 +4,13 @@ import tempfile
 import time
 from typing import Optional
 
-import docker
-from docker.models.containers import Container
+
+try:
+    import docker
+    from docker.models.containers import Container
+    DOCKER = True
+except ModuleNotFoundError:
+    DOCKER = False
 
 from toolboxv2 import MainTool, FileHandler, App, Style, Spinner
 
@@ -27,7 +32,10 @@ class Tools(MainTool, FileHandler):
         FileHandler.__init__(self, "dockerEnv.config", app.id if app else __name__, keys=self.keys, defaults={})
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                           name=self.name, logs=self.logger, color=self.color, on_exit=self.on_exit)
-        self.client = docker.from_env()
+
+        self.client = None
+        if DOCKER:
+            self.client = docker.from_env()
         self.container_dict = {}
         self.streaming_function = lambda x: print(str(x, 'utf-8'))
         self.command_prefix, self.command_post_fix = '/bin/sh -c "', '"'
@@ -113,7 +121,7 @@ class Tools(MainTool, FileHandler):
         if container is None:
             container = self.client.containers.run(image, name=name, detach=True, entrypoint=entrypoint)
 
-            self.print(f"Running container : Status {container.status}")
+            self.print(f"Running container : Status {container.status} E {entrypoint}")
 
         if git_repo_url:
             self.init_with_git_repo(container, git_repo_url)
