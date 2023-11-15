@@ -122,7 +122,7 @@ def run(app: App, args: AppArgs):
     if not custom:
         file_data += f"\nCMD "
         for i in init_args_s:
-            file_data += f"{i} "
+            file_data += f'"{i}" '
 
     # Write the string 'x' into the io.StringIO object
 

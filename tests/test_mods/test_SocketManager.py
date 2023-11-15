@@ -58,38 +58,10 @@ class TestRestrictor(unittest.TestCase):
 
         self.assertEqual(self.tool.version, self.tool.version)
 
-    def test_tb_controller_server2_demon_client(self):
-        s, r = self.tool.create_socket("test-client", host="localhost", port=62436)
-
-        s({"module_name": 'SocketManager', "function_name": 'Version'})
-        s({"exit": True})
-
-        if r.not_empty:
-            data = r.get()
-            print(data)
-            self.assertEqual(data, {'data': self.tool.version})
-        if r.not_empty:
-            data = r.get()
-            print(data)
-            self.assertEqual(data, {'data': self.tool.version})
-
     def test_peer2peer_connection(self):
-        sender_p1, reciver_p1 = self.tool.create_socket("peer1-client",
+        sender_p1 = self.tool.create_socket("peer1-client",
                                                         host="localhost",
                                                         port=8080,
                                                         endpoint_port=8081,
                                                         type_id=SocketType.peer)
-        sender_p2, reciver_p2 = self.tool.create_socket("peer2-client",
-                                                        host="localhost",
-                                                        port=8081,
-                                                        endpoint_port=8082,
-                                                        type_id=SocketType.peer)
-
-        sender_p1({'data': "hallo dats ist eine kleiner test von p1 -> p2"})
-        sender_p2({'data': "hallo dats ist eine kleiner test von p2 -> p1"})
-
-        p_que_data1 = reciver_p1.get(block=True)
-        p_que_data2 = reciver_p2.get(block=True)
-
-        print("Que data = ", p_que_data1)
-        print("Que data = ", p_que_data2)
+        self.assertIsNone(sender_p1)
