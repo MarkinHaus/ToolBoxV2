@@ -155,7 +155,7 @@ if __name__ == 'toolboxv2.api.fast_api_main':
         for fuc in mod.tools.get('all'):
             if len(fuc) == 2:
                 print(mod_name, fuc)
-                if fuc[0].startswith('api_'):
+                if 'api_' in fuc[0]:
                     tb_func = mod.tools.get(fuc[0])
                     if tb_func:
                         if len(list(signature(tb_func).parameters)):
