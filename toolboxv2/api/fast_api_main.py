@@ -140,8 +140,8 @@ if __name__ == 'toolboxv2.api.fast_api_main':
     if "modInstaller" in tb_app.id:
         print("ModInstaller Init")
         cm = tb_app.get_mod("cloudM")
-        for mod_name in tb_app.MOD_LIST:
-            cm.save_mod_snapshot(mod_name, "http://localhost:5000/")
+        for mod_name in tb_app.get_all_mods():
+            cm.save_mod_snapshot(mod_name, "http://127.0.0.1:5000/")
         api_router.include_router(install_router)
 
     app.include_router(app_router)

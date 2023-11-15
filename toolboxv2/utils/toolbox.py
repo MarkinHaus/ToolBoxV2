@@ -648,7 +648,7 @@ class App(metaclass=Singleton):
         self._debug = value
 
     def print(self, text, *args, **kwargs):
-        #self.logger.info(f"Output : {text}")
+        # self.logger.info(f"Output : {text}")
         print(text, *args, **kwargs)
 
 

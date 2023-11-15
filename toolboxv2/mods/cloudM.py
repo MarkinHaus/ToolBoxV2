@@ -110,7 +110,7 @@ class Tools(MainTool, FileHandler):
             "#update-core": self.update_core,
             "wsGetI": self.get_instance_si_id,
             "validate_ws_id": self.validate_ws_id,
-            "mod-installer": installer,
+            "mod-installer": self.install_module,
             "system_init": self.prep_system_initial,
             "mod-remover": delete_package,
             "close_user_instance": self.close_user_instance,
@@ -145,6 +145,23 @@ class Tools(MainTool, FileHandler):
         self.logger.info(f"Time to initialize MainTool {time.perf_counter() - t1}")
         self.logger.info(
             f"Time to initialize Tools {self.name} {time.perf_counter() - t0}")
+
+    def install_module(self, name):
+
+        if isinstance(
+            name, list
+        ) and len(name) == 2:
+            name = name[1]
+
+        self.print(f"Installing module : {name}")
+
+        mod_installer_url = self.get_file_handler(self.keys["URL"]) + fr"/install/installer\{name}-installer.json"
+        self.print(f"Installer file url: {mod_installer_url}")
+        try:
+            installer(mod_installer_url)
+        except Exception as e:
+            self.print(f"Error : {e}")
+
 
     def prep_system_initial(self, command, app):
 
@@ -1004,14 +1021,14 @@ def show_version(_, app: App):
         installer_path = f"./installer/{mod_name}-installer.json"
         if os.path.exists(installer_path):
             with open(installer_path, "r") as installer_file:
-                file_data: dict = json.load(installer_file)
+                file_data: dict = json.loads(installer_file.read())
                 if len(file_data.get('mods', [])) > 1:
                     file_data['mods'].append(mod_data.url)
                 file_data[mod_name] = json_data[mod_name]
 
                 json_data = file_data
 
-        with open(installer_path, "a") as installer_file:
+        with open(installer_path, "w") as installer_file:
             json.dump(json_data, installer_file)
 
         return json_data
@@ -1112,7 +1129,12 @@ def validate_jwt(jwt_key: str, jwt_secret: str, aud) -> dict or str:
         return str(e)
 
 
-def installer(url):
+def installer(url, debug=True):
+
+    def print_(*args, **kwargs):
+        if debug:
+            print(*args, **kwargs)
+
     if isinstance(url, list):
         for i in url:
             if i.strip().startswith('http'):
@@ -1121,8 +1143,10 @@ def installer(url):
     with urllib.request.urlopen(url) as response:
         res = response \
             .read()
+        print_("Collecting installer file data")
         soup = BeautifulSoup(res, 'html.parser')
         data = json.loads(extract_json_strings(soup.text)[0].replace('\n', ''))
+        print_(f"data collected successfully data : {data}")
 
     # os.mkdir(prfix)
     os.makedirs("mods", exist_ok=True)
@@ -1130,28 +1154,33 @@ def installer(url):
 
     for mod_url in tqdm(data["mods"], desc="Mods herunterladen"):
         filename = os.path.basename(mod_url)
+        print_(f"Download Mod {filename}")
         urllib.request.urlretrieve(mod_url, f"mods/{filename}")
 
     runnable = data.get("runnable")
     if runnable is not None:
         for runnable_url in tqdm(runnable, desc="Runnables herunterladen"):
             filename = os.path.basename(runnable_url)
+            print_(f"Download runnable {filename}")
             urllib.request.urlretrieve(runnable_url, f"runable/{filename}")
 
     additional_dirs = data.get("additional-dirs")
     if additional_dirs is not None:
+        print_(f"Download additional dirs {additional_dirs}")
         shutil.unpack_archive(additional_dirs, "/")
 
     # Herunterladen der Requirements-Datei
     requirements_url = data.get("requirements")
     if requirements_url is not None:
         requirements_filename = f"{data['Name']}-requirements.txt"
+        print_(f"Download requirements {requirements_filename}")
         urllib.request.urlretrieve(requirements_url, requirements_filename)
 
         # Installieren der Requirements mit pip
+        print_(f"install requirements")
         subprocess.check_call(
             [sys.executable, "-m", "pip", "install", "-r", requirements_filename])
-
+    print_(f"installation Done")
 
 def delete_package(url):
     if isinstance(url, list):
