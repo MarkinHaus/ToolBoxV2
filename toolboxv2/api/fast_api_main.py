@@ -58,15 +58,6 @@ async def index():
 #     exit(0)
 
 
-@app.get("/HotReload")
-async def exit_code():
-    if "HotReload" in tb_app.id:
-        tb_app.reset()
-        tb_app.remove_all_modules()
-        tb_app.load_all_mods_in_file()
-        return "OK"
-    return "Not found"
-
 @app.websocket("/ws/{ws_id}")
 async def websocket_endpoint(websocket: WebSocket, ws_id: str):
     websocket_id = ws_id
@@ -86,8 +77,8 @@ async def websocket_endpoint(websocket: WebSocket, ws_id: str):
                 res = await manager.manage_data_flow(websocket, websocket_id, data)
                 print("manage_data_flow")
             except Exception as e:
-               print(e)
-               res = '{"res": "error"}'
+                print(e)
+                res = '{"res": "error"}'
             if res is not None:
                 print(f"RESPONSE: {res}")
                 await websocket.send_text(res)
@@ -110,9 +101,19 @@ if __name__ == 'toolboxv2.api.fast_api_main':
             d = i.split(':')
             mods_list_len = d[1]
             id_name = d[2]
-            config_file = id_name+config_file
+            config_file = id_name + config_file
 
     tb_app = get_app(id_name)
+
+    if "HotReload" in tb_app.id:
+        @app.get("/HotReload")
+        async def exit_code():
+            if tb_app.debug:
+                tb_app.reset()
+                tb_app.remove_all_modules()
+                tb_app.load_all_mods_in_file()
+                return "OK"
+            return "Not found"
 
     for mod in mods_list:
         tb_app.get_mod(mod)
@@ -138,11 +139,12 @@ if __name__ == 'toolboxv2.api.fast_api_main':
     if "modInstaller" in tb_app.id:
         print("ModInstaller Init")
         from .fast_api_install import router as install_router
+
         cm = tb_app.get_mod("cloudM")
         for mod_name in tb_app.get_all_mods():
             provider = os.environ.get("MOD_PROVIDER", default="http://127.0.0.1:5000/")
             ret = cm.save_mod_snapshot(mod_name, provider=provider)
-            app.get('/' + mod_name)(lambda:ret)
+            app.get('/' + mod_name)(lambda: ret)
         app.include_router(install_router)
 
     else:
@@ -164,7 +166,7 @@ if __name__ == 'toolboxv2.api.fast_api_main':
                         tb_func = mod.tools.get(fuc[0])
                         if tb_func:
                             if len(list(signature(tb_func).parameters)):
-                                router.post('/'+fuc[0].replace('api_', ''))(tb_func)
+                                router.post('/' + fuc[0].replace('api_', ''))(tb_func)
                             else:
                                 router.get('/' + fuc[0].replace('api_', ''))(tb_func)
 
