@@ -121,17 +121,17 @@ def get_state_from_app(app: App, simple_core_hub_url="https://SimpleCoreHub.com/
     for file_name, file_data in state.utils.items():
         file_data.provider = "git"
         file_data.version = app.version
-        file_data.url = github_url + "utils\\" + file_name
+        file_data.url = github_url + "utils/" + file_name
 
     for file_name, file_data in state.api.items():
         file_data.provider = "git"
         file_data.version = app.version
-        file_data.url = github_url + "api\\" + file_name
+        file_data.url = github_url + "api/" + file_name
 
     for file_name, file_data in state.app.items():
         file_data.provider = "git"
         file_data.version = app.version
-        file_data.url = github_url + "app\\" + file_name
+        file_data.url = github_url + "app/" + file_name
 
     # and mods information
     # current time being mods ar installed and managed via SimpleCoreHub.com
@@ -144,7 +144,7 @@ def get_state_from_app(app: App, simple_core_hub_url="https://SimpleCoreHub.com/
         except Exception:
             file_data.version = "dependency"
 
-        file_data.url = simple_core_hub_url + "mods\\" + file_name
+        file_data.url = simple_core_hub_url + "mods/" + file_name
 
     return state
 
