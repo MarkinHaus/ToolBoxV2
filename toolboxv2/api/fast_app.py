@@ -7,6 +7,8 @@ from fastapi.security import OAuth2PasswordBearer
 
 import os
 
+from starlette.responses import RedirectResponse
+
 from toolboxv2 import App
 from toolboxv2.utils.toolbox import get_app
 
@@ -44,7 +46,14 @@ async def index(access_allowed: bool = Depends(lambda: check_access_level(-1))):
 async def index2(access_allowed: bool = Depends(lambda: check_access_level(-1))):
     if level == -1:
         return serve_app_func('assets/serverInWartung.html')
-    return serve_app_func('assets/reraut.html')
+    return RedirectResponse(url="/app")
+
+
+@router.get("/app/")
+async def index2_(access_allowed: bool = Depends(lambda: check_access_level(-1))):
+    if level == -1:
+        return serve_app_func('assets/serverInWartung.html')
+    return RedirectResponse(url="/app")
 
 
 @router.get("/login")
@@ -57,12 +66,12 @@ async def signup_page(access_allowed: bool = Depends(lambda: check_access_level(
     return serve_app_func('assets/signup.html')
 
 
-@router.get("/quicknote")
-async def quicknote(current_user: str = Depends(get_current_user),
-                    access_allowed: bool = Depends(lambda: check_access_level(0))):
-    print("[current_user]", current_user)
-    print("[access_allowed]", access_allowed)
-    return serve_app_func('quicknote/index.html')
+#@router.get("/quicknote")
+#async def quicknote(current_user: str = Depends(get_current_user),
+#                    access_allowed: bool = Depends(lambda: check_access_level(0))):
+#    print("[current_user]", current_user)
+#    print("[access_allowed]", access_allowed)
+#    return serve_app_func('quicknote/index.html')
 
 
 @router.get("/dashboard")
@@ -76,6 +85,10 @@ async def serve_files(path: str, request: Request, access_allowed: bool = Depend
 
 
 def serve_app_func(path: str, prefix: str = os.getcwd() + "/app/"):
+    if not path:
+        path = "index.html"
+
+    print("serving", path, prefix)
     request_file_path = Path(prefix + path)
     ext = request_file_path.suffix
     print(request_file_path, ext)

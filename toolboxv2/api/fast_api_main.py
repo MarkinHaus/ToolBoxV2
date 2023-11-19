@@ -48,7 +48,7 @@ async def add_process_time_header(request: Request, call_next):
 
 @app.get("/")
 async def index():
-    return RedirectResponse(url="/app")
+    return RedirectResponse(url="/app/core0/index.html")
     # return "Willkommen bei Simple V0 powered by ToolBoxV2-0.0.3"
 
 
@@ -132,16 +132,16 @@ if __name__ == 'toolboxv2.api.fast_api_main':
     tb_app.load_all_mods_in_file()
 
     manager = tb_app.AC_MOD
-
-    from .fast_api_install import router as install_router
     from .fast_app import router as app_router
     from .fast_api import router as api_router
 
     if "modInstaller" in tb_app.id:
         print("ModInstaller Init")
+        from .fast_api_install import router as install_router
         cm = tb_app.get_mod("cloudM")
         for mod_name in tb_app.get_all_mods():
-            cm.save_mod_snapshot(mod_name, "http://127.0.0.1:5000/")
+            provider = os.environ.get("MOD_PROVIDER", default="http://127.0.0.1:5000/")
+            cm.save_mod_snapshot(mod_name, provider=provider)
         api_router.include_router(install_router)
 
     app.include_router(app_router)
@@ -150,7 +150,7 @@ if __name__ == 'toolboxv2.api.fast_api_main':
     for mod_name, mod in tb_app.MOD_LIST.items():
         router = APIRouter(
             prefix=f"/{mod_name}",
-            tags=["token"],
+            tags=["token", mod_name],
             # dependencies=[Depends(get_token_header)],
             # responses={404: {"description": "Not found"}},
         )

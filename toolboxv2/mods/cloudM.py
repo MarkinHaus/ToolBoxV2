@@ -162,7 +162,6 @@ class Tools(MainTool, FileHandler):
         except Exception as e:
             self.print(f"Error : {e}")
 
-
     def prep_system_initial(self, command, app):
 
         db = app.get_mod('DB')
@@ -1129,7 +1128,7 @@ def validate_jwt(jwt_key: str, jwt_secret: str, aud) -> dict or str:
         return str(e)
 
 
-def installer(url, debug=True):
+def installer(url, debug=False):
 
     def print_(*args, **kwargs):
         if debug:
@@ -1152,7 +1151,7 @@ def installer(url, debug=True):
     os.makedirs("mods", exist_ok=True)
     os.makedirs("runable", exist_ok=True)
 
-    for mod_url in tqdm(data["mods"], desc="Mods herunterladen"):
+    for mod_url in tqdm(data["mods"], desc=f"Mods herunterladen"):
         filename = os.path.basename(mod_url)
         print_(f"Download Mod {filename}")
         urllib.request.urlretrieve(mod_url, f"mods/{filename}")
