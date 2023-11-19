@@ -11,7 +11,7 @@ from toolboxv2 import MainTool, FileHandler, App
 class Tools(MainTool, FileHandler):  # FileHandler
 
     def __init__(self, app=None):
-        self.t0 = None
+        self.running_apis = {}
         self.version = "0.0.2"
         self.name = "api_manager"
         self.logger: logging.Logger = app.logger if app else None
@@ -119,12 +119,14 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         print(g)
 
-        if self.t0 is None:
-            self.t0 = threading.Thread(target=os.system, args=(g,))
-            self.t0.start()
+        api_thread = self.running_apis.get(api_name)
+
+        if api_thread is None:
+            self.running_apis[api_name] = threading.Thread(target=os.system, args=(g,))
+            self.running_apis[api_name].start()
             return
 
-        os.system(g)
+        self.print("API is already running")
 
     def stop_api(self, command):
         if command[1] in list(self.api_config.keys()):
@@ -133,6 +135,10 @@ class Tools(MainTool, FileHandler):  # FileHandler
         else:
             if len(command) == 2:
                 command += ["127.0.0.1", 5000]
+
+        api_thread = self.running_apis.get(command[1])
+        if api_thread is None:
+            self.print("API is not running")
 
         if not os.path.exists(f"./.data/api_pid_{command[1]}"):
             self.logger.warning("no api_pid file found ")
@@ -144,10 +150,10 @@ class Tools(MainTool, FileHandler):  # FileHandler
                 os.system(f"taskkill /pid {api_pid} /F")
             else:
                 os.system(f"kill -9 {api_pid}")
-
-        if self.t0:
-            self.t0.join()
-            self.t0 = None
+        api_thread = self.running_apis.get(command[1])
+        if api_thread:
+            api_thread.join()
+        del self.running_apis[command[1]]
         # os.remove(f"app/api_pid_{command[1]}")
 
     def restart_api(self, command, app: App):
@@ -160,4 +166,6 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
     def on_exit(self):
         self.add_to_save_file_handler(self.keys["Apis"], str(self.api_config))
+        for key in self.running_apis:
+            self.stop_api([0, key])
         self.save_file_handler()
