@@ -991,10 +991,11 @@ def show_version(_, app: App):
     def api_validate_jwt(self, data: PostRequest, command):
         return self.validate_jwt([data, command], self.app)
 
-    def save_mod_snapshot(self, mod_name, provider=None):
+    def save_mod_snapshot(self, mod_name, provider=None, tb_state: TbState or None = None):
         if provider is None:
             provider = self.get_file_handler(self.keys["URL"])
-        tb_state: TbState = get_state_from_app(self.app, simple_core_hub_url=provider)
+        if tb_state is None:
+            tb_state: TbState = get_state_from_app(self.app, simple_core_hub_url=provider)
         mod_data = tb_state.mods.get(mod_name)
         if mod_data is None:
             mod_data = tb_state.mods.get(mod_name+".py")

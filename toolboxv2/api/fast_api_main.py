@@ -12,6 +12,7 @@ import time
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from ..utils.state_system import get_state_from_app
 from ..utils.toolbox import get_app
 
 app = FastAPI()
@@ -141,14 +142,12 @@ if __name__ == 'toolboxv2.api.fast_api_main':
         from .fast_api_install import router as install_router
 
         cm = tb_app.get_mod("cloudM")
-        data_cm = []
-        for mod_name in tb_app.get_all_mods():
-            provider = os.environ.get("MOD_PROVIDER", default="http://127.0.0.1:5000/")
-            ret = cm.save_mod_snapshot(mod_name, provider=provider)
-            data_cm.append((mod_name, ret))
-
-        for mod_name, ret in data_cm:
-            app.get('/' + mod_name)(lambda: ret)
+        all_mods = tb_app.get_all_mods()
+        provider = os.environ.get("MOD_PROVIDER", default="http://127.0.0.1:5000/")
+        tb_state = get_state_from_app(tb_app, simple_core_hub_url=provider)
+        for mod_name in all_mods:
+            ret = cm.save_mod_snapshot(mod_name, provider=provider, tb_state=tb_state)
+            app.get('/' + mod_name)(lambda: f"./installer/{mod_name}-installer.json")
         app.include_router(install_router)
         app.get('/app/core0/index.html')(lambda: RedirectResponse(url="/docs"))
 

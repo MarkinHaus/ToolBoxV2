@@ -7,8 +7,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from toolboxv2 import get_logger, App, get_app
 
 router = APIRouter(
-    prefix="/api/install",
+    prefix="/api",
 )
+
 
 @router.post("/upload-file/")
 async def create_upload_file(file: UploadFile):
@@ -33,15 +34,19 @@ async def create_upload_file(file: UploadFile):
             return {"res": f"Successfully uploaded {file.filename}"}
     return {"res": "not avalable"}
 
+
 @router.get("/{file_name}")
 def download_file(file_name: str):
     TB_DIR = get_app().start_dir
+    print(TB_DIR)
     if platform.system() == "Darwin" or platform.system() == "Linux":
         directory = file_name.split("/")
     else:
         directory = file_name.split("\\")
+    print(directory)
     if len(directory) == 1:
         directory = file_name.split("%5")
+    print(directory)
     get_logger().info(f"Request file {file_name}")
 
     if ".." in file_name:
@@ -51,6 +56,8 @@ def download_file(file_name: str):
         file_path = TB_DIR + "/" + file_name
     else:
         file_path = TB_DIR + "\\" + file_name
+
+    print(file_path)
     if len(directory) > 1:
         directory = directory[0]
 
@@ -59,7 +66,6 @@ def download_file(file_name: str):
             return JSONResponse(content={"message": f"directory not public {directory}"}, status_code=100)
 
         if directory == "tests":
-
             if platform.system() == "Darwin" or platform.system() == "Linux":
                 file_path = "/".join(TB_DIR.split("/")[:-1]) + "/" + file_name
             else:
@@ -67,7 +73,9 @@ def download_file(file_name: str):
 
     if os.path.exists(file_path):
         get_logger().info(f"Downloading from {file_path}")
-        return FileResponse(file_path, media_type='application/octet-stream', filename=file_name)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path, media_type='application/octet-stream', filename=file_name)
+        return JSONResponse(content={"message": f"is directory", "files": os.listdir(file_path)}, status_code=201)
     else:
         get_logger().error(f"{file_path} not found")
         return JSONResponse(content={"message": "File not found"}, status_code=110)

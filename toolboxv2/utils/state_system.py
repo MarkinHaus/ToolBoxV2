@@ -108,7 +108,7 @@ def get_state_from_app(app: App, simple_core_hub_url="https://SimpleCoreHub.com/
     if simple_core_hub_url[-1] != '/':
         simple_core_hub_url += '/'
 
-    simple_core_hub_url += 'api/install/'
+    simple_core_hub_url += 'api/'
 
     if github_url[-1] != '/':
         github_url += '/'
@@ -121,23 +121,23 @@ def get_state_from_app(app: App, simple_core_hub_url="https://SimpleCoreHub.com/
     for file_name, file_data in state.utils.items():
         file_data.provider = "git"
         file_data.version = app.version
-        file_data.url = github_url + "utils/" + file_name
+        file_data.url = github_url + "utils\\" + file_name
 
     for file_name, file_data in state.api.items():
         file_data.provider = "git"
         file_data.version = app.version
-        file_data.url = github_url + "api/" + file_name
+        file_data.url = github_url + "api\\" + file_name
 
     for file_name, file_data in state.app.items():
         file_data.provider = "git"
         file_data.version = app.version
-        file_data.url = github_url + "app/" + file_name
+        file_data.url = github_url + "app\\" + file_name
 
     # and mods information
     # current time being mods ar installed and managed via SimpleCoreHub.com
 
     for file_name, file_data in state.mods.items():
-        file_data.provider = "git"
+        file_data.provider = "SimpleCore"
         try:
             file_data.version = app.get_mod(
                 file_name.replace(".py", "")).version if file_name != "__init__.py" else app.version
