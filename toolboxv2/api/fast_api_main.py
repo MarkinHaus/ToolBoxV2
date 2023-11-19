@@ -141,9 +141,13 @@ if __name__ == 'toolboxv2.api.fast_api_main':
         from .fast_api_install import router as install_router
 
         cm = tb_app.get_mod("cloudM")
+        data_cm = []
         for mod_name in tb_app.get_all_mods():
             provider = os.environ.get("MOD_PROVIDER", default="http://127.0.0.1:5000/")
             ret = cm.save_mod_snapshot(mod_name, provider=provider)
+            data_cm.append((mod_name, ret))
+
+        for mod_name, ret in data_cm:
             app.get('/' + mod_name)(lambda: ret)
         app.include_router(install_router)
         app.get('/app/core0/index.html')(lambda: RedirectResponse(url="/docs"))
