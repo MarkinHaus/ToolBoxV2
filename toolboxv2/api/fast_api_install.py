@@ -35,8 +35,9 @@ async def create_upload_file(file: UploadFile):
     return {"res": "not avalable"}
 
 
-@router.get("/{file_name}")
-def download_file(file_name: str):
+@router.get("/{path:path}")
+def download_file(path: str):
+    file_name = path
     TB_DIR = get_app().start_dir
     print(TB_DIR)
     if platform.system() == "Darwin" or platform.system() == "Linux":
