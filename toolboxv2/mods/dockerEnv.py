@@ -68,7 +68,7 @@ class Tools(MainTool, FileHandler):
                 temp_file.write(file_data)
                 temp_path = temp_file.name
                 if self.app.system_flag != "Windows":
-                    temp_path = "/var" + temp_file
+                    temp_path = "/var" + temp_path
         else:
             raise ValueError("Optional pars file_data or path not both")
 
@@ -79,7 +79,6 @@ class Tools(MainTool, FileHandler):
             os.remove(temp_path)
 
         return img_name
-
 
     def start_container(self, name):
         container = self.get_container(name)
