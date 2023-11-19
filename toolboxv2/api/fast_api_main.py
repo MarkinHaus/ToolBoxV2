@@ -147,7 +147,7 @@ if __name__ == 'toolboxv2.api.fast_api_main':
         tb_state = get_state_from_app(tb_app, simple_core_hub_url=provider)
         for mod_name in all_mods:
             ret = cm.save_mod_snapshot(mod_name, provider=provider, tb_state=tb_state)
-            app.get('/' + mod_name)(lambda: f"./installer/{mod_name}-installer.json")
+            # app.get('/' + mod_name)(lambda: f"./installer/{mod_name}-installer.json")
         app.include_router(install_router)
         app.get('/app/core0/index.html')(lambda: RedirectResponse(url="/docs"))
 
