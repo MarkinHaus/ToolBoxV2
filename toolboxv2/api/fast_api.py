@@ -51,18 +51,6 @@ def mod_list():
     return {"res": list(tb_app.MOD_LIST.keys())}
 
 
-@router.get("/SUPER_SET")
-def super_set():
-    tb_app: App = get_app()
-    return {"res": tb_app.SUPER_SET}
-
-
-@router.get("/prefix")
-def prefix_working_dir():
-    tb_app: App = get_app()
-    return {"res": tb_app.PREFIX}
-
-
 @router.get("/test-exist/{name}")
 def test_mod_dow(name: str):
     tb_app: App = get_app()
@@ -85,6 +73,9 @@ def get_mod_index(name: str):
         result = "None"
     return {"res": result}
 
+
+
+# for back compatibility will be removed
 
 @router.get("/get/{mod}/run/{name}")
 def get_mod_run(mod: str, name: str, command: Union[str, None] = None):

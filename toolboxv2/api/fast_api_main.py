@@ -132,7 +132,7 @@ if __name__ == 'toolboxv2.api.fast_api_main':
     tb_app.load_all_mods_in_file()
 
     manager = tb_app.AC_MOD
-    from .fast_app import router as app_router
+    from .fast_app import router as app_router, serve_app_func
     from .fast_api import router as api_router
 
     if "modInstaller" in tb_app.id:
@@ -141,31 +141,31 @@ if __name__ == 'toolboxv2.api.fast_api_main':
         cm = tb_app.get_mod("cloudM")
         for mod_name in tb_app.get_all_mods():
             provider = os.environ.get("MOD_PROVIDER", default="http://127.0.0.1:5000/")
-            cm.save_mod_snapshot(mod_name, provider=provider)
-        api_router.include_router(install_router)
+            ret = cm.save_mod_snapshot(mod_name, provider=provider)
+            app.get('/' + mod_name)(lambda:ret)
+        app.include_router(install_router)
 
     else:
         app.include_router(app_router)
+        app.include_router(api_router)
 
-    app.include_router(api_router)
+        for mod_name, mod in tb_app.MOD_LIST.items():
+            router = APIRouter(
+                prefix=f"/{mod_name}",
+                tags=["token", mod_name],
+                # dependencies=[Depends(get_token_header)],
+                # responses={404: {"description": "Not found"}},
+            )
 
-    for mod_name, mod in tb_app.MOD_LIST.items():
-        router = APIRouter(
-            prefix=f"/{mod_name}",
-            tags=["token", mod_name],
-            # dependencies=[Depends(get_token_header)],
-            # responses={404: {"description": "Not found"}},
-        )
+            for fuc in mod.tools.get('all'):
+                if len(fuc) == 2:
+                    print(mod_name, fuc)
+                    if 'api_' in fuc[0]:
+                        tb_func = mod.tools.get(fuc[0])
+                        if tb_func:
+                            if len(list(signature(tb_func).parameters)):
+                                router.post('/'+fuc[0].replace('api_', ''))(tb_func)
+                            else:
+                                router.get('/' + fuc[0].replace('api_', ''))(tb_func)
 
-        for fuc in mod.tools.get('all'):
-            if len(fuc) == 2:
-                print(mod_name, fuc)
-                if 'api_' in fuc[0]:
-                    tb_func = mod.tools.get(fuc[0])
-                    if tb_func:
-                        if len(list(signature(tb_func).parameters)):
-                            router.post('/'+fuc[0].replace('api_', ''))(tb_func)
-                        else:
-                            router.get('/' + fuc[0].replace('api_', ''))(tb_func)
-
-        app.include_router(router)
+            app.include_router(router)

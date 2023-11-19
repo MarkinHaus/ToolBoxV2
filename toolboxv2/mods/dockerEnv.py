@@ -29,9 +29,6 @@ class Tools(MainTool, FileHandler):
             "Version": self.show_version,
             "build_custom_images": self.build_custom_images,
         }
-        FileHandler.__init__(self, "dockerEnv.config", app.id if app else __name__, keys=self.keys, defaults={})
-        MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
-                          name=self.name, logs=self.logger, color=self.color, on_exit=self.on_exit)
 
         self.client = None
         if DOCKER:
@@ -39,6 +36,10 @@ class Tools(MainTool, FileHandler):
         self.container_dict = {}
         self.streaming_function = lambda x: print(str(x, 'utf-8'))
         self.command_prefix, self.command_post_fix = '/bin/sh -c "', '"'
+
+        FileHandler.__init__(self, "dockerEnv.config", app.id if app else __name__, keys=self.keys, defaults={})
+        MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
+                          name=self.name, logs=self.logger, color=self.color, on_exit=self.on_exit)
 
     def on_start(self):
         self.logger.info(f"Starting dockerEnv")

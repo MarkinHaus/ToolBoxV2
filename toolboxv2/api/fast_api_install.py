@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from toolboxv2 import get_logger, App, get_app
 
 router = APIRouter(
-    prefix="/install",
+    prefix="/api/install",
 )
 
 @router.post("/upload-file/")
