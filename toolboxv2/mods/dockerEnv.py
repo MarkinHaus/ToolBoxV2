@@ -67,6 +67,8 @@ class Tools(MainTool, FileHandler):
             with tempfile.NamedTemporaryFile(delete=False, mode='w', encoding='utf-8') as temp_file:
                 temp_file.write(file_data)
                 temp_path = temp_file.name
+                if self.app.system_flag != "Windows":
+                    temp_path = "/var" + temp_file
         else:
             raise ValueError("Optional pars file_data or path not both")
 

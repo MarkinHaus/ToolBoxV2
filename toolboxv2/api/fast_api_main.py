@@ -144,7 +144,9 @@ if __name__ == 'toolboxv2.api.fast_api_main':
             cm.save_mod_snapshot(mod_name, provider=provider)
         api_router.include_router(install_router)
 
-    app.include_router(app_router)
+    else:
+        app.include_router(app_router)
+
     app.include_router(api_router)
 
     for mod_name, mod in tb_app.MOD_LIST.items():
