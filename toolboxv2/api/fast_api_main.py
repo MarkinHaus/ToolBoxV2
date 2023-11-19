@@ -146,6 +146,7 @@ if __name__ == 'toolboxv2.api.fast_api_main':
             ret = cm.save_mod_snapshot(mod_name, provider=provider)
             app.get('/' + mod_name)(lambda: ret)
         app.include_router(install_router)
+        app.get('/app/core0/index.html')(lambda: RedirectResponse(url="/docs"))
 
     else:
         app.include_router(app_router)
