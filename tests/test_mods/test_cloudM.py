@@ -4,6 +4,7 @@ import time
 from rich.traceback import install
 import os
 
+from toolboxv2.mods.cloudM import CrateUserPostRequest
 from toolboxv2.utils.toolbox import ApiOb
 
 install(show_locals=True)
@@ -55,19 +56,19 @@ class TestCloudM(unittest.TestCase):
     def test_show_version(self):
         comd = []
         res = self.app.run_function("Version", comd)
-        self.assertEqual(res, "0.0.1")
+        self.assertEqual(res, "0.0.2")
 
     def test_new_module(self):
         try:
             os.remove("./mods_dev/test_module.py")
         except FileNotFoundError:
             pass
-        comd = ["", "test_module"]
+        comd = "test_module"
         res = self.app.run_function("NEW", comd)
         self.assertTrue(res)
         res = self.app.run_function("NEW", comd)
         self.assertFalse(res)
-        comd = ["", "cloudM"]
+        comd = "cloudM"
         res = self.app.run_function("NEW", comd)
         self.assertFalse(res)
         self.assertTrue(os.path.exists("./mods_dev/test_module.py"))
@@ -75,7 +76,7 @@ class TestCloudM(unittest.TestCase):
         self.assertFalse(os.path.exists("./mods_dev/test_module.py"))
 
     def test_prep_system_initial(self):
-        self.assertTrue(self.tool.prep_system_initial(['do-root'], self.app))
+        self.assertTrue(self.tool.prep_system_initial(True))
 
     def test_delete_user_instance(self):
 
@@ -135,17 +136,18 @@ class TestCloudM(unittest.TestCase):
 
     def test_create_user(self):
 
-        self.tool.prep_system_initial(['do-root'], self.app)
+        self.tool.prep_system_initial(True)
 
-        command = ApiOb(
-            data={'username': 'test', 'password': 'test', 'email': 'test@test.com', 'invitation': 'test'},
-            token='')
-        result = self.tool.create_user([command], self.app)
+        user: CrateUserPostRequest = CrateUserPostRequest(username='test',
+                                                          password='test',
+                                                          email='test@test.com',
+                                                          invitation='test')
+        result = self.tool.create_user(user)
 
         self.assertTrue(result not in self.tool.user_instances.keys())
 
         self.app.run_any("db", "set", ["test", "Valid"])
-        result = self.tool.create_user([command], self.app)
+        result = self.tool.create_user(user)
 
         valid_id = False
         for key, ids in self.tool.user_instances.items():
@@ -176,14 +178,19 @@ class TestCloudM(unittest.TestCase):
 
     def test_user_welcome(self):
 
-        self.tool.prep_system_initial(['do-root'], self.app)
+        self.tool.prep_system_initial(True)
 
         command = ApiOb(
             data={'username': 'test', 'password': 'test', 'email': 'test@test.com', 'invitation': 'test'},
             token='')
 
         self.app.run_any("db", "set", ["test", "Valid"])
-        webSocketID = self.tool.create_user([command], self.app)  # Erstellen Sie zuerst einen Benutzer
+
+        user: CrateUserPostRequest = CrateUserPostRequest(username='test',
+                                                          password='test',
+                                                          email='test@test.com',
+                                                          invitation='test')
+        webSocketID = self.tool.create_user(user)
         command.data["webSocketID"] = webSocketID
 
         valid_id = False

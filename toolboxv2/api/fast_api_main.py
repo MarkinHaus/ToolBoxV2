@@ -170,8 +170,8 @@ if __name__ == 'toolboxv2.api.fast_api_main':
                         tb_func = mod.tools.get(fuc[0])
                         if tb_func:
                             if len(list(signature(tb_func).parameters)):
-                                router.post('/' + fuc[0].replace('api_', ''))(tb_func)
+                                router.add_api_route('/' + fuc[0].replace('api_', ''), tb_func, methods=["POST"])
                             else:
-                                router.get('/' + fuc[0].replace('api_', ''))(tb_func)
+                                router.add_api_route('/' + fuc[0].replace('api_', ''), tb_func, methods=["GET"])
 
             app.include_router(router)

@@ -10,6 +10,7 @@ from inspect import signature
 import requests
 
 from toolboxv2.utils.file_handler import FileHandler
+from toolboxv2.utils.main_tool import Result
 from toolboxv2.utils.tb_logger import setup_logging, get_logger
 from toolboxv2.utils.Style import Style
 import toolboxv2
@@ -422,10 +423,13 @@ class App(metaclass=Singleton):
     def remove_mod(self, mod_name):
 
         self.logger.info(f"Removing mod from sto")
-        del self.MOD_LIST[mod_name.lower()]
-        del self.MACRO_color[mod_name.lower()]
-        del self.HELPER[mod_name.lower()]
-        self.MACRO.remove(mod_name.lower())
+        try:
+            del self.MOD_LIST[mod_name.lower()]
+            del self.MACRO_color[mod_name.lower()]
+            del self.HELPER[mod_name.lower()]
+            self.MACRO.remove(mod_name.lower())
+        except KeyError:
+            self.logger.info(f"mod not active")
 
     def colorize(self, obj):
         for pos, o in enumerate(obj):
@@ -523,6 +527,10 @@ class App(metaclass=Singleton):
         return None
 
     def run_function(self, mod_function_name, *args, **kwargs):
+        if self.AC_MOD is None:
+            self.logger.warning(f"try running Function without an AC module {mod_function_name}")
+            self.print(Style.RED(f"No AC module"))
+            return None
         self.logger.info(f"Start setup for: {mod_function_name} function mod:{self.AC_MOD.name}")
 
         function = self._get_function(mod_function_name)
@@ -538,20 +546,26 @@ class App(metaclass=Singleton):
         mod_name = self.AC_MOD.name
         self.print(f"\nStart function {mod_name}:{mod_function_name}\n")
         app_position = None
+        result_position = None
         for i, param in enumerate(parameters):
             if param == 'app':
                 app_position = i
-                break
-        if app_position is not None:
+            if param == 'result':
+                result_position = i
+
+        if app_position is not None or result_position is not None:
             args = list(args)
+        if app_position is not None:
             args.insert(app_position, self)
+        if result_position is not None:
+            result = Result.default()
+            args.insert(result_position, result)
         if self.debug:
             if len(parameters) == 0:
                 res = function()
             elif len(parameters) == 1:
                 res = function(*args)
             else:
-
                 res = function(*args, **kwargs)
             self.logger.info(f"Execution done")
         else:
@@ -568,14 +582,19 @@ class App(metaclass=Singleton):
                 res = {'error-in': mod_name, 'error-func': mod_function_name}
             else:
                 self.print_ok()
+
+        if result_position is not None:
+            self.print(f"Function Exec coed : {res.info.exec_code}\nInfos:{res.info.help_text}\nData:{res.result.data}")
+        else:
+            self.print(f"Function returned {type(res)}")
         return res
 
-    def run_any(self, module_name: str, function_name: str, command=None, **kwargs):
+    def run_any(self, module_name: str, function_name: str, *args, **kwargs):
 
-        if command == "":
+        if args == "":
             command = [ApiOb(), ""]
 
-        if command is None:
+        if args is None:
             command = []
 
         do_sto = self.AC_MOD is not None
@@ -590,7 +609,7 @@ class App(metaclass=Singleton):
         if ac_sto != module_name:
             self.new_ac_mod(module_name)
 
-        res = self.run_function(function_name, command, **kwargs)
+        res = self.run_function(function_name, *args, **kwargs)
 
         if do_sto:
             self.new_ac_mod(ac_sto)

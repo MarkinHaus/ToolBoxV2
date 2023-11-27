@@ -2,9 +2,51 @@ from toolboxv2.utils.toolbox import App, get_app
 from toolboxv2.utils.Style import Style
 from toolboxv2.utils.tb_logger import get_logger
 
+from enum import Enum
+from dataclasses import dataclass, field
+
+
+class ToolBoxError(Enum):
+    none = "none"
+    input_error = "InputError"
+    internal_error = "InternalError"
+    custom_error = "CustomError"
+
+
+class ToolBoxInterfaces(Enum):
+    cli = "CLI"
+    api = "API"
+    remote = "REMOTE"
+    native = "NATIVE"
+
+
+@dataclass
+class ToolBoxResult:
+    data_to: ToolBoxInterfaces = field(default=ToolBoxInterfaces.cli)
+    data_info: dict = field(default_factory={})
+    data: dict = field(default_factory={})
+
+
+@dataclass
+class ToolBoxInfo:
+    exec_code: int
+    help_text: str
+
+
+@dataclass
+class Result:
+    error: ToolBoxError
+    result: ToolBoxResult
+    info: ToolBoxInfo
+
+    @classmethod
+    def default(cls, interface=ToolBoxInterfaces.cli):
+        cls.error = ToolBoxError.none
+        cls.info = ToolBoxInfo(-1, "")
+        cls.result = ToolBoxResult(data_to=interface)
+
 
 class MainTool:
-
     toolID = ""
     app = None
 
@@ -30,10 +72,10 @@ class MainTool:
 
     def load(self):
         if self.todo:
-            #try:
-                self.todo()
-            #except Exception as e:
-            #    get_logger().error(f" Error loading mod {self.name} {e}")
+            # try:
+            self.todo()
+        # except Exception as e:
+        #    get_logger().error(f" Error loading mod {self.name} {e}")
         else:
             get_logger().info(f"{self.name} no load require")
 
@@ -43,7 +85,8 @@ class MainTool:
         if self.stuf:
             return
 
-        self.app.print(Style.style_dic[self.color] + self.name + Style.style_dic["END"] + ":", message, end=end, **kwargs)
+        self.app.print(Style.style_dic[self.color] + self.name + Style.style_dic["END"] + ":", message, end=end,
+                       **kwargs)
 
     def add_str_to_config(self, command):
         if len(command) != 2:
@@ -72,4 +115,3 @@ class MainTool:
 
     def get_user_instance(self, uid, app: App):
         return app.run_any('cloudM', "get_user_instance", [uid])
-

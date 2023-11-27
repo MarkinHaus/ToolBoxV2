@@ -160,3 +160,17 @@ class TestToolboxv2(unittest.TestCase):
 
     def test_utils(self):
         pass  # TODO Logging server first
+
+    def test_run_fuctionction(self):
+        cm = self.app.get_mod("cloudM")
+        self.app.new_ac_mod("cloudM")
+        self.assertEqual(self.app.run_function("Version"), cm.version)
+        s = self.app.run_function("get_user_instance", ["test123"])
+        print(s)
+        print("End")
+    def test_run_any(self):
+        self.app.remove_mod("cloudM")
+        self.assertEqual(self.app.run_any("cloudM","Version"), self.app.run_function("Version"))
+        s = self.app.run_any("cloudM", "get_user_instance", ["test123"])
+        print(s)
+        print("End")
