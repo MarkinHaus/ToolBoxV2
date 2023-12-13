@@ -28,24 +28,6 @@ except ModuleNotFoundError:
 import os
 import subprocess
 
-DEFAULT_HELPER = {"help": [["Information", "version : 0.1.2", "color : GREEN", "syntax : help (in scope)",
-                            "help is available in all subsets"]], "load-mod": [
-    ["Information", "version : 0.1.0", "color : BLUE", "syntax : load-mod[filename]", "file must be in mods folder "]],
-                  "exit": [["Information", "version : 0.1.0", "color : RED", "syntax : exit",
-                            "The only way to exit in TOOL BOX"]],
-                  "..": [["Information", "version : 0.1.0", "color : MAGENTA", "syntax : ..", "Brings u Back to Main"]],
-                  "logs": [["Information", "version : 0.1.0", "color : MAGENTA", "syntax : LOGS", "show logs"]],
-                  "_hr": [["Information", "version : ----", "Hotreload all mods"]],
-                  "cls": [["Information", "version : ----", "Clear Screen"]],
-                  "mode": [["Information", "version : ----", "go in monit mode"]],
-                  "app-info": [["Information", "version : ----", "app - status - info"]],
-                  "mode:live": [["Test Function", "version : ----", "\x1b[31mCode can no loger crash\x1b[0m"]],
-                  "mode:debug": [["Test Function", "version : ----", "\x1b[31mCode can crash\x1b[0m"]],
-                  "mode:stuf": [["Test Function", "version : ----", "mmute mods on loding and prossesig\x1b[0m"]]}
-DEFAULT_MACRO = ["help", "load-mod", "exit", "_hr", "..", "cls", "mode"]
-DEFAULT_MACRO_color = {"help": "GREEN", "load-mod": "BLUE", "exit": "RED", "monit": "YELLOW", "..": "MAGENTA",
-                       "logs": "MAGENTA", "cls": "WHITE"}
-
 
 def create_service_file(user, group, working_dir):
     service_content = f"""[Unit]
@@ -194,7 +176,7 @@ def parse_args():
     parser.add_argument('-n', '--name',
                         metavar="name",
                         type=str,
-                        help="Name of ToolBox",
+                        help="Specify an id for the ToolBox instance",
                         default="main")
 
     parser.add_argument("-p", "--port",
@@ -213,10 +195,10 @@ def parse_args():
                         help="load all modules in mod file",
                         action="store_true")
 
-    parser.add_argument("--mods-folder",
-                        help="specify loading package folder",
-                        type=str,
-                        default="toolboxv2.mods.")
+    # parser.add_argument("--mods-folder",
+    #                     help="specify loading package folder",
+    #                     type=str,
+    #                     default="toolboxv2.mods.")
 
     parser.add_argument("--debug",
                         help="start in debug mode",
@@ -324,17 +306,15 @@ def main():
 
     app_pid = str(os.getpid())
 
-    tb_app = get_app(args.name, args=args)
+    tb_app = get_app(from_="InitialStartUp", name=args.name, args=args)
+
+    # tb_app.load_all_mods_in_file()
+    # tb_app.save_registry_as_enums("utils", "all_functions_enums.py")
 
     pid_file = f"{tb_app.start_dir}/{tb_app.config_fh.file_handler_file_prefix}{args.modi}-{args.name}.pid"
 
     if args.background_application and system() == "Windows":
         show_console(False)
-
-    if 'cli' in args.modi:
-        tb_app.HELPER = DEFAULT_HELPER if not tb_app.HELPER else tb_app.HELPER
-        tb_app.MACRO = DEFAULT_MACRO if tb_app.MACRO == ['Exit'] else tb_app.MACRO
-        tb_app.MACRO_color = DEFAULT_MACRO_color if not tb_app.MACRO_color else tb_app.MACRO_color
 
     if args.lm:
         edit_logs()
@@ -352,13 +332,13 @@ def main():
 
     if args.load_all_mod_in_files:
         tb_app.load_all_mods_in_file()
-
+        if args.debug:
+            tb_app.print_functions()
         if args.get_version:
 
-            for mod_name in tb_app.MACRO:
-                if mod_name in tb_app.MOD_LIST.keys():
-                    if isinstance(tb_app.MOD_LIST[mod_name], MainTool):
-                        print(f"{mod_name} : {tb_app.MOD_LIST[mod_name].version}")
+            for mod_name in tb_app.functions:
+                if isinstance(tb_app.functions[mod_name]["app_instance"], MainTool):
+                    print(f"{mod_name} : {tb_app.functions[mod_name]['app_instance'].version}")
 
     if not args.kill and not args.docker:
 

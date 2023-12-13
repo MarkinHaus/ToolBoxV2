@@ -3,13 +3,22 @@
 # Import default Pages
 import sys
 import os
-from platform import system
+from platform import system, node
+
+import json
+from pygments import highlight
+from pygments.lexers import JsonLexer
+from pygments.formatters import TerminalFormatter
 
 # Import public Pages
 import readchar
 from toolboxv2 import App, Style
+from toolboxv2.utils import Singleton
 
 NAME = "cli"
+
+prefix = Style.CYAN(f"~{node()}@>")
+
 
 def user_input(app: App):
     get_input = True
@@ -20,7 +29,7 @@ def user_input(app: App):
     options = []
     sh_index = 0
     session_history = [[]]
-    session_history += [c for c in app.command_history]
+    # session_history += [c for c in app.command_history]
 
     while get_input:
 
@@ -74,7 +83,7 @@ def user_input(app: App):
             else:
                 command += str(key, "ISO-8859-1")
 
-        options = list(set(app.autocompletion(command)))
+        options = list(set(A().autocompletion(command)))
 
         if helper_index > len(options) - 1:
             helper_index = 0
@@ -84,16 +93,16 @@ def user_input(app: App):
         if do:
             helper = options[helper_index][len(command):].lower()
 
-        to_print = app.PREFIX + app.pretty_print(print_command + [command + Style.Underline(Style.Bold(helper))])
+        to_print = prefix + A().pretty_print(print_command + [command + Style.Underline(Style.Bold(helper))])
         if do:
             to_print += " | " + Style.Bold(options[helper_index]) + " " + str(options)
         sys.stdout.write("\033[K")
         print(to_print, end="\r")
 
     sys.stdout.write("\033[K")
-    print(app.PREFIX + app.pretty_print(print_command) + "\n")
+    print(prefix + A().pretty_print(print_command) + "\n")
 
-    app.command_history.append(print_command)
+    # app.command_history.append(print_command)
 
     return print_command
 
@@ -138,8 +147,8 @@ def command_runner(app, command, args):
             app.load_all_mods_in_file()
 
     elif command[0].lower() == 'app-info':
-        print(f"{app.id = }\n{app.stuf_load = }\n{app.mlm = }\n{app.auto_save = }"
-              f"\n{app.AC_MOD = }\n{app.debug = }")
+        print(f"{app.id = }\n{app.stuf_load = }\n{app.mlm = }\n"
+              f"\n{app.debug = }")
         print(f"PREFIX={app.PREFIX}"
               f"\nMACRO={app.pretty_print(app.MACRO[:7])}"
               f"\nMODS={app.pretty_print(app.MACRO[7:])}"
@@ -152,12 +161,11 @@ def command_runner(app, command, args):
 
     elif command[0].lower() == "help":  # logs(event(helper))
         n = command[1] if len(command) > 2 else ''
-        app.help(n)
+        # app.help(n)
 
     elif command[0].lower() == 'load-mod':  # builtin events(event(cloudM(_)->event(Build)))
         if len(command) == 2:
-            if app.save_load(command[1]):
-                app.new_ac_mod(command[1])
+            print(app.save_load(command[1]))
         else:
             p = "_dev" if app.dev_modi else ""
 
@@ -176,7 +184,7 @@ def command_runner(app, command, args):
             for mod_name in res:
                 mod_name_refracted = mod_name.replace(".py", '')
                 print(f"Mod name : {mod_name_refracted}")
-                app.SUPER_SET += [mod_name_refracted]
+                A().SUPER_SET += [mod_name_refracted]
             print()
 
     elif command[0] == '..':
@@ -190,8 +198,8 @@ def command_runner(app, command, args):
 
     elif command[0] == 'mode':
         help_ = ['mode:live', 'mode:debug', 'mode', 'mode:stuf', 'app-info']
-        app.SUPER_SET += help_
-        app.MACRO += help_
+        A().SUPER_SET += help_
+        A().MACRO += help_
         print(f"{'debug' if app.debug else 'live'} \n{app.debug=}\n{app.id=}\n{app.stuf_load=}")
 
     elif command[0] == 'mode:live':
@@ -210,20 +218,12 @@ def command_runner(app, command, args):
         if len(command) > 1:
             app.run_runnable(command[1])
         else:
-            app.show_runnable()
+            print(app.runnable.keys())
 
-    elif command[0].lower() in app.MOD_LIST.keys():
-        app.new_ac_mod(command[0])
-
+    elif command[0].lower() in app.functions:
         if len(command) > 1:
-            if command[1].lower() in app.SUPER_SET:
-                app.run_function(command[1], command[1:])
-
-    elif app.AC_MOD:  # builtin events(AC_MOD(MOD))
-        if command[0].lower() in app.SUPER_SET:
-            app.run_function(command[0], command)
-        else:
-            print(Style.RED("function could not be found"))
+            if command[1].lower() in A().SUPER_SET:
+                app.run_any(command[0], command[1], False, True, command[1:])
 
     else:  # error(->)
         print(Style.YELLOW("[-] Unknown command:") + app.pretty_print(command))
@@ -237,3 +237,109 @@ def run(app: App, *args):
         for com in command:
             commands.append(com.strip())
         command_runner(app, command, args)
+
+        #
+        # self.print(f"Function Exec coed: {formatted_result.info.exec_code}"
+        #            f"\nInfo's: {formatted_result.info.help_text}"
+        #            f"\nData: {formatted_result.result.data}")
+
+
+DEFAULT_HELPER = {"help": [["Information", "version : 0.1.2", "color : GREEN", "syntax : help (in scope)",
+                            "help is available in all subsets"]], "load-mod": [
+    ["Information", "version : 0.1.0", "color : BLUE", "syntax : load-mod[filename]", "file must be in mods folder "]],
+                  "exit": [["Information", "version : 0.1.0", "color : RED", "syntax : exit",
+                            "The only way to exit in TOOL BOX"]],
+                  "..": [["Information", "version : 0.1.0", "color : MAGENTA", "syntax : ..", "Brings u Back to Main"]],
+                  "logs": [["Information", "version : 0.1.0", "color : MAGENTA", "syntax : LOGS", "show logs"]],
+                  "_hr": [["Information", "version : ----", "Hotreload all mods"]],
+                  "cls": [["Information", "version : ----", "Clear Screen"]],
+                  "mode": [["Information", "version : ----", "go in monit mode"]],
+                  "app-info": [["Information", "version : ----", "app - status - info"]],
+                  "mode:live": [["Test Function", "version : ----", "\x1b[31mCode can no loger crash\x1b[0m"]],
+                  "mode:debug": [["Test Function", "version : ----", "\x1b[31mCode can crash\x1b[0m"]],
+                  "mode:stuf": [["Test Function", "version : ----", "mmute mods on loding and prossesig\x1b[0m"]]}
+DEFAULT_MACRO = ["help", "load-mod", "exit", "_hr", "..", "cls", "mode"]
+DEFAULT_MACRO_color = {"help": "GREEN", "load-mod": "BLUE", "exit": "RED", "monit": "YELLOW", "..": "MAGENTA",
+                       "logs": "MAGENTA", "cls": "WHITE"}
+
+
+class A(metaclass=Singleton):
+
+    def __init__(self):
+
+        self.keys = {
+            "MACRO": "macro~~~~:",
+            "MACRO_C": "m_color~~:",
+            "HELPER": "helper~~~:",
+            "debug": "debug~~~~:",
+            "id": "name-spa~:",
+            "st-load": "mute~load:",
+            "module-load-mode": "load~mode:",
+            "comm-his": "comm-his~:",
+            "develop-mode": "dev~mode~:",
+            "all_main": "all~main~:",
+        }
+
+        self.HELPER = DEFAULT_HELPER
+        self.MACRO = DEFAULT_MACRO
+        self.MACRO_color = DEFAULT_MACRO_color
+
+        self.SUPER_SET = []
+        self.command_history = []
+        # self.config_fh.add_to_save_file_handler(self.keys["comm-his"], str(self.command_history))
+
+    def save_init_mod(self, name, mod):  #
+        color = mod.color if mod.color else "WHITE"
+        self.MACRO.append(name.lower())
+        self.MACRO_color[name.lower()] = color
+        self.HELPER[name.lower()] = mod.tools["all"]
+
+    def colorize(self, obj):
+        for pos, o in enumerate(obj):
+            if not isinstance(o, str):
+                o = str(o)
+            if o.lower() in self.MACRO:
+                if o.lower() in self.MACRO_color.keys():
+                    obj[pos] = f"{Style.style_dic[self.MACRO_color[o.lower()]]}{o}{Style.style_dic['END']}"
+        return obj
+
+    def pretty_print(self, obj: list):
+        obj_work = obj.copy()
+        obj_work = self.colorize(obj_work)
+        s = ""
+        for i in obj_work:
+            s += str(i) + " "
+        return s
+
+    def pretty_print_dict(self, data):
+        json_str = json.dumps(data, sort_keys=True, indent=4)
+        print(highlight(json_str, JsonLexer(), TerminalFormatter()))
+
+    def autocompletion(self, command):
+        options = []
+        if command == "":
+            return options
+        for macro in self.MACRO + self.SUPER_SET:
+            if macro.startswith(command.lower()):
+                options.append(macro)
+        return options
+
+    def command_viewer(self, mod_command):
+        mod_command_names = []
+        mod_command_dis = []
+        print(f"\n")
+        for msg in mod_command:
+            if msg[0] not in mod_command_names:
+                mod_command_names.append(msg[0])
+                mod_command_dis.append([])
+
+            for dis in msg[1:]:
+                mod_command_dis[mod_command_names.index(msg[0])].append(dis)
+
+        for tool_address in mod_command_names:
+            print(Style.GREEN(f"{tool_address}, "))
+            for log_info in mod_command_dis[mod_command_names.index(tool_address)]:
+                print(Style.YELLOW(f"    {log_info}"))
+            print("\n")
+
+        return mod_command_names

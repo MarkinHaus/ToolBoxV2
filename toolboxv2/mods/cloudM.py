@@ -24,6 +24,7 @@ import jwt
 import requests
 from toolboxv2 import MainTool, FileHandler, App, Style, ToolBox_over
 from toolboxv2.api.util import PostRequest
+from toolboxv2.utils import Result, ToolBoxError, ToolBoxInfo, ToolBoxResult, ToolBoxInterfaces
 from toolboxv2.utils.Style import extract_json_strings
 from toolboxv2.utils.state_system import get_state_from_app, TbState
 from toolboxv2.utils.toolbox import get_app
@@ -522,7 +523,7 @@ class Tools(MainTool, FileHandler):
         self.save_file_handler()
 
     def show_version(self, c=0):
-        self.print(f"Version: ,{self.version} {self.api_version}, {c}")
+        self.print(f"Version: {self.version} {self.api_version}, {c}")
         return self.version
 
     def get_version(self):
@@ -881,7 +882,13 @@ def show_version(_, app: App):
                     self.logger.error(f"error closing mod instance {key}:{e}")
             self.close_user_instance(user_instance['save']['uid'])
 
-            return "logout"
+            return self.return_result(
+                error=ToolBoxError.none,
+                exec_code=0,  # Assuming exec_code 0 for success, modify as needed
+                help_text="logout",
+                data_info={"error"},
+                data={True}
+            )
 
     def log_in_user(self, user: LoginUserPostRequest):
         # if "db" not in list(app.MOD_LIST.keys()):
@@ -899,23 +906,54 @@ def show_version(_, app: App):
 
         user_data: dict = validate_jwt(user_data_token, tb_token_jwt, self.app.id)
 
-        if type(user_data) is str:
-            return user_data
+        if isinstance(user_data, str):
+            return self.return_result(
+                error=ToolBoxError.custom_error,
+                exec_code=0,  # Assuming exec_code 0 for success, modify as needed
+                help_text=user_data,
+                data_info={"error"},
+                data={}
+            )
 
         if "username" not in list(user_data.keys()):
-            return "invalid Token"
+            return self.return_result(
+                error=ToolBoxError.custom_error,
+                exec_code=0,  # Assuming exec_code 0 for success, modify as needed
+                help_text="invalid Token",
+                data_info={"error"},
+                data={}
+            )
 
         if "password" not in list(user_data.keys()):
-            return "invalid Token"
+            return self.return_result(
+                error=ToolBoxError.custom_error,
+                exec_code=0,  # Assuming exec_code 0 for success, modify as needed
+                help_text="invalid Token",
+                data_info={"error"},
+                data={}
+            )
 
         t_username = user_data["username"]
         t_password = user_data["password"]
 
         if t_username != username:
-            return "username does not match"
+
+            return self.return_result(
+                error=ToolBoxError.custom_error,
+                exec_code=0,  # Assuming exec_code 0 for success, modify as needed
+                help_text="username does not match",
+                data_info={"error"},
+                data={}
+            )
 
         if not verify_password(t_password, password):
-            return "invalid Password"
+            return self.return_result(
+                error=ToolBoxError.custom_error,
+                exec_code=0,  # Assuming exec_code 0 for success, modify as needed
+                help_text="invalid Password",
+                data_info={"error"},
+                data={}
+            )
 
         self.print("user login successful : ", t_username)
         jwt_key = crate_sing_key(username, user_data["email"], "",
@@ -924,24 +962,44 @@ def show_version(_, app: App):
                                                 4380), tb_token_jwt, self.app)
 
         self.get_user_instance(user_data["uid"], username, jwt_key, hydrate=False)
+        return self.return_result(
+            error=ToolBoxError.none,
+            exec_code=0,  # Assuming exec_code 0 for success, modify as needed
+            help_text="",
+            data_info={"email"},
+            data={self.get_web_socket_id(user_data["uid"])}
+        )
+        # return self.get_web_socket_id(user_data["uid"])
 
-        return self.get_web_socket_id(user_data["uid"])
-
-    def email_waiting_list(self, email):
+    def email_waiting_list(self, email) -> Result:
         # if "db" not in list(app.MOD_LIST.keys()):
         #    return "Server has no database module"
 
         imp = ["email_waiting_list", [email]]
         tb_token_jwt = self.app.run_any('db', 'append_on_set', imp)
 
-        out = "My apologies Unfortunately you could not be added to the Waiting list."
+        # Default response for internal error
+        error_type = ToolBoxError.internal_error
+        out = "My apologies, unfortunately, you could not be added to the Waiting list."
+
+        # Check if the email was successfully added to the waiting list
         if tb_token_jwt == imp:
             out = "You will receive an invitation email in a few days"
+            error_type = ToolBoxError.none
 
-        if "already in list" in tb_token_jwt:
+        # Check if the email is already in the waiting list
+        elif "already in list" in tb_token_jwt:
             out = "You are already in the list, please do not try to add yourself more than once."
+            error_type = ToolBoxError.custom_error
 
-        return f"{email}: {out}"
+        # Use the return_result function to create and return the Result object
+        return self.return_result(
+            error=error_type,
+            exec_code=0,  # Assuming exec_code 0 for success, modify as needed
+            help_text=out,
+            data_info={"email": email},
+            data={"message": out}
+        )
 
     def validate_jwt(self, validate_user: ValidatePostRequest):  # spec s -> validate token by server x ask max
         res = ''
@@ -967,7 +1025,7 @@ def show_version(_, app: App):
             self.print(url)
             j_data = {
                 "token": token,
-                "server_x":self. app.id,
+                "server_x": self.app.id,
                 "pasted": validate_user.pasted + 1,
                 "max_p": validate_user.max_p - 1,
             }
