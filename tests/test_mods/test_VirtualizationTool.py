@@ -17,7 +17,6 @@ class TestVirtualizationTool(unittest.TestCase):
         cls.app.debug = True
         cls.app.load_mod('VirtualizationTool')
         cls.tool = cls.app.get_mod('VirtualizationTool')
-        cls.app.new_ac_mod('VirtualizationTool')
 
     @classmethod
     def tearDownClass(cls):

@@ -20,7 +20,6 @@ class TestRestrictor(unittest.TestCase):
         cls.app.debug = True
         cls.app.load_mod('SocketManager')
         cls.tool: Tools = cls.app.get_mod('SocketManager')
-        cls.app.new_ac_mod('SocketManager')
 
     @classmethod
     def tearDownClass(cls):

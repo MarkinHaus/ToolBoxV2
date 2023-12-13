@@ -33,7 +33,6 @@ class TestCloudM(unittest.TestCase):
         cls.app.debug = True
         cls.app.load_mod("cloudM")
         cls.tool = cls.app.get_mod("cloudM")
-        cls.app.new_ac_mod("cloudM")
         # cls.app.run_function("first-web-connection", ['first-web-connection', 'http://127.0.0.1:5000/api'])
         # cls.app.HELPER['api-thread'] = api
 

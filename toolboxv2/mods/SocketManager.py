@@ -321,31 +321,58 @@ class Tools(MainTool, FileHandler):
             client_socket.sendall("exit".encode('utf-8'))
 
     def run_as_single_communication_server(self, name, host='0.0.0.0', port=62435):
-
         send, receiver_queue = self.create_socket(name, host, port, SocketType.server, max_connections=1)
+        status_queue = queue.Queue()
+        running = [True]  # Verwenden einer Liste, um den Wert referenzierbar zu machen
 
-        self.running = True
+        def server_thread(client, address):
+            self.print(f"Receiver connected to address {address}")
+            status_queue.put(f"Server received client connection {address}")
+            while running[0]:
+                t0 = time.perf_counter()
+                try:
+                    msg_json = client.recv(1024).decode()
+                except socket.error:
+                    break
 
-        client, address = receiver_queue.get(block=True)
+                self.print(f"run_as_single_communication_server -- received -- {msg_json}")
+                status_queue.put(f"Server received data {msg_json}")
+                if msg_json == "exit":
+                    running[0] = False
+                    break
+                if msg_json == "keepAlive":
+                    status_queue.put("KEEPALIVE")
+                else:
+                    msg = json.loads(msg_json)
+                    data = self.app.run_any(**msg, get_results=True)
+                    status_queue.put(f"Server returned data {data.print(show=False, show_data=False)}")
+                    data = data.get()
 
-        self.print(f"Receiver connected to address {address}")
+                    if not isinstance(data, dict):
+                        data = {'data': data}
 
-        while self.running:
-            t0 = time.perf_counter()
-            msg_json = client.recv(1024).decode()
-            self.print(Style.GREY(f"run_as_single_communication_server -- received -- {msg_json}"))
-            if msg_json == "exit":
-                self.running = False
-                break
-            else:
-                msg = json.loads(msg_json)
-                data = self.app.run_any(**msg)
+                    client.send(json.dumps(data).encode('utf-8'))
 
-                if not isinstance(data, dict):
-                    data = {'data': data}
+                self.print(f"R Parsed Time ; {time.perf_counter() - t0}")
 
-                client.send(json.dumps(data).encode('utf-8'))
+            client.close()
+            status_queue.put("Server closed")
 
-            self.print(f"R Parsed Time ; {t0 - time.perf_counter()}")
+        def helper():
+            client, address = receiver_queue.get(block=True)
+            thread = threading.Thread(target=server_thread, args=(client, address))
+            thread.start()
 
-        client.close()
+        threading.Thread(target=helper)
+
+        def stop_server():
+            running[0] = False
+            status_queue.put("Server stopping")
+
+        def get_status():
+            while running[0]:
+                while status_queue.not_empty:
+                    yield status_queue.get()
+
+        return {"stop_server": stop_server, "get_status": get_status}
+

@@ -7,31 +7,6 @@ from dataclasses import dataclass
 
 
 @dataclass
-class CLI_FUNCTIONS(Enum):
-	APP_INSTANCE: str = 'app_instance'
-	APP_INSTANCE_TYPE: str = 'app_instance_type'
-
-
-@dataclass
-class DB(Enum):
-	APP_INSTANCE: str = 'app_instance'
-	APP_INSTANCE_TYPE: str = 'app_instance_type'
-	PRIVATE: str = 'private'
-
-
-@dataclass
-class API_MANAGER(Enum):
-	APP_INSTANCE: str = 'app_instance'
-	APP_INSTANCE_TYPE: str = 'app_instance_type'
-	VERSION: str = 'Version'
-	EDITAPI: str = 'edit-api'
-	STARTAPI: str = 'start-api'
-	STOPAPI: str = 'stop-api'
-	INFO: str = 'info'
-	RESTARTAPI: str = 'restart-api'
-
-
-@dataclass
 class MINIMALHTML(Enum):
 	APP_INSTANCE: str = 'app_instance'
 	APP_INSTANCE_TYPE: str = 'app_instance_type'
@@ -40,34 +15,6 @@ class MINIMALHTML(Enum):
 	ADD_COLLECTION_TO_GROUP: str = 'add_collection_to_group'
 	GENERATE_HTML: str = 'generate_html'
 	FUSE_TO_STRING: str = 'fuse_to_string'
-
-
-@dataclass
-class RESTRICTOR(Enum):
-	APP_INSTANCE: str = 'app_instance'
-	APP_INSTANCE_TYPE: str = 'app_instance_type'
-	VERSION: str = 'Version'
-
-
-@dataclass
-class SOCKETMANAGER(Enum):
-	APP_INSTANCE: str = 'app_instance'
-	APP_INSTANCE_TYPE: str = 'app_instance_type'
-	CREATE_SOCKET: str = 'create_socket'
-	TBSOCKETCONTROLLER: str = 'tbSocketController'
-	VERSION: str = 'Version'
-
-
-@dataclass
-class WELCOME(Enum):
-	APP_INSTANCE: str = 'app_instance'
-	APP_INSTANCE_TYPE: str = 'app_instance_type'
-	ANIMATION: str = 'Animation'
-	ANIMATION1: str = 'Animation1'
-	VERSION: str = 'Version'
-	API_VERSION: str = 'api_Version'
-	PRINTT: str = 'printT'
-	WEBINSTALL: str = 'webInstall'
 
 
 @dataclass
@@ -94,6 +41,74 @@ class QUICKNOTE(Enum):
 	GET_INBOX_API: str = 'get_inbox_api'
 	SAVE_TYPES_API: str = 'save_types_api'
 	GET_TYPES_API: str = 'get_types_api'
+
+
+@dataclass
+class API_MANAGER(Enum):
+	APP_INSTANCE: str = 'app_instance'
+	APP_INSTANCE_TYPE: str = 'app_instance_type'
+	VERSION: str = 'Version'
+	EDITAPI: str = 'edit-api'
+	STARTAPI: str = 'start-api'
+	STOPAPI: str = 'stop-api'
+	INFO: str = 'info'
+	RESTARTAPI: str = 'restart-api'
+
+
+@dataclass
+class WELCOME(Enum):
+	PRINTT: str = 'printT'
+	ON_START: str = 'on_start'
+	VERSION: str = 'Version'
+	ANIMATION1: str = 'Animation1'
+	ANIMATION: str = 'Animation'
+	APP_INSTANCE: str = 'app_instance'
+	APP_INSTANCE_TYPE: str = 'app_instance_type'
+
+
+@dataclass
+class RESTRICTOR(Enum):
+	APP_INSTANCE: str = 'app_instance'
+	APP_INSTANCE_TYPE: str = 'app_instance_type'
+	VERSION: str = 'Version'
+
+
+@dataclass
+class SOCKETMANAGER(Enum):
+	APP_INSTANCE: str = 'app_instance'
+	APP_INSTANCE_TYPE: str = 'app_instance_type'
+	CREATE_SOCKET: str = 'create_socket'
+	TBSOCKETCONTROLLER: str = 'tbSocketController'
+	VERSION: str = 'Version'
+
+
+@dataclass
+class DB(Enum):
+	GET: str = 'get'
+	SET: str = 'set'
+	DELETE: str = 'delete'
+	APPEND_ON_SET: str = 'append_on_set'
+	INITIALIZE_DATABASE: str = 'initialize_database'
+	ON_START: str = 'on_start'
+	EDIT_PROGRAMMABLE: str = 'edit_programmable'
+	EDIT_CLI: str = 'edit_cli'
+	EDIT_DEV_WEB_UI: str = 'edit_dev_web_ui'
+	APP_INSTANCE: str = 'app_instance'
+	APP_INSTANCE_TYPE: str = 'app_instance_type'
+	PRIVATE: str = 'private'
+
+
+@dataclass
+class CLI_FUNCTIONS(Enum):
+	VERSION: str = 'Version'
+	GET_CHARACTER: str = 'get_character'
+	GET_GENERATOR: str = 'get_generator'
+	UPDATE_AUTOCOMPLETION_MODS: str = 'update_autocompletion_mods'
+	UPDATE_AUTOCOMPLETION_LIST_OR_KEY: str = 'update_autocompletion_list_or_key'
+	USER_INPUT: str = 'user_input'
+	CO_EVALUATE: str = 'co_evaluate'
+	APP_INSTANCE: str = 'app_instance'
+	APP_INSTANCE_TYPE: str = 'app_instance_type'
 
 
 @dataclass

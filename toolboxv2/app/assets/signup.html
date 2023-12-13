@@ -3,6 +3,7 @@
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="/app/scripts/scripts.js" type="module" defer></script>
+    <script src="/app/scripts/httpSender.js" type="module" defer></script>
     <script src="/app/scripts/WorkerSocketRenderer.js" defer></script>
     <link rel="stylesheet" href="/app/assets/styles.css">
 </head>
@@ -50,9 +51,33 @@
 </main>
 
 
-<script>
+<script type="module">
+
+
+    import {httpPostData} from "/app/scripts/httpSender.js";
 
 document.addEventListener('DOMContentLoaded', () => {
+
+    function handleCreateUserError(data) {
+        document.getElementById('infoText').textContent = data.result.data_info.message;
+        document.getElementById('infoPopup').style.display = 'block';
+        return data
+    }
+
+    function handleCreateUserSuccess(data) {
+        document.getElementById('infoText').textContent = "Valid";
+        document.getElementById('infoPopup').style.display = 'block';
+        setTimeout(() => {
+            localStorage.setItem("WsID", data.result.data.replaceAll('"', ''));
+            sessionStorage.setItem("local_ws.onopen:installMod-welcome", 'true');
+            window.location.href = "/app/dashboard";
+        }, 200);
+        return data
+    }
+
+    function createUser(username, password, email, invitation) {
+        httpPostData('cloudm', 'create_user', { username, password, email, invitation }, handleCreateUserError, handleCreateUserSuccess);
+    }
 
   document.getElementById('signupForm').addEventListener('submit', function(event) {
     event.preventDefault();
@@ -69,42 +94,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('infoPopup').style.color = 'var(--error-color)';
     }else{
 
-        fetch('/api/post/cloudM/run/create_user', {
-            method: 'POST',
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                token: 'string',
-                data: {
-                    username: username,
-                    password: password,
-                    email: email,
-                    invitation: invitation
-                }
-            })
-        })
-            .then(response => response.json())
-            .then(data => {
-                var data_res = JSON.stringify(data['res']);
-                if (data_res.includes("CloudM")){
-                    document.getElementById('infoText').textContent = "Valid";
-                    document.getElementById('infoPopup').style.display = 'block';
-                    setTimeout(()=>{
-                        localStorage.setItem("WsID", data_res.replaceAll('"', ''));
-                        sessionStorage.setItem("local_ws.onopen:installMod-welcome", 'true');
-                        window.location.href = "/app/dashboard"
-                    }, 200)
-                }else{
-                    // Display the response in the popup
-                    document.getElementById('infoText').textContent = JSON.stringify(data['res']);
-                    document.getElementById('infoPopup').style.display = 'block';
-                }
-            })
-            .catch((error) => {
-                console.error('Error:', error);
-            });
+        createUser(username,password,email,invitation)
     }
   });
  });

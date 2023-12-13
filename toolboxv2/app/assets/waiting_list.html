@@ -42,7 +42,10 @@
 
 
 
-<script>
+<script type="module">
+
+
+    import {httpPostUrl} from "/app/scripts/httpSender.js";
 
     document.addEventListener('DOMContentLoaded', () => {
 
@@ -51,36 +54,22 @@
 
             const email = document.getElementById('email').value;
 
-            fetch('/api/cloudM/email_waiting_list', {
-                method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json'
+            httpPostUrl("cloudm", "email_waiting_list", "email", email,
+                (result) => {
+                    document.getElementById('infoText').textContent = result.info.help_text;
+                    document.getElementById('infoPopup').style.display = 'block';
+                    result.info.exec_code = -2;
+                    return result;
                 },
-                body: JSON.stringify({
-                    token: 'string',
-                    data: {
-                        email: email,
-                    }
-                })
-            })
-                .then(response => response.json())
-                .then(data => {
-                    // Display the response in the popup
-                    if (JSON.stringify(data['res']) === 'false'){
-                        document.getElementById('infoText').textContent = "The waiting queue is filled up already.\n" +
-                            "Please try again at a different date";
-                        document.getElementById('infoPopup').style.display = 'block';
-                    }else {
-                        document.getElementById('infoText').textContent = JSON.stringify(data['res']);
-                        document.getElementById('infoPopup').style.display = 'block';
-                        document.getElementById('success-message').hidden = false;
-                    }
+                (result) => {
+                    document.getElementById('infoText').textContent = result.result.data_info.message;
+                    document.getElementById('infoPopup').style.display = 'block';
+                    document.getElementById('success-message').hidden = false;
+                    result.info.exec_code = 1;
+                    return result;
+                }
+            );
 
-                })
-                .catch((error) => {
-                    console.error('Error:', error);
-                });
         });
     });
 </script>

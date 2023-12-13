@@ -1,18 +1,22 @@
 import sys
 
-from toolboxv2 import MainTool, Style
+from toolboxv2 import MainTool, Style, get_app
 from time import sleep
 from platform import system
 import os
 
+export = get_app(from_="welcome.EXPORT").tb
+default_export = export()
+
 
 class Tools(MainTool):
+
     def __init__(self, app=None):
         self.version = "0.0.2"
         self.name = "welcome"
         self.color = "YELLOW"
         self.tools = {
-            "all": [["Version", "Shows current Version"],["api_Version", "Shows current Version"],
+            "all": [["Version", "Shows current Version"], ["api_Version", "Shows current Version"],
                     ["Animation", "TOOL BOX 0 8s"],
                     ["Animation1", "TOOL BOX 1 8s"],
                     ["printT", "print TOOL BOX"],
@@ -28,14 +32,14 @@ class Tools(MainTool):
         }
 
         MainTool.__init__(self, load=self.print_t, v=self.version, tool=self.tools,
-                          name=self.name, logs=None, color=self.color, on_exit=lambda: "")
+                          name=self.name, logs=None, color=self.color, on_exit=lambda: "welcome online")
 
     def webInstall(self, user_instance, construct_render) -> str:
         self.print("Installing Web")
         return construct_render(content="./app/0/welcome/welcome.html",
-                          element_id="main",
-                          externals=["/app/0/welcome/welcome.js"],
-                          from_file=True)
+                                element_id="main",
+                                externals=["/app/0/welcome/welcome.js"],
+                                from_file=True)
 
     def webInstall_app_wrapper(self, command):
 
@@ -44,6 +48,7 @@ class Tools(MainTool):
                           externals=["/app/0/welcome/welcome.js"],
                           from_file=True)
 
+    @export("printT", initial=True)
     def print_t(self):
         print()
         printc("**************************************************************************")
@@ -75,10 +80,12 @@ class Tools(MainTool):
         else:
             os.system("clear")
 
+    @export("Version", api=True)
     def show_version(self):
         self.print(f"Version: {self.name}::{self.version}")
         return self.version
 
+    @export(name="Animation1")
     def ali2(self):
         printc("**************************************************************************")
         printc("*************************************************************************█")
@@ -454,6 +461,7 @@ class Tools(MainTool):
 
         return "Animation1"
 
+    @export(name="Animation")
     def ali1(self):
         printc("**************************************************************************")
         printc("**************************************************************************")
@@ -623,9 +631,21 @@ def printc(str_):
         print("unsupported chars unittest")
         return
     try:
-        print(Style.GREEN(str(str_, 'Utf-8')))
+        print(colorize_ascii_art(Style.GREEN(str(str_, 'Utf-8'))))
     except TypeError:
         try:
             print(Style.GREEN(str(str_, 'ISO-88591')))
         except TypeError:
             print(str_)
+
+
+def colorize_ascii_art(ascii_art):
+    for line in ascii_art:
+        colored_line = ""
+        for char in line:
+            if char != "*":
+                # Wechseln Sie zwischen verschiedenen Grüntönen und anderen Farben
+                colored_line += Style.GREEN2(char) if char in "█╗╝" else Style.GREEN(char)
+            else:
+                colored_line += char
+        print(colored_line)

@@ -1,49 +1,7 @@
+from toolboxv2.utils import Result, ToolBoxInterfaces, ToolBoxError, ToolBoxInfo, ToolBoxResult
 from toolboxv2.utils.toolbox import App, get_app
 from toolboxv2.utils.Style import Style
 from toolboxv2.utils.tb_logger import get_logger
-
-from enum import Enum
-from dataclasses import dataclass, field
-
-
-class ToolBoxError(Enum):
-    none = "none"
-    input_error = "InputError"
-    internal_error = "InternalError"
-    custom_error = "CustomError"
-
-
-class ToolBoxInterfaces(Enum):
-    cli = "CLI"
-    api = "API"
-    remote = "REMOTE"
-    native = "NATIVE"
-
-
-@dataclass
-class ToolBoxResult:
-    data_to: ToolBoxInterfaces = field(default=ToolBoxInterfaces.cli)
-    data_info: dict = field(default_factory={})
-    data: dict = field(default_factory={})
-
-
-@dataclass
-class ToolBoxInfo:
-    exec_code: int
-    help_text: str
-
-
-@dataclass
-class Result:
-    error: ToolBoxError
-    result: ToolBoxResult
-    info: ToolBoxInfo
-
-    @classmethod
-    def default(cls, interface=ToolBoxInterfaces.cli):
-        cls.error = ToolBoxError.none
-        cls.info = ToolBoxInfo(-1, "")
-        cls.result = ToolBoxResult(data_to=interface)
 
 
 class MainTool:
@@ -52,14 +10,14 @@ class MainTool:
 
     def __init__(self, *args, **kwargs):
         self.version = kwargs["v"]
-        self.tools = kwargs["tool"]
+        self.tools = kwargs.get("tool", {})
         self.name = kwargs["name"]
-        self.logger = kwargs["logs"]
-        if kwargs["logs"] is None:
+        self.logger = kwargs.get("logs")
+        if self.logger is None:
             self.logger = get_logger()
-        self.color = kwargs["color"]
-        self.todo = kwargs["load"]
-        self._on_exit = kwargs["on_exit"]
+        self.color = kwargs.get("color", "WHITE")
+        self.todo = kwargs.get("load", lambda: None)
+        self._on_exit = kwargs.get("on_exit", lambda: None)
         self.stuf = False
         if not hasattr(self, 'config'):
             self.config = {}
@@ -67,8 +25,28 @@ class MainTool:
             self.app = get_app()
         self.ac_user_data_sto = {}
         self.description = "A toolbox mod"
-
+        # Result.default(self.app.interface)
         self.load()
+
+    @staticmethod
+    def return_result(error: ToolBoxError = ToolBoxError.none,
+                      exec_code: int = 0,
+                      help_text: str = "",
+                      data_info=None,
+                      data=None,
+                      data_to=ToolBoxInterfaces.cli):
+
+        if data is None:
+            data = {}
+
+        if data_info is None:
+            data_info = {}
+
+        return Result(
+            error,
+            ToolBoxResult(data_info=data_info, data=data, data_to=data_to),
+            ToolBoxInfo(exec_code=exec_code, help_text=help_text)
+        )
 
     def load(self):
         if self.todo:

@@ -9,7 +9,7 @@ loggerNameOfToolboxv2 = 'toolboxV2'
 
 
 def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_online=False, file_level=None,
-                  interminal=False):
+                  interminal=False, logs_directory="../logs"):
     global loggerNameOfToolboxv2
 
     if not online_level:
@@ -18,10 +18,9 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
     if not file_level:
         file_level = level
 
-    logs_directory = "../logs"
     if not os.path.exists(logs_directory):
         os.makedirs(logs_directory, exist_ok=True)
-    if not os.path.exists(logs_directory+"/Logs.info"):
+    if not os.path.exists(logs_directory + "/Logs.info"):
         open(f"{logs_directory}/Logs.info", "a").close()
 
     loggerNameOfToolboxv2 = name

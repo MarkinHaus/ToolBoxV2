@@ -1,7 +1,7 @@
 import unittest
 import time
 
-from toolboxv2 import App
+from toolboxv2 import App, tbef
 from toolboxv2.utils.toolbox import ApiOb
 
 
@@ -18,7 +18,6 @@ class TestRestrictor(unittest.TestCase):
         cls.app.debug = True
         cls.app.load_mod('Restrictor')
         cls.tool = cls.app.get_mod('Restrictor')
-        cls.app.new_ac_mod('Restrictor')
 
     @classmethod
     def tearDownClass(cls):
@@ -33,7 +32,7 @@ class TestRestrictor(unittest.TestCase):
         command = ApiOb(
             data={'username': 'test', 'password': 'test', 'email': 'test@test.com', 'invitation': 'test'},
             token='')
-        res = self.app.run_function('Version', [command, ])
+        res = self.app.run_any(tbef.RESTRICTOR.VERSION, [command, ])
         self.assertEqual(res, '0.0.2')
 
     def test_restrict(self):

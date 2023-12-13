@@ -105,7 +105,7 @@ def serve_app_func(path: str, prefix: str = os.getcwd() + "/app/"):
     content_type = 'text/html'
 
     # Check if the file extension exists in the mime_types dictionary
-    if ext in mime_types:
+    if ext in mime_types.keys():
         content_type = mime_types[ext]
 
     request_file_path.is_file()

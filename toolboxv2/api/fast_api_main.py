@@ -12,6 +12,8 @@ import time
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from toolboxv2 import tbef
+
 from ..utils.state_system import get_state_from_app
 from ..utils.toolbox import get_app
 
@@ -50,6 +52,11 @@ async def add_process_time_header(request: Request, call_next):
 @app.get("/")
 async def index():
     return RedirectResponse(url="/app/core0/index.html")
+
+
+@app.get("/favicon.ico")
+async def index():
+    return RedirectResponse(url="/app/favicon.ico")
     # return "Willkommen bei Simple V0 powered by ToolBoxV2-0.0.3"
 
 
@@ -125,7 +132,13 @@ if __name__ == 'toolboxv2.api.fast_api_main':
         f.write(str(os.getpid()))
     # tb_app.load_all_mods_in_file()
     tb_app.save_load("welcome")
-    tb_img = tb_app.MOD_LIST["welcome"].tools["printT"]
+    f, e = tb_app.get_function(tbef.WELCOME.PRINTT)
+    if e == 0:
+        tb_img = f
+    else:
+        print(e, f)
+        tb_img = lambda: print("TOOL BOX")
+
     tb_img()
 
     tb_app.save_load("WebSocketManager")
@@ -157,7 +170,7 @@ if __name__ == 'toolboxv2.api.fast_api_main':
 
         for mod_name, mod in tb_app.MOD_LIST.items():
             router = APIRouter(
-                prefix=f"/{mod_name}",
+                prefix=f"/api/{mod_name}",
                 tags=["token", mod_name],
                 # dependencies=[Depends(get_token_header)],
                 # responses={404: {"description": "Not found"}},
@@ -165,10 +178,11 @@ if __name__ == 'toolboxv2.api.fast_api_main':
 
             for fuc in mod.tools.get('all'):
                 if len(fuc) == 2:
-                    print(mod_name, fuc)
                     if 'api_' in fuc[0]:
                         tb_func = mod.tools.get(fuc[0])
                         if tb_func:
+                            if tb_app.debug:
+                                print(mod_name, fuc)
                             if len(list(signature(tb_func).parameters)):
                                 router.add_api_route('/' + fuc[0].replace('api_', ''), tb_func, methods=["POST"])
                             else:

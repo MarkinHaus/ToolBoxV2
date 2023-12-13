@@ -1,4 +1,4 @@
-
+import queue
 import time
 import unittest
 
@@ -18,7 +18,6 @@ class TestWebSocketManager(unittest.TestCase):
         cls.app.debug = True
         cls.app.load_mod('WebSocketManager')
         cls.tool = cls.app.get_mod('WebSocketManager')
-        cls.app.new_ac_mod('WebSocketManager')
         cls.websocket_id = 'app-HotReload-DESKTOP-CI57V1L4cb26814-887a-49e1-9e74-8e560a7b7b14CloudM-Signed'
         cls.url = 'ws://localhost:5000/ws'
 
@@ -49,17 +48,17 @@ class TestWebSocketManager(unittest.TestCase):
         pass
 
     def test_get_sender_receiver_que_ws(self):
-        # send_queue, recv_queue = self.tool.get_sender_receiver_que_ws(self.url, self.websocket_id)
-        # time.sleep(5)
-        ## Überprüfen Sie, ob die zurückgegebenen Queues Instanzen der Klasse Queue sind
-        # self.assertIsInstance(send_queue, queue.Queue)
-        # self.assertIsInstance(recv_queue, queue.Queue)
-        #
-        ## Überprüfen Sie, ob die Queues leer sind
-        # self.assertTrue(send_queue.empty())
-        # self.assertTrue(recv_queue.empty())
-        # print("active_connections_client", self.tool.active_connections_client)
-        #
-        # send_queue.put('exit')
-        # recv_queue.put('exit')
+        send_queue, recv_queue = self.tool.get_sender_receiver_que_ws(self.url, self.websocket_id)
+        time.sleep(5)
+        # Überprüfen Sie, ob die zurückgegebenen Queues Instanzen der Klasse Queue sind
+        self.assertIsInstance(send_queue, queue.Queue)
+        self.assertIsInstance(recv_queue, queue.Queue)
+
+        # Überprüfen Sie, ob die Queues leer sind
+        self.assertTrue(send_queue.empty())
+        self.assertTrue(recv_queue.empty())
+        print("active_connections_client", self.tool.active_connections_client)
+
+        send_queue.put('exit')
+        recv_queue.put('exit')
         pass
