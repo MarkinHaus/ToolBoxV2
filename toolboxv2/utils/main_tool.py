@@ -1,4 +1,4 @@
-from toolboxv2.utils import Result, ToolBoxInterfaces, ToolBoxError, ToolBoxInfo, ToolBoxResult
+from toolboxv2.utils.types import Result, ToolBoxInterfaces, ToolBoxError, ToolBoxInfo, ToolBoxResult
 from toolboxv2.utils.toolbox import App, get_app
 from toolboxv2.utils.Style import Style
 from toolboxv2.utils.tb_logger import get_logger
@@ -7,11 +7,13 @@ from toolboxv2.utils.tb_logger import get_logger
 class MainTool:
     toolID = ""
     app = None
+    interface = None
 
     def __init__(self, *args, **kwargs):
         self.version = kwargs["v"]
         self.tools = kwargs.get("tool", {})
         self.name = kwargs["name"]
+        self.spec = 'app' if kwargs.get('spec') is None else kwargs.get('spec')
         self.logger = kwargs.get("logs")
         if self.logger is None:
             self.logger = get_logger()
@@ -24,9 +26,12 @@ class MainTool:
         if self.app is None:
             self.app = get_app()
         self.ac_user_data_sto = {}
-        self.description = "A toolbox mod"
+        self.spec = ''
+        self.description = "A toolbox mod" if kwargs.get("description") is None else kwargs.get("description")
+        if MainTool.interface is None:
+            MainTool.interface = self.app.interface_type
         # Result.default(self.app.interface)
-        self.load()
+        # self.load()
 
     @staticmethod
     def return_result(error: ToolBoxError = ToolBoxError.none,
@@ -34,7 +39,10 @@ class MainTool:
                       help_text: str = "",
                       data_info=None,
                       data=None,
-                      data_to=ToolBoxInterfaces.cli):
+                      data_to=None):
+
+        if data_to is None:
+            data_to = MainTool.interface if MainTool.interface is not None else ToolBoxInterfaces.cli
 
         if data is None:
             data = {}

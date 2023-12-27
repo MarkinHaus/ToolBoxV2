@@ -7,35 +7,54 @@ from enum import Enum
 from platform import node, system
 from importlib import import_module
 from inspect import signature
+from types import ModuleType
+from functools import partial
 
 import requests
 
 from toolboxv2.utils.file_handler import FileHandler
-from toolboxv2.utils import Result, ToolBoxError, ToolBoxResult, ToolBoxInfo, Singleton, AppArgs, ApiOb, \
-    ToolBoxInterfaces
+from toolboxv2.utils import Singleton
+from toolboxv2.utils.helper_functions import generate_test_cases
+from toolboxv2.utils.types import Result, AppArgs, ToolBoxInterfaces
 from toolboxv2.utils.tb_logger import setup_logging, get_logger
 from toolboxv2.utils.Style import Style
 import toolboxv2
 
 import logging
 from dotenv import load_dotenv
+import dill
 
 load_dotenv()
 
 
+def load_module_dill(filename):
+    try:
+        with open(filename, 'rb') as file:
+            data = dill.load(file)
+            return data
+    except FileNotFoundError:
+        return {}
+
+
+def save_module_dill(data_to_serialize, filename):
+    with open(filename, 'wb') as file:
+        dill.dump(data_to_serialize, file)
+
+
 class App(metaclass=Singleton):
+
     def __init__(self, prefix: str = "", args=AppArgs().default()):
 
         t0 = time.perf_counter()
         abspath = os.path.abspath(__file__)
         self.system_flag = system()  # Linux: Linux Mac: Darwin Windows: Windows
         if self.system_flag == "Darwin" or self.system_flag == "Linux":
-            dname = os.path.dirname(abspath).replace("/utils", "")
+            dir_name = os.path.dirname(abspath).replace("/utils", "")
         else:
-            dname = os.path.dirname(abspath).replace("\\utils", "")
-        os.chdir(dname)
+            dir_name = os.path.dirname(abspath).replace("\\utils", "")
+        os.chdir(dir_name)
 
-        self.start_dir = dname
+        self.start_dir = dir_name
 
         self.prefix = prefix
         self.id = prefix + '-' + node()
@@ -44,8 +63,8 @@ class App(metaclass=Singleton):
         if args.mm:
             identification = "MainNode"
 
-        self.data_dir = dname + '\\.data\\' + identification
-        self.config_dir = dname + '\\.config\\' + identification
+        self.data_dir = dir_name + '\\.data\\' + identification
+        self.config_dir = dir_name + '\\.config\\' + identification
 
         if not os.path.exists(self.data_dir):
             os.makedirs(self.data_dir, exist_ok=True)
@@ -67,12 +86,12 @@ class App(metaclass=Singleton):
 
         print(f"Starting ToolBox as {prefix} from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 
-        logger_info_str, self.logger, self.logging_filename = self.set_logger(args.debug)
+        logger_info_str, self.logger, self.logging_filename = self.set_logger(True)  # args.debug)
 
         print("Logger " + logger_info_str)
+        print("================================")
         self.logger.info("Logger initialized")
         get_logger().info(Style.GREEN("Starting Application instance"))
-
         if args.init and args.init is not None:
             if self.start_dir not in sys.path:
                 sys.path.append(self.start_dir)
@@ -120,17 +139,19 @@ class App(metaclass=Singleton):
         self.MOD_LIST = {}
         self.alive = True
 
+        helper = f"{'coppy' if self.mlm == 'C' else ('Inplace' if self.mlm == 'I' else f'pleas use I or C you ar in {self.mlm}')}\n"
+
         self.print(
             f"SYSTEM :: {node()}\nID -> {self.id},\nVersion -> {self.version},\n"
-            f"load_mode -> {'coppy' if self.mlm == 'C' else ('Inplace' if self.mlm == 'I' else 'pleas use I or C')}\n")
+            f"load_mode -> {helper}")
 
         if args.update:
-            self.run_any("cloudM", "#update-core", [])
+            self.run_any("cloudM", "#update-core")
 
         if args.get_version:
             v = self.version
             if args.mod_version_name != "mainTool":
-                v = self.run_any(args.mod_version_name, 'Version', [])
+                v = self.run_any(args.mod_version_name, 'Version')
             self.print(f"Version {args.mod_version_name} : {v}")
 
         self.logger.info(
@@ -142,13 +163,12 @@ class App(metaclass=Singleton):
         self.args_sto = args
 
     def set_logger(self, debug=False):
-        logger_info_str = "is unknown"
         if "test" in self.prefix and not debug:
             logger, logging_filename = setup_logging(logging.NOTSET, name="toolbox-test", interminal=True,
                                                      file_level=logging.NOTSET)
             logger_info_str = "in Test Mode"
         elif "live" in self.prefix and not debug:
-            logger, logging_filename = setup_logging(logging.DEBUG, name="toolbox-debug", interminal=True,
+            logger, logging_filename = setup_logging(logging.DEBUG, name="toolbox-live", interminal=False,
                                                      file_level=logging.WARNING)
             logger_info_str = "in Live Mode"
             # setup_logging(logging.WARNING, name="toolbox-live", is_online=True
@@ -173,6 +193,10 @@ class App(metaclass=Singleton):
     def debug(self):
         return self._debug
 
+    def debug_rains(self, e):
+        if self.debug:
+            raise e
+
     def set_runnable(self, r):
         self.runnable = r
 
@@ -187,13 +211,10 @@ class App(metaclass=Singleton):
             self.logger.debug(f"Value must be an boolean. is : {value} type of {type(value)}")
             raise ValueError("Value must be an boolean.")
 
-        logger_info_str, self.logger, self.logging_filename = self.set_logger(value)
-
-        print("Logger " + logger_info_str)
         self.logger.info(f"Setting debug {value}")
         self._debug = value
 
-    def _coppy_mod(self, content, new_mod_dir, mod_name):
+    def _coppy_mod(self, content, new_mod_dir, mod_name, file_type='py'):
 
         mode = 'xb'
         self.logger.info(f" coppy mod {mod_name} to {new_mod_dir} size : {sys.getsizeof(content) / 8388608:.3f} mb")
@@ -203,43 +224,46 @@ class App(metaclass=Singleton):
             with open(f"{new_mod_dir}/__init__.py", "w") as nmd:
                 nmd.write(f"__version__ = '{self.version}'")
 
-        if os.path.exists(f"{new_mod_dir}/{mod_name}.py"):
+        if os.path.exists(f"{new_mod_dir}/{mod_name}.{file_type}"):
             mode = False
-            with open(f"{new_mod_dir}/{mod_name}.py", 'rb') as d:
+
+            with open(f"{new_mod_dir}/{mod_name}.{file_type}", 'rb') as d:
                 runtime_mod = d.read()  # Testing version but not efficient
+
             if len(content) != len(runtime_mod):
                 mode = 'wb'
 
         if mode:
-            with open(f"{new_mod_dir}/{mod_name}.py", mode) as f:
+            with open(f"{new_mod_dir}/{mod_name}.{file_type}", mode) as f:
                 f.write(content)
 
-    def _pre_lib_mod(self, mod_name, path_to="./runtime"):
+    def _pre_lib_mod(self, mod_name, path_to="./runtime", file_type='py'):
         working_dir = self.id.replace(".", "_")
         lib_mod_dir = f"toolboxv2.runtime.{working_dir}.mod_lib."
 
         self.logger.info(f"pre_lib_mod {mod_name} from {lib_mod_dir}")
 
         postfix = "_dev" if self.dev_modi else ""
-        mod_file_dir = f"./mods{postfix}/{mod_name}.py"
+        mod_file_dir = f"./mods{postfix}/{mod_name}.{file_type}"
         new_mod_dir = f"{path_to}/{working_dir}/mod_lib"
         with open(mod_file_dir, "rb") as c:
             content = c.read()
-        self._coppy_mod(content, new_mod_dir, mod_name)
+        self._coppy_mod(content, new_mod_dir, mod_name, file_type=file_type)
         return lib_mod_dir
 
-    def _copy_load(self, mod_name):
-        loc = self._pre_lib_mod(mod_name)
-        return self.inplace_load(mod_name, loc=loc)
+    def _copy_load(self, mod_name, file_type='py', **kwargs):
+        loc = self._pre_lib_mod(mod_name, file_type)
+        return self.inplace_load_instance(mod_name, loc=loc, **kwargs)
 
-    def inplace_load(self, mod_name, loc="toolboxv2.mods."):
+    def inplace_load_instance(self, mod_name, loc="toolboxv2.mods.", spec='app', save=True):
         if self.dev_modi and loc == "toolboxv2.mods.":
             loc = "toolboxv2.mods_dev."
         if self.mod_online(mod_name):
             self.logger.info(f"Reloading mod from : {loc + mod_name}")
-            self.remove_mod(mod_name)
+            self.remove_mod(mod_name, spec=spec, delete=False)
 
         modular_file_object = import_module(loc + mod_name)
+
         try:
             tools_class = getattr(modular_file_object, "Tools")
         except AttributeError:
@@ -261,14 +285,24 @@ class App(metaclass=Singleton):
             return modular_file_object
 
         if tools_class is not None:
-            live_tools_class = self.save_initialized_module(tools_class)
+            live_tools_class = self.save_initialized_module(tools_class, spec)
             modular_id = live_tools_class.name.lower()
             instance = live_tools_class
             app_instance_type = "functions/class"
 
+        # if private:
+        #     self.functions[modular_id][f"{spec}_private"] = private
+
+        if not save:
+            return instance
+
+        return self.save_instance(modular_id, spec, instance, app_instance_type)
+
+    def save_instance(self, modular_id, spec, instance, instance_type):
+
         if modular_id in self.functions:
-            self.functions[modular_id]["app_instance"] = instance
-            self.functions[modular_id]["app_instance_type"] = app_instance_type
+            self.functions[modular_id][f"{spec}_instance"] = instance
+            self.functions[modular_id][f"{spec}_instance_type"] = instance_type
 
             on_start = self.functions[modular_id].get("on_start")
 
@@ -276,7 +310,7 @@ class App(metaclass=Singleton):
                 i = 1
                 for f in on_start:
                     try:
-                        f_, e = self._get_function(None, as_str=(modular_id, f), state=True)
+                        f_, e = self.get_function((modular_id, f), state=True, specification=spec)
                         if e == 0:
                             self.logger.info(Style.GREY(f"Running On start {f} {i}/{len(on_start)}"))
                             o = f_()
@@ -292,27 +326,24 @@ class App(metaclass=Singleton):
 
         else:
             self.functions[modular_id] = {}
-            self.functions[modular_id]["app_instance"] = instance
-            self.functions[modular_id]["app_instance_type"] = app_instance_type
+            self.functions[modular_id][f"{spec}_instance"] = instance
+            self.functions[modular_id][f"{spec}_instance_type"] = instance_type
             self.logger.warning(f"Starting Module {modular_id} without functions")
-
-            ## Back compatibility
 
             try:
                 for function_name in list(instance.tools.keys()):
                     if function_name != "all" and function_name != "name":
                         self.tb(function_name, mod_name=modular_id)(instance.tools.get(function_name))
-                self.functions[modular_id]["app_instance_type"] += "/BC"
-            except Exception:
+                self.functions[modular_id][f"{spec}_instance_type"] += "/BC"
+            except Exception as e:
+                self.logger.error(f"Starting Module {modular_id} compatibility failed with : {e}")
                 pass
-
-        if private:
-            self.functions[modular_id]["private"] = private
 
         return instance
 
-    def save_initialized_module(self, tools_class):
+    def save_initialized_module(self, tools_class, spec):
         live_tools_class = tools_class(app=self)  # save_as_app_instance
+        live_tools_class.spec = spec
         return live_tools_class
 
     def mod_online(self, mod_name):
@@ -345,13 +376,17 @@ class App(metaclass=Singleton):
 
         function = function_data.get("func")
 
+        state_ = function_data.get("state")
+        if state_ is not None and state != state_:
+            state = state_
+
         if function is None:
             self.logger.warning(f"No function found")
             return "404", 300
 
         if metadata and not state:
             self.logger.info(f"returning metadata stateless")
-            return (function_data, None), 0
+            return (function_data, function), 0
 
         if not state:  # mens a stateless function
             self.logger.info(f"returning stateless function")
@@ -369,13 +404,15 @@ class App(metaclass=Singleton):
             # return "422", -1
             self.logger.info(
                 f"returning stateless function, cant find tools class for state handling found {instance_type}")
+            if metadata:
+                self.logger.info(f"returning metadata stateless")
+                return (function_data, function), 0
             return function, 0
 
         self.logger.info(f"wrapping in higher_order_function")
 
-        def higher_order_function(*args, **kwargs):
-            self.logger.info(f"{specification}.{modular_id}.{function_id} got execute with '{specification}' state ")
-            return function(self=instance, *args, **kwargs)
+        self.logger.info(f"{specification}.{modular_id}.{function_id} got execute with '{specification}' state ")
+        higher_order_function = partial(function, instance)
 
         if metadata:
             self.logger.info(f"returning metadata stateful")
@@ -390,27 +427,37 @@ class App(metaclass=Singleton):
         self.config_fh.add_to_save_file_handler(self.keys["debug"], str(self.debug))
         self.config_fh.add_to_save_file_handler(self.keys["module-load-mode"], self.mlm)
 
-    def load_mod(self, mod_name):
+    def load_mod(self, mod_name, **kwargs):
 
         self.logger.info(f"try opening module {mod_name} in mode {self.mlm}")
-        if self.debug:
-            if self.mlm == "I":
-                return self.inplace_load(mod_name)
-            elif self.mlm == "C":
-                return self._copy_load(mod_name)
+        action_list_helper = ['I (inplace load dill on error python)',
+                              'C (coppy py file to runtime dir)',
+                              # 'S (save py file to dill)',
+                              # 'CS (coppy and save py file)',
+                              # 'D (development mode, inplace load py file)'
+                              ]
+        action_list = {"I": lambda: self.inplace_load_instance(mod_name, **kwargs),
+                       "C": lambda: self._copy_load(mod_name, **kwargs)
+                       }
+
         try:
-            if self.mlm == "I":
-                return self.inplace_load(mod_name)
-            elif self.mlm == "C":
-                return self._copy_load(mod_name)
+            if self.mlm in action_list:
+                return action_list.get(self.mlm)()
             else:
                 self.logger.critical(
-                    f"config mlm must bee I (inplace load) or C (coppy to runtime load) is {self.mlm=}")
-                raise ValueError(f"config mlm must bee I (inplace load) or C (coppy to runtime load) is {self.mlm=}")
+                    f"config mlm must be {' or '.join(action_list_helper)} is {self.mlm=}")
+                raise ValueError(f"config mlm must be {' or '.join(action_list_helper)} is {self.mlm=}")
+        except ValueError as e:
+            self.logger.warning(Style.YELLOW(f"Error Loading Module '{mod_name}', with error :{e}"))
+            self.debug_rains(e)
         except ImportError as e:
             self.logger.error(Style.YELLOW(f"Error Loading Module '{mod_name}', with error :{e}"))
+            self.debug_rains(e)
         except Exception as e:
             self.logger.critical(Style.RED(f"Error Loading Module '{mod_name}', with critical error :{e}"))
+            self.debug_rains(e)
+
+        return Result.default_internal_error(info="info's in logs.")
 
     def load_all_mods_in_file(self, working_dir="mods"):
         t0 = time.perf_counter()
@@ -428,10 +475,8 @@ class App(metaclass=Singleton):
             # Load modules in parallel using threads
             futures = {executor.submit(self.load_mod, mod) for mod in module_list}
 
-            for future in concurrent.futures.as_completed(futures):
+            for _ in concurrent.futures.as_completed(futures):
                 opened += 1
-
-        self.save_registry_as_enums("utils", "all_functions_enums.py")
         self.logger.info(f"Opened {opened} modules in {time.perf_counter() - t0:.2f}s")
         return True
 
@@ -473,26 +518,33 @@ class App(metaclass=Singleton):
         for mod in self.functions:
             self.logger.info(f"closing: {mod}")
             self.remove_mod(mod, delete=False)
-        del self.functions
-        self.functions = {}
 
     def print_ok(self):
         self.logger.info("OK")
 
-    def remove_mod(self, mod_name, delete=True):
+    def remove_mod(self, mod_name, spec='app', delete=True):
         if mod_name not in self.functions:
             self.logger.info(f"mod not active {mod_name}")
+            return
         on_exit = self.functions[mod_name].get("on_exit")
+
+        def helper():
+            if f"{spec}_instance" in self.functions[mod_name]:
+                del self.functions[mod_name][f"{spec}_instance"]
+            if f"{spec}_instance_type" in self.functions[mod_name]:
+                del self.functions[mod_name][f"{spec}_instance_type"]
+
         if on_exit is None and delete:
             self.functions[mod_name] = {}
             del self.functions[mod_name]
             return
         if on_exit is None:
+            helper()
             return
         i = 1
         for f in on_exit:
             try:
-                f_, e = self._get_function(None, as_str=(mod_name, f), state=True)
+                f_, e = self.get_function((mod_name, f), state=True, specification=spec)
                 if e == 0:
                     self.logger.info(Style.GREY(f"Running On exit {f} {i}/{len(on_exit)}"))
                     o = f_()
@@ -506,15 +558,22 @@ class App(metaclass=Singleton):
             finally:
                 i += 1
 
+            helper()
+
+            if delete:
+                self.functions[mod_name] = {}
+                del self.functions[mod_name]
+
     def exit(self):
         self.remove_all_modules()
         self.logger.info("Exiting ToolBox")
         self.print(Style.Bold(Style.CYAN("EXIT See U")))
         self.print('\033', end="")
         self.alive = False
+        self.save_exit()
         self.config_fh.save_file_handler()
 
-    def save_load(self, modname):
+    def save_load(self, modname, spec='app'):
         self.logger.debug(f"Save load module {modname}")
         if not modname:
             self.logger.warning("no filename specified")
@@ -526,12 +585,11 @@ class App(metaclass=Singleton):
             if fw == mod:
                 modname = avalabel_mods[i]
             i += 1
-        if self.debug:
-            return self.load_mod(modname)
         try:
-            return self.load_mod(modname)
-        except ModuleNotFoundError:
+            return self.load_mod(modname, spec=spec)
+        except ModuleNotFoundError as e:
             self.logger.error(Style.RED(f"Module {modname} not found"))
+            self.debug_rains(e)
 
         return False
 
@@ -549,19 +607,31 @@ class App(metaclass=Singleton):
         else:
             return self._get_function(name, **kwargs)
 
-    def run_function(self, mod_function_name: Enum or tuple, tb_run_function_with_state=True, *args,
+    def run_function(self, mod_function_name: Enum or tuple,
+                     tb_run_function_with_state=True,
+                     tb_run_with_specification='app',
+                     args_=None,
+                     kwargs_=None,
+                     *args,
                      **kwargs) -> Result:
+
+        if kwargs_ is not None and not kwargs:
+            kwargs = kwargs_
+        if args_ is not None and not args:
+            args = args_
 
         if isinstance(mod_function_name, tuple):
             modular_name, function_name = mod_function_name
         else:
             modular_name, function_name = mod_function_name.__class__.__name__.lower(), mod_function_name.value
 
-        function, error_code = self.get_function(mod_function_name, state=tb_run_function_with_state)
+        function_data, error_code = self.get_function(mod_function_name, state=tb_run_function_with_state,
+                                                      metadata=True, specification=tb_run_with_specification)
 
         if error_code == 1 or error_code == 3:
             self.get_mod(modular_name)
-            function, error_code = self.get_function(mod_function_name, state=tb_run_function_with_state)
+            function_data, error_code = self.get_function(mod_function_name, state=tb_run_function_with_state,
+                                                          metadata=True, specification=tb_run_with_specification)
 
         if error_code == 2:
             self.logger.warning(Style.RED(f"Function Not Found"))
@@ -582,6 +652,12 @@ class App(metaclass=Singleton):
                                                       f" {modular_name}."
                                                       f"{function_name}").set_origin(mod_function_name)
 
+        if not tb_run_function_with_state:
+            function_data, _ = function_data
+            function = function_data.get('func')
+        else:
+            function_data, function = function_data
+
         if not function:
             self.logger.warning(Style.RED(f"Function {function_name} not found"))
             return Result.default_internal_error(interface=self.interface_type,
@@ -589,10 +665,8 @@ class App(metaclass=Singleton):
                                                  info=f"function not found function").set_origin(mod_function_name)
 
         self.logger.info(f"Profiling function")
-        sig = signature(function)
-        self.logger.debug(f"Signature: {sig}")
-        parameters = list(sig.parameters)
-
+        parameters = function_data.get('params')
+        if_self_state = 1 if 'self' in parameters else 0
         # mod_name = self.AC_MOD.name
         # self.print(f"\nStart function {mod_name}:{mod_function_name}\n")
         app_position = None
@@ -604,40 +678,21 @@ class App(metaclass=Singleton):
             args = list(args)
             args.insert(app_position, self)
 
-        if self.debug:
-            if len(parameters) == 0:
-                res = function()
-            elif len(parameters) == 1:
-                res = function(*args)
-            else:
-                res = function(*args, **kwargs)
-
-            if isinstance(res, Result):
-                formatted_result = res
-                if formatted_result.origin is not None:
-                    formatted_result.set_origin(mod_function_name)
-            else:
-                # Wrap the result in a Result object
-                formatted_result = Result.ok(
-                    interface=self.interface_type,
-                    data_info="Auto generated result",
-                    data=res,
-                    info="Function executed successfully"
-                ).set_origin(mod_function_name)
-
-            self.logger.info(f"Function Exec coed: {formatted_result.info.exec_code} Info's: {formatted_result.info.help_text}")
-            return formatted_result
         try:
+            #self.print(f"[{function_name=}],{len(parameters)},{len(args)} {len(kwargs.keys())} {if_self_state=} {args=},"
+            #           f" {kwargs=}")
             if len(parameters) == 0:
                 res = function()
-            elif len(parameters) == 1:
+            elif len(parameters) == len(args) + if_self_state:
                 res = function(*args)
+            elif len(parameters) == len(kwargs.keys()) + if_self_state:
+                res = function(**kwargs)
             else:
                 res = function(*args, **kwargs)
             self.logger.info(f"Execution done")
             if isinstance(res, Result):
                 formatted_result = res
-                if function_name.origine is not None:
+                if formatted_result.origin is None:
                     formatted_result.set_origin(mod_function_name)
             else:
                 # Wrap the result in a Result object
@@ -647,7 +702,8 @@ class App(metaclass=Singleton):
                     data=res,
                     info="Function executed successfully"
                 ).set_origin(mod_function_name)
-
+            self.logger.info(
+                f"Function Exec coed: {formatted_result.info.exec_code} Info's: {formatted_result.info.help_text}")
         except Exception as e:
             self.logger.error(
                 Style.YELLOW(Style.Bold(
@@ -658,6 +714,7 @@ class App(metaclass=Singleton):
             self.logger.error(
                 f"Function {modular_name}.{function_name}"
                 f" executed wit an error {e}")
+            self.debug_rains(e)
 
         else:
             self.print_ok()
@@ -668,37 +725,45 @@ class App(metaclass=Singleton):
 
         return formatted_result
 
-    def run_any(self, mod_function_name: Enum or str, backwords_compability_variabel_string_holder=None,
-                get_results=False, tb_run_function_with_state=True,
+    def run_any(self, mod_function_name: Enum or str or tuple, backwords_compability_variabel_string_holder=None,
+                get_results=False, tb_run_function_with_state=True, tb_run_with_specification='app', args_=None, kwargs_=None,
                 *args, **kwargs):
+
+        if kwargs_ is not None and not kwargs:
+            kwargs = kwargs_
+        if args_ is not None and not args:
+            args = args_
 
         if isinstance(mod_function_name, str) and isinstance(backwords_compability_variabel_string_holder, str):
             mod_function_name = (mod_function_name, backwords_compability_variabel_string_holder)
 
         res: Result = self.run_function(mod_function_name,
                                         tb_run_function_with_state=tb_run_function_with_state,
-                                        *args, **kwargs)
+                                        tb_run_with_specification=tb_run_with_specification,
+                                        args_=args, kwargs_=kwargs)
 
         if not get_results and isinstance(res, Result):
             return res.get()
 
         return res
 
-    def get_mod(self, name):
+    def get_mod(self, name, spec='app') -> ModuleType:
         self.print(f"NAME: {name}")
         if name.lower() not in list(map(lambda x: x.lower(), self.functions.keys())):
-            mod = self.save_load(name)
-            if mod:
-                return mod
-            self.logger.warning(f"Could not find {name} in {list(self.functions.keys())}")
-            raise ValueError(f"Could not find {name} in {list(self.functions.keys())} pleas install the module")
-        private = self.functions[name.lower()].get("private")
-        if private is not None:
-            if private:
-                raise ValueError("Module is not private")
-        return self.functions[name.lower()].get("app_instance")
+            if self.save_load(name) is False:
+                self.logger.warning(f"Could not find {name} in {list(self.functions.keys())}")
+                raise ValueError(f"Could not find {name} in {list(self.functions.keys())} pleas install the module")
+        # private = self.functions[name.lower()].get(f"{spec}_private")
+        # if private is not None:
+        #     if private and spec != 'app':
+        #         raise ValueError("Module is private")
+        instance = self.functions[name.lower()].get(f"{spec}_instance")
+        if instance is None:
+            return self.load_mod(name, spec=spec)
+        return self.functions[name.lower()].get(f"{spec}_instance")
 
-    def print(self, text, *args, **kwargs):
+    @staticmethod
+    def print(text, *args, **kwargs):
         # self.logger.info(f"Output : {text}")
         print(text, *args, **kwargs)
 
@@ -726,7 +791,10 @@ class App(metaclass=Singleton):
                           helper: str = "",
                           version: str or None = None,
                           initial=False,
-                          exit_f=False):
+                          exit_f=False,
+                          test=True,
+                          samples=None,
+                          state=None):
 
         if isinstance(type_, Enum):
             type_ = type_.value
@@ -751,6 +819,10 @@ class App(metaclass=Singleton):
                 "__module__": func.__module__,
                 "signature": sig,
                 "params": params,
+                "state": (False if len(params) == 0 else params[0] in ['self', 'state']) if state is None else state,
+                "do_test": test,
+                "samples": samples,
+
             }
             self._register_function(module_name, func_name, data)
             if exit_f:
@@ -774,9 +846,15 @@ class App(metaclass=Singleton):
            version=None,
            initial=False,
            exit_f=False,
-           interface=None):
+           interface=None,
+           test=True,
+           samples=None,
+           state=None,
+           test_only=False):
         if interface is None:
             interface = "tb"
+        if test_only and 'test' not in self.id:
+            return lambda x: x
         return self._create_decorator(interface,
                                       name,
                                       mod_name,
@@ -786,18 +864,29 @@ class App(metaclass=Singleton):
                                       api=api,
                                       version=version,
                                       initial=initial,
-                                      exit_f=exit_f)
+                                      exit_f=exit_f,
+                                      test=test,
+                                      samples=samples,
+                                      state=state)
 
     def print_functions(self):
+        if not self.functions:
+            print("Nothing to see")
+            return
+
         for module, functions in self.functions.items():
-            print(f"\nModule: {module} type:{functions.get('app_instance_type')}")
+            print(f"\nModule: {module}; Type: {functions.get('app_instance_type', 'Unknown')}")
+
             for func_name, data in functions.items():
                 if not isinstance(data, dict):
                     continue
-                print(
-                    f"  Function: {func_name}{data['signature']}; Type: {data['type']}, Level: {'r' if data['level'] == -1 else data['level']}, {'Api' if data['api'] else ''}")
-        if self.functions == {}:
-            print("Noting to see")
+
+                func_type = data.get('type', 'Unknown')
+                func_level = 'r' if data['level'] == -1 else data['level']
+                api_status = 'Api' if data.get('api', False) else 'Non-Api'
+
+                print(f"  Function: {func_name}{data.get('signature', '()')}; "
+                      f"Type: {func_type}, Level: {func_level}, {api_status}")
 
     def save_registry_as_enums(self, directory, filename):
         # Ordner erstellen, falls nicht vorhanden
@@ -825,6 +914,107 @@ class App(metaclass=Singleton):
 
         print(Style.Bold(Style.BLUE(f"Enums gespeichert in {filepath}")))
 
+    def execute_all_functions(self, m_query='', f_query=''):
+        print("Executing all functions")
+        all_data = {
+            "modular_run": 0,
+            "modular_fatal_error": 0,
+            "errors": 0,
+            "modular_sug": 0,
+        }
+        for module_name, functions in self.functions.items():
+            infos = {
+                "functions_run": 0,
+                "functions_fatal_error": 0,
+                "error": 0,
+                "functions_sug": 0,
+                'calls': {},
+                'callse': {}
+            }
+            all_data['modular_run'] += 1
+            if not module_name.startswith(m_query):
+                all_data['modular_sug'] += 1
+                continue
+            for function_name, function_data in functions.items():
+                if not isinstance(function_data, dict):
+                    continue
+                if not function_name.startswith(f_query):
+                    continue
+                test: list = function_data.get('do_test')
+                print(test, module_name, function_name, function_data)
+                if test is False:
+                    continue
+                params: list = function_data.get('params')
+                sig: signature = function_data.get('signature')
+                state: bool = function_data.get('state')
+                samples: bool = function_data.get('samples')
+
+                test_kwargs_list = [{}]
+
+                if params is not None:
+                    test_kwargs_list = samples if samples is not None else generate_test_cases(sig=sig)
+                    # print(test_kwargs)
+                    # print(test_kwargs[0])
+                    # test_kwargs = test_kwargs_list[0]
+                print(module_name, function_name, test_kwargs_list)
+                for test_kwargs in test_kwargs_list:
+                    try:
+                        print(f"test Running {state}.{module_name}.{function_name}")
+                        result = self.run_function((module_name, function_name),
+                                                   tb_run_function_with_state=state,
+                                                   **test_kwargs)
+                        if result.info.exec_code == 0:
+                            infos['calls'][function_name] = [test_kwargs, str(result)]
+                            infos['functions_sug'] += 1
+                        else:
+                            infos['functions_sug'] += 1
+                            infos['error'] += 1
+                            infos['callse'][function_name] = [test_kwargs, str(result)]
+                    except Exception as e:
+                        infos['functions_fatal_error'] += 1
+                        infos['callse'][function_name] = [test_kwargs, str(e)]
+                    finally:
+                        infos['functions_run'] += 1
+
+            print('\n' + module_name, len(functions.keys()), '\n' + str(infos['calls']) if infos['calls'] else '',
+                  '\n' + str(infos['callse']) if infos['callse'] else '')
+            print(f"{infos['functions_run']=}\n{infos['functions_sug']=}\n{infos['functions_fatal_error']=}")
+            if infos['functions_run'] == infos['functions_sug']:
+                all_data['modular_sug'] += 1
+            else:
+                all_data['modular_fatal_error'] += 1
+            if infos['error'] > 0:
+                all_data['errors'] += 1
+            all_data[module_name] = infos
+        print(f"{all_data['modular_run']=}\n{all_data['modular_sug']=}\n{all_data['modular_fatal_error']=}")
+
+        return Result.ok(data=all_data, data_info=analyze_data(all_data))
+
+
+def analyze_data(data):
+    report = []
+
+    for mod_name, mod_info in data.items():
+        if mod_name in ['modular_run', 'modular_fatal_error', 'modular_sug']:
+            continue  # Überspringen der allgemeinen Statistiken
+        if mod_name in ['errors']:
+            report.append(f"Total errors: {mod_info}")
+            continue
+        report.append(f"Modul: {mod_name}")
+        report.append(f"  Funktionen ausgeführt: {mod_info.get('functions_run', 0)}")
+        report.append(f"  Funktionen mit Fatalen Fehler: {mod_info.get('functions_fatal_error', 0)}")
+        report.append(f"  Funktionen mit Fehler: {mod_info.get('error', 0)}")
+        report.append(f"  Funktionen erfolgreich: {mod_info.get('functions_sug', 0)}")
+
+        if 'callse' in mod_info and mod_info['callse']:
+            report.append("  Fehler:")
+            for func_name, errors in mod_info['callse'].items():
+                for error in errors:
+                    error = error.replace('\n', ' - ')
+                    report.append(f"    - {func_name}, Fehler: {error}")
+
+    return "\n".join(report)
+
 
 def _initialize_toolBox(init_type, init_from, name):
     logger = get_logger()
@@ -837,8 +1027,7 @@ def _initialize_toolBox(init_type, init_from, name):
         except TimeoutError:
             logger.error(Style.RED("Error retrieving config information "))
             exit(1)
-
-        init_type = "main"
+        # init_type = "main"
     else:
         data = open(init_from, 'r+').read()
 

@@ -1,4 +1,5 @@
 import os
+import sys
 from typing import Union
 from fastapi import APIRouter, UploadFile
 
@@ -33,7 +34,6 @@ def close(data: PostRequest, pid: int):
             return {"res": str(res)}
 
         if res["username"] in (ToolBox_over if not isinstance(ToolBox_over, str) else [ToolBox_over]):
-            tb_app.save_exit()
             tb_app.exit()
             exit(0)
     return {"res": "0"}
@@ -43,36 +43,6 @@ def close(data: PostRequest, pid: int):
 def id_api():
     tb_app: App = get_app()
     return {"res": str(tb_app.id)}
-
-
-@router.get("/mod-list")
-def mod_list():
-    tb_app: App = get_app()
-    return {"res": list(tb_app.MOD_LIST.keys())}
-
-
-@router.get("/test-exist/{name}")
-def test_mod_dow(name: str):
-    tb_app: App = get_app()
-    res = "mod-404"
-    if name.lower() in tb_app.MOD_LIST:
-        tb_app.new_ac_mod(name.lower())
-        res = f"{name}-mod-online"
-    return {"res": res}
-
-
-@router.get("/mod/index/{name}")
-def get_mod_index(name: str):
-    tb_app: App = get_app()
-    try:
-        res = tb_app.new_ac_mod(name)
-        if isinstance(res, str):
-            return {"res": res}
-        result = tb_app.help('')
-    except:
-        result = "None"
-    return {"res": result}
-
 
 
 # for back compatibility will be removed
@@ -132,6 +102,3 @@ if __name__ == 'fast_api':  # do stuw withe ovner to secure ur self
     with open(f"api_pid_{id_name}", "w") as f:
         f.write(str(os.getpid()))
     tb_app.load_all_mods_in_file()
-    tb_img = tb_app.MOD_LIST["welcome"].tools["printT"]
-    tb_img()
-    tb_app.new_ac_mod("welcome")

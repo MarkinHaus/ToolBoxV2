@@ -2,7 +2,7 @@ import os
 from dataclasses import dataclass, field
 from threading import Thread
 
-from toolboxv2.utils import CallingObject
+from toolboxv2.utils.types import CallingObject
 
 try:
     from readchar import key as readchar_key
@@ -147,6 +147,8 @@ def get_generator():
 
 @default_export
 def update_autocompletion_mods(app: App, autocompletion_dict=None):
+    if app is None:
+        app = get_app(from_="cliF.update_autocompletion_mods")
     if autocompletion_dict is None:
         autocompletion_dict = {}
 
@@ -162,7 +164,9 @@ def update_autocompletion_mods(app: App, autocompletion_dict=None):
 
 
 @default_export
-def update_autocompletion_list_or_key(list_or_key, autocompletion_dict=None, raise_e=True):
+def update_autocompletion_list_or_key(list_or_key: iter or None = None, autocompletion_dict=None, raise_e=True):
+    if list_or_key is None:
+        list_or_key = []
     if autocompletion_dict is None:
         autocompletion_dict = {}
 
@@ -174,13 +178,17 @@ def update_autocompletion_list_or_key(list_or_key, autocompletion_dict=None, rai
     return autocompletion_dict
 
 
-@default_export
+@export(mod_name=Name, test=False)
 def user_input(app,
-               completer_dict,
+               completer_dict=None,
                get_rprompt=None,
                bottom_toolbar=None,
                active_modul="",
                password=False) -> CallingObject:
+    if app is None:
+        app = get_app(from_="cliF.user_input")
+    if completer_dict is None:
+        completer_dict = {}
     if not PROMPT_TOOLKIT:
         raise ImportError("prompt toolkit is not available install via 'pip install prompt-toolkit'")
     if app is None:
@@ -285,6 +293,7 @@ def user_input(app,
             call_obj.function_name = infos[1]
         if len(infos) > 2:
             call_obj.kwargs = {}
+            call_obj.args = infos[2:]
             if call_obj.module_name not in completer_dict:
                 return call_obj
             if call_obj.function_name not in completer_dict[call_obj.module_name]:
@@ -293,31 +302,36 @@ def user_input(app,
                 'params')  # TODO FIX parsm ist type list
             if kwargs_name is None:
                 return call_obj
-            for kwarg in infos[1:]:
-                call_obj.kwargs[kwargs_name] = kwarg
+            kwargs_name = kwargs_name.remove('app').remove('self')
+            call_obj.kwargs = dict(zip(kwargs_name, infos[2:]))
         return call_obj
 
 
 @default_export
 def co_evaluate(app: App,
-                obj: CallingObject,
+                obj: CallingObject or None,
                 build_in_commands: dict,
                 threaded=False,
                 helper=None,
                 return_parm=False
                 ):
+    if obj is None:
+        return Result.default_user_error(info="No object specified")
+
+    if app is None:
+        app = get_app(from_="cliF.co_evaluate")
     command = obj.module_name
 
     if not command:
-        return Result.default_user_error(info="No module Provided")
+        return Result.default_user_error(info="No module Provided").set_origin("cli_functions.co_evaluate").print()
 
     if command in build_in_commands:
-        return build_in_commands[command](obj)
+        return build_in_commands[command](obj).print()
 
     function_name = obj.function_name
 
     if not function_name:
-        return Result.default_user_error(info="No function Provided")
+        return Result.default_user_error(info="No function Provided").set_origin("cli_functions.co_evaluate").print()
 
     if obj.kwargs is None:
         obj.kwargs = {}
@@ -325,7 +339,11 @@ def co_evaluate(app: App,
     if helper is None:
         def helper_function(obj_):
 
-            result = app.run_any((obj_.module_name, obj_.function_name), get_results=True, **obj_.kwargs)
+            obj_.print()
+            result = app.run_any((obj_.module_name, obj_.function_name), get_results=True,
+                                 args_=obj_.args,
+                                 kwargs_=obj_.kwargs)
+
             result.print()
 
             if isinstance(return_parm, list):

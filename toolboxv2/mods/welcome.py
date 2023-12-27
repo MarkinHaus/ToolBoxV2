@@ -85,7 +85,7 @@ class Tools(MainTool):
         self.print(f"Version: {self.name}::{self.version}")
         return self.version
 
-    @export(name="Animation1")
+    @export(name="Animation1", test=False)
     def ali2(self):
         printc("**************************************************************************")
         printc("*************************************************************************█")
@@ -461,7 +461,7 @@ class Tools(MainTool):
 
         return "Animation1"
 
-    @export(name="Animation")
+    @export(name="Animation", test=False)
     def ali1(self):
         printc("**************************************************************************")
         printc("**************************************************************************")

@@ -83,16 +83,6 @@ class FileHandler(Code):
 
         self.file_handler_storage.write(json.dumps(self.file_handler_save))
 
-        # for key in self.file_handler_save.keys():
-        #     data = self.file_handler_save[key]
-        #     get_logger().info(
-        #         Style.BLUE(
-        #             f"writing to file : {key} : {len(data)} char(s)"
-        #         )
-        #     )
-        #     self.file_handler_storage.write(key + str(data))
-        #     self.file_handler_storage.write('\n')
-
         self.file_handler_storage.close()
         self.file_handler_storage = None
 
@@ -179,9 +169,11 @@ class FileHandler(Code):
                 except ValueError:
                     logger.error(f"ValueError Loading {obj} ; {self.file_handler_filename}")
                 except SyntaxError:
+                    if isinstance(objects[1], str):
+                        return objects[1]
                     logger.warning(
                         Style.YELLOW(
-                            f"SyntaxError Loading {obj} ; {self.file_handler_filename}"
+                            f"Possible SyntaxError Loading {obj} ; {self.file_handler_filename}"
                             f" {len(objects[1])} {type(objects[1])}"
                         )
                     )

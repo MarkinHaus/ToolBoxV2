@@ -11,12 +11,17 @@ from dataclasses import dataclass
 import logging
 from enum import Enum
 
-from toolboxv2 import MainTool, FileHandler, App, Style
+from toolboxv2 import MainTool, FileHandler, App, Style, get_app
 
 import socket
 import threading
 import queue
 import asyncio
+
+version = "0.0.2"
+Name = "SocketManager"
+
+export = get_app("SocketManager.Export").tb
 
 
 @dataclass
@@ -24,6 +29,23 @@ class SocketType(Enum):
     server = "server"
     client = "client"
     peer = "peer"
+
+
+create_socket_samples = [{'name': 'test', 'host': '0.0.0.0', 'port': 62435,
+                          'type_id': SocketType.client,
+                          'max_connections': -1, 'endpoint_port': None,
+                          'return_full_object': False,
+                          'keepalive_interval': 1000},
+                         {'name': 'sever', 'host': '0.0.0.0', 'port': 62435,
+                          'type_id': SocketType.server,
+                          'max_connections': -1, 'endpoint_port': None,
+                          'return_full_object': False,
+                          'keepalive_interval': 1000},
+                         {'name': 'peer', 'host': '0.0.0.0', 'port': 62435,
+                          'type_id': SocketType.server,
+                          'max_connections': -1, 'endpoint_port': 62434,
+                          'return_full_object': False,
+                          'keepalive_interval': 1000},]
 
 
 class Tools(MainTool, FileHandler):
@@ -60,7 +82,9 @@ class Tools(MainTool, FileHandler):
         self.print("Version: ", self.version)
         return self.version
 
-    def create_socket(self, name, host='0.0.0.0', port=62435, type_id: SocketType = SocketType.client,
+    @export(mod_name="SocketManager", version=version, samples=create_socket_samples, test=False)
+    def create_socket(self, name: str = 'local-host', host: str = '0.0.0.0', port: int = 62435,
+                      type_id: SocketType = SocketType.client,
                       max_connections=-1, endpoint_port=None,
                       return_full_object=False, keepalive_interval=1000):
 
@@ -220,7 +244,7 @@ class Tools(MainTool, FileHandler):
             def keep_alive():
                 i = 0
                 while True:
-                    time.sleep(keepalive_interval/1000)
+                    time.sleep(keepalive_interval / 1000)
                     try:
                         send({'keep_alive': i}, (host, endpoint_port))
                     except Exception as e:
@@ -251,7 +275,9 @@ class Tools(MainTool, FileHandler):
 
         # sender queue
 
-    def run_as_ip_echo_server_a(self, name, host='0.0.0.0', port=62435, max_connections=-1):
+    @export(mod_name=Name, name="run_as_ip_echo_server_a", test=False)
+    def run_as_ip_echo_server_a(self, name: str = 'local-host', host: str = '0.0.0.0', port: int = 62435,
+                                max_connections: int = -1):
         send, receiver_queue = self.create_socket(name, host, port, SocketType.server, max_connections=max_connections)
 
         clients = {}
@@ -320,7 +346,8 @@ class Tools(MainTool, FileHandler):
 
             client_socket.sendall("exit".encode('utf-8'))
 
-    def run_as_single_communication_server(self, name, host='0.0.0.0', port=62435):
+    @export(mod_name=Name, name="run_as_single_communication_server", test=False)
+    def run_as_single_communication_server(self, name: str = 'local-host', host: str = '0.0.0.0', port: int = 62435):
         send, receiver_queue = self.create_socket(name, host, port, SocketType.server, max_connections=1)
         status_queue = queue.Queue()
         running = [True]  # Verwenden einer Liste, um den Wert referenzierbar zu machen
@@ -363,16 +390,14 @@ class Tools(MainTool, FileHandler):
             thread = threading.Thread(target=server_thread, args=(client, address))
             thread.start()
 
-        threading.Thread(target=helper)
+        threading.Thread(target=helper).start()
 
         def stop_server():
             running[0] = False
             status_queue.put("Server stopping")
 
         def get_status():
-            while running[0]:
-                while status_queue.not_empty:
-                    yield status_queue.get()
+            while status_queue.not_empty:
+                yield status_queue.get()
 
         return {"stop_server": stop_server, "get_status": get_status}
-

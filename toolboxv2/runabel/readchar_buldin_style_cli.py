@@ -150,13 +150,12 @@ def command_runner(app, command, args):
         print(f"{app.id = }\n{app.stuf_load = }\n{app.mlm = }\n"
               f"\n{app.debug = }")
         print(f"PREFIX={app.PREFIX}"
-              f"\nMACRO={app.pretty_print(app.MACRO[:7])}"
-              f"\nMODS={app.pretty_print(app.MACRO[7:])}"
-              f"\nSUPER_SET={app.pretty_print(app.SUPER_SET)}")
+              f"\nMACRO={A().pretty_print(app.MACRO[:7])}"
+              f"\nMODS={A().pretty_print(app.MACRO[7:])}"
+              f"\nSUPER_SET={A().pretty_print(app.SUPER_SET)}")
 
     elif command[0].lower() == "exit":  # builtin events(exit)
         if input("Do you want to exit? (y/n): ") in ["y", "yes", "Y"]:
-            app.save_exit()
             app.exit()
 
     elif command[0].lower() == "help":  # logs(event(helper))
@@ -226,7 +225,7 @@ def command_runner(app, command, args):
                 app.run_any(command[0], command[1], False, True, command[1:])
 
     else:  # error(->)
-        print(Style.YELLOW("[-] Unknown command:") + app.pretty_print(command))
+        print(Style.YELLOW("[-] Unknown command:") + A().pretty_print(command))
 
 
 def run(app: App, *args):

@@ -6,13 +6,14 @@ from prompt_toolkit.shortcuts import set_title, yes_no_dialog
 
 from toolboxv2.utils.Style import cls
 from toolboxv2 import App, Result, tbef
-from toolboxv2.utils import CallingObject
+from toolboxv2.utils.types import CallingObject
 
 NAME = 'minicli'
 
 
 def run(app: App, args):
     set_title(f"ToolBox : {app.version}")
+    threaded = False
 
     def bottom_toolbar():
         return HTML(f'Hotkeys shift:s control:c  <b><style bg="ansired">s+left</style></b> helper info '
@@ -27,31 +28,50 @@ def run(app: App, args):
             app.alive = not res
         else:
             app.alive = False
-        return Result.ok()
+        return Result.ok().set_origin("minicli::build-in")
 
     def set_load_mode(call_: CallingObject) -> Result:
+        # Define the mapping of modes to descriptions
+        mode_descriptions = {
+            'I': 'Inplace-loading',
+            'C': 'Copy-loading',
+            # 'S': 'Save Python file to Dill',
+            # 'CS': 'Copy and Save Python file',
+            # 'D': 'Development'
+        }
         if not call_.function_name:
-            return Result.default_user_error(info=f"slm (Set Load Mode) needs at least one argument I or C\napp is in"
-                                                  f" {'Inplace-loading' if app.mlm == 'I' else 'Coppy-loading'} mode")
+            def format_load_mode_info(current_mode):
+                # Check if the current mode is in the dictionary
+                mode_info = mode_descriptions.get(current_mode, 'Unknown mode')
+
+                # Format the information string
+                info = (f"slm (Set Load Mode) needs at least one argument {mode_descriptions.keys()}\n"
+                        f"app is in {mode_info} mode")
+                return info
+
+            return Result.default_user_error(info=format_load_mode_info(app.mlm)).set_origin("minicli::build-in")
         if call_.function_name.lower() == "i":
             app.mlm = 'I'
         elif call_.function_name.lower() == "c":
             app.mlm = 'C'
         else:
-            return Result.default_user_error(info=f"{call_.function_name} != I or C")
-        return Result.ok(info=f"New Load Mode {app.mlm}")
+            return (
+                Result.default_user_error(info=f"{call_.function_name} != I or C {mode_descriptions}")
+                .set_origin("minicli::build-in"))
+        return Result.ok(info=f"New Load Mode {app.mlm}").set_origin("minicli::build-in")
 
     def set_debug_mode(call_: CallingObject) -> Result:
         if not call_.function_name:
-            return Result.default_user_error(info=f"sdm (Set Debug Mode) needs at least one argument on or off\napp is"
-                                                  f" {'' if app.debug else 'NOT'} in debug mode")
+            return (Result.default_user_error(info=f"sdm (Set Debug Mode) needs at least one argument on or off\napp is"
+                                                   f" {'' if app.debug else 'NOT'} in debug mode")
+                    .set_origin("minicli::build-in"))
         if call_.function_name.lower() == "on":
             app.debug = True
         elif call_.function_name.lower() == "off":
             app.debug = False
         else:
-            return Result.default_user_error(info=f"{call_.function_name} != on or off")
-        return Result.ok(info=f"New Load Mode {app.mlm}")
+            return Result.default_user_error(info=f"{call_.function_name} != on or off").set_origin("minicli::build-in")
+        return Result.ok(info=f"New Load Mode {app.mlm}").set_origin("minicli::build-in")
 
     def hr(call_: CallingObject) -> Result:
         if not call_.function_name:
@@ -60,45 +80,47 @@ def run(app: App, args):
         if call_.function_name.lower() in app.functions:
             app.remove_mod(call_.function_name.lower())
             if not app.save_load(call_.function_name.lower()):
-                return Result.default_internal_error()
-        return Result.ok()
+                return Result.default_internal_error().set_origin("minicli::build-in")
+        return Result.ok().set_origin("minicli::build-in")
 
     def open_(call_: CallingObject) -> Result:
         if not call_.function_name:
             app.load_all_mods_in_file()
-            return Result.default_user_error(info="No module specified")
+            return Result.default_user_error(info="No module specified").set_origin("minicli::build-in")
         if not app.save_load(call_.function_name.lower()):
-            return Result.default_internal_error()
-        return Result.ok()
+            return Result.default_internal_error().set_origin("minicli::build-in")
+        return Result.ok().set_origin("minicli::build-in")
 
     def close_(call_: CallingObject) -> Result:
         if not call_.function_name:
             app.remove_all_modules()
-            return Result.default_user_error(info="No module specified")
+            return Result.default_user_error(info="No module specified").set_origin("minicli::build-in")
         if not app.remove_mod(call_.function_name.lower()):
-            return Result.default_internal_error()
-        return Result.ok()
+            return Result.default_internal_error().set_origin("minicli::build-in")
+        return Result.ok().set_origin("minicli::build-in")
 
     def run_(call_: CallingObject) -> Result:
         if not call_.function_name:
-            return Result.default_user_error(info=f"Avalabel are : {list(app.runnable.keys())}")
+            return (Result.default_user_error(info=f"Avalabel are : {list(app.runnable.keys())}")
+                    .set_origin("minicli::build-in"))
         if call_.function_name in app.runnable:
             app.run_runnable(call_.function_name)
-            return Result.ok()
-        return Result.default_user_error("404")
+            return Result.ok().set_origin("minicli::build-in")
+        return Result.default_user_error("404").set_origin("minicli::build-in")
 
     helper_exequtor = [None]
 
     def remote(call_: CallingObject) -> Result:
         if not call_.function_name:
-            return Result.default_user_error(info="add keyword local or port and host")
+            return Result.default_user_error(info="add keyword local or port and host").set_origin("minicli::build-in")
         if call_.function_name != "local":
             app.args_sto.host = call_.function_name
         if call_.kwargs:
             print("Adding", call_.kwargs)
         status, sender, receiver_que = app.run_runnable("demon", as_server=False, programmabel_interface=True)
         if status == -1:
-            return Result.default_internal_error(info="Failed to connect, No service available")
+            return (Result.default_internal_error(info="Failed to connect, No service available")
+                    .set_origin("minicli::build-in"))
 
         def remote_exex_helper(calling_obj: CallingObject):
 
@@ -117,9 +139,20 @@ def run(app: App, args):
 
         helper_exequtor[0] = remote_exex_helper
 
+        return Result.ok().set_origin("minicli::build-in")
+
+    def cls_(_):
+        cls()
+        return Result.ok(info="cls").set_origin("minicli::build-in")
+
+    def toggle_threaded(_):
+        global threaded
+        threaded = not threaded
+        return Result.ok(info=f"in threaded mode {threaded}").set_origin("minicli::build-in")
+
     bic = {
         "exit": exit_,
-        "cls": lambda x: cls(),
+        "cls": cls_,
         "slm:set_load_mode": set_load_mode,
         "sdm:set_debug_mode": set_debug_mode,
         "open": open_,
@@ -127,6 +160,7 @@ def run(app: App, args):
         "run": run_,
         "reload": hr,
         "remote": remote,
+        "toggle_threaded": toggle_threaded,
         "..": lambda x: Result.ok(x),
     }
 
@@ -136,6 +170,7 @@ def run(app: App, args):
     autocompletion_dict = {}
     autocompletion_dict = app.run_any(tbef.CLI_FUNCTIONS.UPDATE_AUTOCOMPLETION_LIST_OR_KEY, list_or_key=bic,
                                       autocompletion_dict=autocompletion_dict)
+
     autocompletion_dict["slm:set_load_mode"] = {arg: None for arg in ['i', 'c']}
     autocompletion_dict["sdm:set_debug_mode"] = {arg: None for arg in ['on', 'off']}
     autocompletion_dict["open"] = autocompletion_dict["close"] = autocompletion_dict["reload"] = \
@@ -147,6 +182,7 @@ def run(app: App, args):
     active_modular = ""
 
     running_instance = None
+    call = CallingObject.empty()
 
     while app.alive:
         # Get CPU usage
@@ -169,6 +205,9 @@ def run(app: App, args):
 
         print("", end="" + "start ->>\r")
 
+        if call is None:
+            continue
+
         if call.module_name == "open":
             autocompletion_dict = app.run_any(tbef.CLI_FUNCTIONS.UPDATE_AUTOCOMPLETION_MODS,
                                               autocompletion_dict=autocompletion_dict)
@@ -176,7 +215,7 @@ def run(app: App, args):
         running_instance = app.run_any(tbef.CLI_FUNCTIONS.CO_EVALUATE,
                                        obj=call,
                                        build_in_commands=bic,
-                                       threaded=True,
+                                       threaded=threaded,
                                        helper=helper_exequtor[0])
 
         print("", end="" + "done ->>\r")
@@ -187,78 +226,4 @@ def run(app: App, args):
         print("Done")
 
     set_title("")
-
-    # example_style = StylePt.from_dict({
-    #    'dialog': 'bg:#88ff88',
-    #    'dialog frame.label': 'bg:#ffffff #000000',
-    #    'dialog.body': 'bg:#000000 #00ff00',
-    #    'dialog shadow': 'bg:#00aa00',
-    # })
-    #
-    # result = radiolist_dialog(
-    #    title="RadioList dialog",
-    #    text="Which breakfast would you like ?",
-    #    values=[
-    #        ("breakfast1", "Eggs and beacon"),
-    #        ("breakfast2", "French breakfast"),
-    #        ("breakfast3", "Equestrian breakfast")
-    #    ]
-    # ).run()
-    #
-    # message_dialog(
-    #    title=HTML('<style bg="blue" fg="white">Styled</style> '
-    #               '<style fg="ansired">dialog</style> window'),
-    #    text='Do you want to continue?\nPress ENTER to quit.',
-    #    style=example_style).run()
-    #
-    # results = checkboxlist_dialog(
-    #    title="CheckboxList dialog",
-    #    text="What would you like in your breakfast ?",
-    #    values=[
-    #        ("eggs", "Eggs"),
-    #        ("bacon", "Bacon"),
-    #        ("croissants", "20 Croissants"),
-    #        ("daily", "The breakfast of the day")
-    #    ],
-    #    style=StylePt.from_dict({
-    #        'dialog': 'bg:#cdbbb3',
-    #        'button': 'bg:#bf99a4',
-    #        'checkbox': '#e8612c',
-    #        'dialog.body': 'bg:#a9cfd0',
-    #        'dialog shadow': 'bg:#c98982',
-    #        'frame.label': '#fcaca3',
-    #        'dialog.body label': '#fd8bb6',
-    #    })
-    # ).run()
-    #
-    # message_dialog(
-    #    title='running dialog window',
-    #    text='Do you want to continue?\nPress ENTER to quit.').run()
-
-    # from prompt_toolkit import Application
-    # from prompt_toolkit.buffer import Buffer
-    # from prompt_toolkit.layout.containers import VSplit, Window
-    # from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
-    # from prompt_toolkit.layout.layout import Layout
-
-    # buffer1 = Buffer()  # Editable buffer.
-    #
-    # root_container = VSplit([
-    #     # One window that holds the BufferControl with the default buffer on
-    #     # the left.
-    #     Window(content=BufferControl(buffer=buffer1)),
-    #
-    #     # A vertical line in the middle. We explicitly specify the width, to
-    #     # make sure that the layout engine will not try to divide the whole
-    #     # width by three for all these windows. The window will simply fill its
-    #     # content by repeating this character.
-    #     Window(width=1, char='|'),
-    #
-    #     # Display the text 'Hello world' on the right.
-    #     Window(content=FormattedTextControl(text='Hello world')),
-    # ])
-    #
-    # layout = Layout(root_container)
-    #
-    # app = Application(layout=layout, full_screen=True, key_bindings=bindings)
-    # app.run()  # You won't be able to Exit this app
+    app.exit()

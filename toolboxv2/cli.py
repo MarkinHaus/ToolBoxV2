@@ -195,6 +195,10 @@ def parse_args():
                         help="load all modules in mod file",
                         action="store_true")
 
+    parser.add_argument("-sfe", "--save-function-enums-in-file",
+                        help="run with -l to gather to generate all_function_enums.py files",
+                        action="store_true")
+
     # parser.add_argument("--mods-folder",
     #                     help="specify loading package folder",
     #                     type=str,
@@ -318,13 +322,10 @@ def main():
 
     if args.lm:
         edit_logs()
-        tb_app.save_exit()
         tb_app.exit()
         exit(0)
 
     if args.sm:
-        print("1. App")
-        setup = input("Set up for :")
         if tb_app.system_flag == "Linux":
             setup_service_linux()
         if tb_app.system_flag == "Windows":
@@ -332,6 +333,8 @@ def main():
 
     if args.load_all_mod_in_files:
         tb_app.load_all_mods_in_file()
+        if args.save_function_enums_in_file:
+            tb_app.save_registry_as_enums("utils", "all_functions_enums.py")
         if args.debug:
             tb_app.print_functions()
         if args.get_version:
@@ -382,7 +385,6 @@ def main():
             #     tb_app.run_any()
 
     if tb_app.alive:
-        tb_app.save_exit()
         tb_app.exit()
 
     if os.path.exists(pid_file):

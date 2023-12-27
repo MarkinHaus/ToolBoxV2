@@ -24,12 +24,12 @@ import jwt
 import requests
 from toolboxv2 import MainTool, FileHandler, App, Style, ToolBox_over
 from toolboxv2.api.util import PostRequest
-from toolboxv2.utils import Result, ToolBoxError, ToolBoxInfo, ToolBoxResult, ToolBoxInterfaces
+from toolboxv2.utils.types import Result, ToolBoxError, ToolBoxInfo, ToolBoxResult, ToolBoxInterfaces
 from toolboxv2.utils.Style import extract_json_strings
 from toolboxv2.utils.state_system import get_state_from_app, TbState
 from toolboxv2.utils.toolbox import get_app
 
-from toolboxv2.mods import Restrictor, VirtualizationTool, welcome
+# from toolboxv2.mods import Restrictor, VirtualizationTool, welcome
 
 
 class CrateUserPostRequest(BaseModel):
@@ -421,7 +421,7 @@ class Tools(MainTool, FileHandler):
             return self.rt
 
         if not self.app.mod_online("Restrictor"):
-            self.rt = self.app.inplace_load("Restrictor")
+            self.rt = self.app.inplace_load_instance("Restrictor")
             return self.rt
         self.app.new_ac_mod("Restrictor")
         self.rt = self.app.AC_MOD
@@ -434,7 +434,7 @@ class Tools(MainTool, FileHandler):
             return self.vt
 
         if not self.app.mod_online("VirtualizationTool"):
-            self.vt = self.app.inplace_load("VirtualizationTool")
+            self.vt = self.app.inplace_load_instance("VirtualizationTool")
             return self.vt
         self.app.new_ac_mod("VirtualizationTool")
         self.vt = self.app.AC_MOD
@@ -449,8 +449,8 @@ class Tools(MainTool, FileHandler):
         # 'SiID': 0000,
         # }
 
-        vt: VirtualizationTool.Tools = self.get_virtualization()
-        rt: Restrictor.Tools = self.get_restrictor()
+        vt = self.get_virtualization()
+        rt = self.get_restrictor()
 
         chak = instance['live'].keys()
         level = instance['save']['level']
@@ -475,9 +475,9 @@ class Tools(MainTool, FileHandler):
 
                 if mod is None:
                     self.print(f"Creating Error Module {mod_name} not found")
-                    mod = welcome.Tools(
-                    )  # switch with an 404 mod and an worning message
-
+                    #mod = welcome.Tools(
+                    #           )  # switch with an 404 mod and an worning message
+                    return
             self.print(f"Received v instance : {mod.name}")
             tool_data = mod.tools["all"]
 

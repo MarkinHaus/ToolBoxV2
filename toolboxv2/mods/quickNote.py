@@ -136,21 +136,6 @@ class Tools(MainTool, FileHandler):  # FileHandler
         else:
             print(f"No token found in modules.config")
 
-    def get_uid(self, command, app: App):
-
-        if "cloudm" not in list(app.MOD_LIST.keys()):
-            return f"Server has no cloudM module", True
-
-        if "db" not in list(app.MOD_LIST.keys()):
-            return "Server has no database module", True
-
-        res = app.run_any('cloudm', "validate_jwt", command)
-
-        if type(res) is str:
-            return res, True
-
-        return res["uid"], False
-
     def save_inbox_api(self, command, app: App):
 
         data = command[0].data

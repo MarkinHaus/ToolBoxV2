@@ -13,7 +13,8 @@ from websockets.sync.client import connect
 import json
 
 from toolboxv2 import MainTool, FileHandler, Style
-from toolboxv2.utils.toolbox import get_app, ApiOb
+from toolboxv2 import Result, get_app
+from toolboxv2.utils.types import ApiOb
 from fastapi import WebSocket, HTTPException
 
 
@@ -66,6 +67,7 @@ class Tools(MainTool, FileHandler):
         self.validated_instances = {
 
         }
+        self.server_actions = {}
         self.vtID = None
         FileHandler.__init__(self, "WebSocketManager.config", app.id if app else __name__, keys=self.keys, defaults={})
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
@@ -250,6 +252,16 @@ class Tools(MainTool, FileHandler):
                     self.print(f"{Style.YELLOW('Error')} Connection in {websocket_id} lost to {connection}")
                     self.active_connections[websocket_id_sto].remove(connection)
 
+    def add_server_action(self, action_name, function=None):
+
+        if function is None:
+            function = lambda x: str(x)
+
+        if action_name in self.server_actions.keys():
+            return f"Server Action {action_name} already exists"
+
+        self.server_actions[action_name] = function
+
     async def manage_data_flow(self, websocket, websocket_id, data):
         self.logger.info(f"Managing data flow: data {data}")
         websocket_id_sto = await valid_id(websocket_id, self.app_id)
@@ -292,7 +304,7 @@ class Tools(MainTool, FileHandler):
                                                               from_file=True)
 
                     await websocket.send_text(systemMSG_content)
-                if action == "getTextWidget":  # WigetNav
+                elif action == "getTextWidget":  # WigetNav
                     # Sendeng system MSG message
                     widgetText_content = self.construct_render(content="./app/1/textWidet/text.html",
                                                                element_id="widgetText",
@@ -300,14 +312,14 @@ class Tools(MainTool, FileHandler):
                                                                from_file=True)
 
                     await websocket.send_text(widgetText_content)
-                if action == "getPathWidget":
+                elif action == "getPathWidget":
                     widgetPath_content = self.construct_render(content="./app/1/PathWidet/text.html",
                                                                element_id="widgetPath",
                                                                externals=["/app/1/PathWidet/pathWiget.js"],
                                                                from_file=True)
 
                     await websocket.send_text(widgetPath_content)
-                if action == "getWidgetNave":
+                elif action == "getWidgetNave":
                     # Sendeng system MSG message
                     widgetText_content = self.construct_render(content="./app/1/WigetNav/navDrow.html",
                                                                element_id="controls",
@@ -315,24 +327,24 @@ class Tools(MainTool, FileHandler):
                                                                from_file=True)
 
                     await websocket.send_text(widgetText_content)
-                if action == "getDrag":
+                elif action == "getDrag":
                     drag_content = self.construct_render(content="./app/Drag/drag.html",
                                                          element_id="DragControls",
                                                          externals=["/app/Drag/drag.js"],
                                                          from_file=True)
                     await websocket.send_text(drag_content)
-                if action == "getControls":
+                elif action == "getControls":
                     controller_content = self.construct_render(content="",
                                                                element_id="editorWidget",
                                                                externals=["/app/1/Controler/controller.js"])
 
                     await websocket.send_text(controller_content)
-                if action == "serviceWorker":
+                elif action == "serviceWorker":
                     sw_content = self.construct_render(content="",
                                                        element_id="control1",
                                                        externals=["/app/index.js", "/app/sw.js"])
                     await websocket.send_text(sw_content)
-                if action == "logOut":
+                elif action == "logOut":
                     user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
                     if user_instance is None or not user_instance:
                         return '{"res": "No User Instance Found"}'
@@ -361,16 +373,16 @@ class Tools(MainTool, FileHandler):
                                                          externals=["/app/scripts/go_home.js"])
 
                     await websocket.send_text(home_content)
-                if action == "getModListAll":
+                elif action == "getModListAll":
                     return json.dumps({'modlistA': self.app_.get_all_mods()})
-                if action == "getModListInstalled":
+                elif action == "getModListInstalled":
                     user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
                     if user_instance is None or not user_instance:
                         self.logger.info("No valid user instance")
                         return '{"res": "No Mods Installed"}'
 
                     return json.dumps({'modlistI': user_instance['save']['mods']})
-                if action == "getModData":
+                elif action == "getModData":
                     mod_name = data["mod-name"]
                     try:
                         mod = self.app_.get_mod(mod_name)
@@ -381,7 +393,7 @@ class Tools(MainTool, FileHandler):
                         </p>
                         """, element_id="infoText")
                         return content
-                if action == "installMod":
+                elif action == "installMod":
                     user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
                     if user_instance is None or not user_instance:
                         self.logger.info("No valid user instance")
@@ -399,13 +411,13 @@ class Tools(MainTool, FileHandler):
                     self.app_.new_ac_mod("cloudM")
                     self.app_.AC_MOD.save_user_instances(user_instance)
                     await websocket.send_text(installer_content)
-                if action == "addConfig":
+                elif action == "addConfig":
                     user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
                     if data["name"] in user_instance['live'].keys():
                         user_instance['live'][data["name"]].add_str_to_config([data["key"], data["value"]])
                     else:
                         await websocket.send_text('{"res": "Mod nod installed or available"}')
-                if action == "runMod":
+                elif action == "runMod":
                     user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
 
                     self.print(f"{user_instance}, {data}")
@@ -460,7 +472,18 @@ class Tools(MainTool, FileHandler):
                     if not isinstance(res, dict):
                         res = {"res": res, data['name']: True}
                     await websocket.send_text(json.dumps(res))
+                else:
+                    function_action = self.server_actions.get(action)
 
+                    if function_action is None:
+                        return json.dumps(Result.default_internal_error(f"ServerAction {action} is not available"))
+
+                    res = function_action(data)
+
+                    if not isinstance(res, str):
+                        res = str(res)
+
+                    return res
             if "ValidateSelf" in keys:
                 user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
                 if user_instance is None or not user_instance:

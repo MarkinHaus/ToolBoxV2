@@ -93,10 +93,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         self.print(self.api_config[command[1]])
 
-    def start_api(self, command, app: App):
-        if len(command) == 1:
-            command.append('-main-')
-        api_name = command[1]
+    def start_api(self,app: App, api_name: str):
 
         if api_name not in self.api_config.keys():
             host = "127.0.0.1"

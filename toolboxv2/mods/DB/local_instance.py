@@ -1,0 +1,72 @@
+from toolboxv2 import Result
+from .types import AuthenticationTypes
+
+
+class MiniDictDB:
+
+    auth_type = AuthenticationTypes.none
+
+    def __init__(self):
+        self.data = {}
+
+    def scan_iter(self, serch=''):
+        print(self.data)
+        if not self.data:
+            return []
+        return [key for key in self.data.keys() if key.startswith(serch.replace('*', ''))]
+
+    def get(self, key: str) -> Result:
+        data = []
+        data_info = ""
+
+        if key == 'all':
+            data_info = "Returning all data available "
+            for key_ in self.data.items():
+                data.append(key_)
+
+        elif key == "all-k":
+            data_info = "Returning all keys "
+            data = list(self.data.keys())
+        else:
+            data_info = "Returning subset of keys "
+            for key_ in self.scan_iter(key):
+                val = self.data.get(key_)
+                data.append(val)
+
+        if not data:
+            return Result.default_internal_error(info=f"No data found for key {key}")
+
+        return Result.ok(data=data, data_info=data_info + key)
+
+    def set(self, key, value):
+        if key and value:
+            self.data[key] = value
+            return Result.ok()
+        return Result.default_user_error(info=f"key is {key}, type{type(key)}, value is {value}, type{type(value)}")
+
+    def append_on_set(self, key, value):
+        if key in self.data:
+            self.data[key].append(value)
+            return Result.ok()
+        return Result.default_user_error(info=f"key not found {key}")
+
+    def delete(self, key, matching=False) -> Result:
+
+        del_list = []
+        n = 0
+
+        if matching:
+            for key_ in self.scan_iter():
+                # Check if the key contains the substring
+                if key_ in str(key, 'utf-8'):
+                    n += 1
+                    # Delete the key if it contains the substring
+                    v = self.data.pop(key)
+                    del_list.append((key_, v))
+        else:
+            v = self.data.pop(key)
+            del_list.append((key, v))
+            n += 1
+
+        return Result.ok(data=del_list, data_info=f"Data deleted successfully removed {n} items")
+

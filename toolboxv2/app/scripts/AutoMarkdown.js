@@ -36,7 +36,6 @@ function observeMarkdownElements(observer) {
 }
 
 export function setupMutationObserver() {
-    initMDBtn.remove()
     const observerOptions = {
         root: null,
         rootMargin: '0px',
@@ -70,7 +69,17 @@ export function setupMutationObserver() {
 document.addEventListener('DOMContentLoaded', ()=>{
     const initMDBtn = document.getElementById('initMDBtn');
     if (initMDBtn){
-        initMDBtn.addEventListener('click', setupMutationObserver);
+        initMDBtn.addEventListener('click', ()=> {
+            setupMutationObserver();
+            initMDBtn.remove()
+        });
+    }else {
+        const initMDBtn = undefined;
+        console.log("Starting AutoMarkdown")
+        setTimeout(()=>{
+            setupMutationObserver()
+            console.log("AutoMarkdown: [started]")
+        }, 4500)
     }
 })
 

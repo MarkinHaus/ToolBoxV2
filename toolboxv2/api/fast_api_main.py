@@ -117,7 +117,6 @@ if __name__ == 'toolboxv2.api.fast_api_main':
         @app.get("/HotReload")
         async def exit_code():
             if tb_app.debug:
-                tb_app.reset()
                 tb_app.remove_all_modules()
                 tb_app.load_all_mods_in_file()
                 return "OK"
@@ -142,12 +141,11 @@ if __name__ == 'toolboxv2.api.fast_api_main':
     tb_img()
 
     tb_app.save_load("WebSocketManager")
-    tb_app.new_ac_mod("WebSocketManager")
+    manager = tb_app.get_mod("WebSocketManager")
 
     tb_app.load_all_mods_in_file()
 
-    manager = tb_app.AC_MOD
-    from .fast_app import router as app_router, serve_app_func
+    from .fast_app import router as app_router
     from .fast_api import router as api_router
 
     if "modInstaller" in tb_app.id:
