@@ -1,19 +1,34 @@
+import json
+import os
+
 from toolboxv2 import Result
 from .types import AuthenticationTypes
+from ...utils.cryp import Code
 
 
 class MiniDictDB:
-
-    auth_type = AuthenticationTypes.none
+    auth_type = AuthenticationTypes.location
 
     def __init__(self):
         self.data = {}
+        self.key = ""
+        self.location = ""
 
     def scan_iter(self, serch=''):
-        print(self.data)
+        # print(self.data)
         if not self.data:
             return []
         return [key for key in self.data.keys() if key.startswith(serch.replace('*', ''))]
+
+    def initialize(self, location, key):
+        try:
+            self.data = eval(Code.decrypt_symmetric(load_from_json(location + 'MiniDictDB.json').get('data'), key))
+        except Exception:
+            print('Could not initialize MiniDictDB with data')
+            self.data = {}
+        self.key = key
+        self.location = location
+        return Result.ok()
 
     def get(self, key: str) -> Result:
         data = []
@@ -70,3 +85,35 @@ class MiniDictDB:
 
         return Result.ok(data=del_list, data_info=f"Data deleted successfully removed {n} items")
 
+    def exit(self) -> Result:
+        if self.key == "":
+            return Result.default_internal_error(info="No cryptographic key available")
+        if self.location == "":
+            return Result.default_internal_error(info="No file location available")
+        save_to_json({"data": Code().encode_code(str(self.data), self.key)}, self.location)
+        return Result.ok()
+
+
+def save_to_json(data, filename):
+    """
+    Speichert die übergebenen Daten in einer JSON-Datei.
+
+    :param data: Die zu speichernden Daten.
+    :param filename: Der Dateiname oder Pfad, in dem die Daten gespeichert werden sollen.
+    """
+    with open(filename, 'w') as file:
+        json.dump(data, file, indent=4)
+
+
+def load_from_json(filename):
+    """
+    Lädt Daten aus einer JSON-Datei.
+
+    :param filename: Der Dateiname oder Pfad der zu ladenden Datei.
+    :return: Die geladenen Daten.
+    """
+    if not os.path.exists(filename):
+        return {'data': ''}
+
+    with open(filename, 'r') as file:
+        return json.load(file)

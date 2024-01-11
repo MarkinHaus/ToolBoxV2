@@ -25,8 +25,8 @@ class Tools(MainTool):
             "name": "welcome",
             "Animation": self.ali1,
             "Animation1": self.ali2,
-            "Version": self.show_version,
-            "api_Version": self.show_version,
+            "Version": lambda: self.version,
+            "api_Version": lambda: self.version,
             "printT": self.print_t,
             "webInstall": self.webInstall_app_wrapper
         }
@@ -79,11 +79,6 @@ class Tools(MainTool):
             os.system("cls")
         else:
             os.system("clear")
-
-    @export("Version", api=True)
-    def show_version(self):
-        self.print(f"Version: {self.name}::{self.version}")
-        return self.version
 
     @export(name="Animation1", test=False)
     def ali2(self):

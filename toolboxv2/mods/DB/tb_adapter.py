@@ -11,20 +11,59 @@ from ...utils.cryp import Code
 
 Name = "DB"
 
+"""Alle Daten Banken sind mit dem selben device schlüssel verschlüsselt TODO ändern"""
+
+
+def pre_function(*args, **kwargs) -> (list, dict):
+
+    # Verarbeitung der args mit der encode_code-Methode
+    encoded_args = map(lambda x: str(x) if type(x).__name__ in ['str', 'int', 'dict', 'list', 'tupel'] else x, args)
+
+    # Verarbeitung der kwargs mit der encode_code-Methode
+    encoded_kwargs = {k: str(v) if k == 'data' else v for k, v in kwargs.items()}
+
+    return list(encoded_args), encoded_kwargs
+
+
+def post_function(result: Result) -> Result:
+    if result.get() is None:
+        return result
+    if result.is_error():
+        return result
+    return result
+
+# decoded_data = []
+# if isinstance(result.get(), list):
+#     for data in result.get():
+#         decoded_data.append(Code().decode_code(data))
+#
+# else:
+#     decoded_data = Code().decode_code(result.get())
+#
+# print("Decoded data", decoded_data)
+
+# if decoded_data == "Error decoding":
+#     return result.lazy_return('intern', result, info=f"post fuction decoding error")
+
+# return result.ok(data=decoded_data, data_info=result.result.data_info, info=result.info.help_text, interface=result.result.data_to)
+
 
 class DB(ABC):
 
     def get(self, query: str) -> Result:
         """get data"""
 
-    def set(self, query:str, value) -> Result:
+    def set(self, query: str, value) -> Result:
         """set data"""
 
-    def append_on_set(self, query:str, value) -> Result:
+    def append_on_set(self, query: str, value) -> Result:
         """append set data"""
 
-    def delete(self, query:str, matching=False) -> Result:
+    def delete(self, query: str, matching=False) -> Result:
         """delete data"""
+
+    def exit(self) -> Result:
+        """Close DB connection and optional save data"""
 
 
 class Tools(MainTool, FileHandler):
@@ -41,7 +80,7 @@ class Tools(MainTool, FileHandler):
         self.encoding = 'utf-8'
 
         self.data_base: MiniRedis or MiniDictDB or DB or None = None
-        self.mode = DatabaseModes.LC
+        self.mode = DatabaseModes.RR
         self.url = None
         self.passkey = None
         self.user_name = None
@@ -56,7 +95,7 @@ class Tools(MainTool, FileHandler):
     @export(
         mod_name=Name,
         name="Version",
-        version=version
+        version=version,
     )
     def get_version(self):
         return self.version
@@ -65,14 +104,13 @@ class Tools(MainTool, FileHandler):
         mod_name=Name,
         helper="Get data from an Database instance",
         version=version,
-        interface=ToolBoxInterfaces.internal
+        interface=ToolBoxInterfaces.internal,
+        post_compute=post_function,
     )
     def get(self, query: str) -> Result:
 
         if self.data_base is None:
             return Result.default_internal_error(info="No database connection")
-
-        query = self.crytography(query)
 
         if self.mode.value == "LOCAL_DICT" or self.mode.value == "LOCAL_REDDIS" or self.mode.value == "REMOTE_REDDIS":
             return self.data_base.get(query)
@@ -86,14 +124,12 @@ class Tools(MainTool, FileHandler):
         mod_name=Name,
         helper="Set data to an Database instance",
         version=version,
-        interface=ToolBoxInterfaces.internal
+        interface=ToolBoxInterfaces.internal,
+        pre_compute=pre_function,
     )
     def set(self, query: str, data: Any) -> Result:
         if self.data_base is None:
             return Result.default_internal_error(info="No database connection")
-
-        query = self.crytography(query)
-        data = self.crytography(data)
 
         if self.mode.value == "LOCAL_DICT" or self.mode.value == "LOCAL_REDDIS" or self.mode.value == "REMOTE_REDDIS":
             return self.data_base.set(query, data)
@@ -107,13 +143,11 @@ class Tools(MainTool, FileHandler):
         mod_name=Name,
         helper="Delete data from an Database instance",
         version=version,
-        interface=ToolBoxInterfaces.internal
+        interface=ToolBoxInterfaces.internal,
     )
     def delete(self, query: str, matching=False) -> Result:
         if self.data_base is None:
             return Result.default_internal_error(info="No database connection")
-
-        query = self.crytography(query)
 
         if self.mode.value == "LOCAL_DICT" or self.mode.value == "LOCAL_REDDIS" or self.mode.value == "REMOTE_REDDIS":
             try:
@@ -130,14 +164,13 @@ class Tools(MainTool, FileHandler):
         mod_name=Name,
         helper="append data to an Database instance subset",
         version=version,
-        interface=ToolBoxInterfaces.internal
+        interface=ToolBoxInterfaces.internal,
+        pre_compute=pre_function,
+        post_compute=post_function,
     )
     def append_on_set(self, query: str, data: Any) -> Result:
         if self.data_base is None:
             return Result.default_internal_error(info="No database connection")
-
-        query = self.crytography(query)
-        data = self.crytography(data)
 
         if self.mode.value == "LOCAL_DICT" or self.mode.value == "LOCAL_REDDIS" or self.mode.value == "REMOTE_REDDIS":
             return self.data_base.append_on_set(query, data)
@@ -161,7 +194,8 @@ class Tools(MainTool, FileHandler):
         else:
             return Result.default_internal_error(info="Not implemented")
 
-        self._autoresize()
+        if self._autoresize().log(prifix="initialize_database: ").is_error():
+            raise RuntimeError("DB Autoresize Error")
 
         self.logger.info(f"Running DB in mode : {self.mode.value}")
 
@@ -173,49 +207,78 @@ class Tools(MainTool, FileHandler):
         auth = self.data_base.auth_type
         evaluation = "An unknown authentication error occurred"
 
-        if auth.value == AuthenticationTypes.Uri.name:
+        if auth.value == AuthenticationTypes.Uri.value:
             url = self.url
             if self.url is None:
                 url = os.getenv("DB_CONNECTION_URI")
+
+            if url is None:
+                raise ValueError("Could not find DB connection URI in environment variable DB_CONNECTION_URI")
+
             evaluation = self.data_base.initialize(url)
 
-        if auth.value == AuthenticationTypes.PassKey.name:
+        if auth.value == AuthenticationTypes.PassKey.value:
             passkey = self.passkey
             if self.passkey is None:
                 passkey = os.getenv("DB_PASSKEY")
+
+            if passkey is None:
+                raise ValueError("Could not find DB connection passkey in environment variable DB_PASSKEY")
+
             evaluation = self.data_base.initialize(passkey)
 
-        if auth.value == AuthenticationTypes.UserNamePassword.name:
+        if auth.value == AuthenticationTypes.UserNamePassword.value:
             user_name = self.user_name
             if self.user_name is None:
                 user_name = os.getenv("DB_USERNAME")
+
+            if user_name is None:
+                raise ValueError("Could not find DB connection user_name in environment variable DB_USERNAME")
+
             evaluation = self.data_base.initialize(user_name, input(":Password:"))
+
+        if auth.value == AuthenticationTypes.location.value:
+            local_key = self.app.config_fh.get_file_handler("LocalDbKey")
+            if local_key is None:
+                local_key = Code.generate_symmetric_key()
+                self.app.config_fh.add_to_save_file_handler("LocalDbKey", local_key)
+
+            if local_key is None:
+                raise ValueError("Could not find DB connection local_key in environment variable LocalDbKey")
+
+            evaluation = self.data_base.initialize(self.app.data_dir + 'MiniDB.json', local_key)
 
         if isinstance(evaluation, bool) and evaluation:
             return Result.ok()
         return Result.default_internal_error(info=evaluation)
 
-    @staticmethod
-    def crytography(data) -> str:
-        # Code().encode_code(data)
-        return data
+    @export(mod_name=Name, exit_f=True, helper="close database")
+    def close_db(self) -> Result:
+        if self.data_base is None:
+            return Result.default_user_error(info="Database is not configured therefor cand be closed")
+
+        return self.data_base.exit()
 
     @export(mod_name=Name, interface=ToolBoxInterfaces.native)
-    def edit_programmable(self):
-        pass
+    def edit_programmable(self, mode: DatabaseModes):
+        if mode.value not in ["LC", "RC", "LR", "RR"]:
+            return Result.default_user_error(info=f"Mode not supported")
+        self.mode = mode
+        self.close_db()
+        self.initialize_database()
 
     @export(mod_name=Name, interface=ToolBoxInterfaces.cli)
-    def edit_cli(self):
-        pass
+    def edit_cli(self, mode):
+        if mode not in ["LC", "RC", "LR", "RR"]:
+            return Result.default_user_error(info=f"Mode not supported")
+        self.mode = mode
+        self.close_db()
+        self.initialize_database()
 
-    @export(mod_name=Name, interface=ToolBoxInterfaces.remote)
-    def edit_dev_web_ui(self):
-        pass
-
-    # TODO: init db default local save and load
-
-    # TODO: switch to reddis or other data base
-
-    # TODO: save sensitive data to database {passkey,username,password,url}
-
-    # TODO: enable crytography for data base
+    @export(mod_name=Name, interface=ToolBoxInterfaces.remote, api=True, helper="Avalabel modes: LC RC LR RR")
+    def edit_dev_web_ui(self, mode):
+        if mode not in ["LC", "RC", "LR", "RR"]:
+            return Result.default_user_error(info=f"Mode not supported")
+        self.mode = mode
+        self.close_db()
+        self.initialize_database()

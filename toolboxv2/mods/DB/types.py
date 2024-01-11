@@ -15,4 +15,5 @@ class AuthenticationTypes(Enum):
     UserNamePassword = "password"
     Uri = "url"
     PassKey = "passkey"
+    location = "location"
     none = "none"

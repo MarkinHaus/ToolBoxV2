@@ -1,3 +1,6 @@
+import time
+from typing import Optional
+
 import redis
 
 from toolboxv2 import Result, get_logger
@@ -10,11 +13,11 @@ class MiniRedis:
 
     def __init__(self):
         self.encoding = 'utf-8'
-        self.rcon = None
+        self.rcon: Optional[redis.Redis] = None
 
     def initialize(self, uri: str):
         try:
-            self.rcon = redis.from_url(uri)
+            self.rcon: redis.Redis = redis.from_url(uri)
             return True
         except Exception as e:
             return e
@@ -86,16 +89,33 @@ class MiniRedis:
         n = 0
 
         if matching:
-            for key_ in self.rcon.scan_iter():
+            for key_ in self.rcon.scan_iter(key):
                 # Check if the key contains the substring
-                if key_ in str(key, 'utf-8'):
-                    n += 1
-                    # Delete the key if it contains the substring
-                    v = self.rcon.delete(key_)
-                    del_list.append((key_, v))
+                v = self.rcon.delete(key_)
+                del_list.append((key_, v))
         else:
             v = self.rcon.delete(key)
             del_list.append((key, v))
             n += 1
 
         return Result.ok(data=del_list, data_info=f"Data deleted successfully removed {n} items")
+
+    def exit(self) -> Result:
+        if self.rcon is None:
+            return Result.default_user_error(info="No reddis connection active")
+        t0 = time.perf_counter()
+        l = get_logger()
+        try:
+            self.rcon.save()
+        except Exception as e:
+            l.warning(f"Saving failed {e}")
+        try:
+            self.rcon.quit()
+        except Exception as e:
+            l.warning(f"Saving quit {e}")
+        try:
+            self.rcon.close()
+        except Exception as e:
+            l.warning(f"Saving close {e}")
+        return Result.ok(data_info=f"closing time in ms {time.perf_counter()-t0:.2f}", info="Connection closed",
+                         data=time.perf_counter()-t0).print()

@@ -22,6 +22,7 @@ def root():
 @router.post("/exit/{pid}")
 def close(data: PostRequest, pid: int):
     tb_app: App = get_app()
+    print(f"{pid=}, {os.getpid()}, {pid == os.getpid()}")
     if pid == os.getpid():
         res = tb_app.run_any('cloudm', "validate_jwt", [data])
         if isinstance(res, str):

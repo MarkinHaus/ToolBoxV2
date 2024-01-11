@@ -68,7 +68,6 @@ class Tools(MainTool, FileHandler):
 
         }
         self.server_actions = {}
-        self.vtID = None
         FileHandler.__init__(self, "WebSocketManager.config", app.id if app else __name__, keys=self.keys, defaults={})
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                           name=self.name, logs=self.logger, color=self.color, on_exit=self.on_exit)
@@ -84,14 +83,13 @@ class Tools(MainTool, FileHandler):
         for key in list(self.active_connections_client.keys()):
             self.close_websocket(key)
 
-    def get_vt(self, uid):
-        if self.vtID is not None:
-            return self.vtID(uid)
-
-        cloudM = self.app_.get_mod("cloudM")
-
-        self.vtID = cloudM.get_vt_id
-        return self.vtID(uid)
+    def vtID(self, uid):
+        vt_id = uid + 'VTInstance'
+        # app . key generator
+        # app . hash pepper and Salting
+        # app . key generator
+        self.print(f"APP:{self.app.id} generated from VTInstance:")
+        return vt_id
 
     def show_version(self):
         self.print("Version: ", self.version)

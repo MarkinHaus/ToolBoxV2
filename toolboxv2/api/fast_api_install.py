@@ -1,3 +1,4 @@
+import json
 import os
 import platform
 
@@ -5,10 +6,58 @@ from fastapi import APIRouter, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
 from toolboxv2 import get_logger, App, get_app
+from toolboxv2.utils.state_system import TbState, get_state_from_app
 
 router = APIRouter(
     prefix="/api",
 )
+
+
+def save_mod_snapshot(app, mod_name, provider=None, tb_state: TbState or None = None):
+    if app is None:
+        app = get_app(from_="Api.start.installer")
+    if provider is None:
+        provider = app.config_fh.get_file_handler("provider::")
+    if provider is None:
+        raise ValueError("No provider specified")
+    if tb_state is None:
+        tb_state: TbState = get_state_from_app(app, simple_core_hub_url=provider)
+    mod_data = tb_state.mods.get(mod_name)
+    if mod_data is None:
+        mod_data = tb_state.mods.get(mod_name + ".py")
+
+    if mod_data is None:
+        app.print(f"Valid ar : {list(tb_state.mods.keys())}")
+        return None
+
+    if not os.path.exists("./installer"):
+        os.mkdir("./installer")
+
+    json_data = {"Name": mod_name,
+                 "mods": [mod_data.url],
+                 "runnable": None,
+                 "requirements": None,
+                 "additional-dirs": None,
+                 mod_name: {
+                     "version": mod_data.version,
+                     "shasum": mod_data.shasum,
+                     "provider": mod_data.provider,
+                     "url": mod_data.url
+                 }}
+    installer_path = f"./installer/{mod_name}-installer.json"
+    if os.path.exists(installer_path):
+        with open(installer_path, "r") as installer_file:
+            file_data: dict = json.loads(installer_file.read())
+            if len(file_data.get('mods', [])) > 1:
+                file_data['mods'].append(mod_data.url)
+            file_data[mod_name] = json_data[mod_name]
+
+            json_data = file_data
+
+    with open(installer_path, "w") as installer_file:
+        json.dump(json_data, installer_file)
+
+    return json_data
 
 
 @router.post("/upload-file/")

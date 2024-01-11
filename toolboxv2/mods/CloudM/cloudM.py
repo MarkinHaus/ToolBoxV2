@@ -31,6 +31,8 @@ from toolboxv2.utils.toolbox import get_app
 
 # from toolboxv2.mods import Restrictor, VirtualizationTool, welcome
 
+Name = 'cloudM'
+
 
 class CrateUserPostRequest(BaseModel):
     username: str
@@ -232,13 +234,7 @@ class Tools(MainTool, FileHandler):
         self.print(f"APP: generated SiID")
         return ss_id
 
-    def get_vt_id(self, uid):
-        vt_id = uid + 'VTInstance'
-        # app . key generator
-        # app . hash pepper and Salting
-        # app . key generator
-        self.print(f"APP:{self.app.id} generated from VTInstance:")
-        return vt_id
+
 
     def get_web_socket_id(self, uid):
         ws_id = self.app.id + uid + 'CloudM-Signed'
@@ -475,7 +471,7 @@ class Tools(MainTool, FileHandler):
 
                 if mod is None:
                     self.print(f"Creating Error Module {mod_name} not found")
-                    #mod = welcome.Tools(
+                    # mod = welcome.Tools(
                     #           )  # switch with an 404 mod and an worning message
                     return
             self.print(f"Received v instance : {mod.name}")
@@ -937,7 +933,6 @@ def show_version(_, app: App):
         t_password = user_data["password"]
 
         if t_username != username:
-
             return self.return_result(
                 error=ToolBoxError.custom_error,
                 exec_code=0,  # Assuming exec_code 0 for success, modify as needed

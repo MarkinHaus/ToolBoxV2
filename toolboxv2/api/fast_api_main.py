@@ -5,6 +5,10 @@ from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 from fastapi.responses import RedirectResponse
 from toolboxv2 import App
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi import Depends, HTTPException, status
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 from fastapi import FastAPI, Request, WebSocket, APIRouter
 import sys
@@ -103,7 +107,6 @@ if __name__ == 'toolboxv2.api.fast_api_main':
 
     config_file = ".config"
     id_name = ""
-    mods_list = []
     for i in sys.argv[2:]:
         if i.startswith('data'):
             d = i.split(':')
@@ -111,7 +114,7 @@ if __name__ == 'toolboxv2.api.fast_api_main':
             id_name = d[2]
             config_file = id_name + config_file
 
-    tb_app = get_app(id_name)
+    tb_app = get_app(from_="init-api", name=id_name)
 
     if "HotReload" in tb_app.id:
         @app.get("/HotReload")
@@ -122,14 +125,13 @@ if __name__ == 'toolboxv2.api.fast_api_main':
                 return "OK"
             return "Not found"
 
-    for mod in mods_list:
-        tb_app.get_mod(mod)
-
     if id_name == tb_app.id:
         print("🟢 START")
     with open(f"./.data/api_pid_{id_name}", "w") as f:
         f.write(str(os.getpid()))
-    # tb_app.load_all_mods_in_file()
+        f.close()
+
+    tb_app.load_all_mods_in_file()
     tb_app.save_load("welcome")
     f, e = tb_app.get_function(tbef.WELCOME.PRINTT)
     if e == 0:
@@ -142,11 +144,6 @@ if __name__ == 'toolboxv2.api.fast_api_main':
 
     tb_app.save_load("WebSocketManager")
     manager = tb_app.get_mod("WebSocketManager")
-
-    tb_app.load_all_mods_in_file()
-
-    from .fast_app import router as app_router
-    from .fast_api import router as api_router
 
     if "modInstaller" in tb_app.id:
         print("ModInstaller Init")
@@ -163,27 +160,56 @@ if __name__ == 'toolboxv2.api.fast_api_main':
         app.get('/app/core0/index.html')(lambda: RedirectResponse(url="/docs"))
 
     else:
+
+        from .fast_app import router as app_router
+        from .fast_api import router as api_router
+
         app.include_router(app_router)
         app.include_router(api_router)
 
-        for mod_name, mod in tb_app.MOD_LIST.items():
+        for mod_name, functions in tb_app.functions.items():
             router = APIRouter(
                 prefix=f"/api/{mod_name}",
                 tags=["token", mod_name],
                 # dependencies=[Depends(get_token_header)],
                 # responses={404: {"description": "Not found"}},
             )
+            # "type": type_,
+            # "level": level,
+            # "restrict_in_virtual_mode": restrict_in_virtual_mode,
+            # "func": func,
+            # "api": api,
+            # "helper": helper,
+            # "version": version,
+            # "initial": initial,
+            # "exit_f": exit_f,
+            # "__module__": func.__module__,
+            # "signature": sig,
+            # "params": params,
+            # "state": (False if len(params) == 0 else params[0] in ['self', 'state']) if state is None else state,
+            # "do_test": test,
+            # "samples": samples,
 
-            for fuc in mod.tools.get('all'):
-                if len(fuc) == 2:
-                    if 'api_' in fuc[0]:
-                        tb_func = mod.tools.get(fuc[0])
-                        if tb_func:
-                            if tb_app.debug:
-                                print(mod_name, fuc)
-                            if len(list(signature(tb_func).parameters)):
-                                router.add_api_route('/' + fuc[0].replace('api_', ''), tb_func, methods=["POST"])
-                            else:
-                                router.add_api_route('/' + fuc[0].replace('api_', ''), tb_func, methods=["GET"])
+            for function_name, function_data in functions.items():
+                if not isinstance(function_data, dict):
+                    continue
+                api: list = function_data.get('api')
+                if api is False:
+                    continue
+                params: list = function_data.get('params')
+                sig: signature = function_data.get('signature')
+                state: bool = function_data.get('state')
+
+                tb_func, error = tb_app.get_function((mod_name, function_name), state=state, specification="app")
+                if error != 0:
+                    continue
+
+                if tb_func:
+                    if len(params):
+                        router.add_api_route('/' + function_name, tb_func, methods=["POST"],
+                                             description=function_data.get("helper", ""))
+                    else:
+                        router.add_api_route('/' + function_name, tb_func, methods=["GET"],
+                                             description=function_data.get("helper", ""))
 
             app.include_router(router)
