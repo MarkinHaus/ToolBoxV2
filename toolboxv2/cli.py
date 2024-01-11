@@ -2,7 +2,7 @@
 # Import default Pages
 import sys
 import argparse
-from platform import system
+from platform import system, node
 
 # Import public Pages
 from toolboxv2 import App, MainTool, runnable_dict as runnable_dict_func
@@ -208,6 +208,22 @@ def parse_args():
                         help="start in debug mode",
                         action="store_true")
 
+    parser.add_argument("--delete-config-all",
+                        help="start in debug mode",
+                        action="store_true")
+
+    parser.add_argument("--delete-data-all",
+                        help="start in debug mode",
+                        action="store_true")
+
+    parser.add_argument("--delete-config",
+                        help="start in debug mode",
+                        action="store_true")
+
+    parser.add_argument("--delete-data",
+                        help="start in debug mode",
+                        action="store_true")
+
     parser.add_argument("--test",
                         help="run all tests",
                         action="store_true")
@@ -307,6 +323,26 @@ def main():
     # )
 
     # print(args)
+    abspath = os.path.abspath(__file__)
+
+    identification = args.name + '-' + node() + '\\'
+    if args.mm:
+        identification = "MainNode\\"
+
+    data_folder = abspath + '\\.data\\'
+    config_folder = abspath + '\\.config\\'
+
+    app_config_file = config_folder + identification
+    app_data_folder = data_folder + identification
+
+    if args.delete_config_all:
+        os.remove(config_folder)
+    if args.delete_data_all:
+        os.remove(data_folder)
+    if args.delete_config:
+        os.remove(app_config_file)
+    if args.delete_data:
+        os.remove(app_data_folder)
 
     app_pid = str(os.getpid())
 
@@ -314,6 +350,8 @@ def main():
 
     # tb_app.load_all_mods_in_file()
     # tb_app.save_registry_as_enums("utils", "all_functions_enums.py")
+
+
 
     pid_file = f"{tb_app.start_dir}/{tb_app.config_fh.file_handler_file_prefix}{args.modi}-{args.name}.pid"
 

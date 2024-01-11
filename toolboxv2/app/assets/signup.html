@@ -31,19 +31,15 @@
 <section id="signup">
     <div class="form-container">
         <form id="signupForm" class="form">
-            <h2>Sign Up</h2>
+            <h2 id="titel-h2">Sign Up</h2>
 
             <div id="infoPopup" class="form-container" style="display: none; z-index: 1000;">
             <p id="infoText"></p>
             </div>
-
             <input id="username" type="text" placeholder="Username">
             <input id="email" type="email" placeholder="Email">
             <input id="initiation" type="password" placeholder="Initiation-Key">
-            <input id="password" type="password" placeholder="Password">
-            <label for="confirm-password">Confirm Password:</label>
-            <input type="password" id="confirm-password" minlength="8" required placeholder="Password">
-            <button type="submit">Sign Up</button>
+            <button type="submit" id="submit-button">Sign Up</button>
         </form>
     </div>
 </section>
@@ -53,52 +49,146 @@
 
 <script type="module">
 
-
     import {httpPostData} from "/app/scripts/httpSender.js";
+    import {registerUser, generateAsymmetricKeys, storePrivateKey, decryptAsymmetric, signMessage} from "/app/scripts/cryp.js";
 
-document.addEventListener('DOMContentLoaded', () => {
+    let UserData = undefined
+    let registrationData = undefined
+    let privateKey_base64 = null
 
-    function handleCreateUserError(data) {
-        document.getElementById('infoText').textContent = data.result.data_info.message;
-        document.getElementById('infoPopup').style.display = 'block';
-        return data
-    }
+    document.addEventListener('DOMContentLoaded', () => {
 
-    function handleCreateUserSuccess(data) {
-        document.getElementById('infoText').textContent = "Valid";
-        document.getElementById('infoPopup').style.display = 'block';
-        setTimeout(() => {
-            localStorage.setItem("WsID", data.result.data.replaceAll('"', ''));
-            sessionStorage.setItem("local_ws.onopen:installMod-welcome", 'true');
-            window.location.href = "/app/dashboard";
-        }, 200);
-        return data
-    }
+        function handleCreateUserError(data) {
+            console.log("[handleCreateUserError data]:", data)
+            document.getElementById('infoText').textContent = data.info.help_text;
+            document.getElementById('infoPopup').style.display = 'block';
+            UserData = undefined
+            document.getElementById('titel-h2').textContent = "Sing Up"
+            document.getElementById('username').classList.remove('none')
+            document.getElementById('email').classList.remove('none')
+            document.getElementById('initiation').classList.remove('none')
+            return data
+        }
 
-    function createUser(username, password, email, invitation) {
-        httpPostData('cloudm', 'create_user', { username, password, email, invitation }, handleCreateUserError, handleCreateUserSuccess);
-    }
+        async function handleCreateUserSuccess(data) {
+            console.log("[handleCreateUserSuccess data]:", data)
+            registrationData = data.get()
+            UserData = true
+            document.getElementById('submit-button').textContent = "Retry";
+            document.getElementById('infoText').textContent = "Now we linke your account with your Persona. A pop-up window should appear. If it does not appear, please click on 'Retry' manually.";
+            document.getElementById('infoPopup').style.display = 'block';
+            document.getElementById('titel-h2').textContent = "Sing Up for "+document.getElementById('username').value
+            document.getElementById('username').classList.add('none')
+            document.getElementById('email').classList.add('none')
+            document.getElementById('initiation').classList.add('none')
 
-  document.getElementById('signupForm').addEventListener('submit', function(event) {
-    event.preventDefault();
+            console.log("[registrationData--]:", registrationData)
+            console.log("[registrationData.dSync, keys.privateKey_base64]:", registrationData.dSync, privateKey_base64)
+            const deviceID = await decryptAsymmetric(registrationData.dSync, privateKey_base64, true)
+            await storePrivateKey(privateKey_base64, deviceID)
+            await registrate_user_personal(await signMessage(privateKey_base64, registrationData.challenge))
 
-    const username = document.getElementById('username').value;
-    const password = document.getElementById('password').value;
-    const password2 = document.getElementById('confirm-password').value;
-    const email = document.getElementById('email').value;
-    const invitation = document.getElementById('initiation').value;
+            return data
+        }
+        function handleCreateUserErrorPersona(data) {
+            console.log("[handleCreateUserError data]:", data)
+            document.getElementById('infoText').textContent = data.info.help_text;
+            document.getElementById('infoPopup').style.display = 'block';
+            UserData = undefined
+            return data
+        }
 
-    if (password !== password2){
-        document.getElementById('infoText').textContent = "The passwords do not match";
-        document.getElementById('infoPopup').style.display = 'block';
-        document.getElementById('infoPopup').style.color = 'var(--error-color)';
-    }else{
+        async function handleCreateUserSuccessPersona(data) {
+            console.log("[handleCreateUserSuccess data]:", data)
+            // setTimeout(()=>{ window.location.href = "/app/dashboard";}, 120)
+            return data
+        }
 
-        createUser(username,password,email,invitation)
-    }
-  });
- });
+        async function createUser(name, email, invitation, pub_key) {
+            return httpPostData('cloudm.authmanager',
+                'create_user',
+                {
+                    name, email ,pub_key ,invitation,
+                    web_data:true, as_base64:false
+                },
+                handleCreateUserError, handleCreateUserSuccess);
+        }
+
+        async function registrate_user_personal(sing){
+            const done = await registerUser(registrationData, sing, handleCreateUserErrorPersona, handleCreateUserSuccessPersona)
+            UserData = !done
+            if (done){
+                sessionStorage.setItem("local_ws.onopen:installMod-welcome", 'true')
+                UserData = false
+                document.getElementById('titel-h2').textContent = "Welcome to SimpleCore "+document.getElementById('username').value
+                document.getElementById('submit-button').textContent = "Go to dashboard";
+                document.getElementById('infoText').textContent = "Verification Done";
+                document.getElementById('infoPopup').style.display = 'block';
+            }else{
+                document.getElementById('infoText').textContent = "Pleas press on 'Retry'";
+                document.getElementById('infoPopup').style.display = 'block';
+            }
+        }
+
+        document.getElementById('signupForm').addEventListener('submit',async function(event) {
+            event.preventDefault();
+
+            if (UserData === false) {
+                // window.location.href = "/app/dashboard";
+                return
+            }
+
+            if (UserData === undefined){
+                const username = document.getElementById('username').value;
+                const email = document.getElementById('email').value;
+                const invitation = document.getElementById('initiation').value;
+                document.getElementById('infoText').textContent = "Validate information's";
+                document.getElementById('infoPopup').style.display = 'block';
+                await generateAsymmetricKeys().then(async keys => {
+                    await createUser(username, email, invitation, keys.publicKey)
+                    privateKey_base64 =  keys.privateKey_base64
+                }, 600);
+                return
+            }
+            console.log("[registrationData]:", registrationData)
+            try {
+                if (UserData === true && registrationData !== {}){
+                    console.log("[registrationData--]:", registrationData)
+                    if (privateKey_base64 !== undefined && privateKey_base64 !== null){
+                        console.log("[registrationData.dSync, keys.privateKey_base64]:", registrationData.dSync, privateKey_base64)
+                        const deviceID = await decryptAsymmetric(registrationData.dSync, privateKey_base64, true)
+                        await storePrivateKey(privateKey_base64, deviceID)
+                        await window.sessionStorage.removeItem('temp_base64_key')
+                    }
+                    await registrate_user_personal(await signMessage(privateKey_base64, registrationData.challenge))
+                    return
+                }
+            }
+            catch (e) {
+                console.log(e)
+            }
+
+
+
+            //generateAsymmetricKeys().then(keys => {
+            //    console.log("Public Key:", keys.publicKey);
+            //    // const result = createUser(username,email,invitation, keys.publicKey)
+            //    // console.log("result:",result);
+            //    //console.log("Private Key:", keys.privateKey);
+            //    //// Verschlüsseln eines Textes
+            //    //const text = "Hello, World!";
+            //    //encryptAsymmetric(text, keys.publicKey).then(encrypted => {
+            //    //    console.log("Encrypted:", encrypted);
+            //    //    // Entschlüsseln des Textes
+            //    //    decryptAsymmetric(encrypted, keys.privateKey).then(decrypted => {
+            //    //        console.log("Decrypted:", decrypted);
+            //    //    });
+            //    //});
+            //});
+
+
+        });
+    });
 </script>
-
 </body>
 </html>

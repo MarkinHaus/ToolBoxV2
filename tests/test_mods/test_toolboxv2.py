@@ -214,7 +214,7 @@ class TestToolboxv2(unittest.TestCase):
 
     def test_save_instance(self):
         # Testen der save_instance-Funktion
-        res = self.app.save_instance('welcome', 'app', None, 'instance_type')
+        res = self.app.save_instance(None, 'welcome', 'app', 'instance_type')
         # Überprüfen Sie, ob die Instanz korrekt gespeichert wurde
         self.assertIn('welcome', self.app.functions)
         self.assertIsNone(res)

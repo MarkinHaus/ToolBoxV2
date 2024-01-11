@@ -1,6 +1,7 @@
 import logging
 import os
 import threading
+import time
 from platform import system
 
 import requests
@@ -73,31 +74,47 @@ class Tools(MainTool, FileHandler):  # FileHandler
             self.print(self.api_config[api])
         return self.api_config
 
-    def conf_api(self, command):
-        if len(command) <= 4:
-            return "invalid command length [api:name host port]"
-        host = command[2]
+    def conf_api(self, api_name: str, host: str = "localhost", port: int = 5000):
+        """Update api configuration
+            Args:
+                *name* - api_name of the api configuration same api_name to use for (start, stop)
+                *host* - host of the api default = "localhost"
+                *port* - port of the api default = "5000"
+        """
         if host == "lh":
             host = "127.0.0.1"
         if host == "0":
             host = "0.0.0.0"
-        port = command[3]
         if port == "0":
             port = "8000"
-        self.api_config[command[1]] = {
-            "Name": command[1],
+        self.api_config[api_name] = {
+            "Name": api_name,
             "version": self.version,
             "port": port,
             "host": host
         }
 
-        self.print(self.api_config[command[1]])
+        self.print(self.api_config[api_name])
 
-    def start_api(self,app: App, api_name: str):
+    def start_api(self, api_name: str, live=False, reload=False):
+
+        if isinstance(live, str):
+            live = bool(live)
+        if isinstance(reload, str):
+            reload = bool(reload)
+
+        self.print(f"{api_name=}: str, {live=}=False, {reload=}=False")
+        api_thread = self.running_apis.get(api_name)
+
+        if api_thread is not None:
+            return "api is already running"
+
+        if live is True and reload is True:
+            raise ValueError("Live and reload should not be used together")
 
         if api_name not in self.api_config.keys():
-            host = "127.0.0.1"
-            if 'live' in api_name:
+            host = "localhost"
+            if live:
                 host = "0.0.0.0"
 
             self.api_config[api_name] = {
@@ -107,54 +124,54 @@ class Tools(MainTool, FileHandler):  # FileHandler
                 "host": host
             }
 
+            self.print(f"Auto addet {api_name} to config : {self.api_config[api_name]}")
+
         api_data = self.api_config[api_name]
 
         self.print(api_data)
         g = f"uvicorn toolboxv2.api.fast_api_main:app --host {api_data['host']}" \
-            f" --port {api_data['port']} --header data:0:{api_name} {'--reload' if 'reload' in app.id else ''}"
+            f" --port {api_data['port']} --header data:0:{api_name} {'--reload' if reload else ''}"
 
-        print(g)
-
-        api_thread = self.running_apis.get(api_name)
+        print("Running command : " + g)
 
         if api_thread is None:
             self.running_apis[api_name] = threading.Thread(target=os.system, args=(g,))
             self.running_apis[api_name].start()
-            return
+            return "starting api"
 
         self.print("API is already running")
 
-    def stop_api(self, command):
-        if command[1] in list(self.api_config.keys()):
-            command.append(self.api_config[command[1]]['host'])
-            command.append(self.api_config[command[1]]['port'])
-        else:
-            if len(command) == 2:
-                command += ["127.0.0.1", 5000]
+    def stop_api(self, api_name):
+        if api_name not in list(self.api_config.keys()):
+            return f"Api with the name {api_name} is not listed"
 
-        api_thread = self.running_apis.get(command[1])
+        api_thread = self.running_apis.get(api_name)
+        api_data = self.api_config[api_name]
+        host = api_data.get("host")
+        port = api_data.get("port")
         if api_thread is None:
             self.print("API is not running")
 
-        if not os.path.exists(f"./.data/api_pid_{command[1]}"):
+        if not os.path.exists(f"./.data/api_pid_{api_name}"):
             self.logger.warning("no api_pid file found ")
-            return
-        with open(f"./.data/api_pid_{command[1]}", "r") as f:
+            return "No such api_pid file found on the filesystem"
+        with open(f"./.data/api_pid_{api_name}", "r") as f:
             api_pid = f.read()
-            requests.get(f"http://{command[2]}:{command[3]}/api/exit/{api_pid}")
+            requests.get(f"http://{host}:{port}/api/exit/{api_pid}")
             if system() == "Windows":
                 os.system(f"taskkill /pid {api_pid} /F")
             else:
                 os.system(f"kill -9 {api_pid}")
-        api_thread = self.running_apis.get(command[1])
+        api_thread = self.running_apis.get(api_name)
         if api_thread:
             api_thread.join()
-        del self.running_apis[command[1]]
-        # os.remove(f"app/api_pid_{command[1]}")
+        del self.running_apis[api_name]
+        os.remove(f"./.data/api_pid_{api_name}")
 
-    def restart_api(self, command, app: App):
-        self.stop_api(command.copy())
-        self.start_api(command, app)
+    def restart_api(self, api_name):
+        self.stop_api(api_name)
+        time.sleep(4)
+        self.start_api(api_name)
 
     def on_start(self):
         self.load_file_handler()
@@ -163,5 +180,5 @@ class Tools(MainTool, FileHandler):  # FileHandler
     def on_exit(self):
         self.add_to_save_file_handler(self.keys["Apis"], str(self.api_config))
         for key in self.running_apis:
-            self.stop_api([0, key])
+            self.stop_api(key)
         self.save_file_handler()

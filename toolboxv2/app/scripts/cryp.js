@@ -1,8 +1,80 @@
-async function generateAsymmetricKeys() {
+import {httpPostData} from "./httpSender.js";
+
+function arrayBufferToBase64(buffer) {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return window.btoa(binary);
+}
+
+function base64ToArrayBuffer(base64) {
+    const binaryString = window.atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes.buffer;
+}
+
+function strToArrayBuffer(str) {
+    const encoder = new TextEncoder();
+    return encoder.encode(str);
+}
+
+function arrayBufferToStr(arrayBuffer) {
+    const decoder = new TextDecoder(); // Standardmäßig 'utf-8'
+    return decoder.decode(arrayBuffer);
+}
+
+function strToBase64(str) {
+    // Erstelle einen UTF-8-kodierten String
+    const utf8Str = new TextEncoder().encode(str);
+
+    // Konvertiere den UTF-8-kodierten String in einen ASCII-String
+    const asciiStr = Array.from(utf8Str).map(byte => String.fromCharCode(byte)).join('');
+
+    // Kodiere den ASCII-String in Base64
+    return btoa(asciiStr);
+}
+function hexStringToArrayBuffer(hexString) {
+    if (hexString.length % 2 !== 0) {
+        throw "Ungültige Hexadezimalstring-Länge";
+    }
+    var arrayBuffer = new Uint8Array(hexString.length / 2);
+    for (var i = 0; i < hexString.length; i += 2) {
+        var byteValue = parseInt(hexString.substring(i, i + 2), 16);
+        if (isNaN(byteValue)) {
+            throw "Ungültiger Hexadezimalstring";
+        }
+        arrayBuffer[i / 2] = byteValue;
+    }
+    return arrayBuffer;
+}
+
+function convertToPem(keyBuffer, type) {
+    let typeString;
+    if (type === 'public') {
+        typeString = 'PUBLIC KEY';
+    } else if (type === 'private') {
+        typeString = 'PRIVATE KEY';
+    } else {
+        throw new Error('Invalid key type');
+    }
+
+    const base64Key = arrayBufferToBase64(keyBuffer);
+    const formattedKey = base64Key.match(/.{1,64}/g).join('\n');
+
+    return `-----BEGIN ${typeString}-----\n${formattedKey}\n-----END ${typeString}-----\n`;
+}
+
+export async function generateAsymmetricKeys() {
     const keyPair = await window.crypto.subtle.generateKey(
         {
             name: "RSA-OAEP",
-            modulusLength: 2048,
+            modulusLength: 2048*3,
             publicExponent: new Uint8Array([1, 0, 1]),
             hash: "SHA-512",
         },
@@ -13,14 +85,13 @@ async function generateAsymmetricKeys() {
     const publicKey = await window.crypto.subtle.exportKey("spki", keyPair.publicKey);
     const privateKey = await window.crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
 
-    return {
-        publicKey: arrayBufferToBase64(publicKey),
-        privateKey: arrayBufferToBase64(privateKey)
-    };
-}
 
-function arrayBufferToBase64(buffer) {
-    return btoa(String.fromCharCode.apply(null, new Uint8Array(buffer)));
+    return {
+        publicKey: convertToPem(publicKey, 'public'),
+        publicKey_base64: arrayBufferToBase64(publicKey),
+        privateKey: convertToPem(privateKey, 'private'),
+        privateKey_base64: arrayBufferToBase64(privateKey),
+    };
 }
 
 async function encryptAsymmetric(text, publicKeyBase64) {
@@ -44,16 +115,8 @@ async function encryptAsymmetric(text, publicKeyBase64) {
     return arrayBufferToBase64(encrypted);
 }
 
-function base64ToArrayBuffer(base64) {
-    const binaryString = atob(base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes.buffer;
-}
+export async function decryptAsymmetric(encryptedTextBase64, privateKeyBase64, convert=false) {
 
-async function decryptAsymmetric(encryptedTextBase64, privateKeyBase64) {
     const privateKey = await window.crypto.subtle.importKey(
         "pkcs8",
         base64ToArrayBuffer(privateKeyBase64),
@@ -65,13 +128,58 @@ async function decryptAsymmetric(encryptedTextBase64, privateKeyBase64) {
         ["decrypt"]
     );
 
-    const decrypted = await window.crypto.subtle.decrypt(
-        { name: "RSA-OAEP" },
+    let ciphertext
+    if (convert){
+        ciphertext = hexStringToArrayBuffer(encryptedTextBase64);
+    }else{
+        ciphertext = base64ToArrayBuffer(encryptedTextBase64)
+    }
+
+    try {
+        const decrypted = await window.crypto.subtle.decrypt(
+            { name: "RSA-OAEP" },
+            privateKey,
+            ciphertext
+        );
+        return new TextDecoder().decode(decrypted);
+    } catch (error) {
+        console.error("Fehler beim Entschlüsseln:", error);
+        return encryptedTextBase64
+    }
+
+}
+
+export async function signMessage(privateKeyBase64, message) {
+    const privateKey = await window.crypto.subtle.importKey(
+        "pkcs8",
+        base64ToArrayBuffer(privateKeyBase64),
+        {
+            name: "RSA-PSS",
+            hash: "SHA-512"
+        },
+        false,
+        ["sign"]
+    );
+    const encodedMessage = strToArrayBuffer(message);
+    return arrayBufferToBase64(await window.crypto.subtle.sign(
+        {
+            name: "RSA-PSS",
+            saltLength: 32, // Die Länge des Salzes in Bytes
+        },
         privateKey,
-        base64ToArrayBuffer(encryptedTextBase64)
+        encodedMessage
+    ));
+}
+
+export async function generateSymmetricKey() {
+    const key = await window.crypto.subtle.generateKey(
+        { name: "AES-GCM", length: 256 },
+        true,
+        ["encrypt", "decrypt"]
     );
 
-    return new TextDecoder().decode(decrypted);
+    const exportedKey = await window.crypto.subtle.exportKey("raw", key);
+    return window.btoa(String.fromCharCode(...new Uint8Array(exportedKey)));
 }
 
 async function encryptSymmetric(data, password) {
@@ -93,7 +201,7 @@ async function encryptSymmetric(data, password) {
     return btoa(String.fromCharCode(...new Uint8Array(encryptedData)));
 }
 
-async function decryptSymmetric(encryptedData, password) {
+export async function decryptSymmetric(encryptedData, password) {
     const enc = new TextEncoder();
     const dec = new TextDecoder();
     const keyMaterial = await window.crypto.subtle.importKey(
@@ -105,39 +213,211 @@ async function decryptSymmetric(encryptedData, password) {
         keyMaterial, { name: "AES-GCM", length: 256 }, false, ["decrypt"]
     );
 
-    const decryptedData = await window.crypto.subtle.decrypt(
-        { name: "AES-GCM", iv: window.crypto.getRandomValues(new Uint8Array(12)) },
-        key, base64ToArrayBuffer(encryptedData)
-    );
+    try {
+        const decryptedData = await window.crypto.subtle.decrypt(
+            { name: "AES-GCM", iv: window.crypto.getRandomValues(new Uint8Array(12)) },
+            key, encryptedData
+        );
+    }catch (e){
+        return "invalid key"
+    }
 
-    return dec.decode(decryptedData);
+
+return dec.decode(decryptedData);
 }
 
-async function storePrivateKey(privateKey, deviceID) {
+export async function storePrivateKey(privateKey, deviceID) {
+    console.log("[privateKey, deviceID]:", privateKey, deviceID)
     const encryptedKey = await encryptSymmetric(privateKey, deviceID);
     localStorage.setItem('encryptedPrivateKey', encryptedKey);
+    localStorage.setItem('deviceID', deviceID);
 }
 
-async function retrievePrivateKey(deviceID) {
+export async function retrievePrivateKey(deviceID) {
     const encryptedKey = localStorage.getItem('encryptedPrivateKey');
     if (!encryptedKey) return null;
-    return await decryptSymmetric(encryptedKey, deviceID);
+
+    const result_ = await decryptSymmetric(strToArrayBuffer(encryptedKey), deviceID);
+
+    if (result_==="invalid key"){
+        return "Invalid user name device not registered"
+    }
+    return result_
 }
 
 
-// Generieren von Schlüsseln
-generateAsymmetricKeys().then(keys => {
-    console.log("Public Key:", keys.publicKey);
-    console.log("Private Key:", keys.privateKey);
 
-    // Verschlüsseln eines Textes
-    const text = "Hello, World!";
-    encryptAsymmetric(text, keys.publicKey).then(encrypted => {
-        console.log("Encrypted:", encrypted);
+export async function registerUser(registrationData, sing, errorCallback, sucessCallback) {
+    // Schritt 1: Anfrage an den Server senden, um die Registrierungsdaten zu erhalten
+    // const registrationData = {
+    //     challenge:"Y2hhbGxlbmdlUmFuZG9tU3R12yaW5n",
+    //     userId:"asda123124155768jgh",
+    //     username:"TestSimp"} //await fetch('/path/to/registration').then(response => response.json());
 
-        // Entschlüsseln des Textes
-        decryptAsymmetric(encrypted, keys.privateKey).then(decrypted => {
-            console.log("Decrypted:", decrypted);
+    // Schritt 2: Umwandeln der Herausforderung und der Benutzer-ID von Base64 in Uint8Array
+    console.log("[registerUser registrationData]:", registrationData)
+    const challenge = strToArrayBuffer(registrationData.challenge);
+    const userId = base64ToArrayBuffer(registrationData.userId)
+
+    // Schritt 3: PublicKeyCredentialCreationOptions für die Registrierung vorbereiten
+    const publicKeyCredentialCreationOptions = {
+        challenge: challenge,
+        rp: {
+            "name": "SimpleCore",
+            "id": "localhost",//"simplecore.app"
+            "ico": "/app/favicon.ico"
+        },
+        user: {
+            id: userId,
+            name: registrationData.username,
+            displayName: registrationData.username
+        },
+        pubKeyCredParams: [
+            {type: "public-key", alg: -7 }, // -7 steht für ES256
+            {type: "public-key",alg: -256},
+            {type: "public-key",alg: -512}
+        ],
+        timeout: 60000,
+        // Weitere Optionen können hier hinzugefügt werden
+        authenticatorSelection: {
+            // ... andere Auswahlkriterien ...
+            requireResidentKey: true, // Setzen Sie dies auf true, um einen residenten Schlüssel zu erfordern
+            userVerification: "required" // Kann "required", "preferred" oder "discouraged" sein
+        },
+    };
+
+    // Schritt 4: Registrierung mit WebAuthn durchführen
+    try {
+        await navigator.credentials.create({
+            publicKey: publicKeyCredentialCreationOptions
+        }).then((publicKeyCredential) => {
+            const response = publicKeyCredential.response;
+
+            // Access attestationObject ArrayBuffer
+            const attestationObj = response.attestationObject;
+
+            // Access client JSON
+            const clientJSON = response.clientDataJSON;
+
+            // Return authenticator data ArrayBuffer
+            const authenticatorData = response.getAuthenticatorData();
+
+            // Return public key ArrayBuffer
+            const pk = response.getPublicKey();
+
+            // Return public key algorithm identifier
+            const pkAlgo = response.getPublicKeyAlgorithm();
+
+            // Return public key algorithm identifier
+            const rawId = arrayBufferToBase64(publicKeyCredential.rawId);
+
+            // Return permissible transports array
+            const transports = response.getTransports();
+            //const attestation = response.assertion()
+
+            console.log("[attestationObj]:", arrayBufferToBase64(attestationObj))
+            console.log("[clientJSON]:", arrayBufferToBase64(clientJSON))
+            console.log("[pk]:", arrayBufferToStr(pk))
+            console.log("[pkAlgo]:", pkAlgo)
+            console.log("[transports]:", transports)
+            console.log("[authenticatorData]:", arrayBufferToStr(authenticatorData))
+            //console.log("[authenticatorData]:", response.getClientExtensionResults())
+            //console.log("[attestation]:", attestation)
+            const newCredential = {
+                userId: registrationData.userId,
+                username: registrationData.username,
+                attestationObj:arrayBufferToStr(attestationObj),
+                clientJSON:arrayBufferToBase64(clientJSON),
+                pk:convertToPem(pk, 'public'),
+                pkAlgo:pkAlgo,
+                authenticatorData:arrayBufferToBase64(authenticatorData),
+                rawId:rawId,
+                sing
+            }
+            sendRegistrationResponseToServer(newCredential, errorCallback, sucessCallback);
         });
-    });
-});
+        return true
+        // Schritt 5: Registrierungsantwort an den Server senden
+        //await sendRegistrationResponseToServer(newCredential);
+    } catch (error) {
+        console.error('Fehler bei der Registrierung:', error);
+        return false
+    }
+}
+
+export async function authorisazeUser(rowID, challenge, username, errorCallback, sucessCallback) {
+    //const challenge = strToArrayBuffer(registrationData.challenge);
+    const publicKey = {
+        challenge: strToArrayBuffer(challenge),
+        rpId: "localhost",
+        allowCredentials: [{
+            type: "public-key",
+            id: base64ToArrayBuffer(rowID)
+        }],
+        userVerification: "required",
+    }
+    try {
+        navigator.credentials.get({ publicKey }).then((publicKeyCredential) => {
+            const response = publicKeyCredential.response;
+
+            // Access authenticator data ArrayBuffer
+            const authenticatorData = response.authenticatorData;
+
+            // Access client JSON
+            const clientJSON = response.clientDataJSON;
+
+            // Access signature ArrayBuffer
+            const signature = response.signature;
+
+            // Access userHandle ArrayBuffer
+            const userHandle = response.userHandle;
+            const userCredential = {
+                signature: arrayBufferToStr(signature),
+                username: username,
+                clientJSON:arrayBufferToBase64(clientJSON),
+                authenticatorData:arrayBufferToBase64(authenticatorData),
+            }
+            sendLoginResponseToServer(userCredential, errorCallback, sucessCallback);
+        });
+        return true
+    } catch (error) {
+        console.error('Fehler bei der Registrierung:', error);
+        return false
+    }
+}
+
+
+async function sendLoginResponseToServer(credential, errorCallback, sucessCallback) {
+    console.log("[credential]:", credential)
+    httpPostData('cloudm.authmanager',
+        'validate_persona',
+        credential, errorCallback, sucessCallback);
+    // Implementieren Sie eine Funktion, um die Registrierungsantwort an Ihren Server zu senden register_user_personal_key
+    // Sie müssen Teile von `credential` in ein Format umwandeln, das über HTTP gesendet werden kann
+}
+async function sendRegistrationResponseToServer(credential, errorCallback, sucessCallback) {
+    console.log("[credential]:", credential)
+    httpPostData('cloudm.authmanager',
+        'register_user_personal_key',
+        credential, errorCallback, sucessCallback);
+    // Implementieren Sie eine Funktion, um die Registrierungsantwort an Ihren Server zu senden register_user_personal_key
+    // Sie müssen Teile von `credential` in ein Format umwandeln, das über HTTP gesendet werden kann
+}
+
+// Generieren von Schlüsseln
+//generateAsymmetricKeys().then(keys => {
+//    console.log("Public Key:", keys.publicKey);
+//    console.log("Private Key:", keys.privateKey);
+//
+//    // Verschlüsseln eines Textes
+//    const text = "Hello, World!";
+//    encryptAsymmetric(text, keys.publicKey).then(encrypted => {
+//        console.log("Encrypted:", encrypted);
+//
+//        // Entschlüsseln des Textes
+//        decryptAsymmetric(encrypted, keys.privateKey).then(decrypted => {
+//            console.log("Decrypted:", decrypted);
+//        });
+//    });
+//});
+//

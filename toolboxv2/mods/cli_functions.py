@@ -339,7 +339,7 @@ def co_evaluate(app: App,
     if helper is None:
         def helper_function(obj_):
 
-            obj_.print()
+            # obj_.print()
             result = app.run_any((obj_.module_name, obj_.function_name), get_results=True,
                                  args_=obj_.args,
                                  kwargs_=obj_.kwargs)

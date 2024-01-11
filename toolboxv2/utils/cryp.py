@@ -6,10 +6,12 @@ import hashlib
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
 from toolboxv2.utils.tb_logger import get_logger
 
@@ -19,15 +21,15 @@ from platform import node
 class Code:
     application_key = None
 
-    def decode_code(self, data, key=None):
+    def decode_code(self, encrypted_data, key=None):
 
-        if not isinstance(data, str):
-            data = str(data)
+        if not isinstance(encrypted_data, str):
+            encrypted_data = str(encrypted_data)
 
         if key is None:
-            key = base64.urlsafe_b64encode((node() + '0' * min(32 - len(node()), 32)).encode() if len(node()) < 32 else
-                                           node()[:32].encode()).decode()
-        return self.decrypt_symmetric(data, key)
+            key = DEVICE_KEY()
+
+        return self.decrypt_symmetric(encrypted_data, key)
 
     def encode_code(self, data, key=None):
 
@@ -35,8 +37,8 @@ class Code:
             data = str(data)
 
         if key is None:
-            key = base64.urlsafe_b64encode((node() + '0' * min(32 - len(node()), 32)).encode() if len(node()) < 32 else
-                                           node()[:32].encode()).decode()
+            key = DEVICE_KEY()
+
         return self.encrypt_symmetric(data, key)
 
     @staticmethod
@@ -47,7 +49,6 @@ class Code:
         Returns:
             int: Eine zufällige Zahl.
         """
-        time.sleep(random.uniform(0, 0.001))  # Mikroverzögerung
         return random.randint(2 ** 32 - 1, 2 ** 64 - 1)
 
     @staticmethod
@@ -71,9 +72,6 @@ class Code:
         """
         Generiert einen Schlüssel für die symmetrische Verschlüsselung.
 
-        Args:
-            seed (int, optional): Ein optionaler Seed-Wert. Standardmäßig None.
-
         Returns:
             str: Der generierte Schlüssel.
         """
@@ -91,12 +89,11 @@ class Code:
         Returns:
             str: Der verschlüsselte Text.
         """
-        time.sleep(random.uniform(0, 0.001))  # Mikroverzögerung
         try:
             fernet = Fernet(key.encode())
             return fernet.encrypt(text.encode()).decode()
         except Exception as e:
-            get_logger().error(f"Error encrypt_symmetric {e}")
+            get_logger().error(f"Error encrypt_symmetric #{str(e)}#")
             return "Error encrypt"
 
     @staticmethod
@@ -111,10 +108,13 @@ class Code:
         Returns:
             str: Der entschlüsselte Text.
         """
-        time.sleep(random.uniform(0, 0.001))  # Mikroverzögerung
+
+        if isinstance(key, str):
+            key = key.encode()
+
         try:
-            fernet = Fernet(key.encode())
-            return fernet.decrypt(encrypted_text.encode()).decode()
+            fernet = Fernet(key)
+            return fernet.decrypt(encrypted_text).decode()
         except Exception as e:
             get_logger().error(f"Error decrypt_symmetric {e}")
             return f"Error decoding"
@@ -132,7 +132,7 @@ class Code:
         """
         private_key = rsa.generate_private_key(
             public_exponent=65537,
-            key_size=2048,
+            key_size=2048 * 3,
         )
         public_key = private_key.public_key()
 
@@ -157,7 +157,8 @@ class Code:
 
         Args:
             text (str): Der zu verschlüsselnde Text.
-            public_key_str (str): Der öffentliche Schlüssel als String.
+            public_key_str (str): Der öffentliche Schlüssel als String oder im pem format.
+            pem (bool): pem flag
 
         Returns:
             str: Der verschlüsselte Text.
@@ -206,21 +207,59 @@ class Code:
         return "Invalid"
 
     @staticmethod
-    def verify_signature(signature: str, message: str, public_key_str: str) -> bool:
+    def verify_signature(signature: str or bytes, message: str or bytes, public_key_str: str,
+                         salt_length=padding.PSS.MAX_LENGTH) -> bool:
+        if isinstance(signature, str):
+            signature = signature.encode()
+        if isinstance(message, str):
+            message = message.encode()
         try:
-            public_key = serialization.load_pem_public_key(public_key_str.encode())
+            public_key: RSAPublicKey = serialization.load_pem_public_key(public_key_str.encode())
             public_key.verify(
-                signature.encode(),
-                message.encode(),
-                padding.PSS(
-                    mgf=padding.MGF1(hashes.SHA256()),
-                    salt_length=padding.PSS.MAX_LENGTH
+                signature=signature,
+                data=message,
+                padding=padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA512()),
+                    salt_length=salt_length
                 ),
-                hashes.SHA512()
+                algorithm=hashes.SHA512()
             )
             return True
         except InvalidSignature:
             pass
+        except Exception as e:
+            get_logger().error(f"Error validating signature: {e}")
+            print(e)
+        return False
+
+    @staticmethod
+    def verify_signature_web_algo(signature: str or bytes, message: str or bytes, public_key_str: str,
+                                  algo: int = -512) -> bool:
+        signature_algorithm = ECDSA(hashes.SHA512())
+        if algo != -512:
+            signature_algorithm = ECDSA(hashes.SHA256())
+
+        if isinstance(signature, str):
+            signature = signature.encode()
+        if isinstance(message, str):
+            message = message.encode()
+        try:
+            public_key = serialization.load_pem_public_key(public_key_str.encode())
+            public_key.verify(
+                signature=signature,
+                data=message,
+                # padding=padding.PSS(
+                #    mgf=padding.MGF1(hashes.SHA512()),
+                #    salt_length=padding.PSS.MAX_LENGTH
+                # ),
+                signature_algorithm=signature_algorithm
+            )
+            return True
+        except InvalidSignature:
+            pass
+        except Exception as e:
+            print(e)
+            get_logger().error(f"Error validating signature: {e}")
         return False
 
     @staticmethod
@@ -239,3 +278,39 @@ class Code:
         except Exception as e:
             get_logger().error(f"Error encrypt_asymmetric {e}")
         return "Invalid Key"
+
+    @staticmethod
+    def pem_to_public_key(pem_key: str):
+        """
+        Konvertiert einen PEM-kodierten öffentlichen Schlüssel in ein PublicKey-Objekt.
+
+        Args:
+            pem_key (str): Der PEM-kodierte öffentliche Schlüssel.
+
+        Returns:
+            PublicKey: Das PublicKey-Objekt.
+        """
+        public_key = serialization.load_pem_public_key(pem_key.encode())
+        return public_key
+
+    @staticmethod
+    def public_key_to_pem(public_key):
+        """
+        Konvertiert ein PublicKey-Objekt in einen PEM-kodierten String.
+
+        Args:
+            public_key (PublicKey): Das PublicKey-Objekt.
+
+        Returns:
+            str: Der PEM-kodierte öffentliche Schlüssel.
+        """
+        pem = public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        return pem.decode()
+
+
+DEVICE_KEY_PATH = "./divice.key"
+DEVICE_KEY = lambda: open(DEVICE_KEY_PATH, "r").read() if os.path.exists(DEVICE_KEY_PATH) else open(DEVICE_KEY_PATH,
+                                                                                                 "w").write(Fernet.generate_key().decode())

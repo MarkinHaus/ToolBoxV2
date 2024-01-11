@@ -36,18 +36,45 @@ export class Result {
         this.info = info;
     }
 
-    static default(TB_interface = ToolBoxInterfaces.cli) {
-        return new Result(ToolBoxError.none, new ToolBoxResult(TB_interface), new ToolBoxInfo(-1, ""));
-    }
 
     get() {
         return this.result.data;
     }
 }
 
+function wrapInResult(data) {
+    let result = new Result("httpPostData Error No date Returned", new ToolBoxResult(ToolBoxInterfaces.native, "Es wurden keine darten vom server zurück gegeben", {}), new ToolBoxInfo(-986, "NO data"));
+
+    function valid_val(v) {
+        return  v !== undefined && v !== null
+    }
+
+    let data_to = ""
+    let data_info = ""
+    let r_data;
+    let exec_code = -989
+    let help_text = ""
+
+    if (valid_val(data)){
+        const error = data.error
+        if (valid_val(data.result)){
+            data_to = data.result.data_to;
+            data_info = data.result.data_info;
+            r_data = data.result.data;
+        }
+        if (valid_val(data.info)){
+            exec_code = data.info.exec_code;
+            help_text = data.info.help_text;
+        }
+        result = new Result(error, new ToolBoxResult(data_to, data_info, r_data), new ToolBoxInfo(exec_code, help_text));
+
+    }
+    return result
+}
+
 // Modified httpPostUrl function
-export function httpPostUrl(module_name, function_name, parm, val, errorCallback, successCallback) {
-    fetch('/api/' + module_name + '/' + function_name + '?' + parm + '=' + val, {
+export function httpPostUrl(module_name, function_name, params, errorCallback, successCallback) {
+    fetch('/api/' + module_name + '/' + function_name + '?' + params, {
         method: 'POST',
         headers: {
             'Accept': 'application/json',
@@ -56,7 +83,7 @@ export function httpPostUrl(module_name, function_name, parm, val, errorCallback
     })
         .then(response => response.json())
         .then(data => {
-            let result = new Result(data.error, new ToolBoxResult(data.result.data_to, data.result.data_info, data.result.data), new ToolBoxInfo(data.info.exec_code, data.info.help_text));
+            const result = wrapInResult(data)
             if (result.error !== ToolBoxError.none) {
                 // Handle error case
                 return errorCallback(result);
@@ -66,8 +93,7 @@ export function httpPostUrl(module_name, function_name, parm, val, errorCallback
             }
         })
         .catch((error) => {
-            console.error('Error:', error);
-            return errorCallback(new Result(ToolBoxError.internal_error, new ToolBoxResult(), new ToolBoxInfo(-1, error.toString())));
+            return errorCallback(new Result(ToolBoxError.internal_error, new ToolBoxResult("Frontend Dev", "Error in successCallback at : "+module_name+'.'+ function_name, error), new ToolBoxInfo(-1, error.toString())));
         });
 }
 export function httpPostData(module_name, function_name, data, errorCallback, successCallback) {
@@ -81,7 +107,8 @@ export function httpPostData(module_name, function_name, data, errorCallback, su
     })
         .then(response => response.json())
         .then(data => {
-            let result = new Result(data.error, new ToolBoxResult(data.result.data_to, data.result.data_info, data.result.data), new ToolBoxInfo(data.info.exec_code, data.info.help_text));
+
+            const result = wrapInResult(data)
             if (result.error !== ToolBoxError.none) {
                 // Handle error case
                 return errorCallback(result);
@@ -91,9 +118,8 @@ export function httpPostData(module_name, function_name, data, errorCallback, su
             }
         })
         .catch((error) => {
-            console.error('Error:', error);
-            return errorCallback(new Result(ToolBoxError.internal_error, new ToolBoxResult(), new ToolBoxInfo(-1, error.toString())));
+            return errorCallback(new Result(ToolBoxError.internal_error, new ToolBoxResult("Frontend Dev", "Error in successCallback at : " +module_name+'.'+ function_name, error), new ToolBoxInfo(-1, error.toString())));
         });
-    return new Result(ToolBoxError.internal_error, new ToolBoxResult(), new ToolBoxInfo(-1, error.toString()))
+    // return new Result(ToolBoxError.internal_error, new ToolBoxResult(), new ToolBoxInfo(-1, 'intern error client side 90975'))
 }
 

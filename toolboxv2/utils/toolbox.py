@@ -6,11 +6,12 @@ import time
 from enum import Enum
 from platform import node, system
 from importlib import import_module
-from inspect import signature
+from inspect import signature, getouterframes, currentframe
 from types import ModuleType
-from functools import partial
-
+from functools import partial, wraps
 import requests
+import shelve
+from cachetools import TTLCache
 
 from toolboxv2.utils.file_handler import FileHandler
 from toolboxv2.utils import Singleton
@@ -25,6 +26,32 @@ from dotenv import load_dotenv
 import dill
 
 load_dotenv()
+
+
+class FileCache:
+    def __init__(self, folder='', filename='cache.db'):
+        self.filename = filename
+        if not os.path.exists(folder):
+            os.makedirs(folder, exist_ok=True)
+
+    def get(self, key):
+        with shelve.open(self.filename) as db:
+            return db.get(key)
+
+    def set(self, key, value):
+        with shelve.open(self.filename, writeback=True) as db:
+            db[key] = value
+
+
+class MemoryCache:
+    def __init__(self, maxsize=100, ttl=300):
+        self.cache = TTLCache(maxsize=maxsize, ttl=ttl)
+
+    def get(self, key):
+        return self.cache.get(key)
+
+    def set(self, key, value):
+        self.cache[key] = value
 
 
 def load_module_dill(filename):
@@ -86,7 +113,7 @@ class App(metaclass=Singleton):
 
         print(f"Starting ToolBox as {prefix} from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 
-        logger_info_str, self.logger, self.logging_filename = self.set_logger(True)  # args.debug)
+        logger_info_str, self.logger, self.logging_filename = self.set_logger(args.debug)
 
         print("Logger " + logger_info_str)
         print("================================")
@@ -131,7 +158,8 @@ class App(metaclass=Singleton):
         self.runnable = {}
         self.dev_modi = self.config_fh.get_file_handler(self.keys["develop-mode"])
         self.mlm = self.config_fh.get_file_handler(self.keys["module-load-mode"])
-
+        if self.config_fh.get_file_handler("provider::") is None:
+            self.config_fh.add_to_save_file_handler("provider::", "https://simplecore.app")
         self.functions = {}
 
         self.interface_type = ToolBoxInterfaces.native
@@ -178,6 +206,7 @@ class App(metaclass=Singleton):
             logger, logging_filename = setup_logging(logging.DEBUG, name="toolbox-debug", interminal=True,
                                                      file_level=logging.WARNING)
             logger_info_str = "in debug Mode"
+            self.debug = True
         elif debug:
             logger, logging_filename = setup_logging(logging.DEBUG, name=f"toolbox-{self.prefix}-debug",
                                                      interminal=True,
@@ -211,7 +240,7 @@ class App(metaclass=Singleton):
             self.logger.debug(f"Value must be an boolean. is : {value} type of {type(value)}")
             raise ValueError("Value must be an boolean.")
 
-        self.logger.info(f"Setting debug {value}")
+        # self.logger.info(f"Setting debug {value}")
         self._debug = value
 
     def _coppy_mod(self, content, new_mod_dir, mod_name, file_type='py'):
@@ -272,10 +301,6 @@ class App(metaclass=Singleton):
         modular_id = None
         instance = modular_file_object
         app_instance_type = "file/application"
-        try:
-            private = getattr(modular_file_object, "private")
-        except AttributeError:
-            private = False
 
         if tools_class is None:
             modular_id = getattr(modular_file_object, "Name").lower()
@@ -296,9 +321,9 @@ class App(metaclass=Singleton):
         if not save:
             return instance
 
-        return self.save_instance(modular_id, spec, instance, app_instance_type)
+        return self.save_instance(instance, modular_id, spec, app_instance_type)
 
-    def save_instance(self, modular_id, spec, instance, instance_type):
+    def save_instance(self, instance, modular_id, spec='app', instance_type="file/application"):
 
         if modular_id in self.functions:
             self.functions[modular_id][f"{spec}_instance"] = instance
@@ -375,6 +400,7 @@ class App(metaclass=Singleton):
         function_data = self.functions[modular_id][function_id]
 
         function = function_data.get("func")
+        params = function_data.get("params")
 
         state_ = function_data.get("state")
         if state_ is not None and state != state_:
@@ -383,6 +409,10 @@ class App(metaclass=Singleton):
         if function is None:
             self.logger.warning(f"No function found")
             return "404", 300
+
+        if params is None:
+            self.logger.warning(f"No function (params) found")
+            return "404", 301
 
         if metadata and not state:
             self.logger.info(f"returning metadata stateless")
@@ -394,6 +424,10 @@ class App(metaclass=Singleton):
 
         instance = self.functions[modular_id].get(f"{specification}_instance")
         instance_type = self.functions[modular_id].get(f"{specification}_instance_type")
+
+        if instance is None and params[0] == 'app':
+            instance = self
+            instance_type = "functions/class"
 
         if instance is None:
             self.logger.warning(f"No live Instance found")
@@ -411,7 +445,7 @@ class App(metaclass=Singleton):
 
         self.logger.info(f"wrapping in higher_order_function")
 
-        self.logger.info(f"{specification}.{modular_id}.{function_id} got execute with '{specification}' state ")
+        self.logger.info(f"returned fuction {specification}.{modular_id}.{function_id}")
         higher_order_function = partial(function, instance)
 
         if metadata:
@@ -679,8 +713,6 @@ class App(metaclass=Singleton):
             args.insert(app_position, self)
 
         try:
-            #self.print(f"[{function_name=}],{len(parameters)},{len(args)} {len(kwargs.keys())} {if_self_state=} {args=},"
-            #           f" {kwargs=}")
             if len(parameters) == 0:
                 res = function()
             elif len(parameters) == len(args) + if_self_state:
@@ -713,7 +745,7 @@ class App(metaclass=Singleton):
             # res = formatted_result
             self.logger.error(
                 f"Function {modular_name}.{function_name}"
-                f" executed wit an error {e}")
+                f" executed wit an error {str(e)}, {type(e)}")
             self.debug_rains(e)
 
         else:
@@ -726,8 +758,12 @@ class App(metaclass=Singleton):
         return formatted_result
 
     def run_any(self, mod_function_name: Enum or str or tuple, backwords_compability_variabel_string_holder=None,
-                get_results=False, tb_run_function_with_state=True, tb_run_with_specification='app', args_=None, kwargs_=None,
+                get_results=False, tb_run_function_with_state=True, tb_run_with_specification='app', args_=None,
+                kwargs_=None,
                 *args, **kwargs):
+
+        if self.debug:
+            self.logger.info(f'Called from: {getouterframes(currentframe(), 2)}')
 
         if kwargs_ is not None and not kwargs:
             kwargs = kwargs_
@@ -773,7 +809,7 @@ class App(metaclass=Singleton):
     def _register_function(self, module_name, func_name, data):
         if module_name not in self.functions:
             self.functions[module_name] = {}
-        if module_name in self.functions and func_name in self.functions[module_name]:
+        if func_name in self.functions[module_name]:
             count = sum(1
                         for existing_key in self.functions[module_name] if
                         existing_key.startswith(module_name))
@@ -794,18 +830,84 @@ class App(metaclass=Singleton):
                           exit_f=False,
                           test=True,
                           samples=None,
-                          state=None):
+                          state=None,
+                          pre_compute=None,
+                          post_compute=None,
+                          memory_cache=False,
+                          file_cache=False,
+                          memory_cache_max_size=100,
+                          memory_cache_ttl=300):
 
         if isinstance(type_, Enum):
             type_ = type_.value
 
+        if memory_cache and file_cache:
+            raise ValueError("Don't use both cash at the same time for the same fuction")
+
+        use_cache = memory_cache or file_cache
+        cache = {}
+        if file_cache:
+            cache = FileCache(folder=self.data_dir + f'\\cache\\{mod_name}\\',
+                              filename=self.data_dir + f'\\cache\\{mod_name}\\{name}cache.db')
+        if memory_cache:
+            cache = MemoryCache(maxsize=memory_cache_max_size, ttl=memory_cache_ttl)
+
         version = self.version if version is None else self.version + ':' + version
+
+        def additional_process(func):
+
+            def executor(*args, **kwargs):
+
+                if pre_compute is not None:
+                    args, kwargs = pre_compute(*args, **kwargs)
+                result = func(*args, **kwargs)
+                if post_compute is not None:
+                    result = post_compute(result)
+                if not isinstance(result, Result):
+                    result = Result.ok(data=result)
+                if result.origin is None:
+                    result.set_origin((mod_name.lower() if mod_name else func.__module__.split('.')[-1].lower()
+                                       , name if name else func.__name__
+                                       , type_))
+                if result.result.data_to == ToolBoxInterfaces.native.name:
+                    result.result.data_to = ToolBoxInterfaces.remote if api else ToolBoxInterfaces.native
+                # Wenden Sie die to_api_result Methode auf das Ergebnis an, falls verfügbar
+                if api and hasattr(result, 'to_api_result'):
+                    return result.to_api_result()
+                return result
+
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+
+                if not use_cache:
+                    return executor(*args, **kwargs)
+
+                try:
+                    cache_key = (f"{mod_name.lower() if mod_name else func.__module__.split('.')[-1].lower()}"
+                                 f"-{func.__name__}-{str(args)},{str(kwargs.items())}")
+                except ValueError:
+                    cache_key = (f"{mod_name.lower() if mod_name else func.__module__.split('.')[-1].lower()}"
+                                 f"-{func.__name__}-{bytes(args)},{str(kwargs.items())}")
+
+                result = cache.get(cache_key)
+                if result is not None:
+                    return result
+
+                result = executor(*args, **kwargs)
+
+                cache.set(cache_key, result)
+
+                return result
+
+            return wrapper
 
         def decorator(func):
             sig = signature(func)
             params = list(sig.parameters)
             module_name = mod_name.lower() if mod_name else func.__module__.split('.')[-1].lower()
             func_name = name if name else func.__name__
+            if api or pre_compute is not None or post_compute is not None or memory_cache or file_cache:
+                func = additional_process(func)
             data = {
                 "type": type_,
                 "level": level,
@@ -819,7 +921,8 @@ class App(metaclass=Singleton):
                 "__module__": func.__module__,
                 "signature": sig,
                 "params": params,
-                "state": (False if len(params) == 0 else params[0] in ['self', 'state']) if state is None else state,
+                "state": (
+                    False if len(params) == 0 else params[0] in ['self', 'state', 'app']) if state is None else state,
                 "do_test": test,
                 "samples": samples,
 
@@ -833,6 +936,7 @@ class App(metaclass=Singleton):
                 if "on_start" not in self.functions[module_name]:
                     self.functions[module_name]["on_start"] = []
                 self.functions[module_name]["on_start"].append(func_name)
+
             return func
 
         return decorator
@@ -850,7 +954,13 @@ class App(metaclass=Singleton):
            test=True,
            samples=None,
            state=None,
-           test_only=False):
+           test_only=False,
+           pre_compute=None,
+           post_compute=None,
+           memory_cache=False,
+           file_cache=False,
+           memory_cache_max_size=100,
+           memory_cache_ttl=300):
         if interface is None:
             interface = "tb"
         if test_only and 'test' not in self.id:
@@ -867,7 +977,13 @@ class App(metaclass=Singleton):
                                       exit_f=exit_f,
                                       test=test,
                                       samples=samples,
-                                      state=state)
+                                      state=state,
+                                      pre_compute=pre_compute,
+                                      post_compute=post_compute,
+                                      memory_cache=memory_cache,
+                                      file_cache=file_cache,
+                                      memory_cache_max_size=memory_cache_max_size,
+                                      memory_cache_ttl=memory_cache_ttl)
 
     def print_functions(self):
         if not self.functions:
@@ -1010,7 +1126,8 @@ def analyze_data(data):
             report.append("  Fehler:")
             for func_name, errors in mod_info['callse'].items():
                 for error in errors:
-                    error = error.replace('\n', ' - ')
+                    if isinstance(error, str):
+                        error = error.replace('\n', ' - ')
                     report.append(f"    - {func_name}, Fehler: {error}")
 
     return "\n".join(report)

@@ -1,7 +1,6 @@
-NAME = "api"
 from toolboxv2 import tbef
+NAME = "api"
 
 
-def run(_, _1):
-    _.run_any(tbef.API_MANAGER.STARTAPI, api_name=_1.name)
-    return 0
+def run(_, _0):
+    return _.run_any(tbef.API_MANAGER.STARTAPI, api_name=_0.name)

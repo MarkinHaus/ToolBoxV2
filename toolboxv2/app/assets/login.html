@@ -36,13 +36,20 @@
 
             <div id="infoPopup" class="form-container" style="display: none; z-index: 1000;">
             <p id="infoText"></p>
+            <p id="remeberText"></p>
             </div>
 
           <input type="text" id="username" placeholder="Username">
-          <input type="password" id="password" placeholder="Password">
-          <label>Remember me <input type="checkbox" id="remember-me"></label>
+          <label>Remember me <input type="checkbox" id="remember-me" onchange='function checkedF() {
+          checked[0] = !checked[0]
+          console.log("[checked]:", checked)
+          document.getElementById("remember-me").classList.add("none")
+          document.getElementById("remeberText").textContent = "Halten sie Ihr gerät welches sie beim sig up verwendend haben beriet."
+          }
+          checkedF()'></label>
           <button type="submit">Login</button>
         </form>
+          <button id="get-magicking" class="none">Login Device</button>
       </div>
     </section>
   </div>
@@ -51,38 +58,112 @@
 <script type="module">
 
 
-    import {httpPostData} from "/app/scripts/httpSender.js";
+    import {httpPostData, httpPostUrl} from "/app/scripts/httpSender.js";
+    import {authorisazeUser, signMessage, retrievePrivateKey, decryptAsymmetric, storePrivateKey} from "/app/scripts/cryp.js";
 
-document.addEventListener('DOMContentLoaded', () => {
+    let base64_privat_key = null
+    let checked = [false]
+    let caunter = 0
+    document.addEventListener('DOMContentLoaded', () => {
 
+        function get_handleLoginError(id) {
     function handleLoginError(data) {
+        console.log("[handleCreateUserError data]:",id, data)
         document.getElementById('infoText').textContent = data.info.help_text;
         document.getElementById('infoPopup').style.display = 'block';
         return data
     }
+    return handleLoginError
+    }
 
-    function handleLoginSuccess(data) {
-        var webSocketID = data.result.data.webSocketID;
-        document.getElementById('infoText').textContent = "Login successful";
-        document.getElementById('infoPopup').style.display = 'block';
+    function rr(){
         setTimeout(() => {
-            localStorage.setItem("WsID", webSocketID);
             localStorage.setItem("local_ws.onopen:installMod-welcome", 'false');
             window.location.href = "/app/dashboard";
         }, 200);
+    }
+
+    async function handleLoginSuccessVP(data) {
+        console.log("[handleLoginSuccessVP data]:", data)
+        document.getElementById('infoText').textContent = data.info.help_text;
+        document.getElementById('infoPopup').style.display = 'block';
+        if (base64_privat_key === null){
+            throw "Device is not registered use remember me"
+        }
+        try {
+            const deviceID = await decryptAsymmetric(data.get().key, base64_privat_key, true)
+            const row_claim = await decryptAsymmetric(data.get().claim, base64_privat_key, true)
+            await storePrivateKey(privateKey_base64, deviceID)
+            localStorage.setItem('jwt_claim', data.get().claim);
+            sessionStorage.setItem('row_jwt_claim', row_claim);
+            rr()
+        }catch (e){
+            console.log("Error handleLoginSuccessVP", e)
+        }
+
         return data
     }
 
-    function login(username, password) {
-        httpPostData('cloudm', 'log_in_user', { username, password }, handleLoginError, handleLoginSuccess);
+    async function handleLoginSuccessVD(data) {
+        console.log("[handleLoginSuccessVD data]:", data)
+        document.getElementById('infoText').textContent = data.info.help_text;
+        document.getElementById('infoPopup').style.display = 'block';
+        if (base64_privat_key === null){
+            throw "Device is not registered use remember me"
+        }
+        try {
+            const claim = await decryptAsymmetric(data.get(), base64_privat_key, true)
+            localStorage.setItem('jwt_claim_device', claim);
+            rr()
+        }catch (e){
+            console.log("Error handleLoginSuccessVP", e)
+        }
+
+        return data
+    }
+
+    async function handleLoginSuccess(data) {
+        document.getElementById('infoText').textContent = "Login in progress";
+        document.getElementById('infoPopup').style.display = 'block';
+
+        console.log("[checked]:", checked)
+
+        if (checked[0]){
+            if(await authorisazeUser(data.get().rowId, data.get().challenge, document.getElementById('username').value, get_handleLoginError("authorisazeUser"), handleLoginSuccessVP)){
+                document.getElementById('infoText').textContent = "Validate user successful";
+            }
+        }else{
+            const deviceID = localStorage.getItem('deviceID');
+
+            base64_privat_key = await retrievePrivateKey(deviceID)
+
+            if (base64_privat_key === "Invalid user name device not registered"){
+                document.getElementById('infoText').textContent = "Invalid user name device not registered on '"+document.getElementById('username').value+"'";
+                document.getElementById('infoPopup').style.display = 'block';
+                caunter++;
+            }else{
+                const signature = await signMessage(base64_privat_key, data.get().challenge)
+                httpPostData('cloudm', 'validate_device', { username:document.getElementById('username').value, signature},
+                    get_handleLoginError("signMessage"), handleLoginSuccessVD);
+            }
+
+
+
+
+        }
+
+        return data
+    }
+
+    function loginDevice(username) {
+        httpPostUrl('cloudm.authmanager', 'get_to_sing_data', 'username='+username + '&personal_key='+checked[0].toString(), get_handleLoginError("loginDevice"), handleLoginSuccess);
     }
 
   document.getElementById('loginForm').addEventListener('submit', function(event) {
     event.preventDefault();
 
     let username = document.getElementById('username').value;
-    let password = document.getElementById('password').value;
-    login(username, password);
+      loginDevice(username);
   });
  });
 </script>

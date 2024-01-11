@@ -361,7 +361,7 @@ input[type="checkbox"] {
 
 .frosted-glass {
     left: 0;
-    min-height: 80vh;
+    /*min-height: 80vh;*/
     max-height: min-content;
     min-width: min-content;
     max-width: max-content;
