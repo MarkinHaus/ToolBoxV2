@@ -98,17 +98,19 @@ class App(metaclass=Singleton):
         if not os.path.exists(self.config_dir):
             os.makedirs(self.config_dir, exist_ok=True)
 
+        lapp = dir_name + '\\.data\\'
+
         if not prefix:
-            if not os.path.exists(f"./.data/last-app-prefix"):
-                open(f"./.data/last-app-prefix", "a").close()
-            with open(f"./.data/last-app-prefix", "r") as prefix_file:
+            if not os.path.exists(f"{lapp}last-app-prefix"):
+                open(f"{lapp}last-app-prefix", "a").close()
+            with open(f"{lapp}last-app-prefix", "r") as prefix_file:
                 cont = prefix_file.read()
                 if cont:
                     prefix = cont
         else:
-            if not os.path.exists(f"./.data/last-app-prefix"):
-                open(f"./.data/last-app-prefix", "a").close()
-            with open(f"./.data/last-app-prefix", "w") as prefix_file:
+            if not os.path.exists(f"{lapp}last-app-prefix"):
+                open(f"{lapp}last-app-prefix", "a").close()
+            with open(f"{lapp}last-app-prefix", "w") as prefix_file:
                 prefix_file.write(prefix)
 
         print(f"Starting ToolBox as {prefix} from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))

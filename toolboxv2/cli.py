@@ -13,9 +13,6 @@ try:
     import pstats
     import io
 
-
-    # Ihr Code hier
-
     def profile_execute_all_functions(app=None, m_query='', f_query=''):
         # Erstellen Sie eine Instanz Ihrer Klasse
         instance = app if app is not None else get_app(from_="Profiler")
