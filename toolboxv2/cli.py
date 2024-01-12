@@ -3,11 +3,53 @@
 import sys
 import argparse
 from platform import system, node
-
 # Import public Pages
 from toolboxv2 import App, MainTool, runnable_dict as runnable_dict_func
 from toolboxv2.utils.toolbox import get_app
 import ctypes
+
+try:
+    import cProfile
+    import pstats
+    import io
+
+
+    # Ihr Code hier
+
+    def profile_execute_all_functions(app=None, m_query='', f_query=''):
+        # Erstellen Sie eine Instanz Ihrer Klasse
+        instance = app if app is not None else get_app(from_="Profiler")
+
+        # Erstellen eines Profilers
+        profiler = cProfile.Profile()
+
+        # Starten des Profilers und Ausführen der Funktion
+        profiler.enable()
+        instance.execute_all_functions(m_query=m_query, f_query=f_query)
+        profiler.disable()
+
+        # Erstellen eines Streams für die Profilergebnisse
+        s = io.StringIO()
+        sortby = 'cumulative'  # Sortierung nach Gesamtzeit im Funktionsaufruf
+        ps = pstats.Stats(profiler, stream=s).sort_stats(sortby)
+
+        # Ausgabe der Profilergebnisse
+        ps.print_stats()
+        print(s.getvalue())
+
+        print("\n================================")
+        s = io.StringIO()
+        sortby = 'time'  # Sortierung nach der Gesamtzeit, die in jeder Funktion verbracht wird
+
+        # Erstellen eines pstats-Objekts und Ausgabe der Top-Funktionen
+        ps = pstats.Stats(profiler, stream=s).sort_stats(sortby)
+        ps.print_stats()
+
+        # Ausgabe der Ergebnisse
+        print(s.getvalue())
+except ImportError as e:
+    profile_execute_all_functions = lambda *args: print(args);
+    raise ValueError(f"Failed to import function for profiling")
 
 
 def show_console(show=True):
@@ -323,7 +365,7 @@ def main():
     # )
 
     # print(args)
-    abspath = os.path.abspath(__file__)
+    abspath = os.path.dirname(os.path.abspath(__file__))
 
     identification = args.name + '-' + node() + '\\'
     if args.mm:
@@ -344,14 +386,18 @@ def main():
     if args.delete_data:
         os.remove(app_data_folder)
 
+    if args.test:
+        test_path = abspath.replace("toolboxv2\\toolboxv2", "toolboxv2") + "\\tests\\test_mods"
+        print(f"Testing in {test_path}")
+        os.system(f"python -m unittest discover -s {test_path}")
+        return 1
+
     app_pid = str(os.getpid())
 
     tb_app = get_app(from_="InitialStartUp", name=args.name, args=args)
 
     # tb_app.load_all_mods_in_file()
     # tb_app.save_registry_as_enums("utils", "all_functions_enums.py")
-
-
 
     pid_file = f"{tb_app.start_dir}/{tb_app.config_fh.file_handler_file_prefix}{args.modi}-{args.name}.pid"
 
@@ -378,8 +424,16 @@ def main():
         if args.get_version:
 
             for mod_name in tb_app.functions:
-                if isinstance(tb_app.functions[mod_name]["app_instance"], MainTool):
+                if isinstance(tb_app.functions[mod_name].get("app_instance"), MainTool):
                     print(f"{mod_name} : {tb_app.functions[mod_name]['app_instance'].version}")
+                else:
+                    v = tb_app.functions[mod_name].get(list(tb_app.functions[mod_name].keys())[0]).get("version",
+                                                                                                       "unknown (functions only)")
+                    print(f"{mod_name} : {v}")
+
+    if args.profiler:
+        profile_execute_all_functions(tb_app)
+        tb_app.alive = False
 
     if not args.kill and not args.docker:
 

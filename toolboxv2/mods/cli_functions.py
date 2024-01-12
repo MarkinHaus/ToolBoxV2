@@ -37,7 +37,7 @@ default_export = export(mod_name=Name)
 version = '0.0.1'
 
 
-@export(mod_name=Name, name='Version')
+@export(mod_name=Name, name='Version', version=version)
 def get_version():
     return version
 
