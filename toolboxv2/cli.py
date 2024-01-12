@@ -412,10 +412,12 @@ def main():
         if tb_app.system_flag == "Windows":
             setup_service_windows()
 
-    if args.load_all_mod_in_files:
+    if args.load_all_mod_in_files or args.save_function_enums_in_file or args.get_version:
         tb_app.load_all_mods_in_file()
         if args.save_function_enums_in_file:
             tb_app.save_registry_as_enums("utils", "all_functions_enums.py")
+            tb_app.alive = False
+            tb_app.exit()
         if args.debug:
             tb_app.print_functions()
         if args.get_version:
@@ -427,12 +429,15 @@ def main():
                     v = tb_app.functions[mod_name].get(list(tb_app.functions[mod_name].keys())[0]).get("version",
                                                                                                        "unknown (functions only)")
                     print(f"{mod_name} : {v}")
+            tb_app.alive = False
+            tb_app.exit()
 
     if args.profiler:
         profile_execute_all_functions(tb_app)
         tb_app.alive = False
+        tb_app.exit()
 
-    if not args.kill and not args.docker:
+    if not args.kill and not args.docker and tb_app.alive:
 
         with open(f"{tb_app.start_dir}/{tb_app.config_fh.file_handler_file_prefix}/{args.modi}-{args.name}.pid",
                   "w") as f:

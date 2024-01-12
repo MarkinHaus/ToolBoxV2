@@ -398,15 +398,13 @@ def otest_invations(app: App):
     print(res, 'invitation test')
 
 
-@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True, level=999)
-def otest_invations_api(app: App) -> ApiResult:
+@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.native, api=False, level=999)
+def get_invitation(app: App) -> Result:
     if app is None:
         app = get_app(Name + '.test_invations')
     print("Test invations api")
     invitation = db_crate_invitation(app)
-    data = Result.ok(data=invitation)
-    data.print()
-    return data
+    return Result.ok(data=invitation)
 
 
 # a sync contention between server and user

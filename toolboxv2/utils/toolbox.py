@@ -785,10 +785,10 @@ class App(metaclass=Singleton):
 
         return res
 
-    def get_mod(self, name, spec='app') -> ModuleType:
+    def get_mod(self, name, spec='app') -> ModuleType or toolboxv2.MainTool:
         self.print(f"NAME: {name}")
         if name.lower() not in list(map(lambda x: x.lower(), self.functions.keys())):
-            if self.save_load(name) is False:
+            if self.save_load(name, spec=spec) is False:
                 self.logger.warning(f"Could not find {name} in {list(self.functions.keys())}")
                 raise ValueError(f"Could not find {name} in {list(self.functions.keys())} pleas install the module")
         # private = self.functions[name.lower()].get(f"{spec}_private")
@@ -945,24 +945,55 @@ class App(metaclass=Singleton):
 
     def tb(self, name=None,
            mod_name: str = "",
-           level=-1,
-           restrict_in_virtual_mode=False,
-           helper="",
-           api=False,
-           version=None,
-           initial=False,
-           exit_f=False,
-           interface=None,
-           test=True,
-           samples=None,
-           state=None,
-           test_only=False,
+           helper: str = "",
+           version: str or None = None,
+           test: bool = True,
+           restrict_in_virtual_mode: bool = False,
+           api: bool = False,
+           initial: bool = False,
+           exit_f: bool = False,
+           test_only: bool = False,
+           memory_cache: bool = False,
+           file_cache: bool = False,
+           state: bool or None = None,
+           level: int = -1,
+           memory_cache_max_size: int = 100,
+           memory_cache_ttl: int = 300,
+           samples: list or dict or None = None,
+           interface: ToolBoxInterfaces or None or str = None,
            pre_compute=None,
            post_compute=None,
-           memory_cache=False,
-           file_cache=False,
-           memory_cache_max_size=100,
-           memory_cache_ttl=300):
+           ):
+        """
+    A decorator for registering and configuring functions within a module.
+
+    This decorator is used to wrap functions with additional functionality such as caching, API conversion, and lifecycle management (initialization and exit). It also handles the registration of the function in the module's function registry.
+
+    Args:
+        name (str, optional): The name to register the function under. Defaults to the function's own name.
+        mod_name (str, optional): The name of the module the function belongs to.
+        helper (str, optional): A helper string providing additional information about the function.
+        version (str or None, optional): The version of the function or module.
+        test (bool, optional): Flag to indicate if the function is for testing purposes.
+        restrict_in_virtual_mode (bool, optional): Flag to restrict the function in virtual mode.
+        api (bool, optional): Flag to indicate if the function is part of an API.
+        initial (bool, optional): Flag to indicate if the function should be executed at initialization.
+        exit_f (bool, optional): Flag to indicate if the function should be executed at exit.
+        test_only (bool, optional): Flag to indicate if the function should only be used for testing.
+        memory_cache (bool, optional): Flag to enable memory caching for the function.
+        file_cache (bool, optional): Flag to enable file caching for the function.
+        state (bool or None, optional): Flag to indicate if the function maintains state.
+        level (int, optional): The level of the function, used for prioritization or categorization.
+        memory_cache_max_size (int, optional): Maximum size of the memory cache.
+        memory_cache_ttl (int, optional): Time-to-live for the memory cache entries.
+        samples (list or dict or None, optional): Samples or examples of function usage.
+        interface (str, optional): The interface type for the function.
+        pre_compute (callable, optional): A function to be called before the main function.
+        post_compute (callable, optional): A function to be called after the main function.
+
+    Returns:
+        function: The decorated function with additional processing and registration capabilities.
+    """
         if interface is None:
             interface = "tb"
         if test_only and 'test' not in self.id:
@@ -1006,7 +1037,7 @@ class App(metaclass=Singleton):
                 print(f"  Function: {func_name}{data.get('signature', '()')}; "
                       f"Type: {func_type}, Level: {func_level}, {api_status}")
 
-    def save_registry_as_enums(self, directory, filename):
+    def save_registry_as_enums(self, directory:str, filename: str):
         # Ordner erstellen, falls nicht vorhanden
         if not os.path.exists(directory):
             os.makedirs(directory)
@@ -1019,6 +1050,8 @@ class App(metaclass=Singleton):
                         f'\nfrom enum import Enum\nfrom dataclasses import dataclass'
                         f'\n\n\n']
         for module, functions in self.functions.items():
+            if module.startswith("APP_INSTANCE"):
+                continue
             class_name = module.split('.')[-1]  # Verwende den letzten Teil des Modulnamens als Klassenname
             enum_members = "\n\t".join(
                 [f"{func_name.upper().replace('-', '')}: str = '{func_name}'" for func_name in functions])

@@ -4,60 +4,34 @@ import logging
 import math
 import os
 import random
-import subprocess
 import sys
-import tempfile
-import threading
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
 import json
-import urllib.request
-import shutil
 from pathlib import Path
 
-from bs4 import BeautifulSoup
-from pydantic import BaseModel
-from tqdm import tqdm
-
-import jwt
 import requests
-from toolboxv2 import MainTool, FileHandler, App, Style, ToolBox_over
-from toolboxv2.api.util import PostRequest
-from toolboxv2.utils.types import Result, ToolBoxError, ToolBoxInfo, ToolBoxResult, ToolBoxInterfaces
-from toolboxv2.utils.Style import extract_json_strings
+from toolboxv2 import MainTool, FileHandler, Style
+from .UserInstanceManager import UserInstances
+from toolboxv2.mods.CloudM.AuthManager import get_invitation
+from toolboxv2.mods.CloudM.ModManager import installer
+from toolboxv2.mods.DB.tb_adapter import Tools as DB
 from toolboxv2.utils.state_system import get_state_from_app, TbState
 from toolboxv2.utils.toolbox import get_app
 
-# from toolboxv2.mods import Restrictor, VirtualizationTool, welcome
 
 Name = 'cloudM'
-
-
-class CrateUserPostRequest(BaseModel):
-    username: str
-    email: str
-    password: str
-    invitation: str
-
-
-class LoginUserPostRequest(BaseModel):
-    username: str
-    password: str
-
-
-class ValidatePostRequest(BaseModel):
-    token: str
-    server_x: str or None
-    pasted: str or None
-    max_p: str or None
+version = "0.0.2"
+export = get_app(f"{Name}.EXPORT").tb
+no_test = export(mod_name=Name, test=False, version=version)
+to_api = export(mod_name=Name, api=True, version=version)
 
 
 class Tools(MainTool, FileHandler):
 
     def __init__(self, app=None):
         t0 = time.perf_counter()
-        self.version = "0.0.1"
+        self.version = version
         self.api_version = "404"
         self.name = "cloudM"
         self.logger: logging.Logger or None = app.logger if app else None
@@ -65,9 +39,10 @@ class Tools(MainTool, FileHandler):
         self.app = app
         if app is None:
             self.app = get_app()
-
+        self.user_instances = UserInstances()
         self.keys = {
             "URL": "comm-vcd~~",
+            "URLS": "comm-vcds~",
             "TOKEN": "comm-tok~~",
         }
         self.tools = {
@@ -118,33 +93,13 @@ class Tools(MainTool, FileHandler):
             "Version": self.show_version,
             "api_Version": self.show_version,
             "NEW": self.new_module,
-            "upload": self.upload,
-            "download": self.download,
-            "first-web-connection": self.add_url_con,
             "create-account": self.create_account,
             "login": self.log_in,
-            "api_create_user": self.create_user,
-            "api_log_in_user": self.log_in_user,
-            "api_log_out_user": self.log_out_user,
-            "api_email_waiting_list": self.email_waiting_list,
-            "api_validate_jwt": self.validate_jwt,
-            "validate_jwt": self.validate_jwt
-            , "download_api_files": self.download_api_files,
             "#update-core": self.update_core,
-            "wsGetI": self.get_instance_si_id,
-            "validate_ws_id": self.validate_ws_id,
             "mod-installer": self.install_module,
             "system_init": self.prep_system_initial,
-            "mod-remover": delete_package,
-            "close_user_instance": self.close_user_instance,
-            "get_user_instance": self.get_user_instance_wrapper,
-            "set_user_level": self.set_user_level,
         }
 
-        self.live_user_instances = {}
-        self.user_instances = {}
-        self.vt = None
-        self.rt = None
         self.logger.info("init FileHandler cloudM")
         t1 = time.perf_counter()
         FileHandler.__init__(self, "modules.config", app.id if app else __name__,
@@ -153,7 +108,6 @@ class Tools(MainTool, FileHandler):
                                  "TOKEN": '"~tok~"',
                              })
         self.logger.info(f"Time to initialize FileHandler {time.perf_counter() - t1}")
-
         t1 = time.perf_counter()
         self.logger.info("init MainTool cloudM")
         MainTool.__init__(self,
@@ -187,14 +141,9 @@ class Tools(MainTool, FileHandler):
 
     def prep_system_initial(self, do_root=False):
 
-        db = self.app.get_mod('DB')
+        db: DB = self.app.get_mod('DB')
 
-        if db is None or not db:
-            self.print(
-                "No redis instance provided from db run DB first-redis-connection")
-            return "Pleas connect first to a redis instance"
-
-        if db.rcon is None:
+        if db.data_base is None or not db:
             self.print(
                 "No redis instance provided from db run DB first-redis-connection")
             return "Pleas connect first to a redis instance"
@@ -203,9 +152,10 @@ class Tools(MainTool, FileHandler):
             if 'y' not in input(
                 Style.RED("Ar u sure : the deb will be cleared type y :")):
                 return
-        db.clean_db()
+
+        db.delete('*', matching=True)
         i = 0
-        for _ in db.rcon.scan_iter():
+        for _ in db.get('all').get():
             i += 1
 
         if i != 0:
@@ -216,299 +166,14 @@ class Tools(MainTool, FileHandler):
         for i in range(4):
             secret += str(uuid.uuid5(uuid.NAMESPACE_X500, secret))
 
-        db.rcon.set("jwt-secret-cloudMService", secret)
-        db.rcon.set("email_waiting_list", '[]')
+        db.set("jwt-secret-cloudMService", secret)
+        db.set("email_waiting_list", '[]')
 
-        key = str(uuid.uuid4())
+        key = get_invitation().get()
 
         print("First key :" + key)
         self.print("Server Initialized for root user")
-        db.rcon.set(key, "Valid")
         return True
-
-    def get_si_id(self, uid):
-        ss_id = uid + 'SiID'
-        # app . key generator
-        # app . hash pepper and Salting
-        # app . key generator
-        self.print(f"APP: generated SiID")
-        return ss_id
-
-
-
-    def get_web_socket_id(self, uid):
-        ws_id = self.app.id + uid + 'CloudM-Signed'
-        # app . key generator
-        # app . hash pepper and Salting
-        # app . key generator
-        self.print(f"APP:generated from webSocketID:")
-        return ws_id
-
-    def close_user_instance(self, uid):
-        if self.get_si_id(uid) not in self.live_user_instances.keys():
-            self.logger.warning("User instance not found")
-            return "User instance not found"
-        instance = self.live_user_instances[self.get_si_id(uid)]
-        self.user_instances[instance['SiID']] = instance['webSocketID']
-        self.app.run_any(
-            'db', 'set',
-            ['', f"User::Instance::{uid}",
-             json.dumps({"saves": instance['save']})])
-        if not instance['live']:
-            self.save_user_instances(instance)
-            self.logger.info("No modules to close")
-            return "No modules to close"
-        for key, val in instance['live'].items():
-            if key.startswith('v-'):
-                continue
-            try:
-                val._on_exit()
-            except Exception as e:
-                self.logger.error(f"Error closing {key}, {str(e)}")
-        del instance['live']
-        instance['live'] = {}
-        self.logger.info("User instance live removed")
-        self.save_user_instances(instance)
-
-    def validate_ws_id(self, ws_id):
-        self.logger.info(f"validate_ws_id 1 {len(self.user_instances)}")
-        if len(self.user_instances) == 0:
-            data = self.app.run_any('db', 'get',
-                                    [f"user_instances::{self.app.id}"])
-            self.logger.info(f"validate_ws_id 2 {type(data)} {data}")
-            if isinstance(data, str):
-                try:
-                    self.user_instances = json.loads(data)
-                    self.logger.info(Style.GREEN("Valid instances"))
-                except Exception as e:
-                    self.logger.info(Style.RED(f"Error : {str(e)}"))
-        self.logger.info(f"validate_ws_id ::{self.user_instances}::")
-        for key in list(self.user_instances.keys()):
-            value = self.user_instances[key]
-            self.logger.info(f"validate_ws_id ::{value == ws_id}:: {key} {value}")
-            if value == ws_id:
-                return True, key
-        return False, ""
-
-    def delete_user_instance(self, uid):
-        si_id = self.get_si_id(uid)
-        if si_id not in self.user_instances.keys():
-            return "User instance not found"
-        if si_id in self.live_user_instances.keys():
-            del self.live_user_instances[si_id]
-
-        del self.user_instances[si_id]
-        self.app.run_any('db', 'del', ['', f"User::Instance::{uid}"])
-        return "Instance deleted successfully"
-
-    def set_user_level(self):
-
-        users, keys = [(u['save'], _) for _, u in self.live_user_instances.items()]
-        users_names = [u['username'] for u in users]
-        for user in users:
-            self.print(f"User: {user['username']} level : {user['level']}")
-
-        rot_input = input("Username: ")
-        if not rot_input:
-            self.print(Style.YELLOW("Please enter a username"))
-            return "Please enter a username"
-        if rot_input not in users_names:
-            self.print(Style.YELLOW("Please enter a valid username"))
-            return "Please enter a valid username"
-
-        user = users[users_names.index(rot_input)]
-
-        self.print(Style.WHITE(f"Usr level : {user['level']}"))
-
-        level = input("set level :")
-        level = int(level)
-
-        instance = self.live_user_instances[keys[users_names.index(rot_input)]]
-
-        instance['save']['level'] = level
-
-        self.save_user_instances(instance)
-
-        self.print("done")
-
-        return True
-
-    def save_user_instances(self, instance):
-        self.logger.info("Saving instance")
-        self.user_instances[instance['SiID']] = instance['webSocketID']
-        self.live_user_instances[instance['SiID']] = instance
-        self.app.run_any(
-            'db', 'set',
-            [f"user_instances::{self.app.id}",
-             json.dumps(self.user_instances)])
-
-    def get_instance_si_id(self, si_id):
-        if si_id in self.live_user_instances:
-            return self.live_user_instances[si_id]
-        return False
-
-    def get_user_instance_wrapper(self, uid):
-        return self.get_user_instance(uid)
-
-    def get_user_instance(self,
-                          uid: str,
-                          username: str or None = None,
-                          token: str or None = None,
-                          hydrate: bool = True):
-        # Test if an instance exist locally -> instance = set of data a dict
-
-        instance = {
-            'save': {
-                'uid': uid,
-                'level': 0,
-                'mods': [],
-                'username': username
-            },
-            'live': {},
-            'webSocketID': self.get_web_socket_id(uid),
-            'SiID': self.get_si_id(uid),
-            'token': token
-        }
-
-        if instance['SiID'] in self.live_user_instances.keys():
-            instance_live = self.live_user_instances[instance['SiID']]
-            if 'live' in instance_live.keys():
-                if instance_live['live'] and instance_live['save']['mods']:
-                    self.logger.info(Style.BLUEBG2("Instance returned from live"))
-                    return instance_live
-                if instance_live['token']:
-                    instance = instance_live
-                    instance['live'] = {}
-
-        if instance['SiID'] in self.user_instances.keys(
-        ):  # der nutzer ist der server instanz bekannt
-            instance['webSocketID'] = self.user_instances[instance['SiID']]
-
-        chash_data = self.app.run_any('db', 'get', [f"User::Instance::{uid}"])
-        if chash_data:
-            self.print(chash_data)
-            try:
-                instance['save'] = json.loads(chash_data)["saves"]
-            except Exception as e:
-                instance['save'] = chash_data["saves"]
-                self.logger.error(Style.YELLOW(f"Error loading instance {e}"))
-
-        self.logger.info(Style.BLUEBG(f"Init mods : {instance['save']['mods']}"))
-
-        self.print(Style.MAGENTA(f"instance : {instance}"))
-
-        #   if no instance is local available look at the upper instance.
-        #       if instance is available download and install the instance.
-        #   if no instance is available create a new instance
-        # upper = instance['save']
-        # # get from upper instance
-        # # upper = get request ...
-        # instance['save'] = upper
-        if hydrate:
-            instance = self.hydrate_instance(instance)
-        self.save_user_instances(instance)
-
-        return instance
-
-    def get_restrictor(self):
-        self.print(f"GET Restrictor {self.app.id}")
-
-        if self.rt is not None:
-            return self.rt
-
-        if not self.app.mod_online("Restrictor"):
-            self.rt = self.app.inplace_load_instance("Restrictor")
-            return self.rt
-        self.app.new_ac_mod("Restrictor")
-        self.rt = self.app.AC_MOD
-        return self.rt
-
-    def get_virtualization(self):
-        self.print(f"GET Virtualization {self.app.id}")
-
-        if self.vt is not None:
-            return self.vt
-
-        if not self.app.mod_online("VirtualizationTool"):
-            self.vt = self.app.inplace_load_instance("VirtualizationTool")
-            return self.vt
-        self.app.new_ac_mod("VirtualizationTool")
-        self.vt = self.app.AC_MOD
-        return self.vt
-
-    def hydrate_instance(self, instance):
-
-        # instance = {
-        # 'save': {'uid':'INVADE_USER','level': -1, 'mods': []},
-        # 'live': {},
-        # 'webSocketID': 0000,
-        # 'SiID': 0000,
-        # }
-
-        vt = self.get_virtualization()
-        rt = self.get_restrictor()
-
-        chak = instance['live'].keys()
-        level = instance['save']['level']
-
-        # app . key generator
-        user_instance_name = self.get_vt_id(instance['save']['uid'])
-
-        for mod_name in instance['save']['mods']:
-
-            if mod_name in chak:
-                continue
-
-            user_instance_name_mod = mod_name + '-' + user_instance_name
-
-            mod = vt.get_instance(user_instance_name_mod)
-
-            if mod is None:
-
-                self.print(f"Crating v instance : {mod_name}")
-
-                mod = vt.create_instance(user_instance_name_mod, mod_name)
-
-                if mod is None:
-                    self.print(f"Creating Error Module {mod_name} not found")
-                    # mod = welcome.Tools(
-                    #           )  # switch with an 404 mod and an worning message
-                    return
-            self.print(f"Received v instance : {mod.name}")
-            tool_data = mod.tools["all"]
-
-            for endpoint in tool_data:
-                endpoint_name = endpoint[0]
-                endpoint_len = len(endpoint)
-                endpoint_level = 0
-                endpoint_func_name = endpoint_name
-                by = ToolBox_over + self.app.id
-                resid = self.app.id + "resid"
-
-                if endpoint_name.startswith("api_"):
-                    endpoint_func_name = endpoint_name[4:]
-
-                if endpoint_len == 3:
-                    endpoint_level = endpoint[2]
-
-                if endpoint_len >= 4:
-                    endpoint_level = endpoint[2]
-                    endpoint_func_name = endpoint[3]
-
-                if endpoint_name.startswith("api_"):
-                    endpoint_level = -1
-
-                restrict = True
-                if isinstance(endpoint_level, int):
-                    restrict = level < endpoint_level
-
-                if restrict:
-                    rt.restrict(mod, endpoint_name, by, resid, endpoint_func_name)
-
-            instance['live'][mod_name] = mod
-            instance['live']['v-' + mod_name] = user_instance_name_mod
-
-        return instance
 
     def load_open_file(self):
         self.logger.info("Starting cloudM")
@@ -518,14 +183,15 @@ class Tools(MainTool, FileHandler):
     def on_exit(self):
         self.save_file_handler()
 
-    def show_version(self, c=0):
-        self.print(f"Version: {self.version} {self.api_version}, {c}")
+    @to_api
+    def show_version(self):
+        self.print(f"Version: {self.version} {self.api_version}")
         return self.version
 
-    def get_version(self):
-        version_command = self.get_file_handler(self.keys["URL"])
+    def get_version(self):  # Add root and upper and controll comander pettern
+        version_command = self.app.config_fh.get_file_handler("provider::")
 
-        url = version_command + "/cloudm/Version?c=" + self.version
+        url = version_command + "api/cloudm/show_version"
 
         try:
             self.api_version = requests.get(url, timeout=5).json()["res"]
@@ -538,7 +204,8 @@ class Tools(MainTool, FileHandler):
                 ))
             self.logger.error(f"Error retrieving version from {url}")
 
-    def new_module(self, mod_name: str, *options):
+    @no_test
+    def new_module(self, mod_name: str, *options): # updater wie AI Fuctonal and class based hybrie , file / folder |<futüre>| rust py
         self.logger.info(f"Crazing new module : {mod_name}")
         boilerplate = """import logging
 from toolboxv2 import MainTool, FileHandler, App, Style
@@ -625,112 +292,9 @@ def show_version(_, app: App):
         self.print("Successfully created new module")
         return True
 
-    def upload(self, input_):
-        version_command = self.get_file_handler(self.keys["URL"])
-        url = "http://127.0.0.1:5000/api/upload-file"
-        if version_command is not None:
-            url = version_command + "/upload-file"
-        try:
-            if len(input_) >= 2:
-                name = input_[1]
-                os.system("cd")
-                try:
-                    with open("./mods/" + name + ".py", "rb").read() as f:
-                        file_data = str(f, "utf-8")
-                except IOError:
-                    self.print((Style.RED(
-                        f"File does not exist or is not readable: ./mods/{name}.py")))
-                    return
-
-                if file_data:
-                    data = {
-                        "filename": name,
-                        "data": file_data,
-                        "content_type": "file/py"
-                    }
-
-                    try:
-
-                        def do_upload():
-                            r = requests.post(url, json=data)
-                            self.print(r.status_code)
-                            if r.status_code == 200:
-                                self.print("DON")
-                            self.print(r.content)
-
-                        threa = threading.Thread(target=do_upload)
-                        self.print("Starting upload threading")
-                        threa.start()
-
-                    except Exception as e:
-                        self.print(
-                            Style.RED(f"Error uploading (connoting to server) : {e}"))
-
-            else:
-                self.print((Style.YELLOW(f"SyntaxError : upload filename | {input_}")))
-        except Exception as e:
-            self.print(Style.RED(f"Error uploading : {e}"))
-            return
-
-    def download(self, input_):
-        version_command = self.get_file_handler(self.keys["URL"])
-        url = "http://127.0.0.1:5000/api/cloudm/download_api_files?filename="
-        if version_command is not None:
-            url = version_command + "/cloudm/download_api_files?filename="
-        try:
-            if len(input_) >= 1:
-                name = input_[1]
-
-                url += name
-
-                try:
-                    data = requests.get(url).json()["res"]
-                    if str(data, "utf-8") == f"name not found {name}":
-                        return False
-                    with open("./mods/" + name, "a") as f:
-                        f.write(str(data, "utf-8"))
-                    self.print("saved file to: " + "./mods" + name)
-                    return True
-
-                except Exception as e:
-                    self.print(Style.RED(f"Error download (connoting to server) : {e}"))
-            else:
-                self.print((Style.YELLOW(f"SyntaxError : download filename {input_}")))
-        except Exception as e:
-            self.print(Style.RED(f"Error download : {e}"))
-        return False
-
-    def download_api_files(self, filename):
-        if ".." in filename:
-            return "invalid command"
-        self.print("download_api_files : ", filename)
-
-        mds = self.app.get_all_mods()
-        if filename in mds:
-            self.logger.info(f"returning module {filename}")
-            with open("./mods/" + filename + ".py", "rb") as f:
-                d = f.read()
-            return d
-
-        self.logger.warning(f"Could not found module {filename}")
-        return False
-
-    def add_url_con(self, url):
-        """
-        Adds a url to the list of urls
-        """
-        if not url:
-            url = input(
-                "Pleas enter URL of CloudM Backend default [https://simpelm.com/api] : "
-            )
-        if url == "":
-            url = "https://simeplecore.app/api"
-        self.print(Style.YELLOW(f"Adding url : {url}"))
-        self.add_to_save_file_handler(self.keys["URL"], url)
-        return url
-
+    @no_test
     def create_account(self):
-        version_command = self.get_file_handler(self.keys["URL"])
+        version_command = self.app.config_fh.get_file_handler("provider::")
         url = "https://simeplecore.app/app/signup"
         if version_command is not None:
             url = version_command + "/app/signup"
@@ -745,8 +309,9 @@ def show_version(_, app: App):
             return False
         return True
 
+    @no_test
     def log_in(self, input_):
-        version_command = self.get_file_handler(self.keys["URL"])
+        version_command = self.app.config_fh.get_file_handler("provider::")
         url = "https://simeplecore.app/app/login"
         if version_command is not None:
             url = version_command + "/app/login"
@@ -789,6 +354,7 @@ def show_version(_, app: App):
 
         return False
 
+    @no_test
     def update_core(self, dackup=False, name=""):
         self.print("Init Update..")
         if dackup:
@@ -797,7 +363,6 @@ def show_version(_, app: App):
             os.system(d)
             os.system("git reset --hard origin/master")
         out = os.system("git pull")
-        self.app.reset()
         self.app.remove_all_modules()
         try:
             com = " ".join(sys.orig_argv)
@@ -827,209 +392,6 @@ def show_version(_, app: App):
             print("Restarting...")
             os.system(com)
         exit(0)
-
-    def create_user(self, user: CrateUserPostRequest):
-
-        username = user.username
-        email = user.email
-        password = user.password
-        invitation_key = user.invitation
-
-        invitation_data = self.app.run_any('db', 'get', [invitation_key])
-
-        if invitation_data != "Valid":
-            return "Invalid Invitation Key"
-
-        self.app.run_any('db', 'del', ['', invitation_key])
-
-        uid = str(uuid.uuid4())
-
-        tb_token_jwt = self.app.run_any('db', 'get', ["jwt-secret-cloudMService"])
-        if not tb_token_jwt:
-            return "jwt - not found pleas register one"
-
-        if test_if_exists(username, self.app):
-            return "username already exists"
-
-        if test_if_exists(email, self.app):
-            return "email already exists"
-        jwt_key = crate_sing_key(username, email, password, uid,
-                                 gen_token_time({"v": self.version}, 4380),
-                                 tb_token_jwt, self.app)
-        self.app.MOD_LIST["db"].tools["set"](
-            ["", f"user::{username}::{email}::{uid}", jwt_key])
-
-        self.get_user_instance(uid, username, jwt_key, hydrate=False)
-
-        return self.get_web_socket_id(uid)
-
-    def log_out_user(self, ws_id: str):
-        valid, key = self.validate_ws_id([ws_id])
-        if valid:
-            user_instance = self.live_user_instances[key]
-            self.logger.info(f"Log out User : {user_instance['save']['username']}")
-            for key, mod in user_instance['live'].items():
-                self.logger.info(f"Closing {key}")
-                if isinstance(mod, str):
-                    continue
-                try:
-                    mod.on_exit()
-                except Exception as e:
-                    self.logger.error(f"error closing mod instance {key}:{e}")
-            self.close_user_instance(user_instance['save']['uid'])
-
-            return self.return_result(
-                error=ToolBoxError.none,
-                exec_code=0,  # Assuming exec_code 0 for success, modify as needed
-                help_text="logout",
-                data_info={"error"},
-                data={True}
-            )
-
-    def log_in_user(self, user: LoginUserPostRequest):
-        # if "db" not in list(app.MOD_LIST.keys()):
-        #    return "Server has no database module"
-
-        username = user.username
-        password = user.password
-
-        tb_token_jwt = self.app.run_any('db', 'get', ["jwt-secret-cloudMService"])
-
-        if not tb_token_jwt:
-            return "The server is Not Initialized yet if u ar an admin run 'cloudM prep_system_initial'"
-
-        user_data_token = self.app.run_any('db', 'get', [f"user::{username}::*"])
-
-        user_data: dict = validate_jwt(user_data_token, tb_token_jwt, self.app.id)
-
-        if isinstance(user_data, str):
-            return self.return_result(
-                error=ToolBoxError.custom_error,
-                exec_code=0,  # Assuming exec_code 0 for success, modify as needed
-                help_text=user_data,
-                data_info={"error"},
-                data={}
-            )
-
-        if "username" not in list(user_data.keys()):
-            return self.return_result(
-                error=ToolBoxError.custom_error,
-                exec_code=0,  # Assuming exec_code 0 for success, modify as needed
-                help_text="invalid Token",
-                data_info={"error"},
-                data={}
-            )
-
-        if "password" not in list(user_data.keys()):
-            return self.return_result(
-                error=ToolBoxError.custom_error,
-                exec_code=0,  # Assuming exec_code 0 for success, modify as needed
-                help_text="invalid Token",
-                data_info={"error"},
-                data={}
-            )
-
-        t_username = user_data["username"]
-        t_password = user_data["password"]
-
-        if t_username != username:
-            return self.return_result(
-                error=ToolBoxError.custom_error,
-                exec_code=0,  # Assuming exec_code 0 for success, modify as needed
-                help_text="username does not match",
-                data_info={"error"},
-                data={}
-            )
-
-        if not verify_password(t_password, password):
-            return self.return_result(
-                error=ToolBoxError.custom_error,
-                exec_code=0,  # Assuming exec_code 0 for success, modify as needed
-                help_text="invalid Password",
-                data_info={"error"},
-                data={}
-            )
-
-        self.print("user login successful : ", t_username)
-        jwt_key = crate_sing_key(username, user_data["email"], "",
-                                 user_data["uid"],
-                                 gen_token_time({"v": self.version},
-                                                4380), tb_token_jwt, self.app)
-
-        self.get_user_instance(user_data["uid"], username, jwt_key, hydrate=False)
-        return self.return_result(
-            error=ToolBoxError.none,
-            exec_code=0,  # Assuming exec_code 0 for success, modify as needed
-            help_text="",
-            data_info={"email"},
-            data={self.get_web_socket_id(user_data["uid"])}
-        )
-        # return self.get_web_socket_id(user_data["uid"])
-
-    def email_waiting_list(self, email) -> Result:
-        # if "db" not in list(app.MOD_LIST.keys()):
-        #    return "Server has no database module"
-
-        imp = ["email_waiting_list", [email]]
-        tb_token_jwt = self.app.run_any('db', 'append_on_set', imp)
-
-        # Default response for internal error
-        error_type = ToolBoxError.internal_error
-        out = "My apologies, unfortunately, you could not be added to the Waiting list."
-
-        # Check if the email was successfully added to the waiting list
-        if tb_token_jwt == imp:
-            out = "You will receive an invitation email in a few days"
-            error_type = ToolBoxError.none
-
-        # Check if the email is already in the waiting list
-        elif "already in list" in tb_token_jwt:
-            out = "You are already in the list, please do not try to add yourself more than once."
-            error_type = ToolBoxError.custom_error
-
-        # Use the return_result function to create and return the Result object
-        return self.return_result(
-            error=error_type,
-            exec_code=0,  # Assuming exec_code 0 for success, modify as needed
-            help_text=out,
-            data_info={"email": email},
-            data={"message": out}
-        )
-
-    def validate_jwt(self, validate_user: ValidatePostRequest):  # spec s -> validate token by server x ask max
-        res = ''
-        self.logger.debug(f'validate_ {validate_user}')
-
-        token = validate_user.token
-
-        tb_token_jwt = self.app.run_any('db', 'get', ["jwt-secret-cloudMService"])
-        res = validate_jwt(token, tb_token_jwt, self.app.id)
-
-        if type(res) != str:
-            return res
-        if res in [
-            "InvalidSignatureError", "InvalidAudienceError", "max-p", "no-db"
-        ]:
-            # go to next kown server to validate the signature and token
-            version_command = self.get_file_handler(self.keys["URL"])
-            url = "https://simeplecore.app/api"  # "https://simeplecore.app/api"
-            if version_command is not None:
-                url = version_command
-
-            url += "/cloudM/validate_jwt"
-            self.print(url)
-            j_data = {
-                "token": token,
-                "server_x": self.app.id,
-                "pasted": validate_user.pasted + 1,
-                "max_p": validate_user.max_p - 1,
-            }
-            if validate_user.pasted > validate_user.max_p:
-                return "max-p"
-            r = requests.post(url, json=j_data)
-            res = r.json()
-
-        return res
 
     def save_mod_snapshot(self, mod_name, provider=None, tb_state: TbState or None = None):
         if provider is None:
@@ -1074,17 +436,6 @@ def show_version(_, app: App):
         return json_data
 
 
-def test_if_exists(name: str, app: App):
-    if "db" not in list(app.MOD_LIST.keys()):
-        return "Server has no database module"
-
-    db: MainTool = app.MOD_LIST["db"]
-
-    get_db = db.tools["get"]
-
-    return get_db([f"*::{name}"], app) != ""
-
-
 # Create a hashed password
 def hash_password(password):
     """Hash a password for storing."""
@@ -1104,172 +455,3 @@ def verify_password(stored_password, provided_password):
                                   salt.encode('ascii'), 100000)
     pwdhash = binascii.hexlify(pwdhash).decode('ascii')
     return pwdhash == stored_password
-
-
-def gen_token_time(massage: dict, hr_ex):
-    massage['exp'] = datetime.now(tz=timezone.utc) + timedelta(hours=hr_ex)
-    return massage
-
-
-def crate_sing_key(username: str,
-                   email: str,
-                   password: str,
-                   uid: str,
-                   message: dict,
-                   jwt_secret: str,
-                   app: App or None = None):
-    # Load an RSA key from a JWK dict.
-    password = hash_password(password)
-    message['username'] = username
-    message['password'] = password
-    message['email'] = email
-    message['uid'] = uid
-    # message['aud'] = app.id if app else "-1"
-
-    jwt_ket = jwt.encode(message, jwt_secret, algorithm="HS512")
-    return jwt_ket
-
-
-def get_jwtdata(jwt_key: str, jwt_secret: str, aud):
-    try:
-        token = jwt.decode(jwt_key,
-                           jwt_secret,
-                           leeway=timedelta(seconds=10),
-                           algorithms=["HS512"],
-                           verify=False),  # audience=aud)
-        return token
-    except jwt.exceptions.InvalidSignatureError:
-        return "InvalidSignatureError"
-    except jwt.exceptions.InvalidAudienceError:
-        return "InvalidAudienceError"
-
-
-def validate_jwt(jwt_key: str, jwt_secret: str, aud) -> dict or str:
-    if not jwt_key:
-        return "No JWT Key provided"
-
-    try:
-        token = jwt.decode(jwt_key,
-                           jwt_secret,
-                           leeway=timedelta(seconds=10),
-                           algorithms=["HS512"],
-                           # audience=aud,
-                           do_time_check=True,
-                           verify=True)
-        return token
-    except jwt.exceptions.InvalidSignatureError:
-        return "InvalidSignatureError"
-    except jwt.exceptions.ExpiredSignatureError:
-        return "ExpiredSignatureError"
-    except jwt.exceptions.InvalidAudienceError:
-        return "InvalidAudienceError"
-    except jwt.exceptions.MissingRequiredClaimError:
-        return "MissingRequiredClaimError"
-    except Exception as e:
-        return str(e)
-
-
-def installer(url, debug=False):
-    def print_(*args, **kwargs):
-        if debug:
-            print(*args, **kwargs)
-
-    if isinstance(url, list):
-        for i in url:
-            if i.strip().startswith('http'):
-                url = i
-                break
-    with urllib.request.urlopen(url) as response:
-        res = response \
-            .read()
-        print_("Collecting installer file data")
-        soup = BeautifulSoup(res, 'html.parser')
-        data = json.loads(extract_json_strings(soup.text)[0].replace('\n', ''))
-        print_(f"data collected successfully data : {data}")
-
-    # os.mkdir(prfix)
-    os.makedirs("mods", exist_ok=True)
-    os.makedirs("runable", exist_ok=True)
-
-    for mod_url in tqdm(data["mods"], desc=f"Mods herunterladen"):
-        filename = os.path.basename(mod_url)
-        print_(f"Download Mod {filename}")
-        urllib.request.urlretrieve(mod_url, f"mods/{filename}")
-
-    runnable = data.get("runnable")
-    if runnable is not None:
-        for runnable_url in tqdm(runnable, desc="Runnables herunterladen"):
-            filename = os.path.basename(runnable_url)
-            print_(f"Download runnable {filename}")
-            urllib.request.urlretrieve(runnable_url, f"runable/{filename}")
-
-    additional_dirs = data.get("additional-dirs")
-    if additional_dirs is not None:
-        print_(f"Download additional dirs {additional_dirs}")
-        shutil.unpack_archive(additional_dirs, "/")
-
-    # Herunterladen der Requirements-Datei
-    requirements_url = data.get("requirements")
-    if requirements_url is not None:
-        requirements_filename = f"{data['Name']}-requirements.txt"
-        print_(f"Download requirements {requirements_filename}")
-        urllib.request.urlretrieve(requirements_url, requirements_filename)
-
-        # Installieren der Requirements mit pip
-        print_(f"install requirements")
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "-r", requirements_filename])
-    print_(f"installation Done")
-
-
-def delete_package(url):
-    if isinstance(url, list):
-        for i in url:
-            if i.strip().startswith('http'):
-                url = i
-                break
-    with urllib.request.urlopen(url) as response:
-        res = response \
-            .read()
-        soup = BeautifulSoup(res, 'html.parser')
-        data = json.loads(extract_json_strings(soup.text)[0].replace('\n', ''))
-
-    for mod_url in tqdm(data["mods"], desc="Mods löschen"):
-        filename = os.path.basename(mod_url)
-        file_path = os.path.join("mods", filename)
-        if os.path.exists(file_path):
-            os.remove(file_path)
-
-    for runnable_url in tqdm(data["runnable"], desc="Runnables löschen"):
-        filename = os.path.basename(runnable_url)
-        file_path = os.path.join("runnable", filename)
-        if os.path.exists(file_path):
-            os.remove(file_path)
-
-    additional_dir_path = os.path.join("mods",
-                                       os.path.basename(data["additional-dirs"]))
-    if os.path.exists(additional_dir_path):
-        shutil.rmtree(additional_dir_path)
-
-    # Herunterladen der Requirements-Datei
-    requirements_url = data["requirements"]
-    requirements_filename = f"{data['Name']}-requirements.txt"
-    urllib.request.urlretrieve(requirements_url, requirements_filename)
-
-    # Deinstallieren der Requirements mit pip
-    with tempfile.NamedTemporaryFile(mode="w",
-                                     delete=False) as temp_requirements_file:
-        with open(requirements_filename) as original_requirements_file:
-            for line in original_requirements_file:
-                package_name = line.strip().split("==")[0]
-                temp_requirements_file.write(f"{package_name}\n")
-
-        temp_requirements_file.flush()
-        subprocess.check_call([
-            sys.executable, "-m", "pip", "uninstall", "-y", "-r",
-            temp_requirements_file.name
-        ])
-
-    # Löschen der heruntergeladenen Requirements-Datei
-    os.remove(requirements_filename)
-    os.remove(temp_requirements_file.name)
