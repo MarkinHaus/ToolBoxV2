@@ -7,6 +7,7 @@ from toolboxv2.utils.main_tool import MainTool
 from toolboxv2.utils import all_functions_enums as tbef
 from toolboxv2.utils.types import Result, AppArgs
 from toolboxv2.runabel import runnable_dict
+from toolboxv2.utils.cryp import Code
 
 # try:
 #     MODS_ERROR = None
@@ -35,6 +36,7 @@ __all__ = [
     "get_app",
     "tbef",
     "Result",
+    "Code",
     ]
 
 ToolBox_over: str = "root"

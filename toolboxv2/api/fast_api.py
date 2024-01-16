@@ -21,7 +21,6 @@ def root():
 
 @router.post("/exit/{pid}")
 def close(data: PostRequest, pid: int):
-    tb_app: App = get_app()
     print(f"{pid=}, {os.getpid()}, {pid == os.getpid()}")
     if pid == os.getpid():
         res = tb_app.run_any('cloudm', "validate_jwt", [data])
@@ -42,36 +41,11 @@ def close(data: PostRequest, pid: int):
 
 @router.get("/id")
 def id_api():
-    tb_app: App = get_app()
     return {"res": str(tb_app.id)}
-
-
-# for back compatibility will be removed
-
-@router.get("/get/{mod}/run/{name}")
-def get_mod_run(mod: str, name: str, command: Union[str, None] = None):
-    tb_app: App = get_app()
-    print("get_mod_run")
-    res = {}
-    if not command:
-        command = ''
-    if tb_app.AC_MOD.name != mod.lower():
-        if mod.lower() in tb_app.MOD_LIST:
-            tb_app.new_ac_mod(mod)
-
-    if tb_app.AC_MOD:
-        res = tb_app.run_function('api_' + name, command.split('|'))
-
-    if type(res) == str:
-        if (res.startswith('{') or res.startswith('[')) or res.startswith('"[') or res.startswith('"{') \
-            or res.startswith('\"[') or res.startswith('\"{') or res.startswith('b"[') or res.startswith('b"{'):
-            res = eval(res)
-    return {"res": res}
 
 
 @router.post("/post/{mod}/run/{name}")
 async def post_mod_run(data: PostRequest, mod: str, name: str, command: Union[str, None] = None):
-    tb_app: App = get_app()
     res = {}
     if not command:
         command = ''

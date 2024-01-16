@@ -190,7 +190,7 @@ class Result:
         result = ToolBoxResult(data_to=interface, data=data, data_type=type(data).__name__)
         return cls(error=error, info=info, result=result)
 
-    def print(self, show=True, show_data=True, prifix="", log=False):
+    def print(self, show=True, show_data=True, prifix=""):
         data = '\n' + f"{((prifix + 'Data: ' + str(self.result.data) if self.result.data is not None else 'NO Data') if not isinstance(self.result.data, Result) else self.print(show=False, show_data=show_data, prifix=prifix + '-')) if show_data else 'Data: private'}"
         origin = '\n' + f"{prifix + 'Origin: ' + str(self.origin) if self.origin is not None else 'NO Origin'}"
         text = (f"Function Exec coed: {self.info.exec_code}"
@@ -208,7 +208,7 @@ class Result:
         return self
 
     def __str__(self):
-        return self.print(show=False, show_data=False)
+        return self.print(show=False, show_data=True)
 
     def get(self):
         data = self.result.data

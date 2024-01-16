@@ -164,16 +164,16 @@ def update_autocompletion_mods(app: App, autocompletion_dict=None):
 
 
 @default_export
-def update_autocompletion_list_or_key(list_or_key: iter or None = None, autocompletion_dict=None, raise_e=True):
+def update_autocompletion_list_or_key(list_or_key: iter or None = None, autocompletion_dict=None, raise_e=True, do_lower=False):
     if list_or_key is None:
         list_or_key = []
     if autocompletion_dict is None:
         autocompletion_dict = {}
 
     for key in list_or_key:
-        if raise_e and key.lower() in autocompletion_dict:
+        if raise_e and key in autocompletion_dict:
             raise ValueError(f"Naming Collision {key}")
-        autocompletion_dict[key.lower()] = None
+        autocompletion_dict[key if do_lower else key] = None
 
     return autocompletion_dict
 
@@ -184,7 +184,9 @@ def user_input(app,
                get_rprompt=None,
                bottom_toolbar=None,
                active_modul="",
-               password=False) -> CallingObject:
+               password=False,
+               bindings=None,
+               message=f"~{node()}@>") -> CallingObject:
     if app is None:
         app = get_app(from_="cliF.user_input")
     if completer_dict is None:
@@ -203,9 +205,11 @@ def user_input(app,
 
         bottom_toolbar = bottom_toolbar_helper
 
+    if bindings is None:
+        bindings = KeyBindings()
+
     completer = NestedCompleter.from_nested_dict(completer_dict)
-    bindings = KeyBindings()
-    fh = FileHistory(f'{app.data_dir}/minicli.txt')
+    fh = FileHistory(f'{app.data_dir}/{app.args_sto.modi}-cli.txt')
     auto_suggest = AutoSuggestFromHistory()
 
     @bindings.add('s-up')
@@ -254,10 +258,10 @@ def user_input(app,
         else:
             buff.start_completion(select_first=False)
 
-    if not os.path.exists(f'{app.data_dir}/minicli.txt'):
-        open(f'{app.data_dir}/minicli.txt', "a")
+    if not os.path.exists(f'{app.data_dir}/{app.args_sto.modi}-cli.txt'):
+        open(f'{app.data_dir}/{app.args_sto.modi}-cli.txt', "a")
 
-    session = PromptSession(message=f"~{node()}@>",
+    session = PromptSession(message=message,
                             history=fh,
                             color_depth=ColorDepth.TRUE_COLOR,
                             # lexer=PygmentsLexer(l),
@@ -307,7 +311,13 @@ def user_input(app,
         return call_obj
 
 
-@default_export
+@export(mod_name=Name, samples=[{
+                                 "obj": CallingObject(
+                                     module_name="welcome",
+                                     function_name="show_version",
+                                 ),
+                                 "build_in_commands": {},
+                                 }])
 def co_evaluate(app: App,
                 obj: CallingObject or None,
                 build_in_commands: dict,

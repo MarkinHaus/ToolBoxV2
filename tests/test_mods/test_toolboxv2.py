@@ -2,16 +2,12 @@
 
 """Tests for `toolboxv2` package."""
 import unittest
-from enum import Enum
-from types import ModuleType
-
 from toolboxv2 import App, MainTool, FileHandler, Style, get_app
 from rich.traceback import install
 
 from toolboxv2.utils.cryp import Code
 import time
 
-from toolboxv2.utils.types import ApiOb, Result
 
 install(show_locals=True)
 
@@ -201,9 +197,6 @@ class TestToolboxv2(unittest.TestCase):
     def test_main_tool(self):
         main_tool = MainTool(v="1.0.0", tool={}, name="TestTool", logs=[], color="RED", on_exit=None, load=None)
         main_tool.print("Hello, world!")
-        ob = ApiOb()
-        ob.token = ""
-        ob.data = {"": ""}
         # uid, err = main_tool.get_uid([ob, ], self.app)
         # self.assertTrue(err)
         # print(uid)
@@ -214,7 +207,7 @@ class TestToolboxv2(unittest.TestCase):
 
     def test_save_instance(self):
         # Testen der save_instance-Funktion
-        res = self.app.save_instance(None, 'welcome', 'app', 'instance_type')
+        res = self.app.save_instance(None, 'welcome', 'app2', 'file/application')
         # Überprüfen Sie, ob die Instanz korrekt gespeichert wurde
         self.assertIn('welcome', self.app.functions)
         self.assertIsNone(res)
@@ -222,14 +215,21 @@ class TestToolboxv2(unittest.TestCase):
 
     def test_mod_online(self):
         # Testen der mod_online-Funktion
+        self.app.remove_all_modules(True)
+        online = self.app.mod_online('welcome')
+        # Überprüfen Sie, ob das Modul als online markiert ist
+        self.assertFalse(online)
+        self.app.get_mod("welcome")
         online = self.app.mod_online('welcome')
         # Überprüfen Sie, ob das Modul als online markiert ist
         self.assertTrue(online)
 
     def test_get_function(self):
         # Testen der _get_function-Funktion
-        result = self.app._get_function(None, as_str=("welcome", "version"))
+        self.app.get_mod("welcome")
+        result, e = self.app._get_function(None, as_str=("welcome", "Version"))
         # Überprüfen Sie das Ergebnis
+        self.assertEqual(e, 0)
         self.assertIsNotNone(result)
         """
     def _get_function(self,
@@ -266,7 +266,7 @@ class TestToolboxv2(unittest.TestCase):
         self.assertIsNotNone(result)
         # self.app.mlm = 'C'
         result = self.app.load_mod('welcome', spec="welcome")
-        self.assertIsNotNone(result)
+        self.assertEqual(result.spec, "welcome")
         # self.app.mlm = 'I'
         # # Überprüfen Sie das Ergebnis
         # self.assertIsNotNone(result)
@@ -289,8 +289,10 @@ class TestToolboxv2(unittest.TestCase):
 
     def test_remove_all_modules(self):
         # Testen der remove_all_modules-Funktion
-        self.app.remove_all_modules()
+        self.app.remove_all_modules(delete=True)
         # Überprüfen Sie, ob alle Module entfernt wurden
+        for i in self.app.functions.keys():
+            print(i)
         self.assertEqual(self.app.functions, {})
 
     def test_remove_mod(self):
@@ -308,9 +310,10 @@ class TestToolboxv2(unittest.TestCase):
         mod = self.app.get_mod('welcome')
         # Überprüfen Sie, ob das Modul korrekt geladen wurde
         self.assertIsNotNone(mod)
-
+        mod.printc("test123")
         self.app.remove_mod('welcome')
         mod = self.app.get_mod('welcome')
+        mod.printc("test123")
         # Überprüfen Sie, ob das Modul korrekt geladen wurde
         self.assertIsNotNone(mod)
         # Weitere Überprüfungen je nach Funktionslogik

@@ -362,6 +362,7 @@ def main():
     # )
 
     # print(args)
+    # abspath = os.path.dirname(os.path.abspath(__file__))
     abspath = os.path.dirname(os.path.abspath(__file__))
 
     identification = args.name + '-' + node() + '\\'
@@ -384,7 +385,7 @@ def main():
         os.remove(app_data_folder)
 
     if args.test:
-        test_path = abspath.replace("toolboxv2\\toolboxv2", "toolboxv2") + "\\tests\\test_mods"
+        test_path = os.path.dirname(os.path.abspath(__file__)).replace("toolboxv2\\toolboxv2", "toolboxv2") + "\\tests\\test_mods"
         print(f"Testing in {test_path}")
         os.system(f"python -m unittest discover -s {test_path}")
         return 1
@@ -445,10 +446,10 @@ def main():
 
         runnable_dict = runnable_dict_func()
 
-        if args.modi.lower() in runnable_dict.keys():
+        if args.modi in runnable_dict.keys():
             tb_app.set_runnable(runnable_dict)
             # open(f"./config/{args.modi}.pid", "w").write(app_pid)
-            runnable_dict[args.modi.lower()](tb_app, args)
+            runnable_dict[args.modi](tb_app, args)
         else:
             print(f"Modi : [{args.modi}] not found on device installed modi : {runnable_dict.keys()}")
 

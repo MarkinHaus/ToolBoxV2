@@ -1,12 +1,10 @@
-import json
 import os
 from inspect import signature
-from fastapi.staticfiles import StaticFiles
+
+import fastapi
 from starlette.websockets import WebSocketDisconnect
 from fastapi.responses import RedirectResponse
-from toolboxv2 import App
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
@@ -50,6 +48,7 @@ async def add_process_time_header(request: Request, call_next):
     response = await call_next(request)
     process_time = time.perf_counter() - start_time
     response.headers["X-Process-Time"] = str(process_time)
+    # if response.body.get("info", {}).get("exec_code", 0) != 0:
     return response
 
 
@@ -133,15 +132,6 @@ if __name__ == 'toolboxv2.api.fast_api_main':
 
     tb_app.load_all_mods_in_file()
     tb_app.save_load("welcome")
-    f, e = tb_app.get_function(tbef.WELCOME.PRINTT)
-    if e == 0:
-        tb_img = f
-    else:
-        print(e, f)
-        tb_img = lambda: print("TOOL BOX")
-
-    tb_img()
-
     tb_app.save_load("WebSocketManager")
     manager = tb_app.get_mod("WebSocketManager")
 
@@ -156,6 +146,11 @@ if __name__ == 'toolboxv2.api.fast_api_main':
         for mod_name in all_mods:
             ret = cm.save_mod_snapshot(mod_name, provider=provider, tb_state=tb_state)
             # app.get('/' + mod_name)(lambda: f"./installer/{mod_name}-installer.json")
+        tb_func, error = tb_app.get_function(("cloudm.modmanager", "list_modules"), state=True, specification="app")
+
+        if error == 0:
+            install_router.add_api_route('/' + "cloudm.modmanager", tb_func, methods=["POST"],
+                                         description="get all mods")
         app.include_router(install_router)
         app.get('/app/core0/index.html')(lambda: RedirectResponse(url="/docs"))
 
@@ -201,15 +196,21 @@ if __name__ == 'toolboxv2.api.fast_api_main':
                 state: bool = function_data.get('state')
 
                 tb_func, error = tb_app.get_function((mod_name, function_name), state=state, specification="app")
+
+                if tb_app.debug:
+                    print(f"Loading fuction {function_name} , intern_error:{error}")
+
                 if error != 0:
                     continue
-
-                if tb_func:
-                    if len(params):
-                        router.add_api_route('/' + function_name, tb_func, methods=["POST"],
-                                             description=function_data.get("helper", ""))
-                    else:
-                        router.add_api_route('/' + function_name, tb_func, methods=["GET"],
-                                             description=function_data.get("helper", ""))
+                try:
+                    if tb_func:
+                        if len(params):
+                            router.add_api_route('/' + function_name, tb_func, methods=["POST"],
+                                                 description=function_data.get("helper", ""))
+                        else:
+                            router.add_api_route('/' + function_name, tb_func, methods=["GET"],
+                                                 description=function_data.get("helper", ""))
+                except fastapi.exceptions.FastAPIError as e:
+                    raise SyntaxError(f"fuction '{function_name}' prove the signature error {e}")
 
             app.include_router(router)

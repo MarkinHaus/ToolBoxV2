@@ -147,7 +147,8 @@ def command_runner(app, command, args):
             app.load_all_mods_in_file()
 
     elif command[0].lower() == 'app-info':
-        print(f"{app.id = }\n{app.stuf_load = }\n{app.mlm = }\n"
+        app.print_functions()
+        print(f"{app.id = }\n\n"
               f"\n{app.debug = }")
         print(f"PREFIX={app.PREFIX}"
               f"\nMACRO={A().pretty_print(app.MACRO[:7])}"
@@ -199,7 +200,7 @@ def command_runner(app, command, args):
         help_ = ['mode:live', 'mode:debug', 'mode', 'mode:stuf', 'app-info']
         A().SUPER_SET += help_
         A().MACRO += help_
-        print(f"{'debug' if app.debug else 'live'} \n{app.debug=}\n{app.id=}\n{app.stuf_load=}")
+        print(f"{'debug' if app.debug else 'live'} \n{app.debug=}\n{app.id=}\n")
 
     elif command[0] == 'mode:live':
         app.debug = False
@@ -208,9 +209,6 @@ def command_runner(app, command, args):
     elif command[0] == 'mode:debug':
         app.debug = True
         app.dev_modi = True
-
-    elif command[0] == 'mode:stuf':
-        app.stuf_load = not app.stuf_load
 
     elif command[0] == 'run-i':
 

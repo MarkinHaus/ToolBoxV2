@@ -12,13 +12,13 @@ def generate_test_cases(sig) -> List[dict]:
 
     test_cases = []
     # Edge Cases
-    edge_kwargs = {param.name: generate_edge_value(param.annotation) for param in params if param.name != 'self'}
+    edge_kwargs = {param.name: generate_edge_value(param.annotation) for param in params if param.name not in ['self', 'app', 'state']}
     test_cases.append(edge_kwargs)
     # Normal Cases
-    normal_kwargs = {param.name: generate_normal_value(param.annotation) for param in params if param.name != 'self'}
+    normal_kwargs = {param.name: generate_normal_value(param.annotation) for param in params if param.name not in ['self', 'app', 'state']}
     test_cases.append(normal_kwargs)
     # Default Values Cases
-    default_kwargs = {param.name: param.default if param.default is not param.empty else None for param in params}
+    default_kwargs = {param.name: param.default if param.default is not param.empty else None for param in params if param.name not in ['self', 'app', 'state']}
     if any(default_kwargs.values()):  # Prüfen, ob es Standardwerte gibt
         test_cases.append(default_kwargs)
 
@@ -38,6 +38,7 @@ def generate_edge_value(param_type: Any) -> Any:
     elif param_type == str:
         return fake.word()*100   # Lange zufällige Strings
     # Fügen Sie hier weitere Bedingungen für andere Datentypen hinzu
+    print(f"Parm typer ========================================  {param_type}")
     return None
 
 

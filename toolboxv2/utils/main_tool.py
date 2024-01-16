@@ -2,18 +2,19 @@ from toolboxv2.utils.types import Result, ToolBoxInterfaces, ToolBoxError, ToolB
 from toolboxv2.utils.toolbox import App, get_app
 from toolboxv2.utils.Style import Style
 from toolboxv2.utils.tb_logger import get_logger
+from toolboxv2.utils.all_functions_enums import *
 
 
 class MainTool:
     toolID = ""
     app = None
     interface = None
+    spec = ""
 
     def __init__(self, *args, **kwargs):
         self.version = kwargs["v"]
         self.tools = kwargs.get("tool", {})
         self.name = kwargs["name"]
-        self.spec = 'app' if kwargs.get('spec') is None else kwargs.get('spec')
         self.logger = kwargs.get("logs")
         if self.logger is None:
             self.logger = get_logger()
@@ -26,12 +27,11 @@ class MainTool:
         if self.app is None:
             self.app = get_app()
         self.ac_user_data_sto = {}
-        self.spec = ''
         self.description = "A toolbox mod" if kwargs.get("description") is None else kwargs.get("description")
         if MainTool.interface is None:
             MainTool.interface = self.app.interface_type
         # Result.default(self.app.interface)
-        # self.load()
+        self.load()
 
     @staticmethod
     def return_result(error: ToolBoxError = ToolBoxError.none,
@@ -58,14 +58,14 @@ class MainTool:
 
     def load(self):
         if self.todo:
-            # try:
-            self.todo()
-        # except Exception as e:
-        #    get_logger().error(f" Error loading mod {self.name} {e}")
+            try:
+                self.todo()
+            except Exception as e:
+               get_logger().error(f" Error loading mod {self.name} {e}")
         else:
             get_logger().info(f"{self.name} no load require")
 
-        self.app.print(f"TOOL : {self.name} online")
+        self.app.print(f"TOOL : {self.spec}.{self.name} online")
 
     def print(self, message, end="\n", **kwargs):
         if self.stuf:
@@ -83,21 +83,6 @@ class MainTool:
     def webInstall(self, user_instance, construct_render) -> str:
         """"Returns a web installer for the given user instance and construct render template"""
 
-    def get_uid(self, command, app: App):
+    def get_user(self, username: str) -> Result:
+        return self.app.run_any(CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username, get_results=True)
 
-        # if "cloudm" not in list(app.MOD_LIST.keys()):
-        #     return f"Server has no cloudM module", True
-        #
-        # if "db" not in list(app.MOD_LIST.keys()):
-        #     return "Server has no database module", True
-
-        res = app.run_any('cloudM', "validate_jwt", command)
-
-        if type(res) is str:
-            return res, True
-
-        self.ac_user_data_sto = res
-        return res["uid"], False
-
-    def get_user_instance(self, uid, app: App):
-        return app.run_any('cloudM', "get_user_instance", [uid])
