@@ -416,7 +416,7 @@ def main():
         os.remove(app_data_folder)
 
     if args.test:
-        test_path = os.path.dirname(os.path.abspath(__file__)).replace("toolboxv2\\toolboxv2", "toolboxv2").replace("ToolBoxV2/toolboxv2", "toolboxv2") + "\\tests\\test_mods"
+        test_path = os.path.dirname(os.path.abspath(__file__)).replace("toolboxv2\\toolboxv2", "toolboxv2").replace("ToolBoxV2/toolboxv2", "ToolBoxV2") + "\\tests\\test_mods"
         print(f"Testing in {test_path}")
         os.system(f"python -m unittest discover -s {test_path}")
         return 1
