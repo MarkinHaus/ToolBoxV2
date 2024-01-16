@@ -217,7 +217,7 @@ def register_initial_root_user(app, tbef=None):
         return Result.default_user_error(info="root user already Registered")
 
     email = input("enter ure Email:")
-    invitation = get_invitation().get()
+    invitation = get_invitation(app=app).get()
     app.run_any(tbef.AUTHMANAGER.CRATE_LOCAL_ACCOUNT, username="root", email=email,
                      invitation=invitation)
 
