@@ -70,7 +70,7 @@ def close_user_instance(uid: str):
 def validate_ws_id(ws_id):  # ToDo refactor
     logger.info(f"validate_ws_id 1 {len(UserInstances().user_instances)}")
     if len(UserInstances().user_instances) == 0:
-        data = app.run_any('db', 'get',
+        data = app.run_any('DB', 'get',
                            query=f"user_instances::{app.id}")
         logger.info(f"validate_ws_id 2 {type(data)} {data}")
         if isinstance(data, str):

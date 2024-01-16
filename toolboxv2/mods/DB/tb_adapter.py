@@ -87,6 +87,7 @@ class Tools(MainTool, FileHandler):
         self.password = None
 
         MainTool.__init__(self,
+                          load=self.initialized,
                           v=self.version,
                           name=self.name,
                           logs=self.logs,
@@ -280,25 +281,29 @@ class Tools(MainTool, FileHandler):
                                            ).lazy_return(data=f"mode change to {mode}")
 
     @export(mod_name=Name, interface=ToolBoxInterfaces.cli)
-    def edit_cli(self, mode="LC"):
+    def edit_cli(self, mode: str = "LC"):
         if mode is None:
             self.logger.warning("No mode parsed")
             return Result.default_user_error(info="mode is None")
         if mode not in ["LC", "RC", "LR", "RR"]:
             return Result.default_user_error(info=f"Mode not supported")
         self.mode = DatabaseModes.crate(mode)
+        if self.data_base is None:
+            return Result.ok(data=self.initialize_database()).lazy_return(data=f"mode change to {mode}")
         return self.close_db().lazy_return("intern",
                                            data=self.initialize_database()
                                            ).lazy_return(data=f"mode change to {mode}")
 
     @export(mod_name=Name, interface=ToolBoxInterfaces.remote, api=False, helper="Avalabel modes: LC RC LR RR")
-    def edit_dev_web_ui(self, mode="LC"):
+    def edit_dev_web_ui(self, mode: str = "LC"):
         if mode is None:
             self.logger.warning("No mode parsed")
             return Result.default_user_error(info="mode is None")
         if mode not in ["LC", "RC", "LR", "RR"]:
             return Result.default_user_error(info=f"Mode not supported")
         self.mode = DatabaseModes.crate(mode)
-        r0 = self.close_db()
-        r1 = self.initialize_database()
-        return Result.ok(data=(r0, r1))
+        if self.data_base is None:
+            return Result.ok(data=self.initialize_database()).lazy_return(data=f"mode change to {mode}")
+        return self.close_db().lazy_return("intern",
+                                           data=self.initialize_database()
+                                           ).lazy_return(data=f"mode change to {mode}")

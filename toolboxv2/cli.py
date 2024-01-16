@@ -2,6 +2,8 @@
 # Import default Pages
 import sys
 import argparse
+import time
+from functools import wraps
 from platform import system, node
 # Import public Pages
 from toolboxv2 import App, MainTool, runnable_dict as runnable_dict_func
@@ -13,6 +15,7 @@ try:
     import pstats
     import io
 
+
     def profile_execute_all_functions(app=None, m_query='', f_query=''):
         # Erstellen Sie eine Instanz Ihrer Klasse
         instance = app if app is not None else get_app(from_="Profiler")
@@ -20,21 +23,46 @@ try:
         # Erstellen eines Profilers
         profiler = cProfile.Profile()
 
-        # Starten des Profilers und Ausführen der Funktion
-        profiler.enable()
+        def timeit(func_):
+            @wraps(func_)
+            def timeit_wrapper(*args, **kwargs):
+                profiler.enable()
+                start_time = time.perf_counter()
+                result = func_(*args, **kwargs)
+                end_time = time.perf_counter()
+                profiler.disable()
+                total_time_ = end_time - start_time
+                print(f'Function {func_.__name__}{args} {kwargs} Took {total_time_:.4f} seconds')
+                return result
+
+            return timeit_wrapper
+
+        items = list(instance.functions.items()).copy()
+        for module_name, functions in items:
+            if not module_name.startswith(m_query):
+                continue
+            f_items = list(functions.items()).copy()
+            for function_name, function_data in f_items:
+                if not isinstance(function_data, dict):
+                    continue
+                if not function_name.startswith(f_query):
+                    continue
+                test: list = function_data.get('do_test')
+                print(test, module_name, function_name, function_data)
+                if test is False:
+                    continue
+                instance.functions[module_name][function_name]['func'] = timeit(function_data.get('func'))
+
+                # Starten des Profilers und Ausführen der Funktion
         instance.execute_all_functions(m_query=m_query, f_query=f_query)
-        profiler.disable()
 
-        # Erstellen eines Streams für die Profilergebnisse
         s = io.StringIO()
-        sortby = 'cumulative'  # Sortierung nach Gesamtzeit im Funktionsaufruf
+        sortby = 'cumulative'
         ps = pstats.Stats(profiler, stream=s).sort_stats(sortby)
-
-        # Ausgabe der Profilergebnisse
         ps.print_stats()
         print(s.getvalue())
 
-        print("\n================================")
+        print("\n================================"*12)
         s = io.StringIO()
         sortby = 'time'  # Sortierung nach der Gesamtzeit, die in jeder Funktion verbracht wird
 
@@ -44,6 +72,9 @@ try:
 
         # Ausgabe der Ergebnisse
         print(s.getvalue())
+
+        # Erstellen eines Streams für die Profilergebnisse
+
 except ImportError as e:
     profile_execute_all_functions = lambda *args: print(args);
     raise ValueError(f"Failed to import function for profiling")
@@ -413,7 +444,7 @@ def main():
         if tb_app.system_flag == "Windows":
             setup_service_windows()
 
-    if args.load_all_mod_in_files or args.save_function_enums_in_file or args.get_version:
+    if args.load_all_mod_in_files or args.save_function_enums_in_file or args.get_version or args.profiler:
         tb_app.load_all_mods_in_file()
         if args.save_function_enums_in_file:
             tb_app.save_registry_as_enums("utils", "all_functions_enums.py")

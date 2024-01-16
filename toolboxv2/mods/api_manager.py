@@ -6,7 +6,11 @@ from platform import system
 
 import requests
 
-from toolboxv2 import MainTool, FileHandler, App
+from toolboxv2 import MainTool, FileHandler, App, get_app
+
+
+export = get_app("api_manager.Export").tb
+Name = "api_manager"
 
 
 class Tools(MainTool, FileHandler):  # FileHandler
@@ -96,6 +100,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         self.print(self.api_config[api_name])
 
+    @export(mod_name="api_manager", test=False)
     def start_api(self, api_name: str, live=False, reload=False):
 
         if isinstance(live, str):
@@ -168,6 +173,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
         del self.running_apis[api_name]
         os.remove(f"./.data/api_pid_{api_name}")
 
+    @export(mod_name="api_manager", test=False)
     def restart_api(self, api_name: str):
         self.stop_api(api_name)
         time.sleep(4)

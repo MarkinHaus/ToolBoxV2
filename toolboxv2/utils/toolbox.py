@@ -94,8 +94,11 @@ class App(metaclass=Singleton):
         if "test" in prefix:
             self.start_dir += '\\tests'
             os.makedirs(self.start_dir, exist_ok=True)
-        self.data_dir = self.start_dir + '\\.data\\' + "test"
-        self.config_dir = self.start_dir + '\\.config\\' + "test"
+            self.data_dir = self.start_dir + '\\.data\\' + "test"
+            self.config_dir = self.start_dir + '\\.config\\' + "test"
+        else:
+            self.data_dir = self.start_dir + '\\.data\\' + identification
+            self.config_dir = self.start_dir + '\\.config\\' + identification
 
         if not os.path.exists(self.data_dir):
             os.makedirs(self.data_dir, exist_ok=True)
@@ -105,16 +108,18 @@ class App(metaclass=Singleton):
         lapp = dir_name + '\\.data\\'
 
         if not prefix:
-            if not os.path.exists(f"{lapp}last-app-prefix"):
-                open(f"{lapp}last-app-prefix", "a").close()
-            with open(f"{lapp}last-app-prefix", "r") as prefix_file:
+            if not os.path.exists(f"{lapp}last-app-prefix.txt"):
+                os.makedirs(lapp, exist_ok=True)
+                open(f"{lapp}last-app-prefix.txt", "a").close()
+            with open(f"{lapp}last-app-prefix.txt", "r") as prefix_file:
                 cont = prefix_file.read()
                 if cont:
                     prefix = cont
         else:
-            if not os.path.exists(f"{lapp}last-app-prefix"):
-                open(f"{lapp}last-app-prefix", "a").close()
-            with open(f"{lapp}last-app-prefix", "w") as prefix_file:
+            if not os.path.exists(f"{lapp}last-app-prefix.txt"):
+                os.makedirs(lapp, exist_ok=True)
+                open(f"{lapp}last-app-prefix.txt", "a").close()
+            with open(f"{lapp}last-app-prefix.txt", "w") as prefix_file:
                 prefix_file.write(prefix)
 
         print(f"Starting ToolBox as {prefix} from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
