@@ -76,7 +76,7 @@ class Tools(MainTool, FileHandler):
         with Spinner(message=f"Building Docker image name: {img_name}", symbols="c"):
             os.system(f"docker build --no-cache -f {temp_path} -t {img_name} .")
 
-        if file_data is not None:
+        if file_data is not None and os.path.exists(temp_path):
             os.remove(temp_path)
 
         return img_name
