@@ -54,7 +54,7 @@
 
             const email = document.getElementById('email').value;
 
-            httpPostUrl("cloudm", "email_waiting_list", "email", email,
+            httpPostUrl("email_waiting_list", "add", "email", email,
                 (result) => {
                     document.getElementById('infoText').textContent = result.info.help_text;
                     document.getElementById('infoPopup').style.display = 'block';

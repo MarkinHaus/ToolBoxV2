@@ -416,7 +416,7 @@ function initTaskEditor() {
             return;
         }
 
-        tasks.push({ name: taskName, JSON.parse(JSON.stringify(workingTask))});
+        tasks.push({ name: taskName, data:JSON.parse(JSON.stringify(workingTask))});
         workingTask = {}
         localStorage.setItem('tasks', JSON.stringify(tasks));
         const valueOpt = document.createElement('option');

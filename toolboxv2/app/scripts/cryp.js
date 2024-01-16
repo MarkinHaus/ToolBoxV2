@@ -264,7 +264,7 @@ export async function registerUser(registrationData, sing, errorCallback, sucess
         challenge: challenge,
         rp: {
             "name": "SimpleCore",
-            "id": "localhost",//"simplecore.app"
+            "id": "simplecore.app", //"localhost",
             "ico": "/app/favicon.ico"
         },
         user: {
@@ -349,7 +349,7 @@ export async function authorisazeUser(rowID, challenge, username, errorCallback,
     //const challenge = strToArrayBuffer(registrationData.challenge);
     const publicKey = {
         challenge: strToArrayBuffer(challenge),
-        rpId: "localhost",
+        rpId: "simplecore.app",
         allowCredentials: [{
             type: "public-key",
             id: base64ToArrayBuffer(rowID)
@@ -389,7 +389,7 @@ export async function authorisazeUser(rowID, challenge, username, errorCallback,
 
 async function sendLoginResponseToServer(credential, errorCallback, sucessCallback) {
     console.log("[credential]:", credential)
-    httpPostData('cloudm.authmanager',
+    httpPostData('CloudM.AuthManager',
         'validate_persona',
         credential, errorCallback, sucessCallback);
     // Implementieren Sie eine Funktion, um die Registrierungsantwort an Ihren Server zu senden register_user_personal_key
@@ -397,7 +397,7 @@ async function sendLoginResponseToServer(credential, errorCallback, sucessCallba
 }
 async function sendRegistrationResponseToServer(credential, errorCallback, sucessCallback) {
     console.log("[credential]:", credential)
-    httpPostData('cloudm.authmanager',
+    httpPostData('CloudM.AuthManager',
         'register_user_personal_key',
         credential, errorCallback, sucessCallback);
     // Implementieren Sie eine Funktion, um die Registrierungsantwort an Ihren Server zu senden register_user_personal_key

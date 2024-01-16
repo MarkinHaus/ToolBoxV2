@@ -1,6 +1,6 @@
 var cacheName = "no-cache";
 var offlineUrl = "/";
-const BASE_URL = "http://localhost:8000/";
+const BASE_URL = "https://simplecore.app" // http://localhost:8000/";
 //importScripts(
   //"https://storage.googleapis.com/workbox-cdn/releases/4.2.0/workbox-sw.js"
 //);

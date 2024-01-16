@@ -105,7 +105,7 @@
         }
 
         async function createUser(name, email, invitation, pub_key) {
-            return httpPostData('cloudm.authmanager',
+            return httpPostData('CloudM.AuthManager',
                 'create_user',
                 {
                     name, email ,pub_key ,invitation,

@@ -143,7 +143,7 @@
                 caunter++;
             }else{
                 const signature = await signMessage(base64_privat_key, data.get().challenge)
-                httpPostData('cloudm', 'validate_device', { username:document.getElementById('username').value, signature},
+                httpPostData('CloudM', 'validate_device', { username:document.getElementById('username').value, signature},
                     get_handleLoginError("signMessage"), handleLoginSuccessVD);
             }
 
@@ -156,7 +156,7 @@
     }
 
     function loginDevice(username) {
-        httpPostUrl('cloudm.authmanager', 'get_to_sing_data', 'username='+username + '&personal_key='+checked[0].toString(), get_handleLoginError("loginDevice"), handleLoginSuccess);
+        httpPostUrl('CloudM.AuthManager', 'get_to_sing_data', 'username='+username + '&personal_key='+checked[0].toString(), get_handleLoginError("loginDevice"), handleLoginSuccess);
     }
 
   document.getElementById('loginForm').addEventListener('submit', function(event) {
