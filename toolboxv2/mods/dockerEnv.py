@@ -2,7 +2,6 @@ import logging
 import os
 import tempfile
 import time
-from typing import Optional
 
 
 try:
@@ -12,7 +11,7 @@ try:
 except ModuleNotFoundError:
     DOCKER = False
 
-from toolboxv2 import MainTool, FileHandler, App, Style, Spinner
+from toolboxv2 import MainTool, FileHandler, App, Style, Spinner, get_app
 
 
 class Tools(MainTool, FileHandler):
@@ -218,3 +217,7 @@ class Tools(MainTool, FileHandler):
             self.print(container.diff())
 
         self.stop_container(container_id)
+
+
+if __name__ == "__main__":
+    docker = get_app(from_="test_docker", name="debug").save_load("dockerEnv")

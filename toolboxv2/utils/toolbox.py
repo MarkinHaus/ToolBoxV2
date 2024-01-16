@@ -609,6 +609,11 @@ class App(metaclass=Singleton):
             if f"{spec}_instance_type" in self.functions[mod_name]:
                 del self.functions[mod_name][f"{spec}_instance_type"]
 
+        if on_exit is None and self.functions[mod_name].get(f"{spec}_instance_type", "").endswith("/BC"):
+            instanc = self.functions[mod_name].get(f"{spec}_instance", None)
+            if instanc is not None:
+                instanc._on_exit()
+
         if on_exit is None and delete:
             self.functions[mod_name] = {}
             del self.functions[mod_name]
