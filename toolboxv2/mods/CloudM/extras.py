@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 import requests
-from toolboxv2 import Style, Result
+from toolboxv2 import Style, Result, tbef, App
 from .AuthManager import get_invitation
 from toolboxv2 import get_app, Code
 
@@ -170,6 +170,9 @@ def log_in(self, input_):
 
 
 @no_test
+def init_git(self):
+    os.system("git init")
+@no_test
 def update_core(self, dackup=False, name=""):
     self.print("Init Update..")
     if dackup:
@@ -209,7 +212,7 @@ def update_core(self, dackup=False, name=""):
     exit(0)
 
 @no_test
-def register_initial_root_user(app, tbef=None):
+def register_initial_root_user(app: App):
 
     root_key = app.config_fh.get_file_handler("Pk" + Code.one_way_hash("root", "dvp-k")[:8])
 
@@ -218,8 +221,11 @@ def register_initial_root_user(app, tbef=None):
 
     email = input("enter ure Email:")
     invitation = get_invitation(app=app).get()
-    app.run_any(tbef.AUTHMANAGER.CRATE_LOCAL_ACCOUNT, username="root", email=email,
-                     invitation=invitation)
+    return app.run_any(tbef.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
+                username="root",
+                email=email,
+                invitation=invitation, get_results=True).lazy_return("intern",
+                                                                     data="Error register_initial_root_user")
 
 @no_test
 def clear_db(self, do_root=False):
@@ -238,7 +244,7 @@ def clear_db(self, do_root=False):
 
     db.delete('*', matching=True)
     i = 0
-    for _ in db.get('all').get():
+    for _ in db.get('all').get(default=[]):
         i += 1
 
     if i != 0:

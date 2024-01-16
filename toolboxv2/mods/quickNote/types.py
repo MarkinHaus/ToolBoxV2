@@ -17,8 +17,8 @@ class DataTypes(Enum):
     TEXT: str = "TEXT"
     CUSTOM: str = "CUSTOM"
 
-
-class Tag(BaseModel):
+@dataclass
+class Tag:
     name: str
     id: str
     related: list[str]
@@ -27,11 +27,11 @@ class Tag(BaseModel):
     def crate(cls, name: str, related=None):
         if related is None:
             related = []
-        return cls(name=name, id=get_id(name), related=related)
+        return cls(name=name, id=get_id(name+":Tag"), related=related)
 
     @classmethod
     def crate_root(cls):
-        return cls(name="root", id=get_id("root"), related=[])
+        return cls(name="root", id=get_id("root"+":Tag"), related=[])
 
     def add_related(self, other_tag):
         self.related.append(other_tag.id)
@@ -53,8 +53,8 @@ class Tag(BaseModel):
         else:
             return string_data
 
-
-class Note(BaseModel):
+@dataclass
+class Note:
     name: str
     id: str
     data: str
@@ -66,7 +66,7 @@ class Note(BaseModel):
     @classmethod
     def crate_root(cls):
         root_tag = Tag.crate_root()
-        return cls(id=get_id("root"),
+        return cls(id=get_id("root"+":Note"),
                    name="root",
                    data="",
                    data_type=DataTypes.TEXT,
@@ -80,7 +80,7 @@ class Note(BaseModel):
             parent = tag
         if links is None:
             links = []
-        return cls(id=get_id(name),
+        return cls(id=get_id(name+":Note"),
                    name=name,
                    data=data,
                    data_type=DataTypes.TEXT,
@@ -94,7 +94,7 @@ class Note(BaseModel):
             parent = tag
         if links is None:
             links = []
-        return cls(id=get_id(name),
+        return cls(id=get_id(name+":Note"),
                    name=name,
                    data=data,
                    data_type=DataTypes.MD,
@@ -108,7 +108,7 @@ class Note(BaseModel):
             parent = tag
         if links is None:
             links = []
-        return cls(id=get_id(name),
+        return cls(id=get_id(name+":Note"),
                    name=name,
                    data=data,
                    data_type=DataTypes.HTML,
@@ -122,7 +122,7 @@ class Note(BaseModel):
             parent = tag
         if links is None:
             links = []
-        return cls(id=get_id(name),
+        return cls(id=get_id(name+":Note"),
                    name=name,
                    data=data,
                    data_type=DataTypes.CUSTOM,
@@ -131,9 +131,9 @@ class Note(BaseModel):
                    parent=parent)
 
     def print(self, show=True, debug=False, data=False):
-        string_data = f"===========\n{self.data}===========\n --- Nama: {self.name} --- \n --- parent: {self.parent.name} --- "
+        string_data = f"_________ \n {self.data}\n _________ \n --- Nama: {self.name} --- \n --- parent: {self.parent.name} --- "
         if debug:
-            string_data += f"\n _________ debug Data _________\n{self.id}\n{self.data_type}\n --- \n"
+            string_data += f"\n =========== debug Data ===========\n{self.id}\n{self.data_type}\n --- \n"
         i = 0
         for tag in self.tags:
             string_data += f"Tag ({i}) {tag.name} \n"

@@ -56,20 +56,19 @@ def run(app: App, args):
 
         name = call_.args[0]
         data = call_.args[1:]
-        call_.print()
-        print(f"Name={name}, {data}")
         if call_.function_name == "":
             return Result.default_user_error(info="No data provided")
-        elif call_.function_name.lower() in ["t", "text"]:
-            qn_instance.note = Note.crate_new_text(name=name, data=data, tag=qn_instance.tag, parent=qn_instance.note)
-        elif call_.function_name.lower() in ["m", "md"]:
-            qn_instance.note = Note.crate_new_md(name=name, data=data, tag=qn_instance.tag, parent=qn_instance.note)
-        elif call_.function_name.lower() in ["h", "html"]:
-            qn_instance.note = Note.crate_new_html(name=name, data=data, tag=qn_instance.tag, parent=qn_instance.note)
-        elif call_.function_name.lower() in ["c", "custom"]:
-            qn_instance.note = Note.crate_new_custom(name=name, data=data, tag=qn_instance.tag, parent=qn_instance.note)
-        else:
-            return Result.default_user_error(info=f"invalid Mode {call_.function_name} not t,m,h or c")
+        else: # call_.function_name.lower() in ["t", "text"]:
+            qn_instance.note = Note.crate_new_text(name=call_.function_name, data=' '.join(call_.args), tag=qn_instance.tag, parent=qn_instance.note)
+        # elif call_.function_name.lower() in ["m", "md"]:
+        #     qn_instance.note = Note.crate_new_md(name=name, data=data, tag=qn_instance.tag, parent=qn_instance.note)
+        # elif call_.function_name.lower() in ["h", "html"]:
+        #     qn_instance.note = Note.crate_new_html(name=name, data=data, tag=qn_instance.tag, parent=qn_instance.note)
+        # elif call_.function_name.lower() in ["c", "custom"]:
+        #     qn_instance.note = Note.crate_new_custom(name=name, data=data, tag=qn_instance.tag, parent=qn_instance.note)
+        # else:
+        #     return Result.default_user_error(info=f"invalid Mode {call_.function_name} not t,m,h or c")
+        qn_instance.note.print()
         return add_note(call_)
 
     def add_note(_):

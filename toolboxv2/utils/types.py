@@ -139,7 +139,7 @@ class Result:
         return self.result.data is not None
 
     def to_api_result(self):
-        print(f" error={self.error}, result= {self.result}, info= {self.info}, origin= {self.origin}")
+        # print(f" error={self.error}, result= {self.result}, info= {self.info}, origin= {self.origin}")
         return ApiResult(
             error=self.error.value if isinstance(self.error, Enum) else self.error,
             result=ToolBoxResultBM(
@@ -191,7 +191,7 @@ class Result:
         return cls(error=error, info=info, result=result)
 
     def print(self, show=True, show_data=True, prifix=""):
-        data = '\n' + f"{((prifix + 'Data: ' + str(self.result.data) if self.result.data is not None else 'NO Data') if not isinstance(self.result.data, Result) else self.print(show=False, show_data=show_data, prifix=prifix + '-')) if show_data else 'Data: private'}"
+        data = '\n' + f"{((prifix + 'Data: ' + str(self.result.data) if self.result.data is not None else 'NO Data') if not isinstance(self.result.data, Result) else self.result.data.print(show=False, show_data=show_data, prifix=prifix + '-')) if show_data else 'Data: private'}"
         origin = '\n' + f"{prifix + 'Origin: ' + str(self.origin) if self.origin is not None else 'NO Origin'}"
         text = (f"Function Exec coed: {self.info.exec_code}"
                 f"\n{prifix}Info's:"
@@ -210,11 +210,11 @@ class Result:
     def __str__(self):
         return self.print(show=False, show_data=True)
 
-    def get(self):
+    def get(self, default=None):
         data = self.result.data
         if isinstance(data, Result):
             return data.get()
-        return data
+        return data if data is not None else default
 
     def lazy_return(self, _=0, data=None, **kwargs):
         flags = ['raise', 'logg', 'user', 'intern']

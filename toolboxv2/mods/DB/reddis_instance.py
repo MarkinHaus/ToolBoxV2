@@ -44,7 +44,7 @@ class MiniRedis:
                 data.append(val)
 
         if not data:
-            return Result.default_internal_error(info=f"No data found for key {key}")
+            return Result.default_internal_error(info=f"No data found for key {key}", data=data_info)
 
         return Result.ok(data=data, data_info=data_info + key)
 

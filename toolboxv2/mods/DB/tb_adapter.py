@@ -76,22 +76,24 @@ class Tools(MainTool, FileHandler):
         self.logs = app.logger if app else None
         self.color = "YELLOWBG"
 
-        self.keys = {"url": "redis:url~"}
+        self.keys = {"mode": "db~mode~~:"}
         self.encoding = 'utf-8'
 
         self.data_base: MiniRedis or MiniDictDB or DB or None = None
-        self.mode = DatabaseModes.LC
+        self.mode = DatabaseModes.crate(os.getenv("DB_MODE_KEY", "LC"))
         self.url = None
         self.passkey = None
         self.user_name = None
         self.password = None
 
         MainTool.__init__(self,
-                          load=self.initialized,
+                          load=self.initialize_database,
                           v=self.version,
                           name=self.name,
                           logs=self.logs,
-                          color=self.color)
+                          color=self.color,
+                          on_exit=self.close_db)
+
 
     @export(
         mod_name=Name,
@@ -210,6 +212,7 @@ class Tools(MainTool, FileHandler):
             self.data_base = MiniRedis()
         else:
             return Result.default_internal_error(info="Not implemented")
+        print(f"Starting DB in {self.mode.value} mode")
         a = self._autoresize()
         if a.log(prifix="initialize_database: ").is_error():
             raise RuntimeError("DB Autoresize Error " + a.print(show=False))

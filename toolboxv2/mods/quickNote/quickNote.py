@@ -184,10 +184,10 @@ class Tools(MainTool, FileHandler):  # FileHandler
         self.print(f"Adding tag... {tag_name}")
 
     def remove_note_by_name(self, note_name: str):
-        self.remove_note(self.get_by_id_ny_name(note_name))
+        self.remove_note(self.get_by_id_ny_name(note_name, t=":Note"))
 
     def remove_tag_by_name(self, tag_name: str):
-        self.remove_tag(self.get_by_id_ny_name(tag_name))
+        self.remove_tag(self.get_by_id_ny_name(tag_name, t=":Tag"))
 
     def view_note(self, show=False, data=False):
 
