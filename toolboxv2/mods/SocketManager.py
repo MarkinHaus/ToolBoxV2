@@ -86,7 +86,10 @@ class Tools(MainTool, FileHandler):
     def create_socket(self, name: str = 'local-host', host: str = '0.0.0.0', port: int = 62435,
                       type_id: SocketType = SocketType.client,
                       max_connections=-1, endpoint_port=None,
-                      return_full_object=False, keepalive_interval=1000):
+                      return_full_object=False, keepalive_interval=1000, test_override=False):
+
+        if 'test' in self.app.id and not test_override:
+            return "No api in test mode allowed"
 
         if endpoint_port is None:
             endpoint_port = port
@@ -280,7 +283,10 @@ class Tools(MainTool, FileHandler):
 
     @export(mod_name=Name, name="run_as_ip_echo_server_a", test=False)
     def run_as_ip_echo_server_a(self, name: str = 'local-host', host: str = '0.0.0.0', port: int = 62435,
-                                max_connections: int = -1):
+                                max_connections: int = -1, test_override=False):
+
+        if 'test' in self.app.id and not test_override:
+            return "No api in test mode allowed"
         send, receiver_queue = self.create_socket(name, host, port, SocketType.server, max_connections=max_connections)
 
         clients = {}
@@ -350,7 +356,11 @@ class Tools(MainTool, FileHandler):
             client_socket.sendall("exit".encode('utf-8'))
 
     @export(mod_name=Name, name="run_as_single_communication_server", test=False)
-    def run_as_single_communication_server(self, name: str = 'local-host', host: str = '0.0.0.0', port: int = 62435):
+    def run_as_single_communication_server(self, name: str = 'local-host', host: str = '0.0.0.0', port: int = 62435, test_override=False):
+
+        if 'test' in self.app.id and not test_override:
+            return "No api in test mode allowed"
+
         send, receiver_queue = self.create_socket(name, host, port, SocketType.server, max_connections=1)
         status_queue = queue.Queue()
         running = [True]  # Verwenden einer Liste, um den Wert referenzierbar zu machen

@@ -101,7 +101,10 @@ class Tools(MainTool, FileHandler):  # FileHandler
         self.print(self.api_config[api_name])
 
     @export(mod_name="api_manager", test=False)
-    def start_api(self, api_name: str, live=False, reload=False):
+    def start_api(self, api_name: str, live=False, reload=False, test_override=False):
+
+        if 'test' in self.app.id and not test_override:
+            return "No api in test mode allowed"
 
         if isinstance(live, str):
             live = bool(live)

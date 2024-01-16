@@ -450,6 +450,7 @@ def main():
             tb_app.save_registry_as_enums("utils", "all_functions_enums.py")
             tb_app.alive = False
             tb_app.exit()
+            return 0
         if args.debug:
             tb_app.print_functions()
         if args.get_version:
@@ -468,6 +469,7 @@ def main():
         profile_execute_all_functions(tb_app)
         tb_app.alive = False
         tb_app.exit()
+        return 0
 
     if not args.kill and not args.docker and tb_app.alive:
 
@@ -512,6 +514,7 @@ def main():
 
     if tb_app.alive:
         tb_app.exit()
+        return 0
 
     if os.path.exists(pid_file):
         os.remove(pid_file)
