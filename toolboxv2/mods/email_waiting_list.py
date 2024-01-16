@@ -1,13 +1,13 @@
 from toolboxv2 import Result, get_app, App, MainTool
 from toolboxv2.utils.types import ToolBoxError, ApiResult, ToolBoxInterfaces
 
-Name = "email_wating_list"
+Name = "email_waiting_list"
 version = '*.*.*'
 export = get_app("email_waiting_list.email_waiting_list.EXPORT").tb
 
 
 @export(mod_name=Name, api=True, interface=ToolBoxInterfaces.api, state=True)
-def add(app:App, email: str) -> ApiResult:
+def add(app: App, email: str) -> ApiResult:
     if app is None:
         app = get_app("email_waiting_list")
     # if "db" not in list(app.MOD_LIST.keys()):
@@ -17,18 +17,20 @@ def add(app:App, email: str) -> ApiResult:
     # Default response for internal error
     error_type = ToolBoxError.internal_error
     out = "My apologies, unfortunately, you could not be added to the Waiting list."
-
+    tb_token_jwt.print()
     # Check if the email was successfully added to the waiting list
     if not tb_token_jwt.is_error():
         out = "You will receive an invitation email in a few days"
         error_type = ToolBoxError.none
-    elif not tb_token_jwt.is_data():
-        out = "an error accused "
+    elif tb_token_jwt.info.exec_code == -4 or tb_token_jwt.info.exec_code == -3:
+
+        app.run_any('DB', 'set', query="email_waiting_list", data=[email], get_results=True)
+        out = "You will receive an invitation email in a few days NICE you ar the first on in the list"
         tb_token_jwt.print()
-        error_type = ToolBoxError.custom_error
+        error_type = ToolBoxError.none
 
     # Check if the email is already in the waiting list
-    elif "already in list" in tb_token_jwt.get():
+    elif tb_token_jwt.info.exec_code == -5:
         out = "You are already in the list, please do not try to add yourself more than once."
         error_type = ToolBoxError.custom_error
 

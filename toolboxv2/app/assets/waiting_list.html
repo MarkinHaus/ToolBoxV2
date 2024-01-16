@@ -32,8 +32,7 @@
         </div>
 
         <form id="email-subscription-form" class="form-container">
-            <label for="email">Email:</label>
-            <input type="email" id="email" required>
+            <input type="email" id="email" placeholder="test@test.com" required>
             <button type="submit">Subscribe</button>
         </form>
         <p id="success-message" hidden>Thank you for subscribing!</p>
@@ -54,22 +53,23 @@
 
             const email = document.getElementById('email').value;
 
-            httpPostUrl("email_wating_list", "add", "email" + email,
+            httpPostUrl("email_waiting_list", "add", "email=" + email,
                 (result) => {
+                    console.log("[Error]",result)
                     document.getElementById('infoText').textContent = result.info.help_text;
                     document.getElementById('infoPopup').style.display = 'block';
                     result.info.exec_code = -2;
                     return result;
                 },
                 (result) => {
-                    document.getElementById('infoText').textContent = result.result.data_info.message;
+                    console.log("[Succses]",result)
+                    document.getElementById('infoText').textContent = result.info.help_text;
                     document.getElementById('infoPopup').style.display = 'block';
                     document.getElementById('success-message').hidden = false;
                     result.info.exec_code = 1;
                     return result;
                 }
             );
-
         });
     });
 </script>

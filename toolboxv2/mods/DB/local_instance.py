@@ -63,9 +63,10 @@ class MiniDictDB:
             return Result.ok()
         return Result.default_user_error(info=f"key is {key}, type{type(key)}, value is {value}, type{type(value)}")
 
-    def append_on_set(self, key, value):
+    def append_on_set(self, key:str, value:list):
         if key in self.data:
-            self.data[key].append(value)
+            for v in value:
+                self.data[key].append(v)
             return Result.ok()
         return Result.default_user_error(info=f"key not found {key}")
 

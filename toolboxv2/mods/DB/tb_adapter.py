@@ -181,8 +181,6 @@ class Tools(MainTool, FileHandler):
         helper="append data to an Database instance subset",
         version=version,
         interface=ToolBoxInterfaces.internal,
-        pre_compute=pre_function,
-        post_compute=post_function,
     )
     def append_on_set(self, query: str, data: Any) -> Result:
         if self.data_base is None:
