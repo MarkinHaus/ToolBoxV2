@@ -1,17 +1,18 @@
 from toolboxv2 import Result, get_app, App, MainTool
-from toolboxv2.utils.types import ToolBoxError
+from toolboxv2.utils.types import ToolBoxError, ApiResult, ToolBoxInterfaces
 
 Name = "email_wating_list"
 version = '*.*.*'
+export = get_app("email_waiting_list.email_waiting_list.EXPORT").tb
 
 
-@get_app("email_waiting_list.email_waiting_list.EXPORT").tb(api=True)
-def email_waiting_list(app: App, email: str) -> Result:
+@export(mod_name=Name, api=True, interface=ToolBoxInterfaces.api, state=True)
+def add(app:App, email: str) -> ApiResult:
     if app is None:
         app = get_app("email_waiting_list")
     # if "db" not in list(app.MOD_LIST.keys()):
     #    return "Server has no database module"
-    tb_token_jwt = app.run_any('db', 'append_on_set', query="email_waiting_list", data=email, get_results=True)
+    tb_token_jwt = app.run_any('DB', 'append_on_set', query="email_waiting_list", data=[email], get_results=True)
 
     # Default response for internal error
     error_type = ToolBoxError.internal_error
@@ -21,6 +22,10 @@ def email_waiting_list(app: App, email: str) -> Result:
     if not tb_token_jwt.is_error():
         out = "You will receive an invitation email in a few days"
         error_type = ToolBoxError.none
+    elif not tb_token_jwt.is_data():
+        out = "an error accused "
+        tb_token_jwt.print()
+        error_type = ToolBoxError.custom_error
 
     # Check if the email is already in the waiting list
     elif "already in list" in tb_token_jwt.get():
@@ -32,7 +37,7 @@ def email_waiting_list(app: App, email: str) -> Result:
         error=error_type,
         exec_code=0,  # Assuming exec_code 0 for success, modify as needed
         help_text=out,
-        data_info={"email": email},
+        data_info="email",
         data={"message": out}
     )
 

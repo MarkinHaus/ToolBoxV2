@@ -2,7 +2,7 @@ import os
 from abc import ABC
 from typing import Any
 
-from toolboxv2 import MainTool, FileHandler, Result, get_app
+from toolboxv2 import MainTool, FileHandler, Result, get_app, tbef
 from .reddis_instance import MiniRedis
 from .local_instance import MiniDictDB
 from .types import DatabaseModes, AuthenticationTypes
@@ -15,7 +15,6 @@ Name = "DB"
 
 
 def pre_function(*args, **kwargs) -> (list, dict):
-
     # Verarbeitung der args mit der encode_code-Methode
     encoded_args = map(lambda x: str(x) if type(x).__name__ in ['str', 'int', 'dict', 'list', 'tupel'] else x, args)
 
@@ -31,6 +30,7 @@ def post_function(result: Result) -> Result:
     if result.is_error():
         return result
     return result
+
 
 # decoded_data = []
 # if isinstance(result.get(), list):
@@ -80,7 +80,7 @@ class Tools(MainTool, FileHandler):
         self.encoding = 'utf-8'
 
         self.data_base: MiniRedis or MiniDictDB or DB or None = None
-        self.mode = DatabaseModes.RR
+        self.mode = DatabaseModes.LC
         self.url = None
         self.passkey = None
         self.user_name = None
@@ -131,6 +131,9 @@ class Tools(MainTool, FileHandler):
         if self.data_base is None:
             return Result.default_internal_error(info="No database connection")
 
+        if data is None:
+            return Result.default_user_error(info="None value is not valid value must have a to str & be serialise")
+
         if self.mode.value == "LOCAL_DICT" or self.mode.value == "LOCAL_REDDIS" or self.mode.value == "REMOTE_REDDIS":
             return self.data_base.set(query, data)
 
@@ -138,6 +141,16 @@ class Tools(MainTool, FileHandler):
             return Result.custom_error(info="Not Implemented yet")  # TODO: add remote dict storage
 
         return Result.default_internal_error(info="Database is not configured")
+
+    @export(
+        mod_name=Name,
+        helper="Set data to an Database instance",
+        version=version,
+        interface=ToolBoxInterfaces.internal,
+        pre_compute=pre_function,
+    )
+    def initialized(self) -> bool:
+        return self.data_base is not None
 
     @export(
         mod_name=Name,
@@ -172,6 +185,9 @@ class Tools(MainTool, FileHandler):
         if self.data_base is None:
             return Result.default_internal_error(info="No database connection")
 
+        if data is None:
+            return Result.default_user_error(info="None value is not valid value must have a to str & be serialise")
+
         if self.mode.value == "LOCAL_DICT" or self.mode.value == "LOCAL_REDDIS" or self.mode.value == "REMOTE_REDDIS":
             return self.data_base.append_on_set(query, data)
 
@@ -193,9 +209,9 @@ class Tools(MainTool, FileHandler):
             self.data_base = MiniRedis()
         else:
             return Result.default_internal_error(info="Not implemented")
-
-        if self._autoresize().log(prifix="initialize_database: ").is_error():
-            raise RuntimeError("DB Autoresize Error")
+        a = self._autoresize()
+        if a.log(prifix="initialize_database: ").is_error():
+            raise RuntimeError("DB Autoresize Error " + a.print(show=False))
 
         self.logger.info(f"Running DB in mode : {self.mode.value}")
 
@@ -203,10 +219,8 @@ class Tools(MainTool, FileHandler):
 
         if self.data_base is None:
             return Result.default_internal_error(info="No data_base instance specified")
-
         auth = self.data_base.auth_type
-        evaluation = "An unknown authentication error occurred"
-
+        evaluation = Result.default_internal_error(info="An unknown authentication error occurred")
         if auth.value == AuthenticationTypes.Uri.value:
             url = self.url
             if self.url is None:
@@ -214,9 +228,7 @@ class Tools(MainTool, FileHandler):
 
             if url is None:
                 raise ValueError("Could not find DB connection URI in environment variable DB_CONNECTION_URI")
-
             evaluation = self.data_base.initialize(url)
-
         if auth.value == AuthenticationTypes.PassKey.value:
             passkey = self.passkey
             if self.passkey is None:
@@ -224,9 +236,7 @@ class Tools(MainTool, FileHandler):
 
             if passkey is None:
                 raise ValueError("Could not find DB connection passkey in environment variable DB_PASSKEY")
-
             evaluation = self.data_base.initialize(passkey)
-
         if auth.value == AuthenticationTypes.UserNamePassword.value:
             user_name = self.user_name
             if self.user_name is None:
@@ -234,51 +244,61 @@ class Tools(MainTool, FileHandler):
 
             if user_name is None:
                 raise ValueError("Could not find DB connection user_name in environment variable DB_USERNAME")
-
             evaluation = self.data_base.initialize(user_name, input(":Password:"))
-
         if auth.value == AuthenticationTypes.location.value:
             local_key = self.app.config_fh.get_file_handler("LocalDbKey")
             if local_key is None:
                 local_key = Code.generate_symmetric_key()
                 self.app.config_fh.add_to_save_file_handler("LocalDbKey", local_key)
-
             if local_key is None:
                 raise ValueError("Could not find DB connection local_key in environment variable LocalDbKey")
-
-            evaluation = self.data_base.initialize(self.app.data_dir + 'MiniDB.json', local_key)
-
-        if isinstance(evaluation, bool) and evaluation:
+            evaluation = self.data_base.initialize(self.app.data_dir, local_key)
+        if not evaluation.is_error():
             return Result.ok()
-        return Result.default_internal_error(info=evaluation)
+        return Result.default_internal_error(info=evaluation.get())
 
     @export(mod_name=Name, exit_f=True, helper="close database")
     def close_db(self) -> Result:
         if self.data_base is None:
             return Result.default_user_error(info="Database is not configured therefor cand be closed")
+        result = self.data_base.exit()
+        self.data_base = None
+        return result
 
-        return self.data_base.exit()
-
-    @export(mod_name=Name, interface=ToolBoxInterfaces.native)
-    def edit_programmable(self, mode: DatabaseModes):
-        if mode.value not in ["LC", "RC", "LR", "RR"]:
-            return Result.default_user_error(info=f"Mode not supported")
+    @export(mod_name=Name, interface=ToolBoxInterfaces.native, samples=[{"mode": DatabaseModes.crate("LC")}])
+    def edit_programmable(self, mode: DatabaseModes = DatabaseModes.LC):
+        if mode is None:
+            self.logger.warning("No mode parsed")
+            return Result.default_user_error(info="mode is None")
+        if mode.name not in ["LC", "RC", "LR", "RR"]:
+            return Result.default_user_error(info=f"Mode not supported used : {mode.name}")
         self.mode = mode
-        self.close_db()
-        self.initialize_database()
+        if self.data_base is None:
+            return Result.ok(data=self.initialize_database()).lazy_return(data=f"mode change to {mode}")
+        return self.close_db().lazy_return("intern",
+                                           data=self.initialize_database()
+                                           ).lazy_return(data=f"mode change to {mode}")
 
     @export(mod_name=Name, interface=ToolBoxInterfaces.cli)
-    def edit_cli(self, mode):
+    def edit_cli(self, mode="LC"):
+        if mode is None:
+            self.logger.warning("No mode parsed")
+            return Result.default_user_error(info="mode is None")
         if mode not in ["LC", "RC", "LR", "RR"]:
             return Result.default_user_error(info=f"Mode not supported")
-        self.mode = mode
-        self.close_db()
-        self.initialize_database()
+        self.mode = DatabaseModes.crate(mode)
+        return self.close_db().lazy_return("intern",
+                                           data=self.initialize_database()
+                                           ).lazy_return(data=f"mode change to {mode}")
 
-    @export(mod_name=Name, interface=ToolBoxInterfaces.remote, api=True, helper="Avalabel modes: LC RC LR RR")
-    def edit_dev_web_ui(self, mode):
+    @export(mod_name=Name, interface=ToolBoxInterfaces.remote, api=False, helper="Avalabel modes: LC RC LR RR")
+    def edit_dev_web_ui(self, mode="LC"):
+        if mode is None:
+            self.logger.warning("No mode parsed")
+            return Result.default_user_error(info="mode is None")
         if mode not in ["LC", "RC", "LR", "RR"]:
             return Result.default_user_error(info=f"Mode not supported")
-        self.mode = mode
-        self.close_db()
-        self.initialize_database()
+        self.mode = DatabaseModes.crate(mode)
+        r0 = self.close_db()
+        r1 = self.initialize_database()
+        return Result.ok(data=(r0, r1))

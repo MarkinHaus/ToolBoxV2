@@ -141,7 +141,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         self.print("API is already running")
 
-    def stop_api(self, api_name):
+    def stop_api(self, api_name: str):
         if api_name not in list(self.api_config.keys()):
             return f"Api with the name {api_name} is not listed"
 
@@ -168,7 +168,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
         del self.running_apis[api_name]
         os.remove(f"./.data/api_pid_{api_name}")
 
-    def restart_api(self, api_name):
+    def restart_api(self, api_name: str):
         self.stop_api(api_name)
         time.sleep(4)
         self.start_api(api_name)

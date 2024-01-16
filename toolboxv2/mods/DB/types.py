@@ -9,6 +9,19 @@ class DatabaseModes(Enum):
     LR = "LOCAL_REDDIS"
     RR = "REMOTE_REDDIS"
 
+    @classmethod
+    def crate(cls, mode: str):
+        if mode == "LC":
+            return DatabaseModes.LC
+        elif mode == "RC":
+            return DatabaseModes.RC
+        elif mode == "LR":
+            return DatabaseModes.LR
+        elif mode == "RR":
+            return DatabaseModes.RR
+        else:
+            raise ValueError(f"{mode} != RR,LR,RC,LC")
+
 
 @dataclass
 class AuthenticationTypes(Enum):

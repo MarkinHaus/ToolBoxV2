@@ -91,6 +91,9 @@ class Tools(MainTool, FileHandler):
         if endpoint_port is None:
             endpoint_port = port
 
+        if not isinstance(type_id, SocketType):
+            return
+
         # setup sockets
         type_id = type_id.name
 

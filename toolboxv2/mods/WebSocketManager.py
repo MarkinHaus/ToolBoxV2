@@ -105,9 +105,9 @@ class Tools(MainTool, FileHandler):
         for name, instance in self.active_connections.items():
             self.print(f"{name}: {instance.name}")
 
-    def srqw_wrapper(self, command):
+    def srqw_wrapper(self, url, websocket_id):
 
-        s, r = self.get_sender_receiver_que_ws(command[0], command[1])
+        s, r = self.get_sender_receiver_que_ws(url, websocket_id)
 
         return s, r
 

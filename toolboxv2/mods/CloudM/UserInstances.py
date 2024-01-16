@@ -20,15 +20,15 @@ class UserInstances(metaclass=Singleton):
     user_instances = {}
 
     @in_mem_chash_150
-    def get_si_id(self, uid):
+    def get_si_id(self, uid: str):
         return Code.one_way_hash(uid, app.id, 'SiID')
 
     @in_mem_chash_150
-    def get_vt_id(self, uid):
+    def get_vt_id(self, uid: str):
         return Code.one_way_hash(uid, app.id, 'VirtualInstanceID')
 
     @in_mem_chash_150
-    def get_web_socket_id(self, uid):
+    def get_web_socket_id(self, uid: str):
         return Code.one_way_hash(uid, app.id, 'CloudM-Signed')
 
     # UserInstanceManager.py
@@ -251,4 +251,3 @@ class UserInstances(metaclass=Singleton):
 
             return Result.ok()
         return Result.default_user_error(info="invalid ws id")
-

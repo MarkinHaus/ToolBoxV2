@@ -1,7 +1,7 @@
 import json
 import os
 
-from toolboxv2 import Result
+from toolboxv2 import Result, get_app
 from .types import AuthenticationTypes
 from ...utils.cryp import Code
 
@@ -21,13 +21,13 @@ class MiniDictDB:
         return [key for key in self.data.keys() if key.startswith(serch.replace('*', ''))]
 
     def initialize(self, location, key):
-        try:
+        if os.path.exists(location + 'MiniDictDB.json'):
             self.data = eval(Code.decrypt_symmetric(load_from_json(location + 'MiniDictDB.json').get('data'), key))
-        except Exception:
-            print('Could not initialize MiniDictDB with data')
+        else:
+            print(f'Could not initialize MiniDictDB with data from MiniDictDB.json')
             self.data = {}
         self.key = key
-        self.location = location
+        self.location = location + 'MiniDictDB.json'
         return Result.ok()
 
     def get(self, key: str) -> Result:
@@ -90,7 +90,12 @@ class MiniDictDB:
             return Result.default_internal_error(info="No cryptographic key available")
         if self.location == "":
             return Result.default_internal_error(info="No file location available")
-        save_to_json({"data": Code().encode_code(str(self.data), self.key)}, self.location)
+        data = Code().encode_code(str(self.data), self.key)
+        try:
+            save_to_json({"data": data}, self.location)
+        except PermissionError and FileNotFoundError as f:
+            return Result.custom_error(data=f)
+
         return Result.ok()
 
 
@@ -101,7 +106,10 @@ def save_to_json(data, filename):
     :param data: Die zu speichernden Daten.
     :param filename: Der Dateiname oder Pfad, in dem die Daten gespeichert werden sollen.
     """
-    with open(filename, 'w') as file:
+    if not os.path.exists(filename):
+        open(filename, 'a').close()
+
+    with open(filename, 'w+') as file:
         json.dump(data, file, indent=4)
 
 

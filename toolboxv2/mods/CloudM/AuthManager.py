@@ -9,6 +9,7 @@ from typing import Union, List
 import jwt
 from pydantic import BaseModel
 
+from toolboxv2.mods.DB.types import DatabaseModes
 from toolboxv2.utils.types import ToolBoxInterfaces, ApiResult
 from toolboxv2 import get_app, App, Result, tbef, ToolBox_over
 
@@ -16,7 +17,7 @@ from toolboxv2.utils.cryp import Code
 
 Name = 'CloudM.AuthManager'
 export = get_app(f"{Name}.Export").tb
-default_export = export(mod_name=Name)
+default_export = export(mod_name=Name, test=False)
 test_only = export(mod_name=Name, test_only=True)
 version = '0.0.1'
 instance_bios = str(uuid.uuid4())
@@ -49,7 +50,7 @@ class UserCreator(User):
 # app Helper functions interaction with the db
 
 def db_helper_test_exist(app: App, username: str):
-    return -2 != app.run_any(tbef.DB.GET, query=f"USER::{username}::*", get_results=True).info.exec_code
+    return not app.run_any(tbef.DB.GET, query=f"USER::{username}::*", get_results=True).is_data()
 
 
 def db_delete_invitation(app: App, invitation: str):
@@ -61,7 +62,9 @@ def db_valid_invitation(app: App, invitation: str):
     if inv_key is None:
         return False
     inv_key = inv_key[0]
-    return Code.decrypt_symmetric(inv_key.decode(), invitation) == invitation
+    if isinstance(inv_key, bytes):
+        inv_key = inv_key.decode()
+    return Code.decrypt_symmetric(inv_key, invitation) == invitation
 
 
 def db_crate_invitation(app: App):
@@ -155,7 +158,7 @@ def reade_jwt(jwt_key: str) -> dict or str:
 # Export functions
 
 
-@export(mod_name=Name, state=False)
+@export(mod_name=Name, state=False, test=False)
 def get_user_by_name(app: App, username: str, uid: str = '*') -> Result:
     if app is None:
         app = get_app(Name + '.get_user_by_name')
@@ -215,11 +218,11 @@ class CreateUserObject(BaseModel):
     as_base64: bool = True
 
 
-@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True)
-def create_user(app: App, data: CreateUserObject = None, name: str = 'test-user', email: str = 'test@user.com',
+@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True, test=False)
+def create_user(app: App, data: CreateUserObject = None, username: str = 'test-user', email: str = 'test@user.com',
                 pub_key: str = '',
                 invitation: str = '', web_data=False, as_base64=False) -> ApiResult:
-    name = data.name if data is not None else name
+    username = data.name if data is not None else username
     email = data.email if data is not None else email
     pub_key = data.pub_key if data is not None else pub_key
     invitation = data.invitation if data is not None else invitation
@@ -229,8 +232,8 @@ def create_user(app: App, data: CreateUserObject = None, name: str = 'test-user'
     if app is None:
         app = get_app(Name + '.crate_user')
 
-    if db_helper_test_exist(app, name):
-        return Result.default_user_error(info=f"Username '{name}' already taken", interface=ToolBoxInterfaces.remote)
+    if db_helper_test_exist(app, username):
+        return Result.default_user_error(info=f"Username '{username}' already taken", interface=ToolBoxInterfaces.remote)
 
     if not db_valid_invitation(app, invitation):
         return Result.default_user_error(info=f"Invalid invitation", interface=ToolBoxInterfaces.remote)
@@ -245,12 +248,12 @@ def create_user(app: App, data: CreateUserObject = None, name: str = 'test-user'
             except Exception as e:
                 return Result.default_internal_error(info=f"Invalid public key not a valid base64 string: {e}")
 
-        test_bub_key = Code().encrypt_asymmetric(name, pub_key)
+        test_bub_key = Code().encrypt_asymmetric(username, pub_key)
 
     if test_bub_key == "Invalid":
         return Result.default_user_error(info="Invalid public key parsed", interface=ToolBoxInterfaces.remote)
 
-    user = User(name=name, email=email, user_pass_pub_devices=[pub_key], pub_key=pub_key)
+    user = User(name=username, email=email, user_pass_pub_devices=[pub_key], pub_key=pub_key)
 
     db_delete_invitation(app, invitation)
 
@@ -259,7 +262,7 @@ def create_user(app: App, data: CreateUserObject = None, name: str = 'test-user'
 
     result_s = db_helper_save_user(app, asdict(user))
 
-    return Result.ok(info=f"User created successfully: {name}",
+    return Result.ok(info=f"User created successfully: {username}",
                      data=Code().encrypt_asymmetric(str(user.name), pub_key)
                      , interface=ToolBoxInterfaces.remote)
 
@@ -276,7 +279,7 @@ class PersonalData(BaseModel):
     rawId: str  # arrayBufferToBase64
 
 
-@export(mod_name=Name, api=True)
+@export(mod_name=Name, api=True, test=False)
 def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
     if not db_helper_test_exist(app, data.username):
         return Result.default_user_error(info=f"Username '{data.username}' not known")
@@ -320,25 +323,25 @@ def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
     return Result.ok(info="User registered successfully")
 
 
-@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.cli)
-def crate_local_account(app: App, name: str, email: str = '', invitation: str = '', create=None) -> Result:
+@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.cli, test=False)
+def crate_local_account(app: App, username: str, email: str = '', invitation: str = '', create=None) -> Result:
     if app is None:
         app = get_app(Name + '.crate_local_account')
-    user_pri = app.config_fh.get_file_handler("Privat-key")
+    user_pri = app.config_fh.get_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8])
     if user_pri is not None:
         return Result.ok(info="User already registered on this device")
     pub, pri = Code.generate_asymmetric_keys()
-    app.config_fh.add_to_save_file_handler("Privat-key", pri)
+    app.config_fh.add_to_save_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8], pri)
     if ToolBox_over == 'root' and invitation == '':
         invitation = db_crate_invitation(app)
     if invitation == '':
         return Result.default_user_error(info="No Invitation key provided")
 
-    create_user_ = lambda *args: create_user(*args)
+    create_user_ = lambda *args: create_user(app, None, *args)
     if create is not None:
         create_user_ = create
 
-    res = create_user_(app, name, email, pub, invitation)
+    res = create_user_(username, email, pub, invitation)
 
     if res.info.exec_code != 0:
         return Result.custom_error(data=res, info="user creation failed!", exec_code=res.info.exec_code)
@@ -346,17 +349,17 @@ def crate_local_account(app: App, name: str, email: str = '', invitation: str = 
     return Result.ok(info="Success")
 
 
-@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.cli)
-def local_login(app: App, name: str) -> Result:
+@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.cli, test=False)
+def local_login(app: App, username: str) -> Result:
     if app is None:
         app = get_app(Name + '.crate_local_account')
-    user_pri = app.config_fh.get_file_handler("Privat-key")
+    user_pri = app.config_fh.get_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8])
     if user_pri is None:
         return Result.ok(info="No User registered on this device")
 
-    signature = Code.create_signature(name + app.id + instance_bios, user_pri)
+    signature = Code.create_signature(get_to_sing_data(app, username=username).as_result().get(), user_pri)
 
-    res = jwt_claim_server_side_sync(app, name, signature).as_result()
+    res = jwt_get_claim(app, username, signature).as_result()
 
     if res.info.exec_code != 0:
         return Result.custom_error(data=res, info="user login failed!", exec_code=res.info.exec_code)
@@ -364,7 +367,7 @@ def local_login(app: App, name: str) -> Result:
     return Result.ok(info="Success", data=res.get())
 
 
-@export(mod_name=Name, api=True)
+@export(mod_name=Name, api=True, test=False)
 def get_to_sing_data(app: App, username, personal_key=False):
     if app is None:
         app = get_app(from_=Name + '.get_to_sing_data')
@@ -387,18 +390,7 @@ def get_to_sing_data(app: App, username, personal_key=False):
     return Result.ok(data=data)
 
 
-@test_only
-def otest_invations(app: App):
-    if app is None:
-        app = get_app(Name + '.test_invations')
-    invitation = db_crate_invitation(app)
-    print("Invitation", invitation)
-    infs = app.run_any(tbef.DB.GET, query=f"invitation::*", get_results=True)
-    res = db_valid_invitation(app, invitation)
-    print(res, 'invitation test')
-
-
-@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.native, api=False, level=999)
+@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.native, api=False, level=999, test=False)
 def get_invitation(app: App) -> Result:
     if app is None:
         app = get_app(Name + '.test_invations')
@@ -419,7 +411,7 @@ class VpUSER(VdUSER, BaseModel):
     authenticatorData: str
 
 
-@export(mod_name=Name, api=True)
+@export(mod_name=Name, api=True, test=False)
 def validate_persona(app: App, data: VpUSER) -> ApiResult:
     if app is None:
         app = get_app(".validate_device")
@@ -429,7 +421,7 @@ def validate_persona(app: App, data: VpUSER) -> ApiResult:
     if user_result.is_error() or not user_result.is_data():
         return Result.default_user_error(info=f"Invalid username : {data.username}")
 
-    jwt_claim = jwt_claim_server_side_sync(app, data.username, from_base64(data.signature))
+    jwt_claim = jwt_get_claim(app, data.username, from_base64(data.signature))
 
     if isinstance(jwt_claim, ApiResult):
         jwt_claim = jwt_claim.as_result()
@@ -440,7 +432,7 @@ def validate_persona(app: App, data: VpUSER) -> ApiResult:
     return Result.ok(data=jwt_claim.get())
 
 
-@export(mod_name=Name, api=True)
+@export(mod_name=Name, api=True, test=False)
 def validate_device(app: App, data: VdUSER) -> ApiResult:
     if app is None:
         app = get_app(".validate_device")
@@ -484,7 +476,7 @@ def validate_device(app: App, data: VdUSER) -> ApiResult:
     return Result.ok(data=Code.encrypt_symmetric(row_jwt_claim, user.pub_key))
 
 
-@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.remote, api=True)
+@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.remote, api=True, test=False)
 def authenticate_user_get_sync_key(app: App, username: str, signature: str, get_user=False) -> ApiResult:
     if app is None:
         app = get_app(Name + '.authenticate_user_get_sync_key')
@@ -513,12 +505,12 @@ def authenticate_user_get_sync_key(app: App, username: str, signature: str, get_
 
 # local user functions
 
-@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.native)
+@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.native, test=False)
 def get_user_sync_key_local(app: App, username: str, ausk=None) -> Result:
     if app is None:
         app = get_app(Name + '.get_user_sync_key')
 
-    user_pri = app.config_fh.get_file_handler("Privat-key")
+    user_pri = app.config_fh.get_file_handler("Pk" + Code.one_way_hash(username)[:8])
 
     signature = Code.create_signature(username + app.id + instance_bios, user_pri)
 
@@ -540,8 +532,8 @@ def get_user_sync_key_local(app: App, username: str, ausk=None) -> Result:
 
 # jwt claim
 
-@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.remote, api=True)
-def jwt_claim_server_side_sync(app: App, username: str, signature: str or bytes) -> ApiResult:
+@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.remote, api=True, test=False)
+def jwt_get_claim(app: App, username: str, signature: str or bytes) -> ApiResult:
     if app is None:
         app = get_app(Name + '.jwt_claim_server_side_sync')
 
@@ -562,8 +554,8 @@ def jwt_claim_server_side_sync(app: App, username: str, signature: str or bytes)
         data={'claim': Code.encrypt_symmetric(row_jwt_claim, userdata.get("pub_key")), 'key': channel_key})
 
 
-@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.remote, api=False)
-def jwt_claim_server_side_sync_local(app: App, username: str, crypt_sing_jwt_claim: str, aud=None) -> Result:
+@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.remote, api=False, test=False)
+def jwt_claim_local_decrypt(app: App, username: str, crypt_sing_jwt_claim: str, aud=None) -> Result:
     if app is None:
         app = get_app(Name + '.jwt_claim_server_side_sync_local')
 
@@ -578,7 +570,7 @@ def jwt_claim_server_side_sync_local(app: App, username: str, crypt_sing_jwt_cla
     return jwt_check_claim_server_side(app, username, sing_jwt_claim).as_result().lazy_return('raise')
 
 
-@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.remote, api=True)
+@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.remote, api=True, test=False)
 def jwt_check_claim_server_side(app: App, username: str, jwt_claim: str) -> ApiResult:
     res = get_user_by_name(app, username)
     if res.info.exec_code != 0:
@@ -591,6 +583,28 @@ def jwt_check_claim_server_side(app: App, username: str, jwt_claim: str) -> ApiR
         return Result.custom_error(info=data, data=False)
 
     return Result.ok(data_info='Valid JWT', data=True)
+
+
+# ============================= Unit tests ===========================================
+
+# set up
+@export(mod_name=Name, test_only=True, initial=True, state=False)
+def prep_test():
+    app = get_app(f"{Name}.prep_test")
+    app.run_any(tbef.DB.EDIT_PROGRAMMABLE, mode=DatabaseModes.LC)
+
+
+@test_only
+def crate_user_test(app: App):
+    if app is None:
+        app = get_app(f"{Name}.crate_user_test")
+    r = crate_local_account(app, "testUser123", "test_mainqmail.com", get_invitation(app).get())
+    r2 = local_login(app, "testUser123").lazy_return("crate_local_account + local_login failed")
+    res = [[r.is_error() is False, "r.is_error() "], [r2.is_error() is False, "r2.is_error()"],
+           [r.is_data() is True, "r.is_data() i"], [r2.is_data() is True, "r2.is_data() "],
+           [r.result.data_info == "Success", "r.result.data"], [r2.result.data_info == "Success", "r2.result.dat"]]
+    return res
+
 
 
 if __name__ == '__main__':

@@ -1,6 +1,7 @@
 from .AuthManager import create_user, crate_local_account, User
-from .cloudM import Tools
-from .UserInstanceManager import UserInstances
+from .module import Tools
+from .UserInstances import UserInstances
 
-Name = "CloudM"
 tools = Tools
+Name = 'CloudM'
+version = "0.0.2"

@@ -30,36 +30,6 @@ def run(app: App, args):
             app.alive = False
         return Result.ok().set_origin("minicli::build-in")
 
-    def set_load_mode(call_: CallingObject) -> Result:
-        # Define the mapping of modes to descriptions
-        mode_descriptions = {
-            'I': 'Inplace-loading',
-            'C': 'Copy-loading',
-            # 'S': 'Save Python file to Dill',
-            # 'CS': 'Copy and Save Python file',
-            # 'D': 'Development'
-        }
-        if not call_.function_name:
-            def format_load_mode_info(current_mode):
-                # Check if the current mode is in the dictionary
-                mode_info = mode_descriptions.get(current_mode, 'Unknown mode')
-
-                # Format the information string
-                info = (f"slm (Set Load Mode) needs at least one argument {mode_descriptions.keys()}\n"
-                        f"app is in {mode_info} mode")
-                return info
-
-            return Result.default_user_error(info=format_load_mode_info(app.mlm)).set_origin("minicli::build-in")
-        if call_.function_name.lower() == "i":
-            app.mlm = 'I'
-        elif call_.function_name.lower() == "c":
-            app.mlm = 'C'
-        else:
-            return (
-                Result.default_user_error(info=f"{call_.function_name} != I or C {mode_descriptions}")
-                .set_origin("minicli::build-in"))
-        return Result.ok(info=f"New Load Mode {app.mlm}").set_origin("minicli::build-in")
-
     def set_debug_mode(call_: CallingObject) -> Result:
         if not call_.function_name:
             return (Result.default_user_error(info=f"sdm (Set Debug Mode) needs at least one argument on or off\napp is"
@@ -71,15 +41,15 @@ def run(app: App, args):
             app.debug = False
         else:
             return Result.default_user_error(info=f"{call_.function_name} != on or off").set_origin("minicli::build-in")
-        return Result.ok(info=f"New Load Mode {app.mlm}").set_origin("minicli::build-in")
+        return Result.ok(info=f"New Debug Mode {app.debug}").set_origin("minicli::build-in")
 
     def hr(call_: CallingObject) -> Result:
         if not call_.function_name:
             app.remove_all_modules()
             app.load_all_mods_in_file()
-        if call_.function_name.lower() in app.functions:
-            app.remove_mod(call_.function_name.lower())
-            if not app.save_load(call_.function_name.lower()):
+        if call_.function_name in app.functions:
+            app.remove_mod(call_.function_name)
+            if not app.save_load(call_.function_name):
                 return Result.default_internal_error().set_origin("minicli::build-in")
         return Result.ok().set_origin("minicli::build-in")
 
@@ -87,7 +57,7 @@ def run(app: App, args):
         if not call_.function_name:
             app.load_all_mods_in_file()
             return Result.default_user_error(info="No module specified").set_origin("minicli::build-in")
-        if not app.save_load(call_.function_name.lower()):
+        if not app.save_load(call_.function_name):
             return Result.default_internal_error().set_origin("minicli::build-in")
         return Result.ok().set_origin("minicli::build-in")
 
@@ -95,7 +65,7 @@ def run(app: App, args):
         if not call_.function_name:
             app.remove_all_modules()
             return Result.default_user_error(info="No module specified").set_origin("minicli::build-in")
-        if not app.remove_mod(call_.function_name.lower()):
+        if not app.remove_mod(call_.function_name):
             return Result.default_internal_error().set_origin("minicli::build-in")
         return Result.ok().set_origin("minicli::build-in")
 
@@ -148,16 +118,20 @@ def run(app: App, args):
     def toggle_threaded(_):
         global threaded
         threaded = not threaded
-        return Result.ok(info=f"in threaded mode {threaded}").set_origin("minicli::build-in")
+        return Result.ok(info=f"in threaded mode {threaded}").set_origin("minicli::build-in").print()
+
+    def infos(_):
+        app.print_functions()
+        return Result.ok(info=f"").set_origin("minicli::build-in")
 
     bic = {
         "exit": exit_,
         "cls": cls_,
-        "slm:set_load_mode": set_load_mode,
         "sdm:set_debug_mode": set_debug_mode,
         "open": open_,
         "close": close_,
         "run": run_,
+        "infos": infos,
         "reload": hr,
         "remote": remote,
         "toggle_threaded": toggle_threaded,
@@ -171,7 +145,6 @@ def run(app: App, args):
     autocompletion_dict = app.run_any(tbef.CLI_FUNCTIONS.UPDATE_AUTOCOMPLETION_LIST_OR_KEY, list_or_key=bic,
                                       autocompletion_dict=autocompletion_dict)
 
-    autocompletion_dict["slm:set_load_mode"] = {arg: None for arg in ['i', 'c']}
     autocompletion_dict["sdm:set_debug_mode"] = {arg: None for arg in ['on', 'off']}
     autocompletion_dict["open"] = autocompletion_dict["close"] = autocompletion_dict["reload"] = \
         {arg: None for arg in all_modes}

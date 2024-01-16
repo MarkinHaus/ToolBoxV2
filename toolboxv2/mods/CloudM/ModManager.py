@@ -15,7 +15,7 @@ from toolboxv2.utils.types import ToolBoxInterfaces
 Name = 'CloudM.ModManager'
 export = get_app(f"{Name}.Export").tb
 version = '0.0.1'
-default_export = export(mod_name=Name, version=version, interface=ToolBoxInterfaces.native)
+default_export = export(mod_name=Name, version=version, interface=ToolBoxInterfaces.native, test=False)
 
 
 @default_export
@@ -151,6 +151,8 @@ def delete_package(url):
     os.remove(temp_requirements_file.name)
 
 
-@export(mod_name=Name, api=True, interface=ToolBoxInterfaces.remote)
-def list_modules(app: App):
-    return map(lambda x: '/api/installer/'+x+'-installer.json', app.get_all_mods())
+@export(mod_name=Name, api=True, interface=ToolBoxInterfaces.remote, test=False)
+def list_modules(app: App = None):
+    if app is None:
+        app = get_app("cm.list_modules")
+    return list(map(lambda x: '/api/installer/' + x + '-installer.json', app.get_all_mods()))

@@ -8,7 +8,6 @@ from .types import AuthenticationTypes
 
 
 class MiniRedis:
-
     auth_type = AuthenticationTypes.Uri
 
     def __init__(self):
@@ -18,9 +17,9 @@ class MiniRedis:
     def initialize(self, uri: str):
         try:
             self.rcon: redis.Redis = redis.from_url(uri)
-            return True
+            return Result.ok(data=True)
         except Exception as e:
-            return e
+            return Result.default_internal_error(data=e)
 
     def get(self, key: str) -> Result:
         data = []
@@ -59,7 +58,7 @@ class MiniRedis:
             get_logger().error(f"Timeout by redis DB : {e}")
             return Result.default_internal_error(info=e)
         except Exception as e:
-            return Result.default_internal_error(info="Fatal Error: "+str(e))
+            return Result.default_internal_error(info="Fatal Error: " + str(e))
 
     def append_on_set(self, key: str, value: list) -> Result:
 
@@ -72,7 +71,7 @@ class MiniRedis:
             val = eval(val)
             for new_val in value:
                 if new_val in val:
-                    return Result.default_user_error(info="Error value: " + str(new_val) + "already in list")
+                    return Result.default_user_error(info="Error value: " + str(new_val) + " already in list")
                 val.append(new_val)
         else:
             val = value
@@ -104,18 +103,18 @@ class MiniRedis:
         if self.rcon is None:
             return Result.default_user_error(info="No reddis connection active")
         t0 = time.perf_counter()
-        l = get_logger()
+        logger = get_logger()
         try:
             self.rcon.save()
         except Exception as e:
-            l.warning(f"Saving failed {e}")
+            logger.warning(f"Saving failed {e}")
         try:
             self.rcon.quit()
         except Exception as e:
-            l.warning(f"Saving quit {e}")
+            logger.warning(f"Saving quit {e}")
         try:
             self.rcon.close()
         except Exception as e:
-            l.warning(f"Saving close {e}")
-        return Result.ok(data_info=f"closing time in ms {time.perf_counter()-t0:.2f}", info="Connection closed",
-                         data=time.perf_counter()-t0).print()
+            logger.warning(f"Saving close {e}")
+        return Result.ok(data_info=f"closing time in ms {time.perf_counter() - t0:.2f}", info="Connection closed",
+                         data=time.perf_counter() - t0)

@@ -30,6 +30,6 @@ def runnable_dict(s='.py'):
 
             # Füge das Modul der Dictionary hinzu
             if hasattr(module, 'run') and callable(module.run) and hasattr(module, 'NAME'):
-                runnable_dict_[module.NAME.lower()] = module.run
+                runnable_dict_[module.NAME] = module.run
     #  print(f"Getting all runnabels toock {time.perf_counter() -to:.2f} for {len(runnable_dict_.keys())} elements")
     return runnable_dict_

@@ -8,150 +8,168 @@ from dataclasses import dataclass
 
 @dataclass
 class EMAIL_WATING_LIST(Enum):
-	EMAIL_WAITING_LIST: str = 'email_waiting_list'
-	SEND_EMAIL_TO_ALL: str = 'send_email_to_all'
-	APP_INSTANCE: str = 'app_instance'
-	APP_INSTANCE_TYPE: str = 'app_instance_type'
-
-
-@dataclass
-class WELCOME(Enum):
-	PRINTT: str = 'printT'
-	ON_START: str = 'on_start'
-	ANIMATION1: str = 'Animation1'
-	ANIMATION: str = 'Animation'
-	APP_INSTANCE: str = 'app_instance'
-	APP_INSTANCE_TYPE: str = 'app_instance_type'
-
-
-@dataclass
-class QUICKNOTE(Enum):
-	APP_INSTANCE: str = 'app_instance'
-	APP_INSTANCE_TYPE: str = 'app_instance_type'
-	VERSION: str = 'Version'
-	ADD: str = 'ADD'
-	VIEW: str = 'VIEW'
-	SAVE_INBOX: str = 'Save_inbox'
-	GET_INBOX: str = 'Get_inbox'
-	SAVE_INBOX_API: str = 'save_inbox_api'
-	GET_INBOX_API: str = 'get_inbox_api'
-	SAVE_TYPES_API: str = 'save_types_api'
-	GET_TYPES_API: str = 'get_types_api'
+    NAME = 'email_wating_list'
+    ADD: str = 'add'
+    SEND_EMAIL_TO_ALL: str = 'send_email_to_all'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
 
 
 @dataclass
 class API_MANAGER(Enum):
-	APP_INSTANCE: str = 'app_instance'
-	APP_INSTANCE_TYPE: str = 'app_instance_type'
-	VERSION: str = 'Version'
-	EDITAPI: str = 'edit-api'
-	STARTAPI: str = 'start-api'
-	STOPAPI: str = 'stop-api'
-	INFO: str = 'info'
-	RESTARTAPI: str = 'restart-api'
+    NAME = 'api_manager'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
+    VERSION: str = 'Version'
+    EDITAPI: str = 'edit-api'
+    STARTAPI: str = 'start-api'
+    STOPAPI: str = 'stop-api'
+    INFO: str = 'info'
+    RESTARTAPI: str = 'restart-api'
 
 
 @dataclass
-class AUTHMANAGER(Enum):
-	GET_USER_BY_NAME: str = 'get_user_by_name'
-	CREATE_USER: str = 'create_user'
-	REGISTER_USER_PERSONAL_KEY: str = 'register_user_personal_key'
-	CRATE_LOCAL_ACCOUNT: str = 'crate_local_account'
-	LOCAL_LOGIN: str = 'local_login'
-	GET_TO_SING_DATA: str = 'get_to_sing_data'
-	GET_INVITATION: str = 'get_invitation'
-	VALIDATE_PERSONA: str = 'validate_persona'
-	VALIDATE_DEVICE: str = 'validate_device'
-	AUTHENTICATE_USER_GET_SYNC_KEY: str = 'authenticate_user_get_sync_key'
-	GET_USER_SYNC_KEY_LOCAL: str = 'get_user_sync_key_local'
-	JWT_CLAIM_SERVER_SIDE_SYNC: str = 'jwt_claim_server_side_sync'
-	JWT_CLAIM_SERVER_SIDE_SYNC_LOCAL: str = 'jwt_claim_server_side_sync_local'
-	JWT_CHECK_CLAIM_SERVER_SIDE: str = 'jwt_check_claim_server_side'
+class WELCOME(Enum):
+    NAME = 'welcome'
+    VERSION: str = 'Version'
+    PRINTT: str = 'printT'
+    ON_START: str = 'on_start'
+    ANIMATION1: str = 'Animation1'
+    ANIMATION: str = 'Animation'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
 
 
 @dataclass
-class USERINSTANCES(Enum):
-	GET_SI_ID: str = 'get_si_id'
-	GET_VT_ID: str = 'get_vt_id'
-	GET_WEB_SOCKET_ID: str = 'get_web_socket_id'
-	CLOSE_USER_INSTANCE: str = 'close_user_instance'
-	VALIDATE_WS_ID: str = 'validate_ws_id'
-	DELETE_USER_INSTANCE: str = 'delete_user_instance'
-	SET_USER_LEVEL: str = 'set_user_level'
-	SAVE_USER_INSTANCES: str = 'save_user_instances'
-	GET_INSTANCE_SI_ID: str = 'get_instance_si_id'
-	GET_USER_INSTANCE: str = 'get_user_instance'
-	HYDRATE_INSTANCE: str = 'hydrate_instance'
-	SAVE_CLOSE_USER_INSTANCE: str = 'save_close_user_instance'
+class CLOUDM_AUTHMANAGER(Enum):
+    NAME = 'CloudM.AuthManager'
+    GET_USER_BY_NAME: str = 'get_user_by_name'
+    CREATE_USER: str = 'create_user'
+    REGISTER_USER_PERSONAL_KEY: str = 'register_user_personal_key'
+    CRATE_LOCAL_ACCOUNT: str = 'crate_local_account'
+    LOCAL_LOGIN: str = 'local_login'
+    GET_TO_SING_DATA: str = 'get_to_sing_data'
+    GET_INVITATION: str = 'get_invitation'
+    VALIDATE_PERSONA: str = 'validate_persona'
+    VALIDATE_DEVICE: str = 'validate_device'
+    AUTHENTICATE_USER_GET_SYNC_KEY: str = 'authenticate_user_get_sync_key'
+    GET_USER_SYNC_KEY_LOCAL: str = 'get_user_sync_key_local'
+    JWT_GET_CLAIM: str = 'jwt_get_claim'
+    JWT_CLAIM_LOCAL_DECRYPT: str = 'jwt_claim_local_decrypt'
+    JWT_CHECK_CLAIM_SERVER_SIDE: str = 'jwt_check_claim_server_side'
+
+
+@dataclass
+class CLOUDM_USERINSTANCES(Enum):
+    NAME = 'CloudM.UserInstances'
+    GET_SI_ID: str = 'get_si_id'
+    GET_VT_ID: str = 'get_vt_id'
+    GET_WEB_SOCKET_ID: str = 'get_web_socket_id'
+    CLOSE_USER_INSTANCE: str = 'close_user_instance'
+    VALIDATE_WS_ID: str = 'validate_ws_id'
+    DELETE_USER_INSTANCE: str = 'delete_user_instance'
+    SET_USER_LEVEL: str = 'set_user_level'
+    SAVE_USER_INSTANCES: str = 'save_user_instances'
+    GET_INSTANCE_SI_ID: str = 'get_instance_si_id'
+    GET_USER_INSTANCE: str = 'get_user_instance'
+    HYDRATE_INSTANCE: str = 'hydrate_instance'
+    SAVE_CLOSE_USER_INSTANCE: str = 'save_close_user_instance'
 
 
 @dataclass
 class SOCKETMANAGER(Enum):
-	CREATE_SOCKET: str = 'create_socket'
-	RUN_AS_IP_ECHO_SERVER_A: str = 'run_as_ip_echo_server_a'
-	RUN_AS_SINGLE_COMMUNICATION_SERVER: str = 'run_as_single_communication_server'
-	APP_INSTANCE: str = 'app_instance'
-	APP_INSTANCE_TYPE: str = 'app_instance_type'
+    NAME = 'SocketManager'
+    CREATE_SOCKET: str = 'create_socket'
+    RUN_AS_IP_ECHO_SERVER_A: str = 'run_as_ip_echo_server_a'
+    RUN_AS_SINGLE_COMMUNICATION_SERVER: str = 'run_as_single_communication_server'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
+    SOCKETMANAGER_0: str = 'SocketManager_0'
+    TBSOCKETCONTROLLER: str = 'tbSocketController'
+    VERSION: str = 'Version'
 
 
 @dataclass
 class DB(Enum):
-	VERSION: str = 'Version'
-	GET: str = 'get'
-	SET: str = 'set'
-	DELETE: str = 'delete'
-	APPEND_ON_SET: str = 'append_on_set'
-	INITIALIZE_DATABASE: str = 'initialize_database'
-	ON_START: str = 'on_start'
-	CLOSE_DB: str = 'close_db'
-	ON_EXIT: str = 'on_exit'
-	EDIT_PROGRAMMABLE: str = 'edit_programmable'
-	EDIT_CLI: str = 'edit_cli'
-	EDIT_DEV_WEB_UI: str = 'edit_dev_web_ui'
-	APP_INSTANCE: str = 'app_instance'
-	APP_INSTANCE_TYPE: str = 'app_instance_type'
+    NAME = 'DB'
+    VERSION: str = 'Version'
+    GET: str = 'get'
+    SET: str = 'set'
+    INITIALIZED: str = 'initialized'
+    DELETE: str = 'delete'
+    APPEND_ON_SET: str = 'append_on_set'
+    INITIALIZE_DATABASE: str = 'initialize_database'
+    ON_START: str = 'on_start'
+    CLOSE_DB: str = 'close_db'
+    ON_EXIT: str = 'on_exit'
+    EDIT_PROGRAMMABLE: str = 'edit_programmable'
+    EDIT_CLI: str = 'edit_cli'
+    EDIT_DEV_WEB_UI: str = 'edit_dev_web_ui'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
 
 
 @dataclass
-class MODMANAGER(Enum):
-	INSTALLER: str = 'installer'
-	DELETE_PACKAGE: str = 'delete_package'
-	LIST_MODULES: str = 'list_modules'
+class CLOUDM_MODMANAGER(Enum):
+    NAME = 'CloudM.ModManager'
+    INSTALLER: str = 'installer'
+    DELETE_PACKAGE: str = 'delete_package'
+    LIST_MODULES: str = 'list_modules'
 
 
 @dataclass
 class CLOUDM(Enum):
-	SHOW_VERSION: str = 'show_version'
-	NEW_MODULE: str = 'new_module'
-	CREATE_ACCOUNT: str = 'create_account'
-	LOG_IN: str = 'log_in'
-	UPDATE_CORE: str = 'update_core'
-	APP_INSTANCE: str = 'app_instance'
-	APP_INSTANCE_TYPE: str = 'app_instance_type'
+    NAME = 'CloudM'
+    NEW_MODULE: str = 'new_module'
+    CREATE_ACCOUNT: str = 'create_account'
+    LOG_IN: str = 'log_in'
+    UPDATE_CORE: str = 'update_core'
+    REGISTER_INITIAL_ROOT_USER: str = 'register_initial_root_user'
+    CLEAR_DB: str = 'clear_db'
+    SHOW_VERSION: str = 'show_version'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
+    MODINSTALLER: str = 'mod-installer'
+    MODUNINSTALLER: str = 'mod-uninstaller'
+
+
+@dataclass
+class QUICKNOTE(Enum):
+    NAME = 'quickNote'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
+    VERSION: str = 'Version'
+    ADD: str = 'ADD'
+    REMOVE: str = 'REMOVE'
+    VIEW: str = 'VIEW'
+    FIND: str = 'Find'
+    INIT: str = 'init'
 
 
 @dataclass
 class CLI_FUNCTIONS(Enum):
-	VERSION: str = 'Version'
-	GET_CHARACTER: str = 'get_character'
-	GET_GENERATOR: str = 'get_generator'
-	UPDATE_AUTOCOMPLETION_MODS: str = 'update_autocompletion_mods'
-	UPDATE_AUTOCOMPLETION_LIST_OR_KEY: str = 'update_autocompletion_list_or_key'
-	USER_INPUT: str = 'user_input'
-	CO_EVALUATE: str = 'co_evaluate'
-	APP_INSTANCE: str = 'app_instance'
-	APP_INSTANCE_TYPE: str = 'app_instance_type'
+    NAME = 'cli_functions'
+    VERSION: str = 'Version'
+    GET_CHARACTER: str = 'get_character'
+    GET_GENERATOR: str = 'get_generator'
+    UPDATE_AUTOCOMPLETION_MODS: str = 'update_autocompletion_mods'
+    UPDATE_AUTOCOMPLETION_LIST_OR_KEY: str = 'update_autocompletion_list_or_key'
+    USER_INPUT: str = 'user_input'
+    CO_EVALUATE: str = 'co_evaluate'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
 
 
 @dataclass
 class WEBSOCKETMANAGER(Enum):
-	APP_INSTANCE: str = 'app_instance'
-	APP_INSTANCE_TYPE: str = 'app_instance_type'
-	VERSION: str = 'Version'
-	CONNECT: str = 'connect'
-	DISCONNECT: str = 'disconnect'
-	SEND_MESSAGE: str = 'send_message'
-	LIST: str = 'list'
-	GET: str = 'get'
-	SRQW: str = 'srqw'
-	CONSTRUCT_RENDER: str = 'construct_render'
+    NAME = 'WebSocketManager'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
+    VERSION: str = 'Version'
+    CONNECT: str = 'connect'
+    DISCONNECT: str = 'disconnect'
+    SEND_MESSAGE: str = 'send_message'
+    LIST: str = 'list'
+    GET: str = 'get'
+    SRQW: str = 'srqw'
+    CONSTRUCT_RENDER: str = 'construct_render'
