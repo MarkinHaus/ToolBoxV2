@@ -94,9 +94,8 @@ class App(metaclass=Singleton):
         if "test" in prefix:
             self.start_dir += '\\tests'
             os.makedirs(self.start_dir, exist_ok=True)
-        else:
-            self.data_dir = self.start_dir + '\\.data\\' + identification
-            self.config_dir = self.start_dir + '\\.config\\' + identification
+        self.data_dir = self.start_dir + '\\.data\\' + "test"
+        self.config_dir = self.start_dir + '\\.config\\' + "test"
 
         if not os.path.exists(self.data_dir):
             os.makedirs(self.data_dir, exist_ok=True)
