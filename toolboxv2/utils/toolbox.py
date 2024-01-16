@@ -178,7 +178,7 @@ class App(metaclass=Singleton):
             f"SYSTEM :: {node()}\nID -> {self.id},\nVersion -> {self.version},\n")
 
         if args.update:
-            self.run_any("cloudM", "#update-core")
+            self.run_any("cloudM", "update_core")
 
         if args.get_version:
             v = self.version

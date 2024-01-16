@@ -191,7 +191,7 @@ def update_core(self, dackup=False, name=""):
         print("ther was an errer updateing...\n\n")
         print(Style.RED(f"Error-code: os.system -> {out}"))
         print(
-            "if you changet local files type $ cloudM #update-core save {name}")
+            "if you changet local files type $ cloudM update_core save {name}")
         print(
             "your changes will be saved to a branch named : backup-master-{app.id}-{self.version}-{name}"
         )
