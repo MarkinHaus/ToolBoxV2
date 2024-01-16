@@ -418,7 +418,9 @@ def main():
     if args.test:
         test_path = os.path.dirname(os.path.abspath(__file__)).replace("toolboxv2\\toolboxv2", "toolboxv2").replace("ToolBoxV2/toolboxv2", "ToolBoxV2") + "\\tests\\test_mods"
         print(f"Testing in {test_path}")
-        os.system(f"python -m unittest discover -s {test_path}")
+
+        if os.system(f"python -m unittest discover -s {test_path}") != 0:
+            os.system(f"python3 -m unittest discover -s {test_path}")
         return 1
 
     app_pid = str(os.getpid())
