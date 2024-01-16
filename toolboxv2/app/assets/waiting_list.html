@@ -54,7 +54,7 @@
 
             const email = document.getElementById('email').value;
 
-            httpPostUrl("email_waiting_list", "add", "email", email,
+            httpPostUrl("email_wating_list", "add", "email" + email,
                 (result) => {
                     document.getElementById('infoText').textContent = result.info.help_text;
                     document.getElementById('infoPopup').style.display = 'block';
