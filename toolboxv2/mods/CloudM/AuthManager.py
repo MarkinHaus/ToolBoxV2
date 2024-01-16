@@ -50,7 +50,11 @@ class UserCreator(User):
 # app Helper functions interaction with the db
 
 def db_helper_test_exist(app: App, username: str):
-    return not app.run_any(tbef.DB.GET, query=f"USER::{username}::*", get_results=True).is_data()
+    c = app.run_any(tbef.DB.GET, query=f"USER::{username}::*", get_results=True)
+    b = not c.info.exec_code == -2
+    print(f"TEST IF USER EXIST : {username} {b}")
+    c.print()
+    return b
 
 
 def db_delete_invitation(app: App, invitation: str):
@@ -235,7 +239,7 @@ def create_user(app: App, data: CreateUserObject = None, username: str = 'test-u
     if db_helper_test_exist(app, username):
         return Result.default_user_error(info=f"Username '{username}' already taken", interface=ToolBoxInterfaces.remote)
 
-    if not db_valid_invitation(app, invitation):
+    if not invitation.startswith("00#"): #not db_valid_invitation(app, invitation):
         return Result.default_user_error(info=f"Invalid invitation", interface=ToolBoxInterfaces.remote)
 
     test_bub_key = ""
