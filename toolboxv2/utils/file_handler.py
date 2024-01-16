@@ -54,7 +54,8 @@ class FileHandler(Code):
                 logger.info(Style.GREEN("File created successfully"))
                 self.file_handler_max_loaded_index_ = -1
             rdu()
-
+        except OSError and PermissionError as e:
+            raise e
     def open_s_file_handler(self):
         self._open_file_handler('w+', self.open_s_file_handler)
         return self

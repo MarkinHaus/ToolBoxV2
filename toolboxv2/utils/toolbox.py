@@ -1102,7 +1102,8 @@ class App(metaclass=Singleton):
             "errors": 0,
             "modular_sug": 0,
         }
-        for module_name, functions in self.functions.items():
+        items = list(self.functions.items()).copy()
+        for module_name, functions in items:
             infos = {
                 "functions_run": 0,
                 "functions_fatal_error": 0,
@@ -1115,7 +1116,8 @@ class App(metaclass=Singleton):
             if not module_name.startswith(m_query):
                 all_data['modular_sug'] += 1
                 continue
-            for function_name, function_data in functions.items():
+            f_items = list(functions.items()).copy()
+            for function_name, function_data in f_items:
                 if not isinstance(function_data, dict):
                     continue
                 if not function_name.startswith(f_query):

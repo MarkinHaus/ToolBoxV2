@@ -69,6 +69,8 @@ class MiniRedis:
 
         if val:
             val = eval(val)
+            if not isinstance(val, list):
+                return Result.default_user_error(info="Error key: " + str(key) + " is not a set")
             for new_val in value:
                 if new_val in val:
                     return Result.default_user_error(info="Error value: " + str(new_val) + " already in list")

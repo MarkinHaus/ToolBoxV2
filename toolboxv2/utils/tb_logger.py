@@ -84,10 +84,14 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
                 "P": log_info_data["P"]
             }
         li.write(str(log_info_data))
-
     log_filename = f"{logs_directory}/{filename}.log"
-    with open(log_filename, "a"):
-        pass
+    try:
+        with open(log_filename, "a"):
+            pass
+    except OSError:
+        log_filename = f"{logs_directory}/Logs-Test-{log_date}-{log_levels[log_level_index]}.log"
+        with open(log_filename, "a"):
+            pass
 
     log_format = '%(asctime)s - %(name)s - %(levelname)s - %(filename)s - %(funcName)s:%(lineno)d - %(message)s'
 
