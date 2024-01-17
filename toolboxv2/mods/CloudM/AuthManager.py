@@ -301,10 +301,10 @@ def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
     if challenge is None:
         return Result.default_user_error(info="No challenge found in data invalid date parsed", data=user_result)
 
-    valid_origen = ["simpleCore.app", "http://localhost:5000"] + (["http://localhost:5000"] if app.debug else [])
+    valid_origen = ["https://simplecore.app", "http://localhost:5000"] + (["http://localhost:5000"] if app.debug else [])
 
     if origin not in valid_origen:
-        return Result.default_user_error(info=f'Invalid origen:{origin} not in {valid_origen}', data=user_result)
+        return Result.default_user_error(info=f'Invalid origen: {origin} not in {valid_origen}', data=user_result)
 
     user: User = user_result.get()
 
