@@ -53,7 +53,6 @@ def db_helper_test_exist(app: App, username: str):
     c = app.run_any(tbef.DB.GET, query=f"USER::{username}::*", get_results=True)
     b = not c.info.exec_code == -2
     print(f"TEST IF USER EXIST : {username} {b}")
-    c.print()
     return b
 
 
@@ -222,6 +221,14 @@ class CreateUserObject(BaseModel):
     as_base64: bool = True
 
 
+class AddUserDeviceObject(BaseModel):
+    name: str
+    pub_key: str
+    invitation: str
+    web_data: bool = True
+    as_base64: bool = True
+
+
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True, test=False)
 def create_user(app: App, data: CreateUserObject = None, username: str = 'test-user', email: str = 'test@user.com',
                 pub_key: str = '',
@@ -237,9 +244,10 @@ def create_user(app: App, data: CreateUserObject = None, username: str = 'test-u
         app = get_app(Name + '.crate_user')
 
     if db_helper_test_exist(app, username):
-        return Result.default_user_error(info=f"Username '{username}' already taken", interface=ToolBoxInterfaces.remote)
+        return Result.default_user_error(info=f"Username '{username}' already taken",
+                                         interface=ToolBoxInterfaces.remote)
 
-    if not invitation.startswith("00#"): #not db_valid_invitation(app, invitation):
+    if not invitation.startswith("00#"):  # not db_valid_invitation(app, invitation):
         return Result.default_user_error(info=f"Invalid invitation", interface=ToolBoxInterfaces.remote)
 
     test_bub_key = ""
@@ -258,6 +266,90 @@ def create_user(app: App, data: CreateUserObject = None, username: str = 'test-u
         return Result.default_user_error(info="Invalid public key parsed", interface=ToolBoxInterfaces.remote)
 
     user = User(name=username, email=email, user_pass_pub_devices=[pub_key], pub_key=pub_key)
+
+    db_delete_invitation(app, invitation)
+
+    if web_data:
+        return initialize_and_return(app, user)
+
+    result_s = db_helper_save_user(app, asdict(user))
+
+    return Result.ok(info=f"User created successfully: {username}",
+                     data=Code().encrypt_asymmetric(str(user.name), pub_key)
+                     , interface=ToolBoxInterfaces.remote)
+
+
+@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True, test=False)
+def get_magick_link_email(app: App, username):
+    if app is None:
+        app = get_app(Name + '.add_user_device')
+
+    if not db_helper_test_exist(app, username):
+        return Result.default_user_error(info=f"Username '{username}' not known", interface=ToolBoxInterfaces.remote)
+
+    user: User = get_user_by_name(username=username).get()
+
+    if user.challenge == '':
+        user = UserCreator(**asdict(user))
+
+    invitation = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
+    nl = len(user.name)
+    email_data_result = app.run_any(tbef.EMAIL_WAITING_LIST.CRATE_MAGICK_LICK_DEVICE_EMAIL,
+                                    user_email=user.email,
+                                    user_name=user.name,
+                                    link_id=invitation, nl=nl, get_results=True)
+
+    if email_data_result.is_error() and not email_data_result.is_data():
+        return email_data_result
+
+    email_data = email_data_result.get()
+
+    return app.run_any(tbef.EMAIL_WAITING_LIST.SEND_EMAIL, data=email_data, get_results=True)
+
+    # if not invitation.endswith(user.challenge[12:]):
+
+
+@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True, test=False)
+def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 'test-user',
+                    pub_key: str = '',
+                    invitation: str = '', web_data=False, as_base64=False) -> ApiResult:
+    username = data.name if data is not None else username
+    pub_key = data.pub_key if data is not None else pub_key
+    invitation = data.invitation if data is not None else invitation
+    web_data = data.web_data if data is not None else web_data
+    as_base64 = data.as_base64 if data is not None else as_base64
+
+    if app is None:
+        app = get_app(Name + '.add_user_device')
+
+    if not db_helper_test_exist(app, username):
+        return Result.default_user_error(info=f"Username '{username}' not known", interface=ToolBoxInterfaces.remote)
+
+    if not invitation.startswith("01#"):  # not db_valid_invitation(app, invitation):
+        return Result.default_user_error(info=f"Invalid invitation", interface=ToolBoxInterfaces.remote)
+    invitation = invitation.replace("01#", "")
+    test_bub_key = "Invalid"
+
+    if pub_key:
+        if as_base64:
+            try:
+                pub_key = from_base64(pub_key)
+                pub_key = str(pub_key)
+            except Exception as e:
+                return Result.default_internal_error(info=f"Invalid public key not a valid base64 string: {e}")
+
+        test_bub_key = Code().encrypt_asymmetric(username, pub_key)
+
+    if test_bub_key == "Invalid":
+        return Result.default_user_error(info="Invalid public key parsed", interface=ToolBoxInterfaces.remote)
+
+    user: User = get_user_by_name(username=username).get()
+
+    if invitation != Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email"):
+        return Result.default_user_error(info=f"Invalid invitation", interface=ToolBoxInterfaces.remote)
+
+    user.user_pass_pub_devices.append(pub_key)
+    user.pub_key = pub_key
 
     db_delete_invitation(app, invitation)
 
@@ -301,7 +393,8 @@ def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
     if challenge is None:
         return Result.default_user_error(info="No challenge found in data invalid date parsed", data=user_result)
 
-    valid_origen = ["https://simplecore.app", "http://localhost:5000"] + (["http://localhost:5000"] if app.debug else [])
+    valid_origen = ["https://simplecore.app", "http://localhost:5000"] + (
+        ["http://localhost:5000"] if app.debug else [])
 
     if origin not in valid_origen:
         return Result.default_user_error(info=f'Invalid origen: {origin} not in {valid_origen}', data=user_result)
@@ -324,7 +417,10 @@ def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
     if save_result.is_error():
         return save_result.to_api_result()
 
-    return Result.ok(info="User registered successfully")
+    key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
+    url = f"/app/assets/m_log_in.html?key={key}?name={user.name}"
+
+    return Result.ok(info="User registered successfully", data=url)
 
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.cli, test=False)
@@ -385,6 +481,7 @@ def get_to_sing_data(app: App, username, personal_key=False):
 
     if user.challenge == "":
         user.challenge = Code.encrypt_asymmetric(str(uuid.uuid4()), user.user_pass_pub)
+        db_helper_save_user(app, asdict(user))
 
     data = {'challenge': user.challenge}
 
@@ -424,16 +521,21 @@ def validate_persona(app: App, data: VpUSER) -> ApiResult:
 
     if user_result.is_error() or not user_result.is_data():
         return Result.default_user_error(info=f"Invalid username : {data.username}")
+    # from_base64(data.signature)
+    res = authenticate_user_get_sync_key(app, data.username, from_base64(data.signature), get_user=True, web=True).as_result().print()
+    authenticate_user_get_sync_key(app, data.username, data.signature, get_user=True, web=True).as_result().print()
 
-    jwt_claim = jwt_get_claim(app, data.username, from_base64(data.signature))
+    if res.info.exec_code != 0:
+        return res.custom_error(data=res)
 
-    if isinstance(jwt_claim, ApiResult):
-        jwt_claim = jwt_claim.as_result()
+    channel_key, userdata = res.get()
 
-    if jwt_claim.is_error():
-        return jwt_claim.custom_error(data=jwt_claim, info="Error Processing user data")
+    user: User = User(**userdata)
 
-    return Result.ok(data=jwt_claim.get())
+    key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
+    url = f"/app/assets/m_log_in.html?key={key}?name={user.name}"
+
+    return Result.ok(data=url, info="Auto redirect")
 
 
 @export(mod_name=Name, api=True, test=False)
@@ -457,9 +559,8 @@ def validate_device(app: App, data: VdUSER) -> ApiResult:
                                       public_key_str=divce_keys,
                                       salt_length=32)
 
-        user.pub_key = divce_keys
-
         if valid:
+            user.pub_key = divce_keys
             break
 
     if not valid:
@@ -477,11 +578,18 @@ def validate_device(app: App, data: VdUSER) -> ApiResult:
 
     row_jwt_claim = crate_jwt(claim, user.user_pass_pri)
 
-    return Result.ok(data=Code.encrypt_symmetric(row_jwt_claim, user.pub_key))
+    encrypt_jwt_claim = Code.encrypt_asymmetric(row_jwt_claim, user.pub_key)
+    if encrypt_jwt_claim != "Invalid":
+        data = {'key': encrypt_jwt_claim, 'toPrivat': True}
+    else:
+        data = {'key': row_jwt_claim, 'toPrivat': False}
+
+    return Result.ok(data=data)
 
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.remote, api=True, test=False)
-def authenticate_user_get_sync_key(app: App, username: str, signature: str, get_user=False) -> ApiResult:
+def authenticate_user_get_sync_key(app: App, username: str, signature: str or bytes, get_user=False,
+                                   web=False) -> ApiResult:
     if app is None:
         app = get_app(Name + '.authenticate_user_get_sync_key')
 
@@ -490,10 +598,16 @@ def authenticate_user_get_sync_key(app: App, username: str, signature: str, get_
     if user is None:
         return Result.default_internal_error(info="User not found", exec_code=404)
 
-    if not Code.verify_signature(signature=signature,
-                                 message=user.challenge if user.challenge else username + app.id + instance_bios,
-                                 public_key_str=user.user_pass_pub_persona):
-        return Result.default_user_error(info="Verification failed Invalid signature")
+    if web:
+        if not Code.verify_signature_web_algo(signature=signature,
+                                              message=to_base64(user.challenge) if user.challenge else username + app.id + instance_bios,
+                                              public_key_str=user.user_pass_pub_persona):
+            return Result.default_user_error(info="Verification failed Invalid signature")
+    else:
+        if not Code.verify_signature(signature=signature,
+                                     message=user.challenge if user.challenge else username + app.id + instance_bios,
+                                     public_key_str=user.user_pass_pub_persona):
+            return Result.default_user_error(info="Verification failed Invalid signature")
 
     user = UserCreator(**asdict(user))
 
@@ -608,7 +722,6 @@ def crate_user_test(app: App):
            [r.is_data() is True, "r.is_data() i"], [r2.is_data() is True, "r2.is_data() "],
            [r.result.data_info == "Success", "r.result.data"], [r2.result.data_info == "Success", "r2.result.dat"]]
     return res
-
 
 
 if __name__ == '__main__':

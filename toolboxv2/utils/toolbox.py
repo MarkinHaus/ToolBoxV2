@@ -216,6 +216,11 @@ class App(metaclass=Singleton):
                                                      interminal=True,
                                                      file_level=logging.DEBUG)
             logger_info_str = "in args debug Mode"
+        elif debug:
+            logger, logging_filename = setup_logging(logging.DEBUG, name=f"toolbox-{self.prefix}-debug",
+                                                     interminal=True,
+                                                     file_level=logging.DEBUG)
+            logger_info_str = "in args debug Mode"
         else:
             logger, logging_filename = setup_logging(logging.ERROR, name=f"toolbox-{self.prefix}")
             logger_info_str = "in Default"

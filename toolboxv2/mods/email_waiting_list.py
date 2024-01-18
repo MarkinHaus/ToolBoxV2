@@ -1,9 +1,15 @@
 from toolboxv2 import Result, get_app, App, MainTool
 from toolboxv2.utils.types import ToolBoxError, ApiResult, ToolBoxInterfaces
+from mailjet_rest import Client
+import os
 
 Name = "email_waiting_list"
 version = '*.*.*'
 export = get_app("email_waiting_list.email_waiting_list.EXPORT").tb
+s_export = export(mod_name=Name, version=version, state=False)
+api_key = os.environ.get('MJ_APIKEY_PUBLIC')
+api_secret = os.environ.get('MJ_APIKEY_PRIVATE')
+mailjet = Client(auth=(api_key, api_secret), version='v3.1')
 
 
 @export(mod_name=Name, api=True, interface=ToolBoxInterfaces.api, state=True)
@@ -47,3 +53,57 @@ def add(app: App, email: str) -> ApiResult:
 @get_app("email_waiting_list.send_email_to_all.EXPORT").tb()
 def send_email_to_all():
     pass
+
+
+@s_export
+def send_email(data):
+    result = mailjet.send.create(data=data)
+    if result.status_code != 0:
+        return Result.default_internal_error(exec_code=result.status_code, data=result.json())
+    return Result.ok(exec_code=result.status_code, data=result.json())
+
+@s_export
+def crate_sing_in_email(user_email, user_name):
+    return {
+        'Messages': [
+            {
+                "From": {
+                    "Email": "MarkinHausDev@gmail.com",
+                    "Name": "Me"
+                },
+                "To": [
+                    {
+                        "Email": user_email,
+                        "Name": user_name
+                    }
+                ],
+                "Subject": "Welcome to SimpleCore!",
+                "TextPart": f"Hi {user_name}",
+                "HTMLPart": "<h3>Dear passenger 1, welcome to <a href=\"https://www.mailjet.com/\">Mailjet</a>!</h3><br />May the delivery force be with you!"
+            }
+        ]
+    }
+
+
+@s_export
+def crate_magick_lick_device_email(user_email, user_name, link_id, nl=-1):
+    return {
+        'Messages': [
+            {
+                "From": {
+                    "Email": "MarkinHausDev@gmail.com",
+                    "Name": "Me"
+                },
+                "To": [
+                    {
+                        "Email": user_email,
+                        "Name": user_name
+                    }
+                ],
+                "Subject": "Welcome to SimpleCore!",
+                "TextPart": f"Hi {user_name}",
+                "HTMLPart": f"<h3>Dear passenger 1, welcome to <a href=\"https://simplecore.app/app/assets/m_log_in.html?key={link_id}&nl={nl}\">Magick Log in link</a>!</h3><br />Must enter ur user name on the next page to"
+            }
+        ]
+    }
+

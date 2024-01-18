@@ -7,28 +7,6 @@ from dataclasses import dataclass
 
 
 @dataclass
-class EMAIL_WATING_LIST(Enum):
-    NAME = 'email_wating_list'
-    ADD: str = 'add'
-    SEND_EMAIL_TO_ALL: str = 'send_email_to_all'
-    APP_INSTANCE: str = 'app_instance'
-    APP_INSTANCE_TYPE: str = 'app_instance_type'
-
-
-@dataclass
-class API_MANAGER(Enum):
-    NAME = 'api_manager'
-    APP_INSTANCE: str = 'app_instance'
-    APP_INSTANCE_TYPE: str = 'app_instance_type'
-    VERSION: str = 'Version'
-    EDITAPI: str = 'edit-api'
-    STARTAPI: str = 'start-api'
-    STOPAPI: str = 'stop-api'
-    INFO: str = 'info'
-    RESTARTAPI: str = 'restart-api'
-
-
-@dataclass
 class WELCOME(Enum):
     NAME = 'welcome'
     VERSION: str = 'Version'
@@ -41,10 +19,39 @@ class WELCOME(Enum):
 
 
 @dataclass
+class API_MANAGER(Enum):
+    NAME = 'api_manager'
+    START_API: str = 'start_api'
+    RESTART_API: str = 'restart_api'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
+    VERSION: str = 'Version'
+    EDITAPI: str = 'edit-api'
+    STARTAPI: str = 'start-api'
+    STOPAPI: str = 'stop-api'
+    INFO: str = 'info'
+    RESTARTAPI: str = 'restart-api'
+
+
+@dataclass
+class EMAIL_WAITING_LIST(Enum):
+    NAME = 'email_waiting_list'
+    ADD: str = 'add'
+    SEND_EMAIL_TO_ALL: str = 'send_email_to_all'
+    SEND_EMAIL: str = 'send_email'
+    CRATE_SING_IN_EMAIL: str = 'crate_sing_in_email'
+    CRATE_MAGICK_LICK_DEVICE_EMAIL: str = 'crate_magick_lick_device_email'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
+
+
+@dataclass
 class CLOUDM_AUTHMANAGER(Enum):
     NAME = 'CloudM.AuthManager'
     GET_USER_BY_NAME: str = 'get_user_by_name'
     CREATE_USER: str = 'create_user'
+    GET_MAGICK_LINK_EMAIL: str = 'get_magick_link_email'
+    ADD_USER_DEVICE: str = 'add_user_device'
     REGISTER_USER_PERSONAL_KEY: str = 'register_user_personal_key'
     CRATE_LOCAL_ACCOUNT: str = 'crate_local_account'
     LOCAL_LOGIN: str = 'local_login'
@@ -123,6 +130,7 @@ class CLOUDM(Enum):
     NEW_MODULE: str = 'new_module'
     CREATE_ACCOUNT: str = 'create_account'
     LOG_IN: str = 'log_in'
+    INIT_GIT: str = 'init_git'
     UPDATE_CORE: str = 'update_core'
     REGISTER_INITIAL_ROOT_USER: str = 'register_initial_root_user'
     CLEAR_DB: str = 'clear_db'
@@ -144,6 +152,15 @@ class QUICKNOTE(Enum):
     VIEW: str = 'VIEW'
     FIND: str = 'Find'
     INIT: str = 'init'
+
+
+@dataclass
+class DOCKERENV(Enum):
+    NAME = 'dockerEnv'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
+    VERSION: str = 'Version'
+    BUILD_CUSTOM_IMAGES: str = 'build_custom_images'
 
 
 @dataclass

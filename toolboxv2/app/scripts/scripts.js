@@ -217,9 +217,9 @@ function createSierpinskiTriangle(depth, size) {
 function startBgInteract() {
     animantionFactor = animantionFactorKlick;
     isMouseDown = true;
-    animationX = 0.02;
-    animationY = 0.02;
-    animationZ = 0.02;
+    animationX = 0.02*Math.random();
+    animationY = 0.02*Math.random();
+    animationZ = 0.02*Math.random();
 }
 
 function endBgInteract() {
@@ -397,21 +397,21 @@ document.addEventListener('mouseup', () => {
     endBgInteract()
 });
 
-document.addEventListener('mousemove', (event) => {
-    if (isMouseDown) {
-        mouseX = event.clientX / window.innerWidth * 2 - 1;
-        mouseY = -(event.clientY / window.innerHeight) * 2 + 1;
-
-        animationX = (mouseX* Math.PI)/100;
-        animationY = (mouseY* Math.PI)/100;
-        animationZ = ((mouseX+mouseY)* Math.PI)/100
-
-
-        //animationX
-        //animationX += (mouseX* Math.PI);
-        //animationY += (mouseY* Math.PI);
-    }
-});
+// document.addEventListener('mousemove', (event) => {
+//     if (isMouseDown) {
+//         mouseX = event.clientX / window.innerWidth * 2 - 1;
+//         mouseY = -(event.clientY / window.innerHeight) * 2 + 1;
+//
+//         animationX = (mouseX* Math.PI)/100;
+//         animationY = (mouseY* Math.PI)/100;
+//         animationZ = ((mouseX+mouseY)* Math.PI)/100
+//
+//
+//         //animationX
+//         //animationX += (mouseX* Math.PI);
+//         //animationY += (mouseY* Math.PI);
+//     }
+// });
 
 
 animate();

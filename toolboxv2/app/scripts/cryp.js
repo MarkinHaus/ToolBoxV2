@@ -1,5 +1,16 @@
 import {httpPostData} from "./httpSender.js";
 
+const rpIdUrl_f = ()=> {
+    if (window.location.href.match("localhost")) {
+        return "localhost"
+    } else {
+        return "simplecore.app"
+    }
+}
+const rpIdUrl = rpIdUrl_f()
+
+console.log("[rpIdUrl]:", rpIdUrl)
+
 function arrayBufferToBase64(buffer) {
     let binary = '';
     const bytes = new Uint8Array(buffer);
@@ -226,23 +237,17 @@ export async function decryptSymmetric(encryptedData, password) {
 return dec.decode(decryptedData);
 }
 
-export async function storePrivateKey(privateKey, deviceID) {
-    console.log("[privateKey, deviceID]:", privateKey, deviceID)
-    const encryptedKey = await encryptSymmetric(privateKey, deviceID);
-    localStorage.setItem('encryptedPrivateKey', encryptedKey);
-    localStorage.setItem('deviceID', deviceID);
+export async function storePrivateKey(privateKey, username) {
+    const key = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(username+"PK"))
+    localStorage.setItem(arrayBufferToBase64(key), privateKey);
 }
 
-export async function retrievePrivateKey(deviceID) {
-    const encryptedKey = localStorage.getItem('encryptedPrivateKey');
-    if (!encryptedKey) return null;
-
-    const result_ = await decryptSymmetric(strToArrayBuffer(encryptedKey), deviceID);
-
-    if (result_==="invalid key"){
-        return "Invalid user name device not registered"
-    }
-    return result_
+export async function retrievePrivateKey(username) {
+    const key = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(username+"PK"))
+    const encryptedKey = localStorage.getItem(arrayBufferToBase64(key));
+    console.log("encryptedPrivateKey:", encryptedKey)
+    if (!encryptedKey) return "Invalid user name device not registered";
+    return encryptedKey
 }
 
 
@@ -264,7 +269,7 @@ export async function registerUser(registrationData, sing, errorCallback, sucess
         challenge: challenge,
         rp: {
             "name": "SimpleCore",
-            "id": "simplecore.app", //"localhost",
+            "id": rpIdUrl, //"localhost",
             "ico": "/app/favicon.ico"
         },
         user: {
@@ -348,8 +353,8 @@ export async function registerUser(registrationData, sing, errorCallback, sucess
 export async function authorisazeUser(rowID, challenge, username, errorCallback, sucessCallback) {
     //const challenge = strToArrayBuffer(registrationData.challenge);
     const publicKey = {
-        challenge: strToArrayBuffer(challenge),
-        rpId: "simplecore.app",
+        challenge: base64ToArrayBuffer(strToBase64(challenge)),
+        rpId: rpIdUrl,
         allowCredentials: [{
             type: "public-key",
             id: base64ToArrayBuffer(rowID)
@@ -372,7 +377,7 @@ export async function authorisazeUser(rowID, challenge, username, errorCallback,
             // Access userHandle ArrayBuffer
             const userHandle = response.userHandle;
             const userCredential = {
-                signature: arrayBufferToStr(signature),
+                signature: arrayBufferToBase64(signature),
                 username: username,
                 clientJSON:arrayBufferToBase64(clientJSON),
                 authenticatorData:arrayBufferToBase64(authenticatorData),
@@ -381,7 +386,7 @@ export async function authorisazeUser(rowID, challenge, username, errorCallback,
         });
         return true
     } catch (error) {
-        console.error('Fehler bei der Registrierung:', error);
+        console.error('Fehler beim der einloggen:', error);
         return false
     }
 }

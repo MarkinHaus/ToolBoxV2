@@ -158,13 +158,12 @@ class Code:
         Args:
             text (str): Der zu verschlüsselnde Text.
             public_key_str (str): Der öffentliche Schlüssel als String oder im pem format.
-            pem (bool): pem flag
 
         Returns:
             str: Der verschlüsselte Text.
         """
         try:
-            public_key = serialization.load_pem_public_key(public_key_str.encode())
+            public_key: RSAPublicKey = serialization.load_pem_public_key(public_key_str.encode())
             encrypted = public_key.encrypt(
                 text.encode(),
                 padding.OAEP(
@@ -203,7 +202,7 @@ class Code:
             return decrypted.decode()
 
         except Exception as e:
-            get_logger().error(f"Error encrypt_asymmetric {e}")
+            get_logger().error(f"Error decrypt_asymmetric {e}")
         return "Invalid"
 
     @staticmethod

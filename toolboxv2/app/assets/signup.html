@@ -40,6 +40,7 @@
             <input id="email" type="email" placeholder="Email">
             <input id="initiation" type="password" placeholder="Initiation-Key">
             <button type="submit" id="submit-button">Sign Up</button>
+            <button type="submit" class="none" id="skip-persona-button">Only Device</button>
         </form>
     </div>
 </section>
@@ -55,6 +56,7 @@
     let UserData = undefined
     let registrationData = undefined
     let privateKey_base64 = null
+    let username
 
     document.addEventListener('DOMContentLoaded', () => {
 
@@ -85,7 +87,8 @@
             console.log("[registrationData--]:", registrationData)
             console.log("[registrationData.dSync, keys.privateKey_base64]:", registrationData.dSync, privateKey_base64)
             const deviceID = await decryptAsymmetric(registrationData.dSync, privateKey_base64, true)
-            await storePrivateKey(privateKey_base64, deviceID)
+            await window.sessionStorage.setItem("SKey", deviceID)
+            await storePrivateKey(privateKey_base64, username)
             await registrate_user_personal(await signMessage(privateKey_base64, registrationData.challenge))
 
             return data
@@ -100,7 +103,7 @@
 
         async function handleCreateUserSuccessPersona(data) {
             console.log("[handleCreateUserSuccess data]:", data)
-            // setTimeout(()=>{ window.location.href = "/app/dashboard";}, 120)
+            setTimeout(()=>{ window.location.href = "/app/dashboard";}, 120)
             return data
         }
 
@@ -133,13 +136,18 @@
         document.getElementById('signupForm').addEventListener('submit',async function(event) {
             event.preventDefault();
 
+            if (document.getElementById('submit-button').textContent === "Retry"){
+                document.getElementById('skip-persona-button').classList.remove('none')
+                document.getElementById('infoText').textContent = "If the web auth interface is not working you can add the personal data letter. To continue press on 'Only Device'";
+            }
+
             if (UserData === false) {
-                // window.location.href = "/app/dashboard";
+                window.location.href = "/app/dashboard";
                 return
             }
 
             if (UserData === undefined){
-                const username = document.getElementById('username').value;
+                username = document.getElementById('username').value;
                 const email = document.getElementById('email').value;
                 const invitation = document.getElementById('initiation').value;
                 document.getElementById('infoText').textContent = "Validate information's";
@@ -157,7 +165,8 @@
                     if (privateKey_base64 !== undefined && privateKey_base64 !== null){
                         console.log("[registrationData.dSync, keys.privateKey_base64]:", registrationData.dSync, privateKey_base64)
                         const deviceID = await decryptAsymmetric(registrationData.dSync, privateKey_base64, true)
-                        await storePrivateKey(privateKey_base64, deviceID)
+                        await window.sessionStorage.setItem("SKey", deviceID)
+                        await storePrivateKey(privateKey_base64, username)
                         await window.sessionStorage.removeItem('temp_base64_key')
                     }
                     await registrate_user_personal(await signMessage(privateKey_base64, registrationData.challenge))

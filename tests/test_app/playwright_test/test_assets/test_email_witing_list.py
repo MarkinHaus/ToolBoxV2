@@ -24,7 +24,7 @@ def test_run_sing_in(playwright: Playwright) -> None:
     browser.close()
 
 
-def test_run(playwright: Playwright) -> None:
+def test_run_email(playwright: Playwright) -> None:
     browser = playwright.chromium.launch(headless=False)
     context = browser.new_context()
     page = context.new_page()
@@ -36,17 +36,15 @@ def test_run(playwright: Playwright) -> None:
     page.get_by_text("You will receive an invitation email in a few days").click()
     page.get_by_role("button", name="Subscribe").click()
     page.get_by_text("You are already in the list, please do not try to add yourself more than once.").click()
+    context.close()
+    browser.close()
 
-    # page.goto("http://127.0.0.1:5000/app/signup")
-    # page.wait_for_load_state("networkidle")
-    # page.get_by_placeholder("Username").click()
-    # page.get_by_placeholder("Username").fill("Kinr3")
-    # page.get_by_placeholder("Email").click()
-    # page.get_by_placeholder("Email").fill("Markinhaus@gmail.com")
-    # page.get_by_placeholder("Initiation-Key").click()
-    # page.get_by_placeholder("Initiation-Key").fill("inv")
-    # page.get_by_role("button", name="Sign Up").click()
 
+def test_run_links(playwright: Playwright) -> None:
+
+    browser = playwright.chromium.launch(headless=False)
+    context = browser.new_context()
+    page = context.new_page()
     page.goto("http://127.0.0.1:5000/app/core0/index.html")
     page.wait_for_load_state("networkidle")
 

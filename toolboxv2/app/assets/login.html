@@ -40,8 +40,8 @@
             </div>
 
           <input type="text" id="username" placeholder="Username">
-          <label>Remember me <input type="checkbox" id="remember-me" onchange='function checkedF() {
-          checked[0] = !checked[0]
+          <label>Register Device <input type="checkbox" id="remember-me" onchange='function checkedF() {
+          checked = [true]
           console.log("[checked]:", checked)
           document.getElementById("remember-me").classList.add("none")
           document.getElementById("remeberText").textContent = "Halten sie Ihr gerät welches sie beim sig up verwendend haben beriet."
@@ -64,7 +64,8 @@
     let base64_privat_key = null
     let checked = [false]
     let caunter = 0
-    document.addEventListener('DOMContentLoaded', () => {
+    let username
+
 
         function get_handleLoginError(id) {
     function handleLoginError(data) {
@@ -74,6 +75,13 @@
         return data
     }
     return handleLoginError
+    }
+
+    function handleLoginSMK(data) {
+        console.log("[handleLoginSMK data]:", data)
+        document.getElementById('infoText').textContent = "Bitte schauen sie in ihre Emails";
+        document.getElementById('infoPopup').style.display = 'block';
+        return data
     }
 
     function rr(){
@@ -87,19 +95,10 @@
         console.log("[handleLoginSuccessVP data]:", data)
         document.getElementById('infoText').textContent = data.info.help_text;
         document.getElementById('infoPopup').style.display = 'block';
-        if (base64_privat_key === null){
-            throw "Device is not registered use remember me"
-        }
-        try {
-            const deviceID = await decryptAsymmetric(data.get().key, base64_privat_key, true)
-            const row_claim = await decryptAsymmetric(data.get().claim, base64_privat_key, true)
-            await storePrivateKey(privateKey_base64, deviceID)
-            localStorage.setItem('jwt_claim', data.get().claim);
-            sessionStorage.setItem('row_jwt_claim', row_claim);
-            rr()
-        }catch (e){
-            console.log("Error handleLoginSuccessVP", e)
-        }
+        setTimeout(() => {
+            localStorage.setItem("local_ws.onopen:installMod-welcome", 'false');
+            window.location.href = data.get();
+        }, 200);
 
         return data
     }
@@ -108,34 +107,43 @@
         console.log("[handleLoginSuccessVD data]:", data)
         document.getElementById('infoText').textContent = data.info.help_text;
         document.getElementById('infoPopup').style.display = 'block';
-        if (base64_privat_key === null){
-            throw "Device is not registered use remember me"
-        }
-        try {
-            const claim = await decryptAsymmetric(data.get(), base64_privat_key, true)
-            localStorage.setItem('jwt_claim_device', claim);
-            rr()
-        }catch (e){
-            console.log("Error handleLoginSuccessVP", e)
+
+        if (data.get().toPrivat){
+            try {
+                const claim = await decryptAsymmetric(data.get().key, privateKey_base64, true)
+                localStorage.setItem('jwt_claim_device', claim);
+                rr()
+            }catch (e){
+                console.log("Error handleLoginSuccessVP", e)
+            }
+        }else {
+            if (base64_privat_key === null){
+                document.getElementById('infoText').textContent = "Sie erhalten in kürze eine Email zum einloggen"
+                httpPostUrl('CloudM.AuthManager', 'get_magick_link_email', 'username='+username, get_handleLoginError("mk"), handleLoginSMK);
+                return data
+            }else{
+                localStorage.setItem('jwt_claim_device', data.get().key);
+                rr()
+            }
         }
 
         return data
     }
 
+
     async function handleLoginSuccess(data) {
+        console.log("[handleLoginSuccess data]:", data)
         document.getElementById('infoText').textContent = "Login in progress";
         document.getElementById('infoPopup').style.display = 'block';
 
-        console.log("[checked]:", checked)
+        console.log("[checked]:", document.getElementById("remember-me").classList.contains('none'))
 
-        if (checked[0]){
+        if (document.getElementById("remember-me").classList.contains('none')){
             if(await authorisazeUser(data.get().rowId, data.get().challenge, document.getElementById('username').value, get_handleLoginError("authorisazeUser"), handleLoginSuccessVP)){
                 document.getElementById('infoText').textContent = "Validate user successful";
             }
         }else{
-            const deviceID = localStorage.getItem('deviceID');
-
-            base64_privat_key = await retrievePrivateKey(deviceID)
+            base64_privat_key = await retrievePrivateKey(username)
 
             if (base64_privat_key === "Invalid user name device not registered"){
                 document.getElementById('infoText').textContent = "Invalid user name device not registered on '"+document.getElementById('username').value+"'";
@@ -143,12 +151,9 @@
                 caunter++;
             }else{
                 const signature = await signMessage(base64_privat_key, data.get().challenge)
-                httpPostData('CloudM', 'validate_device', { username:document.getElementById('username').value, signature},
+                httpPostData('CloudM.AuthManager', 'validate_device', { username:document.getElementById('username').value, signature},
                     get_handleLoginError("signMessage"), handleLoginSuccessVD);
             }
-
-
-
 
         }
 
@@ -156,13 +161,14 @@
     }
 
     function loginDevice(username) {
-        httpPostUrl('CloudM.AuthManager', 'get_to_sing_data', 'username='+username + '&personal_key='+checked[0].toString(), get_handleLoginError("loginDevice"), handleLoginSuccess);
+        httpPostUrl('CloudM.AuthManager', 'get_to_sing_data', 'username='+username + '&personal_key='+document.getElementById("remember-me").classList.contains('none').toString(), get_handleLoginError("loginDevice"), handleLoginSuccess);
     }
 
+  document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('loginForm').addEventListener('submit', function(event) {
     event.preventDefault();
 
-    let username = document.getElementById('username').value;
+      username = document.getElementById('username').value;
       loginDevice(username);
   });
  });
