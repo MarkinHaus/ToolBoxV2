@@ -21,12 +21,6 @@ router = APIRouter(
 
 level = 2  # Setzen Sie den Level-Wert, um verschiedene Routen zu aktivieren oder zu deaktivieren
 pattern = ['.png', '.jpg', '.jpeg', '.js', '.css', '.ico', '.gif', '.svg', '.wasm']
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
-
-
-async def get_current_user(token: str = Depends(oauth2_scheme)):
-    tb_app: App = get_app()
-    return tb_app.run_any("cloudM", "validate_jwt", ["token", token, {}])
 
 
 def check_access_level(required_level: int):
@@ -64,14 +58,6 @@ async def login_page(access_allowed: bool = Depends(lambda: check_access_level(0
 @router.get("/signup")
 async def signup_page(access_allowed: bool = Depends(lambda: check_access_level(2))):
     return serve_app_func('assets/signup.html')
-
-
-#@router.get("/quicknote")
-#async def quicknote(current_user: str = Depends(get_current_user),
-#                    access_allowed: bool = Depends(lambda: check_access_level(0))):
-#    print("[current_user]", current_user)
-#    print("[access_allowed]", access_allowed)
-#    return serve_app_func('quicknote/index.html')
 
 
 @router.get("/dashboard")

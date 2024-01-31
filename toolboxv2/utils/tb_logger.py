@@ -42,6 +42,7 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
     log_level_index = log_levels.index(logging.getLevelName(level))
 
     filename = f"Logs-{name}-{log_date}-{log_levels[log_level_index]}"
+    log_filename = f"{logs_directory}/{filename}.log"
 
     log_info_data = {
         filename: 0,
@@ -55,23 +56,23 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
             log_info_data = eval(log_info_data_str)
         except SyntaxError:
             if log_info_data_str:
-                print(Style.RED(Style.Bold("Could not parse log")))
+                print(Style.RED(Style.Bold("Could not parse log info data")))
 
         if filename not in log_info_data:
             log_info_data[filename] = 0
 
-        if not os.path.exists(f"{logs_directory}/{filename}.log"):
+        if not os.path.exists(log_filename):
             log_info_data[filename] = 0
             print("new log file")
 
-        if os.path.exists(f"{logs_directory}/{filename}.log"):
+        if os.path.exists(log_filename):
             log_info_data[filename] += 1
 
             while os.path.exists(f"{logs_directory}/{filename}#{log_info_data[filename]}.log"):
                 log_info_data[filename] += 1
 
             try:
-                os.rename(f"{logs_directory}/{filename}.log",
+                os.rename(log_filename,
                           f"{logs_directory}/{filename}#{log_info_data[filename]}.log")
             except PermissionError:
                 print(Style.YELLOW(Style.Bold(f"Could not rename log file appending on {filename}")))
@@ -84,7 +85,7 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
                 "P": log_info_data["P"]
             }
         li.write(str(log_info_data))
-    log_filename = f"{logs_directory}/{filename}.log"
+
     try:
         with open(log_filename, "a"):
             pass

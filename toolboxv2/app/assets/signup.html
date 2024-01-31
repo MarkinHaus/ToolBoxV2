@@ -40,7 +40,7 @@
             <input id="email" type="email" placeholder="Email">
             <input id="initiation" type="password" placeholder="Initiation-Key">
             <button type="submit" id="submit-button">Sign Up</button>
-            <button type="submit" class="none" id="skip-persona-button">Only Device</button>
+            <button class="none" id="skip-persona-button" onclick="window.location.href = '/app/dashboard'">Only Device</button>
         </form>
     </div>
 </section>
@@ -176,26 +176,6 @@
             catch (e) {
                 console.log(e)
             }
-
-
-
-            //generateAsymmetricKeys().then(keys => {
-            //    console.log("Public Key:", keys.publicKey);
-            //    // const result = createUser(username,email,invitation, keys.publicKey)
-            //    // console.log("result:",result);
-            //    //console.log("Private Key:", keys.privateKey);
-            //    //// Verschlüsseln eines Textes
-            //    //const text = "Hello, World!";
-            //    //encryptAsymmetric(text, keys.publicKey).then(encrypted => {
-            //    //    console.log("Encrypted:", encrypted);
-            //    //    // Entschlüsseln des Textes
-            //    //    decryptAsymmetric(encrypted, keys.privateKey).then(decrypted => {
-            //    //        console.log("Decrypted:", decrypted);
-            //    //    });
-            //    //});
-            //});
-
-
         });
     });
 </script>

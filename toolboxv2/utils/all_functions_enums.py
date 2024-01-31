@@ -7,18 +7,6 @@ from dataclasses import dataclass
 
 
 @dataclass
-class WELCOME(Enum):
-    NAME = 'welcome'
-    VERSION: str = 'Version'
-    PRINTT: str = 'printT'
-    ON_START: str = 'on_start'
-    ANIMATION1: str = 'Animation1'
-    ANIMATION: str = 'Animation'
-    APP_INSTANCE: str = 'app_instance'
-    APP_INSTANCE_TYPE: str = 'app_instance_type'
-
-
-@dataclass
 class API_MANAGER(Enum):
     NAME = 'api_manager'
     START_API: str = 'start_api'
@@ -34,6 +22,18 @@ class API_MANAGER(Enum):
 
 
 @dataclass
+class WELCOME(Enum):
+    NAME = 'welcome'
+    VERSION: str = 'Version'
+    PRINTT: str = 'printT'
+    ON_START: str = 'on_start'
+    ANIMATION1: str = 'Animation1'
+    ANIMATION: str = 'Animation'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
+
+
+@dataclass
 class EMAIL_WAITING_LIST(Enum):
     NAME = 'email_waiting_list'
     ADD: str = 'add'
@@ -41,6 +41,40 @@ class EMAIL_WAITING_LIST(Enum):
     SEND_EMAIL: str = 'send_email'
     CRATE_SING_IN_EMAIL: str = 'crate_sing_in_email'
     CRATE_MAGICK_LICK_DEVICE_EMAIL: str = 'crate_magick_lick_device_email'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
+
+
+@dataclass
+class SOCKETMANAGER(Enum):
+    NAME = 'SocketManager'
+    CREATE_SOCKET: str = 'create_socket'
+    RUN_AS_IP_ECHO_SERVER_A: str = 'run_as_ip_echo_server_a'
+    RUN_AS_SINGLE_COMMUNICATION_SERVER: str = 'run_as_single_communication_server'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
+    SOCKETMANAGER_0: str = 'SocketManager_0'
+    TBSOCKETCONTROLLER: str = 'tbSocketController'
+    VERSION: str = 'Version'
+
+
+@dataclass
+class DB(Enum):
+    NAME = 'DB'
+    VERSION: str = 'Version'
+    GET: str = 'get'
+    IF_EXIST: str = 'if_exist'
+    SET: str = 'set'
+    INITIALIZED: str = 'initialized'
+    DELETE: str = 'delete'
+    APPEND_ON_SET: str = 'append_on_set'
+    INITIALIZE_DATABASE: str = 'initialize_database'
+    ON_START: str = 'on_start'
+    CLOSE_DB: str = 'close_db'
+    ON_EXIT: str = 'on_exit'
+    EDIT_PROGRAMMABLE: str = 'edit_programmable'
+    EDIT_CLI: str = 'edit_cli'
+    EDIT_DEV_WEB_UI: str = 'edit_dev_web_ui'
     APP_INSTANCE: str = 'app_instance'
     APP_INSTANCE_TYPE: str = 'app_instance_type'
 
@@ -84,44 +118,25 @@ class CLOUDM_USERINSTANCES(Enum):
 
 
 @dataclass
-class SOCKETMANAGER(Enum):
-    NAME = 'SocketManager'
-    CREATE_SOCKET: str = 'create_socket'
-    RUN_AS_IP_ECHO_SERVER_A: str = 'run_as_ip_echo_server_a'
-    RUN_AS_SINGLE_COMMUNICATION_SERVER: str = 'run_as_single_communication_server'
-    APP_INSTANCE: str = 'app_instance'
-    APP_INSTANCE_TYPE: str = 'app_instance_type'
-    SOCKETMANAGER_0: str = 'SocketManager_0'
-    TBSOCKETCONTROLLER: str = 'tbSocketController'
-    VERSION: str = 'Version'
-
-
-@dataclass
-class DB(Enum):
-    NAME = 'DB'
-    VERSION: str = 'Version'
-    GET: str = 'get'
-    SET: str = 'set'
-    INITIALIZED: str = 'initialized'
-    DELETE: str = 'delete'
-    APPEND_ON_SET: str = 'append_on_set'
-    INITIALIZE_DATABASE: str = 'initialize_database'
-    ON_START: str = 'on_start'
-    CLOSE_DB: str = 'close_db'
-    ON_EXIT: str = 'on_exit'
-    EDIT_PROGRAMMABLE: str = 'edit_programmable'
-    EDIT_CLI: str = 'edit_cli'
-    EDIT_DEV_WEB_UI: str = 'edit_dev_web_ui'
-    APP_INSTANCE: str = 'app_instance'
-    APP_INSTANCE_TYPE: str = 'app_instance_type'
-
-
-@dataclass
 class CLOUDM_MODMANAGER(Enum):
     NAME = 'CloudM.ModManager'
     INSTALLER: str = 'installer'
     DELETE_PACKAGE: str = 'delete_package'
     LIST_MODULES: str = 'list_modules'
+
+
+@dataclass
+class CLI_FUNCTIONS(Enum):
+    NAME = 'cli_functions'
+    VERSION: str = 'Version'
+    GET_CHARACTER: str = 'get_character'
+    GET_GENERATOR: str = 'get_generator'
+    UPDATE_AUTOCOMPLETION_MODS: str = 'update_autocompletion_mods'
+    UPDATE_AUTOCOMPLETION_LIST_OR_KEY: str = 'update_autocompletion_list_or_key'
+    USER_INPUT: str = 'user_input'
+    CO_EVALUATE: str = 'co_evaluate'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
 
 
 @dataclass
@@ -152,29 +167,6 @@ class QUICKNOTE(Enum):
     VIEW: str = 'VIEW'
     FIND: str = 'Find'
     INIT: str = 'init'
-
-
-@dataclass
-class DOCKERENV(Enum):
-    NAME = 'dockerEnv'
-    APP_INSTANCE: str = 'app_instance'
-    APP_INSTANCE_TYPE: str = 'app_instance_type'
-    VERSION: str = 'Version'
-    BUILD_CUSTOM_IMAGES: str = 'build_custom_images'
-
-
-@dataclass
-class CLI_FUNCTIONS(Enum):
-    NAME = 'cli_functions'
-    VERSION: str = 'Version'
-    GET_CHARACTER: str = 'get_character'
-    GET_GENERATOR: str = 'get_generator'
-    UPDATE_AUTOCOMPLETION_MODS: str = 'update_autocompletion_mods'
-    UPDATE_AUTOCOMPLETION_LIST_OR_KEY: str = 'update_autocompletion_list_or_key'
-    USER_INPUT: str = 'user_input'
-    CO_EVALUATE: str = 'co_evaluate'
-    APP_INSTANCE: str = 'app_instance'
-    APP_INSTANCE_TYPE: str = 'app_instance_type'
 
 
 @dataclass

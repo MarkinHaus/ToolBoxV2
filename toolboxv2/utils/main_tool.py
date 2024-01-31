@@ -26,7 +26,7 @@ class MainTool:
             self.config = {}
         if self.app is None:
             self.app = get_app()
-        self.ac_user_data_sto = {}
+        self.user = None
         self.description = "A toolbox mod" if kwargs.get("description") is None else kwargs.get("description")
         if MainTool.interface is None:
             MainTool.interface = self.app.interface_type

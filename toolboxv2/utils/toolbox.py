@@ -84,6 +84,23 @@ class App(metaclass=Singleton):
 
         self.start_dir = dir_name
 
+        lapp = dir_name + '\\.data\\'
+
+        if not prefix:
+            if not os.path.exists(f"{lapp}last-app-prefix.txt"):
+                os.makedirs(lapp, exist_ok=True)
+                open(f"{lapp}last-app-prefix.txt", "a").close()
+            with open(f"{lapp}last-app-prefix.txt", "r") as prefix_file:
+                cont = prefix_file.read()
+                if cont:
+                    prefix = cont
+        else:
+            if not os.path.exists(f"{lapp}last-app-prefix.txt"):
+                os.makedirs(lapp, exist_ok=True)
+                open(f"{lapp}last-app-prefix.txt", "a").close()
+            with open(f"{lapp}last-app-prefix.txt", "w") as prefix_file:
+                prefix_file.write(prefix)
+
         self.prefix = prefix
         self.id = prefix + '-' + node()
 
@@ -105,24 +122,7 @@ class App(metaclass=Singleton):
         if not os.path.exists(self.config_dir):
             os.makedirs(self.config_dir, exist_ok=True)
 
-        lapp = dir_name + '\\.data\\'
-
-        if not prefix:
-            if not os.path.exists(f"{lapp}last-app-prefix.txt"):
-                os.makedirs(lapp, exist_ok=True)
-                open(f"{lapp}last-app-prefix.txt", "a").close()
-            with open(f"{lapp}last-app-prefix.txt", "r") as prefix_file:
-                cont = prefix_file.read()
-                if cont:
-                    prefix = cont
-        else:
-            if not os.path.exists(f"{lapp}last-app-prefix.txt"):
-                os.makedirs(lapp, exist_ok=True)
-                open(f"{lapp}last-app-prefix.txt", "a").close()
-            with open(f"{lapp}last-app-prefix.txt", "w") as prefix_file:
-                prefix_file.write(prefix)
-
-        print(f"Starting ToolBox as {prefix} from : ", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
+        print(f"Starting ToolBox as {prefix} from :", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 
         logger_info_str, self.logger, self.logging_filename = self.set_logger(args.debug)
 
@@ -303,8 +303,8 @@ class App(metaclass=Singleton):
         try:
             modular_file_object = import_module(loc + mod_name)
         except ModuleNotFoundError as e:
-            self.logger.error(Style.RED(f"module {loc +mod_name} not found is type sensitive {e}"))
-            self.print(Style.RED(f"module {loc +mod_name} not found is type sensitive {e}"))
+            self.logger.error(Style.RED(f"module {loc + mod_name} not found is type sensitive {e}"))
+            self.print(Style.RED(f"module {loc + mod_name} not found is type sensitive {e}"))
             return None
         try:
             tools_class = getattr(modular_file_object, "Tools")
@@ -1041,7 +1041,7 @@ class App(metaclass=Singleton):
         if interface is None:
             interface = "tb"
         if test_only and 'test' not in self.id:
-            return lambda x: x
+            return lambda *args, **kwargs: args
         return self._create_decorator(interface,
                                       name,
                                       mod_name,

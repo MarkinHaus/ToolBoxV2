@@ -58,8 +58,8 @@
 <script type="module">
 
 
-    import {httpPostData, httpPostUrl} from "/app/scripts/httpSender.js";
-    import {authorisazeUser, signMessage, retrievePrivateKey, decryptAsymmetric, storePrivateKey} from "/app/scripts/cryp.js";
+    import {httpPostData, httpPostUrl, AuthHttpPostData} from "/app/scripts/httpSender.js";
+    import {authorisazeUser, signMessage, retrievePrivateKey, decryptAsymmetric} from "/app/scripts/cryp.js";
 
     let base64_privat_key = null
     let checked = [false]
@@ -85,9 +85,11 @@
     }
 
     function rr(){
-        setTimeout(() => {
+        setTimeout(async () => {
             localStorage.setItem("local_ws.onopen:installMod-welcome", 'false');
-            window.location.href = "/app/dashboard";
+            await AuthHttpPostData(username, get_handleLoginError("Session Error"), (_)=>{
+                window.location.href = "/app/dashboard";
+            })
         }, 200);
     }
 
@@ -96,8 +98,10 @@
         document.getElementById('infoText').textContent = data.info.help_text;
         document.getElementById('infoPopup').style.display = 'block';
         setTimeout(() => {
-            localStorage.setItem("local_ws.onopen:installMod-welcome", 'false');
-            window.location.href = data.get();
+            if (data.get()){
+                localStorage.setItem("local_ws.onopen:installMod-welcome", 'false');
+                window.location.href = data.get();
+            }
         }, 200);
 
         return data

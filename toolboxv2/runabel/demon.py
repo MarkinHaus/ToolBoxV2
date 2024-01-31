@@ -44,7 +44,9 @@ def run(app: App, args: AppArgs, programmabel_interface=False, as_server=True):
     status = 'unknown'
 
     client = app.run_any('SocketManager', 'create_socket',
-                         name="demon", host="localhost" if args.host == '0.0.0.0' else args.host, port=62436,
+                         name="demon",
+                         host="localhost" if args.host == '0.0.0.0' else args.host,
+                         port=62436 if args.port == 8000 else args.port,
                          type_id=SocketType.client,
                          max_connections=-1,
                          endpoint_port=None,

@@ -60,20 +60,6 @@ async def post_mod_run(data: PostRequest, mod: str, name: str, command: Union[st
     return {"res": res}
 
 
-if __name__ == 'fast_api':  # do stuw withe ovner to secure ur self
-
-    print("online")
-
-    config_file = "api.config"
-    id_name = ""
-
-    for i in sys.argv[2:]:
-        if i.startswith('data'):
-            d = i.split(':')
-            config_file = d[1]
-            id_name = d[2]
-    print(os.getcwd())
-    tb_app = App("api")
-    with open(f"api_pid_{id_name}", "w") as f:
-        f.write(str(os.getpid()))
+if __name__ == 'fast_api':
+    tb_app = get_app(from_="api")
     tb_app.load_all_mods_in_file()

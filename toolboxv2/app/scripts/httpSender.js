@@ -123,3 +123,32 @@ export function httpPostData(module_name, function_name, data, errorCallback, su
     // return new Result(ToolBoxError.internal_error, new ToolBoxResult(), new ToolBoxInfo(-1, 'intern error client side 90975'))
 }
 
+export function AuthHttpPostData(username, errorCallback, successCallback) {
+    fetch('/validateSession', {
+        method: 'POST',
+        headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'jwt_claim': window.localStorage.getItem('jwt_claim_device'),
+            username
+        },
+        body: JSON.stringify({})
+    })
+        .then(response => response.json())
+        .then(data => {
+
+            const result = wrapInResult(data)
+            if (result.error !== ToolBoxError.none) {
+                // Handle error case
+                return errorCallback(result);
+            } else {
+                // Handle success case
+                return successCallback(result);
+            }
+        })
+        .catch((error) => {
+            return errorCallback(new Result(ToolBoxError.internal_error, new ToolBoxResult("Frontend Dev", "Error in successCallback at : " +module_name+'.'+ function_name, error), new ToolBoxInfo(-1, error.toString())));
+        });
+    // return new Result(ToolBoxError.internal_error, new ToolBoxResult(), new ToolBoxInfo(-1, 'intern error client side 90975'))
+}
+

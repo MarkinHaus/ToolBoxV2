@@ -263,7 +263,6 @@ export async function registerUser(registrationData, sing, errorCallback, sucess
     console.log("[registerUser registrationData]:", registrationData)
     const challenge = strToArrayBuffer(registrationData.challenge);
     const userId = base64ToArrayBuffer(registrationData.userId)
-
     // Schritt 3: PublicKeyCredentialCreationOptions für die Registrierung vorbereiten
     const publicKeyCredentialCreationOptions = {
         challenge: challenge,
@@ -278,20 +277,26 @@ export async function registerUser(registrationData, sing, errorCallback, sucess
             displayName: registrationData.username
         },
         pubKeyCredParams: [
-            {type: "public-key", alg: -7 }, // -7 steht für ES256
+            {type: "public-key",alg: -7 }, // -7 steht für ES256
             {type: "public-key",alg: -256},
             {type: "public-key",alg: -512}
         ],
         timeout: 60000,
         // Weitere Optionen können hier hinzugefügt werden
+        excludeCredentials: [],
         authenticatorSelection: {
             // ... andere Auswahlkriterien ...
+            //residentKey: "preferred",
+            //authenticatorAttachment: "platform",
             requireResidentKey: true, // Setzen Sie dies auf true, um einen residenten Schlüssel zu erfordern
             userVerification: "required" // Kann "required", "preferred" oder "discouraged" sein
         },
     };
 
     // Schritt 4: Registrierung mit WebAuthn durchführen
+
+    const asBase64 = ab => btoa(String.fromCharCode(...new Uint8Array(ab)))
+
     try {
         await navigator.credentials.create({
             publicKey: publicKeyCredentialCreationOptions
@@ -331,13 +336,22 @@ export async function registerUser(registrationData, sing, errorCallback, sucess
             const newCredential = {
                 userId: registrationData.userId,
                 username: registrationData.username,
-                attestationObj:arrayBufferToStr(attestationObj),
-                clientJSON:arrayBufferToBase64(clientJSON),
                 pk:convertToPem(pk, 'public'),
                 pkAlgo:pkAlgo,
+                clientJson:arrayBufferToBase64(clientJSON),
                 authenticatorData:arrayBufferToBase64(authenticatorData),
                 rawId:rawId,
-                sing
+                sing,
+                registration_credential: {
+                     id: publicKeyCredential.id,
+                     raw_id: asBase64(publicKeyCredential.rawId),
+                     response: {
+                         client_data_json: asBase64(clientJSON),
+                         attestation_object: asBase64(attestationObj),
+                     },
+                     authenticator_attachment: "platform",
+                     type: "public-key"
+                }
             }
             sendRegistrationResponseToServer(newCredential, errorCallback, sucessCallback);
         });
@@ -350,19 +364,20 @@ export async function registerUser(registrationData, sing, errorCallback, sucess
     }
 }
 
-export async function authorisazeUser(rowID, challenge, username, errorCallback, sucessCallback) {
+export async function authorisazeUser(rawId, challenge, username, errorCallback, sucessCallback) {
     //const challenge = strToArrayBuffer(registrationData.challenge);
     const publicKey = {
         challenge: base64ToArrayBuffer(strToBase64(challenge)),
         rpId: rpIdUrl,
         allowCredentials: [{
             type: "public-key",
-            id: base64ToArrayBuffer(rowID)
+            id: base64ToArrayBuffer(rawId)
         }],
         userVerification: "required",
     }
+    const asBase64 = ab => btoa(String.fromCharCode(...new Uint8Array(ab)))
     try {
-        navigator.credentials.get({ publicKey }).then((publicKeyCredential) => {
+        await navigator.credentials.get({ publicKey }).then((publicKeyCredential) => {
             const response = publicKeyCredential.response;
 
             // Access authenticator data ArrayBuffer
@@ -379,8 +394,17 @@ export async function authorisazeUser(rowID, challenge, username, errorCallback,
             const userCredential = {
                 signature: arrayBufferToBase64(signature),
                 username: username,
-                clientJSON:arrayBufferToBase64(clientJSON),
-                authenticatorData:arrayBufferToBase64(authenticatorData),
+                authentication_credential: {
+                    id: publicKeyCredential.id,
+                    raw_id: asBase64(publicKeyCredential.rawId),
+                    response: {
+                        client_data_json: asBase64(clientJSON),
+                        signature: asBase64(signature),
+                        authenticator_data: asBase64(authenticatorData),
+                        user_handle: arrayBufferToBase64(userHandle),
+                    },
+                    type:"public-key"
+                }
             }
             sendLoginResponseToServer(userCredential, errorCallback, sucessCallback);
         });

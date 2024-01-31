@@ -262,14 +262,14 @@ class Code:
         return False
 
     @staticmethod
-    def create_signature(message: str, private_key_str: str) -> str:
+    def create_signature(message: str, private_key_str: str, salt_length=padding.PSS.MAX_LENGTH) -> str:
         try:
             private_key = serialization.load_pem_private_key(private_key_str.encode(), password=None)
             signature = private_key.sign(
                 message.encode(),
                 padding.PSS(
                     mgf=padding.MGF1(hashes.SHA256()),
-                    salt_length=padding.PSS.MAX_LENGTH
+                    salt_length=salt_length
                 ),
                 hashes.SHA256()
             )
