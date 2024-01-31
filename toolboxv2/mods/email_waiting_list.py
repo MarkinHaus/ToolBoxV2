@@ -60,7 +60,8 @@ def send_email(data):
     result = mailjet.send.create(data=data)
     if result.status_code != 0:
         return Result.default_internal_error(exec_code=result.status_code, data=result.json())
-    return Result.ok(exec_code=result.status_code, data=result.json())
+    return Result.custom_error(exec_code=result.status_code, data=result.json())
+
 
 @s_export
 def crate_sing_in_email(user_email, user_name):
@@ -102,8 +103,7 @@ def crate_magick_lick_device_email(user_email, user_name, link_id, nl=-1):
                 ],
                 "Subject": "Welcome to SimpleCore!",
                 "TextPart": f"Hi {user_name}",
-                "HTMLPart": f"<h3>Dear passenger 1, welcome to <a href=\"https://simplecore.app/app/assets/m_log_in.html?key={link_id}&nl={nl}\">Magick Log in link</a>!</h3><br />Must enter ur user name on the next page to"
+                "HTMLPart": f"<h3>Dear passenger 1, welcome to <a href=\"https://simplecore.app/app/assets/m_log_in.html?key={link_id}&nl={nl}\">Magick Log in link</a> don not chair!</h3><br />Must enter ur user name on the next page to log in"
             }
         ]
     }
-

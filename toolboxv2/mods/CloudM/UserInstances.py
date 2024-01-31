@@ -1,6 +1,6 @@
 import json
 
-from toolboxv2 import Style, get_app, tbef
+from toolboxv2 import Style, get_app
 from toolboxv2.utils import Singleton
 from toolboxv2.utils.cryp import Code
 from toolboxv2.utils.types import Result
@@ -20,17 +20,17 @@ class UserInstances(metaclass=Singleton):
 
     @staticmethod
     @in_mem_chash_150
-    def get_si_id(uid: str):
+    def get_si_id(uid: str) -> Result or str:
         return Code.one_way_hash(uid, app.id, 'SiID')
 
     @staticmethod
     @in_mem_chash_150
-    def get_vt_id(uid: str):
+    def get_vt_id(uid: str) -> Result or str:
         return Code.one_way_hash(uid, app.id, 'VirtualInstanceID')
 
     @staticmethod
     @in_mem_chash_150
-    def get_web_socket_id(uid: str):
+    def get_web_socket_id(uid: str) -> Result or str:
         return Code.one_way_hash(uid, app.id, 'CloudM-Signed')
 
     # UserInstanceManager.py
@@ -40,26 +40,23 @@ class UserInstances(metaclass=Singleton):
 def close_user_instance(uid: str):
     if uid is None:
         return
-    if UserInstances.get_si_id(uid).get()not in UserInstances().live_user_instances.keys():
+    si_id = UserInstances.get_si_id(uid).get()
+    if si_id not in UserInstances().live_user_instances.keys():
         logger.warning("User instance not found")
         return "User instance not found"
-    instance = UserInstances().live_user_instances[UserInstances.get_si_id(uid).get()]
+    instance = UserInstances().live_user_instances[si_id]
     UserInstances().user_instances[instance['SiID']] = instance['webSocketID']
     app.run_any(
-        'db', 'set',
-        query=f"User::Instance::{uid}", data=
-        json.dumps({"saves": instance['save']}))
+        'DB', 'set',
+        query=f"User::Instance::{uid}",
+        data=json.dumps({"saves": instance['save']}))
     if not instance['live']:
         save_user_instances(instance)
         logger.info("No modules to close")
         return "No modules to close"
-    for key, val in instance['live'].items():
-        if key.startswith('v-'):
-            continue
-        try:
-            val._on_exit()
-        except Exception as e:
-            logger.error(f"Error closing {key}, {str(e)}")
+    for mode_name, spec in instance['live'].items():
+        logger.info(f"Closing {mode_name}")
+        app.remove_mod(mod_name=mode_name, spec=spec, delete=False)
     del instance['live']
     instance['live'] = {}
     logger.info("User instance live removed")
@@ -77,8 +74,8 @@ def validate_ws_id(ws_id):  # ToDo refactor
             try:
                 UserInstances().user_instances = json.loads(data)
                 logger.info(Style.GREEN("Valid instances"))
-            except Exception as e:
-                logger.info(Style.RED(f"Error : {str(e)}"))
+            except Exception as e_:
+                logger.info(Style.RED(f"Error : {str(e_)}"))
     logger.info(f"validate_ws_id ::{UserInstances().user_instances}::")
     for key in list(UserInstances().user_instances.keys()):
         value = UserInstances().user_instances[key]
@@ -99,46 +96,8 @@ def delete_user_instance(uid: str):
         del UserInstances().live_user_instances[si_id]
 
     del UserInstances().user_instances[si_id]
-    app.run_any('db', 'del', query=f"User::Instance::{uid}")
+    app.run_any('DB', 'delete', query=f"User::Instance::{uid}")
     return "Instance deleted successfully"
-
-
-@export(mod_name=Name, state=False)
-def set_user_level():  # TODO Ad to user date default
-
-    if not UserInstances().live_user_instances.items():
-        app.print(f"User: No users registered")
-        return
-
-    users, keys = [(u['save'], _) for _, u in UserInstances().live_user_instances.items()]
-    users_names = [u['username'] for u in users]
-    for user in users:
-        app.print(f"User: {user['username']} level : {user['level']}")
-
-    rot_input = input("Username: ")
-    if not rot_input:
-        app.print(Style.YELLOW("Please enter a username"))
-        return "Please enter a username"
-    if rot_input not in users_names:
-        app.print(Style.YELLOW("Please enter a valid username"))
-        return "Please enter a valid username"
-
-    user = users[users_names.index(rot_input)]
-
-    app.print(Style.WHITE(f"Usr level : {user['level']}"))
-
-    level = input("set level :")
-    level = int(level)
-
-    instance = UserInstances().live_user_instances[keys[users_names.index(rot_input)]]
-
-    instance['save']['level'] = level
-
-    save_user_instances(instance)
-
-    app.print("done")
-
-    return True
 
 
 @e
@@ -148,7 +107,7 @@ def save_user_instances(instance: dict):
     logger.info("Saving instance")
     UserInstances().user_instances[instance['SiID']] = instance['webSocketID']
     UserInstances().live_user_instances[instance['SiID']] = instance
-    print(UserInstances().user_instances)
+    # print(UserInstances().user_instances)
     app.run_any(
         'DB', 'set',
         query=f"user_instances::{app.id}",
@@ -164,8 +123,6 @@ def get_instance_si_id(si_id):
 
 @e
 def get_user_instance(uid: str,
-                      username: str or None = None,
-                      token: str or None = None,
                       hydrate: bool = True):
     # Test if an instance exist locally -> instance = set of data a dict
     if uid is None:
@@ -173,25 +130,20 @@ def get_user_instance(uid: str,
     instance = {
         'save': {
             'uid': uid,
-            'level': 0,
             'mods': [],
-            'username': username
         },
         'live': {},
         'webSocketID': UserInstances.get_web_socket_id(uid).get(),
         'SiID': UserInstances.get_si_id(uid).get(),
-        'token': token
+        'VtID': UserInstances.get_vt_id(uid).get()
     }
 
     if instance['SiID'] in UserInstances().live_user_instances.keys():
-        instance_live = UserInstances().live_user_instances.get([instance['SiID']], {})
+        instance_live = UserInstances().live_user_instances.get(instance['SiID'], {})
         if 'live' in instance_live.keys():
             if instance_live['live'] and instance_live['save']['mods']:
                 logger.info(Style.BLUEBG2("Instance returned from live"))
                 return instance_live
-            if instance_live['token']:
-                instance = instance_live
-                instance['live'] = {}
     chash = {}
     if instance['SiID'] in UserInstances().user_instances.keys(
     ):  # der nutzer ist der server instanz bekannt
@@ -204,11 +156,13 @@ def get_user_instance(uid: str,
             chash = chash_data.get()
     if chash != {}:
         app.print(chash)
-        try:
-            instance['save'] = json.loads(chash)["saves"]
-        except Exception as er:
+        if isinstance(chash, dict):
             instance['save'] = chash["saves"]
-            logger.error(Style.YELLOW(f"Error loading instance {er}"))
+        else:
+            try:
+                instance['save'] = json.loads(chash)["saves"]
+            except Exception as er:
+                logger.error(Style.YELLOW(f"Error loading instance {er}"))
 
     logger.info(Style.BLUEBG(f"Init mods : {instance['save']['mods']}"))
 
@@ -231,7 +185,7 @@ def get_user_instance(uid: str,
 @e
 def hydrate_instance(instance: dict):
     # instance = {
-    # 'save': {'uid':'INVADE_USER','level': -1, 'mods': []},
+    # 'save': {'uid':'INVADE_USER', 'mods': []},
     # 'live': {},
     # 'webSocketID': 0000,
     # 'SiID': 0000,
@@ -241,23 +195,16 @@ def hydrate_instance(instance: dict):
         return
 
     chak = instance['live'].keys()
-    level = instance['save']['level']
-
-    # app . key generator
-    user_instance_name = UserInstances.get_vt_id(instance['save']['uid']).get()
 
     for mod_name in instance['save']['mods']:
 
         if mod_name in chak:
             continue
 
-        user_instance_name_mod = mod_name + '-' + user_instance_name
-
-        mod = app.get_mod(mod_name, user_instance_name)
+        mod = app.get_mod(mod_name, instance['VtID'])
         app.print(f"{mod_name}.instance_{mod.spec} online")
 
-        instance['live'][mod_name] = mod
-        instance['live']['v-' + mod_name] = user_instance_name_mod
+        instance['live'][mod_name] = mod.spec
 
     return instance
 
@@ -267,15 +214,7 @@ def save_close_user_instance(ws_id: str):
     valid, key = validate_ws_id(ws_id)
     if valid:
         user_instance = UserInstances().live_user_instances[key]
-        logger.info(f"Log out User : {user_instance['save']['username']}")
-        for key, mod in user_instance['live'].items():
-            logger.info(f"Closing {key}")
-            if isinstance(mod, str):
-                continue
-            try:
-                mod.on_exit()
-            except Exception as e:
-                logger.error(f"error closing mod instance {key}:{e}")
+        logger.info(f"Log out User : {ws_id}")
         close_user_instance(user_instance['save']['uid'])
 
         return Result.ok()

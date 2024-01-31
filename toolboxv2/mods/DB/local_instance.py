@@ -1,7 +1,7 @@
 import json
 import os
 
-from toolboxv2 import Result, get_app
+from toolboxv2 import Result
 from .types import AuthenticationTypes
 from ...utils.cryp import Code
 
@@ -14,18 +14,18 @@ class MiniDictDB:
         self.key = ""
         self.location = ""
 
-    def scan_iter(self, serch=''):
+    def scan_iter(self, search=''):
         # print(self.data)
         if not self.data:
             return []
-        return [key for key in self.data.keys() if key.startswith(serch.replace('*', ''))]
+        return [key for key in self.data.keys() if key.startswith(search.replace('*', ''))]
 
     def initialize(self, location, key):
         if os.path.exists(location + 'MiniDictDB.json'):
             try:
                 self.data = eval(Code.decrypt_symmetric(load_from_json(location + 'MiniDictDB.json').get('data'), key))
             except Exception as er:
-                print(f"Data is currupted error : {er}")
+                print(f"Data is corrupted error : {er}")
                 self.data = {}
         else:
             print(f'Could not initialize MiniDictDB with data from MiniDictDB.json')
@@ -36,7 +36,6 @@ class MiniDictDB:
 
     def get(self, key: str) -> Result:
         data = []
-        data_info = ""
 
         if key == 'all':
             data_info = "Returning all data available "
@@ -63,12 +62,17 @@ class MiniDictDB:
             return Result.ok()
         return Result.default_user_error(info=f"key is {key}, type{type(key)}, value is {value}, type{type(value)}")
 
-    def append_on_set(self, key:str, value:list):
+    def append_on_set(self, key: str, value: list):
         if key in self.data:
             for v in value:
                 self.data[key].append(v)
             return Result.ok()
         return Result.default_user_error(info=f"key not found {key}")
+
+    def if_exist(self, key: str):
+        if key.endswith('*'):
+            return len(self.scan_iter(key))
+        return 1 if key in self.data else 0
 
     def delete(self, key, matching=False) -> Result:
 

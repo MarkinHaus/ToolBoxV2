@@ -6,7 +6,7 @@ from platform import system
 
 import requests
 
-from toolboxv2 import MainTool, FileHandler, App, get_app
+from toolboxv2 import MainTool, FileHandler, get_app
 
 
 export = get_app("api_manager.Export").tb
@@ -138,7 +138,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         self.print(api_data)
         g = f"uvicorn toolboxv2.api.fast_api_main:app --host {api_data['host']}" \
-            f" --port {api_data['port']} --header data:0:{api_name} {'--reload' if reload else ''}"
+            f" --port {api_data['port']} --header data:{self.app.debug}:{api_name} {'--reload' if reload else ''}"
 
         print("Running command : " + g)
 

@@ -23,7 +23,6 @@ class MiniRedis:
 
     def get(self, key: str) -> Result:
         data = []
-        data_info = ""
         if self.rcon is None:
             return Result.default_user_error(info='Pleas run first-redis-connection to connect to a reddis instance')
 
@@ -44,9 +43,19 @@ class MiniRedis:
                 data.append(val)
 
         if not data:
-            return Result.default_internal_error(info=f"No data found for key {key}", data=data_info)
+            return Result.ok(info=f"No data found for key {key}", data=None, data_info=data_info)
 
         return Result.ok(data=data, data_info=data_info + key)
+
+    def if_exist(self, query: str):
+        if self.rcon is None:
+            return Result.default_user_error(info='Pleas run first-redis-connection to connect to a reddis instance')
+        if not query.endswith('*'):
+            return self.rcon.exists(query)
+        i = 0
+        for _ in self.rcon.scan_iter(query):
+            i += 1
+        return i
 
     def set(self, key: str, value) -> Result:
         if self.rcon is None:

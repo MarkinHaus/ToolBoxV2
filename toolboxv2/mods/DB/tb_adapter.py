@@ -2,7 +2,7 @@ import os
 from abc import ABC
 from typing import Any
 
-from toolboxv2 import MainTool, FileHandler, Result, get_app, tbef
+from toolboxv2 import MainTool, FileHandler, Result, get_app
 from .reddis_instance import MiniRedis
 from .local_instance import MiniDictDB
 from .types import DatabaseModes, AuthenticationTypes
@@ -10,8 +10,7 @@ from toolboxv2.utils.types import ToolBoxInterfaces
 from ...utils.cryp import Code
 
 Name = "DB"
-
-"""Alle Daten Banken sind mit dem selben device schlüssel verschlüsselt TODO ändern"""
+export = get_app(from_="DB.EXPORT").tb
 
 
 def pre_function(*args, **kwargs) -> (list, dict):
@@ -45,8 +44,8 @@ def post_function(result: Result) -> Result:
 # if decoded_data == "Error decoding":
 #     return result.lazy_return('intern', result, info=f"post fuction decoding error")
 
-# return result.ok(data=decoded_data, data_info=result.result.data_info, info=result.info.help_text, interface=result.result.data_to)
-
+# return result.ok(data=decoded_data, data_info=result.result.data_info, info=result.info.help_text,
+# interface=result.result.data_to)
 
 class DB(ABC):
 
@@ -62,14 +61,15 @@ class DB(ABC):
     def delete(self, query: str, matching=False) -> Result:
         """delete data"""
 
+    def if_exist(self, query: str) -> bool:
+        """return True if query exists"""
+
     def exit(self) -> Result:
         """Close DB connection and optional save data"""
 
 
 class Tools(MainTool, FileHandler):
     version = "0.0.2"
-
-    export = get_app(from_="DB.EXPORT").tb
 
     def __init__(self, app=None):
         self.name = Name
@@ -94,7 +94,6 @@ class Tools(MainTool, FileHandler):
                           color=self.color,
                           on_exit=self.close_db)
 
-
     @export(
         mod_name=Name,
         name="Version",
@@ -117,6 +116,26 @@ class Tools(MainTool, FileHandler):
 
         if self.mode.value == "LOCAL_DICT" or self.mode.value == "LOCAL_REDDIS" or self.mode.value == "REMOTE_REDDIS":
             return self.data_base.get(query)
+
+        if self.mode.value == "REMOTE_DICT":
+            return Result.custom_error(info="Not Implemented yet")  # TODO: add remote dict storage
+
+        return Result.default_internal_error(info="Database is not configured")
+
+    @export(
+        mod_name=Name,
+        helper="Test if an key is in the Database instance",
+        version=version,
+        interface=ToolBoxInterfaces.internal,
+        post_compute=post_function,
+    )
+    def if_exist(self, query: str) -> Result:
+
+        if self.data_base is None:
+            return Result.default_internal_error(info="No database connection")
+
+        if self.mode.value == "LOCAL_DICT" or self.mode.value == "LOCAL_REDDIS" or self.mode.value == "REMOTE_REDDIS":
+            return Result.ok(data=self.data_base.if_exist(query)).set_origin(f"{self.mode.value}.DB.if_exist")
 
         if self.mode.value == "REMOTE_DICT":
             return Result.custom_error(info="Not Implemented yet")  # TODO: add remote dict storage

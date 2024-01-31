@@ -1,19 +1,26 @@
 import base64
 import datetime
 import json
+import os
 import time
+from urllib.parse import quote
 import uuid
+import webauthn
 from dataclasses import dataclass, field, asdict
-from typing import Union, List
+from typing import List
 
 import jwt
 from pydantic import BaseModel
+from webauthn.helpers.exceptions import InvalidAuthenticationResponse, InvalidRegistrationResponse
+from webauthn.helpers.structs import AuthenticationCredential, RegistrationCredential
 
 from toolboxv2.mods.DB.types import DatabaseModes
 from toolboxv2.utils.types import ToolBoxInterfaces, ApiResult
 from toolboxv2 import get_app, App, Result, tbef, ToolBox_over
+from typing import Dict
 
 from toolboxv2.utils.cryp import Code
+from pydantic import validator
 
 Name = 'CloudM.AuthManager'
 export = get_app(f"{Name}.Export").tb
@@ -24,19 +31,29 @@ instance_bios = str(uuid.uuid4())
 
 
 @dataclass
+class UserPersonaPubKey:
+    public_key: bytes
+    sign_count: int
+    credential_id: bytes
+    rawId: str
+    attestation_object: bytes
+
+
+@dataclass
 class User:
     uid: str = field(default_factory=lambda: str(uuid.uuid4()))
     pub_key: str = field(default="")
     email: str = field(default="")
     name: str = field(default="")
     user_pass_pub: str = field(default="")
-    user_pass_pub_persona: str = field(default="")
-    user_pass_pub_persona_id: str = field(default="")
-    user_pass_pub_devices: List[str] = field(default_factory=[])
+    user_pass_pub_persona: Dict[str, str or bytes] = field(default_factory=lambda: ({}))
+    user_pass_pub_devices: List[str] = field(default_factory=lambda: ([]))
     user_pass_pri: str = field(default="")
     user_pass_sync: str = field(default="")
     creation_time: str = field(default_factory=lambda: time.strftime("%Y-%m-%d::%H:%M:%S", time.localtime()))
     challenge: str = field(default="")
+    is_persona: bool = field(default=False)
+    level: int = field(default=0)
 
 
 @dataclass
@@ -47,11 +64,40 @@ class UserCreator(User):
         self.challenge = Code.encrypt_asymmetric(str(uuid.uuid4()), self.user_pass_pub)
 
 
+def b64decode(s: str) -> bytes:
+    return base64.urlsafe_b64decode(s.encode())
+
+
+class CustomAuthenticationCredential(AuthenticationCredential):
+    @validator('raw_id', pre=True)
+    def convert_raw_id(cls, v: str):
+        assert isinstance(v, str), 'raw_id is not a string'
+        return b64decode(v)
+
+    @validator('response', pre=True)
+    def convert_response(cls, data: dict):
+        assert isinstance(data, dict), 'response is not a dictionary'
+        return {k: b64decode(v) for k, v in data.items()}
+
+
+class CustomRegistrationCredential(RegistrationCredential):
+    @validator('raw_id', pre=True)
+    def convert_raw_id(cls, v: str):
+        assert isinstance(v, str), 'raw_id is not a string'
+        return b64decode(v)
+
+    @validator('response', pre=True)
+    def convert_response(cls, data: dict):
+        assert isinstance(data, dict), 'response is not a dictionary'
+        return {k: b64decode(v) for k, v in data.items()}
+
+
 # app Helper functions interaction with the db
 
 def db_helper_test_exist(app: App, username: str):
-    c = app.run_any(tbef.DB.GET, query=f"USER::{username}::*", get_results=True)
-    b = not c.info.exec_code == -2
+    c = app.run_any(tbef.DB.IF_EXIST, query=f"USER::{username}::*", get_results=True)
+    if c.is_error(): raise f"DB - error {c.print(show=False)}"
+    b = c.get() > 0
     print(f"TEST IF USER EXIST : {username} {b}")
     return b
 
@@ -161,7 +207,7 @@ def reade_jwt(jwt_key: str) -> dict or str:
 # Export functions
 
 
-@export(mod_name=Name, state=False, test=False)
+@export(mod_name=Name, state=True, test=False)
 def get_user_by_name(app: App, username: str, uid: str = '*') -> Result:
     if app is None:
         app = get_app(Name + '.get_user_by_name')
@@ -209,7 +255,7 @@ def initialize_and_return(app: App, user) -> ApiResult:
         "challenge": user.challenge,
         "userId": to_base64(user.uid),
         "username": user.name,
-        "dSync": Code().encrypt_asymmetric(user.user_pass_sync, user.user_pass_pub_devices[0])})
+        "dSync": Code().encrypt_asymmetric(user.user_pass_sync, user.pub_key)})
 
 
 class CreateUserObject(BaseModel):
@@ -250,7 +296,7 @@ def create_user(app: App, data: CreateUserObject = None, username: str = 'test-u
     if not invitation.startswith("00#"):  # not db_valid_invitation(app, invitation):
         return Result.default_user_error(info=f"Invalid invitation", interface=ToolBoxInterfaces.remote)
 
-    test_bub_key = ""
+    test_bub_key = "Invalid"
 
     if pub_key:
         if as_base64:
@@ -265,7 +311,10 @@ def create_user(app: App, data: CreateUserObject = None, username: str = 'test-u
     if test_bub_key == "Invalid":
         return Result.default_user_error(info="Invalid public key parsed", interface=ToolBoxInterfaces.remote)
 
-    user = User(name=username, email=email, user_pass_pub_devices=[pub_key], pub_key=pub_key)
+    user = User(name=username,
+                email=email,
+                user_pass_pub_devices=[pub_key],
+                pub_key=pub_key)
 
     db_delete_invitation(app, invitation)
 
@@ -282,12 +331,12 @@ def create_user(app: App, data: CreateUserObject = None, username: str = 'test-u
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True, test=False)
 def get_magick_link_email(app: App, username):
     if app is None:
-        app = get_app(Name + '.add_user_device')
+        app = get_app(Name + '.get_magick_link_email')
 
     if not db_helper_test_exist(app, username):
         return Result.default_user_error(info=f"Username '{username}' not known", interface=ToolBoxInterfaces.remote)
 
-    user: User = get_user_by_name(username=username).get()
+    user: User = get_user_by_name(app, username=username).get()
 
     if user.challenge == '':
         user = UserCreator(**asdict(user))
@@ -343,7 +392,7 @@ def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 
     if test_bub_key == "Invalid":
         return Result.default_user_error(info="Invalid public key parsed", interface=ToolBoxInterfaces.remote)
 
-    user: User = get_user_by_name(username=username).get()
+    user: User = get_user_by_name(app, username=username).get()
 
     if invitation != Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email"):
         return Result.default_user_error(info=f"Invalid invitation", interface=ToolBoxInterfaces.remote)
@@ -366,13 +415,13 @@ def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 
 class PersonalData(BaseModel):
     userId: str
     username: str
-    attestationObj: str  # arrayBufferToBase64
-    clientJSON: str  # arrayBufferToBase64
     pk: str  # arrayBufferToBase64
     pkAlgo: int
     authenticatorData: str  # arrayBufferToBase64
+    clientJson: str  # arrayBufferToBase64
     sing: str
     rawId: str  # arrayBufferToBase64
+    registration_credential: CustomRegistrationCredential
 
 
 @export(mod_name=Name, api=True, test=False)
@@ -385,10 +434,10 @@ def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
     if user_result.is_error() and not user_result.is_data():
         return Result.default_internal_error(info="No user found", data=user_result)
 
-    client_json = json.loads(from_base64(data.clientJSON))
+    client_json = json.loads(from_base64(data.clientJson))
     challenge = client_json.get("challenge")
     origin = client_json.get("origin")
-    crossOrigin = client_json.get("crossOrigin")
+    # crossOrigin = client_json.get("crossOrigin")
 
     if challenge is None:
         return Result.default_user_error(info="No challenge found in data invalid date parsed", data=user_result)
@@ -407,10 +456,34 @@ def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
     if not Code.verify_signature(signature=from_base64(data.sing), message=user.challenge, public_key_str=user.pub_key,
                                  salt_length=32):
         return Result.default_user_error(info="Verification failed Invalid signature")
+    # c = {   "id": data.rawId,   "rawId": data.rawId,   "response": {       "attestationObject": data.attestationObj,
+    # "clientDataJSON": data.clientJSON,       "transports": ["usb", "nfc", "ble", "internal", "cable", "hybrid"],
+    # },   "type": "public-key",   "clientExtensionResults": {},   "authenticatorAttachment": "platform",}
+    try:
+        registration_verification = webauthn.verify_registration_response(
+            credential=data.registration_credential,
+            expected_challenge=user.challenge.encode(),
+            expected_origin=valid_origen,
+            expected_rp_id=os.environ.get('HOSTNAME', 'localhost'),  # simplecore.app
+            require_user_verification=True,
+        )
+    except InvalidRegistrationResponse as e:
+        return Result.default_user_error(info=f"Registration failure : {e}")
+
+    if not registration_verification.user_verified:
+        return Result.default_user_error(info="Invalid registration not user verified")
+
+    user_persona_pub_key = {
+        'public_key': registration_verification.credential_public_key,
+        'sign_count': registration_verification.sign_count,
+        'credential_id': registration_verification.credential_id,
+        'rawId': data.rawId,
+        'attestation_object': registration_verification.attestation_object,
+    }
 
     user.challenge = ""
-    user.user_pass_pub_persona = data.pk
-    user.user_pass_pub_persona_id = data.rawId
+    user.user_pass_pub_persona = user_persona_pub_key
+    user.is_persona = True
 
     # Speichern des neuen Benutzers in der Datenbank
     save_result = db_helper_save_user(app, asdict(user))
@@ -418,7 +491,7 @@ def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
         return save_result.to_api_result()
 
     key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
-    url = f"/app/assets/m_log_in.html?key={key}?name={user.name}"
+    url = f"/app/assets/m_log_in.html?key={quote(key)}&name={user.name}"
 
     return Result.ok(info="User registered successfully", data=url)
 
@@ -486,7 +559,7 @@ def get_to_sing_data(app: App, username, personal_key=False):
     data = {'challenge': user.challenge}
 
     if personal_key:
-        data['rowId'] = user.user_pass_pub_persona_id
+        data['rowId'] = user.user_pass_pub_persona.get("rawId")
 
     return Result.ok(data=data)
 
@@ -495,8 +568,8 @@ def get_to_sing_data(app: App, username, personal_key=False):
 def get_invitation(app: App) -> Result:
     if app is None:
         app = get_app(Name + '.test_invations')
-    print("Test invations api")
-    invitation = db_crate_invitation(app)
+
+    invitation = "00#" + str(Code.generate_seed())  # db_crate_invitation(app)
     return Result.ok(data=invitation)
 
 
@@ -508,33 +581,50 @@ class VdUSER(BaseModel):
 
 
 class VpUSER(VdUSER, BaseModel):
-    clientJSON: str
-    authenticatorData: str
+    authentication_credential: CustomAuthenticationCredential
 
 
 @export(mod_name=Name, api=True, test=False)
 def validate_persona(app: App, data: VpUSER) -> ApiResult:
     if app is None:
-        app = get_app(".validate_device")
+        app = get_app(".validate_persona")
 
     user_result = get_user_by_name(app, data.username)
 
     if user_result.is_error() or not user_result.is_data():
         return Result.default_user_error(info=f"Invalid username : {data.username}")
     # from_base64(data.signature)
-    res = authenticate_user_get_sync_key(app, data.username, from_base64(data.signature), get_user=True, web=True).as_result().print()
-    authenticate_user_get_sync_key(app, data.username, data.signature, get_user=True, web=True).as_result().print()
+    user: User = user_result.get()
 
-    if res.info.exec_code != 0:
-        return res.custom_error(data=res)
+    if user.is_persona == "":
+        return Result.default_user_error(info="No Persona key registered")
 
-    channel_key, userdata = res.get()
+    valid_origen = ["https://simplecore.app", "http://localhost:5000"] + (
+        ["http://localhost:5000"] if app.debug else [])
 
-    user: User = User(**userdata)
+    try:
+        authentication_verification = webauthn.verify_authentication_response(
+            # Demonstrating the ability to handle a stringified JSON version of the WebAuthn response
+            credential=data.authentication_credential,
+            expected_challenge=user.challenge.encode(),
+            expected_rp_id=os.environ.get('HOSTNAME', 'localhost'),
+            expected_origin=valid_origen,
+            credential_public_key=user.user_pass_pub_persona.get("public_key"),
+            credential_current_sign_count=user.user_pass_pub_persona.get("sign_count"),
+            require_user_verification=True,
+        )
+        print(f"\n[Authentication Verification {user.name}]")
+        user.user_pass_pub_persona["sign_count"] = authentication_verification.new_sign_count
+    except InvalidAuthenticationResponse as e:
+        print(f"0Error authenticating user {data.username}, {e}")
+        return Result.default_user_error(info=f"Authentication failure : {e}")
+
+    save_result = db_helper_save_user(app, asdict(user))
+    if save_result.is_error():
+        return save_result.to_api_result()
 
     key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
-    url = f"/app/assets/m_log_in.html?key={key}?name={user.name}"
-
+    url = f"/app/assets/m_log_in.html?key={quote(key)}&name={user.name}"
     return Result.ok(data=url, info="Auto redirect")
 
 
@@ -600,13 +690,14 @@ def authenticate_user_get_sync_key(app: App, username: str, signature: str or by
 
     if web:
         if not Code.verify_signature_web_algo(signature=signature,
-                                              message=to_base64(user.challenge) if user.challenge else username + app.id + instance_bios,
-                                              public_key_str=user.user_pass_pub_persona):
+                                              message=to_base64(
+                                                  user.challenge) if user.challenge else username + app.id + instance_bios,
+                                              public_key_str=user.pub_key):
             return Result.default_user_error(info="Verification failed Invalid signature")
     else:
         if not Code.verify_signature(signature=signature,
                                      message=user.challenge if user.challenge else username + app.id + instance_bios,
-                                     public_key_str=user.user_pass_pub_persona):
+                                     public_key_str=user.pub_key):
             return Result.default_user_error(info="Verification failed Invalid signature")
 
     user = UserCreator(**asdict(user))
@@ -695,10 +786,10 @@ def jwt_check_claim_server_side(app: App, username: str, jwt_claim: str) -> ApiR
         return Result.custom_error(data=res)
     user: User = res.get()
 
-    data = validate_jwt(jwt_claim, user.pub_key)
-
+    data = validate_jwt(jwt_claim, user.user_pass_pub)
+    # InvalidSignatureError
     if isinstance(data, str):
-        return Result.custom_error(info=data, data=False)
+        return Result.custom_error(info="Invalid", data=False)
 
     return Result.ok(data_info='Valid JWT', data=True)
 
@@ -724,10 +815,75 @@ def crate_user_test(app: App):
     return res
 
 
-if __name__ == '__main__':
-    singen = "HhSdUTQO0wKhKpBPg34422My3kciycjZPHnFRHboVFL5pDQikPTcLGhxjqP0xWUIVh+FbpOsIywCCPjRL7IlPBxmA3Zrb0YcWq3j4I11GORF6mCVoiJX3Qq2eDFBg27lR7bmP3QfFFjEDJrFXs2pNKSaCKfZrEH9tgnm7lq9tXnzOMoeHi+kO1StnWjO5qmlvodymeyAGMnBKpomgxP2we+cznlgb9Mk7GY9Mm0S4YFj2fNX6Fra7xCxtB+ErycTRCVPrTayQ2cwqBZ0LI5jNRaqJVOPXD5U8fiMnaNlOu1bMu9FtTVnqHfszK5qy9OVyKia0xyo2UdGOfymNJSFyJ+y3JJGnhdhuS0I2za25p/K7I5xwGEL5lIBpj+JaRV5pOwDcxGhn21Q/82VsmAseT7V4TbdrSSOo6bjycRiARiwl1LgzsUhQ8CPa86x3KxzYWddvNh3aRTqCoaPWfsnJHywZXi6gPZbsCVcytOnkxOZep6TfdULstyFNjvKO9X/UmLl9Qzc5rpmjGg8gYFju05lN+IWe5qCbbgNrydn615Y30Z15G88ZwWkzs/q/n2CkzUyBLK1nrt4hPt4SXzF02/3EYTl2JhUS1je0GDfgmcVSQ+Yhr/mfHhKfS0zQBtCFm0ua9AmcqrJu7B8+InONh16WBRdHmFUUundyifj3QcZBEJRvU4gF1xq+0cDNta0XnLgpl+FVJsliKycGYkAUuohMAysznLen1bG0TuorPNHAutWOu3JBdx/BHdc2001bUIuzJ5Gg8Mnx8PUy83g2JSE4CFtNFoutlhaY5XdD4ElzPdbFgMX6N+e9ZGYIYG/4H1QBzB3qkkWbpDLVOqtNKDnTma602pHQJOtns9qkIcmwlYmJK/4USZDjAj1zSX3n+u4RttBdsvmRiehMyJ4e1A5y5Rf7r2mLtzo3EaTYvu27evKrMmWfiR0/cgTdhxhlM9gXAi8Sq///HX+vL38lcibIypScBtGV09cHSCEl/Dmm4ZsFM2ppsbUqRkcWhcI"
-    msg = "0c538a042e321b968daab931ec9445dcafd7b12e1c30a338ae3a5fdd87a122188521d832fcc05741017921673f16a1491affc176f40feda81c9dc4621526748fb97af5a953df0b99be7fb0e4fa80679ebe3dbab973897d4a8baa0a209b6296757396297f0bb2cd0d3a97b892da12e1da108a7724126afcb1c3a70abb40ce3429b6333252999478731da82e0b2be355085cc5e80ecfd9fdf5d908e6fe66bf980bb9fcdf6d578dd83cf4d9f373a4bf65e9285d789e1a1b352dd12301b69f8a75ffce1679c1d767cc53bcee73da5e8cb6fb4f699dbbd429e3ffbf2e67ef57820706369e07d45f11198e528ba7ee83748ac3492060d2d611f61c4004cf8b522770d04091d277c884374970eda7c27b1bb3374f0d264f5b0e1384a83ebe29079bb274b41692f8fcec85147727c055ecfbdac51a136eb94de1f9b80f673463e6fb0aaa400db63f48a9c502cf551be39309b13fac027ccb8e69c384c0f127d56beb80d45fee60e93d69cae39dac74d2db6a0cb4a495d087ddbfb85ef3402ba19b82bc098287d9e53bf50402c7edf57e2c462c4db12ea94dff900a734e504c4c3ed90c80bc3cbc183a3e3510c86a8b123783c5b400a003fb1d8f299a897b209df8a18541550c82841867b642efd1e53435ea32bc105c7dc58d12c9d7b3eea41d63f6ab2a5e7424024fd87b35a91523d463f6016e40deccdea9ae559850b60a75e917120e6cbd209e1e00ff6f0e2ddd3c30c02a39af8ba9cf11ae9d7651afbfe9736df3d38a021297ccb11bdbe2b03a2ee603fdb5523f5f891ad482928eecba31f3e541793e87a0d8327ce7f1aa40c3f07015e712ea9af42ba51fddd42f5ce53c17ea01463f2b8722d94f928c285a35722e30694984fa79443d5ef91008205361b3936a50608436176fd23ffcece86339d79c510dcd73f7db5147d744625610ef2a776218d484c0e6173ffdaea28b6c131d62cef5d82f751c35fd7f70a02ae9c29197ac86a784b6957c2bf872aa408199b0e729e8712a30d73c745a061f914fcccd84ded5da9450ff47f8fd56ad8d803e4fbb1f0885801ed242fd30b9296a4d29dbd8556f', '"
-    key = "-----BEGIN PUBLIC KEY-----\nMIIDIjANBgkqhkiG9w0BAQEFAAOCAw8AMIIDCgKCAwEAjuWAq+adexJOA4SYLNjl\nSvY0QirC/kVAX2hWcC/93qer2WT1rd4CbK0h5zRhglgBpG5zYmwllqROfJdpfQSN\nHomq7zwz+IGqs7KKGvpXgIRyDdoFcvc5IfMjaVCu8tq7OEU7w1jjIRxcInlucgsk\nayJ9qeTtzbZo/4b1wiaPwIEhn1H//30IA0WOMNO0pffXRFFY7tnbuMBmSrPPkMTY\ngycTUKIOR+8bAyozLRMOwBZzT0f1EcJWL14QDIhb7FNAjjyw3a/QK62Laq2yEoUn\nTB90Ej/AuN133mhOQfqLKo4UR39mmVTP9PvqgCy/JlwMbiV8qHaX46WjmV4qB6Lt\nTQMQFBiulVHrKJJP99Nw7aEW0PLCaRPfJt/UN+YLgisUNSZIO/Cru7uF+kbsCoa0\nqGUldDmeqQaANLASR1SW2AHNl/m/L3yS/ZBSqw6p20RjlIwWh/2Pj5q81T/Z6hgG\nuib5BEU6U3D/MPWmdhxeaO9tVgF1gz0ENXlm7B9FZrZrpuIUMJh8tX+NAL9uLRGx\nnR28WQxGnnyh9vS6VBFq0Oo1xc8GaComL+UgiMi/L3mtzCUO3yyX3eoezJOZPNm+\nuCyz+I6RGXdxr5Vewksyqh80YyCjXj8NnP+k43nAM2GJf9toM8dP7RqOrQfpn3NB\njWaQLgAVkEZmat3blA/JSof/yb+fzmmAcsMhUYWGQttxW6KF8pKKzd6EPdeZu3Mu\nMzDfcwY6c3Pqmcn5cSF+S9dOLJBhehnILYatrlHdyohCdqiaxcBL5BM+N9AaEwHQ\nFPs26HgyjRgHuqSKRlF34n+KnLInSh4ReNXD05N9RSRNU4zRDW1WAB4jTl29z87C\ns7sGb1jhfu6jVCGnqelKhhoRcH2WX9+e49/mXYtNn/LSDXO3wEXvE4f3wVC5ck1l\n3cKCEDm9Fs6Ix1E90YUW17p+g7ZT+adJtChP8RYMv2n29FlautuFxjmIsncShAi7\nCXYfjyawdkDTGme78G2DvM09fw7u6LMbwzYn9rQMk6RtAgMBAAE=\n-----END PUBLIC KEY-----\n"
+@test_only
+def test_validate_persona(app: App = None):
+    if app is None:
+        app = get_app(f"{Name}.test_validate_persona", name="test-debug")
 
-    print(Code.verify_signature(singen, msg, key))
-    print(Code.verify_signature(singen, to_base64(msg).decode(), key))
+    # Schritt 1: Benutzer erstellen
+    username = "testPersonaUser"
+    email = "persona_test@example.com"
+    pub_key, pri_key = Code.generate_asymmetric_keys()
+    user = UserCreator(name=username, email=email, user_pass_pub_devices=[pub_key], pub_key=pub_key)
+    db_helper_save_user(app, asdict(user))
+
+    # Schritt 2: Persona-Daten vorbereiten
+    challenge = user.challenge
+    signature = Code.create_signature(challenge, pri_key)
+    clientJSON = json.dumps({"challenge": to_base64(challenge).decode()})
+    authenticatorData = "testAuthenticatorData"
+    userHandle = "testUserHandle"
+
+    # Schritt 3: Testdaten vorbereiten
+    test_data = VpUSER(
+        username=username,
+        signature=to_base64(signature),
+        clientJSON=to_base64(clientJSON),
+        authenticatorData=to_base64(authenticatorData),
+        userHandle=to_base64(userHandle)
+    )
+
+    # Schritt 4: validate_persona Funktion testen
+    result = validate_persona(app, test_data).as_result()
+
+    # Schritt 5: Ergebnisse überprüfen
+    result.print()
+    assert not result.is_error(), f"Test fehlgeschlagen: {result.info}"
+    assert not result.is_data(), "Erwartete Antwort nicht erhalten"
+
+    # Aufräumen: Benutzer aus der Datenbank entfernen
+    db_helper_delete_user(app, username, user.uid)
+
+    return "Test erfolgreich abgeschlossen"
+
+
+@test_only
+def test_validate_device(app: App = None):
+    if app is None:
+        app = get_app(f"{Name}.test_validate_device", name="test-debug")
+
+    # Schritt 1: Benutzer erstellen
+    username = "testUser"
+    email = "test@example.com"
+    pub_key, pri_key = Code.generate_asymmetric_keys()
+    user = UserCreator(name=username, email=email, user_pass_pub_devices=[pub_key], pub_key=pub_key)
+    db_helper_save_user(app, asdict(user))
+
+    # Schritt 2: Signatur generieren
+    challenge = user.challenge
+    signature = Code.create_signature(challenge, pri_key)
+
+    # Schritt 3: Testdaten vorbereiten
+    test_data = VdUSER(username=username, signature=to_base64(signature).decode())
+
+    # Schritt 4: validate_device Funktion testen
+    result = validate_device(app, test_data).as_result()
+    result.print()
+    # Schritt 5: Ergebnisse überprüfen
+    assert not result.is_error(), f"Test fehlgeschlagen: {result.info}"
+    assert not result.is_data(), "Kein Schlüssel im Ergebnis gefunden"
+
+    # Aufräumen: Benutzer aus der Datenbank entfernen
+    db_helper_delete_user(app, username, user.uid)
+
+    return "Test erfolgreich abgeschlossen"
