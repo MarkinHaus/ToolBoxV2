@@ -20,7 +20,7 @@ import threading
 import queue
 import asyncio
 
-version = "0.1.3"
+version = "0.1.4"
 Name = "SocketManager"
 
 export = get_app("SocketManager.Export").tb
@@ -184,7 +184,7 @@ class Tools(MainTool, FileHandler):
 
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 sock.bind(('0.0.0.0', port))
-                sock.sendto(b'0', (host, endpoint_port))
+                sock.sendto(b'k', (host, endpoint_port))
 
             except Exception:
                 connection_error = -1
@@ -212,9 +212,12 @@ class Tools(MainTool, FileHandler):
 
         def send(msg, address=None):
             t0 = time.perf_counter()
-
+            res_msg = b''
             # Prüfen, ob die Nachricht ein Dictionary ist und Bytes direkt unterstützen
             if isinstance(msg, bytes):
+                if len(msg) > 1472:
+                    res_msg = msg[1460]
+                    msg = msg[:1460]
                 sender_bytes = b'b' + msg  # Präfix für Bytes
                 msg_json = 'sending bytes'
             elif isinstance(msg, dict):
@@ -245,6 +248,9 @@ class Tools(MainTool, FileHandler):
                 self.logger.error(f"Error sending data: {e}")
 
             self.print(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
+
+            if len(res_msg):
+                send(res_msg, address)
 
         def receive(r_socket_):
             running = True
