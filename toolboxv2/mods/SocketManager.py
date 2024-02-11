@@ -20,7 +20,7 @@ import threading
 import queue
 import asyncio
 
-version = "0.0.8"
+version = "0.0.9"
 Name = "SocketManager"
 
 export = get_app("SocketManager.Export").tb
@@ -468,6 +468,11 @@ class Tools(MainTool, FileHandler):
 
     @export(mod_name=Name, name="send_file_to_peer", test=False)
     def send_file_to_peer(self, filepath, peer_host, peer_port):
+        if isinstance(peer_port, str):
+            try:
+                peer_port = int(peer_port)
+            except:
+                return self.return_result(exec_code=-1, data_info=f"{peer_port} is not an int or not cast to int")
         # Überprüfen, ob die Datei existiert
         if not os.path.exists(filepath):
             self.logger.error(f"Datei {filepath} nicht gefunden.")
@@ -514,6 +519,12 @@ class Tools(MainTool, FileHandler):
     @export(mod_name=Name, name="receive_and_decompress_file", test=False)
     def receive_and_decompress_file(self, save_path, listening_port):
         # Empfangs-Socket erstellen
+        if isinstance(listening_port, str):
+            try:
+                listening_port = int(listening_port)
+            except:
+                return self.return_result(exec_code=-1, data_info=f"{listening_port} is not an int or not cast to int")
+
         socket_data = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
                                                type_id=SocketType.peer, endpoint_port=listening_port,
                                                return_full_object=True)
