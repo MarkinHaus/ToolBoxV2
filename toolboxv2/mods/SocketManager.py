@@ -257,6 +257,8 @@ class Tools(MainTool, FileHandler):
                 if data_type == b'e':
                     running = False
                     self.print(f"{name} -- received exit signal --")
+                elif data_type == b'k':
+                    self.print(f"{name} -- received keepalive signal --")
                 elif data_type == b'b':
                     receiver_queue.put({'bytes': data_content})
                     self.print(f"{name} -- received bytes --")
@@ -299,7 +301,7 @@ class Tools(MainTool, FileHandler):
                 while keep_alive_var[0]:
                     time.sleep(keepalive_interval)
                     try:
-                        send({'keep_alive': i}, (host, endpoint_port))
+                        send(b'k', (host, endpoint_port))
                     except Exception as e:
                         self.print(f"Exiting keep alive {e}")
                         break
@@ -526,7 +528,7 @@ class Tools(MainTool, FileHandler):
 
         socket_data = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
                                                type_id=SocketType.peer, endpoint_port=listening_port,
-                                                keepalive_interval=10,
+                                                keepalive_interval=9,
                                                return_full_object=True)
         receiver_queue = socket_data['receiver_queue']
 
