@@ -244,9 +244,9 @@ class Tools(MainTool, FileHandler):
             self.print(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
 
         def receive(r_socket_):
-            t0 = time.perf_counter()
             running = True
             while running:
+                t0 = time.perf_counter()
                 data = r_socket_.recv(1024)
                 if not data:
                     break
@@ -257,6 +257,7 @@ class Tools(MainTool, FileHandler):
                 if data_type == b'e':
                     running = False
                     self.print(f"{name} -- received exit signal --")
+                    self.sockets[name]['keepalive_var'][0] = False
                 elif data_type == b'k':
                     self.print(f"{name} -- received keepalive signal --")
                 elif data_type == b'b':
@@ -547,7 +548,7 @@ class Tools(MainTool, FileHandler):
                 file_data += data['bytes']
                 # Daten dekomprimieren
                 if len(file_data) > 0:
-                    print(f"{file_size/len(file_data)*100:.2f}")
+                    print(f"{file_size/len(file_data)*100:.2f}% of 100% | {file_size}, {file_data}")
                 if len(file_data) != file_size:
                     continue
                 decompressed_data = gzip.decompress(file_data)
