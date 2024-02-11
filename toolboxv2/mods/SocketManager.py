@@ -68,7 +68,7 @@ class Tools(MainTool, FileHandler):
 
     def __init__(self, app=None):
         self.running = False
-        self.version = "0.0.5"
+        self.version = "0.0.6"
         self.name = "SocketManager"
         self.logger: logging.Logger or None = app.logger if app else None
         self.color = "WHITE"
@@ -92,6 +92,24 @@ class Tools(MainTool, FileHandler):
 
     def on_exit(self):
         self.logger.info(f"Closing SocketManager")
+        for socket_name, socket_data in self.sockets.items():
+            self.print(f"consing Socket : {socket_name}")
+            #'socket': socket,
+            #'receiver_socket': r_socket,
+            #'host': host,
+            #'port': port,
+            #'p2p-port': endpoint_port,
+            #'sender': send,
+            #'receiver_queue': receiver_queue,
+            #'connection_error': connection_error,
+            #'receiver_thread': s_thread,
+            #'keepalive_thread': keep_alive_thread,
+            #'keepalive_var': keep_alive_var,
+            socket_data['keepalive_var'][0] = False
+            try:
+                socket_data['sender']('exit')
+            except:
+                pass
         # ~ self.save_file_handler()
 
     def show_version(self):
@@ -203,13 +221,13 @@ class Tools(MainTool, FileHandler):
 
             if msg.get('exit'):
                 msg_json = 'exit'
-                sender_bytes = b'e'+msg_json.encode('utf-8')
+                sender_bytes = b'e' + msg_json.encode('utf-8')
             elif len(msg.keys()) == 1 and isinstance(msg[0], bytes):
-                sender_bytes = b'b'+msg[0]
+                sender_bytes = b'b' + msg[0]
                 msg_json = 'sending bytes'
             else:
                 msg_json = json.dumps(msg)
-                sender_bytes = b'j'+msg_json.encode('utf-8')
+                sender_bytes = b'j' + msg_json.encode('utf-8')
 
             self.print(Style.GREY(f"Sending Data {msg_json}"))
 
@@ -269,12 +287,13 @@ class Tools(MainTool, FileHandler):
                 self.print(f"No receiver connected {name}:{type_id}")
 
         keep_alive_thread = None
+        keep_alive_var = [True]
 
         if type_id == SocketType.peer.name:
 
             def keep_alive():
                 i = 0
-                while True:
+                while keep_alive_var[0]:
                     time.sleep(keepalive_interval / 1000)
                     try:
                         send({'keep_alive': i}, (host, endpoint_port))
@@ -282,6 +301,7 @@ class Tools(MainTool, FileHandler):
                         self.print("Exiting keep alive")
                         break
                     i += 1
+                self.print("Closing KeepAlive")
 
             keep_alive_thread = threading.Thread(target=keep_alive)
             keep_alive_thread.start()
@@ -297,6 +317,7 @@ class Tools(MainTool, FileHandler):
             'connection_error': connection_error,
             'receiver_thread': s_thread,
             'keepalive_thread': keep_alive_thread,
+            'keepalive_var': keep_alive_var,
         }
 
         if return_full_object:
@@ -453,8 +474,21 @@ class Tools(MainTool, FileHandler):
             compressed_data = gzip.compress(f.read())
 
         # Peer-to-Peer Socket erstellen und verbinden
-        send, _ = self.create_socket(name="sender", host=peer_host, port=peer_port, type_id=SocketType.peer,
-                                     endpoint_port=peer_port)
+        socket_data = self.create_socket(name="sender", host=peer_host, port=peer_port, type_id=SocketType.peer,
+                                         endpoint_port=peer_port, return_full_object=True)
+
+        # 'socket': socket,
+        # 'receiver_socket': r_socket,
+        # 'host': host,
+        # 'port': port,
+        # 'p2p-port': endpoint_port,
+        # 'sender': send,
+        # 'receiver_queue': receiver_queue,
+        # 'connection_error': connection_error,
+        # 'receiver_thread': s_thread,
+        # 'keepalive_thread': keep_alive_thread,
+
+        send = socket_data['sender']
 
         # Komprimierte Daten senden
         try:
@@ -470,13 +504,16 @@ class Tools(MainTool, FileHandler):
             self.logger.error(f"Fehler beim Senden der Datei: {e}")
             self.print(f"Fehler beim Senden der Datei: {e}")
             return False
+        finally:
+            socket_data['keepalive_var'][0] = False
 
     @export(mod_name=Name, name="receive_and_decompress_file", test=False)
     def receive_and_decompress_file(self, save_path, listening_port):
         # Empfangs-Socket erstellen
-        _, receiver_queue = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
-                                               type_id=SocketType.peer, endpoint_port=listening_port)
-
+        socket_data = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
+                                               type_id=SocketType.peer, endpoint_port=listening_port,
+                                               return_full_object=True)
+        receiver_queue = socket_data['receiver_queue']
         while True:
             # Auf Daten warten
             data = receiver_queue.get()
@@ -498,3 +535,4 @@ class Tools(MainTool, FileHandler):
                 break
             else:
                 self.print(f"Unexpected data : {data}")
+        socket_data['keepalive_var'][0] = False
