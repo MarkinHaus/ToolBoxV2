@@ -20,7 +20,7 @@ import threading
 import queue
 import asyncio
 
-version = "0.0.7"
+version = "0.0.8"
 Name = "SocketManager"
 
 export = get_app("SocketManager.Export").tb
@@ -107,7 +107,7 @@ class Tools(MainTool, FileHandler):
             #'keepalive_var': keep_alive_var,
             socket_data['keepalive_var'][0] = False
             try:
-                socket_data['sender']('exit')
+                socket_data['sender']({'exit'})
             except:
                 pass
         # ~ self.save_file_handler()
@@ -211,7 +211,7 @@ class Tools(MainTool, FileHandler):
             t0 = time.perf_counter()
 
             if not isinstance(msg, dict):
-                self.print(Style.YELLOW("Only dicts supported with keys msg and address"))
+                self.print(Style.YELLOW(f"Only dicts supported with keys msg and address '{msg}'"))
                 self.logger.warning("Try send none dic object thrue socket")
                 return
 
@@ -514,9 +514,13 @@ class Tools(MainTool, FileHandler):
                                                type_id=SocketType.peer, endpoint_port=listening_port,
                                                return_full_object=True)
         receiver_queue = socket_data['receiver_queue']
+
         while True:
             # Auf Daten warten
-            data = receiver_queue.get()
+            try:
+                data = receiver_queue.get(timeout=60*5)
+            except:
+                break
             if 'data_size' in data:
                 file_size = data['data_size']
                 self.logger.info(f"Erwartete Dateigröße: {file_size} Bytes")
@@ -535,4 +539,5 @@ class Tools(MainTool, FileHandler):
                 break
             else:
                 self.print(f"Unexpected data : {data}")
+
         socket_data['keepalive_var'][0] = False
