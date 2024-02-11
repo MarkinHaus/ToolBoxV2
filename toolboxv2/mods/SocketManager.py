@@ -216,7 +216,7 @@ class Tools(MainTool, FileHandler):
             # Prüfen, ob die Nachricht ein Dictionary ist und Bytes direkt unterstützen
             if isinstance(msg, bytes):
                 if len(msg) > 1472:
-                    res_msg = msg[1460]
+                    res_msg = msg[1460:]
                     msg = msg[:1460]
                 sender_bytes = b'b' + msg  # Präfix für Bytes
                 msg_json = 'sending bytes'
