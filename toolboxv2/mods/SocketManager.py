@@ -20,7 +20,7 @@ import threading
 import queue
 import asyncio
 
-version = "0.0.2"
+version = "0.0.7"
 Name = "SocketManager"
 
 export = get_app("SocketManager.Export").tb
@@ -68,7 +68,7 @@ class Tools(MainTool, FileHandler):
 
     def __init__(self, app=None):
         self.running = False
-        self.version = "0.0.6"
+        self.version = version
         self.name = "SocketManager"
         self.logger: logging.Logger or None = app.logger if app else None
         self.color = "WHITE"
@@ -298,7 +298,7 @@ class Tools(MainTool, FileHandler):
                     try:
                         send({'keep_alive': i}, (host, endpoint_port))
                     except Exception as e:
-                        self.print("Exiting keep alive")
+                        self.print(f"Exiting keep alive {e}")
                         break
                     i += 1
                 self.print("Closing KeepAlive")
