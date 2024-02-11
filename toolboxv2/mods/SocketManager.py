@@ -120,7 +120,7 @@ class Tools(MainTool, FileHandler):
     def create_socket(self, name: str = 'local-host', host: str = '0.0.0.0', port: int = 62435,
                       type_id: SocketType = SocketType.client,
                       max_connections=-1, endpoint_port=None,
-                      return_full_object=False, keepalive_interval=1000, test_override=False):
+                      return_full_object=False, keepalive_interval=1, test_override=False):
 
         if 'test' in self.app.id and not test_override:
             return "No api in test mode allowed"
@@ -295,7 +295,7 @@ class Tools(MainTool, FileHandler):
             def keep_alive():
                 i = 0
                 while keep_alive_var[0]:
-                    time.sleep(keepalive_interval / 1000)
+                    time.sleep(keepalive_interval)
                     try:
                         send({'keep_alive': i}, (host, endpoint_port))
                     except Exception as e:
