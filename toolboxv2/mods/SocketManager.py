@@ -4,7 +4,9 @@ The SocketManager Supports 2 types of connections
 2. Peer to Peer
 
 """
+import gzip
 import json
+import os
 import random
 import time
 from dataclasses import dataclass
@@ -45,7 +47,21 @@ create_socket_samples = [{'name': 'test', 'host': '0.0.0.0', 'port': 62435,
                           'type_id': SocketType.server,
                           'max_connections': -1, 'endpoint_port': 62434,
                           'return_full_object': False,
-                          'keepalive_interval': 1000},]
+                          'keepalive_interval': 1000}, ]
+
+
+def get_local_ip():
+    try:
+        # Erstellt einen Socket, um eine Verbindung mit einem öffentlichen DNS-Server zu simulieren
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            # Verwendet Google's öffentlichen DNS-Server als Ziel, ohne tatsächlich eine Verbindung herzustellen
+            s.connect(("8.8.8.8", 80))
+            # Ermittelt die lokale IP-Adresse, die für die Verbindung verwendet würde
+            local_ip = s.getsockname()[0]
+        return local_ip
+    except Exception as e:
+        print(f"Fehler beim Ermitteln der lokalen IP-Adresse: {e}")
+        return None
 
 
 class Tools(MainTool, FileHandler):
@@ -65,7 +81,7 @@ class Tools(MainTool, FileHandler):
             "tbSocketController": self.run_as_single_communication_server,
             "Version": self.show_version,
         }
-
+        self.local_ip = get_local_ip()
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                           name=self.name, logs=self.logger, color=self.color, on_exit=self.on_exit)
         self.sockets = {}
@@ -102,7 +118,7 @@ class Tools(MainTool, FileHandler):
 
         r_socket = None
         connection_error = 0
-
+        self.print(f"Device IP : {self.local_ip}")
         if type_id == SocketType.server.name:
             # create sever
             self.logger.debug(f"Starting:{name} server on port {port} with host {host}")
@@ -148,6 +164,7 @@ class Tools(MainTool, FileHandler):
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 sock.bind(('0.0.0.0', port))
                 sock.sendto(b'0', (host, endpoint_port))
+
             except Exception:
                 connection_error = -1
             self.print(f"Peer:{name} sending default to at {host}:{endpoint_port}")
@@ -356,7 +373,8 @@ class Tools(MainTool, FileHandler):
             client_socket.sendall("exit".encode('utf-8'))
 
     @export(mod_name=Name, name="run_as_single_communication_server", test=False)
-    def run_as_single_communication_server(self, name: str = 'local-host', host: str = '0.0.0.0', port: int = 62435, test_override=False):
+    def run_as_single_communication_server(self, name: str = 'local-host', host: str = '0.0.0.0', port: int = 62435,
+                                           test_override=False):
 
         if 'test' in self.app.id and not test_override:
             return "No api in test mode allowed"
@@ -414,3 +432,61 @@ class Tools(MainTool, FileHandler):
                 yield status_queue.get()
 
         return {"stop_server": stop_server, "get_status": get_status}
+
+    @export(mod_name=Name, name="run_as_single_communication_server", test=False)
+    def send_file_to_peer(self, filepath, peer_host, peer_port):
+        # Überprüfen, ob die Datei existiert
+        if not os.path.exists(filepath):
+            self.logger.error(f"Datei {filepath} nicht gefunden.")
+            return False
+
+        # Datei komprimieren
+        with open(filepath, 'rb') as f:
+            compressed_data = gzip.compress(f.read())
+
+        # Peer-to-Peer Socket erstellen und verbinden
+        send, _ = self.create_socket(name="sender", host=peer_host, port=peer_port, type_id=SocketType.peer,
+                                     endpoint_port=peer_port)
+
+        # Komprimierte Daten senden
+        try:
+            # Größe der komprimierten Daten senden
+            send({'data_size': len(compressed_data)})
+            # Komprimierte Daten senden
+            send({'file_data': compressed_data})
+            self.logger.info(f"Datei {filepath} erfolgreich gesendet.")
+            self.print(f"Datei {filepath} erfolgreich gesendet.")
+            send({'exit': True})
+            return True
+        except Exception as e:
+            self.logger.error(f"Fehler beim Senden der Datei: {e}")
+            self.print(f"Fehler beim Senden der Datei: {e}")
+            return False
+
+    @export(mod_name=Name, name="run_as_single_communication_server", test=False)
+    def receive_and_decompress_file(self, save_path, listening_port):
+        # Empfangs-Socket erstellen
+        _, receiver_queue = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
+                                               type_id=SocketType.peer, endpoint_port=listening_port)
+
+        while True:
+            # Auf Daten warten
+            data = receiver_queue.get()
+            if 'data_size' in data:
+                file_size = data['data_size']
+                self.logger.info(f"Erwartete Dateigröße: {file_size} Bytes")
+                self.print(f"Erwartete Dateigröße: {file_size} Bytes")
+            elif 'file_data' in data:
+                compressed_data = data['file_data']
+                # Daten dekomprimieren
+                decompressed_data = gzip.decompress(compressed_data)
+                # Datei speichern
+                with open(save_path, 'wb') as f:
+                    f.write(decompressed_data)
+                self.logger.info(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
+                self.print(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
+                break
+            elif 'exit' in data:
+                break
+            else:
+                self.print(f"Unexpected data : {data}")
