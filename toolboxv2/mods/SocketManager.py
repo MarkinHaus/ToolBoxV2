@@ -107,7 +107,7 @@ class Tools(MainTool, FileHandler):
             #'keepalive_var': keep_alive_var,
             socket_data['keepalive_var'][0] = False
             try:
-                socket_data['sender']({'exit'})
+                socket_data['sender']({'exit': True})
             except:
                 pass
         # ~ self.save_file_handler()
