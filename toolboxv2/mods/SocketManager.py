@@ -221,6 +221,9 @@ class Tools(MainTool, FileHandler):
                 if 'exit' in msg:
                     sender_bytes = b'e'  # Präfix für "exit"
                     msg_json = 'exit'
+                elif 'keepalive' in msg:
+                    sender_bytes = b'k'  # Präfix für "exit"
+                    msg_json = 'keepalive'
                 else:
                     msg_json = json.dumps(msg)
                     sender_bytes = b'j' + msg_json.encode('utf-8')  # Präfix für JSON
@@ -302,7 +305,7 @@ class Tools(MainTool, FileHandler):
                 while keep_alive_var[0]:
                     time.sleep(keepalive_interval)
                     try:
-                        send(b'k', (host, endpoint_port))
+                        send({'keepalive': True}, (host, endpoint_port))
                     except Exception as e:
                         self.print(f"Exiting keep alive {e}")
                         break
@@ -542,6 +545,7 @@ class Tools(MainTool, FileHandler):
                 self.logger.info(f"Erwartete Dateigröße: {file_size} Bytes")
                 self.print(f"Erwartete Dateigröße: {file_size} Bytes")
             elif 'bytes' in data:
+                print("dasdadad", data)
                 file_data += data['bytes']
                 # Daten dekomprimieren
                 if len(file_data) > 0:
