@@ -112,6 +112,12 @@ class FileHandler(Code):
         self.file_handler_save[key] = self.encode_code(value)
         return True
 
+    def remove_key_file_handler(self, key: str):
+        if key in self.file_handler_load.keys():
+            del self.file_handler_load[key]
+        if key in self.file_handler_save.keys():
+            del self.file_handler_save[key]
+
     def load_file_handler(self):
         get_logger().info(
             Style.BLUE(

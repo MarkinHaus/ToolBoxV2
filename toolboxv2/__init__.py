@@ -18,7 +18,7 @@ from toolboxv2.utils.cryp import Code
 
 __author__ = """Markin Hausmanns"""
 __email__ = 'Markinhausmanns@gmail.com'
-__version__ = '0.1.6'
+__version__ = '0.1.7'
 __all__ = [
     "__version__",
     "App",

@@ -13,7 +13,7 @@ from toolboxv2 import App
 from toolboxv2.utils.toolbox import get_app
 
 router = APIRouter(
-    prefix="/app",
+    prefix="/web",
     tags=["token"],
     # dependencies=[Depends(get_token_header)],
     # responses={404: {"description": "Not found"}},
@@ -40,14 +40,14 @@ async def index(access_allowed: bool = Depends(lambda: check_access_level(-1))):
 async def index2(access_allowed: bool = Depends(lambda: check_access_level(-1))):
     if level == -1:
         return serve_app_func('assets/serverInWartung.html')
-    return RedirectResponse(url="/app")
+    return RedirectResponse(url="/web")
 
 
-@router.get("/app/")
+@router.get("/web/")
 async def index2_(access_allowed: bool = Depends(lambda: check_access_level(-1))):
     if level == -1:
         return serve_app_func('assets/serverInWartung.html')
-    return RedirectResponse(url="/app")
+    return RedirectResponse(url="/web")
 
 
 @router.get("/login")
@@ -61,8 +61,8 @@ async def signup_page(access_allowed: bool = Depends(lambda: check_access_level(
 
 
 @router.get("/dashboard")
-async def quicknote(access_allowed: bool = Depends(lambda: check_access_level(1))):
-    return serve_app_func('dashboards/dashboard_builder.html')
+async def quicknote(access_allowed: bool = Depends(lambda: check_access_level(2))):
+    return serve_app_func('dashboards/user_dashboard.html')  # 'dashboards/dashboard_builder.html')
 
 
 @router.get("/{path:path}")
@@ -70,7 +70,7 @@ async def serve_files(path: str, request: Request, access_allowed: bool = Depend
     return serve_app_func(path)
 
 
-def serve_app_func(path: str, prefix: str = os.getcwd() + "/app/"):
+def serve_app_func(path: str, prefix: str = os.getcwd() + "/web/"):
     if not path:
         path = "index.html"
 
@@ -97,4 +97,4 @@ def serve_app_func(path: str, prefix: str = os.getcwd() + "/app/"):
     request_file_path.is_file()
     if request_file_path.exists():
         return FileResponse(request_file_path, media_type=content_type)
-    return FileResponse("./app/3Dbg.html", media_type=content_type)
+    return FileResponse("./web/3Dbg.html", media_type=content_type)

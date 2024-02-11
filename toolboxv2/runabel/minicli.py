@@ -168,10 +168,10 @@ def run(app: App, args):
         disk_usage = psutil.disk_usage('/').percent
 
         def get_rprompt():
-            current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            # Get current time
+            current_time: str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             return HTML(
-                f'''<b> App Infos: {app.id} \nCPU: {cpu_usage}% Memory: {memory_usage}% Disk :{disk_usage}%\nTime: {current_time}</b>''')
+                f'<b> App Infos: '
+                f'{app.id} \nCPU: {cpu_usage}% Memory: {memory_usage}% Disk :{disk_usage}%\nTime: {current_time}</b>')
 
         call = app.run_any(tbef.CLI_FUNCTIONS.USER_INPUT, completer_dict=autocompletion_dict,
                            get_rprompt=get_rprompt, bottom_toolbar=bottom_toolbar, active_modul=active_modular)

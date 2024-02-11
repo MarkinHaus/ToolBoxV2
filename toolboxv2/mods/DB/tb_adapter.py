@@ -73,14 +73,13 @@ class Tools(MainTool, FileHandler):
 
     def __init__(self, app=None):
         self.name = Name
-        self.logs = app.logger if app else None
         self.color = "YELLOWBG"
 
         self.keys = {"mode": "db~mode~~:"}
         self.encoding = 'utf-8'
 
         self.data_base: MiniRedis or MiniDictDB or DB or None = None
-        self.mode = DatabaseModes.crate(os.getenv("DB_MODE_KEY", "LC"))
+        self.mode = DatabaseModes.crate(os.getenv("DB_MODE_KEY", "LC") if 'test' not in get_app("DB_MODE_KEY").id else os.getenv("DB_MODE_KEY_TEST", "LC"))
         self.url = None
         self.passkey = None
         self.user_name = None
@@ -90,7 +89,6 @@ class Tools(MainTool, FileHandler):
                           load=self.initialize_database,
                           v=self.version,
                           name=self.name,
-                          logs=self.logs,
                           color=self.color,
                           on_exit=self.close_db)
 

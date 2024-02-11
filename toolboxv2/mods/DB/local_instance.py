@@ -15,10 +15,11 @@ class MiniDictDB:
         self.location = ""
 
     def scan_iter(self, search=''):
-        # print(self.data)
+        print(self.data)
         if not self.data:
             return []
-        return [key for key in self.data.keys() if key.startswith(search.replace('*', ''))]
+        search = search.replace('*', '')
+        return [key for key in self.data.keys() if key.startswith(search)]
 
     def initialize(self, location, key):
         if os.path.exists(location + 'MiniDictDB.json'):
@@ -32,7 +33,7 @@ class MiniDictDB:
             self.data = {}
         self.key = key
         self.location = location + 'MiniDictDB.json'
-        return Result.ok()
+        return Result.ok().set_origin("Dict DB")
 
     def get(self, key: str) -> Result:
         data = []
@@ -52,22 +53,25 @@ class MiniDictDB:
                 data.append(val)
 
         if not data:
-            return Result.default_internal_error(info=f"No data found for key {key}")
+            return Result.default_internal_error(info=f"No data found for key {key}").set_origin("Dict DB")
 
-        return Result.ok(data=data, data_info=data_info + key)
+        return Result.ok(data=data, data_info=data_info + key).set_origin("Dict DB")
 
     def set(self, key, value):
         if key and value:
             self.data[key] = value
-            return Result.ok()
-        return Result.default_user_error(info=f"key is {key}, type{type(key)}, value is {value}, type{type(value)}")
+            return Result.ok().set_origin("Dict DB")
+        return Result.default_user_error(info=f"key is {key}, type{type(key)}, value is {value}, type{type(value)}").set_origin("Dict DB")
 
     def append_on_set(self, key: str, value: list):
         if key in self.data:
             for v in value:
-                self.data[key].append(v)
-            return Result.ok()
-        return Result.default_user_error(info=f"key not found {key}")
+                if v in self.data[key]:
+                    return Result.default_user_error(info=f"key is {key}, {v} existing in set").set_origin("Dict DB")
+            self.data[key] += value
+            return Result.ok().set_origin("Dict DB")
+        self.data[key] = value
+        return Result.ok().set_origin("Dict DB")
 
     def if_exist(self, key: str):
         if key.endswith('*'):
@@ -79,10 +83,13 @@ class MiniDictDB:
         del_list = []
         n = 0
 
+        if not isinstance(key, str):
+            key = str(key, 'utf-8')
+
         if matching:
             for key_ in self.scan_iter():
                 # Check if the key contains the substring
-                if key_ in str(key, 'utf-8'):
+                if key_ in key:
                     n += 1
                     # Delete the key if it contains the substring
                     v = self.data.pop(key)
@@ -92,20 +99,20 @@ class MiniDictDB:
             del_list.append((key, v))
             n += 1
 
-        return Result.ok(data=del_list, data_info=f"Data deleted successfully removed {n} items")
+        return Result.ok(data=del_list, data_info=f"Data deleted successfully removed {n} items").set_origin("Dict DB")
 
     def exit(self) -> Result:
         if self.key == "":
-            return Result.default_internal_error(info="No cryptographic key available")
+            return Result.default_internal_error(info="No cryptographic key available").set_origin("Dict DB")
         if self.location == "":
-            return Result.default_internal_error(info="No file location available")
+            return Result.default_internal_error(info="No file location available").set_origin("Dict DB")
         data = Code().encode_code(str(self.data), self.key)
         try:
             save_to_json({"data": data}, self.location)
         except PermissionError and FileNotFoundError as f:
-            return Result.custom_error(data=f, info=f"Error Exiting local DB instance {f}")
+            return Result.custom_error(data=f, info=f"Error Exiting local DB instance {f}").set_origin("Dict DB")
 
-        return Result.ok()
+        return Result.ok().set_origin("Dict DB")
 
 
 def save_to_json(data, filename):
@@ -134,3 +141,4 @@ def load_from_json(filename):
 
     with open(filename, 'r') as file:
         return json.load(file)
+

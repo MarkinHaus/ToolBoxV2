@@ -34,6 +34,18 @@ class WELCOME(Enum):
 
 
 @dataclass
+class MINIMALHTML(Enum):
+    NAME = 'MinimalHtml'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
+    VERSION: str = 'Version'
+    ADD_GROUP: str = 'add_group'
+    ADD_COLLECTION_TO_GROUP: str = 'add_collection_to_group'
+    GENERATE_HTML: str = 'generate_html'
+    FUSE_TO_STRING: str = 'fuse_to_string'
+
+
+@dataclass
 class EMAIL_WAITING_LIST(Enum):
     NAME = 'email_waiting_list'
     ADD: str = 'add'
@@ -59,27 +71,6 @@ class SOCKETMANAGER(Enum):
 
 
 @dataclass
-class DB(Enum):
-    NAME = 'DB'
-    VERSION: str = 'Version'
-    GET: str = 'get'
-    IF_EXIST: str = 'if_exist'
-    SET: str = 'set'
-    INITIALIZED: str = 'initialized'
-    DELETE: str = 'delete'
-    APPEND_ON_SET: str = 'append_on_set'
-    INITIALIZE_DATABASE: str = 'initialize_database'
-    ON_START: str = 'on_start'
-    CLOSE_DB: str = 'close_db'
-    ON_EXIT: str = 'on_exit'
-    EDIT_PROGRAMMABLE: str = 'edit_programmable'
-    EDIT_CLI: str = 'edit_cli'
-    EDIT_DEV_WEB_UI: str = 'edit_dev_web_ui'
-    APP_INSTANCE: str = 'app_instance'
-    APP_INSTANCE_TYPE: str = 'app_instance_type'
-
-
-@dataclass
 class CLOUDM_AUTHMANAGER(Enum):
     NAME = 'CloudM.AuthManager'
     GET_USER_BY_NAME: str = 'get_user_by_name'
@@ -101,6 +92,27 @@ class CLOUDM_AUTHMANAGER(Enum):
 
 
 @dataclass
+class DB(Enum):
+    NAME = 'DB'
+    VERSION: str = 'Version'
+    GET: str = 'get'
+    IF_EXIST: str = 'if_exist'
+    SET: str = 'set'
+    INITIALIZED: str = 'initialized'
+    DELETE: str = 'delete'
+    APPEND_ON_SET: str = 'append_on_set'
+    INITIALIZE_DATABASE: str = 'initialize_database'
+    ON_START: str = 'on_start'
+    CLOSE_DB: str = 'close_db'
+    ON_EXIT: str = 'on_exit'
+    EDIT_PROGRAMMABLE: str = 'edit_programmable'
+    EDIT_CLI: str = 'edit_cli'
+    EDIT_DEV_WEB_UI: str = 'edit_dev_web_ui'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
+
+
+@dataclass
 class CLOUDM_USERINSTANCES(Enum):
     NAME = 'CloudM.UserInstances'
     GET_SI_ID: str = 'get_si_id'
@@ -109,7 +121,6 @@ class CLOUDM_USERINSTANCES(Enum):
     CLOSE_USER_INSTANCE: str = 'close_user_instance'
     VALIDATE_WS_ID: str = 'validate_ws_id'
     DELETE_USER_INSTANCE: str = 'delete_user_instance'
-    SET_USER_LEVEL: str = 'set_user_level'
     SAVE_USER_INSTANCES: str = 'save_user_instances'
     GET_INSTANCE_SI_ID: str = 'get_instance_si_id'
     GET_USER_INSTANCE: str = 'get_user_instance'
@@ -126,25 +137,10 @@ class CLOUDM_MODMANAGER(Enum):
 
 
 @dataclass
-class CLI_FUNCTIONS(Enum):
-    NAME = 'cli_functions'
-    VERSION: str = 'Version'
-    GET_CHARACTER: str = 'get_character'
-    GET_GENERATOR: str = 'get_generator'
-    UPDATE_AUTOCOMPLETION_MODS: str = 'update_autocompletion_mods'
-    UPDATE_AUTOCOMPLETION_LIST_OR_KEY: str = 'update_autocompletion_list_or_key'
-    USER_INPUT: str = 'user_input'
-    CO_EVALUATE: str = 'co_evaluate'
-    APP_INSTANCE: str = 'app_instance'
-    APP_INSTANCE_TYPE: str = 'app_instance_type'
-
-
-@dataclass
 class CLOUDM(Enum):
     NAME = 'CloudM'
     NEW_MODULE: str = 'new_module'
     CREATE_ACCOUNT: str = 'create_account'
-    LOG_IN: str = 'log_in'
     INIT_GIT: str = 'init_git'
     UPDATE_CORE: str = 'update_core'
     REGISTER_INITIAL_ROOT_USER: str = 'register_initial_root_user'
@@ -167,6 +163,36 @@ class QUICKNOTE(Enum):
     VIEW: str = 'VIEW'
     FIND: str = 'Find'
     INIT: str = 'init'
+
+
+@dataclass
+class CLI_FUNCTIONS(Enum):
+    NAME = 'cli_functions'
+    VERSION: str = 'Version'
+    GET_CHARACTER: str = 'get_character'
+    GET_GENERATOR: str = 'get_generator'
+    UPDATE_AUTOCOMPLETION_MODS: str = 'update_autocompletion_mods'
+    UPDATE_AUTOCOMPLETION_LIST_OR_KEY: str = 'update_autocompletion_list_or_key'
+    USER_INPUT: str = 'user_input'
+    CO_EVALUATE: str = 'co_evaluate'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
+
+
+@dataclass
+class DASHPROVIDER(Enum):
+    NAME = 'DashProvider'
+    VERSION: str = 'Version'
+    GET_CONTROLLER: str = 'get_controller'
+    GETSMSG: str = 'getsMSG'
+    GETTEXTWIDGET: str = 'getTextWidget'
+    GETPATHWIDGET: str = 'getPathWidget'
+    GETWIDGETNAVE: str = 'getWidgetNave'
+    GETDRAG: str = 'getDrag'
+    GETCONTROLS: str = 'getControls'
+    SERVICEWORKER: str = 'serviceWorker'
+    APP_INSTANCE: str = 'app_instance'
+    APP_INSTANCE_TYPE: str = 'app_instance_type'
 
 
 @dataclass

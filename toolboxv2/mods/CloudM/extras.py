@@ -1,6 +1,7 @@
 import os
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 from toolboxv2 import Style, Result, tbef, App
 from .AuthManager import get_invitation
@@ -106,9 +107,9 @@ def show_version(_, app: App):
 @no_test
 def create_account(self):
     version_command = self.app.config_fh.get_file_handler("provider::")
-    url = "https://simeplecore.app/app/signup"
+    url = "https://simeplecore.app/web/signup"
     if version_command is not None:
-        url = version_command + "/app/signup"
+        url = version_command + "/web/signup"
     # os.system(f"start {url}")
 
     try:
@@ -175,11 +176,32 @@ def register_initial_root_user(app: App):
 
     email = input("enter ure Email:")
     invitation = get_invitation(app=app).get()
-    return app.run_any(tbef.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
+    ret = app.run_any(tbef.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
                        username="root",
                        email=email,
                        invitation=invitation, get_results=True).lazy_return("intern",
                                                                             data="Error register_initial_root_user")
+    user = app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username="root")
+    key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
+    base_url = app.config_fh.get_file_handler("provider::") + (f':{app.args_sto.port}' if app.args_sto.host == 'localhost' else '')
+    url = f"{base_url}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
+
+    try:
+        import qrcode
+
+        qr = qrcode.main.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_Q,
+            box_size=1,
+            border=2,
+        )
+        qr.add_data(url)
+        qr.make(fit=True)
+
+        qr.print_ascii(invert=True)
+    except ImportError:
+        print(url)
+    return ret
 
 
 @no_test

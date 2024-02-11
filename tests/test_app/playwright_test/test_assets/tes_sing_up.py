@@ -13,7 +13,7 @@ def test_run_sing_up(playwright: Playwright) -> None:
 
     user_name = faker.Faker().word()
 
-    page.goto("http://localhost:5000/app/signup")
+    page.goto("http://localhost:5000/web/signup")
     page.wait_for_load_state("networkidle")
     page.get_by_placeholder("Username").click()
     page.get_by_placeholder("Username").fill(user_name)

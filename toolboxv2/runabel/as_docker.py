@@ -93,7 +93,7 @@ def run(app: App, args: AppArgs):
     # Install any needed packages specified in requirements.txt
     RUN pip install -e ./ToolBoxV2/
 
-    #RUN npm install ./ToolBoxV2/toolboxv2/app/node_modules/.package-lock.json
+    #RUN npm install ./ToolBoxV2/toolboxv2/web/node_modules/.package-lock.json
     # Make port 5000, 62435 available to the world outside this container
     EXPOSE 5000:5000
     EXPOSE 62435:62435

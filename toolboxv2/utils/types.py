@@ -111,6 +111,16 @@ class ApiResult(BaseModel):
             origin=self.origin
         )
 
+    def to_api_result(self):
+        return self
+
+    def print(self, *args, **kwargs):
+        res = self.as_result().print(*args, **kwargs)
+        if not isinstance(res, str):
+            res = res.to_api_result()
+        return res
+
+
 
 class Result:
     def __init__(self,
@@ -123,6 +133,9 @@ class Result:
         self.result: ToolBoxResult = result
         self.info: ToolBoxInfo = info
         self.origin = origin
+
+    def as_result(self):
+        return self
 
     def set_origin(self, origin):
         if self.origin is not None:
@@ -149,7 +162,7 @@ class Result:
                 data_type=self.result.data_type
             ) if self.result else None,
             info=ToolBoxInfoBM(
-                exec_code=self.info.exec_code,
+                exec_code=self.info.exec_code,  # exec_code umwandel in http resposn codes
                 help_text=self.info.help_text
             ) if self.info else None,
             origin=self.origin
@@ -199,7 +212,7 @@ class Result:
                 f"{origin}{data if not data.endswith('NO Data') else ''}")
         if not show:
             return text
-        print(text)
+        print("\n======== Result ========\n"+text+"\n------- EndOfD -------")
         return self
 
     def log(self, show_data=True, prifix=""):
@@ -210,10 +223,12 @@ class Result:
     def __str__(self):
         return self.print(show=False, show_data=True)
 
-    def get(self, default=None):
+    def get(self, key=None, default=None):
         data = self.result.data
         if isinstance(data, Result):
-            return data.get()
+            return data.get(key=key, default=default)
+        if key is not None and isinstance(data, dict):
+            return data.get(key, default)
         return data if data is not None else default
 
     def lazy_return(self, _=0, data=None, **kwargs):

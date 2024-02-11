@@ -296,55 +296,7 @@ class Tools(MainTool, FileHandler):
             if "ServerAction" in keys:
                 action = data["ServerAction"]
 
-                if action == "getsMSG":
-                    # Sendeng system MSG message
-                    systemMSG_content = self.construct_render(content="./app/systemMSG/text.html",
-                                                              element_id="extra",
-                                                              externals=["/app/systemMSG/speech_balloon.js"],
-                                                              from_file=True)
-
-                    await websocket.send_text(systemMSG_content)
-                elif action == "getTextWidget":  # WigetNav
-                    # Sendeng system MSG message
-                    widgetText_content = self.construct_render(content="./app/1/textWidet/text.html",
-                                                               element_id="widgetText",
-                                                               externals=["/app/1/textWidet/testWiget.js"],
-                                                               from_file=True)
-
-                    await websocket.send_text(widgetText_content)
-                elif action == "getPathWidget":
-                    widgetPath_content = self.construct_render(content="./app/1/PathWidet/text.html",
-                                                               element_id="widgetPath",
-                                                               externals=["/app/1/PathWidet/pathWiget.js"],
-                                                               from_file=True)
-
-                    await websocket.send_text(widgetPath_content)
-                elif action == "getWidgetNave":
-                    # Sendeng system MSG message
-                    widgetText_content = self.construct_render(content="./app/1/WigetNav/navDrow.html",
-                                                               element_id="controls",
-                                                               externals=["/app/1/WigetNav/navDrow.js"],
-                                                               from_file=True)
-
-                    await websocket.send_text(widgetText_content)
-                elif action == "getDrag":
-                    drag_content = self.construct_render(content="./app/Drag/drag.html",
-                                                         element_id="DragControls",
-                                                         externals=["/app/Drag/drag.js"],
-                                                         from_file=True)
-                    await websocket.send_text(drag_content)
-                elif action == "getControls":
-                    controller_content = self.construct_render(content="",
-                                                               element_id="editorWidget",
-                                                               externals=["/app/1/Controler/controller.js"])
-
-                    await websocket.send_text(controller_content)
-                elif action == "serviceWorker":
-                    sw_content = self.construct_render(content="",
-                                                       element_id="control1",
-                                                       externals=["/app/index.js", "/app/sw.js"])
-                    await websocket.send_text(sw_content)
-                elif action == "logOut":
+                if action == "logOut":
                     user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
                     if user_instance is None or not user_instance:
                         return '{"res": "No User Instance Found"}'
@@ -370,7 +322,7 @@ class Tools(MainTool, FileHandler):
                     home_content = self.construct_render(content="",
                                                          element_id="main",
 
-                                                         externals=["/app/scripts/go_home.js"])
+                                                         externals=["/web/scripts/go_home.js"])
 
                     await websocket.send_text(home_content)
                 elif action == "getModListAll":
@@ -482,7 +434,7 @@ class Tools(MainTool, FileHandler):
 
                     if not isinstance(res, str):
                         res = str(res)
-
+                    await websocket.send_text(res)
                     return res
             if "ValidateSelf" in keys:
                 user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
@@ -504,10 +456,12 @@ class Tools(MainTool, FileHandler):
             await self.send_message(data, websocket, websocket_id)
 
     def construct_render(self, content: str, element_id: str, externals: List[str] or None = None,
-                         placeholder_content: str or None = None, from_file=False):
+                         placeholder_content: str or None = None, from_file=False, to_str=True):
 
         if externals is None:
             externals = []
+        if element_id is None:
+            element_id = ""
 
         if placeholder_content is None:
             placeholder_content = "<h1>Loading...</h1>"
@@ -532,4 +486,6 @@ class Tools(MainTool, FileHandler):
 
         self.logger.info(f"render content :  {render_data}")
 
-        return json.dumps(render_data)
+        if to_str:
+            return json.dumps(render_data)
+        return render_data

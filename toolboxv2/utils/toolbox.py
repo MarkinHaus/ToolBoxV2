@@ -104,13 +104,18 @@ class App(metaclass=Singleton):
         self.prefix = prefix
         self.id = prefix + '-' + node()
 
+        self.globals = {
+            "root": {},
+        }
+        self.locals = {
+            "user": {},
+        }
+
         identification = self.id
         if args.mm:
             identification = "MainNode"
 
         if "test" in prefix:
-            self.start_dir += '\\tests'
-            os.makedirs(self.start_dir, exist_ok=True)
             self.data_dir = self.start_dir + '\\.data\\' + "test"
             self.config_dir = self.start_dir + '\\.config\\' + "test"
         else:
@@ -147,6 +152,7 @@ class App(metaclass=Singleton):
             "comm-his": "comm-his~:",
             "develop-mode": "dev~mode~:",
             "all_main": "all~main~:",
+            "provider::": "provider::",
         }
 
         defaults = {
@@ -167,7 +173,7 @@ class App(metaclass=Singleton):
         self.runnable = {}
         self.dev_modi = self.config_fh.get_file_handler(self.keys["develop-mode"])
         if self.config_fh.get_file_handler("provider::") is None:
-            self.config_fh.add_to_save_file_handler("provider::", "https://simplecore.app")
+            self.config_fh.add_to_save_file_handler("provider::", os.environ.get("HOSTNAME", "https://simplecore.app"))
         self.functions = {}
 
         self.interface_type = ToolBoxInterfaces.native
@@ -432,7 +438,7 @@ class App(metaclass=Singleton):
 
         if modular_id not in self.functions.keys():
             if r == 0:
-                self.save_load(modular_id)
+                self.save_load(modular_id, spec=specification)
                 return self.get_function(name=(modular_id, function_id),
                                          state=state,
                                          specification=specification,
@@ -506,7 +512,7 @@ class App(metaclass=Singleton):
         self.logger.info(f"save exiting saving data to {self.config_fh.file_handler_filename} states of {self.debug=}")
         self.config_fh.add_to_save_file_handler(self.keys["debug"], str(self.debug))
 
-    def load_mod(self, mod_name, mlm='I', **kwargs):
+    def load_mod(self, mod_name: str, mlm='I', **kwargs):
 
         self.logger.info(f"try opening module {mod_name}")
         action_list_helper = ['I (inplace load dill on error python)',
@@ -553,7 +559,7 @@ class App(metaclass=Singleton):
 
         with concurrent.futures.ThreadPoolExecutor() as executor:
             # Load modules in parallel using threads
-            futures = {executor.submit(self.load_mod, mod) for mod in module_list}
+            futures = {executor.submit(self.save_load, mod) for mod in module_list}
 
             for _ in concurrent.futures.as_completed(futures):
                 opened += 1
@@ -750,7 +756,15 @@ class App(metaclass=Singleton):
                                                  info=f"function not found function").set_origin(mod_function_name)
 
         self.logger.info(f"Profiling function")
+        return self.fuction_runner(function, function_data, args, kwargs)
+
+    def fuction_runner(self, function, function_data: dict, args: list, kwargs: dict):
+
         parameters = function_data.get('params')
+        modular_name = function_data.get('module_name')
+        function_name = function_data.get('func_name')
+        mod_function_name = f"{modular_name}.{function_name}"
+
         if_self_state = 1 if 'self' in parameters else 0
 
         try:
@@ -767,6 +781,10 @@ class App(metaclass=Singleton):
                 formatted_result = res
                 if formatted_result.origin is None:
                     formatted_result.set_origin(mod_function_name)
+            elif isinstance(res, ApiResult):
+                formatted_result = res
+                if formatted_result.origin is None:
+                    formatted_result.as_result().set_origin(mod_function_name).to_api_result()
             else:
                 # Wrap the result in a Result object
                 formatted_result = Result.ok(
@@ -822,7 +840,7 @@ class App(metaclass=Singleton):
         if not get_results and isinstance(res, Result):
             return res.get()
 
-        return res
+        return res.as_result()
 
     def get_mod(self, name, spec='app') -> ModuleType or toolboxv2.MainTool:
         if name not in self.functions.keys():
@@ -875,6 +893,7 @@ class App(metaclass=Singleton):
                           post_compute=None,
                           memory_cache=False,
                           file_cache=False,
+                          request_as_kwarg=False,
                           memory_cache_max_size=100,
                           memory_cache_ttl=300):
 
@@ -954,6 +973,8 @@ class App(metaclass=Singleton):
                                  f"Please change the sig from ..)-> Result to ..)-> ApiResult")
             data = {
                 "type": type_,
+                "module_name": module_name,
+                "func_name": func_name,
                 "level": level,
                 "restrict_in_virtual_mode": restrict_in_virtual_mode,
                 "func": func,
@@ -969,6 +990,7 @@ class App(metaclass=Singleton):
                     False if len(params) == 0 else params[0] in ['self', 'state', 'app']) if state is None else state,
                 "do_test": test,
                 "samples": samples,
+                "request_as_kwarg": request_as_kwarg,
 
             }
             self._register_function(module_name, func_name, data)
@@ -999,6 +1021,7 @@ class App(metaclass=Singleton):
            test_only: bool = False,
            memory_cache: bool = False,
            file_cache: bool = False,
+           request_as_kwarg: bool = False,
            state: bool or None = None,
            level: int = -1,
            memory_cache_max_size: int = 100,
@@ -1025,6 +1048,7 @@ class App(metaclass=Singleton):
         exit_f (bool, optional): Flag to indicate if the function should be executed at exit.
         test_only (bool, optional): Flag to indicate if the function should only be used for testing.
         memory_cache (bool, optional): Flag to enable memory caching for the function.
+        request_as_kwarg (bool, optional): Flag to get request if the fuction is calld from api.
         file_cache (bool, optional): Flag to enable file caching for the function.
         state (bool or None, optional): Flag to indicate if the function maintains state.
         level (int, optional): The level of the function, used for prioritization or categorization.
@@ -1059,6 +1083,7 @@ class App(metaclass=Singleton):
                                       post_compute=post_compute,
                                       memory_cache=memory_cache,
                                       file_cache=file_cache,
+                                      request_as_kwarg=request_as_kwarg,
                                       memory_cache_max_size=memory_cache_max_size,
                                       memory_cache_ttl=memory_cache_ttl)
 

@@ -12,16 +12,16 @@ version = '0.0.1'
 
 def webInstall(self, user_instance, construct_render) -> str:
     self.print("Installing Web")
-    return construct_render(content="./app/0/welcome/welcome.html",
+    return construct_render(content="./web/0/welcome/welcome.html",
                             element_id="main",
-                            externals=["/app/0/welcome/welcome.js"],
+                            externals=["/web/0/welcome/welcome.js"],
                             from_file=True)
 
 
 def webInstall_app_wrapper(self, command):
-    return command[1](content="./app/0/welcome/welcome.html",
+    return command[1](content="./web/0/welcome/welcome.html",
                       element_id="main",
-                      externals=["/app/0/welcome/welcome.js"],
+                      externals=["/web/0/welcome/welcome.js"],
                       from_file=True)
 
 

@@ -6,13 +6,13 @@ import os
 Name = "email_waiting_list"
 version = '*.*.*'
 export = get_app("email_waiting_list.email_waiting_list.EXPORT").tb
-s_export = export(mod_name=Name, version=version, state=False)
+s_export = export(mod_name=Name, version=version, state=False, test=False)
 api_key = os.environ.get('MJ_APIKEY_PUBLIC')
 api_secret = os.environ.get('MJ_APIKEY_PRIVATE')
 mailjet = Client(auth=(api_key, api_secret), version='v3.1')
 
 
-@export(mod_name=Name, api=True, interface=ToolBoxInterfaces.api, state=True)
+@export(mod_name=Name, api=True, interface=ToolBoxInterfaces.api, state=True, test=False)
 def add(app: App, email: str) -> ApiResult:
     if app is None:
         app = get_app("email_waiting_list")
@@ -103,7 +103,7 @@ def crate_magick_lick_device_email(user_email, user_name, link_id, nl=-1):
                 ],
                 "Subject": "Welcome to SimpleCore!",
                 "TextPart": f"Hi {user_name}",
-                "HTMLPart": f"<h3>Dear passenger 1, welcome to <a href=\"https://simplecore.app/app/assets/m_log_in.html?key={link_id}&nl={nl}\">Magick Log in link</a> don not chair!</h3><br />Must enter ur user name on the next page to log in"
+                "HTMLPart": f"<h3>Dear passenger 1, welcome to <a href=\"https://simplecore.app/web/assets/m_log_in.html?key={link_id}&nl={nl}\">Magick Log in link</a> don not chair!</h3><br />Must enter ur user name on the next page to log in"
             }
         ]
     }

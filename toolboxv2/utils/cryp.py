@@ -262,20 +262,23 @@ class Code:
         return False
 
     @staticmethod
-    def create_signature(message: str, private_key_str: str, salt_length=padding.PSS.MAX_LENGTH) -> str:
+    def create_signature(message: str, private_key_str: str, salt_length=padding.PSS.MAX_LENGTH, row=False) -> str or bytes:
         try:
             private_key = serialization.load_pem_private_key(private_key_str.encode(), password=None)
             signature = private_key.sign(
                 message.encode(),
                 padding.PSS(
-                    mgf=padding.MGF1(hashes.SHA256()),
+                    mgf=padding.MGF1(hashes.SHA512()),
                     salt_length=salt_length
                 ),
-                hashes.SHA256()
+                hashes.SHA512()
             )
-            return signature.decode()
+            if row:
+                return signature
+            return base64.b64encode(signature).decode()
         except Exception as e:
-            get_logger().error(f"Error encrypt_asymmetric {e}")
+            get_logger().error(f"Error create_signature {e}")
+            print(e)
         return "Invalid Key"
 
     @staticmethod
@@ -293,7 +296,7 @@ class Code:
         return public_key
 
     @staticmethod
-    def public_key_to_pem(public_key):
+    def public_key_to_pem(public_key: RSAPublicKey):
         """
         Konvertiert ein PublicKey-Objekt in einen PEM-kodierten String.
 
@@ -310,6 +313,7 @@ class Code:
         return pem.decode()
 
 
-DEVICE_KEY_PATH = "./divice.key"
-DEVICE_KEY = lambda: open(DEVICE_KEY_PATH, "r").read() if os.path.exists(DEVICE_KEY_PATH) else open(DEVICE_KEY_PATH,
-                                                                                                 "w").write(Fernet.generate_key().decode())
+DEVICE_KEY_PATH = "./device.key"
+DEVICE_KEY = lambda: open(DEVICE_KEY_PATH,
+                          "r").read(
+) if os.path.exists(DEVICE_KEY_PATH) else open(DEVICE_KEY_PATH, "wb").write(Fernet.generate_key())

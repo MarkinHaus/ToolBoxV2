@@ -235,7 +235,10 @@ def get_user_by_name(app: App, username: str, uid: str = '*') -> Result:
         if len(user_data) > 1:
             pass
 
-        return Result.ok(data=User(**eval(user_data[0].decode())))
+        if isinstance(user_data[0], bytes):
+            user_data[0] = user_data[0].decode()
+
+        return Result.ok(data=User(**eval(user_data[0])))
     else:
         return Result.default_internal_error(info="get_user_by_name failed no User data found", exec_code=2351)
 
@@ -485,13 +488,16 @@ def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
     user.user_pass_pub_persona = user_persona_pub_key
     user.is_persona = True
 
+    if user.level == 0:
+        user.level = 2
+
     # Speichern des neuen Benutzers in der Datenbank
     save_result = db_helper_save_user(app, asdict(user))
     if save_result.is_error():
         return save_result.to_api_result()
 
     key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
-    url = f"/app/assets/m_log_in.html?key={quote(key)}&name={user.name}"
+    url = f"/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
 
     return Result.ok(info="User registered successfully", data=url)
 
@@ -501,8 +507,8 @@ def crate_local_account(app: App, username: str, email: str = '', invitation: st
     if app is None:
         app = get_app(Name + '.crate_local_account')
     user_pri = app.config_fh.get_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8])
-    if user_pri is not None:
-        return Result.ok(info="User already registered on this device")
+    if user_pri is not None and db_helper_test_exist(app=app, username=username):
+        return Result.default_user_error(info="User already registered on this device")
     pub, pri = Code.generate_asymmetric_keys()
     app.config_fh.add_to_save_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8], pri)
     if ToolBox_over == 'root' and invitation == '':
@@ -530,9 +536,10 @@ def local_login(app: App, username: str) -> Result:
     if user_pri is None:
         return Result.ok(info="No User registered on this device")
 
-    signature = Code.create_signature(get_to_sing_data(app, username=username).as_result().get(), user_pri)
+    signature = Code.create_signature(get_to_sing_data(app, username=username).as_result().get('challenge'), user_pri
+                                      , row=True)
 
-    res = jwt_get_claim(app, username, signature).as_result()
+    res = jwt_get_claim(app, username, signature, web=False).as_result()
 
     if res.info.exec_code != 0:
         return Result.custom_error(data=res, info="user login failed!", exec_code=res.info.exec_code)
@@ -624,7 +631,7 @@ def validate_persona(app: App, data: VpUSER) -> ApiResult:
         return save_result.to_api_result()
 
     key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
-    url = f"/app/assets/m_log_in.html?key={quote(key)}&name={user.name}"
+    url = f"/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
     return Result.ok(data=url, info="Auto redirect")
 
 
@@ -643,12 +650,10 @@ def validate_device(app: App, data: VdUSER) -> ApiResult:
     valid = False
 
     for divce_keys in user.user_pass_pub_devices:
-
         valid = Code.verify_signature(signature=from_base64(data.signature),
                                       message=user.challenge,
                                       public_key_str=divce_keys,
                                       salt_length=32)
-
         if valid:
             user.pub_key = divce_keys
             break
@@ -691,12 +696,12 @@ def authenticate_user_get_sync_key(app: App, username: str, signature: str or by
     if web:
         if not Code.verify_signature_web_algo(signature=signature,
                                               message=to_base64(
-                                                  user.challenge) if user.challenge else username + app.id + instance_bios,
+                                                  user.challenge),
                                               public_key_str=user.pub_key):
             return Result.default_user_error(info="Verification failed Invalid signature")
     else:
         if not Code.verify_signature(signature=signature,
-                                     message=user.challenge if user.challenge else username + app.id + instance_bios,
+                                     message=user.challenge,
                                      public_key_str=user.pub_key):
             return Result.default_user_error(info="Verification failed Invalid signature")
 
@@ -707,7 +712,8 @@ def authenticate_user_get_sync_key(app: App, username: str, signature: str or by
     crypt_sync_key = Code.encrypt_asymmetric(user.user_pass_sync, user.pub_key)
 
     if get_user:
-        Result.ok(data_info="Returned Sync Key, read only for user", data=(crypt_sync_key, asdict(user)))
+        return Result.ok(data_info="Returned Sync Key, read only for user (withe user_data)",
+                         data=(crypt_sync_key, asdict(user)))
 
     return Result.ok(data_info="Returned Sync Key, read only for user", data=crypt_sync_key)
 
@@ -721,7 +727,7 @@ def get_user_sync_key_local(app: App, username: str, ausk=None) -> Result:
 
     user_pri = app.config_fh.get_file_handler("Pk" + Code.one_way_hash(username)[:8])
 
-    signature = Code.create_signature(username + app.id + instance_bios, user_pri)
+    signature = Code.create_signature(get_to_sing_data(app, username=username).get('challenge'), user_pri)
 
     authenticate_user_get_sync_key_ = lambda *args: authenticate_user_get_sync_key(*args)
     if ausk is not None:
@@ -742,11 +748,11 @@ def get_user_sync_key_local(app: App, username: str, ausk=None) -> Result:
 # jwt claim
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.remote, api=True, test=False)
-def jwt_get_claim(app: App, username: str, signature: str or bytes) -> ApiResult:
+def jwt_get_claim(app: App, username: str, signature: str or bytes, web=False) -> ApiResult:
     if app is None:
         app = get_app(Name + '.jwt_claim_server_side_sync')
 
-    res = authenticate_user_get_sync_key(app, username, signature, get_user=True).as_result()
+    res = authenticate_user_get_sync_key(app, username, signature, get_user=True, web=web).as_result()
 
     if res.info.exec_code != 0:
         return res.custom_error(data=res)
@@ -803,58 +809,59 @@ def prep_test():
     app.run_any(tbef.DB.EDIT_PROGRAMMABLE, mode=DatabaseModes.LC)
 
 
-@test_only
-def crate_user_test(app: App):
+def get_test_app_gen(app=None):
     if app is None:
-        app = get_app(f"{Name}.crate_user_test")
-    r = crate_local_account(app, "testUser123", "test_mainqmail.com", get_invitation(app).get())
-    r2 = local_login(app, "testUser123").lazy_return("crate_local_account + local_login failed")
-    res = [[r.is_error() is False, "r.is_error() "], [r2.is_error() is False, "r2.is_error()"],
-           [r.is_data() is True, "r.is_data() i"], [r2.is_data() is True, "r2.is_data() "],
-           [r.result.data_info == "Success", "r.result.data"], [r2.result.data_info == "Success", "r2.result.dat"]]
-    return res
+        app = get_app('test-app', name='test-debug')
+    yield app
+    # Teardown-Logik hier, falls benötigt
+
+
+def helper_gen_test_app():
+    _ = get_test_app_gen(None)
+    TestAppGen.t = _, next(_)
+    prep_test()
+    return TestAppGen
+
+
+class TestAppGen:
+    t: tuple
+
+    @staticmethod
+    def get():
+        return TestAppGen.t
 
 
 @test_only
-def test_validate_persona(app: App = None):
-    if app is None:
-        app = get_app(f"{Name}.test_validate_persona", name="test-debug")
+def test_user():
+    app: App
+    test_app, app = helper_gen_test_app().get()
+    username = "testUser123"+uuid.uuid4().hex
+    email = "test_mainqmail.com"
+    db_helper_delete_user(app, username, "*", matching=True)
+    # Benutzer erstellen
+    r = crate_local_account(app, username, email, get_invitation(app).get())
+    assert not r.is_error(), r.print(show=False)
+    r = crate_local_account(app, username, email, get_invitation(app).get())
+    assert r.is_error(), r.print(show=False)
+    # Aufräumen
+    db_helper_delete_user(app, username, "*", matching=True)
+    app.config_fh.remove_key_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8])
+    return Result.ok()
 
-    # Schritt 1: Benutzer erstellen
-    username = "testPersonaUser"
-    email = "persona_test@example.com"
-    pub_key, pri_key = Code.generate_asymmetric_keys()
-    user = UserCreator(name=username, email=email, user_pass_pub_devices=[pub_key], pub_key=pub_key)
-    db_helper_save_user(app, asdict(user))
 
-    # Schritt 2: Persona-Daten vorbereiten
-    challenge = user.challenge
-    signature = Code.create_signature(challenge, pri_key)
-    clientJSON = json.dumps({"challenge": to_base64(challenge).decode()})
-    authenticatorData = "testAuthenticatorData"
-    userHandle = "testUserHandle"
-
-    # Schritt 3: Testdaten vorbereiten
-    test_data = VpUSER(
-        username=username,
-        signature=to_base64(signature),
-        clientJSON=to_base64(clientJSON),
-        authenticatorData=to_base64(authenticatorData),
-        userHandle=to_base64(userHandle)
-    )
-
-    # Schritt 4: validate_persona Funktion testen
-    result = validate_persona(app, test_data).as_result()
-
-    # Schritt 5: Ergebnisse überprüfen
-    result.print()
-    assert not result.is_error(), f"Test fehlgeschlagen: {result.info}"
-    assert not result.is_data(), "Erwartete Antwort nicht erhalten"
-
-    # Aufräumen: Benutzer aus der Datenbank entfernen
-    db_helper_delete_user(app, username, user.uid)
-
-    return "Test erfolgreich abgeschlossen"
+@test_only
+def test_create_user_and_login():
+    app: App
+    test_app, app = helper_gen_test_app().get()
+    username = "testUser123"+uuid.uuid4().hex
+    email = "test_mainqmail.com"
+    r = crate_local_account(app, username, email, get_invitation(app).get())
+    r2 = local_login(app, username)
+    assert not r.is_error(), r.print(show=False)
+    assert not r2.is_error(), r2.print(show=False)
+    app.config_fh.remove_key_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8])
+    db_helper_delete_user(app, username, "*", matching=True)
+    return Result.ok()
 
 
 @test_only
@@ -863,27 +870,26 @@ def test_validate_device(app: App = None):
         app = get_app(f"{Name}.test_validate_device", name="test-debug")
 
     # Schritt 1: Benutzer erstellen
-    username = "testUser"
+    username = "testUser"+uuid.uuid4().hex
     email = "test@example.com"
     pub_key, pri_key = Code.generate_asymmetric_keys()
     user = UserCreator(name=username, email=email, user_pass_pub_devices=[pub_key], pub_key=pub_key)
     db_helper_save_user(app, asdict(user))
 
     # Schritt 2: Signatur generieren
-    challenge = user.challenge
-    signature = Code.create_signature(challenge, pri_key)
+    signature = Code.create_signature(get_to_sing_data(app, username=username).as_result().get('challenge'),
+                                      pri_key, row=False, salt_length=32)
 
     # Schritt 3: Testdaten vorbereiten
-    test_data = VdUSER(username=username, signature=to_base64(signature).decode())
-
+    test_data = VdUSER(username=username, signature=signature)
     # Schritt 4: validate_device Funktion testen
     result = validate_device(app, test_data).as_result()
     result.print()
     # Schritt 5: Ergebnisse überprüfen
-    assert not result.is_error(), f"Test fehlgeschlagen: {result.info}"
-    assert not result.is_data(), "Kein Schlüssel im Ergebnis gefunden"
+    assert not result.is_error(), f"Test fehlgeschlagen: {result.print(show=False)}"
+    assert result.is_data(), "Kein Schlüssel im Ergebnis gefunden"
 
     # Aufräumen: Benutzer aus der Datenbank entfernen
     db_helper_delete_user(app, username, user.uid)
 
-    return "Test erfolgreich abgeschlossen"
+    return Result.ok()

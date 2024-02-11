@@ -27,7 +27,7 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
     RATE_LIMIT_DURATION = timedelta(seconds=2)
     RATE_LIMIT_REQUESTS_app = 800
     RATE_LIMIT_REQUESTS_api = 60
-    WHITE_LIST_IPS = []
+    WHITE_LIST_IPS = ["127.0.0.1"]
 
     def __init__(self, app):
         super().__init__(app)
@@ -39,6 +39,9 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
         client_ip = request.client.host
 
         # Check if IP is already present in request_counts
+        request_count_app: int
+        request_count_api: int
+        last_request: datetime
         request_count_app, request_count_api, last_request = self.request_counts.get(client_ip, (0, 0, datetime.min))
 
         # Calculate the time elapsed since the last request
@@ -47,7 +50,8 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
             pass
         if elapsed_time > self.RATE_LIMIT_DURATION:
             # If the elapsed time is greater than the rate limit duration, reset the count
-            request_count = 1
+            request_count_app: int = 1
+            request_count_api: int = 1
         else:
             if request_count_app >= self.RATE_LIMIT_REQUESTS_app:
                 # If the request count exceeds the rate limit, return a JSON response with an error message
@@ -125,6 +129,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
                 content={"message": "!ACCESS_DENIED!"}
             )
         if jwt_claim is None or username is None:
+            tb_app.logger.debug(f"Session Handler New session no jwt no username {username}")
             return '#0'
         return self.verify_session_id(session_id, username, jwt_claim)
 
@@ -136,6 +141,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             # del self.sessions[session_id]
             self.sessions[session_id]['CHECK'] = 'failed'
             self.sessions[session_id]['c'] += 1
+            tb_app.logger.debug(f"Session Handler V invalid jwt from : {username}")
             return '#0'
 
         user_result = tb_app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME,
@@ -146,6 +152,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             # del self.sessions[session_id]
             self.sessions[session_id]['CHECK'] = user_result.print(show=False)
             self.sessions[session_id]['c'] += 1
+            tb_app.logger.debug(f"Session Handler V invalid Username : {username}")
             return '#0'
 
         user: User = user_result.get()
@@ -155,6 +162,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
 
         if user_instance.is_error():
             user_instance.print()
+            tb_app.logger.debug(f"Session Handler V no UsernameInstance : {username}")
             return '#0'
 
         self.sessions[session_id] = {
@@ -165,8 +173,9 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             'c': 0,
             'live_data': {
                 'SiID': user_instance.get().get('SiID'),
-                'level': user.level,
+                'level': user.level if user.level > 1 else 1,
                 'spec': user_instance.get().get('VtID'),
+                'user_name': tb_app.config_fh.encode_code(user.name)
             },
 
         }
@@ -214,13 +223,13 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             session_id = self.crate_new_session_id(request, jwt_token, username)
         else:
             session_id: str = request.session.get('ID')
-
+        request.session['live_data'] = {}
         if self.validate_session(session_id):
             request.session['valid'] = True
             request.session['live_data'] = self.sessions[session_id]['live_data']
             if request.url.path == '/logout':
                 uid = tb_app.run_any(tbef.CLOUDM_USERINSTANCES.GET_INSTANCE_SI_ID,
-                                     si_id=request.session['SiID']).get('save', {}).get('uid')
+                                     si_id=self.sessions[session_id]['live_data']['SiID']).get('save', {}).get('uid')
                 if uid is not None:
                     tb_app.run_any(tbef.CLOUDM_USERINSTANCES.CLOSE_USER_INSTANCE, uid=uid)
                     del self.sessions[session_id]
@@ -356,11 +365,12 @@ def protect_level_test(request):
     fuction_name = request.url.path.split('/')[3]
 
     if not (modul_name in tb_app.functions.keys() and fuction_name in tb_app.functions.get(modul_name, {}).keys()):
+        request.session['live_data']['RUN'] = False
         tb_app.logger.warning(
             f"Path is not for level testing {request.url.path} module {modul_name} and module fuction {fuction_name} dos not exist")
         return True  # path is not for level testing
 
-    fod, error = tb_app.get_function((modul_name, fuction_name), metadata=True, spec=user_spec)
+    fod, error = tb_app.get_function((modul_name, fuction_name), metadata=True, specification=user_spec)
 
     if error:
         tb_app.logger.error(f"Error getting function for user {(modul_name, fuction_name)}{request.session}")
@@ -370,9 +380,10 @@ def protect_level_test(request):
 
     fuction_level = fuction_data.get('level', -1)
 
+    request.session['live_data']['GET_R'] = fuction_data.get('request_as_kwarg', False)
+
     if user_level >= fuction_level:
-        request.session['live_data']['f_data'] = fuction_data
-        request.session['live_data']['fuction'] = fuction
+        request.session['live_data']['RUN'] = True
         return True
 
     return False
@@ -383,18 +394,18 @@ def protect_url_split_helper(url_split):
         tb_app.logger.info(f'not protected url {url_split}')
         return False
 
-    elif url_split[1] == "app" and len(url_split[2]) == 1 and url_split[2] != "0":
+    elif url_split[1] == "web" and len(url_split[2]) == 1 and url_split[2] != "0":
         tb_app.logger.info(f'protected url {url_split}')
         return True
 
-    elif url_split[1] == "app" and url_split[2] in [
+    elif url_split[1] == "web" and url_split[2] in [
         'dashboards',
         'dashboard',
     ]:
         tb_app.logger.info(f'protected url dashboards {url_split}')
         return True
 
-    elif url_split[1] == "app":
+    elif url_split[1] == "web":
         return False
 
     elif url_split[1] == "api" and url_split[2] in [
@@ -427,34 +438,61 @@ async def protector(request: Request, call_next):
     #         content={"message": "Protected resource"}
     #     )
     else:
-        response = await call_next(request)
+        response = await user_runner(request, call_next)
         return response
 
 
-@app.middleware("http")
 async def user_runner(request, call_next):
-    if 'fuction' not in request.session.get('live_data', {}).keys():
+    run_fuction = request.session.get("live_data", {}).get('RUN', False)
+    if not run_fuction:
         response = await call_next(request)
         return response
 
     print("user_runner", request.session.get('live_data'))
+    print(request.url.path.split('/'))
 
-    function = request.session["live_data"].get('fuction')
+    if len(request.url.path.split('/')) < 4:
+        response = await call_next(request)
+        return response
+
+    modul_name = request.url.path.split('/')[2]
+    fuction_name = request.url.path.split('/')[3]
+
     path_params = request.path_params
     query_params = dict(request.query_params)
-    print("HANDEL USERS FUCTION :::::::::::::::::")
-    print(path_params, '\n' + '#' * 20, query_params)
-    return function(*path_params.values(), **query_params)
+
+    if request.session['live_data'].get('GET_R', False):
+        query_params['request'] = request
+
+    result = tb_app.run_function((modul_name, fuction_name),
+                                 tb_run_with_specification=request.session['live_data'].get('spec', 'app'),
+                                 args_=path_params.values(),
+                                 kwargs_=query_params).print()
+
+    request.session['live_data']['RUN'] = False
+    request.session['live_data']['GET_R'] = False
+
+    if result.info.exec_code == 100:
+        response = await call_next(request)
+        return response
+
+    if result.info.exec_code == 0:
+        result.info.exec_code = 200
+
+    content = result.to_api_result().json()
+
+    return JSONResponse(status_code=result.info.exec_code if result.info.exec_code > 0 else 500,
+                        content=content)
 
 
 @app.get("/")
 async def index():
-    return RedirectResponse(url="/app/core0/index.html")
+    return RedirectResponse(url="/web/core0/index.html")
 
 
 @app.get("/favicon.ico")
 async def index():
-    return RedirectResponse(url="/app/favicon.ico")
+    return RedirectResponse(url="/web/favicon.ico")
     # return "Willkommen bei Simple V0 powered by ToolBoxV2-0.0.3"
 
 
@@ -583,6 +621,9 @@ if __name__ == 'toolboxv2.api.fast_api_main':
         f.close()
 
     tb_app.load_all_mods_in_file()
+
+    time.sleep(0.5)
+
     tb_app.save_load("welcome")
     tb_app.save_load("WebSocketManager")
     manager = tb_app.get_mod("WebSocketManager")
@@ -604,7 +645,7 @@ if __name__ == 'toolboxv2.api.fast_api_main':
             install_router.add_api_route('/' + "cloudm.modmanager", tb_func, methods=["POST"],
                                          description="get all mods")
         app.include_router(install_router)
-        app.get('/app/core0/index.html')(lambda: RedirectResponse(url="/docs"))
+        app.get('/web/core0/index.html')(lambda: RedirectResponse(url="/docs"))
 
     else:
 

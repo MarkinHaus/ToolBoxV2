@@ -226,6 +226,35 @@ def user_input(app,
         run_in_terminal(run_in_console)
         event.app.current_buffer.text = ""
 
+    @bindings.add('c-up')
+    def run_in_shell(event):
+        buff = event.app.current_buffer.text
+
+        def run_in_console():
+            if buff.startswith('cd'):
+                print("CD not available")
+                return
+            fh.append_string(buff)
+            if app.locals['user'].get('counts') is None:
+                app.locals['user']['counts'] = 0
+
+            try:
+                result = eval(buff, app.globals['root'], app.locals['user'])
+                if result is not None:
+                    print(f"#{app.locals['user']['counts']}>", result)
+                else:
+                    print(f"#{app.locals['user']['counts']}>")
+            except SyntaxError:
+                exec(buff, app.globals['root'], app.locals['user'])
+                print(f"#{app.locals['user']['counts']}> Statement executed")
+            except Exception as e:
+                print(f"Error: {e}")
+
+            app.locals['user']['counts'] += 1
+
+        run_in_terminal(run_in_console)
+        event.app.current_buffer.text = ""
+
     @bindings.add('s-left')
     def user_helper(event):
 
@@ -346,6 +375,9 @@ def co_evaluate(app: App,
     if obj.kwargs is None:
         obj.kwargs = {}
 
+    if app.locals['user'].get('res_id') is None:
+        app.locals['user']['res_id'] = 0
+
     if helper is None:
         def helper_function(obj_):
 
@@ -353,6 +385,9 @@ def co_evaluate(app: App,
             result = app.run_any((obj_.module_name, obj_.function_name), get_results=True,
                                  args_=obj_.args,
                                  kwargs_=obj_.kwargs)
+
+            app.locals['user'][f"result{app.locals['user']['res_id']}"] = result
+            app.locals['user']['res_id'] += 1
 
             result.print()
 

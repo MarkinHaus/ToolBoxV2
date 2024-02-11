@@ -8,7 +8,7 @@ def test_run_sing_in(playwright: Playwright) -> None:
     context = browser.new_context()
     page = context.new_page()
 
-    page.goto("http://127.0.0.1:5000/app/signup")
+    page.goto("http://127.0.0.1:5000/web/signup")
     page.wait_for_load_state("networkidle")
     page.get_by_placeholder("Username").click()
     page.get_by_placeholder("Username").fill("Kinr3")
@@ -28,7 +28,7 @@ def test_run_email(playwright: Playwright) -> None:
     browser = playwright.chromium.launch(headless=False)
     context = browser.new_context()
     page = context.new_page()
-    page.goto("http://127.0.0.1:5000/app/assets/waiting_list.html")
+    page.goto("http://127.0.0.1:5000/web/assets/waiting_list.html")
     page.wait_for_load_state("networkidle")
     page.get_by_placeholder("test@test.com").click()
     page.get_by_placeholder("test@test.com").fill("Test2@email.com")
@@ -45,7 +45,7 @@ def test_run_links(playwright: Playwright) -> None:
     browser = playwright.chromium.launch(headless=False)
     context = browser.new_context()
     page = context.new_page()
-    page.goto("http://127.0.0.1:5000/app/core0/index.html")
+    page.goto("http://127.0.0.1:5000/web/core0/index.html")
     page.wait_for_load_state("networkidle")
 
     page.get_by_role("link", name="Main Idea").click()
@@ -57,7 +57,7 @@ def test_run_links(playwright: Playwright) -> None:
     page.get_by_role("link", name="Kontaktwege").click()
     page.wait_for_load_state("networkidle")
 
-    page.goto("http://127.0.0.1:5000/app/core0/roadmap.html")
+    page.goto("http://127.0.0.1:5000/web/core0/roadmap.html")
     page.wait_for_load_state("networkidle")
 
     page.get_by_role("link", name="Home").click()

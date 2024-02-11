@@ -117,4 +117,4 @@ ENV/
 *.config
 
 
-/toolboxv2/app/node_modules/
+/toolboxv2/web/node_modules/

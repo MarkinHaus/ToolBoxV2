@@ -4,6 +4,9 @@ import logging
 import math
 import time
 import json
+
+import requests
+
 from toolboxv2 import MainTool, FileHandler
 from .UserInstances import UserInstances
 from .ModManager import installer, delete_package
