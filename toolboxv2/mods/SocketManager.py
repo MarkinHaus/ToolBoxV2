@@ -522,7 +522,7 @@ class Tools(MainTool, FileHandler):
             except:
                 return self.return_result(exec_code=-1, data_info=f"{listening_port} is not an int or not cast to int")
 
-        socket_data = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
+        socket_data = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port-1,
                                                type_id=SocketType.peer, endpoint_port=listening_port,
                                                return_full_object=True)
         receiver_queue = socket_data['receiver_queue']
