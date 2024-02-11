@@ -20,7 +20,7 @@ import threading
 import queue
 import asyncio
 
-version = "0.1.1"
+version = "0.1.2"
 Name = "SocketManager"
 
 export = get_app("SocketManager.Export").tb
@@ -231,10 +231,12 @@ class Tools(MainTool, FileHandler):
             self.print(Style.GREY(f"Sending Data: {msg_json}"))
 
             try:
-                if type_id == SocketType.client.name or address is None:
+                if type_id == SocketType.client.name:
                     sock.sendall(sender_bytes)
-                else:
+                elif address is not None:
                     sock.sendto(sender_bytes, address)
+                else:
+                    sock.sendto(sender_bytes, (host, endpoint_port))
                 self.print(Style.GREY("-- Sent --"))
             except Exception as e:
                 self.logger.error(f"Error sending data: {e}")
@@ -481,7 +483,7 @@ class Tools(MainTool, FileHandler):
 
         # Peer-to-Peer Socket erstellen und verbinden
         socket_data = self.create_socket(name="sender", host=peer_host, port=peer_port, type_id=SocketType.peer,
-                                         endpoint_port=peer_port+1,keepalive_interval=2, return_full_object=True)
+                                         endpoint_port=peer_port,keepalive_interval=2, return_full_object=True)
 
         # 'socket': socket,
         # 'receiver_socket': r_socket,
@@ -522,7 +524,7 @@ class Tools(MainTool, FileHandler):
             except:
                 return self.return_result(exec_code=-1, data_info=f"{listening_port} is not an int or not cast to int")
 
-        socket_data = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port-1,
+        socket_data = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
                                                type_id=SocketType.peer, endpoint_port=listening_port,
                                                 keepalive_interval=10,
                                                return_full_object=True)
