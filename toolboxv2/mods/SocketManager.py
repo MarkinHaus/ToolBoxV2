@@ -481,7 +481,7 @@ class Tools(MainTool, FileHandler):
 
         # Peer-to-Peer Socket erstellen und verbinden
         socket_data = self.create_socket(name="sender", host=peer_host, port=peer_port, type_id=SocketType.peer,
-                                         endpoint_port=peer_port+1, return_full_object=True)
+                                         endpoint_port=peer_port+1,keepalive_interval=2, return_full_object=True)
 
         # 'socket': socket,
         # 'receiver_socket': r_socket,
@@ -524,13 +524,14 @@ class Tools(MainTool, FileHandler):
 
         socket_data = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port-1,
                                                type_id=SocketType.peer, endpoint_port=listening_port,
+                                                keepalive_interval=10,
                                                return_full_object=True)
         receiver_queue = socket_data['receiver_queue']
 
         while True:
             # Auf Daten warten
             try:
-                data = receiver_queue.get(timeout=60*5)
+                data = receiver_queue.get(timeout=60*15)
             except:
                 break
             if 'data_size' in data:
