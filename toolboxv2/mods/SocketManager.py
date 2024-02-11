@@ -68,7 +68,7 @@ class Tools(MainTool, FileHandler):
 
     def __init__(self, app=None):
         self.running = False
-        self.version = "0.0.3"
+        self.version = "0.0.4"
         self.name = "SocketManager"
         self.logger: logging.Logger or None = app.logger if app else None
         self.color = "WHITE"
@@ -433,7 +433,7 @@ class Tools(MainTool, FileHandler):
 
         return {"stop_server": stop_server, "get_status": get_status}
 
-    @export(mod_name=Name, name="run_as_single_communication_server", test=False)
+    @export(mod_name=Name, name="send_file_to_peer", test=False)
     def send_file_to_peer(self, filepath, peer_host, peer_port):
         # Überprüfen, ob die Datei existiert
         if not os.path.exists(filepath):
@@ -463,7 +463,7 @@ class Tools(MainTool, FileHandler):
             self.print(f"Fehler beim Senden der Datei: {e}")
             return False
 
-    @export(mod_name=Name, name="run_as_single_communication_server", test=False)
+    @export(mod_name=Name, name="receive_and_decompress_file", test=False)
     def receive_and_decompress_file(self, save_path, listening_port):
         # Empfangs-Socket erstellen
         _, receiver_queue = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
