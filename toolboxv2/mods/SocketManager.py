@@ -20,7 +20,7 @@ import threading
 import queue
 import asyncio
 
-version = "0.1.0"
+version = "0.1.1"
 Name = "SocketManager"
 
 export = get_app("SocketManager.Export").tb
@@ -501,7 +501,7 @@ class Tools(MainTool, FileHandler):
             # Größe der komprimierten Daten senden
             send({'data_size': len(compressed_data)})
             # Komprimierte Daten senden
-            send({'bytes': compressed_data})
+            send(compressed_data)
             self.logger.info(f"Datei {filepath} erfolgreich gesendet.")
             self.print(f"Datei {filepath} erfolgreich gesendet.")
             send({'exit': True})
