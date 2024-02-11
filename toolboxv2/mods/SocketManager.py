@@ -203,8 +203,13 @@ class Tools(MainTool, FileHandler):
 
             if msg.get('exit'):
                 msg_json = 'exit'
+                sender_bytes = b'e'+msg_json.encode('utf-8')
+            elif len(msg.keys()) == 1 and isinstance(msg[0], bytes):
+                sender_bytes = b'b'+msg[0]
+                msg_json = 'sending bytes'
             else:
                 msg_json = json.dumps(msg)
+                sender_bytes = b'j'+msg_json.encode('utf-8')
 
             self.print(Style.GREY(f"Sending Data {msg_json}"))
 
@@ -214,11 +219,11 @@ class Tools(MainTool, FileHandler):
 
             try:
                 if type_id == SocketType.client.name:
-                    sock.sendall(msg_json.encode('utf-8'))
+                    sock.sendall(sender_bytes)
                 elif address is not None:
-                    sock.sendto(msg_json.encode('utf-8'), address)
+                    sock.sendto(sender_bytes, address)
                 else:
-                    sock.sendto(msg_json.encode('utf-8'), (host, endpoint_port))
+                    sock.sendto(sender_bytes, (host, endpoint_port))
 
                 self.print(Style.GREY("-- Sendet --"))
             except Exception:
@@ -230,15 +235,18 @@ class Tools(MainTool, FileHandler):
             t0 = time.perf_counter()
             running = True
             while running:
-                msg_json = r_socket_.recv(1024).decode()
+                msg_json = r_socket_.recv(1024)
                 if not msg_json: break
                 self.print(Style.GREY(f"{name} -- received -- '{msg_json}'"))
-                if msg_json == "exit":
+                if msg_json[0] == b'e':
                     running = False
+                elif msg_json[0] == b'b':
+                    receiver_queue.put({'bytes': msg_json[1:]})
+                elif msg_json[0] == b'j':
+                    msg = json.loads(msg_json)
+                    receiver_queue.put(msg)
                 else:
-                    if msg_json:
-                        msg = json.loads(msg_json)
-                        receiver_queue.put(msg)
+                    self.print(f"Receive unknown data type {msg_json[0]} length: {len(msg_json)}")
 
                 self.print(f"{name} :R Parsed Time ; {time.perf_counter() - t0:.2f}")
                 t0 = time.perf_counter()
