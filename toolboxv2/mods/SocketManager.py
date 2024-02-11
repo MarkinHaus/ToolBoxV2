@@ -68,7 +68,7 @@ class Tools(MainTool, FileHandler):
 
     def __init__(self, app=None):
         self.running = False
-        self.version = "0.0.4"
+        self.version = "0.0.5"
         self.name = "SocketManager"
         self.logger: logging.Logger or None = app.logger if app else None
         self.color = "WHITE"
