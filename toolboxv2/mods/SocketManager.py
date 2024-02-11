@@ -244,7 +244,8 @@ class Tools(MainTool, FileHandler):
                     sock.sendto(sender_bytes, (host, endpoint_port))
 
                 self.print(Style.GREY("-- Sendet --"))
-            except Exception:
+            except Exception as e:
+                print(e)
                 pass
 
             self.print(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
