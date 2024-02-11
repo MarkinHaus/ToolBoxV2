@@ -20,7 +20,7 @@ import threading
 import queue
 import asyncio
 
-version = "0.1.2"
+version = "0.1.3"
 Name = "SocketManager"
 
 export = get_app("SocketManager.Export").tb
@@ -530,6 +530,8 @@ class Tools(MainTool, FileHandler):
                                                return_full_object=True)
         receiver_queue = socket_data['receiver_queue']
 
+        file_data = b''
+        file_size = 1
         while True:
             # Auf Daten warten
             try:
@@ -541,9 +543,12 @@ class Tools(MainTool, FileHandler):
                 self.logger.info(f"Erwartete Dateigröße: {file_size} Bytes")
                 self.print(f"Erwartete Dateigröße: {file_size} Bytes")
             elif 'bytes' in data:
-                compressed_data = data['bytes']
+                file_data += data['bytes']
                 # Daten dekomprimieren
-                decompressed_data = gzip.decompress(compressed_data)
+                print(f"{file_size/len(file_data)*100:.2f}")
+                if len(file_data) != file_size:
+                    continue
+                decompressed_data = gzip.decompress(file_data)
                 # Datei speichern
                 with open(save_path, 'wb') as f:
                     f.write(decompressed_data)
