@@ -120,7 +120,7 @@ class Tools(MainTool, FileHandler):
     def create_socket(self, name: str = 'local-host', host: str = '0.0.0.0', port: int = 62435,
                       type_id: SocketType = SocketType.client,
                       max_connections=-1, endpoint_port=None,
-                      return_full_object=False, keepalive_interval=1, test_override=False):
+                      return_full_object=False, keepalive_interval=6, test_override=False):
 
         if 'test' in self.app.id and not test_override:
             return "No api in test mode allowed"
@@ -485,7 +485,7 @@ class Tools(MainTool, FileHandler):
 
         # Peer-to-Peer Socket erstellen und verbinden
         socket_data = self.create_socket(name="sender", host=peer_host, port=peer_port, type_id=SocketType.peer,
-                                         endpoint_port=peer_port,keepalive_interval=2, return_full_object=True)
+                                         endpoint_port=peer_port, return_full_object=True)
 
         # 'socket': socket,
         # 'receiver_socket': r_socket,
@@ -528,12 +528,11 @@ class Tools(MainTool, FileHandler):
 
         socket_data = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
                                                type_id=SocketType.peer, endpoint_port=listening_port,
-                                                keepalive_interval=9,
                                                return_full_object=True)
         receiver_queue = socket_data['receiver_queue']
 
         file_data = b''
-        file_size = 1
+        file_size = 0
         while True:
             # Auf Daten warten
             try:
@@ -547,7 +546,8 @@ class Tools(MainTool, FileHandler):
             elif 'bytes' in data:
                 file_data += data['bytes']
                 # Daten dekomprimieren
-                print(f"{file_size/len(file_data)*100:.2f}")
+                if len(file_data) > 0:
+                    print(f"{file_size/len(file_data)*100:.2f}")
                 if len(file_data) != file_size:
                     continue
                 decompressed_data = gzip.decompress(file_data)
