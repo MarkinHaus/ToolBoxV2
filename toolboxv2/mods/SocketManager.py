@@ -20,7 +20,7 @@ import threading
 import queue
 import asyncio
 
-version = "0.0.9"
+version = "0.1.0"
 Name = "SocketManager"
 
 export = get_app("SocketManager.Export").tb
@@ -213,43 +213,31 @@ class Tools(MainTool, FileHandler):
         def send(msg, address=None):
             t0 = time.perf_counter()
 
-            if not isinstance(msg, dict):
-                self.print(Style.YELLOW(f"Only dicts supported with keys msg and address '{msg}'"))
-                self.logger.warning("Try send none dic object thrue socket")
-                return
-
-            if not len(msg.keys()):
-                self.logger.warning("no msg to send")
-                return
-
-            if msg.get('exit'):
-                msg_json = 'exit'
-                sender_bytes = b'e' + msg_json.encode('utf-8')
-            elif len(msg.keys()) == 1 and isinstance(msg[0], bytes):
-                sender_bytes = b'b' + msg[0]
+            # Prüfen, ob die Nachricht ein Dictionary ist und Bytes direkt unterstützen
+            if isinstance(msg, bytes):
+                sender_bytes = b'b' + msg  # Präfix für Bytes
                 msg_json = 'sending bytes'
+            elif isinstance(msg, dict):
+                if 'exit' in msg:
+                    sender_bytes = b'e'  # Präfix für "exit"
+                    msg_json = 'exit'
+                else:
+                    msg_json = json.dumps(msg)
+                    sender_bytes = b'j' + msg_json.encode('utf-8')  # Präfix für JSON
             else:
-                msg_json = json.dumps(msg)
-                sender_bytes = b'j' + msg_json.encode('utf-8')
-
-            self.print(Style.GREY(f"Sending Data {msg_json}"))
-
-            if not msg_json:
-                self.logger.warning("no msg_json to send")
+                self.print(Style.YELLOW(f"Unsupported message type: {type(msg)}"))
                 return
+
+            self.print(Style.GREY(f"Sending Data: {msg_json}"))
 
             try:
-                if type_id == SocketType.client.name:
+                if type_id == SocketType.client.name or address is None:
                     sock.sendall(sender_bytes)
-                elif address is not None:
-                    sock.sendto(sender_bytes, address)
                 else:
-                    sock.sendto(sender_bytes, (host, endpoint_port))
-
-                self.print(Style.GREY("-- Sendet --"))
+                    sock.sendto(sender_bytes, address)
+                self.print(Style.GREY("-- Sent --"))
             except Exception as e:
-                print(e)
-                pass
+                self.logger.error(f"Error sending data: {e}")
 
             self.print(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
 
@@ -257,21 +245,30 @@ class Tools(MainTool, FileHandler):
             t0 = time.perf_counter()
             running = True
             while running:
-                msg_json = r_socket_.recv(1024)
-                if not msg_json: break
-                self.print(Style.GREY(f"{name} -- received -- '{msg_json}'"))
-                if msg_json[0] == b'e':
+                data = r_socket_.recv(1024)
+                if not data:
+                    break
+
+                data_type = data[0:1]  # Erstes Byte ist der Datentyp
+                data_content = data[1:]  # Rest der Daten
+
+                if data_type == b'e':
                     running = False
-                elif msg_json[0] == b'b':
-                    receiver_queue.put({'bytes': msg_json[1:]})
-                elif msg_json[0] == b'j':
-                    msg = json.loads(msg_json)
-                    receiver_queue.put(msg)
+                    self.print(f"{name} -- received exit signal --")
+                elif data_type == b'b':
+                    receiver_queue.put({'bytes': data_content})
+                    self.print(f"{name} -- received bytes --")
+                elif data_type == b'j':
+                    try:
+                        msg = json.loads(data_content.decode('utf-8'))
+                        receiver_queue.put(msg)
+                        self.print(f"{name} -- received JSON -- {msg}")
+                    except json.JSONDecodeError as e:
+                        self.logger.error(f"JSON decode error: {e}")
                 else:
-                    self.print(f"Receive unknown data type {msg_json[0]} length: {len(msg_json)}")
+                    self.print(f"Received unknown data type: {data_type}")
 
                 self.print(f"{name} :R Parsed Time ; {time.perf_counter() - t0:.2f}")
-                t0 = time.perf_counter()
 
             self.print(f"{name} :closing connection to {host}")
             r_socket_.close()
