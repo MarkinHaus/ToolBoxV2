@@ -126,7 +126,10 @@ class Tools(MainTool, FileHandler):
             return "No api in test mode allowed"
 
         if endpoint_port is None:
-            endpoint_port = port
+            endpoint_port = port+1
+
+        if endpoint_port == port:
+            endpoint_port += 1
 
         if not isinstance(type_id, SocketType):
             return
@@ -476,7 +479,7 @@ class Tools(MainTool, FileHandler):
 
         # Peer-to-Peer Socket erstellen und verbinden
         socket_data = self.create_socket(name="sender", host=peer_host, port=peer_port, type_id=SocketType.peer,
-                                         endpoint_port=peer_port, return_full_object=True)
+                                         endpoint_port=peer_port+1, return_full_object=True)
 
         # 'socket': socket,
         # 'receiver_socket': r_socket,
@@ -496,7 +499,7 @@ class Tools(MainTool, FileHandler):
             # Größe der komprimierten Daten senden
             send({'data_size': len(compressed_data)})
             # Komprimierte Daten senden
-            send({'file_data': compressed_data})
+            send({'bytes': compressed_data})
             self.logger.info(f"Datei {filepath} erfolgreich gesendet.")
             self.print(f"Datei {filepath} erfolgreich gesendet.")
             send({'exit': True})
@@ -526,7 +529,7 @@ class Tools(MainTool, FileHandler):
                 file_size = data['data_size']
                 self.logger.info(f"Erwartete Dateigröße: {file_size} Bytes")
                 self.print(f"Erwartete Dateigröße: {file_size} Bytes")
-            elif 'file_data' in data:
+            elif 'bytes' in data:
                 compressed_data = data['file_data']
                 # Daten dekomprimieren
                 decompressed_data = gzip.decompress(compressed_data)
