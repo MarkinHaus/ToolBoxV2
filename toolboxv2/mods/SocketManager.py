@@ -536,10 +536,7 @@ class Tools(MainTool, FileHandler):
         file_size = 0
         while True:
             # Auf Daten warten
-            try:
-                data = receiver_queue.get(timeout=60*15)
-            except:
-                break
+            data = receiver_queue.get(timeout=60*15)
             if 'data_size' in data:
                 file_size = data['data_size']
                 self.logger.info(f"Erwartete Dateigröße: {file_size} Bytes")
