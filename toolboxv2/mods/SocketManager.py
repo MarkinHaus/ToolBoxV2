@@ -541,7 +541,7 @@ class Tools(MainTool, FileHandler):
                 self.logger.info(f"Erwartete Dateigröße: {file_size} Bytes")
                 self.print(f"Erwartete Dateigröße: {file_size} Bytes")
             elif 'bytes' in data:
-                compressed_data = data['file_data']
+                compressed_data = data['bytes']
                 # Daten dekomprimieren
                 decompressed_data = gzip.decompress(compressed_data)
                 # Datei speichern
