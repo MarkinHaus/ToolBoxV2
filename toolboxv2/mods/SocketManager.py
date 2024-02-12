@@ -260,7 +260,7 @@ class Tools(MainTool, FileHandler):
                 send_(chunk_)
             if len(sender_bytes) % 1024 != 0:
                 pass
-            send_(b'E' * 1024)
+            send_(b'E' * 6)
             self.print(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
 
         def receive(r_socket_, identifier="main"):
@@ -278,12 +278,10 @@ class Tools(MainTool, FileHandler):
                 if not chunk:
                     break  # Verbindung wurde geschlossen
 
-                print(chunk)
                 if not data_type:
                     data_type = chunk[:1]  # Erstes Byte ist der Datentyp
                     chunk = chunk[1:]  # Rest der Daten
                     self.print(f"Register date type : {data_type}")
-                print(chunk, data_type)
                 if data_type == b'k':
                     data_buffer = b''
                     data_type = None
