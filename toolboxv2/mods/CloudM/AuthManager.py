@@ -667,7 +667,6 @@ def validate_device(app: App, data: VdUSER) -> ApiResult:
     db_helper_save_user(app, asdict(user))
 
     claim = {
-        "pub": user.user_pass_pub,
         "u-key": user.uid,
     }
 
@@ -760,7 +759,6 @@ def jwt_get_claim(app: App, username: str, signature: str or bytes, web=False) -
 
     channel_key, userdata = res.get()
     claim = {
-        "pub": userdata.get("user_pass_pub"),
         "u-key": userdata.get("uid"),
     }
 

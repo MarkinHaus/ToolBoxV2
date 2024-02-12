@@ -117,7 +117,9 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             'c': 0,
             'h-sid': h_session_id
         }
-
+        print("[jwt_claim]:, ", jwt_claim)
+        print(username)
+        print(request.headers)
         if request.client.host in self.GRAY_LIST and not request.url.path.split('/')[-1] in ['login', 'signup']:
             return JSONResponse(
                 status_code=403,
