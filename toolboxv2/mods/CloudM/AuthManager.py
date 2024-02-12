@@ -673,9 +673,8 @@ def validate_device(app: App, data: VdUSER) -> ApiResult:
 
     row_jwt_claim = crate_jwt(claim, user.user_pass_pri)
 
-    print(Code.encrypt_asymmetric(row_jwt_claim, user.pub_key))
-    print(Code.encrypt_asymmetric(row_jwt_claim, from_base64(user.pub_key).decode(errors="ignore")))
     encrypt_jwt_claim = Code.encrypt_asymmetric(row_jwt_claim, user.pub_key)
+    print(encrypt_jwt_claim)
     if encrypt_jwt_claim != "Invalid":
         data = {'key': encrypt_jwt_claim, 'toPrivat': True}
     else:
