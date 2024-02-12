@@ -12,6 +12,11 @@ import time
 from dataclasses import dataclass
 import logging
 from enum import Enum
+import zipfile
+from io import BytesIO
+import shutil
+from zipfile import ZipInfo, ZIP_LZMA
+import uuid
 
 from tqdm import tqdm
 
@@ -26,6 +31,39 @@ version = "0.1.7"
 Name = "SocketManager"
 
 export = get_app("SocketManager.Export").tb
+
+
+def zip_folder_to_bytes(folder_path):
+    bytes_buffer = BytesIO()
+    with zipfile.ZipFile(bytes_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, dirs, files in os.walk(folder_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arcname = os.path.relpath(file_path, folder_path)
+                zipf.write(file_path, arcname)
+    return bytes_buffer.getvalue()
+
+
+def zip_folder_to_file(folder_path):
+    output_path = f"{folder_path.replace('_', '_').replace('-', '_')}_{uuid.uuid4().hex}.zip"
+    with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, dirs, files in os.walk(folder_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arcname = os.path.relpath(file_path, folder_path)
+                zipf.write(file_path, arcname)
+    return output_path
+
+
+def unzip_bytes_to_folder(zip_bytes, extract_path):
+    bytes_buffer = BytesIO(zip_bytes)
+    with zipfile.ZipFile(bytes_buffer, 'r') as zipf:
+        zipf.extractall(extract_path)
+
+
+def unzip_file_to_folder(zip_file_path, extract_path):
+    with zipfile.ZipFile(zip_file_path, 'r') as zipf:
+        zipf.extractall(extract_path)
 
 
 @dataclass
@@ -122,7 +160,7 @@ class Tools(MainTool, FileHandler):
     def create_socket(self, name: str = 'local-host', host: str = '0.0.0.0', port: int or None = None,
                       type_id: SocketType = SocketType.client,
                       max_connections=-1, endpoint_port=None,
-                      return_full_object=False, keepalive_interval=6, test_override=False):
+                      return_full_object=False, keepalive_interval=6, test_override=False, package_size=1024):
 
         if 'test' in self.app.id and not test_override:
             return "No api in test mode allowed"
@@ -264,18 +302,20 @@ class Tools(MainTool, FileHandler):
                 send_(sender_bytes)
                 return
 
-            total_steps = len(sender_bytes) // 1024
-            if len(sender_bytes) % 1024 != 0:
+            total_steps = len(sender_bytes) // package_size
+            if len(sender_bytes) % package_size != 0:
                 total_steps += 1  # Einen zusätzlichen Schritt hinzufügen, falls ein Rest existiert
 
             # tqdm Fortschrittsanzeige initialisieren
             with tqdm(total=total_steps, unit='chunk', desc='Sending data') as pbar:
-                for i in range(0, len(sender_bytes), 1024):
-                    chunk_ = sender_bytes[i:i + 1024]
+                for i in range(0, len(sender_bytes), package_size):
+                    chunk_ = sender_bytes[i:i + package_size]
                     send_(chunk_)
                     pbar.update(1)
-                    time.sleep(1/10**18)
-            if len(sender_bytes) % 1024 != 0:
+                    time.sleep(1 / 10 ** 18)
+            if len(sender_bytes) < package_size:
+                send_(b' '*(len(sender_bytes)-package_size))
+            if len(sender_bytes) % package_size != 0:
                 pass
             send_(b'E' * 6)
             self.print(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
@@ -307,7 +347,9 @@ class Tools(MainTool, FileHandler):
                     self.print(f"Register date type : {data_type}")
 
                 if max_size > -1 and len(data_buffer) > 0 and data_type == b'b':
-                    print(f"don {chunk[0] == b'E'[0] and chunk[-1] == b'E'[0]} {(len(data_buffer)/max_size)*100:.2f}% total byts: {len(data_buffer)} von {max_size}", end='\r')
+                    print(
+                        f"don {chunk[0] == b'E'[0] and chunk[-1] == b'E'[0]} {(len(data_buffer) / max_size) * 100:.2f}% total byts: {len(data_buffer)} von {max_size}",
+                        end='\r')
                 if data_type == b'e':
                     running = False
                     self.logger.info(f"{name} -- received exit signal --")
@@ -340,6 +382,9 @@ class Tools(MainTool, FileHandler):
                     data_buffer = b''
                     data_type = None
                 else:
+                    print(b' ' in chunk, b' '[0])
+                    if b' ' in chunk and chunk[-1] == b' '[0]:
+                        chunk = chunk.replace(b' ', b'')
                     data_buffer += chunk
 
                 # self.print(
@@ -571,7 +616,7 @@ class Tools(MainTool, FileHandler):
             compressed_data = gzip.compress(f.read())
 
         # Peer-to-Peer Socket erstellen und verbinden
-        socket_data = self.create_socket(name="sender", host=host, port=port, type_id=SocketType.server,
+        socket_data = self.create_socket(name="sender", host=host, port=port, type_id=SocketType.client,
                                          return_full_object=True)
 
         # 'socket': socket,
@@ -604,6 +649,54 @@ class Tools(MainTool, FileHandler):
             return False
         finally:
             socket_data['keepalive_var'][0] = False
+
+    @export(mod_name=Name, name="receive_and_decompress_file_as_server", test=False)
+    def receive_and_decompress_file_from_client(self, save_path, listening_port):
+        # Empfangs-Socket erstellen
+        if isinstance(listening_port, str):
+            try:
+                listening_port = int(listening_port)
+            except:
+                return self.return_result(exec_code=-1, data_info=f"{listening_port} is not an int or not cast to int")
+
+        socket_data = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
+                                         type_id=SocketType.server,
+                                         return_full_object=True, max_connections=1)
+        receiver_queue = socket_data['receiver_queue']
+        to_receiver = socket_data['client_to_receiver_thread']
+        client, address = receiver_queue.get(block=True)
+        to_receiver(client, 'client-' + str(address))
+
+        file_data = b''
+        file_size = 0
+        while True:
+            # Auf Daten warten
+            data = receiver_queue.get()
+            if 'data_size' in data:
+                file_size = data['data_size']
+                self.logger.info(f"Erwartete Dateigröße: {file_size} Bytes")
+                self.print(f"Erwartete Dateigröße: {file_size} Bytes")
+            elif 'bytes' in data:
+                print("dasdadad", data)
+                file_data += data['bytes']
+                # Daten dekomprimieren
+                if len(file_data) > 0:
+                    print(f"{len(file_data) / file_size * 100:.2f}%")
+                if len(file_data) != file_size:
+                    continue
+                decompressed_data = gzip.decompress(file_data)
+                # Datei speichern
+                with open(save_path, 'wb') as f:
+                    f.write(decompressed_data)
+                self.logger.info(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
+                self.print(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
+                break
+            elif 'exit' in data:
+                break
+            else:
+                self.print(f"Unexpected data : {data}")
+
+        socket_data['keepalive_var'][0] = False
 
     @export(mod_name=Name, name="send_file_to_peer", test=False)
     def send_file_to_peer(self, filepath, host, port):
@@ -659,54 +752,6 @@ class Tools(MainTool, FileHandler):
         finally:
             socket_data['keepalive_var'][0] = False
 
-    @export(mod_name=Name, name="receive_and_decompress_file_as_server", test=False)
-    def receive_and_decompress_file_from_client(self, save_path, listening_port):
-        # Empfangs-Socket erstellen
-        if isinstance(listening_port, str):
-            try:
-                listening_port = int(listening_port)
-            except:
-                return self.return_result(exec_code=-1, data_info=f"{listening_port} is not an int or not cast to int")
-
-        socket_data = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
-                                         type_id=SocketType.server,
-                                         return_full_object=True, max_connections=1)
-        receiver_queue = socket_data['receiver_queue']
-        to_receiver = socket_data['client_to_receiver_thread']
-        client, address = receiver_queue.get(block=True)
-        to_receiver(client, 'client-' + str(address))
-
-        file_data = b''
-        file_size = 0
-        while True:
-            # Auf Daten warten
-            data = receiver_queue.get()
-            if 'data_size' in data:
-                file_size = data['data_size']
-                self.logger.info(f"Erwartete Dateigröße: {file_size} Bytes")
-                self.print(f"Erwartete Dateigröße: {file_size} Bytes")
-            elif 'bytes' in data:
-                print("dasdadad", data)
-                file_data += data['bytes']
-                # Daten dekomprimieren
-                if len(file_data) > 0:
-                    print(f"{file_size / len(file_data) * 100:.2f}% of 100% | {file_size}, {len(file_data)}")
-                if len(file_data) != file_size:
-                    continue
-                decompressed_data = gzip.decompress(file_data)
-                # Datei speichern
-                with open(save_path, 'wb') as f:
-                    f.write(decompressed_data)
-                self.logger.info(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
-                self.print(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
-                break
-            elif 'exit' in data:
-                break
-            else:
-                self.print(f"Unexpected data : {data}")
-
-        socket_data['keepalive_var'][0] = False
-
     @export(mod_name=Name, name="receive_and_decompress_file", test=False)
     def receive_and_decompress_file_peer(self, save_path, listening_port):
         # Empfangs-Socket erstellen
@@ -735,7 +780,7 @@ class Tools(MainTool, FileHandler):
                 file_data += data['bytes']
                 # Daten dekomprimieren
                 if len(file_data) > 0:
-                    print(f"{len(file_data)/ file_size * 100:.2f}%")
+                    print(f"{len(file_data) / file_size * 100:.2f}%")
                 if len(file_data) != file_size:
                     continue
                 decompressed_data = gzip.decompress(file_data)
