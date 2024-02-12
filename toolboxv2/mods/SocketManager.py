@@ -386,7 +386,7 @@ class Tools(MainTool, FileHandler):
                     data_buffer = b''
                     data_type = None
                 else:
-                    print(b' ' in chunk, b' '[0], chunk)
+                    # print(b' ' in chunk, b' '[0], chunk)
                     if b' ' in chunk and chunk[-1] == b' '[0]:
                         chunk = chunk.replace(b' ', b'')
                     data_buffer += chunk
