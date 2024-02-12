@@ -268,7 +268,7 @@ def user_input(app,
                 if user_input_buffer_info[0] in completer_dict:
                     print("Avalabel functions:", completer_dict[user_input_buffer_info[0]])
                 else:
-                    print("Module is not available")
+                    os.system(f"{user_input_buffer_info[0]} --help")
             if len(user_input_buffer_info) > 1:
                 if user_input_buffer_info[0] in completer_dict:
                     if user_input_buffer_info[1] in completer_dict[user_input_buffer_info[0]]:
