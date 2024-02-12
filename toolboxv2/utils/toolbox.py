@@ -184,7 +184,9 @@ class App(metaclass=Singleton):
             f"SYSTEM :: {node()}\nID -> {self.id},\nVersion -> {self.version},\n")
 
         if args.update:
-            self.run_any("CloudM", "update_core")
+            os.system("git pull")
+            # self.save_load("CloudM")
+            # self.run_any("CloudM", "update_core")
 
         if args.get_version:
             v = self.version
