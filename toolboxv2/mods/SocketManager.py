@@ -274,7 +274,7 @@ class Tools(MainTool, FileHandler):
                     chunk_ = sender_bytes[i:i + 1024]
                     send_(chunk_)
                     pbar.update(1)
-                    time.sleep(0.01)
+                    # time.sleep(0.01)
             if len(sender_bytes) % 1024 != 0:
                 pass
             send_(b'E' * 6)
@@ -307,17 +307,15 @@ class Tools(MainTool, FileHandler):
                     self.print(f"Register date type : {data_type}")
 
                 if max_size > -1 and len(data_buffer) > 0 and data_type == b'b':
-                    print(f"don {chunk[0] == b'E'[0] and chunk[-1] == b'E'[0]} {len(data_buffer)//max_size:.2f}% total byts: {len(data_buffer)}", end='\r')
-
-                if chunk[0] == b'E'[0] and chunk[-1] == b'E'[0] and len(data_buffer) > 0:
-                    print("\nall data restructured", data_buffer)
+                    print(f"don {chunk[0] == b'E'[0] and chunk[-1] == b'E'[0]} {len(data_buffer)//max_size:.2f}% total byts: {len(data_buffer)} von {max_size}", end='\r')
+                if data_type == b'e':
+                    running = False
+                    self.logger.info(f"{name} -- received exit signal --")
+                    self.sockets[name]['keepalive_var'][0] = False
+                elif chunk[0] == b'E'[0] and chunk[-1] == b'E'[0] and len(data_buffer) > 0:
                     max_size = -1
                     # Letzter Teil des Datensatzes
-                    if data_type == b'e':
-                        running = False
-                        self.logger.info(f"{name} -- received exit signal --")
-                        self.sockets[name]['keepalive_var'][0] = False
-                    elif data_type == b'b':
+                    if data_type == b'b':
                         # Behandlung von Byte-Daten
                         receiver_queue.put({'bytes': data_buffer, 'identifier': identifier})
                         self.logger.info(f"{name} -- received bytes --")
@@ -647,7 +645,9 @@ class Tools(MainTool, FileHandler):
             send({'data_size': len(compressed_data)})
             # Komprimierte Daten senden
             time.sleep(2)
-            send(compressed_data)
+            for i in range(0, len(compressed_data), 1024*6):
+                send(compressed_data[i:i+1024*6])
+                time.sleep(0.1)
             self.logger.info(f"Datei {filepath} erfolgreich gesendet.")
             self.print(f"Datei {filepath} erfolgreich gesendet.")
             peer_result = receiver_queue.get(timeout=60*10)
