@@ -291,7 +291,7 @@ class Tools(MainTool, FileHandler):
                     elif data_type == b'j':
                         # Behandlung von JSON-Daten
                         try:
-                            msg = json.loads(data_buffer.decode('utf-8'))
+                            msg = json.loads(data_buffer)
                             msg['identifier'] = identifier
                             receiver_queue.put(msg)
                             self.logger.info(f"{name} -- received JSON -- {msg}")
