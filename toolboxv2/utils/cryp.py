@@ -164,6 +164,10 @@ class Code:
         """
         try:
             public_key: RSAPublicKey = serialization.load_pem_public_key(public_key_str.encode())
+        except Exception as e:
+            get_logger().error(f"Error encrypt_asymmetric {e}")
+        try:
+            public_key: RSAPublicKey = serialization.load_pem_public_key(public_key_str.encode())
             encrypted = public_key.encrypt(
                 text.encode(),
                 padding.OAEP(

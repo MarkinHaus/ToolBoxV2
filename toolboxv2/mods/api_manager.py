@@ -9,7 +9,6 @@ import requests
 
 from toolboxv2 import MainTool, FileHandler, get_app
 
-
 export = get_app("api_manager.Export").tb
 Name = "api_manager"
 
@@ -123,8 +122,6 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         if api_name not in self.api_config.keys():
             host = "localhost"
-            if live:
-                host = "0.0.0.0"
 
             self.api_config[api_name] = {
                 "Name": api_name,
@@ -133,7 +130,13 @@ class Tools(MainTool, FileHandler):  # FileHandler
                 "host": host
             }
 
+            if live:
+                self.api_config[api_name]['host'] = "0.0.0.0"
+
             self.print(f"Auto addet {api_name} to config : {self.api_config[api_name]}")
+
+        if live:
+            self.api_config[api_name]['host'] = "0.0.0.0"
 
         api_data = self.api_config[api_name]
 
@@ -150,7 +153,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         self.print("API is already running")
 
-    def stop_api(self, api_name: str, delete = True):
+    def stop_api(self, api_name: str, delete=True):
         if api_name not in list(self.api_config.keys()):
             return f"Api with the name {api_name} is not listed"
 
