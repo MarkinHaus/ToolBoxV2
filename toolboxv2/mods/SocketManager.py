@@ -278,14 +278,16 @@ class Tools(MainTool, FileHandler):
                 if not chunk:
                     break  # Verbindung wurde geschlossen
 
+                print(chunk)
                 if not data_type:
                     data_type = chunk[:1]  # Erstes Byte ist der Datentyp
                     chunk = chunk[1:]  # Rest der Daten
                     self.print(f"Register date type : {data_type}")
-                print(chunk)
-                if len(chunk) == 0:
-                    pass
-                if chunk[0] == b'E' and chunk[-1] == b'E' and len(data_buffer) > 0:
+                print(chunk, data_type)
+                if data_type == b'k':
+                    data_buffer = b''
+                    data_type = None
+                elif chunk[0] == b'E' and chunk[-1] == b'E' and len(data_buffer) > 0:
                     print("all data", data_buffer)
                     # Letzter Teil des Datensatzes
                     if data_type == b'e':
