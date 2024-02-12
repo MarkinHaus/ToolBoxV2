@@ -234,7 +234,7 @@ class Tools(MainTool, FileHandler):
                 self.print("LocalHost Peer2Peer is not supported use server client architecture")
                 return
 
-            if host != '0.0.0.0':
+            if host == '0.0.0.0':
                 public_ip = self.local_ip
             else:
                 if self.public_ip is None:
@@ -248,11 +248,11 @@ class Tools(MainTool, FileHandler):
 
                 r_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 r_socket.bind(('0.0.0.0', endpoint_port))
-                self.print(f"Peer:{name} receiving on {public_ip}:{port}")
+                self.print(f"Peer:{name} receiving on {public_ip}:{endpoint_port}")
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 sock.bind(('0.0.0.0', port))
                 sock.sendto(b'k', (host, endpoint_port))
-                self.print(f"Peer:{name} sending to on {host}:{endpoint_port}")
+                self.print(f"Peer:{name} sending to on {host}:{port}")
 
             except Exception:
                 connection_error = -1
