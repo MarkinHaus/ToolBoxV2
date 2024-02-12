@@ -94,17 +94,17 @@ class Tools(MainTool, FileHandler):
         self.logger.info(f"Closing SocketManager")
         for socket_name, socket_data in self.sockets.items():
             self.print(f"consing Socket : {socket_name}")
-            #'socket': socket,
-            #'receiver_socket': r_socket,
-            #'host': host,
-            #'port': port,
-            #'p2p-port': endpoint_port,
-            #'sender': send,
-            #'receiver_queue': receiver_queue,
-            #'connection_error': connection_error,
-            #'receiver_thread': s_thread,
-            #'keepalive_thread': keep_alive_thread,
-            #'keepalive_var': keep_alive_var,
+            # 'socket': socket,
+            # 'receiver_socket': r_socket,
+            # 'host': host,
+            # 'port': port,
+            # 'p2p-port': endpoint_port,
+            # 'sender': send,
+            # 'receiver_queue': receiver_queue,
+            # 'connection_error': connection_error,
+            # 'receiver_thread': s_thread,
+            # 'keepalive_thread': keep_alive_thread,
+            # 'keepalive_var': keep_alive_var,
             socket_data['keepalive_var'][0] = False
             try:
                 socket_data['sender']({'exit': True})
@@ -126,7 +126,7 @@ class Tools(MainTool, FileHandler):
             return "No api in test mode allowed"
 
         if endpoint_port is None:
-            endpoint_port = port+1
+            endpoint_port = port + 1
 
         if endpoint_port == port:
             endpoint_port += 1
@@ -247,10 +247,11 @@ class Tools(MainTool, FileHandler):
                     self.print(Style.GREY(f"-- Sent to : {to} --"))
                 except Exception as e:
                     self.logger.error(f"Error sending data: {e}")
+
             for i in range(0, len(sender_bytes), 1024):
                 chunk_ = sender_bytes[i:i + 1024]
                 send_(chunk_)
-            send_(b'E'*1024)
+            send_(b'E' * 1024)
             self.print(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
 
         def receive(r_socket_, identifier="main"):
@@ -272,7 +273,7 @@ class Tools(MainTool, FileHandler):
                     data_type = chunk[:1]  # Erstes Byte ist der Datentyp
                     chunk = chunk[1:]  # Rest der Daten
 
-                if chunk != b'E'*1024:
+                if chunk != b'E' * 1024:
                     data_buffer += chunk
                 elif len(chunk) < 1024:
                     data_buffer += chunk
@@ -284,7 +285,7 @@ class Tools(MainTool, FileHandler):
                         self.sockets[name]['keepalive_var'][0] = False
                     elif data_type == b'b':
                         # Behandlung von Byte-Daten
-                        receiver_queue.put({'bytes': data_buffer, 'identifier':identifier})
+                        receiver_queue.put({'bytes': data_buffer, 'identifier': identifier})
                         self.logger.info(f"{name} -- received bytes --")
                     elif data_type == b'j':
                         # Behandlung von JSON-Daten
@@ -302,7 +303,8 @@ class Tools(MainTool, FileHandler):
                     data_buffer = b''
                     data_type = None
 
-                self.print(f"{name} :R Parsed Time ; {time.perf_counter() - t0:.2f} port :{endpoint_port if type_id == SocketType.peer.name else port}")
+                self.print(
+                    f"{name} :R Parsed Time ; {time.perf_counter() - t0:.2f} port :{endpoint_port if type_id == SocketType.peer.name else port}")
 
             self.print(f"{name} :closing connection to {host}")
             r_socket_.close()
@@ -322,6 +324,8 @@ class Tools(MainTool, FileHandler):
                 self.print(f"No receiver connected {name}:{type_id}")
 
         keep_alive_thread = None
+        to_receive = None
+        threeds = []
         keep_alive_var = [True]
 
         if type_id == SocketType.peer.name:
@@ -341,6 +345,15 @@ class Tools(MainTool, FileHandler):
             keep_alive_thread = threading.Thread(target=keep_alive)
             keep_alive_thread.start()
 
+        elif type_id == SocketType.server.name:
+
+            threeds = []
+
+            def to_receive(client, identifier='main'):
+                t = threading.Thread(target=receive, args=(client, identifier,))
+                t.start()
+                threeds.append(t)
+
         self.sockets[name] = {
             'socket': socket,
             'receiver_socket': r_socket,
@@ -353,7 +366,8 @@ class Tools(MainTool, FileHandler):
             'receiver_thread': s_thread,
             'keepalive_thread': keep_alive_thread,
             'keepalive_var': keep_alive_var,
-            'receiver': receive,
+            'client_to_receiver_thread': to_receive,
+            'client_receiver_threads': threeds,
         }
 
         if return_full_object:
@@ -559,18 +573,18 @@ class Tools(MainTool, FileHandler):
                 return self.return_result(exec_code=-1, data_info=f"{listening_port} is not an int or not cast to int")
 
         socket_data = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
-                                               type_id=SocketType.server,
-                                               return_full_object=True, max_connections=1)
+                                         type_id=SocketType.server,
+                                         return_full_object=True, max_connections=1)
         receiver_queue = socket_data['receiver_queue']
         receiver = socket_data['receiver']
         client, address = receiver_queue.get(block=True)
-        receiver(client, 'client-'+str(address))
+        receiver(client, 'client-' + str(address))
 
         file_data = b''
         file_size = 0
         while True:
             # Auf Daten warten
-            data = receiver_queue.get(timeout=60*15)
+            data = receiver_queue.get(timeout=60 * 15)
             if 'data_size' in data:
                 file_size = data['data_size']
                 self.logger.info(f"Erwartete Dateigröße: {file_size} Bytes")
@@ -580,7 +594,7 @@ class Tools(MainTool, FileHandler):
                 file_data += data['bytes']
                 # Daten dekomprimieren
                 if len(file_data) > 0:
-                    print(f"{file_size/len(file_data)*100:.2f}% of 100% | {file_size}, {len(file_data)}")
+                    print(f"{file_size / len(file_data) * 100:.2f}% of 100% | {file_size}, {len(file_data)}")
                 if len(file_data) != file_size:
                     continue
                 decompressed_data = gzip.decompress(file_data)
@@ -596,4 +610,3 @@ class Tools(MainTool, FileHandler):
                 self.print(f"Unexpected data : {data}")
 
         socket_data['keepalive_var'][0] = False
-
