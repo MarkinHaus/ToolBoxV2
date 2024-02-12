@@ -155,9 +155,8 @@ def command_runner(app, command, args):
               f"\nMODS={A().pretty_print(app.MACRO[7:])}"
               f"\nSUPER_SET={A().pretty_print(app.SUPER_SET)}")
 
-    elif command[0].lower() == "exit":  # builtin events(exit)
-        if input("Do you want to exit? (y/n): ") in ["y", "yes", "Y"]:
-            app.exit()
+    elif command[0].lower() == "exit" or command[0].lower() == 'e':  # builtin events(exit)
+        app.exit()
 
     elif command[0].lower() == "help":  # logs(event(helper))
         n = command[1] if len(command) > 2 else ''
