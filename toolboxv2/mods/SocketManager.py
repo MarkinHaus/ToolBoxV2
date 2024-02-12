@@ -644,10 +644,8 @@ class Tools(MainTool, FileHandler):
             # Größe der komprimierten Daten senden
             send({'data_size': len(compressed_data)})
             # Komprimierte Daten senden
-            time.sleep(2)
-            for i in range(0, len(compressed_data), 1024*6):
-                send(compressed_data[i:i+1024*6])
-                time.sleep(0.1)
+            time.sleep(0.2)
+            send(compressed_data)
             self.logger.info(f"Datei {filepath} erfolgreich gesendet.")
             self.print(f"Datei {filepath} erfolgreich gesendet.")
             # peer_result = receiver_queue.get(timeout=60*10)
@@ -728,7 +726,6 @@ class Tools(MainTool, FileHandler):
         while True:
             # Auf Daten warten
             data = receiver_queue.get()
-            print("receiver_queue received: ", data)
             if 'data_size' in data:
                 file_size = data['data_size']
                 self.logger.info(f"Erwartete Dateigröße: {file_size} Bytes")
