@@ -317,7 +317,10 @@ class Tools(MainTool, FileHandler):
                 send_(b' '*(len(sender_bytes)-package_size))
             if len(sender_bytes) % package_size != 0:
                 pass
-            send_(b'E' * 1024)
+            if type_id == SocketType.peer.name:
+                send_(b'E'*6)
+            else:
+                send_(b'E' * 1024)
             self.print(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
 
         def receive(r_socket_, identifier="main"):
