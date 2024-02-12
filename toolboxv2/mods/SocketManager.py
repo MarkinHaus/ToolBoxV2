@@ -263,9 +263,6 @@ class Tools(MainTool, FileHandler):
                 send_(sender_bytes)
                 return
 
-            print("all data - sender_bytes -", sender_bytes)
-
-            self.print(Style.GREY(f"-- Sent to :  --"))
             total_steps = len(sender_bytes) // 1024
             if len(sender_bytes) % 1024 != 0:
                 total_steps += 1  # Einen zusätzlichen Schritt hinzufügen, falls ein Rest existiert
@@ -276,6 +273,7 @@ class Tools(MainTool, FileHandler):
                     chunk_ = sender_bytes[i:i + 1024]
                     send_(chunk_)
                     pbar.update(1)
+                    time.sleep(0.1)
             if len(sender_bytes) % 1024 != 0:
                 pass
             send_(b'E' * 6)
@@ -331,6 +329,9 @@ class Tools(MainTool, FileHandler):
                             self.logger.info(f"{name} -- received JSON -- {msg}")
                             if 'data_size' in msg.keys():
                                 max_size = msg['data_size']
+
+                                self.logger.info(f"Erwartete Bytes: {max_size}")
+                                self.print(f"Erwartete Bytes: {max_size}")
                         except json.JSONDecodeError and UnicodeDecodeError as e:
                             self.logger.error(f"JSON decode error: {e}")
                     else:
