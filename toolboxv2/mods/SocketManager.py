@@ -272,7 +272,7 @@ class Tools(MainTool, FileHandler):
                     pbar.update(1)
             if len(sender_bytes) % 1024 != 0:
                 pass
-            send_(b'E' * 1024)
+            send_(b'E' * 2)
             self.print(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
 
         def receive(r_socket_, identifier="main"):
@@ -295,6 +295,8 @@ class Tools(MainTool, FileHandler):
                     self.logger.info(f"{name} -- received keepalive signal--")
                     continue
 
+                if not data_type and chunk[:1] == b'E':
+                    continue
                 if not data_type:
                     data_type = chunk[:1]  # Erstes Byte ist der Datentyp
                     chunk = chunk[1:]  # Rest der Daten
