@@ -494,7 +494,7 @@ class Tools(MainTool, FileHandler):
 
         # Peer-to-Peer Socket erstellen und verbinden
         socket_data = self.create_socket(name="sender", host=peer_host, port=peer_port, type_id=SocketType.peer,
-                                         endpoint_port=peer_port, return_full_object=True)
+                                         endpoint_port=peer_port, return_full_object=True, keepalive_interval=1)
 
         # 'socket': socket,
         # 'receiver_socket': r_socket,
@@ -517,7 +517,7 @@ class Tools(MainTool, FileHandler):
             for i in range((len(compressed_data)//1460)+1):
                 print(f"Sending compressed data {i}")
                 send(compressed_data[i*1460:(i+1)*1460])
-                time.sleep(0.02)
+                time.sleep(1.02)
             self.logger.info(f"Datei {filepath} erfolgreich gesendet.")
             self.print(f"Datei {filepath} erfolgreich gesendet.")
             send({'exit': True})
@@ -557,7 +557,7 @@ class Tools(MainTool, FileHandler):
                 file_data += data['bytes']
                 # Daten dekomprimieren
                 if len(file_data) > 0:
-                    print(f"{file_size/len(file_data)*100:.2f}% of 100% | {file_size}, {file_data}")
+                    print(f"{file_size/len(file_data)*100:.2f}% of 100% | {file_size}, {len(file_data)}")
                 if len(file_data) != file_size:
                     continue
                 decompressed_data = gzip.decompress(file_data)
