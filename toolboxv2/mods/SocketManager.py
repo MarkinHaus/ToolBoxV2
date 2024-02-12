@@ -220,6 +220,14 @@ class Tools(MainTool, FileHandler):
 
         def send(msg, address=None):
             t0 = time.perf_counter()
+
+            if type_id == SocketType.client.name:
+                to = (host, port)
+            elif address is not None:
+                to = address
+            else:
+                to = (host, endpoint_port)
+
             # Prüfen, ob die Nachricht ein Dictionary ist und Bytes direkt unterstützen
             if isinstance(msg, bytes):
                 sender_bytes = b'b' + msg  # Präfix für Bytes
@@ -238,7 +246,7 @@ class Tools(MainTool, FileHandler):
                 self.print(Style.YELLOW(f"Unsupported message type: {type(msg)}"))
                 return
 
-            self.print(Style.GREY(f"Sending Data: {msg_json}"))
+            self.print(Style.GREY(f"Sending Data: {msg_json} {to}"))
 
             def send_(chunk):
                 try:
@@ -256,13 +264,8 @@ class Tools(MainTool, FileHandler):
                 return
 
             print("all data - sender_bytes -", sender_bytes)
-            if type_id == SocketType.client.name:
-                to = (host, port)
-            elif address is not None:
-                to = address
-            else:
-                to = (host, endpoint_port)
-            self.print(Style.GREY(f"-- Sent to : {to} --"))
+
+            self.print(Style.GREY(f"-- Sent to :  --"))
             total_steps = len(sender_bytes) // 1024
             if len(sender_bytes) % 1024 != 0:
                 total_steps += 1  # Einen zusätzlichen Schritt hinzufügen, falls ein Rest existiert
@@ -303,7 +306,7 @@ class Tools(MainTool, FileHandler):
                     chunk = chunk[1:]  # Rest der Daten
                     self.print(f"Register date type : {data_type}")
 
-                print(data_type, len(data_buffer), chunk[:3])
+                # print(data_type, len(data_buffer), chunk[:3])
 
                 if chunk[0] == b'E' and chunk[-1] == b'E' and len(data_buffer) > 0:
                     print("all data restructured", data_buffer)
@@ -334,8 +337,8 @@ class Tools(MainTool, FileHandler):
                 else:
                     data_buffer += chunk
 
-                self.print(
-                    f"{name} :R Parsed Time ; {time.perf_counter() - t0:.2f} port :{endpoint_port if type_id == SocketType.peer.name else port}")
+                # self.print(
+                #     f"{name} :R Parsed Time ; {time.perf_counter() - t0:.2f} port :{endpoint_port if type_id == SocketType.peer.name else port}")
 
             self.print(f"{name} :closing connection to {host}")
             r_socket_.close()
@@ -613,7 +616,7 @@ class Tools(MainTool, FileHandler):
             compressed_data = gzip.compress(f.read())
 
         # Peer-to-Peer Socket erstellen und verbinden
-        socket_data = self.create_socket(name="sender", host=host, endpoint_port=port, type_id=SocketType.peer,
+        socket_data = self.create_socket(name="sender", host=host, endpoint_port=port+1, type_id=SocketType.peer,
                                          return_full_object=True)
 
         # 'socket': socket,
