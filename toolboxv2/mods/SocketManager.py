@@ -685,13 +685,13 @@ class Tools(MainTool, FileHandler):
         socket_data = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
                                          type_id=SocketType.peer,
                                          return_full_object=True, max_connections=1)
-        receiver_queue = socket_data['receiver_queue']
+        receiver_queue: queue.Queue = socket_data['receiver_queue']
 
         file_data = b''
         file_size = 0
         while True:
             # Auf Daten warten
-            data = receiver_queue.get(timout=60*15)
+            data = receiver_queue.get(timeout=60*15)
             if 'data_size' in data:
                 file_size = data['data_size']
                 self.logger.info(f"Erwartete Dateigröße: {file_size} Bytes")
