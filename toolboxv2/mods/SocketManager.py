@@ -229,7 +229,7 @@ class Tools(MainTool, FileHandler):
                     sender_bytes = b'e'  # Präfix für "exit"
                     msg_json = 'exit'
                 elif 'keepalive' in msg:
-                    sender_bytes = b'k'  # Präfix für "exit"
+                    sender_bytes = b'k'  # Präfix für "keepalive"
                     msg_json = 'keepalive'
                 else:
                     msg_json = json.dumps(msg)
@@ -290,17 +290,19 @@ class Tools(MainTool, FileHandler):
                 if not chunk:
                     break  # Verbindung wurde geschlossen
 
+                if chunk == b'k':
+                    # Behandlung von Byte-Daten
+                    self.logger.info(f"{name} -- received keepalive signal--")
+                    continue
+
                 if not data_type:
                     data_type = chunk[:1]  # Erstes Byte ist der Datentyp
                     chunk = chunk[1:]  # Rest der Daten
                     self.print(f"Register date type : {data_type}")
 
-                print(data_type, len(chunk), chunk)
+                print(data_type, len(chunk))
 
-                if data_type == b'k':
-                    data_buffer = b''
-                    data_type = None
-                elif chunk[0] == b'E' and chunk[-1] == b'E' and len(data_buffer) > 0:
+                if chunk[0] == b'E' and chunk[-1] == b'E' and len(data_buffer) > 0:
                     print("all data restructured", data_buffer)
                     # Letzter Teil des Datensatzes
                     if data_type == b'e':
