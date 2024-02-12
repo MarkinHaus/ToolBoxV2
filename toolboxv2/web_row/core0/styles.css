@@ -1,0 +1,253 @@
+*,
+*:before,
+*:after{
+    padding: 0;
+    margin: 0;
+    box-sizing: border-box;
+
+    --background-color : #fffa;
+    --text-clor : #000;
+    --anti-text-clor: #fff;
+    --light-acent: #045fab;
+    --dark-acent: #011b33;
+}
+
+
+.wrapper{
+    box-sizing: content-box;
+    background-color: var(--background-color);
+    height: min-content;
+    display: contents;
+    text-align: center;
+}
+
+@media (max-width: 480px) {
+    .wrapper{
+        box-sizing: content-box;
+        background-color: var(--background-color);
+        height: min-content;
+        display: contents;
+        text-align: center;
+    }
+}
+.words {
+    overflow: hidden;
+}
+
+
+.wrapper span{
+    display: block;
+    height: 100%;
+    padding-left: 10px;
+    animation: spin_words 10s infinite;
+}
+
+
+.wrapper div{
+
+    width: 100%;
+    height: 15vh;
+    text-align: center;
+
+}
+
+.Apps {
+    text-align: center;
+    height: 50vh;
+    transition: 1s background 0.5s ease-in, 2s color 1s ease-out;
+    margin: auto;
+    width: 75%;
+    display: contents;
+    animation-name: fade_in_animation;
+    animation-duration: 0.75s;
+}
+
+footer {
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    text-align: center;
+    padding: 10%;
+}
+
+@keyframes spin_words {
+    10%{
+        transform: translateY(-112%);
+    }
+    25%{
+        transform: translateY(-100%);
+    }
+    35%{
+        transform: translateY(-212%);
+    }
+    50%{
+        transform: translateY(-200%);
+    }
+    60%{
+        transform: translateY(-312%);
+    }
+    75%{
+        transform: translateY(-300%);
+    }
+    85%{
+        transform: translateY(-412%);
+    }
+    100%{
+        transform: translateY(-406%);
+    }
+}
+
+.fade-aut{
+  animation-name: fade_out_animation;
+  animation-duration: 2s;
+  animation-delay: 1s;
+}
+
+.fade-in{
+  animation-name: fade_in_animation;
+  animation-duration: 2s;
+  animation-delay: 4s;
+
+}
+
+.fade-aut-speed{
+    animation-name: fade_out_animation;
+    animation-duration: 0.75s;
+}
+
+.app-box > a {
+    padding: 12px;
+    border: 2px solid;
+    border-radius: 12px;
+    display: list-item;
+    text-decoration: none;
+    font-size: larger;
+}
+
+@keyframes fade_in_animation{
+    0%{
+        color: var(--dark-text-color);
+        scale: 2;
+    }
+    100%{
+        color: var(--text-color);
+        scale: 1;
+        display: block;
+    }
+}
+
+@keyframes fade_out_animation{
+    0%{
+        color: var(--text-color);
+        scale: 1;
+    }
+    100%{
+        color: var(--dark-text-color);
+        scale: 4;
+    }
+}
+
+
+/* Stil für den Hauptcontainer */
+.stylesheet {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* Stil für den Hauptinhalt */
+.main-content {
+    background: #fff;
+    padding: 20px;
+    border-radius: 5px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+/* Stil für Überschriften */
+h1, h2, h3, h4, h5, h6 {
+    margin-top: 0;
+}
+h3, h4, h5, h6 {
+    line-height: 1.6;
+}
+
+/* Stil für die Einführungssektion */
+.introduction {
+    margin-bottom: 20px;
+}
+
+/* Stil für Detailabschnitte */
+.details {
+    margin-bottom: 20px;
+}
+
+/* Stil für den Vorteile-Abschnitt */
+.benefits {
+    margin-bottom: 20px;
+}
+
+/* Stil für den Umsetzungsabschnitt */
+.implementation {
+    margin-bottom: 20px;
+}
+
+/* Stil für den Footer */
+footer {
+    margin-top: 40px;
+    text-align: center;
+    font-size: 0.8em;
+}
+
+/* Stil für Links */
+a {
+    color: #537FE7;
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+#installer-container {
+    max-width: 600px;
+    margin: 0 auto;
+    text-align: center;
+}
+
+#download-options p {
+    margin: 10px 0;
+}
+
+
+.roadmap-container {
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+.roadmap {
+    position: relative;
+    border-left: 2px solid #333;
+    padding-left: 20px;
+}
+
+.roadmap-item {
+    margin-bottom: 20px;
+}
+
+.roadmap-marker {
+    width: 10px;
+    height: 10px;
+    background-color: #333;
+    border-radius: 50%;
+    position: absolute;
+    left: -6px; /* Halbe Breite des Markers */
+    top: 0;
+}
+
+.roadmap-content {
+    background-color: white;
+    padding: 10px;
+    border-radius: 5px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}

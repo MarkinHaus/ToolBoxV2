@@ -615,7 +615,7 @@ class Tools(MainTool, FileHandler):
         # Überprüfen, ob die Datei existiert
         if not os.path.exists(filepath):
             self.logger.error(f"Datei {filepath} nicht gefunden.")
-            return False
+            return f"Datei {filepath} nicht gefunden."
 
         if '.' in filepath.split('/')[-1]:
             with open(filepath, 'rb') as f:
@@ -687,8 +687,8 @@ class Tools(MainTool, FileHandler):
                 self.logger.info(f"Erwartete Dateigröße: {file_size} Bytes")
                 self.print(f"Erwartete Dateigröße: {file_size} Bytes")
             elif 'bytes' in data:
-                print("dasdadad", data)
                 file_data += data['bytes']
+                self.print(f"Erhaltende Bytes: {len(file_data)} Bytes")
                 # Daten dekomprimieren
                 if len(file_data) > 0:
                     print(f"{len(file_data) / file_size * 100:.2f}%")
@@ -700,7 +700,7 @@ class Tools(MainTool, FileHandler):
                     with open(save_path, 'wb') as f:
                         f.write(decompressed_data)
                 else:
-                    unzip_bytes_to_folder(decompressed_data, socket_data)
+                    unzip_bytes_to_folder(decompressed_data, save_path)
                 self.logger.info(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
                 self.print(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
                 break
