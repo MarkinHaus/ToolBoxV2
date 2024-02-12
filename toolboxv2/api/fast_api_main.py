@@ -222,7 +222,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         elif not session:
             session_id = self.crate_new_session_id(request, jwt_token, username)
         else:
-            session_id: str = request.session.get('ID')
+            session_id: str = request.session.get('ID', '')
         request.session['live_data'] = {}
         if self.validate_session(session_id):
             request.session['valid'] = True
