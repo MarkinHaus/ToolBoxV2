@@ -232,8 +232,8 @@ class Tools(MainTool, FileHandler):
                 return
 
             self.print(Style.GREY(f"Sending Data: {msg_json}"))
-            for i in range(0, len(sender_bytes), 1024):
-                chunk = sender_bytes[i:i + 1024]
+
+            def send_(chunk):
                 try:
                     if type_id == SocketType.client.name:
                         sock.sendall(chunk)
@@ -247,7 +247,10 @@ class Tools(MainTool, FileHandler):
                     self.print(Style.GREY(f"-- Sent to : {to} --"))
                 except Exception as e:
                     self.logger.error(f"Error sending data: {e}")
-
+            for i in range(0, len(sender_bytes), 1024):
+                chunk_ = sender_bytes[i:i + 1024]
+                send_(chunk_)
+            send_(b'E'*1024)
             self.print(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
 
         def receive(r_socket_):
@@ -269,9 +272,11 @@ class Tools(MainTool, FileHandler):
                     data_type = chunk[:1]  # Erstes Byte ist der Datentyp
                     chunk = chunk[1:]  # Rest der Daten
 
-                data_buffer += chunk
-
-                if len(chunk) < 1024:
+                if chunk != b'E'*1024:
+                    data_buffer += chunk
+                elif len(chunk) < 1024:
+                    data_buffer += chunk
+                else:
                     # Letzter Teil des Datensatzes
                     if data_type == b'e':
                         running = False
@@ -586,3 +591,4 @@ class Tools(MainTool, FileHandler):
                 self.print(f"Unexpected data : {data}")
 
         socket_data['keepalive_var'][0] = False
+
