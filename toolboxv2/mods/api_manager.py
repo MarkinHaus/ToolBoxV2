@@ -150,7 +150,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         self.print("API is already running")
 
-    def stop_api(self, api_name: str):
+    def stop_api(self, api_name: str, delete = True):
         if api_name not in list(self.api_config.keys()):
             return f"Api with the name {api_name} is not listed"
 
@@ -174,7 +174,8 @@ class Tools(MainTool, FileHandler):  # FileHandler
         api_thread = self.running_apis.get(api_name)
         if api_thread:
             api_thread.join()
-        del self.running_apis[api_name]
+        if delete:
+            del self.running_apis[api_name]
         os.remove(f"./.data/api_pid_{api_name}")
 
     @export(mod_name="api_manager", test=False)
@@ -190,5 +191,6 @@ class Tools(MainTool, FileHandler):  # FileHandler
     def on_exit(self):
         self.add_to_save_file_handler(self.keys["Apis"], json.dumps(self.api_config))
         for key in self.running_apis:
-            self.stop_api(key)
+            self.stop_api(key, delete=False)
+        self.running_apis = {}
         self.save_file_handler()
