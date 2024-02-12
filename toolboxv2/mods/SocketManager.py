@@ -576,9 +576,9 @@ class Tools(MainTool, FileHandler):
                                          type_id=SocketType.server,
                                          return_full_object=True, max_connections=1)
         receiver_queue = socket_data['receiver_queue']
-        receiver = socket_data['receiver']
+        to_receiver = socket_data['client_to_receiver_thread']
         client, address = receiver_queue.get(block=True)
-        receiver(client, 'client-' + str(address))
+        to_receiver(client, 'client-' + str(address))
 
         file_data = b''
         file_size = 0
