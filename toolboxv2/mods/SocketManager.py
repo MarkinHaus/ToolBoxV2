@@ -650,8 +650,8 @@ class Tools(MainTool, FileHandler):
                 time.sleep(0.1)
             self.logger.info(f"Datei {filepath} erfolgreich gesendet.")
             self.print(f"Datei {filepath} erfolgreich gesendet.")
-            peer_result = receiver_queue.get(timeout=60*10)
-            print(f"{peer_result}")
+            # peer_result = receiver_queue.get(timeout=60*10)
+            # print(f"{peer_result}")
             send({'exit': True})
             return True
         except Exception as e:
