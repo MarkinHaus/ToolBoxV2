@@ -285,8 +285,9 @@ class Tools(MainTool, FileHandler):
             running = True
             data_type = None
             data_buffer = b''
+            max_size = -1
             while running:
-                t0 = time.perf_counter()
+                # t0 = time.perf_counter()
 
                 if type_id == SocketType.client.name:
                     chunk, add = r_socket_.recvfrom(1024)
@@ -306,10 +307,12 @@ class Tools(MainTool, FileHandler):
                     chunk = chunk[1:]  # Rest der Daten
                     self.print(f"Register date type : {data_type}")
 
-                print(data_type, len(data_buffer), chunk[0] == b'E' and chunk[-1] == b'E' and len(data_buffer) > 0)
+                if max_size > -1 and len(data_buffer) > 0 and data_type == b'b':
+                    print(f"don {chunk[0] == b'E'[0] and chunk[-1] == b'E'[0]} {len(data_buffer)//max_size:.2f}", end='\r')
 
                 if chunk[0] == b'E'[0] and chunk[-1] == b'E'[0] and len(data_buffer) > 0:
-                    print("all data restructured", data_buffer)
+                    print("\nall data restructured", data_buffer)
+                    max_size = -1
                     # Letzter Teil des Datensatzes
                     if data_type == b'e':
                         running = False
@@ -326,6 +329,8 @@ class Tools(MainTool, FileHandler):
                             msg['identifier'] = identifier
                             receiver_queue.put(msg)
                             self.logger.info(f"{name} -- received JSON -- {msg}")
+                            if 'data_size' in msg.keys():
+                                max_size = msg['data_size']
                         except json.JSONDecodeError and UnicodeDecodeError as e:
                             self.logger.error(f"JSON decode error: {e}")
                     else:
