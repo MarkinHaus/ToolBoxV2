@@ -215,8 +215,6 @@ class Tools(MainTool, FileHandler):
             res_msg = b''
             # Prüfen, ob die Nachricht ein Dictionary ist und Bytes direkt unterstützen
             if isinstance(msg, bytes):
-                if len(msg) > 1472:
-                    return "TO BIG"
                 sender_bytes = b'b' + msg  # Präfix für Bytes
                 msg_json = 'sending bytes'
             elif isinstance(msg, dict):
@@ -234,52 +232,65 @@ class Tools(MainTool, FileHandler):
                 return
 
             self.print(Style.GREY(f"Sending Data: {msg_json}"))
-
-            try:
-                if type_id == SocketType.client.name:
-                    sock.sendall(sender_bytes)
-                    to = (host, port)
-                elif address is not None:
-                    sock.sendto(sender_bytes, address)
-                    to = address
-                else:
-                    sock.sendto(sender_bytes, (host, endpoint_port))
-                    to = (host, endpoint_port)
-                self.print(Style.GREY(f"-- Sent to : {to} --"))
-            except Exception as e:
-                self.logger.error(f"Error sending data: {e}")
+            for i in range(0, len(sender_bytes), 1024):
+                chunk = sender_bytes[i:i + 1024]
+                try:
+                    if type_id == SocketType.client.name:
+                        sock.sendall(chunk)
+                        to = (host, port)
+                    elif address is not None:
+                        sock.sendto(chunk, address)
+                        to = address
+                    else:
+                        sock.sendto(chunk, (host, endpoint_port))
+                        to = (host, endpoint_port)
+                    self.print(Style.GREY(f"-- Sent to : {to} --"))
+                except Exception as e:
+                    self.logger.error(f"Error sending data: {e}")
 
             self.print(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
 
         def receive(r_socket_):
             running = True
+            data_type = None
+            data_buffer = b''
             while running:
                 t0 = time.perf_counter()
-                data = r_socket_.recv(1024)
-                if not data:
-                    break
 
-                data_type = data[0:1]  # Erstes Byte ist der Datentyp
-                data_content = data[1:]  # Rest der Daten
+                chunk = r_socket.recvfrom(1024)
+                if not chunk:
+                    break  # Verbindung wurde geschlossen
 
-                if data_type == b'e':
-                    running = False
-                    self.print(f"{name} -- received exit signal --")
-                    self.sockets[name]['keepalive_var'][0] = False
-                elif data_type == b'k':
-                    self.print(f"{name} -- received keepalive signal --")
-                elif data_type == b'b':
-                    receiver_queue.put({'bytes': data_content})
-                    self.print(f"{name} -- received bytes --")
-                elif data_type == b'j':
-                    try:
-                        msg = json.loads(data_content.decode('utf-8'))
-                        receiver_queue.put(msg)
-                        self.print(f"{name} -- received JSON -- {msg}")
-                    except json.JSONDecodeError as e:
-                        self.logger.error(f"JSON decode error: {e}")
-                else:
-                    self.print(f"Received unknown data type: {data_type}")
+                if not data_type:
+                    data_type = chunk[:1]  # Erstes Byte ist der Datentyp
+                    chunk = chunk[1:]  # Rest der Daten
+
+                data_buffer += chunk
+
+                if len(chunk) < 1024:
+                    # Letzter Teil des Datensatzes
+                    if data_type == b'e':
+                        running = False
+                        self.logger.info(f"{name} -- received exit signal --")
+                        self.sockets[name]['keepalive_var'][0] = False
+                    elif data_type == b'b':
+                        # Behandlung von Byte-Daten
+                        receiver_queue.put({'bytes': data_buffer})
+                        self.logger.info(f"{name} -- received bytes --")
+                    elif data_type == b'j':
+                        # Behandlung von JSON-Daten
+                        try:
+                            msg = json.loads(data_buffer.decode('utf-8'))
+                            receiver_queue.put(msg)
+                            self.logger.info(f"{name} -- received JSON -- {msg}")
+                        except json.JSONDecodeError as e:
+                            self.logger.error(f"JSON decode error: {e}")
+                    else:
+                        self.logger.error("Unbekannter Datentyp")
+                        self.print(f"Received unknown data type: {data_type}")
+                    # Zurücksetzen für den nächsten Datensatz
+                    data_buffer = b''
+                    data_type = None
 
                 self.print(f"{name} :R Parsed Time ; {time.perf_counter() - t0:.2f} port :{endpoint_port if type_id == SocketType.peer.name else port}")
 
