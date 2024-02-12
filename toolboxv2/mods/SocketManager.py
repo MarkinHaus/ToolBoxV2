@@ -272,13 +272,11 @@ class Tools(MainTool, FileHandler):
                 if not data_type:
                     data_type = chunk[:1]  # Erstes Byte ist der Datentyp
                     chunk = chunk[1:]  # Rest der Daten
+                    self.print(f"Register date type : {data_type}")
 
-                if chunk != b'E' * 1024:
-                    data_buffer += chunk
+                data_buffer += chunk
 
-                if len(chunk) < 1024:
-                    data_buffer += chunk
-                else:
+                if chunk == b'E' * 1024:
                     # Letzter Teil des Datensatzes
                     if data_type == b'e':
                         running = False
@@ -295,7 +293,7 @@ class Tools(MainTool, FileHandler):
                             msg['identifier'] = identifier
                             receiver_queue.put(msg)
                             self.logger.info(f"{name} -- received JSON -- {msg}")
-                        except json.JSONDecodeError as e:
+                        except json.JSONDecodeError and UnicodeDecodeError as e:
                             self.logger.error(f"JSON decode error: {e}")
                     else:
                         self.logger.error("Unbekannter Datentyp")
