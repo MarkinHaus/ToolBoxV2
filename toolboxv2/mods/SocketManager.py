@@ -160,7 +160,7 @@ class Tools(MainTool, FileHandler):
     def create_socket(self, name: str = 'local-host', host: str = '0.0.0.0', port: int or None = None,
                       type_id: SocketType = SocketType.client,
                       max_connections=-1, endpoint_port=None,
-                      return_full_object=False, keepalive_interval=6, test_override=False, package_size=1024):
+                      return_full_object=False, keepalive_interval=6, test_override=False, package_size=1024, start_keep_alive=True):
 
         if 'test' in self.app.id and not test_override:
             return "No api in test mode allowed"
@@ -387,7 +387,7 @@ class Tools(MainTool, FileHandler):
                     data_type = None
                 else:
                     # print(b' ' in chunk, b' '[0], chunk)
-                    if b' ' in chunk and chunk[-1] == b' '[0]:
+                    if b' ' in chunk and chunk[-1] == b' '[0] and type_id == SocketType.client.name:
                         chunk = chunk.replace(b' ', b'')
                     data_buffer += chunk
 
@@ -432,7 +432,9 @@ class Tools(MainTool, FileHandler):
                 send({"exit": True})
 
             keep_alive_thread = threading.Thread(target=keep_alive)
-            keep_alive_thread.start()
+            if start_keep_alive:
+                keep_alive_thread.start()
+
 
         elif type_id == SocketType.server.name:
 
@@ -615,9 +617,13 @@ class Tools(MainTool, FileHandler):
             self.logger.error(f"Datei {filepath} nicht gefunden.")
             return False
 
+        if '.' in filepath.split('/')[-1]:
+            with open(filepath, 'rb') as f:
+                to_send_data = gzip.compress(f.read())
+        else:
+            to_send_data = zip_folder_to_bytes(filepath)
         # Datei komprimieren
-        with open(filepath, 'rb') as f:
-            compressed_data = gzip.compress(f.read())
+        compressed_data = gzip.compress(to_send_data)
 
         # Peer-to-Peer Socket erstellen und verbinden
         socket_data = self.create_socket(name="sender", host=host, port=port, type_id=SocketType.client,
@@ -690,8 +696,11 @@ class Tools(MainTool, FileHandler):
                     continue
                 decompressed_data = gzip.decompress(file_data)
                 # Datei speichern
-                with open(save_path, 'wb') as f:
-                    f.write(decompressed_data)
+                if '.' in save_path.split('/')[-1]:
+                    with open(save_path, 'wb') as f:
+                        f.write(decompressed_data)
+                else:
+                    unzip_bytes_to_folder(decompressed_data, socket_data)
                 self.logger.info(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
                 self.print(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
                 break
@@ -714,13 +723,17 @@ class Tools(MainTool, FileHandler):
             self.logger.error(f"Datei {filepath} nicht gefunden.")
             return False
 
+        if '.' in filepath.split('/')[-1]:
+            with open(filepath, 'rb') as f:
+                to_send_data = gzip.compress(f.read())
+        else:
+            to_send_data = zip_folder_to_bytes(filepath)
         # Datei komprimieren
-        with open(filepath, 'rb') as f:
-            compressed_data = gzip.compress(f.read())
+        compressed_data = gzip.compress(to_send_data)
 
         # Peer-to-Peer Socket erstellen und verbinden
         socket_data = self.create_socket(name="sender", host=host, endpoint_port=port, type_id=SocketType.peer,
-                                         return_full_object=True, keepalive_interval=1)
+                                         return_full_object=True, keepalive_interval=1, start_keep_alive=False)
 
         # 'socket': socket,
         # 'receiver_socket': r_socket,
@@ -734,7 +747,6 @@ class Tools(MainTool, FileHandler):
         # 'keepalive_thread': keep_alive_thread,
 
         send = socket_data['sender']
-        receiver_queue: queue.Queue = socket_data['receiver_queue']
 
         # Komprimierte Daten senden
         try:
@@ -771,7 +783,6 @@ class Tools(MainTool, FileHandler):
         receiver_queue: queue.Queue = socket_data['receiver_queue']
 
         file_data = b''
-        file_size = -1
         while True:
             # Auf Daten warten
             data = receiver_queue.get()
@@ -783,14 +794,13 @@ class Tools(MainTool, FileHandler):
 
                 file_data += data['bytes']
                 # Daten dekomprimieren
-                if len(file_data) > 0:
-                    print(f"{len(file_data) / file_size * 100:.2f}%")
-                if len(file_data) != file_size:
-                    continue
                 decompressed_data = gzip.decompress(file_data)
                 # Datei speichern
-                with open(save_path, 'wb') as f:
-                    f.write(decompressed_data)
+                if '.' in save_path.split('/')[-1]:
+                    with open(save_path, 'wb') as f:
+                        f.write(decompressed_data)
+                else:
+                    unzip_bytes_to_folder(decompressed_data, socket_data)
                 self.logger.info(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
                 self.print(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
                 break
