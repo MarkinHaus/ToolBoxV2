@@ -274,7 +274,7 @@ class Tools(MainTool, FileHandler):
                     chunk_ = sender_bytes[i:i + 1024]
                     send_(chunk_)
                     pbar.update(1)
-                    time.sleep(0.00001)
+                    time.sleep(1/10**18)
             if len(sender_bytes) % 1024 != 0:
                 pass
             send_(b'E' * 6)
