@@ -56,6 +56,7 @@ class FileHandler(Code):
             rdu()
         except OSError and PermissionError as e:
             raise e
+
     def open_s_file_handler(self):
         self._open_file_handler('w+', self.open_s_file_handler)
         return self

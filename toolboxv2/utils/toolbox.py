@@ -108,7 +108,7 @@ class App(metaclass=Singleton):
             "root": {},
         }
         self.locals = {
-            "user": {},
+            "user": {'app': self},
         }
 
         identification = self.id
