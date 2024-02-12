@@ -253,17 +253,17 @@ class Tools(MainTool, FileHandler):
             send_(b'E'*1024)
             self.print(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
 
-        def receive(r_socket_):
+        def receive(r_socket_, identifier="main"):
             running = True
             data_type = None
             data_buffer = b''
             while running:
                 t0 = time.perf_counter()
 
-                if type_id == SocketType.peer.name:
-                    chunk = r_socket.recv(1024)
-                else:
+                if type_id == SocketType.client.name:
                     chunk, add = r_socket.recvfrom(1024)
+                else:
+                    chunk = r_socket.recv(1024)
 
                 if not chunk:
                     break  # Verbindung wurde geschlossen
@@ -284,12 +284,13 @@ class Tools(MainTool, FileHandler):
                         self.sockets[name]['keepalive_var'][0] = False
                     elif data_type == b'b':
                         # Behandlung von Byte-Daten
-                        receiver_queue.put({'bytes': data_buffer})
+                        receiver_queue.put({'bytes': data_buffer, 'identifier':identifier})
                         self.logger.info(f"{name} -- received bytes --")
                     elif data_type == b'j':
                         # Behandlung von JSON-Daten
                         try:
                             msg = json.loads(data_buffer.decode('utf-8'))
+                            msg['identifier'] = identifier
                             receiver_queue.put(msg)
                             self.logger.info(f"{name} -- received JSON -- {msg}")
                         except json.JSONDecodeError as e:
@@ -352,6 +353,7 @@ class Tools(MainTool, FileHandler):
             'receiver_thread': s_thread,
             'keepalive_thread': keep_alive_thread,
             'keepalive_var': keep_alive_var,
+            'receiver': receive,
         }
 
         if return_full_object:
@@ -497,10 +499,10 @@ class Tools(MainTool, FileHandler):
         return {"stop_server": stop_server, "get_status": get_status}
 
     @export(mod_name=Name, name="send_file_to_peer", test=False)
-    def send_file_to_peer(self, filepath, host, port):
+    def send_file_to_sever(self, filepath, host, port):
         if isinstance(port, str):
             try:
-                peer_port = int(port)
+                port = int(port)
             except:
                 return self.return_result(exec_code=-1, data_info=f"{port} is not an int or not cast to int")
         # Überprüfen, ob die Datei existiert
@@ -548,7 +550,7 @@ class Tools(MainTool, FileHandler):
             socket_data['keepalive_var'][0] = False
 
     @export(mod_name=Name, name="receive_and_decompress_file", test=False)
-    def receive_and_decompress_file(self, save_path, listening_port):
+    def receive_and_decompress_file_from_client(self, save_path, listening_port):
         # Empfangs-Socket erstellen
         if isinstance(listening_port, str):
             try:
@@ -558,8 +560,11 @@ class Tools(MainTool, FileHandler):
 
         socket_data = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
                                                type_id=SocketType.server,
-                                               return_full_object=True)
+                                               return_full_object=True, max_connections=1)
         receiver_queue = socket_data['receiver_queue']
+        receiver = socket_data['receiver']
+        client, address = receiver_queue.get(block=True)
+        receiver(client, 'client-'+str(address))
 
         file_data = b''
         file_size = 0
