@@ -334,7 +334,7 @@ class Tools(MainTool, FileHandler):
                     chunk = r_socket_.recv(1024)
 
                 if not chunk:
-                    break  # Verbindung wurde geschlossen
+                    continue
 
                 if chunk == b'k':
                     # Behandlung von Byte-Daten
@@ -716,7 +716,7 @@ class Tools(MainTool, FileHandler):
 
         # Peer-to-Peer Socket erstellen und verbinden
         socket_data = self.create_socket(name="sender", host=host, endpoint_port=port, type_id=SocketType.peer,
-                                         return_full_object=True)
+                                         return_full_object=True, keepalive_interval=1)
 
         # 'socket': socket,
         # 'receiver_socket': r_socket,
@@ -737,7 +737,7 @@ class Tools(MainTool, FileHandler):
             # Größe der komprimierten Daten senden
             send({'data_size': len(compressed_data)})
             # Komprimierte Daten senden
-            time.sleep(0.2)
+            time.sleep(1.2)
             send(compressed_data)
             self.logger.info(f"Datei {filepath} erfolgreich gesendet.")
             self.print(f"Datei {filepath} erfolgreich gesendet.")
