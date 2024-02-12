@@ -20,7 +20,7 @@ import threading
 import queue
 import asyncio
 
-version = "0.1.4"
+version = "0.1.5"
 Name = "SocketManager"
 
 export = get_app("SocketManager.Export").tb
@@ -216,8 +216,7 @@ class Tools(MainTool, FileHandler):
             # Prüfen, ob die Nachricht ein Dictionary ist und Bytes direkt unterstützen
             if isinstance(msg, bytes):
                 if len(msg) > 1472:
-                    res_msg = msg[1460:]
-                    msg = msg[:1460]
+                    return "TO BIG"
                 sender_bytes = b'b' + msg  # Präfix für Bytes
                 msg_json = 'sending bytes'
             elif isinstance(msg, dict):
@@ -239,18 +238,18 @@ class Tools(MainTool, FileHandler):
             try:
                 if type_id == SocketType.client.name:
                     sock.sendall(sender_bytes)
+                    to = (host, port)
                 elif address is not None:
                     sock.sendto(sender_bytes, address)
+                    to = address
                 else:
                     sock.sendto(sender_bytes, (host, endpoint_port))
-                self.print(Style.GREY("-- Sent --"))
+                    to = (host, endpoint_port)
+                self.print(Style.GREY(f"-- Sent to : {to} --"))
             except Exception as e:
                 self.logger.error(f"Error sending data: {e}")
 
             self.print(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
-
-            if len(res_msg):
-                send(res_msg, address)
 
         def receive(r_socket_):
             running = True
@@ -282,7 +281,7 @@ class Tools(MainTool, FileHandler):
                 else:
                     self.print(f"Received unknown data type: {data_type}")
 
-                self.print(f"{name} :R Parsed Time ; {time.perf_counter() - t0:.2f}")
+                self.print(f"{name} :R Parsed Time ; {time.perf_counter() - t0:.2f} port :{endpoint_port if type_id == SocketType.peer.name else port}")
 
             self.print(f"{name} :closing connection to {host}")
             r_socket_.close()
@@ -515,7 +514,10 @@ class Tools(MainTool, FileHandler):
             # Größe der komprimierten Daten senden
             send({'data_size': len(compressed_data)})
             # Komprimierte Daten senden
-            send(compressed_data)
+            for i in range((len(compressed_data)//1460)+1):
+                print(f"Sending compressed data {i}")
+                send(compressed_data[i*1460:(i+1)*1460])
+                time.sleep(0.02)
             self.logger.info(f"Datei {filepath} erfolgreich gesendet.")
             self.print(f"Datei {filepath} erfolgreich gesendet.")
             send({'exit': True})
