@@ -382,7 +382,7 @@ class Tools(MainTool, FileHandler):
                     data_buffer = b''
                     data_type = None
                 else:
-                    print(b' ' in chunk, b' '[0])
+                    print(b' ' in chunk, b' '[0], chunk)
                     if b' ' in chunk and chunk[-1] == b' '[0]:
                         chunk = chunk.replace(b' ', b'')
                     data_buffer += chunk
@@ -668,7 +668,7 @@ class Tools(MainTool, FileHandler):
         to_receiver(client, 'client-' + str(address))
 
         file_data = b''
-        file_size = 0
+        file_size = -1
         while True:
             # Auf Daten warten
             data = receiver_queue.get()
@@ -682,7 +682,7 @@ class Tools(MainTool, FileHandler):
                 # Daten dekomprimieren
                 if len(file_data) > 0:
                     print(f"{len(file_data) / file_size * 100:.2f}%")
-                if len(file_data) != file_size:
+                if len(file_data) < file_size:
                     continue
                 decompressed_data = gzip.decompress(file_data)
                 # Datei speichern
@@ -767,7 +767,7 @@ class Tools(MainTool, FileHandler):
         receiver_queue: queue.Queue = socket_data['receiver_queue']
 
         file_data = b''
-        file_size = 0
+        file_size = -1
         while True:
             # Auf Daten warten
             data = receiver_queue.get()
