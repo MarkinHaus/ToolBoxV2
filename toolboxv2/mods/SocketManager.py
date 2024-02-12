@@ -261,9 +261,9 @@ class Tools(MainTool, FileHandler):
                 t0 = time.perf_counter()
 
                 if type_id == SocketType.client.name:
-                    chunk, add = r_socket.recvfrom(1024)
+                    chunk, add = r_socket_.recvfrom(1024)
                 else:
-                    chunk = r_socket.recv(1024)
+                    chunk = r_socket_.recv(1024)
 
                 if not chunk:
                     break  # Verbindung wurde geschlossen
