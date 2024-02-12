@@ -282,8 +282,10 @@ class Tools(MainTool, FileHandler):
                     data_type = chunk[:1]  # Erstes Byte ist der Datentyp
                     chunk = chunk[1:]  # Rest der Daten
                     self.print(f"Register date type : {data_type}")
-
-                if (len(chunk) == 0 and len(data_buffer) > 0) or chunk[0] == b'E' and chunk[-1] == b'E' and len(data_buffer) > 0:
+                print(chunk)
+                if len(chunk) == 0:
+                    pass
+                if chunk[0] == b'E' and chunk[-1] == b'E' and len(data_buffer) > 0:
                     print("all data", data_buffer)
                     # Letzter Teil des Datensatzes
                     if data_type == b'e':
