@@ -525,10 +525,8 @@ class Tools(MainTool, FileHandler):
             # Größe der komprimierten Daten senden
             send({'data_size': len(compressed_data)})
             # Komprimierte Daten senden
-            for i in range((len(compressed_data)//1460)+1):
-                print(f"Sending compressed data {i}")
-                send(compressed_data[i*1460:(i+1)*1460])
-                time.sleep(1.02)
+
+            send(compressed_data)
             self.logger.info(f"Datei {filepath} erfolgreich gesendet.")
             self.print(f"Datei {filepath} erfolgreich gesendet.")
             send({'exit': True})
