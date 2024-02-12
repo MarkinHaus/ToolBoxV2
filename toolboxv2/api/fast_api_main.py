@@ -46,7 +46,7 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
 
         # Calculate the time elapsed since the last request
         elapsed_time = datetime.now() - last_request
-        if request.url.path.split('/')[1] == "app":
+        if request.url.path.split('/')[1] == "web":
             pass
         if elapsed_time > self.RATE_LIMIT_DURATION:
             # If the elapsed time is greater than the rate limit duration, reset the count
@@ -65,7 +65,7 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
                     status_code=429,
                     content={"message": "Rate limit exceeded. Please try again later. api"}
                 )
-            if 'app' in request.url.path:
+            if 'web' in request.url.path:
                 request_count_app += 1
             else:
                 request_count_api += 1

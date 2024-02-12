@@ -114,6 +114,9 @@ class FileHandler(Code):
         return True
 
     def remove_key_file_handler(self, key: str):
+        if key == 'Pka7237327':
+            print("Cant remove Root Key")
+            return
         if key in self.file_handler_load.keys():
             del self.file_handler_load[key]
         if key in self.file_handler_save.keys():

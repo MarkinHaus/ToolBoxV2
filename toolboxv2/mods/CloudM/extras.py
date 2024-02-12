@@ -179,8 +179,7 @@ def register_initial_root_user(app: App):
     ret = app.run_any(tbef.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
                        username="root",
                        email=email,
-                       invitation=invitation, get_results=True).lazy_return("intern",
-                                                                            data="Error register_initial_root_user")
+                       invitation=invitation, get_results=True)
     user = app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username="root")
     key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
     base_url = app.config_fh.get_file_handler("provider::") + (f':{app.args_sto.port}' if app.args_sto.host == 'localhost' else '')
@@ -200,8 +199,9 @@ def register_initial_root_user(app: App):
 
         qr.print_ascii(invert=True)
     except ImportError:
-        print(url)
-    return ret
+        pass
+    print(url)
+    return ret.lazy_return('internal', data='url')
 
 
 @no_test
