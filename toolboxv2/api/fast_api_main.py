@@ -130,6 +130,9 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             )
         if jwt_claim is None or username is None:
             tb_app.logger.debug(f"Session Handler New session no jwt no username {username}")
+            print("[jwt_claim]:, ", jwt_claim)
+            print(username)
+            print(request.headers)
             return '#0'
         return self.verify_session_id(session_id, username, jwt_claim)
 
