@@ -13,6 +13,8 @@ from dataclasses import dataclass
 import logging
 from enum import Enum
 
+from tqdm import tqdm
+
 from toolboxv2 import MainTool, FileHandler, App, Style, get_app
 
 import socket
@@ -218,7 +220,6 @@ class Tools(MainTool, FileHandler):
 
         def send(msg, address=None):
             t0 = time.perf_counter()
-            res_msg = b''
             # Prüfen, ob die Nachricht ein Dictionary ist und Bytes direkt unterstützen
             if isinstance(msg, bytes):
                 sender_bytes = b'b' + msg  # Präfix für Bytes
@@ -240,27 +241,38 @@ class Tools(MainTool, FileHandler):
             self.print(Style.GREY(f"Sending Data: {msg_json}"))
 
             def send_(chunk):
+                print("Sending chunk", chunk)
                 try:
                     if type_id == SocketType.client.name:
                         sock.sendall(chunk)
-                        to = (host, port)
                     elif address is not None:
                         sock.sendto(chunk, address)
-                        to = address
                     else:
                         sock.sendto(chunk, (host, endpoint_port))
-                        to = (host, endpoint_port)
-                    self.print(Style.GREY(f"-- Sent to : {to} --"))
                 except Exception as e:
                     self.logger.error(f"Error sending data: {e}")
 
-            print("all data", sender_bytes)
-            for i in range(0, len(sender_bytes), 1024):
-                chunk_ = sender_bytes[i:i + 1024]
-                send_(chunk_)
+            print("all data - sender_bytes -", sender_bytes)
+            if type_id == SocketType.client.name:
+                to = (host, port)
+            elif address is not None:
+                to = address
+            else:
+                to = (host, endpoint_port)
+            self.print(Style.GREY(f"-- Sent to : {to} --"))
+            total_steps = len(sender_bytes) // 1024
+            if len(sender_bytes) % 1024 != 0:
+                total_steps += 1  # Einen zusätzlichen Schritt hinzufügen, falls ein Rest existiert
+
+            # tqdm Fortschrittsanzeige initialisieren
+            with tqdm(total=total_steps, unit='chunk', desc='Sending data') as pbar:
+                for i in range(0, len(sender_bytes), 1024):
+                    chunk_ = sender_bytes[i:i + 1024]
+                    send_(chunk_)
+                    pbar.update(1)
             if len(sender_bytes) % 1024 != 0:
                 pass
-            send_(b'E' * 6)
+            send_(b'E' * 1024)
             self.print(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
 
         def receive(r_socket_, identifier="main"):
@@ -282,11 +294,14 @@ class Tools(MainTool, FileHandler):
                     data_type = chunk[:1]  # Erstes Byte ist der Datentyp
                     chunk = chunk[1:]  # Rest der Daten
                     self.print(f"Register date type : {data_type}")
+
+                print(data_type, len(chunk), chunk)
+
                 if data_type == b'k':
                     data_buffer = b''
                     data_type = None
                 elif chunk[0] == b'E' and chunk[-1] == b'E' and len(data_buffer) > 0:
-                    print("all data", data_buffer)
+                    print("all data restructured", data_buffer)
                     # Letzter Teil des Datensatzes
                     if data_type == b'e':
                         running = False
@@ -608,6 +623,7 @@ class Tools(MainTool, FileHandler):
         # 'keepalive_thread': keep_alive_thread,
 
         send = socket_data['sender']
+        receiver_queue: queue.Queue = socket_data['receiver_queue']
 
         # Komprimierte Daten senden
         try:
@@ -618,6 +634,8 @@ class Tools(MainTool, FileHandler):
             send(compressed_data)
             self.logger.info(f"Datei {filepath} erfolgreich gesendet.")
             self.print(f"Datei {filepath} erfolgreich gesendet.")
+            peer_result = receiver_queue.get(timeout=60*10)
+            print(f"{peer_result}")
             send({'exit': True})
             return True
         except Exception as e:
@@ -628,7 +646,7 @@ class Tools(MainTool, FileHandler):
             socket_data['keepalive_var'][0] = False
 
     @export(mod_name=Name, name="receive_and_decompress_file_as_server", test=False)
-    def receive_and_decompress_file_from_client_as_sever(self, save_path, listening_port):
+    def receive_and_decompress_file_from_client(self, save_path, listening_port):
         # Empfangs-Socket erstellen
         if isinstance(listening_port, str):
             try:
@@ -676,7 +694,7 @@ class Tools(MainTool, FileHandler):
         socket_data['keepalive_var'][0] = False
 
     @export(mod_name=Name, name="receive_and_decompress_file", test=False)
-    def receive_and_decompress_file_from_client(self, save_path, listening_port):
+    def receive_and_decompress_file_peer(self, save_path, listening_port):
         # Empfangs-Socket erstellen
         if isinstance(listening_port, str):
             try:
@@ -693,13 +711,14 @@ class Tools(MainTool, FileHandler):
         file_size = 0
         while True:
             # Auf Daten warten
-            data = receiver_queue.get(timeout=60*15)
+            data = receiver_queue.get()
+            print("receiver_queue received: ", data)
             if 'data_size' in data:
                 file_size = data['data_size']
                 self.logger.info(f"Erwartete Dateigröße: {file_size} Bytes")
                 self.print(f"Erwartete Dateigröße: {file_size} Bytes")
             elif 'bytes' in data:
-                print("dasdadad", data)
+
                 file_data += data['bytes']
                 # Daten dekomprimieren
                 if len(file_data) > 0:
