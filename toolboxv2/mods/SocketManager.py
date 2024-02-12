@@ -273,7 +273,7 @@ class Tools(MainTool, FileHandler):
                 for i in range(0, len(sender_bytes), 1024):
                     chunk_ = sender_bytes[i:i + 1024]
                     send_(chunk_)
-                    pbar.update(1024)
+                    pbar.update(1)
                     time.sleep(0.00001)
             if len(sender_bytes) % 1024 != 0:
                 pass
@@ -307,7 +307,7 @@ class Tools(MainTool, FileHandler):
                     self.print(f"Register date type : {data_type}")
 
                 if max_size > -1 and len(data_buffer) > 0 and data_type == b'b':
-                    print(f"don {chunk[0] == b'E'[0] and chunk[-1] == b'E'[0]} {(len(data_buffer)//max_size)*100:.2f}% total byts: {len(data_buffer)} von {max_size}", end='\r')
+                    print(f"don {chunk[0] == b'E'[0] and chunk[-1] == b'E'[0]} {(len(data_buffer)/max_size)*100:.2f}% total byts: {len(data_buffer)} von {max_size}", end='\r')
                 if data_type == b'e':
                     running = False
                     self.logger.info(f"{name} -- received exit signal --")
@@ -735,7 +735,7 @@ class Tools(MainTool, FileHandler):
                 file_data += data['bytes']
                 # Daten dekomprimieren
                 if len(file_data) > 0:
-                    print(f"{file_size / len(file_data) * 100:.2f}% of 100% | {file_size}, {len(file_data)}")
+                    print(f"{len(file_data)/ file_size * 100:.2f}%")
                 if len(file_data) != file_size:
                     continue
                 decompressed_data = gzip.decompress(file_data)
