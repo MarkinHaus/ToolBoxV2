@@ -214,7 +214,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         session = request.cookies.get(self.cookie_key)
         tb_app.logger.debug(f"({request.session} --> {request.url.path})")
 
-        jwt_token = request.headers.get('jwt_claim')
+        jwt_token = request.headers.get('Jwt_claim', request.headers.get('jwt_claim'))
         username = request.headers.get('username')
 
         if request.url.path == '/validateSession':
