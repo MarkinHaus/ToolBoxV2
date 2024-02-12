@@ -497,12 +497,12 @@ class Tools(MainTool, FileHandler):
         return {"stop_server": stop_server, "get_status": get_status}
 
     @export(mod_name=Name, name="send_file_to_peer", test=False)
-    def send_file_to_peer(self, filepath, peer_host, peer_port):
-        if isinstance(peer_port, str):
+    def send_file_to_peer(self, filepath, host, port):
+        if isinstance(port, str):
             try:
-                peer_port = int(peer_port)
+                peer_port = int(port)
             except:
-                return self.return_result(exec_code=-1, data_info=f"{peer_port} is not an int or not cast to int")
+                return self.return_result(exec_code=-1, data_info=f"{port} is not an int or not cast to int")
         # Überprüfen, ob die Datei existiert
         if not os.path.exists(filepath):
             self.logger.error(f"Datei {filepath} nicht gefunden.")
@@ -513,8 +513,8 @@ class Tools(MainTool, FileHandler):
             compressed_data = gzip.compress(f.read())
 
         # Peer-to-Peer Socket erstellen und verbinden
-        socket_data = self.create_socket(name="sender", host=peer_host, port=peer_port, type_id=SocketType.peer,
-                                         endpoint_port=peer_port, return_full_object=True, keepalive_interval=1)
+        socket_data = self.create_socket(name="sender", host=host, port=port, type_id=SocketType.client,
+                                         return_full_object=True)
 
         # 'socket': socket,
         # 'receiver_socket': r_socket,
@@ -557,7 +557,7 @@ class Tools(MainTool, FileHandler):
                 return self.return_result(exec_code=-1, data_info=f"{listening_port} is not an int or not cast to int")
 
         socket_data = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
-                                               type_id=SocketType.peer, endpoint_port=listening_port,
+                                               type_id=SocketType.server,
                                                return_full_object=True)
         receiver_queue = socket_data['receiver_queue']
 
