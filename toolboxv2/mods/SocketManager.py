@@ -275,7 +275,8 @@ class Tools(MainTool, FileHandler):
 
                 if chunk != b'E' * 1024:
                     data_buffer += chunk
-                elif len(chunk) < 1024:
+
+                if len(chunk) < 1024:
                     data_buffer += chunk
                 else:
                     # Letzter Teil des Datensatzes
@@ -353,6 +354,8 @@ class Tools(MainTool, FileHandler):
                 t = threading.Thread(target=receive, args=(client, identifier,))
                 t.start()
                 threeds.append(t)
+        elif type_id == SocketType.client.name:
+            time.sleep(2)
 
         self.sockets[name] = {
             'socket': socket,
