@@ -330,11 +330,15 @@ class Tools(MainTool, FileHandler):
 
                 if type_id == SocketType.client.name:
                     chunk, add = r_socket_.recvfrom(1024)
+
+                    if not chunk:
+                        break
+
                 else:
                     chunk = r_socket_.recv(1024)
 
-                if not chunk:
-                    continue
+                    if not chunk:
+                        continue
 
                 if chunk == b'k':
                     # Behandlung von Byte-Daten
