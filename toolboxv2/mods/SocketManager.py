@@ -27,7 +27,7 @@ import threading
 import queue
 import asyncio
 
-version = "0.1.7"
+version = "0.1.8"
 Name = "SocketManager"
 
 export = get_app("SocketManager.Export").tb
@@ -300,6 +300,10 @@ class Tools(MainTool, FileHandler):
 
             if sender_bytes == b'k':
                 send_(sender_bytes)
+                return
+            if sender_bytes == b'e':
+                send_(sender_bytes)
+                sock.close()
                 return
 
             total_steps = len(sender_bytes) // package_size
