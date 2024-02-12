@@ -800,7 +800,7 @@ class Tools(MainTool, FileHandler):
                     with open(save_path, 'wb') as f:
                         f.write(decompressed_data)
                 else:
-                    unzip_bytes_to_folder(decompressed_data, socket_data)
+                    unzip_bytes_to_folder(decompressed_data, save_path)
                 self.logger.info(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
                 self.print(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
                 break
