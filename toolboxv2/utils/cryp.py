@@ -262,7 +262,8 @@ class Code:
         return False
 
     @staticmethod
-    def create_signature(message: str, private_key_str: str, salt_length=padding.PSS.MAX_LENGTH, row=False) -> str or bytes:
+    def create_signature(message: str, private_key_str: str, salt_length=padding.PSS.MAX_LENGTH,
+                         row=False) -> str or bytes:
         try:
             private_key = serialization.load_pem_private_key(private_key_str.encode(), password=None)
             signature = private_key.sign(
@@ -314,6 +315,7 @@ class Code:
 
 
 DEVICE_KEY_PATH = "./device.key"
-DEVICE_KEY = lambda: open(DEVICE_KEY_PATH,
-                          "r").read(
+DEVICE_KEY_ = lambda: open(DEVICE_KEY_PATH,
+                           "r").read(
 ) if os.path.exists(DEVICE_KEY_PATH) else open(DEVICE_KEY_PATH, "wb").write(Fernet.generate_key())
+DEVICE_KEY = lambda: DEVICE_KEY_() if isinstance(DEVICE_KEY_(), str) else DEVICE_KEY_()
