@@ -21,6 +21,7 @@ import uuid
 from tqdm import tqdm
 
 from toolboxv2 import MainTool, FileHandler, App, Style, get_app
+import requests
 
 import socket
 import threading
@@ -90,6 +91,16 @@ create_socket_samples = [{'name': 'test', 'host': '0.0.0.0', 'port': 62435,
                           'keepalive_interval': 1000}, ]
 
 
+def get_public_ip():
+    try:
+        response = requests.get('https://api.ipify.org?format=json')
+        ip_address = response.json()['ip']
+        return ip_address
+    except Exception as e:
+        print(f"Fehler beim Ermitteln der öffentlichen IP-Adresse: {e}")
+        return None
+
+
 def get_local_ip():
     try:
         # Erstellt einen Socket, um eine Verbindung mit einem öffentlichen DNS-Server zu simulieren
@@ -122,6 +133,7 @@ class Tools(MainTool, FileHandler):
             "Version": self.show_version,
         }
         self.local_ip = get_local_ip()
+        self.public_ip = None
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                           name=self.name, logs=self.logger, color=self.color, on_exit=self.on_exit)
         self.sockets = {}
@@ -160,7 +172,8 @@ class Tools(MainTool, FileHandler):
     def create_socket(self, name: str = 'local-host', host: str = '0.0.0.0', port: int or None = None,
                       type_id: SocketType = SocketType.client,
                       max_connections=-1, endpoint_port=None,
-                      return_full_object=False, keepalive_interval=6, test_override=False, package_size=1024, start_keep_alive=True):
+                      return_full_object=False, keepalive_interval=6, test_override=False, package_size=1024,
+                      start_keep_alive=True):
 
         if 'test' in self.app.id and not test_override:
             return "No api in test mode allowed"
@@ -224,17 +237,21 @@ class Tools(MainTool, FileHandler):
             self.logger.debug(f"Starting:{name} peer on port {port} with host {host}")
             r_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
+            if self.public_ip is None:
+                self.public_ip = get_public_ip()
+
             try:
                 r_socket.bind(('0.0.0.0', endpoint_port))
-                self.print(f"Peer:{name} listening on {port}")
 
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 sock.bind(('0.0.0.0', port))
                 sock.sendto(b'k', (host, endpoint_port))
 
+                self.print(f"Peer:{name} sending to on {host}:{endpoint_port}")
+                self.print(f"Peer:{name} receiving on {self.public_ip}:{port}")
             except Exception:
                 connection_error = -1
-            self.print(f"Peer:{name} sending default to at {host}:{endpoint_port}")
+
 
         else:
             self.print(f"Invalid SocketType {type_id}:{name}")
@@ -318,11 +335,11 @@ class Tools(MainTool, FileHandler):
                     pbar.update(1)
                     time.sleep(1 / 10 ** 18)
             if len(sender_bytes) < package_size:
-                send_(b' '*(len(sender_bytes)-package_size))
+                send_(b' ' * (len(sender_bytes) - package_size))
             if len(sender_bytes) % package_size != 0:
                 pass
             if type_id == SocketType.peer.name:
-                send_(b'E'*6)
+                send_(b'E' * 6)
             else:
                 send_(b'E' * 1024)
             self.print(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
@@ -776,7 +793,7 @@ class Tools(MainTool, FileHandler):
             socket_data['keepalive_var'][0] = False
 
     @export(mod_name=Name, name="receive_and_decompress_file", test=False)
-    def receive_and_decompress_file_peer(self, save_path, listening_port):
+    def receive_and_decompress_file_peer(self, save_path, listening_port, sender_ip='0.0.0.0'):
         # Empfangs-Socket erstellen
         if isinstance(listening_port, str):
             try:
@@ -784,7 +801,7 @@ class Tools(MainTool, FileHandler):
             except:
                 return self.return_result(exec_code=-1, data_info=f"{listening_port} is not an int or not cast to int")
 
-        socket_data = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
+        socket_data = self.create_socket(name="receiver", host=sender_ip, port=listening_port,
                                          type_id=SocketType.peer,
                                          return_full_object=True, max_connections=1)
         receiver_queue: queue.Queue = socket_data['receiver_queue']
