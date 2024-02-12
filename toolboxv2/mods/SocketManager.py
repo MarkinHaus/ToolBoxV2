@@ -188,7 +188,7 @@ class Tools(MainTool, FileHandler):
 
             try:
                 r_socket.bind(('0.0.0.0', endpoint_port))
-                self.print(f"Peer:{name} listening on {endpoint_port}")
+                self.print(f"Peer:{name} listening on {port}")
 
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 sock.bind(('0.0.0.0', port))
@@ -241,7 +241,6 @@ class Tools(MainTool, FileHandler):
             self.print(Style.GREY(f"Sending Data: {msg_json}"))
 
             def send_(chunk):
-                print("Sending chunk", chunk)
                 try:
                     if type_id == SocketType.client.name:
                         sock.sendall(chunk)
@@ -251,6 +250,10 @@ class Tools(MainTool, FileHandler):
                         sock.sendto(chunk, (host, endpoint_port))
                 except Exception as e:
                     self.logger.error(f"Error sending data: {e}")
+
+            if sender_bytes == b'k':
+                send_(sender_bytes)
+                return
 
             print("all data - sender_bytes -", sender_bytes)
             if type_id == SocketType.client.name:
@@ -272,7 +275,7 @@ class Tools(MainTool, FileHandler):
                     pbar.update(1)
             if len(sender_bytes) % 1024 != 0:
                 pass
-            send_(b'E' * 2)
+            send_(b'E' * 6)
             self.print(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
 
         def receive(r_socket_, identifier="main"):
@@ -295,14 +298,12 @@ class Tools(MainTool, FileHandler):
                     self.logger.info(f"{name} -- received keepalive signal--")
                     continue
 
-                if not data_type and chunk[:1] == b'E':
-                    continue
                 if not data_type:
                     data_type = chunk[:1]  # Erstes Byte ist der Datentyp
                     chunk = chunk[1:]  # Rest der Daten
                     self.print(f"Register date type : {data_type}")
 
-                print(data_type, len(chunk))
+                print(data_type, len(data_buffer), chunk[:3])
 
                 if chunk[0] == b'E' and chunk[-1] == b'E' and len(data_buffer) > 0:
                     print("all data restructured", data_buffer)
