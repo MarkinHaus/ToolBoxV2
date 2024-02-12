@@ -117,13 +117,19 @@ class Tools(MainTool, FileHandler):
         return self.version
 
     @export(mod_name="SocketManager", version=version, samples=create_socket_samples, test=False)
-    def create_socket(self, name: str = 'local-host', host: str = '0.0.0.0', port: int = 62435,
+    def create_socket(self, name: str = 'local-host', host: str = '0.0.0.0', port: int or None = None,
                       type_id: SocketType = SocketType.client,
                       max_connections=-1, endpoint_port=None,
                       return_full_object=False, keepalive_interval=6, test_override=False):
 
         if 'test' in self.app.id and not test_override:
             return "No api in test mode allowed"
+
+        if endpoint_port is None and port is None:
+            port = 62435
+
+        if port is None:
+            port = endpoint_port - 1
 
         if endpoint_port is None:
             endpoint_port = port + 1
@@ -248,9 +254,12 @@ class Tools(MainTool, FileHandler):
                 except Exception as e:
                     self.logger.error(f"Error sending data: {e}")
 
+            print("all data", sender_bytes)
             for i in range(0, len(sender_bytes), 1024):
                 chunk_ = sender_bytes[i:i + 1024]
                 send_(chunk_)
+            if len(sender_bytes) % 1024 != 0:
+                pass
             send_(b'E' * 1024)
             self.print(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
 
@@ -274,9 +283,8 @@ class Tools(MainTool, FileHandler):
                     chunk = chunk[1:]  # Rest der Daten
                     self.print(f"Register date type : {data_type}")
 
-                data_buffer += chunk
-
-                if chunk == b'E' * 1024:
+                if chunk[0] == b'E' and chunk[-1] == b'E' and len(data_buffer) > 0:
+                    print("all data", data_buffer)
                     # Letzter Teil des Datensatzes
                     if data_type == b'e':
                         running = False
@@ -301,6 +309,8 @@ class Tools(MainTool, FileHandler):
                     # Zurücksetzen für den nächsten Datensatz
                     data_buffer = b''
                     data_type = None
+                else:
+                    data_buffer += chunk
 
                 self.print(
                     f"{name} :R Parsed Time ; {time.perf_counter() - t0:.2f} port :{endpoint_port if type_id == SocketType.peer.name else port}")
@@ -513,7 +523,7 @@ class Tools(MainTool, FileHandler):
 
         return {"stop_server": stop_server, "get_status": get_status}
 
-    @export(mod_name=Name, name="send_file_to_peer", test=False)
+    @export(mod_name=Name, name="send_file_to_sever", test=False)
     def send_file_to_sever(self, filepath, host, port):
         if isinstance(port, str):
             try:
@@ -530,7 +540,7 @@ class Tools(MainTool, FileHandler):
             compressed_data = gzip.compress(f.read())
 
         # Peer-to-Peer Socket erstellen und verbinden
-        socket_data = self.create_socket(name="sender", host=host, port=port, type_id=SocketType.client,
+        socket_data = self.create_socket(name="sender", host=host, port=port, type_id=SocketType.server,
                                          return_full_object=True)
 
         # 'socket': socket,
@@ -551,7 +561,7 @@ class Tools(MainTool, FileHandler):
             # Größe der komprimierten Daten senden
             send({'data_size': len(compressed_data)})
             # Komprimierte Daten senden
-
+            time.sleep(2)
             send(compressed_data)
             self.logger.info(f"Datei {filepath} erfolgreich gesendet.")
             self.print(f"Datei {filepath} erfolgreich gesendet.")
@@ -564,8 +574,59 @@ class Tools(MainTool, FileHandler):
         finally:
             socket_data['keepalive_var'][0] = False
 
-    @export(mod_name=Name, name="receive_and_decompress_file", test=False)
-    def receive_and_decompress_file_from_client(self, save_path, listening_port):
+    @export(mod_name=Name, name="send_file_to_peer", test=False)
+    def send_file_to_peer(self, filepath, host, port):
+        if isinstance(port, str):
+            try:
+                port = int(port)
+            except:
+                return self.return_result(exec_code=-1, data_info=f"{port} is not an int or not cast to int")
+        # Überprüfen, ob die Datei existiert
+        if not os.path.exists(filepath):
+            self.logger.error(f"Datei {filepath} nicht gefunden.")
+            return False
+
+        # Datei komprimieren
+        with open(filepath, 'rb') as f:
+            compressed_data = gzip.compress(f.read())
+
+        # Peer-to-Peer Socket erstellen und verbinden
+        socket_data = self.create_socket(name="sender", host=host, endpoint_port=port, type_id=SocketType.peer,
+                                         return_full_object=True)
+
+        # 'socket': socket,
+        # 'receiver_socket': r_socket,
+        # 'host': host,
+        # 'port': port,
+        # 'p2p-port': endpoint_port,
+        # 'sender': send,
+        # 'receiver_queue': receiver_queue,
+        # 'connection_error': connection_error,
+        # 'receiver_thread': s_thread,
+        # 'keepalive_thread': keep_alive_thread,
+
+        send = socket_data['sender']
+
+        # Komprimierte Daten senden
+        try:
+            # Größe der komprimierten Daten senden
+            send({'data_size': len(compressed_data)})
+            # Komprimierte Daten senden
+            time.sleep(2)
+            send(compressed_data)
+            self.logger.info(f"Datei {filepath} erfolgreich gesendet.")
+            self.print(f"Datei {filepath} erfolgreich gesendet.")
+            send({'exit': True})
+            return True
+        except Exception as e:
+            self.logger.error(f"Fehler beim Senden der Datei: {e}")
+            self.print(f"Fehler beim Senden der Datei: {e}")
+            return False
+        finally:
+            socket_data['keepalive_var'][0] = False
+
+    @export(mod_name=Name, name="receive_and_decompress_file_as_server", test=False)
+    def receive_and_decompress_file_from_client_as_sever(self, save_path, listening_port):
         # Empfangs-Socket erstellen
         if isinstance(listening_port, str):
             try:
@@ -585,7 +646,52 @@ class Tools(MainTool, FileHandler):
         file_size = 0
         while True:
             # Auf Daten warten
-            data = receiver_queue.get(timeout=60 * 15)
+            data = receiver_queue.get()
+            if 'data_size' in data:
+                file_size = data['data_size']
+                self.logger.info(f"Erwartete Dateigröße: {file_size} Bytes")
+                self.print(f"Erwartete Dateigröße: {file_size} Bytes")
+            elif 'bytes' in data:
+                print("dasdadad", data)
+                file_data += data['bytes']
+                # Daten dekomprimieren
+                if len(file_data) > 0:
+                    print(f"{file_size / len(file_data) * 100:.2f}% of 100% | {file_size}, {len(file_data)}")
+                if len(file_data) != file_size:
+                    continue
+                decompressed_data = gzip.decompress(file_data)
+                # Datei speichern
+                with open(save_path, 'wb') as f:
+                    f.write(decompressed_data)
+                self.logger.info(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
+                self.print(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
+                break
+            elif 'exit' in data:
+                break
+            else:
+                self.print(f"Unexpected data : {data}")
+
+        socket_data['keepalive_var'][0] = False
+
+    @export(mod_name=Name, name="receive_and_decompress_file", test=False)
+    def receive_and_decompress_file_from_client(self, save_path, listening_port):
+        # Empfangs-Socket erstellen
+        if isinstance(listening_port, str):
+            try:
+                listening_port = int(listening_port)
+            except:
+                return self.return_result(exec_code=-1, data_info=f"{listening_port} is not an int or not cast to int")
+
+        socket_data = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
+                                         type_id=SocketType.peer,
+                                         return_full_object=True, max_connections=1)
+        receiver_queue = socket_data['receiver_queue']
+
+        file_data = b''
+        file_size = 0
+        while True:
+            # Auf Daten warten
+            data = receiver_queue.get(timout=60*15)
             if 'data_size' in data:
                 file_size = data['data_size']
                 self.logger.info(f"Erwartete Dateigröße: {file_size} Bytes")
