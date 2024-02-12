@@ -20,7 +20,7 @@ import threading
 import queue
 import asyncio
 
-version = "0.1.5"
+version = "0.1.6"
 Name = "SocketManager"
 
 export = get_app("SocketManager.Export").tb
@@ -257,7 +257,11 @@ class Tools(MainTool, FileHandler):
             while running:
                 t0 = time.perf_counter()
 
-                chunk = r_socket.recvfrom(1024)
+                if type_id == SocketType.peer.name:
+                    chunk = r_socket.recv(1024)
+                else:
+                    chunk, add = r_socket.recvfrom(1024)
+
                 if not chunk:
                     break  # Verbindung wurde geschlossen
 
