@@ -22,7 +22,7 @@ import threading
 import queue
 import asyncio
 
-version = "0.1.6"
+version = "0.1.7"
 Name = "SocketManager"
 
 export = get_app("SocketManager.Export").tb
@@ -306,9 +306,9 @@ class Tools(MainTool, FileHandler):
                     chunk = chunk[1:]  # Rest der Daten
                     self.print(f"Register date type : {data_type}")
 
-                # print(data_type, len(data_buffer), chunk[:3])
+                print(data_type, len(data_buffer), chunk[0] == b'E' and chunk[-1] == b'E' and len(data_buffer) > 0)
 
-                if chunk[0] == b'E' and chunk[-1] == b'E' and len(data_buffer) > 0:
+                if chunk[0] == b'E'[0] and chunk[-1] == b'E'[0] and len(data_buffer) > 0:
                     print("all data restructured", data_buffer)
                     # Letzter Teil des Datensatzes
                     if data_type == b'e':
@@ -616,7 +616,7 @@ class Tools(MainTool, FileHandler):
             compressed_data = gzip.compress(f.read())
 
         # Peer-to-Peer Socket erstellen und verbinden
-        socket_data = self.create_socket(name="sender", host=host, endpoint_port=port+1, type_id=SocketType.peer,
+        socket_data = self.create_socket(name="sender", host=host, endpoint_port=port, type_id=SocketType.peer,
                                          return_full_object=True)
 
         # 'socket': socket,
