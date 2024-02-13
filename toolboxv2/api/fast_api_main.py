@@ -266,6 +266,13 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             return session_id
         elif session_id not in self.sessions:
             request.session['valid'] = False
+            body = {}
+            try:
+                body = await request.json()
+            except:
+                pass
+            jwt_token = body.get('Jwt_claim', None)
+            username = body.get('Username', None)
             if self.crate_new_session_id(request, username, jwt_token,
                                          session_id if session_id.startswith('0x') else None):
                 request.session['valid'] = self.validate_session(session_id)
