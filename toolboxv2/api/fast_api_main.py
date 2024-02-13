@@ -606,7 +606,7 @@ if __name__ == 'toolboxv2.api.fast_api_main':
 
     app.add_middleware(SessionMiddleware,
                        session_cookie=Code.one_way_hash(tb_app.id, 'session'),
-                       https_only=False,
+                       https_only='live' in tb_app.id,
                        secret_key=Code.one_way_hash(DEVICE_KEY(), tb_app.id))
 
     if "HotReload" in tb_app.id:
