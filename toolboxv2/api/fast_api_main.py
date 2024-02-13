@@ -94,7 +94,8 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         }
         self.cookie_key = tb_app.config_fh.one_way_hash(tb_app.id, 'session')
 
-    def crate_new_session_id(self, request: Request, jwt_claim: str, username: str, session_id: str = None):
+    def crate_new_session_id(self, request: Request, jwt_claim: str or None, username: str or None,
+                             session_id: str = None):
 
         if session_id is None:
             session_id = hex(tb_app.config_fh.generate_seed())
@@ -216,17 +217,13 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         session = request.cookies.get(self.cookie_key)
         tb_app.logger.debug(f"({request.session} --> {request.url.path})")
 
-        body = request.json()
-        jwt_token = None
-        username = None
-        if isinstance(body, dict):
-            jwt_token = body.get('Jwt_claim', request.headers.get('jwt_claim'))
-            username = body.get('username')
-
         if request.url.path == '/validateSession':
+            body = await request.json()
+            jwt_token = body.get('Jwt_claim', None)
+            username = body.get('Username', None)
             session_id = self.crate_new_session_id(request, jwt_token, username, session_id=request.session.get('ID'))
         elif not session:
-            session_id = self.crate_new_session_id(request, jwt_token, username)
+            session_id = self.crate_new_session_id(request, None, "Unknown")
         else:
             session_id: str = request.session.get('ID', '')
         request.session['live_data'] = {}
