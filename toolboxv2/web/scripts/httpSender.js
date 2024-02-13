@@ -169,8 +169,8 @@ export function AuthHttpPostData(username, errorCallback, successCallback) {
         headers: {
             'Accept': 'application/json',
             'Content-Type': 'application/json',
-            'jwt_claim': window.localStorage.getItem('jwt_claim_device'),
-            username
+            'Jwt_claim': window.localStorage.getItem('jwt_claim_device'),
+            'Username':username
         },
         body: JSON.stringify({})
     })
