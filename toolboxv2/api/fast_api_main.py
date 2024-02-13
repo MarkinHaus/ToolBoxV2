@@ -119,7 +119,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         }
         print("[jwt_claim]:, ", jwt_claim)
         print(username)
-        print(request.headers)
+        print(request.json())
         if request.client.host in self.GRAY_LIST and not request.url.path.split('/')[-1] in ['login', 'signup']:
             return JSONResponse(
                 status_code=403,
@@ -132,9 +132,6 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             )
         if jwt_claim is None or username is None:
             tb_app.logger.debug(f"Session Handler New session no jwt no username {username}")
-            print("[jwt_claim]:, ", jwt_claim)
-            print(username)
-            print(request.headers)
             return '#0'
         return self.verify_session_id(session_id, username, jwt_claim)
 
@@ -219,8 +216,12 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         session = request.cookies.get(self.cookie_key)
         tb_app.logger.debug(f"({request.session} --> {request.url.path})")
 
-        jwt_token = request.headers.get('Jwt_claim', request.headers.get('jwt_claim'))
-        username = request.headers.get('username')
+        body = request.json()
+        jwt_token = None
+        username = None
+        if isinstance(body, dict):
+            jwt_token = body.get('Jwt_claim', request.headers.get('jwt_claim'))
+            username = body.get('username')
 
         if request.url.path == '/validateSession':
             session_id = self.crate_new_session_id(request, jwt_token, username, session_id=request.session.get('ID'))
