@@ -7,7 +7,6 @@ from urllib.parse import quote
 import uuid
 import webauthn
 from dataclasses import dataclass, field, asdict
-from typing import List
 
 import jwt
 from pydantic import BaseModel
@@ -17,10 +16,10 @@ from webauthn.helpers.structs import AuthenticationCredential, RegistrationCrede
 from toolboxv2.mods.DB.types import DatabaseModes
 from toolboxv2.utils.types import ToolBoxInterfaces, ApiResult
 from toolboxv2 import get_app, App, Result, tbef, ToolBox_over
-from typing import Dict
 
 from toolboxv2.utils.cryp import Code
 from pydantic import validator
+from .types import UserCreator, User, UserPersonaPubKey
 
 Name = 'CloudM.AuthManager'
 export = get_app(f"{Name}.Export").tb
@@ -28,40 +27,6 @@ default_export = export(mod_name=Name, test=False)
 test_only = export(mod_name=Name, test_only=True)
 version = '0.0.1'
 instance_bios = str(uuid.uuid4())
-
-
-@dataclass
-class UserPersonaPubKey:
-    public_key: bytes
-    sign_count: int
-    credential_id: bytes
-    rawId: str
-    attestation_object: bytes
-
-
-@dataclass
-class User:
-    uid: str = field(default_factory=lambda: str(uuid.uuid4()))
-    pub_key: str = field(default="")
-    email: str = field(default="")
-    name: str = field(default="")
-    user_pass_pub: str = field(default="")
-    user_pass_pub_persona: Dict[str, str or bytes] = field(default_factory=lambda: ({}))
-    user_pass_pub_devices: List[str] = field(default_factory=lambda: ([]))
-    user_pass_pri: str = field(default="")
-    user_pass_sync: str = field(default="")
-    creation_time: str = field(default_factory=lambda: time.strftime("%Y-%m-%d::%H:%M:%S", time.localtime()))
-    challenge: str = field(default="")
-    is_persona: bool = field(default=False)
-    level: int = field(default=0)
-
-
-@dataclass
-class UserCreator(User):
-    def __post_init__(self):
-        self.user_pass_pub, self.user_pass_pri = Code.generate_asymmetric_keys()
-        self.user_pass_sync = Code.generate_symmetric_key()
-        self.challenge = Code.encrypt_asymmetric(str(uuid.uuid4()), self.user_pass_pub)
 
 
 def b64decode(s: str) -> bytes:

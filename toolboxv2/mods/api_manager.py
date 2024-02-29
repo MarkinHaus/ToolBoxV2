@@ -189,7 +189,11 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
     def on_start(self):
         self.load_file_handler()
-        self.api_config = json.loads(self.get_file_handler(self.keys["Apis"]))
+        data = self.get_file_handler(self.keys["Apis"])
+        if isinstance(data, str):
+            self.api_config = json.loads(data)
+        else:
+            self.api_config = data
 
     def on_exit(self):
         self.add_to_save_file_handler(self.keys["Apis"], json.dumps(self.api_config))

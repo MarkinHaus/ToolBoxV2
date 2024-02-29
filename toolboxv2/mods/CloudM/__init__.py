@@ -1,4 +1,4 @@
-from .AuthManager import create_user, crate_local_account, User
+from .types import User
 from .module import Tools
 from .UserInstances import UserInstances
 

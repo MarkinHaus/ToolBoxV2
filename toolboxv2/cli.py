@@ -10,6 +10,11 @@ from toolboxv2 import App, MainTool, runnable_dict as runnable_dict_func
 from toolboxv2.utils.toolbox import get_app
 import ctypes
 
+try:
+    import hmr
+    HOT_RELOADER = True
+except ImportError:
+    HOT_RELOADER = False
 
 try:
     import cProfile
@@ -218,7 +223,7 @@ def parse_args():
     parser.add_argument("-m", "--modi",
                         type=str,
                         help="Start a ToolBox interface default build in cli",
-                        default="cli")
+                        default="minicli")
 
     parser.add_argument("--kill", help="Kill current local tb instance", default=False,
                         action="store_true")
@@ -268,6 +273,11 @@ def parse_args():
 
     parser.add_argument("-sfe", "--save-function-enums-in-file",
                         help="run with -l to gather to generate all_function_enums.py files",
+                        action="store_true")
+
+    parser.add_argument("-hr", "--hot-reload",
+                        help="run -hr automatically reload the toolboxv2 module on changes good for development and"
+                             " for long running instances in save environments",
                         action="store_true")
 
     # parser.add_argument("--mods-folder",
@@ -430,7 +440,17 @@ def main():
 
     app_pid = str(os.getpid())
 
-    tb_app = get_app(from_="InitialStartUp", name=args.name, args=args)
+    if args.hot_reload and HOT_RELOADER:
+        print("InitialStartUpHotReloader")
+        tb_app = get_app(from_="InitialStartUpHotReloader", name=args.name, args=args, app_con=hmr.reload(App))
+    elif args.hot_reload:
+        if 'y' in input("NO hmr installed auto install ?"):
+            os.system('pip install python-hmr')
+            exit(-1)
+        exit(-1)
+    else:
+        print("InitialStartUp")
+        tb_app = get_app(from_="InitialStartUp", name=args.name, args=args)
 
     # tb_app.load_all_mods_in_file()
     # tb_app.save_registry_as_enums("utils", "all_functions_enums.py")
@@ -491,7 +511,7 @@ def main():
             # open(f"./config/{args.modi}.pid", "w").write(app_pid)
             runnable_dict[args.modi](tb_app, args)
         else:
-            print(f"Modi : [{args.modi}] not found on device installed modi : {runnable_dict.keys()}")
+            print(f"Modi : [{args.modi}] not found on device installed modi : {list(runnable_dict.keys())}")
 
     elif args.docker:
 

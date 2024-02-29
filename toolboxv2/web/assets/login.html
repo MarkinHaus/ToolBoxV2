@@ -91,7 +91,7 @@
         setTimeout(async () => {
             localStorage.setItem("local_ws.onopen:installMod-welcome", 'false');
             await AuthHttpPostData(username, get_handleLoginError("Session Error"), (_)=>{
-                //window.location.href = "/web/dashboard";
+                window.location.href = "/web/dashboard";
             })
         }, 200);
     }

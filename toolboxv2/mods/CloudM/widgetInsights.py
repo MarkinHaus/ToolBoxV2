@@ -38,7 +38,7 @@ def get_controller(app: App = None, request: Request or None = None):
     # app.run_any(tbef.MINIMALHTML.GENERATE_HTML)
 
     return """<div>
-    <p>Neue Steuerungselemente geladen!</p>
-    <!-- Weitere Steuerelemente hier -->
+<p>Neue Steuerungselemente geladen!</p>
+<!-- Weitere Steuerelemente hier -->
 </div>
 """

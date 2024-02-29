@@ -421,7 +421,9 @@ class App(metaclass=Singleton):
         live_tools_class = tools_class(app=self)
         return live_tools_class
 
-    def mod_online(self, mod_name):
+    def mod_online(self, mod_name, installed=False):
+        if installed and mod_name not in self.functions:
+            self.save_load(mod_name)
         return mod_name in self.functions
 
     def _get_function(self,
@@ -837,12 +839,12 @@ class App(metaclass=Singleton):
         res: Result = self.run_function(mod_function_name,
                                         tb_run_function_with_state=tb_run_function_with_state,
                                         tb_run_with_specification=tb_run_with_specification,
-                                        args_=args, kwargs_=kwargs)
+                                        args_=args, kwargs_=kwargs).as_result()
 
         if not get_results and isinstance(res, Result):
             return res.get()
 
-        return res.as_result()
+        return res
 
     def get_mod(self, name, spec='app') -> ModuleType or toolboxv2.MainTool:
         if name not in self.functions.keys():
@@ -967,6 +969,10 @@ class App(metaclass=Singleton):
             params = list(sig.parameters)
             module_name = mod_name if mod_name else func.__module__.split('.')[-1]
             func_name = name if name else func.__name__
+            if func_name == 'on_start':
+                func_name = 'on_startup'
+            if func_name == 'on_exit':
+                func_name = 'on_close'
             if api or pre_compute is not None or post_compute is not None or memory_cache or file_cache:
                 func = additional_process(func)
             if api and 'Result' == str(sig.return_annotation):
@@ -1261,12 +1267,14 @@ def _initialize_toolBox(init_type, init_from, name):
     logger.info("Done!")
 
 
-def get_app(from_=None, name=None, args=AppArgs().default()) -> App:
+def get_app(from_=None, name=None, args=AppArgs().default(), app_con=App) -> App:
     logger = get_logger()
     logger.info(Style.GREYBG(f"get app requested from: {from_}"))
+    print(f"get app requested from: {from_}") # https://de.wikipedia.org/wiki/Erster_Weltkrieg##url
     if name:
-        app = App(name, args=args)
+        app = app_con(name, args=args)
     else:
-        app = App()
+        app = app_con()
     logger.info(Style.Bold(f"App instance, returned ID: {app.id}"))
     return app
+

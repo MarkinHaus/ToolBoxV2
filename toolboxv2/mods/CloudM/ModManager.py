@@ -68,12 +68,14 @@ def installer(url, debug=False):
     print_debug("Installation abgeschlossen")
 
 
-def download_files(urls, directory, desc, print_func):
+def download_files(urls, directory, desc, print_func, filename=None):
     """ Hilfsfunktion zum Herunterladen von Dateien. """
     for url in tqdm(urls, desc=desc):
-        filename = os.path.basename(url)
+        if filename is None:
+            filename = os.path.basename(url)
         print_func(f"Download {filename}")
-        urllib.request.urlretrieve(url, f"{directory}/{filename}")
+        print_func(f"{url} -> {directory}\\{filename}")
+        urllib.request.urlretrieve(url, f"{directory}\\{filename}")
 
 
 def handle_additional_dirs(additional_dirs_url, print_func):

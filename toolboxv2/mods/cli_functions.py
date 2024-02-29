@@ -42,11 +42,18 @@ def get_version():
     return version
 
 
+@dataclass
 class UserInputObject:
-    char: chr or str or None = None
-    word: str or None = None
-    offset_x: int or None = None
-    offset_y: int or None = None
+    char: chr or str or None = field(default=None)
+    word: str or None = field(default=None)
+    offset_x: int or None = field(default=None)
+    offset_y: int or None = field(default=None)
+
+    def is_last(self) -> bool:
+        return "LAST" == self.char
+
+    def is_v_error(self) -> bool:
+        return "ValueError" == self.char
 
     @classmethod
     def default(cls,
@@ -54,27 +61,26 @@ class UserInputObject:
                 word: str or None = None,
                 offset_x: int or None = None,
                 offset_y: int or None = None):
-        cls.char = char
-        cls.word = word
-        cls.offset_x = offset_x
-        cls.offset_y = offset_y
-        return cls
+        return cls(
+            char=char,
+            word=word,
+            offset_x=offset_x,
+            offset_y=offset_y,
+        )
 
     @classmethod
     def final(cls):
-        cls.char = "LAST"
-        cls.word = "LAST"
-        cls.offset_x = 0
-        cls.offset_y = 0
-        return cls
+        return cls(char="LAST",
+                   word="LAST",
+                   offset_x=0,
+                   offset_y=0)
 
     @classmethod
     def ve(cls):
-        cls.char = "ValueError"
-        cls.word = "ValueError"
-        cls.offset_x = 0
-        cls.offset_y = 0
-        return cls
+        return cls(char="ValueError",
+                   word="ValueError",
+                   offset_x=0,
+                   offset_y=0, )
 
 
 @default_export
@@ -88,6 +94,7 @@ def get_character():
 
     # session_history += [c for c in app.command_history]
 
+    print("-->", end='\r')
     while get_input:
 
         key = readkey()
@@ -164,7 +171,8 @@ def update_autocompletion_mods(app: App, autocompletion_dict=None):
 
 
 @default_export
-def update_autocompletion_list_or_key(list_or_key: iter or None = None, autocompletion_dict=None, raise_e=True, do_lower=False):
+def update_autocompletion_list_or_key(list_or_key: iter or None = None, autocompletion_dict=None, raise_e=True,
+                                      do_lower=False):
     if list_or_key is None:
         list_or_key = []
     if autocompletion_dict is None:
@@ -319,7 +327,7 @@ def user_input(app,
         return user_input(app, completer_dict, get_rprompt, bottom_toolbar, active_modul)
     else:
         infos = text.split(" ")
-
+        print("[completer_dict]:", completer_dict)
         if len(infos) >= 1:
             call_obj.module_name = infos[0]
         if len(infos) >= 2:
@@ -329,7 +337,7 @@ def user_input(app,
             call_obj.args = infos[2:]
             if call_obj.module_name not in completer_dict:
                 return call_obj
-            if call_obj.function_name not in completer_dict[call_obj.module_name]:
+            if call_obj.function_name not in completer_dict[call_obj.module_name] if completer_dict[call_obj.module_name] is not None else {}:
                 return call_obj
             kwargs_name = completer_dict[call_obj.module_name][call_obj.function_name].get(
                 'params')  # TODO FIX parsm ist type list
@@ -341,12 +349,11 @@ def user_input(app,
 
 
 @export(mod_name=Name, samples=[{
-                                 "obj": CallingObject(
-                                     module_name="welcome",
-                                     function_name="show_version",
-                                 ),
-                                 "build_in_commands": {},
-                                 }])
+    "obj": CallingObject(
+        module_name="welcome",
+    ),
+    "build_in_commands": {},
+}])
 def co_evaluate(app: App,
                 obj: CallingObject or None,
                 build_in_commands: dict,

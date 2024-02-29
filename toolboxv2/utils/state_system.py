@@ -154,6 +154,6 @@ if __name__ == "__main__":
     app = get_app()
     app.load_all_mods_in_file()
     state = get_state_from_app(app)
-    print(str(state))
+    print(state)
     # def get_state_from_app(app: App):
     #    """"""

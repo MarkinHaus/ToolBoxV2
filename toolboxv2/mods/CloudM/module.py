@@ -2,17 +2,16 @@ import binascii
 import hashlib
 import logging
 import math
+import os
 import time
 import json
 
 import requests
 
-from toolboxv2 import MainTool, FileHandler
+from toolboxv2 import MainTool, FileHandler, get_app, Style
 from .UserInstances import UserInstances
 from .ModManager import installer, delete_package
 from toolboxv2.utils.state_system import get_state_from_app, TbState
-from .extras import *
-
 Name = 'CloudM'
 version = "0.0.2"
 export = get_app(f"{Name}.EXPORT").tb

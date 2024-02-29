@@ -36,7 +36,7 @@ class Tools(MainTool, FileHandler):
         if app is None:
             app = get_app()
 
-        self.app_ = app
+        self.app = app
         self.color = "BLUE"
         self.active_connections: dict = {}
         self.active_connections_client: dict = {}
@@ -208,7 +208,7 @@ class Tools(MainTool, FileHandler):
     async def connect(self, websocket: WebSocket, websocket_id):
         websocket_id_sto = await valid_id(websocket_id, self.app_id, websocket)
 
-        data = self.app_.run_any("cloudM", "validate_ws_id", [websocket_id])
+        data = self.app.run_any("cloudM", "validate_ws_id", [websocket_id])
         valid, key = False, ''
         if isinstance(data, list) or isinstance(data, tuple):
             if len(data) == 2:
@@ -297,7 +297,7 @@ class Tools(MainTool, FileHandler):
                 action = data["ServerAction"]
 
                 if action == "logOut":
-                    user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
+                    user_instance = self.app.run_any("cloudM", "wsGetI", [si_id])
                     if user_instance is None or not user_instance:
                         return '{"res": "No User Instance Found"}'
 
@@ -309,7 +309,7 @@ class Tools(MainTool, FileHandler):
                     api_data.token = data['data']['token']
                     command = [api_data, data['command'].split('|')]
 
-                    self.app_.run_any("cloudM", "api_log_out_user", command)
+                    self.app.run_any("cloudM", "api_log_out_user", command)
                     websocket_id_sto = await valid_id(websocket_id, self.app_id)
                     for websocket_ in self.active_connections[websocket_id_sto]:
                         if websocket == websocket_:
@@ -326,9 +326,9 @@ class Tools(MainTool, FileHandler):
 
                     await websocket.send_text(home_content)
                 elif action == "getModListAll":
-                    return json.dumps({'modlistA': self.app_.get_all_mods()})
+                    return json.dumps({'modlistA': self.app.get_all_mods()})
                 elif action == "getModListInstalled":
-                    user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
+                    user_instance = self.app.run_any("cloudM", "wsGetI", [si_id])
                     if user_instance is None or not user_instance:
                         self.logger.info("No valid user instance")
                         return '{"res": "No Mods Installed"}'
@@ -337,7 +337,7 @@ class Tools(MainTool, FileHandler):
                 elif action == "getModData":
                     mod_name = data["mod-name"]
                     try:
-                        mod = self.app_.get_mod(mod_name)
+                        mod = self.app.get_mod(mod_name)
                         return {"settings": {'mod-description': mod.description}}
                     except ValueError:
                         content = self.construct_render(
@@ -346,7 +346,7 @@ class Tools(MainTool, FileHandler):
                         """, element_id="infoText")
                         return content
                 elif action == "installMod":
-                    user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
+                    user_instance = self.app.run_any("cloudM", "wsGetI", [si_id])
                     if user_instance is None or not user_instance:
                         self.logger.info("No valid user instance")
                         return '{"res": "No User Instance Found Pleas Log in"}'
@@ -355,22 +355,22 @@ class Tools(MainTool, FileHandler):
                         self.logger.info(f"Appending mod {data['name']}")
                         user_instance['save']['mods'].append(data["name"])
 
-                    self.app_.new_ac_mod("cloudM")
-                    self.app_.AC_MOD.hydrate_instance(user_instance)
+                    self.app.new_ac_mod("cloudM")
+                    self.app.AC_MOD.hydrate_instance(user_instance)
                     self.print("Sending webInstaller")
                     installer_content = user_instance['live'][data["name"]].webInstall(user_instance,
                                                                                        self.construct_render)
-                    self.app_.new_ac_mod("cloudM")
-                    self.app_.AC_MOD.save_user_instances(user_instance)
+                    self.app.new_ac_mod("cloudM")
+                    self.app.AC_MOD.save_user_instances(user_instance)
                     await websocket.send_text(installer_content)
                 elif action == "addConfig":
-                    user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
+                    user_instance = self.app.run_any("cloudM", "wsGetI", [si_id])
                     if data["name"] in user_instance['live'].keys():
                         user_instance['live'][data["name"]].add_str_to_config([data["key"], data["value"]])
                     else:
                         await websocket.send_text('{"res": "Mod nod installed or available"}')
                 elif action == "runMod":
-                    user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
+                    user_instance = self.app.run_any("cloudM", "wsGetI", [si_id])
 
                     self.print(f"{user_instance}, {data}")
                     if user_instance is None or not user_instance:
@@ -384,7 +384,7 @@ class Tools(MainTool, FileHandler):
                     api_data.token = data['data']['token']
                     command = [api_data, data['command'].split('|')]
 
-                    token_data = self.app_.run_any('cloudM', "validate_jwt", command)
+                    token_data = self.app.run_any('cloudM', "validate_jwt", command)
 
                     if not isinstance(token_data, dict):
                         return json.dumps({'res': 'u ar using an invalid token pleas log in again'})
@@ -392,8 +392,8 @@ class Tools(MainTool, FileHandler):
                     if token_data["uid"] != user_instance['save']['uid']:
                         self.logger.critical(
                             f"{Style.RED(f'''User {user_instance['save']['username']} {Style.CYAN('Accessed')} : {Style.Bold(token_data['username'])} token both log aut.''')}")
-                        self.app_.run_any('cloudM', "close_user_instance", token_data["uid"])
-                        self.app_.run_any('cloudM', "close_user_instance", user_instance['save']['uid'])
+                        self.app.run_any('cloudM', "close_user_instance", token_data["uid"])
+                        self.app.run_any('cloudM', "close_user_instance", user_instance['save']['uid'])
                         return json.dumps({'res': "The server registered: you are"
                                                   " trying to register with an not fitting token "})
 
@@ -402,15 +402,15 @@ class Tools(MainTool, FileHandler):
 
                     if data['name'] not in user_instance['live'].keys():
                         self.logger.info(f"'Crating live module:{data['name']}'")
-                        self.app_.new_ac_mod("cloudM")
-                        self.app_.AC_MOD.hydrate_instance(user_instance)
-                        self.app_.new_ac_mod("cloudM")
-                        self.app_.AC_MOD.save_user_instances(user_instance)
+                        self.app.new_ac_mod("cloudM")
+                        self.app.AC_MOD.hydrate_instance(user_instance)
+                        self.app.new_ac_mod("cloudM")
+                        self.app.AC_MOD.save_user_instances(user_instance)
 
                     try:
-                        self.app_.new_ac_mod("VirtualizationTool")
-                        if self.app_.run_function('set-ac', user_instance['live']['v-' + data['name']]):
-                            res = self.app_.run_function('api_' + data['function'], command)
+                        self.app.new_ac_mod("VirtualizationTool")
+                        if self.app.run_function('set-ac', user_instance['live']['v-' + data['name']]):
+                            res = self.app.run_function('api_' + data['function'], command)
                         else:
                             res = "Mod Not Found 404"
                     except Exception as e:
@@ -437,13 +437,13 @@ class Tools(MainTool, FileHandler):
                     await websocket.send_text(res)
                     return res
             if "ValidateSelf" in keys:
-                user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
+                user_instance = self.app.run_any("cloudM", "wsGetI", [si_id])
                 if user_instance is None or not user_instance:
                     self.logger.info("No valid user instance")
                     return json.dumps({"res": "No User Instance Found Pleas Log in", "valid": False})
                 return json.dumps({"res": "User Instance is valid", "valid": True})
             if "ChairData" in keys:
-                user_instance = self.app_.run_any("cloudM", "wsGetI", [si_id])
+                user_instance = self.app.run_any("cloudM", "wsGetI", [si_id])
                 if user_instance is None or not user_instance:
                     self.logger.info("No valid user instance")
                     return json.dumps({"res": "No User Instance Found Pleas Log in", "valid": False})

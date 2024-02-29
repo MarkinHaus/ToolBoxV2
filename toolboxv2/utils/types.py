@@ -29,6 +29,7 @@ class AppArgs:
     debug = None
     test = None
     profiler = None
+    hot_reload = False
 
     def default(self):
         return self
@@ -267,6 +268,14 @@ class CallingObject:
     @classmethod
     def empty(cls):
         return cls()
+
+    def __str__(self):
+        if self.args is not None and self.kwargs is not None:
+            return (f"{self.module_name} {self.function_name} " + ' '.join(self.args) +
+                    ' '.join([key+'-'+str(val) for key, val in self.kwargs.items()]))
+        if self.args is not None:
+            return f"{self.module_name} {self.function_name} " + ' '.join(self.args)
+        return f"{self.module_name} {self.function_name}"
 
     def print(self, show=True):
         s = f"{self.module_name=};{self.function_name=};{self.args=};{self.kwargs=}"

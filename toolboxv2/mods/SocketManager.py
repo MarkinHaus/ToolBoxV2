@@ -132,7 +132,7 @@ class Tools(MainTool, FileHandler):
             "tbSocketController": self.run_as_single_communication_server,
             "Version": self.show_version,
         }
-        self.local_ip = get_local_ip()
+        self.local_ip = None
         self.public_ip = None
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                           name=self.name, logs=self.logger, color=self.color, on_exit=self.on_exit)
@@ -198,6 +198,9 @@ class Tools(MainTool, FileHandler):
 
         r_socket = None
         connection_error = 0
+        if self.local_ip is None:
+            self.local_ip = get_local_ip()
+
         self.print(f"Device IP : {self.local_ip}")
         if type_id == SocketType.server.name:
             # create sever

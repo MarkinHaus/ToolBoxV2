@@ -19,6 +19,7 @@ def runnable_dict(s='.py'):
         elif file_name.endswith('.py') and s in file_name:
             # Entferne die Erweiterung ".py" aus dem Dateinamen
             name = os.path.splitext(file_name)[0]
+            # print("Ent", name)
             # Lade das Modul
             spec = importlib.util.spec_from_file_location(name, os.path.join(dir_path, file_name))
             module = importlib.util.module_from_spec(spec)
@@ -30,6 +31,7 @@ def runnable_dict(s='.py'):
 
             # Füge das Modul der Dictionary hinzu
             if hasattr(module, 'run') and callable(module.run) and hasattr(module, 'NAME'):
+                # print("Collecing :", module.NAME)
                 runnable_dict_[module.NAME] = module.run
-    #  print(f"Getting all runnabels toock {time.perf_counter() -to:.2f} for {len(runnable_dict_.keys())} elements")
+    print(f"Getting all runnable took {time.perf_counter() -to:.2f} for {len(runnable_dict_.keys())} elements")
     return runnable_dict_
