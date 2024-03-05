@@ -147,7 +147,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
         print("Running command : " + g)
 
         if api_thread is None:
-            self.running_apis[api_name] = threading.Thread(target=os.system, args=(g,))
+            self.running_apis[api_name] = threading.Thread(target=os.system, args=(g,), daemon=True)
             self.running_apis[api_name].start()
             return "starting api"
 

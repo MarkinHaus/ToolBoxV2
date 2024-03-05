@@ -182,7 +182,7 @@ def register_initial_root_user(app: App):
                        invitation=invitation, get_results=True)
     user = app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username="root")
     key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
-    base_url = app.config_fh.get_file_handler("provider::") + (f':{app.args_sto.port}' if app.args_sto.host == 'localhost' else '')
+    base_url = app.config_fh.get_file_handler("provider::") + (f':{app.args_sto.port}' if app.args_sto.host == 'localhost' else "5000")
     url = f"{base_url}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
 
     try:
@@ -201,7 +201,7 @@ def register_initial_root_user(app: App):
     except ImportError:
         pass
     print(url)
-    return ret.lazy_return('internal', data='url')
+    return ret.lazy_return('internal', data=url)
 
 
 @no_test

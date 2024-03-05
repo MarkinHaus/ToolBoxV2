@@ -156,8 +156,8 @@ class Tools(MainTool, FileHandler):
             # 'connection_error': connection_error,
             # 'receiver_thread': s_thread,
             # 'keepalive_thread': keep_alive_thread,
-            # 'keepalive_var': keep_alive_var,
-            socket_data['keepalive_var'][0] = False
+            # '['running_dict']["keep_alive_var"] ': keep_alive_var,
+            socket_data['running_dict']["keep_alive_var"] = False
             try:
                 socket_data['sender']({'exit': True})
             except:
@@ -211,10 +211,10 @@ class Tools(MainTool, FileHandler):
             try:
                 sock.bind((host, port))
                 sock.listen(max_connections)
-            except Exception:
+                self.print(f"Server:{name} online at {host}:{port}")
+            except Exception as e:
                 connection_error = -1
-
-            self.print(f"Server:{name} online at {host}:{port}")
+                self.print(Style.RED(f"Server:{name} error at {host}:{port} {e}"))
 
         elif type_id == SocketType.client.name:
             # create client
@@ -260,7 +260,6 @@ class Tools(MainTool, FileHandler):
             except Exception:
                 connection_error = -1
 
-
         else:
             self.print(f"Invalid SocketType {type_id}:{name}")
             raise ValueError(f"Invalid SocketType {type_id}:{name}")
@@ -268,20 +267,35 @@ class Tools(MainTool, FileHandler):
         # start queues sender, receiver, acceptor
         receiver_queue = queue.Queue()
 
+        running_dict = {
+            "server_receiver": True,
+            "receive": {
+                "main": True,
+            },
+            "keep_alive_var": True
+        }
+
+        client_sockets = {}
+
         # server receiver
 
         def server_receiver(sock_):
-            running = True
             connctions = 0
-            while running:
-                client_socket, endpoint = sock_.accept()
+            while running_dict["server_receiver"]:
+                try:
+                    client_socket, endpoint = sock_.accept()
+                except OSError:
+                    running_dict["server_receiver"] = False
+                    break
                 connctions += 1
                 self.print(f"Server Receiver:{name} new connection:{connctions}:{max_connections} {endpoint=}")
-                receiver_queue.put((client_socket, endpoint))
-                if connctions >= max_connections:
-                    running = False
+                receiver_queue.put({'data': (client_socket, endpoint), 'identifier': "new_con"})
+                client_sockets[endpoint[0]+str(endpoint[1])] = client_socket
+                if max_connections != -1:
+                    if connctions >= max_connections:
+                        running_dict["server_receiver"] = False
 
-        def send(msg, address=None):
+        def send(msg: bytes or dict, address=None):
             t0 = time.perf_counter()
 
             if type_id == SocketType.client.name:
@@ -299,6 +313,7 @@ class Tools(MainTool, FileHandler):
                 if 'exit' in msg:
                     sender_bytes = b'e'  # Präfix für "exit"
                     msg_json = 'exit'
+                    running_dict["receive"]["main"] = False
                 elif 'keepalive' in msg:
                     sender_bytes = b'k'  # Präfix für "keepalive"
                     msg_json = 'keepalive'
@@ -309,13 +324,16 @@ class Tools(MainTool, FileHandler):
                 self.print(Style.YELLOW(f"Unsupported message type: {type(msg)}"))
                 return
 
-            if sender_bytes != b'k':
+            if sender_bytes != b'k' and self.app.debug:
                 self.print(Style.GREY(f"Sending Data: {msg_json} {to}"))
 
             def send_(chunk):
                 try:
                     if type_id == SocketType.client.name:
                         sock.sendall(chunk)
+                    elif address is not None and type_id == SocketType.server.name:
+                        _sock = client_sockets.get(address[0] + str(address[1]), sock)
+                        _sock.sendto(chunk, address)
                     elif address is not None:
                         sock.sendto(chunk, address)
                     else:
@@ -342,6 +360,7 @@ class Tools(MainTool, FileHandler):
                     send_(chunk_)
                     pbar.update(1)
                     time.sleep(1 / 10 ** 18)
+
             if len(sender_bytes) < package_size:
                 send_(b' ' * (len(sender_bytes) - package_size))
             if len(sender_bytes) % package_size != 0:
@@ -350,27 +369,32 @@ class Tools(MainTool, FileHandler):
                 send_(b'E' * 6)
             else:
                 send_(b'E' * 1024)
-            self.print(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
+            print(" ", end='\r')
+            self.logger.info(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
 
         def receive(r_socket_, identifier="main"):
-            running = True
             data_type = None
             data_buffer = b''
             max_size = -1
-            while running:
+            running_dict["receive"][identifier] = True
+            while running_dict["receive"][identifier]:
                 # t0 = time.perf_counter()
+                try:
+                    if type_id == SocketType.client.name:
+                        chunk, add = r_socket_.recvfrom(1024)
 
-                if type_id == SocketType.client.name:
-                    chunk, add = r_socket_.recvfrom(1024)
+                        if not chunk:
+                            break
 
-                    if not chunk:
-                        break
+                    else:
+                        chunk = r_socket_.recv(1024)
 
-                else:
-                    chunk = r_socket_.recv(1024)
-
-                    if not chunk:
-                        continue
+                        if not chunk:
+                            continue
+                except ConnectionResetError and ConnectionAbortedError and Exception:
+                    print(f"Cloning Receiver {identifier}")
+                    running_dict["receive"][identifier] = False
+                    break
 
                 if chunk == b'k':
                     # Behandlung von Byte-Daten
@@ -387,9 +411,9 @@ class Tools(MainTool, FileHandler):
                         f"don {chunk[0] == b'E'[0] and chunk[-1] == b'E'[0]} {(len(data_buffer) / max_size) * 100:.2f}% total byts: {len(data_buffer)} von {max_size}",
                         end='\r')
                 if data_type == b'e':
-                    running = False
+                    running_dict["receive"][identifier] = False
                     self.logger.info(f"{name} -- received exit signal --")
-                    self.sockets[name]['keepalive_var'][0] = False
+                    self.sockets[name]['running_dict']["keep_alive_var"]  = False
                 elif chunk[0] == b'E'[0] and chunk[-1] == b'E'[0] and len(data_buffer) > 0:
                     max_size = -1
                     # Letzter Teil des Datensatzes
@@ -403,7 +427,7 @@ class Tools(MainTool, FileHandler):
                             msg = json.loads(data_buffer)
                             msg['identifier'] = identifier
                             receiver_queue.put(msg)
-                            self.logger.info(f"{name} -- received JSON -- {msg}")
+                            self.logger.info(f"{name} -- received JSON -- {msg['identifier']} {len(msg.keys())}")
                             if 'data_size' in msg.keys():
                                 max_size = msg['data_size']
 
@@ -435,10 +459,10 @@ class Tools(MainTool, FileHandler):
 
         if connection_error == 0:
             if type_id == SocketType.server.name:
-                s_thread = threading.Thread(target=server_receiver, args=(sock,))
+                s_thread = threading.Thread(target=server_receiver, args=(sock,), daemon=True)
                 s_thread.start()
             elif connection_error == 0:
-                s_thread = threading.Thread(target=receive, args=(r_socket,))
+                s_thread = threading.Thread(target=receive, args=(r_socket,), daemon=True)
                 s_thread.start()
             else:
                 self.print(f"No receiver connected {name}:{type_id}")
@@ -446,13 +470,12 @@ class Tools(MainTool, FileHandler):
         keep_alive_thread = None
         to_receive = None
         threeds = []
-        keep_alive_var = [True]
 
         if type_id == SocketType.peer.name:
 
             def keep_alive():
                 i = 0
-                while keep_alive_var[0]:
+                while running_dict["keep_alive_var"]:
                     time.sleep(keepalive_interval)
                     try:
                         send({'keepalive': True}, (host, endpoint_port))
@@ -463,19 +486,17 @@ class Tools(MainTool, FileHandler):
                 self.print("Closing KeepAlive")
                 send({"exit": True})
 
-            keep_alive_thread = threading.Thread(target=keep_alive)
+            keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
             if start_keep_alive:
                 keep_alive_thread.start()
 
-
         elif type_id == SocketType.server.name:
 
-            threeds = []
-
             def to_receive(client, identifier='main'):
-                t = threading.Thread(target=receive, args=(client, identifier,))
+                t = threading.Thread(target=receive, args=(client, identifier,), daemon=True)
                 t.start()
                 threeds.append(t)
+
         elif type_id == SocketType.client.name:
             time.sleep(2)
 
@@ -490,7 +511,8 @@ class Tools(MainTool, FileHandler):
             'connection_error': connection_error,
             'receiver_thread': s_thread,
             'keepalive_thread': keep_alive_thread,
-            'keepalive_var': keep_alive_var,
+            'running_dict': running_dict,
+            'client_sockets_dict': client_sockets,
             'client_to_receiver_thread': to_receive,
             'client_receiver_threads': threeds,
         }
@@ -622,10 +644,10 @@ class Tools(MainTool, FileHandler):
 
         def helper():
             client, address = receiver_queue.get(block=True)
-            thread = threading.Thread(target=server_thread, args=(client, address))
+            thread = threading.Thread(target=server_thread, args=(client, address), daemon=True)
             thread.start()
 
-        threading.Thread(target=helper).start()
+        threading.Thread(target=helper, daemon=True).start()
 
         def stop_server():
             running[0] = False
@@ -690,7 +712,7 @@ class Tools(MainTool, FileHandler):
             self.print(f"Fehler beim Senden der Datei: {e}")
             return False
         finally:
-            socket_data['keepalive_var'][0] = False
+            socket_data['running_dict']["keep_alive_var"] = False
 
     @export(mod_name=Name, name="receive_and_decompress_file_as_server", test=False)
     def receive_and_decompress_file_from_client(self, save_path, listening_port):
@@ -741,7 +763,7 @@ class Tools(MainTool, FileHandler):
             else:
                 self.print(f"Unexpected data : {data}")
 
-        socket_data['keepalive_var'][0] = False
+        socket_data['running_dict']["keep_alive_var"]  = False
 
     @export(mod_name=Name, name="send_file_to_peer", test=False)
     def send_file_to_peer(self, filepath, host, port):
@@ -798,7 +820,7 @@ class Tools(MainTool, FileHandler):
             self.print(f"Fehler beim Senden der Datei: {e}")
             return False
         finally:
-            socket_data['keepalive_var'][0] = False
+            socket_data['running_dict']["keep_alive_var"]  = False
 
     @export(mod_name=Name, name="receive_and_decompress_file", test=False)
     def receive_and_decompress_file_peer(self, save_path, listening_port, sender_ip='0.0.0.0'):

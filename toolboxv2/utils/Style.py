@@ -435,7 +435,7 @@ class Spinner:
     def __enter__(self) -> None:
         """Start the spinner"""
         self.running = True
-        self.spinner_thread = threading.Thread(target=self.spin)
+        self.spinner_thread = threading.Thread(target=self.spin, daemon=True)
         self.spinner_thread.start()
 
     def __exit__(self, exc_type, exc_value, exc_traceback) -> None:

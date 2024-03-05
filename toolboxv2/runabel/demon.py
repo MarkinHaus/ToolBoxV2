@@ -3,7 +3,6 @@ import time
 from threading import Thread
 
 from toolboxv2 import App, AppArgs, tbef
-from toolboxv2.mods.SocketManager import SocketType
 
 NAME = 'demon'
 
@@ -39,6 +38,7 @@ def run(app: App, args: AppArgs, programmabel_interface=False, as_server=True):
 
     """
 
+    from toolboxv2.mods.SocketManager import SocketType
     # Start a New Demon
 
     status = 'unknown'

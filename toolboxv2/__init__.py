@@ -18,7 +18,7 @@ from toolboxv2.utils.cryp import Code
 
 __author__ = """Markin Hausmanns"""
 __email__ = 'Markinhausmanns@gmail.com'
-__version__ = '0.1.7'
+__version__ = '0.1.8'
 __all__ = [
     "__version__",
     "App",
@@ -37,7 +37,6 @@ __all__ = [
     "tbef",
     "Result",
     "Code",
-    ]
+]
 
 ToolBox_over: str = "root"
-

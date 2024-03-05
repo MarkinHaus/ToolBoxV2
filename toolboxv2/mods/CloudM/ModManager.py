@@ -75,7 +75,9 @@ def download_files(urls, directory, desc, print_func, filename=None):
             filename = os.path.basename(url)
         print_func(f"Download {filename}")
         print_func(f"{url} -> {directory}\\{filename}")
+        os.makedirs(directory, exist_ok=True)
         urllib.request.urlretrieve(url, f"{directory}\\{filename}")
+    return f"{directory}\\{filename}"
 
 
 def handle_additional_dirs(additional_dirs_url, print_func):

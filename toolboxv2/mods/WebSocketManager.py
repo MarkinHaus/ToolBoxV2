@@ -182,7 +182,7 @@ class Tools(MainTool, FileHandler):
             # loop.run_in_executor(None, websocket_handler)
             loop.run_until_complete(websocket_handler())
 
-        ws_thread = threading.Thread(target=websocket_thread)
+        ws_thread = threading.Thread(target=websocket_thread, daemon=True)
         ws_thread.start()
 
         return send_queue, recv_queue

@@ -122,7 +122,6 @@ class ApiResult(BaseModel):
         return res
 
 
-
 class Result:
     def __init__(self,
                  error: ToolBoxError,
@@ -209,11 +208,11 @@ class Result:
         origin = '\n' + f"{prifix + 'Origin: ' + str(self.origin) if self.origin is not None else 'NO Origin'}"
         text = (f"Function Exec coed: {self.info.exec_code}"
                 f"\n{prifix}Info's:"
-                f" {self.info.help_text} {'<|> '+str(self.result.data_info) if self.result.data_info is not None else ''}"
+                f" {self.info.help_text} {'<|> ' + str(self.result.data_info) if self.result.data_info is not None else ''}"
                 f"{origin}{data if not data.endswith('NO Data') else ''}")
         if not show:
             return text
-        print("\n======== Result ========\n"+text+"\n------- EndOfD -------")
+        print("\n======== Result ========\n" + text + "\n------- EndOfD -------")
         return self
 
     def log(self, show_data=True, prifix=""):
@@ -247,9 +246,11 @@ class Result:
             get_logger().error(self.print(show=False))
 
         if flag == 'user':
-            return self if data is None else data if test_is_result(data) else self.default_user_error(data=data, **kwargs)
+            return self if data is None else data if test_is_result(data) else self.default_user_error(data=data,
+                                                                                                       **kwargs)
         if flag == 'intern':
-            return self if data is None else data if test_is_result(data) else self.default_internal_error(data=data, **kwargs)
+            return self if data is None else data if test_is_result(data) else self.default_internal_error(data=data,
+                                                                                                           **kwargs)
 
         return self if data is None else data if test_is_result(data) else self.custom_error(data=data, **kwargs)
 
@@ -272,7 +273,7 @@ class CallingObject:
     def __str__(self):
         if self.args is not None and self.kwargs is not None:
             return (f"{self.module_name} {self.function_name} " + ' '.join(self.args) +
-                    ' '.join([key+'-'+str(val) for key, val in self.kwargs.items()]))
+                    ' '.join([key + '-' + str(val) for key, val in self.kwargs.items()]))
         if self.args is not None:
             return f"{self.module_name} {self.function_name} " + ' '.join(self.args)
         return f"{self.module_name} {self.function_name}"

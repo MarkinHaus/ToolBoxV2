@@ -1,21 +1,24 @@
 import datetime
+import os
+
 import psutil
 
 from prompt_toolkit import HTML
 from prompt_toolkit.shortcuts import set_title, yes_no_dialog
 
-from toolboxv2.mods.cli_functions import UserInputObject
-from toolboxv2.mods.isaa import Tools
-from toolboxv2.mods.isaa.AgentFramwork import ATPAS, CodingCapability
-from toolboxv2.utils.Style import cls
 from toolboxv2 import App, Result, tbef
+from toolboxv2.utils import Style
+from toolboxv2.utils.Style import cls, Spinner
 from toolboxv2.utils.types import CallingObject
-from toolboxv2.mods.isaa.Agents import *
 
 NAME = 'isaacli'
 
 
 def run(app: App, args):
+    from toolboxv2.mods.isaa.Agents import Agent, AgentBuilder, LLMMode
+    from toolboxv2.mods.isaa import Tools
+    from toolboxv2.mods.isaa.AgentFramwork import CodingCapability
+
     set_title(f"ToolBox : {app.version}")
     threaded = False
 
@@ -316,7 +319,7 @@ def run(app: App, args):
                 print("Running Isaa on statement failed to exec", e)
             if er:
                 out = isaa.run_agent("self", f"User Locals Variables : {app.locals['user']}\nUsr Input:" + user_text,
-                                     running_mode='oncex', persist=False, persist_local=False)
+                                     running_mode='oncex', persist=False)
                 return_parm = [Result.ok(data=out)]
 
         if do_next == 1:  # question
@@ -342,15 +345,14 @@ def run(app: App, args):
                 return_parm = [Result.ok(data=memdata)]
                 isaa.run_agent("self", user_text, running_mode="once")
             if do_next_ == 2:  # system
-                out = isaa.run_agent("self", user_text, max_iterations=2, running_mode="lineIs", persist=False,
-                                     persist_local=False)
+                out = isaa.run_agent("self", user_text, max_iterations=2, running_mode="lineIs", persist=False)
                 return_parm = [Result.ok(data=out)]
 
         if do_next == 2:  # coding-task
             pass
 
         if return_parm[0].is_error():
-            isaa.run_agent("self", user_text + ' ' + out, persist=False, persist_local=False)
+            isaa.run_agent("self", user_text + ' ' + out, persist=False)
 
         if do_next == 3:  # command
             with Spinner(message=f"Analysing command type...", symbols='d'):
@@ -383,7 +385,7 @@ def run(app: App, args):
                 os.system(user_text)
 
             if do_next_ == 2:  # custom
-                isaa.run_agent("shell", user_text, running_mode="oncex", persist=False, persist_local=False)
+                isaa.run_agent("shell", user_text, running_mode="oncex", persist=False)
 
         print("", end="" + "done ->>\r")
 

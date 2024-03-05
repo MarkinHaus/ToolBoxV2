@@ -4,16 +4,18 @@ from prompt_toolkit import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import set_title, yes_no_dialog
 
-from toolboxv2.mods.quickNote.quickNote import Tools
-from toolboxv2.mods.quickNote.types import *
-from toolboxv2.utils.Style import cls
+
 from toolboxv2 import App, Result, tbef
+from toolboxv2.utils.Style import cls
 from toolboxv2.utils.types import CallingObject
 
 NAME = 'qncli'
 
 
 def run(app: App, _):
+    from toolboxv2.mods.quickNote.quickNote import Tools
+    from toolboxv2.mods.quickNote.types import Tag, Note
+
     set_title(f"ToolBox : {app.version} quickNote")
     threaded = False
     qn_instance: Tools = app.get_mod('quickNote', 'app')

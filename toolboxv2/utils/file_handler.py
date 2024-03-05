@@ -171,7 +171,7 @@ class FileHandler(Code):
 
                 try:
                     if len(objects[1]) > 0:
-                        return eval(objects[1])
+                        return eval(objects[1]) if isinstance(objects[1], str) else objects[1]
                     logger.warning(
                         Style.YELLOW(
                             f"No data  {obj}  ; {self.file_handler_filename}"

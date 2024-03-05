@@ -4,15 +4,19 @@ import psutil
 from prompt_toolkit import HTML
 from prompt_toolkit.shortcuts import set_title, yes_no_dialog
 
-from toolboxv2.utils.Style import cls
 from toolboxv2 import App, Result, tbef
+from toolboxv2.utils import show_console
+from toolboxv2.utils.Style import cls
 from toolboxv2.utils.types import CallingObject
 
 NAME = 'minicli'
 
 
 def run(app: App, args):
-    set_title(f"ToolBox : {app.version}")
+    try:
+        set_title(f"ToolBox : {app.version}")
+    except:
+        pass
     threaded = False
 
     def bottom_toolbar():
@@ -21,6 +25,8 @@ def run(app: App, args):
                     f'<b><style bg="ansired">s+up</style></b> run in shell')
 
     def exit_(_):
+        if app.debug:
+            app.hide_console()
         if 'main' in app.id:
             res = yes_no_dialog(
                 title='Exit ToolBox',
@@ -124,6 +130,14 @@ def run(app: App, args):
         app.print_functions()
         return Result.ok(info=f"").set_origin("minicli::build-in")
 
+    def colose_console(_):
+        show_console(False)
+        return Result.ok(info=f"").set_origin("minicli::build-in")
+
+    def open_console(_):
+        app.show_console(True)
+        return Result.ok(info=f"").set_origin("minicli::build-in")
+
     bic = {
         "exit": exit_,
         "cls": cls_,
@@ -134,6 +148,8 @@ def run(app: App, args):
         "infos": infos,
         "reload": hr,
         "remote": remote,
+        "hide_console": colose_console,
+        "show_console": open_console,
         "toggle_threaded": toggle_threaded,
         "..": lambda x: Result.ok(x),
     }
@@ -141,23 +157,30 @@ def run(app: App, args):
     all_modes = app.get_all_mods()
 
     # set up Autocompletion
+
     autocompletion_dict = {}
     autocompletion_dict = app.run_any(tbef.CLI_FUNCTIONS.UPDATE_AUTOCOMPLETION_LIST_OR_KEY, list_or_key=bic,
                                       autocompletion_dict=autocompletion_dict)
+
+    autocompletion_dict_ = app.get_autocompletion_dict()
+
+    if autocompletion_dict is None:
+        autocompletion_dict = {}
+
+    if autocompletion_dict_ is not None:
+        autocompletion_dict = {**autocompletion_dict, **autocompletion_dict_}
 
     autocompletion_dict["sdm:set_debug_mode"] = {arg: None for arg in ['on', 'off']}
     autocompletion_dict["open"] = autocompletion_dict["close"] = autocompletion_dict["reload"] = \
         {arg: None for arg in all_modes}
     autocompletion_dict["run"] = {arg: None for arg in list(app.runnable.keys())}
-    autocompletion_dict = app.run_any(tbef.CLI_FUNCTIONS.UPDATE_AUTOCOMPLETION_MODS,
-                                      autocompletion_dict=autocompletion_dict)
 
     active_modular = ""
 
     running_instance = None
     call = CallingObject.empty()
-
-    while app.alive:
+    running = True
+    while running:
         # Get CPU usage
         cpu_usage = psutil.cpu_percent(interval=1)
 
@@ -192,11 +215,18 @@ def run(app: App, args):
                                        helper=helper_exequtor[0])
 
         print("", end="" + "done ->>\r")
+        running = app.alive
+
+    if hasattr(app, 'timeout'):
+        app.timeout = 2
 
     if running_instance is not None:
         print("Closing running instance")
         running_instance.join()
         print("Done")
 
-    set_title("")
+    try:
+        set_title("")
+    except:
+        pass
     app.exit()

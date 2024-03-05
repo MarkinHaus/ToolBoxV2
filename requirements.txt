@@ -22,3 +22,5 @@ webauthn>=2.0.0
 qrcode>=7.4.2
 uvicorn[standard]
 python-multipart
+playwright~=1.33.0
+pydantic~=1.10.8

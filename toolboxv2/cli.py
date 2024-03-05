@@ -2,16 +2,20 @@
 # Import default Pages
 import sys
 import argparse
+import threading
 import time
 from functools import wraps
 from platform import system, node
 # Import public Pages
 from toolboxv2 import App, MainTool, runnable_dict as runnable_dict_func
-from toolboxv2.utils.toolbox import get_app
-import ctypes
+from toolboxv2.utils import show_console
+from toolboxv2.utils.toolbox import get_app, ProxyApp, DemonApp, override_main_app
+
+DEFAULT_MODI = "minicli"
 
 try:
     import hmr
+
     HOT_RELOADER = True
 except ImportError:
     HOT_RELOADER = False
@@ -68,7 +72,7 @@ try:
         ps.print_stats()
         print(s.getvalue())
 
-        print("\n================================"*12)
+        print("\n================================" * 12)
         s = io.StringIO()
         sortby = 'time'  # Sortierung nach der Gesamtzeit, die in jeder Funktion verbracht wird
 
@@ -85,17 +89,6 @@ except ImportError as e:
     profile_execute_all_functions = lambda *args: print(args);
     raise ValueError(f"Failed to import function for profiling")
 
-
-def show_console(show=True):
-    """Brings up the Console Window."""
-    if show:
-        # Show console
-        ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 4)
-    else:
-        # Hide console
-        ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
-
-
 try:
     from toolboxv2.utils.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
 except ModuleNotFoundError:
@@ -105,49 +98,88 @@ import os
 import subprocess
 
 
+def start(pidname, args):
+    caller = args[0]
+    args = args[1:]
+    args = ["-bgr" if arg == "-bg" else arg for arg in args]
+
+    if '-m' not in args or args[args.index('-m')+1] == "toolboxv2":
+        args += ["-m", "bg"]
+    if caller.endswith('toolboxv2'):
+        args = ["toolboxv2"] + args
+    else:
+        args = [sys.executable, "-m", "toolboxv2"] + args
+    if system() == "Windows":
+        DETACHED_PROCESS = 0x00000008
+        p = subprocess.Popen(args, creationflags=DETACHED_PROCESS)
+    else:  # sys.executable, "-m",
+        p = subprocess.Popen(args, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE)
+    pdi = p.pid
+    get_app().sprint(f"Service {pidname} started")
+
+
+def stop(pidfile, pidname):
+    try:
+        with open(pidfile, "r") as f:
+            procID = f.readline().strip()
+    except IOError:
+        print("Process file does not exist")
+        return
+
+    if procID:
+        if system() == "Windows":
+            subprocess.Popen(['taskkill', '/PID', procID, '/F'])
+        else:
+            subprocess.Popen(['kill', '-SIGTERM', procID])
+
+        print(f"Service {pidname} {procID} stopped")
+        os.remove(pidfile)
+
+
 def create_service_file(user, group, working_dir):
     service_content = f"""[Unit]
-Description=My Python App
+Description=ToolBoxService
 After=network.target
 
 [Service]
 User={user}
 Group={group}
 WorkingDirectory={working_dir}
-ExecStart=toolboxv2 -m app -n app
+ExecStart=toolboxv2 -bg
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 """
-    with open("myapp.service", "w") as f:
+    with open("tb.service", "w") as f:
         f.write(service_content)
 
 
 def init_service():
     user = input("Enter the user name: ")
     group = input("Enter the group name: ")
-    working_dir = input("Enter the working directory path (/path/to/your/app): ")
+    working_dir = get_app().start_dir
 
     create_service_file(user, group, working_dir)
 
-    subprocess.run(["sudo", "mv", "myapp.service", "/etc/systemd/system/"])
+    subprocess.run(["sudo", "mv", "tb.service", "/etc/systemd/system/"])
     subprocess.run(["sudo", "systemctl", "daemon-reload"])
 
 
 def manage_service(action):
-    subprocess.run(["sudo", "systemctl", action, "myapp.service"])
+    subprocess.run(["sudo", "systemctl", action, "tb.service"])
 
 
 def show_service_status():
-    subprocess.run(["sudo", "systemctl", "status", "myapp.service"])
+    subprocess.run(["sudo", "systemctl", "status", "tb.service"])
 
 
 def uninstall_service():
-    subprocess.run(["sudo", "systemctl", "disable", "myapp.service"])
-    subprocess.run(["sudo", "systemctl", "stop", "myapp.service"])
-    subprocess.run(["sudo", "rm", "/etc/systemd/system/myapp.service"])
+    subprocess.run(["sudo", "systemctl", "disable", "tb.service"])
+    subprocess.run(["sudo", "systemctl", "stop", "tb.service"])
+    subprocess.run(["sudo", "rm", "/etc/systemd/system/tb.service"])
     subprocess.run(["sudo", "systemctl", "daemon-reload"])
 
 
@@ -156,21 +188,30 @@ def setup_service_windows():
     print("Select mode:")
     print("1. Init (first-time setup)")
     print("2. Uninstall")
+    print("3. Show window")
+    print("4. hide window")
+
     mode = int(input("Enter the mode number: "))
 
     if not os.path.exists(path):
         print("pleas press win + r and enter")
         print("1. for system -> shell:common startup")
         print("2. for user -> shell:startup")
-        path = input("Enter the path: ")
+        path = input("Enter the path that opened: ")
 
     if mode == 1:
+        if os.path.exists(path + '/tb_start.bat'):
+            os.remove(path + '/tb_start.bat')
         with open(path + '/tb_start.bat', "a") as f:
             f.write(
-                """toolboxV2 -m demon -bg -n AutoStart"""
+                f"""{sys.executable} -m toolboxv2 -bg --debug"""
             )
+    elif mode == 3:
+        get_app().show_console()
+    elif mode == 4:
+        get_app().hide_console()
     else:
-        os.remove(path + '/tb_start.pyw')
+        os.remove(path + '/tb_start.bat')
 
 
 def setup_service_linux():
@@ -179,6 +220,9 @@ def setup_service_linux():
     print("2. Start / Stop / Restart")
     print("3. Status")
     print("4. Uninstall")
+
+    print("5. Show window")
+    print("6. hide window")
 
     mode = int(input("Enter the mode number: "))
 
@@ -191,6 +235,10 @@ def setup_service_linux():
         show_service_status()
     elif mode == 4:
         uninstall_service()
+    elif mode == 5:
+        get_app().show_console()
+    elif mode == 6:
+        get_app().hide_console()
     else:
         print("Invalid mode")
 
@@ -223,7 +271,7 @@ def parse_args():
     parser.add_argument("-m", "--modi",
                         type=str,
                         help="Start a ToolBox interface default build in cli",
-                        default="minicli")
+                        default=DEFAULT_MODI)
 
     parser.add_argument("--kill", help="Kill current local tb instance", default=False,
                         action="store_true")
@@ -235,6 +283,13 @@ def parse_args():
     parser.add_argument("-bg", "--background-application", help="Start an interface as background application",
                         default=False,
                         action="store_true")
+    parser.add_argument("-bgr", "--background-application-runner", help="Start an interface as background application",
+                        default=False,
+                        action="store_true")
+    parser.add_argument("-fg", "--proxy-application", help="Start an interface as proxy application",
+                        default=True,
+                        action="store_false")
+
     parser.add_argument("--docker", help="start the toolbox in docker (in remote mode is no local docker engin "
                                          "required)", default=False,
                         action="store_true")
@@ -413,6 +468,9 @@ def main():
 
     data_folder = abspath + '\\.data\\'
     config_folder = abspath + '\\.config\\'
+    info_folder = abspath + '\\.info\\'
+
+    os.makedirs(info_folder, exist_ok=True)
 
     app_config_file = config_folder + identification
     app_data_folder = data_folder + identification
@@ -440,25 +498,46 @@ def main():
 
     app_pid = str(os.getpid())
 
-    if args.hot_reload and HOT_RELOADER:
-        print("InitialStartUpHotReloader")
-        tb_app = get_app(from_="InitialStartUpHotReloader", name=args.name, args=args, app_con=hmr.reload(App))
-    elif args.hot_reload:
-        if 'y' in input("NO hmr installed auto install ?"):
-            os.system('pip install python-hmr')
-            exit(-1)
-        exit(-1)
-    else:
-        print("InitialStartUp")
-        tb_app = get_app(from_="InitialStartUp", name=args.name, args=args)
+    pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
+
+    print(sys.argv)
+    tb_app = get_app(from_="InitialStartUp", name=args.name, args=args, app_con=App)
+    demon_app = None
+    if args.background_application_runner:
+        demon_app = DemonApp(tb_app, args.host, args.port if args.port != 8000 else 6587, t=args.modi != 'bg')
+        if not args.debug:
+            show_console(False)
+        tb_app.demon_app = demon_app
+        with open(pid_file + '-app.pid', 'w') as f:
+            f.write(app_pid)
+        args.proxy_application = False
+    elif args.background_application:
+        if not args.kill and not args.hot_reload:
+            start(args.name, sys.argv)
+        elif args.hot_reload:
+            _ = ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
+                           args.port if args.port != 8000 else 6587, timeout=6)
+            if _.exit_main() == "No data look later":
+                stop(pid_file + '-app.pid', args.name)
+            time.sleep(2)
+            start(args.name, sys.argv)
+        else:
+            if '-m ' not in sys.argv:
+                pid_file = f"{info_folder}bg-{args.name}.pid"
+            _ = ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
+                         args.port if args.port != 8000 else 6587, timeout=6)
+            if _.exit_main() == "No data look later":
+                stop(pid_file + '-app.pid', args.name)
+    elif args.proxy_application:
+        tb_app = override_main_app(ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
+                                            args.port if args.port != 8000 else 6587))
+
+        tb_app.verify()
+        if args.debug:
+            tb_app.show_console()
 
     # tb_app.load_all_mods_in_file()
     # tb_app.save_registry_as_enums("utils", "all_functions_enums.py")
-
-    pid_file = f"{tb_app.start_dir}/{tb_app.config_fh.file_handler_file_prefix}{args.modi}-{args.name}.pid"
-
-    if args.background_application and system() == "Windows":
-        show_console(False)
 
     if args.lm:
         edit_logs()
@@ -470,9 +549,12 @@ def main():
             setup_service_linux()
         if tb_app.system_flag == "Windows":
             setup_service_windows()
+        tb_app.exit()
+        exit(0)
 
-    if args.load_all_mod_in_files or args.save_function_enums_in_file or args.get_version or args.profiler:
-        tb_app.load_all_mods_in_file()
+    if args.load_all_mod_in_files or args.save_function_enums_in_file or args.get_version or args.profiler or args.background_application_runner:
+        if not args.proxy_application:
+            tb_app.load_all_mods_in_file()
         if args.save_function_enums_in_file:
             tb_app.save_registry_as_enums("utils", "all_functions_enums.py")
             tb_app.alive = False
@@ -481,7 +563,6 @@ def main():
         if args.debug:
             tb_app.print_functions()
         if args.get_version:
-
             for mod_name in tb_app.functions:
                 if isinstance(tb_app.functions[mod_name].get("app_instance"), MainTool):
                     print(f"{mod_name} : {tb_app.functions[mod_name]['app_instance'].version}")
@@ -498,20 +579,28 @@ def main():
         tb_app.exit()
         return 0
 
-    if not args.kill and not args.docker and tb_app.alive:
+    if not args.kill and not args.docker and tb_app.alive and not args.background_application:
 
-        with open(f"{tb_app.start_dir}/{tb_app.config_fh.file_handler_file_prefix}/{args.modi}-{args.name}.pid",
-                  "w") as f:
+        tb_app.save_autocompletion_dict()
+        with open(pid_file, "w") as f:
             f.write(app_pid)
 
-        runnable_dict = runnable_dict_func()
-
-        if args.modi in runnable_dict.keys():
+        if not args.proxy_application:
+            runnable_dict = runnable_dict_func()
             tb_app.set_runnable(runnable_dict)
-            # open(f"./config/{args.modi}.pid", "w").write(app_pid)
-            runnable_dict[args.modi](tb_app, args)
+            if args.modi in runnable_dict.keys():
+                pass
+            else:
+                raise ValueError(
+                    f"Modi : [{args.modi}] not found on device installed modi : {list(runnable_dict.keys())}")
+        # open(f"./config/{args.modi}.pid", "w").write(app_pid)
+            tb_app.run_runnable(args.modi)
+        elif 'cli' in args.modi:
+            runnable_dict = runnable_dict_func('cli')
+            tb_app.set_runnable(runnable_dict)
+            tb_app.run_runnable(args.modi)
         else:
-            print(f"Modi : [{args.modi}] not found on device installed modi : {list(runnable_dict.keys())}")
+            tb_app.rrun_runnable(args.modi)
 
     elif args.docker:
 
@@ -523,12 +612,11 @@ def main():
 
         runnable_dict['docker'](tb_app, args)
 
-    elif args.kill:
+    elif args.kill and not args.background_application:
         if not os.path.exists(pid_file):
             print("You must first run the mode")
         else:
-            with open(pid_file,
-                      "r") as f:
+            with open(pid_file, "r") as f:
                 app_pid = f.read()
             print(f"Exit app {app_pid}")
             if system() == "Windows":
@@ -536,8 +624,8 @@ def main():
             else:
                 os.system(f"kill -9 {app_pid}")
 
-            # if args.docker:
-            #     tb_app.run_any()
+    if args.proxy_application and args.debug:
+        tb_app.hide_console()
 
     if tb_app.alive:
         tb_app.exit()

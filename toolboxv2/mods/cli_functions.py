@@ -2,7 +2,7 @@ import os
 from dataclasses import dataclass, field
 from threading import Thread
 
-from toolboxv2.utils.types import CallingObject
+from toolboxv2.utils.types import CallingObject, ApiResult
 
 try:
     from readchar import key as readchar_key
@@ -159,13 +159,11 @@ def update_autocompletion_mods(app: App, autocompletion_dict=None):
     if autocompletion_dict is None:
         autocompletion_dict = {}
 
-    for module_name, module in app.functions.items():
-        data = {}
-        for function_name, function_data in app.functions[module_name].items():
-            if not isinstance(function_data, dict):
-                continue
-            data[function_name] = {arg: None for arg in function_data.get("params", [])}  # TODO get default from sig
-        autocompletion_dict[module_name] = data
+    app.save_autocompletion_dict()
+    autocompletion_dict_ = app.get_autocompletion_dict()
+
+    if autocompletion_dict_ is not None:
+        autocompletion_dict = {**autocompletion_dict_, **autocompletion_dict}
 
     return autocompletion_dict
 
@@ -327,7 +325,6 @@ def user_input(app,
         return user_input(app, completer_dict, get_rprompt, bottom_toolbar, active_modul)
     else:
         infos = text.split(" ")
-        print("[completer_dict]:", completer_dict)
         if len(infos) >= 1:
             call_obj.module_name = infos[0]
         if len(infos) >= 2:
@@ -337,7 +334,8 @@ def user_input(app,
             call_obj.args = infos[2:]
             if call_obj.module_name not in completer_dict:
                 return call_obj
-            if call_obj.function_name not in completer_dict[call_obj.module_name] if completer_dict[call_obj.module_name] is not None else {}:
+            if call_obj.function_name not in (
+            completer_dict[call_obj.module_name] if completer_dict[call_obj.module_name] is not None else {}):
                 return call_obj
             kwargs_name = completer_dict[call_obj.module_name][call_obj.function_name].get(
                 'params')  # TODO FIX parsm ist type list
@@ -366,6 +364,7 @@ def co_evaluate(app: App,
 
     if app is None:
         app = get_app(from_="cliF.co_evaluate")
+
     command = obj.module_name
 
     if not command:
@@ -396,7 +395,10 @@ def co_evaluate(app: App,
             app.locals['user'][f"result{app.locals['user']['res_id']}"] = result
             app.locals['user']['res_id'] += 1
 
-            result.print()
+            if isinstance(result, Result) or isinstance(result, ApiResult):
+                result.print()
+            else:
+                print(result)
 
             if isinstance(return_parm, list):
                 return_parm[0] = result
