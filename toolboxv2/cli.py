@@ -515,18 +515,24 @@ def main():
         if not args.kill and not args.hot_reload:
             start(args.name, sys.argv)
         elif args.hot_reload:
-            _ = ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
-                           args.port if args.port != 8000 else 6587, timeout=6)
-            if _.exit_main() == "No data look later":
+            try:
+                _ = ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
+                             args.port if args.port != 8000 else 6587, timeout=6)
+                if _.exit_main() != "No data look later":
+                    stop(pid_file + '-app.pid', args.name)
+            except Exception:
                 stop(pid_file + '-app.pid', args.name)
             time.sleep(2)
             start(args.name, sys.argv)
         else:
             if '-m ' not in sys.argv:
                 pid_file = f"{info_folder}bg-{args.name}.pid"
-            _ = ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
-                         args.port if args.port != 8000 else 6587, timeout=6)
-            if _.exit_main() == "No data look later":
+            try:
+                _ = ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
+                             args.port if args.port != 8000 else 6587, timeout=6)
+                if _.exit_main() != "No data look later":
+                    stop(pid_file + '-app.pid', args.name)
+            except Exception:
                 stop(pid_file + '-app.pid', args.name)
     elif args.proxy_application:
         tb_app = override_main_app(ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",

@@ -1,0 +1,13 @@
+- Parse command line arguments using the parse_args function.
+- Initialize variables and folders for the application.
+- Handle options to delete configuration and data files.
+- Handle options for testing, profiling, and background application running.
+- Create an instance of the application using the get_app function.
+- Handle options for background application, proxy application, and debug mode.
+- Load all modules from files if specified.
+- Save function enums to a file if specified.
+- Print the version of each module if specified.
+- Profile the execution of all functions if specified.
+- Run the application in the specified mode.
+- Handle options for Docker and killing the application.
+- Exit the application and clean up if necessary.
