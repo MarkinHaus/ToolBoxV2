@@ -19,5 +19,9 @@ The sources for ToolBox can be downloaded from the Github repo.
 You can clone the public repository:
 
 ```
-git clone git://github.com/MarkinHaus/ToolBoxV2
+git clone https://github.com/MarkinHaus/ToolBoxV2
+```
+or with pip
+```
+pip install git+https://github.com/MarkinHaus/ToolBoxV2
 ```
