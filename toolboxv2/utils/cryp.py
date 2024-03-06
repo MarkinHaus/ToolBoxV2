@@ -318,7 +318,7 @@ class Code:
         return pem.decode()
 
 
-DEVICE_KEY_PATH = ".info/device.key"
+DEVICE_KEY_PATH = ".info\\device.key"
 DEVICE_KEY_ = lambda: open(DEVICE_KEY_PATH,
                            "r").read(
 ) if os.path.exists(DEVICE_KEY_PATH) else open(DEVICE_KEY_PATH, "wb").write(Fernet.generate_key())
