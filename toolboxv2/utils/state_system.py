@@ -19,7 +19,7 @@ import os
 import hashlib
 from typing import Dict
 
-from toolboxv2 import App
+from toolboxv2.utils import App
 from toolboxv2.utils.toolbox import get_app
 
 

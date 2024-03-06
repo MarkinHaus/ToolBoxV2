@@ -1,5 +1,5 @@
 from toolboxv2.utils.types import Result, ToolBoxInterfaces, ToolBoxError, ToolBoxInfo, ToolBoxResult
-from toolboxv2.utils.toolbox import App, get_app
+from toolboxv2.utils.toolbox import get_app
 from toolboxv2.utils.Style import Style
 from toolboxv2.utils.tb_logger import get_logger
 from toolboxv2.utils.all_functions_enums import *

@@ -19,13 +19,17 @@ import requests
 import shelve
 from cachetools import TTLCache
 
-from toolboxv2.utils.file_handler import FileHandler
-from toolboxv2.utils import Singleton, show_console
+import toolboxv2.utils
+from toolboxv2.utils.show_and_hide_console import show_console
 from toolboxv2.utils.helper_functions import generate_test_cases
-from toolboxv2.utils.types import Result, AppArgs, ToolBoxInterfaces, ApiResult
-from toolboxv2.utils.tb_logger import setup_logging, get_logger
+from toolboxv2.utils.types import ToolBoxInterfaces
 from toolboxv2.utils.Style import Style, Spinner
-import toolboxv2
+from toolboxv2.utils.file_handler import FileHandler
+
+from toolboxv2.utils.tb_logger import setup_logging, get_logger
+from toolboxv2.utils.types import Result, AppArgs, ApiResult
+
+from toolboxv2.utils.singelton_class import Singleton
 from toolboxv2.utils.all_functions_enums import *
 
 import logging

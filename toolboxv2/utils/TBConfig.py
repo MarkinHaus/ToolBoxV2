@@ -1,6 +1,6 @@
 from dotenv import load_dotenv
 
-from toolboxv2 import get_logger
+from toolboxv2.utils import get_logger
 from toolboxv2.utils.toolbox import Singleton
 
 # Load environment variables from .env file
