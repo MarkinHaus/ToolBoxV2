@@ -136,14 +136,18 @@ class App(metaclass=Singleton):
         if "test" in prefix:
             self.data_dir = self.start_dir + '\\.data\\' + "test"
             self.config_dir = self.start_dir + '\\.config\\' + "test"
+            self.info_dir = self.start_dir + '\\.info\\' + "test"
         else:
             self.data_dir = self.start_dir + '\\.data\\' + identification
             self.config_dir = self.start_dir + '\\.config\\' + identification
+            self.info_dir = self.start_dir + '\\.info\\' + identification
 
         if not os.path.exists(self.data_dir):
             os.makedirs(self.data_dir, exist_ok=True)
         if not os.path.exists(self.config_dir):
             os.makedirs(self.config_dir, exist_ok=True)
+        if not os.path.exists(self.info_dir):
+            os.makedirs(self.info_dir, exist_ok=True)
 
         print(f"Starting ToolBox as {prefix} from :", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 
