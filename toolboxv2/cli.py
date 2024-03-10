@@ -103,7 +103,7 @@ def start(pidname, args):
     args = args[1:]
     args = ["-bgr" if arg == "-bg" else arg for arg in args]
 
-    if '-m' not in args or args[args.index('-m')+1] == "toolboxv2":
+    if '-m' not in args or args[args.index('-m') + 1] == "toolboxv2":
         args += ["-m", "bg"]
     if caller.endswith('toolboxv2'):
         args = ["toolboxv2"] + args
@@ -146,7 +146,7 @@ After=network.target
 User={user}
 Group={group}
 WorkingDirectory={working_dir}
-ExecStart=toolboxv2 -bg
+ExecStart=toolboxv2 -bgr -m bg
 Restart=always
 RestartSec=5
 
@@ -190,8 +190,9 @@ def setup_service_windows():
     print("2. Uninstall")
     print("3. Show window")
     print("4. hide window")
+    print("0. Exit")
 
-    mode = int(input("Enter the mode number: "))
+    mode = input("Enter the mode number: ").strip()
 
     if not os.path.exists(path):
         print("pleas press win + r and enter")
@@ -199,19 +200,26 @@ def setup_service_windows():
         print("2. for user -> shell:startup")
         path = input("Enter the path that opened: ")
 
-    if mode == 1:
+    if mode == "1":
         if os.path.exists(path + '/tb_start.bat'):
             os.remove(path + '/tb_start.bat')
         with open(path + '/tb_start.bat', "a") as f:
             f.write(
-                f"""{sys.executable} -m toolboxv2 -bg --debug"""
+                f"""{sys.executable} -m toolboxv2 -bg"""
             )
-    elif mode == 3:
+        print(f"Init Service in {path}")
+        print(f"run toolboxv2 -bg to start the service")
+    elif mode == "3":
         get_app().show_console()
-    elif mode == 4:
+    elif mode == "4":
         get_app().hide_console()
-    else:
+    elif mode == "0":
+        pass
+    elif mode == "2":
         os.remove(path + '/tb_start.bat')
+        print(f"Removed Service from {path}")
+    else:
+        setup_service_windows()
 
 
 def setup_service_linux():
@@ -500,7 +508,6 @@ def main():
 
     pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
 
-    print(sys.argv)
     tb_app = get_app(from_="InitialStartUp", name=args.name, args=args, app_con=App)
     demon_app = None
     if args.background_application_runner:
@@ -599,7 +606,7 @@ def main():
             else:
                 raise ValueError(
                     f"Modi : [{args.modi}] not found on device installed modi : {list(runnable_dict.keys())}")
-        # open(f"./config/{args.modi}.pid", "w").write(app_pid)
+            # open(f"./config/{args.modi}.pid", "w").write(app_pid)
             tb_app.run_runnable(args.modi)
         elif 'cli' in args.modi:
             runnable_dict = runnable_dict_func('cli')

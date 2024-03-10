@@ -1,8 +1,8 @@
-site_name: ToolBoxV2
+site_name: ReSimpleToolBox
 
-site_url: https://MarkinHaus.github.io/ToolBoxV2
+site_url: https://MarkinHaus.github.io/ReSimpleToolBox
 
-repo_url: https://github.com/MarkinHaus/ToolBoxV2
+repo_url: https://github.com/MarkinHaus/ReSimpleToolBox
 
 theme:
     palette:
@@ -26,7 +26,7 @@ plugins:
         #   ignore_h1_titles: True
         #   execute: True
         #   execute_ignore: "*.ipynb"
-          
+
 markdown_extensions:
     - attr_list
     - pymdownx.superfences
@@ -47,6 +47,7 @@ nav:
     - Contributing: contributing.md
     - FAQ: faq.md
     - Changelog: changelog.md
-    - Report Issues: https://github.com/MarkinHaus/ToolBoxV2/issues
+    - Report Issues: https://github.com/MarkinHaus/ReSimpleToolBox/issues
     - API Reference:
           - toolboxv2 module: toolboxv2.md
+          - utils: /utils

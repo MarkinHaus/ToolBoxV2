@@ -912,12 +912,12 @@ class App(metaclass=Singleton):
     @staticmethod
     def print(text, *args, **kwargs):
         # self.logger.info(f"Output : {text}")
-
+        print(text, *args, **kwargs)
         # print(Style.CYAN("System:"), end=" ")
-        if isinstance(text, str) and kwargs == {} and text:
-            stram_print(text + ' '.join(args))
-        else:
-            print(text, *args, **kwargs)
+        # if isinstance(text, str) and kwargs == {} and text:
+        #     stram_print(text + ' '.join(args))
+        # else:
+        #     print(text, *args, **kwargs)
 
     @staticmethod
     def sprint(text, *args, **kwargs):
