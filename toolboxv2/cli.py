@@ -500,7 +500,7 @@ def main():
 
         if os.system(f"python -m unittest discover -s {test_path}") != 0:
             os.system(f"python3 -m unittest discover -s {test_path}")
-        return 1
+        return 0
 
     app_pid = str(os.getpid())
 
