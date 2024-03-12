@@ -498,8 +498,8 @@ def main():
             test_path = test_path.replace("ToolBoxV2/toolboxv2", "ToolBoxV2") + "/tests/test_mods"
         print(f"Testing in {test_path}")
 
-        if os.system(f"python -m unittest discover -s {test_path}") != 0:
-            os.system(f"python3 -m unittest discover -s {test_path}")
+        if os.system(f"{sys.executable} -m unittest discover -s {test_path}") != 0:
+            os.system(f"{sys.executable} -m unittest discover -s {test_path}")
         return 0
 
     app_pid = str(os.getpid())
@@ -622,7 +622,7 @@ def main():
 
         if 'docker' not in runnable_dict.keys():
             print("No docker")
-            return
+            return 1
 
         runnable_dict['docker'](tb_app, args)
 
