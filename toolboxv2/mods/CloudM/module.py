@@ -10,7 +10,6 @@ import requests
 
 from toolboxv2 import MainTool, FileHandler, get_app, Style
 from .UserInstances import UserInstances
-from .ModManager import installer, delete_package
 from toolboxv2.utils.system.state_system import get_state_from_app, TbState
 Name = 'CloudM'
 version = "0.0.2"
@@ -120,7 +119,8 @@ class Tools(MainTool, FileHandler):
         mod_installer_url = self.get_file_handler(self.keys["URL"]) + fr"/install/installer\{name}-installer.json"
         self.print(f"Installer file url: {mod_installer_url}")
         try:
-            installer(mod_installer_url, self.app.debug)
+            pass
+            #installer(mod_installer_url, self.app.debug)
         except Exception as e:
             self.print(f"Error : {e}")
 
@@ -136,7 +136,8 @@ class Tools(MainTool, FileHandler):
         mod_installer_url = self.get_file_handler(self.keys["URL"]) + fr"/install/installer\{name}-installer.json"
         self.print(f"Installer file url: {mod_installer_url}")
         try:
-            delete_package(mod_installer_url)
+            pass
+            # delete_package(mod_installer_url)
         except Exception as e:
             self.print(f"Error : {e}")
 

@@ -4,7 +4,7 @@ from mailjet_rest import Client
 import os
 
 Name = "email_waiting_list"
-version = '*.*.*'
+version = '0.0.0'
 export = get_app("email_waiting_list.email_waiting_list.EXPORT").tb
 s_export = export(mod_name=Name, version=version, state=False, test=False)
 api_key = os.environ.get('MJ_APIKEY_PUBLIC')
