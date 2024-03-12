@@ -14,6 +14,29 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
 from ..system.tb_logger import get_logger
 
+DEVICE_KEY_DIR = "./.info"
+DEVICE_KEY_PATH = os.path.join(DEVICE_KEY_DIR, "device.key")
+
+
+def ensure_device_key_dir_exists():
+    if not os.path.exists(DEVICE_KEY_DIR):
+        os.makedirs(DEVICE_KEY_DIR)
+
+
+def get_or_create_device_key():
+    ensure_device_key_dir_exists()
+    if os.path.exists(DEVICE_KEY_PATH):
+        with open(DEVICE_KEY_PATH, "r") as key_file:
+            return key_file.read()
+    else:
+        key = Fernet.generate_key()
+        with open(DEVICE_KEY_PATH, "wb") as key_file:
+            key_file.write(key)
+        return key.decode()
+
+
+DEVICE_KEY = get_or_create_device_key()
+
 
 class Code:
     application_key = None
@@ -313,12 +336,3 @@ class Code:
             format=serialization.PublicFormat.SubjectPublicKeyInfo
         )
         return pem.decode()
-
-
-DEVICE_KEY_PATH = ".\\.info\\device.key"
-if os.path.exists(DEVICE_KEY_PATH):
-    os.makedirs(DEVICE_KEY_PATH, exist_ok=True)
-DEVICE_KEY_ = lambda: open(DEVICE_KEY_PATH,
-                           "r").read(
-) if os.path.exists(DEVICE_KEY_PATH) else open(DEVICE_KEY_PATH, "wb").write(Fernet.generate_key())
-DEVICE_KEY = lambda: DEVICE_KEY_() if isinstance(DEVICE_KEY_(), str) else DEVICE_KEY_()
