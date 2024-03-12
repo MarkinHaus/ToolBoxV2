@@ -315,9 +315,9 @@ class Code:
         return pem.decode()
 
 
-DEVICE_KEY_PATH = ".info\\device.key"
+DEVICE_KEY_PATH = "..\\.info\\device.key"
 DEVICE_KEY_ = lambda: open(DEVICE_KEY_PATH,
                            "r").read(
-) if os.path.exists(DEVICE_KEY_PATH) else os.makedirs(".\\info\\", exist_ok=True) ;
+) if os.path.exists(DEVICE_KEY_PATH) else os.makedirs("..\\.info\\", exist_ok=True) ;
 open(DEVICE_KEY_PATH, "wb").write(Fernet.generate_key())
 DEVICE_KEY = lambda: DEVICE_KEY_() if isinstance(DEVICE_KEY_(), str) else DEVICE_KEY_()
