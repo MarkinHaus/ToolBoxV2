@@ -664,8 +664,8 @@ class App(AppType, metaclass=Singleton):
             if thread.name == "MainThread":
                 continue
             try:
-                with Spinner(f"closing Thread {thread.name:^50}|", symbols="s", count_down=True, time_in_s=5):
-                    thread.join(timeout=5)
+                with Spinner(f"closing Thread {thread.name:^50}|", symbols="s", count_down=True, time_in_s=5 if not self.debug else 1):
+                    thread.join(timeout=5 if not self.debug else 1)
             except TimeoutError as e:
                 self.logger.error(f"Timeout error on exit {thread.name} {str(e)}")
                 print(str(e), f"Timeout {thread.name}")
