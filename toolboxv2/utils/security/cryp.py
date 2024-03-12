@@ -35,7 +35,7 @@ def get_or_create_device_key():
         return key.decode()
 
 
-DEVICE_KEY = get_or_create_device_key()
+DEVICE_KEY = get_or_create_device_key
 
 
 class Code:
