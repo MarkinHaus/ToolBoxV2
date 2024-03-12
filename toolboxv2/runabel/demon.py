@@ -4,32 +4,32 @@ from threading import Thread
 
 from toolboxv2 import App, AppArgs, tbef
 
-NAME = 'demon'
+NAME = 'daemon'
 
 
 def run(app: App, args: AppArgs, programmabel_interface=False, as_server=True):
     """
-    The Demon runner is responsible for running a lightweight toolbox instance in the background
-    The name of the demon instance is also the communication bridge.
+    The daemon runner is responsible for running a lightweight toolbox instance in the background
+    The name of the daemon instance is also the communication bridge.
 
     workflow :
 
-    run the demon as a .py script the demon will then kill the Terminal interface and runs in the background
-    the demon can then be used to start other toolbox runnabel processes like the cli thru a nothe Terminal by simply
-    naming the new instance as the demon. This new generated instance the shadow demon is then used to control the demon.
+    run the daemon as a .py script the daemon will then kill the Terminal interface and runs in the background
+    the daemon can then be used to start other toolbox runnabel processes like the cli thru a nothe Terminal by simply
+    naming the new instance as the daemon. This new generated instance the shadow daemon is then used to control the daemon.
 
-    crate the Demon
+    crate the daemon
 
-        $ ToolBoxV2 -m demon -n main # use the same name default is main
+        $ ToolBoxV2 -m daemon -n main # use the same name default is main
 
-    creating the shadow demon
+    creating the shadow daemon
 
         same device
 
             $ ToolBoxV2 -m AnyMode[(default), cli, api]
 
-            # to stop the demon
-            $ ToolBoxV2 -m demon --kill
+            # to stop the daemon
+            $ ToolBoxV2 -m daemon --kill
 
         remote
 
@@ -39,12 +39,12 @@ def run(app: App, args: AppArgs, programmabel_interface=False, as_server=True):
     """
 
     from toolboxv2.mods.SocketManager import SocketType
-    # Start a New Demon
+    # Start a New daemon
 
     status = 'unknown'
 
     client = app.run_any('SocketManager', 'create_socket',
-                         name="demon",
+                         name="daemon",
                          host="localhost" if args.host == '0.0.0.0' else args.host,
                          port=62436 if args.port == 8000 else args.port,
                          type_id=SocketType.client,
@@ -70,7 +70,7 @@ def run(app: App, args: AppArgs, programmabel_interface=False, as_server=True):
     if not as_client and as_server:
         status = 'server'
         server_controler = app.run_any('SocketManager', 'tbSocketController',
-                                       name="demon", host=args.host, port=62436)
+                                       name="daemon", host=args.host, port=62436)
         if programmabel_interface:
             return 0, server_controler["get_status"], server_controler["stop_server"]
 
@@ -96,7 +96,7 @@ def run(app: App, args: AppArgs, programmabel_interface=False, as_server=True):
         t_1.join()
 
     if status != 'client':
-        app.logger.info(f"closing demon {app.id}'{status}'")
+        app.logger.info(f"closing daemon {app.id}'{status}'")
         return -1, status, status
 
     if programmabel_interface:

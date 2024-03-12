@@ -1,16 +1,22 @@
-import os
 import sys
-import subprocess
 import urllib.request
 import json
+import zipfile
+
+import yaml
 from tqdm import tqdm
 from bs4 import BeautifulSoup
-import shutil
 import tempfile
 
-from toolboxv2 import get_app, App
-from toolboxv2.utils.Style import extract_json_strings
-from toolboxv2.utils.types import ToolBoxInterfaces
+from toolboxv2 import get_app, App, __version__
+from toolboxv2.utils.extras.Style import extract_json_strings
+from toolboxv2.utils.system.types import ToolBoxInterfaces
+
+import os
+import subprocess
+import shutil
+from zipfile import ZipFile
+
 
 Name = 'CloudM.ModManager'
 export = get_app(f"{Name}.Export").tb
@@ -18,54 +24,70 @@ version = '0.0.1'
 default_export = export(mod_name=Name, version=version, interface=ToolBoxInterfaces.native, test=False)
 
 
-@default_export
-def installer(url, debug=False):
+def unpack_mod(zip_path, extract_to):
+    """Entpackt eine ZIP-Datei in ein Verzeichnis."""
+    with ZipFile(zip_path, 'r') as zipf:
+        zipf.extractall(extract_to)
+
+
+def build_and_archive_module(module_path, archive_path, ver=version):
+    """Baut das Modul und speichert es als ZIP im Archiv."""
+    # Bauen des Moduls
+    run_command(['python', '-m', 'build'], cwd=module_path)
+
+    # Erstellen des ZIP-Archivs
+    dist_path = os.path.join(module_path, 'dist')
+    module_name = os.path.basename(module_path)
+    zip_file_path = os.path.join(archive_path, f"RST${module_name}&{__version__}§{ver}.zip")
+    with ZipFile(zip_file_path, 'w') as zipf:
+        for file in os.listdir(dist_path):
+            zipf.write(os.path.join(dist_path, file), arcname=file)
+
+    return zip_file_path
+
+
+def extract_and_prepare_module(archive_path, module_name, temp_path, ver=version):
+    """Extrahiert ein Modul aus dem Archiv und bereitet es vor."""
+    zip_file_path = os.path.join(archive_path, f"RST${module_name}&{__version__}§{ver}.zip")
+    temp_module_path = os.path.join(temp_path, module_name)
+    with ZipFile(zip_file_path, 'r') as zipf:
+        zipf.extractall(temp_module_path)
+    return temp_module_path
+
+
+# shutil.rmtree(temp_path)
+
+def install_zip_from_url(zip_url, target_directory, print_func):
     """
-    Installiert Module und Abhängigkeiten basierend auf einer URL.
+    Lädt eine ZIP-Datei von einer gegebenen URL herunter und entpackt sie in ein Zielverzeichnis.
 
     Args:
-        url (str or list): URL oder Liste von URLs zum Herunterladen der Installationsdaten.
-        debug (bool): Aktiviert Debug-Ausgaben, wenn True.
+        zip_url (str): URL der ZIP-Datei, die heruntergeladen werden soll.
+        target_directory (str): Pfad des Verzeichnisses, in das die ZIP-Datei entpackt werden soll.
+        print_func (function): Funktion zum Ausgeben von Debug-Informationen.
 
     Returns:
         None
     """
+    # Stellen Sie sicher, dass das Zielverzeichnis existiert
+    os.makedirs(target_directory, exist_ok=True)
 
-    def print_debug(*args, **kwargs):
-        """ Hilfsfunktion für Debug-Ausgaben. """
-        if debug:
-            print(*args, **kwargs)
+    # Temporäre Datei für den Download erstellen
+    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+        print_func(f"Downloading ZIP from {zip_url}")
+        # ZIP-Datei herunterladen
+        urllib.request.urlretrieve(zip_url, tmp_file.name)
+        print_func(f"ZIP downloaded successfully to {tmp_file.name}")
 
-    # URL-Verarbeitung
-    if isinstance(url, list):
-        url = next((u for u in url if u.strip().startswith('http')), None)
+    # ZIP-Datei entpacken
+    with ZipFile(tmp_file.name, 'r') as zip_ref:
+        print_func(f"Extracting ZIP to {target_directory}")
+        zip_ref.extractall(target_directory)
+        print_func("ZIP extraction completed")
 
-    if not url:
-        raise ValueError("Keine gültige URL gefunden")
-
-    # Daten herunterladen und verarbeiten
-    with urllib.request.urlopen(url) as response:
-        res = response.read()
-        print_debug("Collecting installer file data")
-        soup = BeautifulSoup(res, 'html.parser')
-        data = json.loads(next(extract_json_strings(soup.text), '{}').replace('\n', ''))
-        print_debug(f"data collected successfully data : {data}")
-
-    # Verzeichnisse erstellen
-    os.makedirs("mods", exist_ok=True)
-    os.makedirs("runable", exist_ok=True)
-
-    # Module und Runnables herunterladen
-    download_files(data.get("mods", []), "mods", "Mods herunterladen", print_debug)
-    download_files(data.get("runnable", []), "runable", "Runnables herunterladen", print_debug)
-
-    # Zusätzliche Verzeichnisse
-    handle_additional_dirs(data.get("additional-dirs"), print_debug)
-
-    # Requirements installieren
-    handle_requirements(data.get("requirements"), data.get("Name"), print_debug)
-
-    print_debug("Installation abgeschlossen")
+    # Temporäre Datei löschen
+    os.remove(tmp_file.name)
+    print_func("Temporary file removed")
 
 
 def download_files(urls, directory, desc, print_func, filename=None):
@@ -80,13 +102,6 @@ def download_files(urls, directory, desc, print_func, filename=None):
     return f"{directory}\\{filename}"
 
 
-def handle_additional_dirs(additional_dirs_url, print_func):
-    """ Verarbeitet zusätzliche Verzeichnisse. """
-    if additional_dirs_url:
-        print_func(f"Download additional dirs {additional_dirs_url}")
-        shutil.unpack_archive(additional_dirs_url, "/")
-
-
 def handle_requirements(requirements_url, module_name, print_func):
     """ Verarbeitet und installiert Requirements. """
     if requirements_url:
@@ -95,7 +110,7 @@ def handle_requirements(requirements_url, module_name, print_func):
         urllib.request.urlretrieve(requirements_url, requirements_filename)
 
         print_func("Install requirements")
-        subprocess.check_call(
+        run_command(
             [sys.executable, "-m", "pip", "install", "-r", requirements_filename])
 
         os.remove(requirements_filename)
@@ -160,3 +175,88 @@ def list_modules(app: App = None):
     if app is None:
         app = get_app("cm.list_modules")
     return list(map(lambda x: '/api/installer/' + x + '-installer.json', app.get_all_mods()))
+
+
+def create_and_pack_module(path, additional_dirs, version, module_name):
+    """
+    Erstellt ein Python-Modul und packt es in eine ZIP-Datei.
+
+    Args:
+        path (str): Pfad zum Ordner oder zur Datei, die in das Modul aufgenommen werden soll.
+        additional_dirs (dict): Zusätzliche Verzeichnisse, die hinzugefügt werden sollen.
+        version (str): Version des Moduls.
+        module_name (str): Name des Moduls.
+
+    Returns:
+        str: Pfad zur erstellten ZIP-Datei.
+    """
+    base_path = os.path.dirname(path)
+    module_path = os.path.join(base_path, module_name)
+    zip_path = f"RST${module_name}&{__version__}§{version}.zip"
+
+    # Modulverzeichnis erstellen, falls es nicht existiert
+    os.makedirs(module_path, exist_ok=True)
+
+    # Datei oder Ordner in das Modulverzeichnis kopieren
+    if os.path.isdir(path):
+        shutil.copytree(path, os.path.join(module_path, os.path.basename(path)), dirs_exist_ok=True)
+    else:
+        shutil.copy2(path, module_path)
+
+    # Zusätzliche Verzeichnisse hinzufügen
+    for dir_name, dir_paths in additional_dirs.items():
+        if isinstance(dir_paths, str):
+            dir_paths = [dir_paths]
+        for dir_path in dir_paths:
+            full_path = os.path.join(module_path, dir_name)
+            shutil.copytree(dir_path, full_path, dirs_exist_ok=True)
+
+    # tbConfig.yaml erstellen
+    config_path = os.path.join(module_path, "tbConfig.yaml")
+    with open(config_path, 'w') as config_file:
+        yaml.dump({"version": version, "module_name": module_name}, config_file)
+
+    # Modul in eine ZIP-Datei packen
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, dirs, files in os.walk(module_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                zipf.write(file_path, os.path.relpath(file_path, base_path))
+
+    # Ursprüngliches Modulverzeichnis löschen
+    shutil.rmtree(module_path)
+
+    return zip_path
+
+
+#  =================== v2 functions =================
+
+def run_command(command, cwd=None):
+    """Führt einen Befehl aus und gibt den Output zurück."""
+    result = subprocess.run(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+    return result.stdout
+
+
+if __name__ == "__main__":
+
+    # package module
+    get_app()
+    zip_path = create_and_pack_module(r"C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\welcome.py", {
+        "runnable": [r"C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\runabel\readchar_buldin_style_cli.py"],
+        ".":[r"C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\init.config"]
+    }, "0.0.1", "Welcome")
+    print(zip_path)
+# # Beispielverwendung TODO
+# archive_path = '/pfad/zum/archiv'
+# temp_path = '/pfad/zum/temp'
+# module_path = '/pfad/zum/modul'
+# module_name = 'MeinModul'
+#
+# # Initialisiere und baue ein neues Modul
+# initialize_module_repository(module_path)
+# build_and_archive_module(module_path, archive_path)
+#
+# # Extrahiere, aktualisiere und rearchiviere ein existierendes Modul
+# temp_module_path = extract_and_prepare_module(archive_path, module_name, temp_path)
+# # Hier würden Sie Änderungen am Modul vornehmen
+# update_and_rearchive_module(temp_module_path, archive_path)

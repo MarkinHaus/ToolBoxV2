@@ -9,7 +9,7 @@ from starlette.responses import JSONResponse
 from starlette.websockets import WebSocketDisconnect
 from fastapi.responses import RedirectResponse
 
-from ..utils.cryp import DEVICE_KEY, Code
+from toolboxv2.utils.security.cryp import DEVICE_KEY, Code
 
 from fastapi import FastAPI, Request, WebSocket, APIRouter
 import sys
@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from toolboxv2 import tbef, AppArgs
 
-from ..utils.state_system import get_state_from_app
+from toolboxv2.utils.system.state_system import get_state_from_app
 from ..utils.toolbox import get_app
 
 

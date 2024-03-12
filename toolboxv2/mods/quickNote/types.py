@@ -2,9 +2,7 @@ import uuid
 from dataclasses import dataclass
 from enum import Enum
 
-from pydantic import BaseModel
-
-from toolboxv2.utils.cryp import Code
+from toolboxv2.utils.security.cryp import Code
 
 
 def get_id(name=str(uuid.uuid4())):

@@ -6,8 +6,8 @@ from toolboxv2 import MainTool, FileHandler, Result, get_app
 from .reddis_instance import MiniRedis
 from .local_instance import MiniDictDB
 from .types import DatabaseModes, AuthenticationTypes
-from toolboxv2.utils.types import ToolBoxInterfaces
-from ...utils.cryp import Code
+from toolboxv2.utils.system.types import ToolBoxInterfaces
+from toolboxv2.utils.security.cryp import Code
 
 Name = "DB"
 export = get_app(from_="DB.EXPORT").tb

@@ -1,14 +1,26 @@
-from toolboxv2.utils.Style import Style, remove_styles, Spinner
-from toolboxv2.utils.file_handler import FileHandler
-from toolboxv2.utils.toolbox import App, get_app
-from toolboxv2.utils.tb_logger import setup_logging, get_logger
-from toolboxv2.utils.main_tool import MainTool
-from toolboxv2.utils import all_functions_enums as tbef
-from toolboxv2.utils.types import Result, AppArgs, ApiResult
-from toolboxv2.utils.cryp import Code
-from toolboxv2.utils.singelton_class import Singleton
-from toolboxv2.utils.show_and_hide_console import show_console
+import os
 
+from yaml import safe_load
+
+from .toolbox import App
+
+from .singelton_class import Singleton
+from .security.cryp import Code
+
+from .system.file_handler import FileHandler
+from .system.tb_logger import setup_logging, get_logger
+from .system.main_tool import MainTool
+from .system import all_functions_enums as tbef
+from .system.types import Result, AppArgs, ApiResult
+from .system.getting_and_closing_app import get_app
+
+from .extras.Style import Style, remove_styles, Spinner
+from .extras.show_and_hide_console import show_console
+
+
+with open(os.getenv('CONFIG_FILE', 'toolbox.yaml'), 'r') as config_file:
+    _version = safe_load(config_file)
+    __version__ = _version.get('main', {}).get('version', '-.-.-')
 
 __all__ = [
     "App",

@@ -6,7 +6,7 @@ from fastapi import APIRouter, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
 from toolboxv2 import get_logger, App, get_app
-from toolboxv2.utils.state_system import TbState, get_state_from_app
+from toolboxv2.utils.system.state_system import TbState, get_state_from_app
 
 router = APIRouter(
     prefix="/api",

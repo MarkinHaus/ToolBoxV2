@@ -126,7 +126,7 @@ class Tools(MainTool, FileHandler):
         # ~ self.keys = {}
         self.tools = {
             "all": [["Version", "Shows current Version"], ["create_socket", "crate a socket", -1],
-                    ["tbSocketController", "run demon", -1]],
+                    ["tbSocketController", "run daemon", -1]],
             "name": "SocketManager",
             "create_socket": self.create_socket,
             "tbSocketController": self.run_as_single_communication_server,

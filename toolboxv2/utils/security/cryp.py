@@ -1,6 +1,5 @@
 import base64
 import random
-import time
 import os
 import hashlib
 
@@ -13,9 +12,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
-from toolboxv2.utils.tb_logger import get_logger
-
-from platform import node
+from ..system.tb_logger import get_logger
 
 
 class Code:

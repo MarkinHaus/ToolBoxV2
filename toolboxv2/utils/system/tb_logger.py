@@ -3,7 +3,7 @@ import os
 import datetime
 from logging.handlers import SocketHandler
 
-from toolboxv2.utils import Style, remove_styles
+from ..extras.Style import Style, remove_styles
 
 loggerNameOfToolboxv2 = 'toolboxV2'
 

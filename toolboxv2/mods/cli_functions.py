@@ -2,7 +2,7 @@ import os
 from dataclasses import dataclass, field
 from threading import Thread
 
-from toolboxv2.utils.types import CallingObject, ApiResult
+from toolboxv2.utils.system.types import CallingObject, ApiResult
 
 try:
     from readchar import key as readchar_key

@@ -1,13 +1,14 @@
-from toolboxv2.utils.types import Result, ToolBoxInterfaces, ToolBoxError, ToolBoxInfo, ToolBoxResult
-from toolboxv2.utils.toolbox import get_app
-from toolboxv2.utils.Style import Style
-from toolboxv2.utils.tb_logger import get_logger
-from toolboxv2.utils.all_functions_enums import *
+from toolboxv2.utils.extras import Style
+
+from .types import Result, ToolBoxInterfaces, ToolBoxError, ToolBoxInfo, ToolBoxResult
+from .getting_and_closing_app import get_app
+from .tb_logger import get_logger
+from .all_functions_enums import CLOUDM_AUTHMANAGER
 
 
 class MainTool:
-    toolID = ""
-    app = None
+    toolID: str = ""
+    # app = None
     interface = None
     spec = ""
 
@@ -24,14 +25,20 @@ class MainTool:
         self.stuf = False
         if not hasattr(self, 'config'):
             self.config = {}
-        if self.app is None:
-            self.app = get_app()
         self.user = None
         self.description = "A toolbox mod" if kwargs.get("description") is None else kwargs.get("description")
         if MainTool.interface is None:
             MainTool.interface = self.app.interface_type
         # Result.default(self.app.interface)
         self.load()
+
+    @property
+    def app(self):
+        return get_app(from_=f"{self.spec}.{self.name}|{self.toolID if self.toolID else '*'+MainTool.toolID} {self.interface if self.interface else MainTool.interface}")
+
+    @app.setter
+    def app(self, v):
+        raise PermissionError(f"You cannot set the App Instance! {v=}")
 
     @staticmethod
     def return_result(error: ToolBoxError = ToolBoxError.none,

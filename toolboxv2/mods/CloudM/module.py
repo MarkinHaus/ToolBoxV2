@@ -11,7 +11,7 @@ import requests
 from toolboxv2 import MainTool, FileHandler, get_app, Style
 from .UserInstances import UserInstances
 from .ModManager import installer, delete_package
-from toolboxv2.utils.state_system import get_state_from_app, TbState
+from toolboxv2.utils.system.state_system import get_state_from_app, TbState
 Name = 'CloudM'
 version = "0.0.2"
 export = get_app(f"{Name}.EXPORT").tb
@@ -28,9 +28,8 @@ class Tools(MainTool, FileHandler):
         self.name = "CloudM"
         self.logger: logging.Logger or None = app.logger if app else None
         self.color = "CYAN"
-        self.app = app
         if app is None:
-            self.app = get_app()
+            app = get_app()
         self.user_instances = UserInstances()
         self.keys = {
             "URL": "comm-vcd~~",

@@ -4,12 +4,16 @@
 
 import io
 from os import path
-
+from yaml import safe_load
 from setuptools import setup, find_packages
 
 
 with open('README.md') as readme_file:
     readme = readme_file.read()
+
+with open(os.getenv('CONFIG_FILE', 'toolbox.yaml'), 'r') as config_file:
+    _version = safe_load(config_file)
+    version = _version.get('main', {}).get('version', '-.-.-')
 
 here = path.abspath(path.dirname(__file__))
 
@@ -59,11 +63,11 @@ setup(
     keywords='toolboxv2',
     name='ToolBoxV2',
     packages=find_packages(include=['toolboxv2', 'toolboxv2.mods.*',  'toolboxv2.mods_dev.*', 'toolboxv2.*']),
-    package_data={"toolboxv2": ["toolboxv2/init.config"]},
+    package_data={"toolboxv2": ["toolboxv2/init.config", "toolbox.yaml"]},
     setup_requires=setup_requirements,
     test_suite='tests',
     tests_require=test_requirements,
     url='https://github.com/MarkinHaus/ToolBoxV2',
-    version='0.1.8',
+    version=version,
     zip_safe=False,
 )

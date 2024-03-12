@@ -1,5 +1,4 @@
-import inspect
-from typing import Any, Callable, List
+from typing import Any, List
 from faker import Faker
 fake = Faker()
 
@@ -38,7 +37,6 @@ def generate_edge_value(param_type: Any) -> Any:
     elif param_type == str:
         return fake.word()*100   # Lange zufällige Strings
     # Fügen Sie hier weitere Bedingungen für andere Datentypen hinzu
-    print(f"Parm typer ========================================  {param_type}")
     return None
 
 

@@ -2,11 +2,10 @@ import base64
 import datetime
 import json
 import os
-import time
 from urllib.parse import quote
 import uuid
 import webauthn
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict
 
 import jwt
 from pydantic import BaseModel
@@ -14,12 +13,12 @@ from webauthn.helpers.exceptions import InvalidAuthenticationResponse, InvalidRe
 from webauthn.helpers.structs import AuthenticationCredential, RegistrationCredential
 
 from toolboxv2.mods.DB.types import DatabaseModes
-from toolboxv2.utils.types import ToolBoxInterfaces, ApiResult
-from toolboxv2 import get_app, App, Result, tbef, ToolBox_over
+from toolboxv2.utils.system.types import ToolBoxInterfaces, ApiResult
+from toolboxv2 import get_app, App, Result, tbef, ToolBox_over, get_logger
 
-from toolboxv2.utils.cryp import Code
+from toolboxv2.utils.security.cryp import Code
 from pydantic import validator
-from .types import UserCreator, User, UserPersonaPubKey
+from .types import UserCreator, User
 
 Name = 'CloudM.AuthManager'
 export = get_app(f"{Name}.Export").tb
@@ -63,7 +62,7 @@ def db_helper_test_exist(app: App, username: str):
     c = app.run_any(tbef.DB.IF_EXIST, query=f"USER::{username}::*", get_results=True)
     if c.is_error(): raise f"DB - error {c.print(show=False)}"
     b = c.get() > 0
-    print(f"TEST IF USER EXIST : {username} {b}")
+    get_logger().info(f"TEST IF USER EXIST : {username} {b}")
     return b
 
 
@@ -576,7 +575,7 @@ def validate_persona(app: App, data: VpUSER) -> ApiResult:
 
     try:
         authentication_verification = webauthn.verify_authentication_response(
-            # Demonstrating the ability to handle a stringified JSON version of the WebAuthn response
+            # daemonstrating the ability to handle a stringified JSON version of the WebAuthn response
             credential=data.authentication_credential,
             expected_challenge=user.challenge.encode(),
             expected_rp_id=os.environ.get('HOSTNAME', 'localhost'),
@@ -585,10 +584,10 @@ def validate_persona(app: App, data: VpUSER) -> ApiResult:
             credential_current_sign_count=user.user_pass_pub_persona.get("sign_count"),
             require_user_verification=True,
         )
-        print(f"\n[Authentication Verification {user.name}]")
+        get_logger().info(f"\n[Authentication Verification {user.name}]")
         user.user_pass_pub_persona["sign_count"] = authentication_verification.new_sign_count
     except InvalidAuthenticationResponse as e:
-        print(f"0Error authenticating user {data.username}, {e}")
+        get_logger().warning(f"0Error authenticating user {data.username}, {e}")
         return Result.default_user_error(info=f"Authentication failure : {e}")
 
     save_result = db_helper_save_user(app, asdict(user))
@@ -638,7 +637,6 @@ def validate_device(app: App, data: VdUSER) -> ApiResult:
     row_jwt_claim = crate_jwt(claim, user.user_pass_pri)
 
     encrypt_jwt_claim = Code.encrypt_asymmetric(row_jwt_claim, user.pub_key)
-    print(encrypt_jwt_claim)
     if encrypt_jwt_claim != "Invalid":
         data = {'key': encrypt_jwt_claim, 'toPrivat': True}
     else:

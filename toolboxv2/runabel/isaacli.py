@@ -1,15 +1,12 @@
-import datetime
 import os
-
-import psutil
 
 from prompt_toolkit import HTML
 from prompt_toolkit.shortcuts import set_title, yes_no_dialog
 
 from toolboxv2 import App, Result, tbef
 from toolboxv2.utils import Style
-from toolboxv2.utils.Style import cls, Spinner
-from toolboxv2.utils.types import CallingObject
+from toolboxv2.utils.extras.Style import cls, Spinner
+from toolboxv2.utils.system.types import CallingObject
 
 NAME = 'isaacli'
 
@@ -94,7 +91,7 @@ def run(app: App, args):
             app.args_sto.host = call_.function_name
         if call_.kwargs:
             print("Adding", call_.kwargs)
-        status, sender, receiver_que = app.run_runnable("demon", as_server=False, programmabel_interface=True)
+        status, sender, receiver_que = app.run_runnable("daemon", as_server=False, programmabel_interface=True)
         if status == -1:
             return (Result.default_internal_error(info="Failed to connect, No service available")
                     .set_origin("minicli::build-in"))

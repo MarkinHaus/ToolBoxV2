@@ -13,14 +13,12 @@
 
  trans form state from on to an other.
  """
-from typing import Dict
 
 import os
 import hashlib
 from typing import Dict
 
-from toolboxv2.utils import App
-from toolboxv2.utils.toolbox import get_app
+from .getting_and_closing_app import get_app
 
 
 class DefaultFilesFormatElement:
@@ -103,7 +101,7 @@ def process_files(directory: str) -> TbState:
     return state
 
 
-def get_state_from_app(app: App, simple_core_hub_url="https://SimpleCoreHub.com/Mods/",
+def get_state_from_app(app, simple_core_hub_url="https://SimpleCoreHub.com/Mods/",
                        github_url="https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/"):
     if simple_core_hub_url[-1] != '/':
         simple_core_hub_url += '/'

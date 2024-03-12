@@ -1,5 +1,5 @@
 from toolboxv2 import Result, get_app, App, MainTool
-from toolboxv2.utils.types import ToolBoxError, ApiResult, ToolBoxInterfaces
+from toolboxv2.utils.system.types import ToolBoxError, ApiResult, ToolBoxInterfaces
 from mailjet_rest import Client
 import os
 

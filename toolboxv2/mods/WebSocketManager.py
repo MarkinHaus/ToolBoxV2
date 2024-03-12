@@ -14,7 +14,7 @@ import json
 
 from toolboxv2 import MainTool, FileHandler, Style
 from toolboxv2 import Result, get_app
-from toolboxv2.utils.types import ApiOb
+from toolboxv2.utils.system.types import ApiOb
 from fastapi import WebSocket, HTTPException
 
 
@@ -36,7 +36,6 @@ class Tools(MainTool, FileHandler):
         if app is None:
             app = get_app()
 
-        self.app = app
         self.color = "BLUE"
         self.active_connections: dict = {}
         self.active_connections_client: dict = {}

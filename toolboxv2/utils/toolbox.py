@@ -1,100 +1,45 @@
 """Main module."""
 import concurrent.futures
-import json
 import os
-import queue
 import sys
-import threading
 import time
 import types
-from dataclasses import asdict
 from enum import Enum
 from platform import node, system
 from importlib import import_module
 from inspect import signature
-from random import uniform
 from types import ModuleType
 from functools import partial, wraps
 import requests
-import shelve
-from cachetools import TTLCache
+from yaml import safe_load
 
-import toolboxv2.utils
-from toolboxv2.utils.show_and_hide_console import show_console
-from toolboxv2.utils.helper_functions import generate_test_cases
-from toolboxv2.utils.types import ToolBoxInterfaces
-from toolboxv2.utils.Style import Style, Spinner
-from toolboxv2.utils.file_handler import FileHandler
+from .singelton_class import Singleton
 
-from toolboxv2.utils.tb_logger import setup_logging, get_logger
-from toolboxv2.utils.types import Result, AppArgs, ApiResult
+from .system.cache import FileCache, MemoryCache
+from .system.tb_logger import get_logger, setup_logging
+from .system.types import AppArgs, ToolBoxInterfaces, ApiResult, Result, AppType, MainToolType
+from .system.getting_and_closing_app import get_app
+from .system.file_handler import FileHandler
 
-from toolboxv2.utils.singelton_class import Singleton
-from toolboxv2.utils.all_functions_enums import *
+from .extras.Style import Style, stram_print, Spinner
 
 import logging
 from dotenv import load_dotenv
-import dill
+
 
 load_dotenv()
 
-
-class FileCache:
-    def __init__(self, folder='', filename='cache.db'):
-        self.filename = filename
-        if not os.path.exists(folder):
-            os.makedirs(folder, exist_ok=True)
-
-    def get(self, key):
-        with shelve.open(self.filename) as db:
-            return db.get(key)
-
-    def set(self, key, value):
-        with shelve.open(self.filename, writeback=True) as db:
-            db[key] = value
+with open(os.getenv('CONFIG_FILE', 'toolbox.yaml'), 'r') as config_file:
+    _version = safe_load(config_file)
+    __version__ = _version.get('main', {}).get('version', '-.-.-')
 
 
-class MemoryCache:
-    def __init__(self, maxsize=100, ttl=300):
-        self.cache = TTLCache(maxsize=maxsize, ttl=ttl)
 
-    def get(self, key):
-        return self.cache.get(key)
-
-    def set(self, key, value):
-        self.cache[key] = value
-
-
-def load_module_dill(filename):
-    try:
-        with open(filename, 'rb') as file:
-            data = dill.load(file)
-            return data
-    except FileNotFoundError:
-        return {}
-
-
-def save_module_dill(data_to_serialize, filename):
-    with open(filename, 'wb') as file:
-        dill.dump(data_to_serialize, file)
-
-
-def stram_print(text):
-    min_typing_speed, max_typing_speed = 0.0009, 0.0005
-    for i, word in enumerate(text):
-        if not word:
-            continue
-        print(word, end="", flush=True)
-        typing_speed = uniform(min_typing_speed, max_typing_speed)
-        time.sleep(typing_speed)
-        min_typing_speed = min_typing_speed * 0.04
-        max_typing_speed = max_typing_speed * 0.03
-
-
-class App(metaclass=Singleton):
+class App(AppType, metaclass=Singleton):
 
     def __init__(self, prefix: str = "", args=AppArgs().default()):
 
+        super().__init__(prefix, args)
         t0 = time.perf_counter()
         abspath = os.path.abspath(__file__)
         self.system_flag = system()  # Linux: Linux Mac: Darwin Windows: Windows
@@ -138,9 +83,14 @@ class App(metaclass=Singleton):
             identification = "MainNode"
 
         if "test" in prefix:
-            self.data_dir = self.start_dir + '\\.data\\' + "test"
-            self.config_dir = self.start_dir + '\\.config\\' + "test"
-            self.info_dir = self.start_dir + '\\.info\\' + "test"
+
+            if self.system_flag == "Darwin" or self.system_flag == "Linux":
+                start_dir = self.start_dir.replace("/toolboxv2", "")
+            else:
+                start_dir = self.start_dir.replace("\\toolboxv2", "")
+            self.data_dir = start_dir + '\\.data\\' + "test"
+            self.config_dir = start_dir + '\\.config\\' + "test"
+            self.info_dir = start_dir + '\\.info\\' + "test"
         else:
             self.data_dir = self.start_dir + '\\.data\\' + identification
             self.config_dir = self.start_dir + '\\.config\\' + identification
@@ -166,7 +116,7 @@ class App(metaclass=Singleton):
                 sys.path.append(self.start_dir)
             _initialize_toolBox(args.init, args.init_file, self.id)
 
-        self.version = toolboxv2.__version__
+        self.version = __version__
 
         self.keys = {
             "MACRO": "macro~~~~:",
@@ -204,10 +154,10 @@ class App(metaclass=Singleton):
 
         self.interface_type = ToolBoxInterfaces.native
         self.PREFIX = Style.CYAN(f"~{node()}@>")
-        self.MOD_LIST = {}
         self.alive = True
-        self.print(
-            f"SYSTEM :: {node()}\nID -> {self.id},\nVersion -> {self.version},\n")
+        self.called_exit = False, time.time()
+
+        self.print(f"Infos:\n  {'Name':<8} -> {node()}\n  {'ID':<8} -> {self.id}\n  {'Version':<8} -> {self.version}\n")
 
         if args.update:
             os.system("git pull")
@@ -617,15 +567,12 @@ class App(metaclass=Singleton):
     def get_all_mods(self, working_dir="mods", path_to="./runtime"):
         self.logger.info(f"collating all mods in working directory {working_dir}")
 
-        w_dir = self.id.replace(".", "_")
-
-        # if self.mlm == "C":
-        #     if os.path.exists(f"{path_to}/{w_dir}/mod_lib"):
-        #         working_dir = f"{path_to}/{w_dir}/mod_lib/"
+        pr = "_dev" if self.dev_modi else ""
         if working_dir == "mods":
-            pr = "_dev" if self.dev_modi else ""
             working_dir = f"./mods{pr}"
-
+        else:
+            w_dir = self.id.replace(".", "_")
+            working_dir = f"{path_to}/{w_dir}/mod_lib{pr}/"
         res = os.listdir(working_dir)
 
         self.logger.info(f"found : {len(res)} files")
@@ -652,9 +599,6 @@ class App(metaclass=Singleton):
         for mod in list(self.functions.keys()):
             self.logger.info(f"closing: {mod}")
             self.remove_mod(mod, delete=delete)
-
-    def print_ok(self):
-        self.logger.info("OK")
 
     def remove_mod(self, mod_name, spec='app', delete=True):
         if mod_name not in self.functions:
@@ -709,23 +653,28 @@ class App(metaclass=Singleton):
         self.disconnect()
         self.remove_all_modules()
         self.logger.info("Exiting ToolBox interface")
-        self.print(Style.Bold(Style.ITALIC("- ok -")))
         self.alive = False
+        self.called_exit = True, time.time()
         self.save_exit()
         self.config_fh.save_file_handler()
+
+        import threading
+
+        for thread in threading.enumerate():
+            if thread.name == "MainThread":
+                continue
+            try:
+                with Spinner(f"closing Thread {thread.name:^50}|", symbols="s", count_down=True, time_in_s=5):
+                    thread.join(timeout=5)
+            except TimeoutError as e:
+                self.logger.error(f"Timeout error on exit {thread.name} {str(e)}")
+                print(str(e), f"Timeout {thread.name}")
 
     def save_load(self, modname, spec='app'):
         self.logger.debug(f"Save load module {modname}")
         if not modname:
             self.logger.warning("no filename specified")
             return False
-        avalabel_mods = self.get_all_mods()
-        i = 0
-        fw = modname
-        for mod in avalabel_mods:
-            if fw == mod:
-                modname = avalabel_mods[i]
-            i += 1
         try:
             return self.load_mod(modname, spec=spec)
         except ModuleNotFoundError as e:
@@ -895,7 +844,7 @@ class App(metaclass=Singleton):
 
         return res
 
-    def get_mod(self, name, spec='app') -> ModuleType or toolboxv2.MainTool:
+    def get_mod(self, name, spec='app') -> ModuleType or MainToolType:
         if name not in self.functions.keys():
             if self.save_load(name, spec=spec) is False:
                 self.logger.warning(f"Could not find {name} in {list(self.functions.keys())}")
@@ -912,17 +861,12 @@ class App(metaclass=Singleton):
     @staticmethod
     def print(text, *args, **kwargs):
         # self.logger.info(f"Output : {text}")
+        print(Style.CYAN("System:"), end=" ")
         print(text, *args, **kwargs)
-        # print(Style.CYAN("System:"), end=" ")
-        # if isinstance(text, str) and kwargs == {} and text:
-        #     stram_print(text + ' '.join(args))
-        # else:
-        #     print(text, *args, **kwargs)
 
     @staticmethod
     def sprint(text, *args, **kwargs):
         # self.logger.info(f"Output : {text}")
-
         print(Style.CYAN("System:"), end=" ")
         if isinstance(text, str) and kwargs == {} and text:
             stram_print(text + ' '.join(args))
@@ -1229,379 +1173,6 @@ class App(metaclass=Singleton):
 
         print(Style.Bold(Style.BLUE(f"Enums gespeichert in {filepath}")))
 
-    def execute_all_functions(self, m_query='', f_query=''):
-        print("Executing all functions")
-        all_data = {
-            "modular_run": 0,
-            "modular_fatal_error": 0,
-            "errors": 0,
-            "modular_sug": 0,
-        }
-        items = list(self.functions.items()).copy()
-        for module_name, functions in items:
-            infos = {
-                "functions_run": 0,
-                "functions_fatal_error": 0,
-                "error": 0,
-                "functions_sug": 0,
-                'calls': {},
-                'callse': {}
-            }
-            all_data['modular_run'] += 1
-            if not module_name.startswith(m_query):
-                all_data['modular_sug'] += 1
-                continue
-            f_items = list(functions.items()).copy()
-            for function_name, function_data in f_items:
-                if not isinstance(function_data, dict):
-                    continue
-                if not function_name.startswith(f_query):
-                    continue
-                test: list = function_data.get('do_test')
-                print(test, module_name, function_name, function_data)
-                if test is False:
-                    continue
-                params: list = function_data.get('params')
-                sig: signature = function_data.get('signature')
-                state: bool = function_data.get('state')
-                samples: bool = function_data.get('samples')
-
-                test_kwargs_list = [{}]
-
-                if params is not None:
-                    test_kwargs_list = samples if samples is not None else generate_test_cases(sig=sig)
-                    # print(test_kwargs)
-                    # print(test_kwargs[0])
-                    # test_kwargs = test_kwargs_list[0]
-                print(module_name, function_name, test_kwargs_list)
-                for test_kwargs in test_kwargs_list:
-                    try:
-                        print(f"test Running {state}.{module_name}.{function_name}")
-                        result = self.run_function((module_name, function_name),
-                                                   tb_run_function_with_state=state,
-                                                   **test_kwargs)
-                        if result.info.exec_code == 0:
-                            infos['calls'][function_name] = [test_kwargs, str(result)]
-                            infos['functions_sug'] += 1
-                        else:
-                            infos['functions_sug'] += 1
-                            infos['error'] += 1
-                            infos['callse'][function_name] = [test_kwargs, str(result)]
-                    except Exception as e:
-                        infos['functions_fatal_error'] += 1
-                        infos['callse'][function_name] = [test_kwargs, str(e)]
-                    finally:
-                        infos['functions_run'] += 1
-
-            if infos['functions_run'] == infos['functions_sug']:
-                all_data['modular_sug'] += 1
-            else:
-                all_data['modular_fatal_error'] += 1
-            if infos['error'] > 0:
-                all_data['errors'] += infos['error']
-            all_data[module_name] = infos
-        print(f"{all_data['modular_run']=}\n{all_data['modular_sug']=}\n{all_data['modular_fatal_error']=}")
-
-        return Result.ok(data=all_data, data_info=analyze_data(all_data))
-
-
-class ProxyApp(metaclass=Singleton):
-    def __init__(self, app: App, host='0.0.0.0', port=6587, timeout=15):
-        self.app = app
-        self.client = None
-        self.port = port
-        self.host = host
-        self.timeout = timeout
-        self.remote_functions = ["run_any",
-                                 "remove_mod",
-                                 "save_load",
-                                 "exit_main",
-                                 "show_console",
-                                 "hide_console",
-                                 "rrun_runnable",
-                                 "get_autocompletion_dict",
-                                 "exit_main"]
-        self.connect()
-
-    def connect(self):
-        from toolboxv2.mods.SocketManager import SocketType
-        client_result = self.app.run_any(SOCKETMANAGER.CREATE_SOCKET,
-                                         get_results=True,
-                                         name='DemonApp-client',
-                                         host=self.host,
-                                         port=self.port,
-                                         type_id=SocketType.client,
-                                         max_connections=-1,
-                                         return_full_object=True)
-
-        if client_result.is_error():
-            raise Exception(f"Client error: {client_result.print(False)}")
-        if not client_result.is_data():
-            raise Exception(f"Client error: {client_result.print(False)}")
-        if client_result.get('connection_error') != 0:
-            raise Exception(f"Client error: {client_result.print(False)}")
-        # 'socket': socket,
-        # 'receiver_socket': r_socket,
-        # 'host': host,
-        # 'port': port,
-        # 'p2p-port': endpoint_port,
-        # 'sender': send,
-        # 'receiver_queue': receiver_queue,
-        # 'connection_error': connection_error,
-        # 'receiver_thread': s_thread,
-        # 'keepalive_thread': keep_alive_thread,
-        # 'running_dict': running_dict,
-        # 'client_to_receiver_thread': to_receive,
-        # 'client_receiver_threads': threeds,
-        self.client = client_result
-
-    def disconnect(self):
-        time.sleep(1)
-        running_dict = self.client.get("running_dict")
-        sender = self.client.get("sender")
-        running_dict["server_receiver"] = False
-        running_dict["receive"]['main'] = False
-        running_dict["keep_alive_var"] = False
-        sender({'exit': True})
-        self.client = None
-
-    def reconnect(self):
-        if self.client is not None:
-            self.disconnect()
-        self.connect()
-
-    def verify(self):
-        time.sleep(1)
-        self.client.get('sender')({'keepalive': 0})
-
-    def __getattr__(self, name):
-
-        if self.client is None:
-            self.reconnect()
-        # print(f"ProxyApp: {name}, {self.client is None}")
-        if name == "on_exit":
-            self.disconnect()
-        if name == "rc":
-            self.reconnect()
-            return
-        if name == "r":
-            try:
-                return self.client.get('receiver_queue').get(timeout=self.timeout)
-            except:
-                return "No data"
-
-        app_attr = getattr(self.app, name)
-
-        def method(*args, **kwargs):
-            # if name == 'run_any':
-            #     print("method", name, kwargs.get('get_results', False), args[0])
-            if kwargs.get('spec', '-') == 'app':
-                return app_attr(*args, **kwargs)
-            try:
-                if name in self.remote_functions:
-                    if name == 'run_any' and not kwargs.get('get_results', False):
-                        return app_attr(*args, **kwargs)
-                    if name == 'run_any' and kwargs.get('get_results', False):
-                        if isinstance(args[0], Enum):
-                            args = (args[0].__class__.NAME.value, args[0].value), args[1:]
-                    self.app.sprint(f"Calling method {name}")
-                    self.client.get('sender')({'name': name, 'args': args, 'kwargs': kwargs})
-                    while Spinner("Waiting for result"):
-                        try:
-                            data = self.client.get('receiver_queue').get(timeout=self.timeout)
-                            if isinstance(data, dict) and 'identifier' in data:
-                                del data["identifier"]
-                            if 'error' in data and 'origin' in data and 'result' in data and 'info' in data:
-                                data = ApiResult(**data).as_result()
-                            return data
-                        except:
-                            print("No data look later with app.r")
-                            return "No data look later"
-            except:
-                if self.client.get('socket') is None:
-                    self.client = None
-            return app_attr(*args, **kwargs)
-
-        if callable(app_attr) and name in self.remote_functions and self.client is not None:
-            return method
-        return app_attr
-
-
-class DemonApp(metaclass=Singleton):
-    def __init__(self, app: App, host='0.0.0.0', port=6587, t=False):
-        self.app: App = app
-        self.server = None
-        self.port = port
-        self.host = host
-        self.start_server()
-        if t:
-            threading.Thread(target=self.connect, daemon=True).start()
-
-    def start_server(self):
-        """Start the server using app and the socket manager"""
-
-        from toolboxv2.mods.SocketManager import SocketType
-        server_result = self.app.run_any(SOCKETMANAGER.CREATE_SOCKET,
-                                         get_results=True,
-                                         name='DemonApp-server',
-                                         host=self.host,
-                                         port=self.port,
-                                         type_id=SocketType.server,
-                                         max_connections=-1,
-                                         return_full_object=True)
-        if server_result.is_error():
-            raise Exception(f"Server error: {server_result.print(False)}")
-        if not server_result.is_data():
-            raise Exception(f"Server error: {server_result.print(False)}")
-        if server_result.get('connection_error') != 0:
-            raise Exception(f"Server error: {server_result.print(False)}")
-
-        self.server = server_result
-        # 'socket': socket,
-        # 'receiver_socket': r_socket,
-        # 'host': host,
-        # 'port': port,
-        # 'p2p-port': endpoint_port,
-        # 'sender': send,
-        # 'receiver_queue': receiver_queue,
-        # 'connection_error': connection_error,
-        # 'receiver_thread': s_thread,
-        # 'keepalive_thread': keep_alive_thread,
-        # 'running_dict': running_dict,
-        # 'client_to_receiver_thread': to_receive,
-        # 'client_receiver_threads': threeds,
-
-    def connect(self):
-        receiver_queue: queue.Queue = self.server.get('receiver_queue')
-        client_to_receiver_thread = self.server.get('client_to_receiver_thread')
-        running_dict = self.server.get('running_dict')
-        sender = self.server.get('sender')
-        known_clients = {}
-        valid_clients = {}
-        while self.app.alive:
-
-            if receiver_queue.not_empty:
-                data = receiver_queue.get()
-                if not data:
-                    continue
-                if 'identifier' not in data:
-                    continue
-
-                identifier = data.get('identifier', 'unknown')
-                try:
-
-                    if identifier == "new_con":
-                        client, address = data.get('data')
-                        print("New connection:", address)
-                        known_clients[str(address)] = client
-                        client_to_receiver_thread(client, str(address))
-
-                    # validation
-                    if identifier in known_clients:
-                        print(identifier)
-                        if identifier.startswith("('127.0.0.1'"):
-                            valid_clients[identifier] = known_clients[identifier]
-                        elif data.get("claim", False):
-                            do = self.app.run_any(("CloudM.UserInstances", "validate_ws_id"),
-                                             ws_id=data.get("claim"))[0]
-                            print(do)
-                            if do:
-                                valid_clients[identifier] = known_clients[identifier]
-                        else:
-                            print("Validating Failed: ", identifier)
-                            sender({'Validating Failed': -1}, eval(identifier))
-                        print("Validating New:", identifier)
-                        del known_clients[identifier]
-
-                    if identifier in valid_clients:
-                        print("New valid Request:", identifier)
-                        name = data.get('name')
-                        args = data.get('args')
-                        kwargs = data.get('kwargs')
-
-                        print("Request data:", name, args, kwargs)
-
-                        if name == 'exit_main':
-                            self.app.alive = False
-                            break
-
-                        if name == 'show_console':
-                            show_console(True)
-                            sender({'ok': 0}, eval(identifier))
-                            continue
-
-                        if name == 'hide_console':
-                            show_console(False)
-                            sender({'ok': 0}, eval(identifier))
-                            continue
-
-                        if name == 'rrun_runnable':
-                            show_console(True)
-                            runnner = getattr(self.app, "run_runnable")
-                            threading.Thread(target=runnner, args=args, kwargs=kwargs, daemon=True).start()
-                            sender({'ok': 0}, eval(identifier))
-                            show_console(False)
-                            continue
-
-                        def helper_runner():
-                            try:
-                                res = getattr(self.app, name)(*args, **kwargs)
-
-                                print("sending response0")
-                                if res is None:
-                                    res = {'data': res}
-                                elif isinstance(res, Result):
-                                    res = json.loads(res.to_api_result().json())
-                                elif isinstance(res, bytes):
-                                    pass
-                                elif isinstance(res, dict):
-                                    pass
-                                else:
-                                    res = {'data': 'unsupported type', 'type': str(type(res))}
-
-                                print("sending response", res, type(res))
-
-                                sender(res, eval(identifier))
-                            except Exception as e:
-                                sender({"data": str(e)}, eval(identifier))
-
-                        threading.Thread(target=helper_runner, daemon=True).start()
-
-                except Exception as e:
-                    print(Style.RED(f"An error occurred on {identifier} {str(e)}"))
-                    if identifier != "unknown":
-                        running_dict["receive"][str(identifier)] = False
-        running_dict["server_receiver"] = False
-        for x in running_dict["receive"].keys():
-            running_dict["receive"][x] = False
-        running_dict["keep_alive_var"] = False
-
-
-def analyze_data(data):
-    report = []
-
-    for mod_name, mod_info in data.items():
-        if mod_name in ['modular_run', 'modular_fatal_error', 'modular_sug']:
-            continue  # Überspringen der allgemeinen Statistiken
-        if mod_name in ['errors']:
-            report.append(f"Total errors: {mod_info}")
-            continue
-        report.append(f"Modul: {mod_name}")
-        report.append(f"  Funktionen ausgeführt: {mod_info.get('functions_run', 0)}")
-        report.append(f"  Funktionen mit Fatalen Fehler: {mod_info.get('functions_fatal_error', 0)}")
-        report.append(f"  Funktionen mit Fehler: {mod_info.get('error', 0)}")
-        report.append(f"  Funktionen erfolgreich: {mod_info.get('functions_sug', 0)}")
-
-        if 'callse' in mod_info and mod_info['callse']:
-            report.append("  Fehler:")
-            for func_name, errors in mod_info['callse'].items():
-                for error in errors:
-                    if isinstance(error, str):
-                        error = error.replace('\n', ' - ')
-                    report.append(f"    - {func_name}, Fehler: {error}")
-
-    return "\n".join(report)
-
 
 def _initialize_toolBox(init_type, init_from, name):
     logger = get_logger()
@@ -1624,32 +1195,3 @@ def _initialize_toolBox(init_type, init_from, name):
     fh.file_handler_storage.close()
 
     logger.info("Done!")
-
-
-registered_apps = [None]
-
-
-def override_main_app(app):
-    global registered_apps
-    registered_apps[0] = app
-    return app
-
-
-def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None) -> App:
-    global registered_apps
-
-    # print(f"get app requested from: {from_}")
-    if registered_apps[0] is not None:
-        return registered_apps[0]
-
-    if app_con is None:
-        app_con = App
-    logger = get_logger()
-    logger.info(Style.GREYBG(f"get app requested from: {from_}"))
-    if name:
-        app = app_con(name, args=args)
-    else:
-        app = app_con()
-    logger.info(Style.Bold(f"App instance, returned ID: {app.id}"))
-    registered_apps[0] = app
-    return app

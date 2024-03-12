@@ -1,9 +1,11 @@
 import json
 import os
 
-from toolboxv2.utils.tb_logger import get_logger
-from toolboxv2.utils.Style import Style
-from toolboxv2.utils.cryp import Code
+from .tb_logger import get_logger
+
+from ..extras.Style import Style
+
+from ..security.cryp import Code
 
 
 class FileHandler(Code):

@@ -2,8 +2,8 @@ import json
 
 from toolboxv2 import Style, get_app
 from toolboxv2.utils import Singleton
-from toolboxv2.utils.cryp import Code
-from toolboxv2.utils.types import Result
+from toolboxv2.utils.security.cryp import Code
+from toolboxv2.utils.system.types import Result
 
 app = get_app("UserInstances")
 logger = app.logger

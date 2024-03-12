@@ -2,14 +2,17 @@
 # Import default Pages
 import sys
 import argparse
-import threading
 import time
 from functools import wraps
 from platform import system, node
 # Import public Pages
-from toolboxv2 import App, MainTool, runnable_dict as runnable_dict_func
+from toolboxv2 import App, MainTool, runnable_dict as runnable_dict_func, Style, __version__, Spinner
 from toolboxv2.utils import show_console
-from toolboxv2.utils.toolbox import get_app, ProxyApp, DemonApp, override_main_app
+from toolboxv2.utils import get_app
+from toolboxv2.utils.daemon import DaemonApp
+from toolboxv2.utils.proxy import ProxyApp
+from toolboxv2.utils.system import override_main_app
+
 
 DEFAULT_MODI = "minicli"
 
@@ -90,9 +93,9 @@ except ImportError as e:
     raise ValueError(f"Failed to import function for profiling")
 
 try:
-    from toolboxv2.utils.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
+    from toolboxv2.utils.system.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
 except ModuleNotFoundError:
-    from .utils.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
+    from toolboxv2.utils.system.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
 
 import os
 import subprocess
@@ -434,11 +437,6 @@ def main():
     """Console script for toolboxv2."""
     args = parse_args()
 
-    def dev_helper():
-        dev_args = f"streamlit run streamlit_web_dev_tools.py ata:{args.name}.config:{args.name}" \
-                   f" {(f'--server.port={args.port} --server.address={args.host}' if args.host != '0.0.0.0' else '')}"
-        os.system(dev_args)
-
     # (
     # init=None,
     # init_file='init.config',
@@ -509,12 +507,12 @@ def main():
     pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
 
     tb_app = get_app(from_="InitialStartUp", name=args.name, args=args, app_con=App)
-    demon_app = None
+    daemon_app = None
     if args.background_application_runner:
-        demon_app = DemonApp(tb_app, args.host, args.port if args.port != 8000 else 6587, t=args.modi != 'bg')
+        daemon_app = DaemonApp(tb_app, args.host, args.port if args.port != 8000 else 6587, t=args.modi != 'bg')
         if not args.debug:
             show_console(False)
-        tb_app.demon_app = demon_app
+        tb_app.daemon_app = daemon_app
         with open(pid_file + '-app.pid', 'w') as f:
             f.write(app_pid)
         args.proxy_application = False
@@ -576,15 +574,18 @@ def main():
         if args.debug:
             tb_app.print_functions()
         if args.get_version:
+            print(f"\n{' Version ':-^45}\n\n{Style.Bold(Style.CYAN(Style.ITALIC('RE')))+Style.ITALIC('Simple')+'ToolBox':<35}:{__version__:^10}\n")
             for mod_name in tb_app.functions:
                 if isinstance(tb_app.functions[mod_name].get("app_instance"), MainTool):
-                    print(f"{mod_name} : {tb_app.functions[mod_name]['app_instance'].version}")
+                    print(f"{mod_name:^35}:{tb_app.functions[mod_name]['app_instance'].version:^10}")
                 else:
                     v = tb_app.functions[mod_name].get(list(tb_app.functions[mod_name].keys())[0]).get("version",
-                                                                                                       "unknown (functions only)")
-                    print(f"{mod_name} : {v}")
+                                                                                                       "unknown (functions only)").replace(f"{__version__}:", '')
+                    print(f"{mod_name:^35}:{v:^10}")
+            print("\n")
             tb_app.alive = False
             tb_app.exit()
+            return 0
 
     if args.profiler:
         profile_execute_all_functions(tb_app)
@@ -653,6 +654,7 @@ def main():
 
 
 if __name__ == "__main__":
+
     sys.exit(main())
     # init main : ToolBoxV2 -init main -f init.config
     # Exit

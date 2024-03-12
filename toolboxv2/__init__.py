@@ -1,22 +1,29 @@
 """Top-level package for ToolBox."""
-from toolboxv2.utils import (Style, remove_styles, Spinner, FileHandler, App, get_app,
-                             setup_logging, get_logger, MainTool,
-                             all_functions_enums as tbef,
-                             Result, AppArgs, Code)
-from toolboxv2.runabel import runnable_dict
+import os
 
-# try:
-#     MODS_ERROR = None
-#     import toolboxv2.mods
-#     from toolboxv2.mods import *
-# except ImportError as e:
-#     MODS_ERROR = e
+from yaml import safe_load
+
+from .utils import (Style, remove_styles, Spinner, FileHandler, App, get_app,
+                             setup_logging, get_logger, MainTool,
+                             Result, AppArgs, Code)
+from .utils.system import all_functions_enums as tbef
+from .runabel import runnable_dict
+
+try:
+    MODS_ERROR = None
+    import toolboxv2.mods
+    from toolboxv2.mods import *
+except ImportError as e:
+    MODS_ERROR = e
 
 __author__ = """Markin Hausmanns"""
 __email__ = 'Markinhausmanns@gmail.com'
-__version__ = '0.1.8'
+
+with open(os.getenv('CONFIG_FILE', 'toolbox.yaml'), 'r') as config_file:
+    _version = safe_load(config_file)
+    __version__ = _version.get('main', {}).get('version', '-.-.-')
+
 __all__ = [
-    "__version__",
     "App",
     "MainTool",
     "FileHandler",

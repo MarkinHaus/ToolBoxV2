@@ -6,8 +6,8 @@ from prompt_toolkit.shortcuts import set_title, yes_no_dialog
 
 
 from toolboxv2 import App, Result, tbef
-from toolboxv2.utils.Style import cls
-from toolboxv2.utils.types import CallingObject
+from toolboxv2.utils.extras.Style import cls
+from toolboxv2.utils.system.types import CallingObject
 
 NAME = 'qncli'
 

@@ -1,5 +1,5 @@
 import os
-import random
+from random import uniform
 import re
 import time
 from json import JSONDecoder
@@ -8,6 +8,18 @@ from time import sleep
 import itertools
 import sys
 import threading
+
+
+def stram_print(text):
+    min_typing_speed, max_typing_speed = 0.0009, 0.0005
+    print_to_console(
+        "",
+        "",
+        text,
+        min_typing_speed=min_typing_speed,
+        max_typing_speed=max_typing_speed)
+
+
 
 
 def cls():
@@ -336,7 +348,7 @@ def print_to_console(
             print(word, end="", flush=True)
             if i < len(words) - 1:
                 print(" ", end="", flush=True)
-            typing_speed = random.uniform(min_typing_speed, max_typing_speed)
+            typing_speed = uniform(min_typing_speed, max_typing_speed)
             time.sleep(typing_speed)
             # type faster after each word
             min_typing_speed = min_typing_speed * 0.95
@@ -398,7 +410,7 @@ def extract_python_code(text):
 class Spinner:
     """A simple spinner class"""
 
-    def __init__(self, message: str = "Loading...", delay: float = 0.1, symbols=None) -> None:
+    def __init__(self, message: str = "Loading...", delay: float = 0.1, symbols=None, count_down=False, time_in_s=0) -> None:
         """Initialize the spinner class
         Args:
             message (str): The message to display.
@@ -431,6 +443,8 @@ class Spinner:
         self.message = message
         self.running = False
         self.spinner_thread = None
+        self.max_t = time_in_s
+        self.contd = count_down
 
     def __enter__(self) -> None:
         """Start the spinner"""
@@ -448,7 +462,16 @@ class Spinner:
 
     def spin(self) -> None:
         """Spin the spinner"""
+        t0 = time.time()
         while self.running:
-            sys.stdout.write(f"\r{next(self.spinner)} {self.message}")
+            if self.contd:
+                _ = self.max_t-(time.time()-t0)
+                extra = f"{_:.2f}"
+                if _ < 0:
+                    self.contd = False
+                    t0 = time.time()
+            else:
+                extra = f"{time.time()-t0:.2f}"
+            sys.stdout.write(f"\r{next(self.spinner)} {self.message} | {extra} ")
             sys.stdout.flush()
             time.sleep(self.delay)

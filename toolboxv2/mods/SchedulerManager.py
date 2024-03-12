@@ -12,7 +12,7 @@ import schedule
 import threading
 import time
 from datetime import datetime, timedelta
-from toolboxv2 import get_app, App, Result
+from toolboxv2 import get_app, App, Result, MainTool, FileHandler
 
 Name = 'SchedulerManager'
 export = get_app(Name).tb
@@ -37,7 +37,7 @@ class SchedulerManagerClass:
     def start(self):
         if not self.running:
             self.running = True
-            self.thread = threading.Thread(target=self._run)
+            self.thread = threading.Thread(target=self._run, daemon=True)
             self.thread.start()
 
     def stop(self):
@@ -241,144 +241,159 @@ class SchedulerManagerClass:
                 self.register_job(job_info['id'], func=func, **job_info)
 
 
-scheduler_manager_: Optional[SchedulerManagerClass] = None
+@export(name=Name, mod_name=Name, version=version)
+class Tools(MainTool, SchedulerManagerClass):
+    version = version
 
+    def __init__(self, app=None):
+        self.name = Name
+        self.color = "VIOLET2"
 
-# Exportieren der Scheduler-Instanz für die Nutzung in anderen Modulen
-@export(mod_name=Name, name='init', version=version, initial=True)
-def init_sm(app: App):
-    global scheduler_manager_
-    if os.path.exists(app.data_dir + '/jobs.compact'):
-        print("SchedulerManager try loading from file")
-        # scheduler_manager_.load_jobs(
-        #     app.data_dir + '/jobs.compact'
-        # )
-        print("SchedulerManager Successfully loaded")
-    scheduler_manager_ = SchedulerManagerClass()
-    print("STARTING SchedulerManager")
-    scheduler_manager_.start()
+        self.keys = {"mode": "db~mode~~:"}
+        self.encoding = 'utf-8'
 
+        SchedulerManagerClass.__init__(self)
+        MainTool.__init__(self,
+                          load=self.init_sm,
+                          v=self.version,
+                          name=self.name,
+                          color=self.color,
+                          on_exit=self.on_exit)
 
-@export(mod_name=Name, name='clos_manager', version=version, exit_f=True)
-def on_exit(app: App):
-    if scheduler_manager_ is None:
-        return
-    scheduler_manager_.stop()
-    scheduler_manager_.save_jobs(app.data_dir + '/jobs.compact')
-    del scheduler_manager_
-
-
-@export(mod_name=Name, name='instance', version=version)
-def get_instance():
-    return scheduler_manager_
-
-
-@export(mod_name=Name, name='start', version=version)
-def start_instance():
-    return scheduler_manager_.start()
-
-
-@export(mod_name=Name, name='stop', version=version)
-def stop_instance():
-    return scheduler_manager_.stop()
-
-
-@export(mod_name=Name, name='cancel', version=version)
-def cancel_instance(job_id):
-    return scheduler_manager_.cancel_job(job_id)
-
-
-@export(mod_name=Name, name='dealt', version=version)
-def dealt_instance(job_id):
-    return scheduler_manager_.del_job(job_id)
-
-
-@export(mod_name=Name, name='add', version=version, state=False)
-def register_instance(job_data: dict):
-    global scheduler_manager_
-    """
-    example dicts :
-        -----------
-        {
-            "job_id": "job0",
-            "second": 0,
-            "func": None,
-            "job": None,
-            "time_passer": None,
-            "object_name": "tb_job_fuction",
-            "receive_job": False,
-            "save": False,
-            "max_live": True,
-            # just lev it out "serializer": serializer_default,
-            "args": [],
-            "kwargs": {},
-        }
-
-        job_id : str
-            id for the job for management
-        second (optional): int
-            The time interval in seconds between each call of the job.
-        func (optional): Callable or str
-            The function to be executed as the job.
-        job (optional):  schedule.Job
-            An existing job object from the schedule library.
-        time_passer (optional):  schedule.Job
-            A job without a function, used to specify the time interval.
-        object_name (optional): str
-            The name of the object containing in the 'func' var to be executed.
-        receive_job (optional): bool
-            A flag indicating whether the job should be received from an object from 'func' var.
-        save (optional): bool
-            A flag indicating whether the job should be saved.
-        max_live (optional): bool
-            A flag indicating whether the job should have a maximum live time.
-        serializer (optional): bool
-            json pickel or dill must have a dumps fuction
-        *args, **kwargs (optional):
-            Additional arguments to be passed to the job function.
-
-
-    Parameters
-        ----------
-       job_data : dict
-
-    example usage
-        ----------
-        `python
-
-        `
-
-"""
-    job_id = job_data["job_id"]
-    second = job_data.get("second", 0)
-    func = job_data.get("func", None)
-    job = job_data.get("job", None)
-    time_passer = job_data.get("time_passer", None)
-    object_name = job_data.get("object_name", "tb_job_fuction")
-    receive_job = job_data.get("receive_job", False)
-    save = job_data.get("save", False)
-    max_live = job_data.get("max_live", True)
-    serializer = job_data.get("serializer", serializer_default)
-    args = job_data.get("args", ())
-    kwargs = job_data.get("kwargs", {})
-
-    return scheduler_manager_.register_job(
-        job_id=job_id,
-        second=second,
-        func=func,
-        job=job,
-        time_passer=time_passer,
-        object_name=object_name,
-        receive_job=receive_job,
-        save=save,
-        max_live=max_live,
-        serializer=serializer,
-        args=args,
-        kwargs=kwargs
+    @export(
+        mod_name=Name,
+        name="Version",
+        version=version,
     )
+    def get_version(self):
+        return self.version
+
+    # Exportieren der Scheduler-Instanz für die Nutzung in anderen Modulen
+    @export(mod_name=Name, name='init', version=version, initial=True)
+    def init_sm(self):
+        if os.path.exists(self.app.data_dir + '/jobs.compact'):
+            print("SchedulerManager try loading from file")
+            self.load_jobs(
+                self.app.data_dir + '/jobs.compact'
+            )
+            print("SchedulerManager Successfully loaded")
+        print("STARTING SchedulerManager")
+        self.start()
+
+    @export(mod_name=Name, name='clos_manager', version=version, exit_f=True)
+    def on_exit(self):
+        self.stop()
+        self.save_jobs(self.app.data_dir + '/jobs.compact')
+
+    @export(mod_name=Name, name='instance', version=version)
+    def get_instance(self):
+        return self
+
+    @export(mod_name=Name, name='start', version=version)
+    def start_instance(self):
+        return self.start()
+
+    @export(mod_name=Name, name='stop', version=version)
+    def stop_instance(self):
+        return self.stop()
+
+    @export(mod_name=Name, name='cancel', version=version)
+    def cancel_instance(self, job_id):
+        return self.cancel_job(job_id)
+
+    @export(mod_name=Name, name='dealt', version=version)
+    def dealt_instance(self, job_id):
+        return self.del_job(job_id)
+
+    @export(mod_name=Name, name='add', version=version)
+    def register_instance(self, job_data: dict):
+        """
+        example dicts :
+            -----------
+            {
+                "job_id": "job0",
+                "second": 0,
+                "func": None,
+                "job": None,
+                "time_passer": None,
+                "object_name": "tb_job_fuction",
+                "receive_job": False,
+                "save": False,
+                "max_live": True,
+                # just lev it out "serializer": serializer_default,
+                "args": [],
+                "kwargs": {},
+            }
+
+            job_id : str
+                id for the job for management
+            second (optional): int
+                The time interval in seconds between each call of the job.
+            func (optional): Callable or str
+                The function to be executed as the job.
+            job (optional):  schedule.Job
+                An existing job object from the schedule library.
+            time_passer (optional):  schedule.Job
+                A job without a function, used to specify the time interval.
+            object_name (optional): str
+                The name of the object containing in the 'func' var to be executed.
+            receive_job (optional): bool
+                A flag indicating whether the job should be received from an object from 'func' var.
+            save (optional): bool
+                A flag indicating whether the job should be saved.
+            max_live (optional): bool
+                A flag indicating whether the job should have a maximum live time.
+            serializer (optional): bool
+                json pickel or dill must have a dumps fuction
+            *args, **kwargs (optional):
+                Additional arguments to be passed to the job function.
+
+
+        Parameters
+            ----------
+           job_data : dict
+
+        example usage
+            ----------
+            `python
+
+            `
+
+    """
+        if job_data is None:
+            self.logger.error("No job data provided")
+            return None
+        job_id = job_data["job_id"]
+        second = job_data.get("second", 0)
+        func = job_data.get("func", None)
+        job = job_data.get("job", None)
+        time_passer = job_data.get("time_passer", None)
+        object_name = job_data.get("object_name", "tb_job_fuction")
+        receive_job = job_data.get("receive_job", False)
+        save = job_data.get("save", False)
+        max_live = job_data.get("max_live", True)
+        serializer = job_data.get("serializer", serializer_default)
+        args = job_data.get("args", ())
+        kwargs = job_data.get("kwargs", {})
+
+        return self.register_job(
+            job_id=job_id,
+            second=second,
+            func=func,
+            job=job,
+            time_passer=time_passer,
+            object_name=object_name,
+            receive_job=receive_job,
+            save=save,
+            max_live=max_live,
+            serializer=serializer,
+            args=args,
+            kwargs=kwargs
+        )
 
 
 if __name__ == '__main__':
+    '''
     def example_basic():
         print("example")
 
@@ -585,3 +600,5 @@ data :
 2024-03-06 22:30:02 DEBUG - Running job Job(interval=5, unit=seconds, do=example_closer, args=(), kwargs={})
 ...
     """
+'''
+    pass

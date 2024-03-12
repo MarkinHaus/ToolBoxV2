@@ -2,10 +2,10 @@
 
 """Tests for `toolboxv2` package."""
 import unittest
-from toolboxv2 import App, MainTool, FileHandler, Style, get_app
+from toolboxv2 import MainTool, FileHandler, Style, get_app
 from rich.traceback import install
 
-from toolboxv2.utils.cryp import Code
+from toolboxv2.utils.security.cryp import Code
 import time
 
 
@@ -326,6 +326,8 @@ class TestToolboxv2(unittest.TestCase):
         print("STARTING test")
         res = self.app.execute_all_functions()
         print("RES: ", res.result.data_info)
-        data = res.get()
-        self.assertEqual(data.get('modular_run'), data.get('modular_sug'))
+        # data = res.get()
+        # print(res.result.data_info)
+        # time.sleep(15)
+        self.assertEqual(res.get('modular_run', 0), res.get('modular_sug', -1))
         print("DONE RUNNING ALL FUNCTIONS")

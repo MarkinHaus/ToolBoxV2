@@ -1,4 +1,3 @@
-
 class Singleton(type):
     """
     Singleton metaclass for ensuring only one instance of a class.

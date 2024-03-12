@@ -3,7 +3,7 @@ import os
 
 from toolboxv2 import Result
 from .types import AuthenticationTypes
-from ...utils.cryp import Code
+from toolboxv2.utils.security.cryp import Code
 
 
 class MiniDictDB:
@@ -15,7 +15,6 @@ class MiniDictDB:
         self.location = ""
 
     def scan_iter(self, search=''):
-        print(self.data)
         if not self.data:
             return []
         search = search.replace('*', '')
