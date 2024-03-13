@@ -396,7 +396,7 @@ class Tools(MainTool, FileHandler):
                         if not chunk:
                             continue
                 except ConnectionResetError and ConnectionAbortedError and Exception:
-                    print(f"Cloning Receiver {identifier}")
+                    print(f"Closing Receiver {identifier}")
                     running_dict["receive"][identifier] = False
                     break
 
@@ -498,7 +498,7 @@ class Tools(MainTool, FileHandler):
         elif type_id == SocketType.server.name:
 
             def to_receive(client, identifier='main'):
-                if not isinstance(client, str):
+                if isinstance(client, str):
                     print("Client", client, identifier)
                     return
                 t = threading.Thread(target=receive, args=(client, identifier,), daemon=True)
