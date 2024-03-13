@@ -603,7 +603,10 @@ class Tools(MainTool, EventManagerClass):
     # Exportieren der Scheduler-Instanz für die Nutzung in anderen Modulen
     @export(mod_name=Name, name='startEventManager', version=version)
     def startEventManager(self):
-        self.start()
+        if self.app.args_sto.background_application_runner:
+            self.identification = 'P0'
+        else:
+            self.start()
 
     @export(mod_name=Name, name='closeEventManager', version=version)
     def closeEventManager(self):

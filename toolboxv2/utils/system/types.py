@@ -24,6 +24,7 @@ class AppArgs:
     remote = False
     remote_direct_key = None
     background_application = False
+    background_application_runner = False
     docker = False
     install = None
     remove = None
