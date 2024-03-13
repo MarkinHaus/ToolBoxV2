@@ -14,9 +14,9 @@ registered_apps: List[Optional[AppType]] = [None]
 def override_main_app(app):
     global registered_apps
     if registered_apps[0] is not None:
-        if time.time() - registered_apps[0].called_exit[1] > 1.3:
+        if time.time() - registered_apps[0].called_exit[1] > 30:
             raise PermissionError("Permission denied because of overtime fuction override_main_app sud only be called "
-                                  "once and ontime")
+                                  f"once and ontime overtime {time.time() - registered_apps[0].called_exit[1]}")
 
     registered_apps[0] = app
 

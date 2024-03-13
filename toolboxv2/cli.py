@@ -567,7 +567,7 @@ def main():
         if not args.proxy_application:
             tb_app.load_all_mods_in_file()
         if args.save_function_enums_in_file:
-            tb_app.save_registry_as_enums("utils", "all_functions_enums.py")
+            tb_app.save_registry_as_enums("utils\\system", "all_functions_enums.py")
             tb_app.alive = False
             tb_app.exit()
             return 0
@@ -613,8 +613,12 @@ def main():
             runnable_dict = runnable_dict_func('cli')
             tb_app.set_runnable(runnable_dict)
             tb_app.run_runnable(args.modi)
-        else:
+        elif args.remote:
             tb_app.rrun_runnable(args.modi)
+        else:
+            runnable_dict = runnable_dict_func(args.modi[:2])
+            tb_app.set_runnable(runnable_dict)
+            tb_app.run_runnable(args.modi)
 
     elif args.docker:
 

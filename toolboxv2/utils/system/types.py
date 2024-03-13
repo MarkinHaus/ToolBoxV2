@@ -458,6 +458,10 @@ class AppType:
     def run_runnable(self, name, **kwargs):
         """proxi attr"""
 
+
+    def rrun_runnable(self, name, **kwargs):
+        """proxi attr"""
+
     @debug.setter
     def debug(self, value):
         """proxi attr"""

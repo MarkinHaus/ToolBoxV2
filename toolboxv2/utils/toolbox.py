@@ -664,8 +664,8 @@ class App(AppType, metaclass=Singleton):
             if thread.name == "MainThread":
                 continue
             try:
-                with Spinner(f"closing Thread {thread.name:^50}|", symbols="s", count_down=True, time_in_s=5 if not self.debug else 1):
-                    thread.join(timeout=5 if not self.debug else 1)
+                with Spinner(f"closing Thread {thread.name:^50}|", symbols="s", count_down=True, time_in_s=0.251 if not self.debug else 0.1):
+                    thread.join(timeout=0.251 if not self.debug else 0.1)
             except TimeoutError as e:
                 self.logger.error(f"Timeout error on exit {thread.name} {str(e)}")
                 print(str(e), f"Timeout {thread.name}")
@@ -817,6 +817,9 @@ class App(AppType, metaclass=Singleton):
                 f" executed successfully")
 
         return formatted_result
+
+    def run_local(self, *args, **kwargs):
+        return self.run_any(*args, **kwargs)
 
     def run_any(self, mod_function_name: Enum or str or tuple, backwords_compability_variabel_string_holder=None,
                 get_results=False, tb_run_function_with_state=True, tb_run_with_specification='app', args_=None,

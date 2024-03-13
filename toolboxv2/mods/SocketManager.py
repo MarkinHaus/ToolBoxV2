@@ -224,7 +224,7 @@ class Tools(MainTool, FileHandler):
             connection_error = sock.connect_ex((host, port))
             if connection_error != 0:
                 sock.close()
-                self.print(f"Client:{name} connection_error:{connection_error}")
+                self.print(f"Client:{name}-{host}-{port} connection_error:{connection_error}")
             else:
                 self.print(f"Client:{name} online at {host}:{port}")
             # sock.sendall(bytes(self.app.id, 'utf-8'))
@@ -330,13 +330,17 @@ class Tools(MainTool, FileHandler):
             def send_(chunk):
                 try:
                     if type_id == SocketType.client.name:
+                        self.print(f"Start sending data to client {sock.getpeername()}")
                         sock.sendall(chunk)
                     elif address is not None and type_id == SocketType.server.name:
                         _sock = client_sockets.get(address[0] + str(address[1]), sock)
+                        self.print(f"Start sending data to {address}")
                         _sock.sendto(chunk, address)
                     elif address is not None:
+                        self.print(f"Start sending data to {address}")
                         sock.sendto(chunk, address)
                     else:
+                        self.print(f"Start sending data to {(host, endpoint_port)}")
                         sock.sendto(chunk, (host, endpoint_port))
                 except Exception as e:
                     self.logger.error(f"Error sending data: {e}")
@@ -352,7 +356,7 @@ class Tools(MainTool, FileHandler):
             total_steps = len(sender_bytes) // package_size
             if len(sender_bytes) % package_size != 0:
                 total_steps += 1  # Einen zusätzlichen Schritt hinzufügen, falls ein Rest existiert
-
+            self.logger.info("Start sending data")
             # tqdm Fortschrittsanzeige initialisieren
             with tqdm(total=total_steps, unit='chunk', desc='Sending data') as pbar:
                 for i in range(0, len(sender_bytes), package_size):
@@ -451,6 +455,7 @@ class Tools(MainTool, FileHandler):
                 #     f"{name} :R Parsed Time ; {time.perf_counter() - t0:.2f} port :{endpoint_port if type_id == SocketType.peer.name else port}")
 
             self.print(f"{name} :closing connection to {host}")
+            self.sockets[name]['alive'] = False
             r_socket_.close()
             if type_id == SocketType.peer.name:
                 sock.close()
@@ -501,6 +506,7 @@ class Tools(MainTool, FileHandler):
             time.sleep(2)
 
         self.sockets[name] = {
+            'alive': True,
             'socket': socket,
             'receiver_socket': r_socket,
             'host': host,
