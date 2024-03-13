@@ -259,7 +259,7 @@ def uninstaller(app: Optional[App], module_name: str):
 
 
 @export(mod_name=Name, name="install", test=False)
-def installer(app: Optional[App], module_name: str, version:str="-.-.-"):
+def installer(app: Optional[App], module_name: str, version: str = "-.-.-", zip_path=""):
     if app is None:
         app = get_app(f"{Name}.installer")
 
@@ -267,10 +267,9 @@ def installer(app: Optional[App], module_name: str, version:str="-.-.-"):
         version_ = app.get_mod(module_name).version
         if version == version_:
             return "module already installed found"
-
-    zip_path = "" #create_and_pack_module(f".\\mods\\{module_name}", module_name, version_)
+    # create_and_pack_module(f".\\mods\\{module_name}", module_name, version_)
     if 'y' in input("install zip file ?"):
-        unpack_and_move_module(zip_path, module_name)
+        unpack_and_move_module(zip_path, module_name=module_name)
 
     return zip_path
 
@@ -286,7 +285,7 @@ def run_command(command, cwd=None):
 if __name__ == "__main__":
     app = get_app()
     print(app.get_all_mods())
-    for module_ in app.get_all_mods():#['dockerEnv', 'email_waiting_list',  'MinimalHtml', 'SchedulerManager', 'SocketManager', 'WebSocketManager', 'welcome']:
+    for module_ in app.get_all_mods():  # ['dockerEnv', 'email_waiting_list',  'MinimalHtml', 'SchedulerManager', 'SocketManager', 'WebSocketManager', 'welcome']:
         print(f"Building module {module_}")
         make_installer(app, module_)
         time.sleep(0.1)

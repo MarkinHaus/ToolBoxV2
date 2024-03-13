@@ -1,16 +1,10 @@
-import os
-import re
 from pathlib import Path
 from fastapi import Request, HTTPException, Depends, APIRouter
 from fastapi.responses import FileResponse
-from fastapi.security import OAuth2PasswordBearer
 
 import os
 
 from starlette.responses import RedirectResponse
-
-from toolboxv2 import App
-from toolboxv2.utils.toolbox import get_app
 
 router = APIRouter(
     prefix="/web",

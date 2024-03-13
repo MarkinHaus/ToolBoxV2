@@ -3,7 +3,12 @@ from toolboxv2.utils.extras import Style
 from .types import Result, ToolBoxInterfaces, ToolBoxError, ToolBoxInfo, ToolBoxResult
 from .getting_and_closing_app import get_app
 from .tb_logger import get_logger
-from .all_functions_enums import CLOUDM_AUTHMANAGER
+
+try:
+    from .all_functions_enums import CLOUDM_AUTHMANAGER
+except ImportError:
+    CLOUDM_AUTHMANAGER = lambda: None
+    CLOUDM_AUTHMANAGER.GET_USER_BY_NAME = None
 
 
 class MainTool:
@@ -34,7 +39,8 @@ class MainTool:
 
     @property
     def app(self):
-        return get_app(from_=f"{self.spec}.{self.name}|{self.toolID if self.toolID else '*'+MainTool.toolID} {self.interface if self.interface else MainTool.interface}")
+        return get_app(
+            from_=f"{self.spec}.{self.name}|{self.toolID if self.toolID else '*' + MainTool.toolID} {self.interface if self.interface else MainTool.interface}")
 
     @app.setter
     def app(self, v):
@@ -68,7 +74,7 @@ class MainTool:
             try:
                 self.todo()
             except Exception as e:
-               get_logger().error(f" Error loading mod {self.name} {e}")
+                get_logger().error(f" Error loading mod {self.name} {e}")
         else:
             get_logger().info(f"{self.name} no load require")
 
@@ -92,4 +98,3 @@ class MainTool:
 
     def get_user(self, username: str) -> Result:
         return self.app.run_any(CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username, get_results=True)
-

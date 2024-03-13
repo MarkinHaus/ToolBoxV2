@@ -5,7 +5,12 @@ from typing import Any, Optional
 from ..extras.Style import Spinner
 from ..system.types import ApiResult, AppType
 from ..toolbox import App
-from ..system.all_functions_enums import SOCKETMANAGER
+
+try:
+    from ..system.all_functions_enums import SOCKETMANAGER
+except ImportError:
+    SOCKETMANAGER = lambda: None
+    SOCKETMANAGER.CREATE_SOCKET = None
 
 
 class ProxyUtil:
@@ -34,13 +39,13 @@ class ProxyUtil:
 
     def connect(self):
         client_result = self.app.run_local(SOCKETMANAGER.CREATE_SOCKET,
-                                         get_results=True,
-                                         name=self._name,
-                                         host=self.host,
-                                         port=self.port,
-                                         type_id=self.connection_type,
-                                         max_connections=-1,
-                                         return_full_object=True)
+                                           get_results=True,
+                                           name=self._name,
+                                           host=self.host,
+                                           port=self.port,
+                                           type_id=self.connection_type,
+                                           max_connections=-1,
+                                           return_full_object=True)
 
         if client_result.is_error():
             raise Exception(f"Client {self._name} error: {client_result.print(False)}")

@@ -4,7 +4,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from toolboxv2 import Style, Result, tbef, App
-from .AuthManager import get_invitation
+
 from toolboxv2 import get_app, Code
 
 Name = 'CloudM'
@@ -173,18 +173,22 @@ def register_initial_root_user(app: App):
 
     if root_key is not None:
         return Result.default_user_error(info="root user already Registered")
+    try:
+        from .AuthManager import get_invitation
 
-    email = input("enter ure Email:")
-    invitation = get_invitation(app=app).get()
-    ret = app.run_any(tbef.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
-                       username="root",
-                       email=email,
-                       invitation=invitation, get_results=True)
-    user = app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username="root")
-    key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
-    base_url = app.config_fh.get_file_handler("provider::") + (f':{app.args_sto.port}' if app.args_sto.host == 'localhost' else "5000")
-    url = f"{base_url}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
-
+        email = input("enter ure Email:")
+        invitation = get_invitation(app=app).get()
+        ret = app.run_any(tbef.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
+                           username="root",
+                           email=email,
+                           invitation=invitation, get_results=True)
+        user = app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username="root")
+        key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
+        base_url = app.config_fh.get_file_handler("provider::") + (f':{app.args_sto.port}' if app.args_sto.host == 'localhost' else "5000")
+        url = f"{base_url}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
+    except ImportError:
+        print("Please update CloudM")
+        return
     try:
         import qrcode
 

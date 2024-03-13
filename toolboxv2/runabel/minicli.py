@@ -9,7 +9,7 @@ from toolboxv2.utils import show_console
 from toolboxv2.utils.extras.Style import cls
 from toolboxv2.utils.system.types import CallingObject
 
-NAME = 'minicli'
+NAME = 'cli'
 
 
 def run(app: App, args):
