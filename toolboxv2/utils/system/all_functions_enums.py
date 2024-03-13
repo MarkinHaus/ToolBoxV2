@@ -62,20 +62,6 @@ class CLOUDM_USERINSTANCES(Enum):
 
 
 @dataclass
-class EVENTMANAGER(Enum):
-    NAME = 'EventManager'
-    VERSION: str = 'Version'  # Input: (['self']), Output: <class 'inspect._empty'>
-    STARTEVENTMANAGER: str = 'startEventManager'  # Input: (['self']), Output: <class 'inspect._empty'>
-    ON_START: str = 'on_start'  # Input: (), Output: None
-    CLOSEEVENTMANAGER: str = 'closeEventManager'  # Input: (['self']), Output: <class 'inspect._empty'>
-    ON_EXIT: str = 'on_exit'  # Input: (), Output: None
-    GETEVENTMANAGERC: str = 'getEventManagerC'  # Input: (['self']), Output: <class 'toolboxv2.mods.EventManager.module.EventManagerClass'>
-    EVENTMANAGER: str = 'EventManager'  # Input: (['app']), Output: <class 'inspect._empty'>
-    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
-    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
-
-
-@dataclass
 class EMAIL_WAITING_LIST(Enum):
     NAME = 'email_waiting_list'
     ADD: str = 'add'  # Input: (['app', 'email']), Output: <class 'toolboxv2.utils.system.types.ApiResult'>
@@ -83,6 +69,19 @@ class EMAIL_WAITING_LIST(Enum):
     SEND_EMAIL: str = 'send_email'  # Input: (['data']), Output: <class 'inspect._empty'>
     CRATE_SING_IN_EMAIL: str = 'crate_sing_in_email'  # Input: (['user_email', 'user_name']), Output: <class 'inspect._empty'>
     CRATE_MAGICK_LICK_DEVICE_EMAIL: str = 'crate_magick_lick_device_email'  # Input: (['user_email', 'user_name', 'link_id', 'nl']), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+
+
+@dataclass
+class EVENTMANAGER(Enum):
+    NAME = 'EventManager'
+    VERSION: str = 'Version'  # Input: (['self']), Output: <class 'inspect._empty'>
+    STARTEVENTMANAGER: str = 'startEventManager'  # Input: (['self']), Output: <class 'inspect._empty'>
+    CLOSEEVENTMANAGER: str = 'closeEventManager'  # Input: (['self']), Output: <class 'inspect._empty'>
+    GETEVENTMANAGERC: str = 'getEventManagerC'  # Input: (['self']), Output: <class 'toolboxv2.mods.EventManager.module.EventManagerClass'>
+    ON_EXIT: str = 'on_exit'  # Input: (), Output: None
+    EVENTMANAGER: str = 'EventManager'  # Input: (['app']), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
 

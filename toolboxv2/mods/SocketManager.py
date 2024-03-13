@@ -290,7 +290,7 @@ class Tools(MainTool, FileHandler):
                 connctions += 1
                 self.print(f"Server Receiver:{name} new connection:{connctions}:{max_connections} {endpoint=}")
                 receiver_queue.put({'data': (client_socket, endpoint), 'identifier': "new_con"})
-                client_sockets[endpoint[0]+str(endpoint[1])] = client_socket
+                client_sockets[endpoint[0] + str(endpoint[1])] = client_socket
                 if max_connections != -1:
                     if connctions >= max_connections:
                         running_dict["server_receiver"] = False
@@ -330,17 +330,17 @@ class Tools(MainTool, FileHandler):
             def send_(chunk):
                 try:
                     if type_id == SocketType.client.name:
-                        self.print(f"Start sending data to client {sock.getpeername()}")
+                        # self.print(f"Start sending data to client {sock.getpeername()}")
                         sock.sendall(chunk)
                     elif address is not None and type_id == SocketType.server.name:
                         _sock = client_sockets.get(address[0] + str(address[1]), sock)
-                        self.print(f"Start sending data to {address}")
+                        # self.print(f"Start sending data to {address}")
                         _sock.sendto(chunk, address)
                     elif address is not None:
-                        self.print(f"Start sending data to {address}")
+                        # self.print(f"Start sending data to {address}")
                         sock.sendto(chunk, address)
                     else:
-                        self.print(f"Start sending data to {(host, endpoint_port)}")
+                        # self.print(f"Start sending data to {(host, endpoint_port)}")
                         sock.sendto(chunk, (host, endpoint_port))
                 except Exception as e:
                     self.logger.error(f"Error sending data: {e}")
@@ -417,7 +417,7 @@ class Tools(MainTool, FileHandler):
                 if data_type == b'e':
                     running_dict["receive"][identifier] = False
                     self.logger.info(f"{name} -- received exit signal --")
-                    self.sockets[name]['running_dict']["keep_alive_var"]  = False
+                    self.sockets[name]['running_dict']["keep_alive_var"] = False
                 elif chunk[0] == b'E'[0] and chunk[-1] == b'E'[0] and len(data_buffer) > 0:
                     max_size = -1
                     # Letzter Teil des Datensatzes
@@ -498,6 +498,9 @@ class Tools(MainTool, FileHandler):
         elif type_id == SocketType.server.name:
 
             def to_receive(client, identifier='main'):
+                if not isinstance(client, str):
+                    print("Client", client, identifier)
+                    return
                 t = threading.Thread(target=receive, args=(client, identifier,), daemon=True)
                 t.start()
                 threeds.append(t)
@@ -769,7 +772,7 @@ class Tools(MainTool, FileHandler):
             else:
                 self.print(f"Unexpected data : {data}")
 
-        socket_data['running_dict']["keep_alive_var"]  = False
+        socket_data['running_dict']["keep_alive_var"] = False
 
     @export(mod_name=Name, name="send_file_to_peer", test=False)
     def send_file_to_peer(self, filepath, host, port):
@@ -826,7 +829,7 @@ class Tools(MainTool, FileHandler):
             self.print(f"Fehler beim Senden der Datei: {e}")
             return False
         finally:
-            socket_data['running_dict']["keep_alive_var"]  = False
+            socket_data['running_dict']["keep_alive_var"] = False
 
     @export(mod_name=Name, name="receive_and_decompress_file", test=False)
     def receive_and_decompress_file_peer(self, save_path, listening_port, sender_ip='0.0.0.0'):
