@@ -249,6 +249,7 @@ class EventManagerClass:
         )
 
     def __init__(self, source_id, _identification="Pn"):
+        self.bo = False
         self.running = False
         self.source_id = source_id
         self.receiver_que = queue.Queue()
@@ -354,6 +355,7 @@ class EventManagerClass:
         if event in self.events:
             return Result.default_user_error("Event registration failed Event already registered")
 
+        print(f"Registration new Event : {event.name}, {str(event.event_id)}")
         self.events.add(event)
 
         if event.scope.name == Scope.instance.name:
@@ -365,28 +367,32 @@ class EventManagerClass:
             return
 
         if event.scope.name == Scope.local_network.name:
-
-            try:
+            if self.identification == "P0" and not self.bo:
+                t0 = threading.Thread(target=self.start_brodcast_router_local_network, daemon=True)
+                t0.start()
+            elif not self.bo and "P0" not in self.routes_client:
+                self.bo = True
                 with Spinner(message="Sercheing for Rooter instance", count_down=True, time_in_s=6):
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         t0 = executor.submit(make_known, self.source_id)
-                        data = t0.result(timeout=6)
+                        try:
+                            data = t0.result(timeout=6)
+                        except TimeoutError:
+                            print("No P0 found in network or on device")
+                            return
                     self.add_server_route(data.get("name", self.source_id), (data.get("host"), data.get("port")))
-
-            except TimeoutError:
-                while Spinner(message="Starting a First instance.. running for ever"):
-                    t0 = threading.Thread(target=self.start_brodcast_router_local_network, daemon=True)
-                    t0.start()
 
         if event.scope.name == Scope.global_network.name:
             self.add_server_route(self.source_id, ('0.0.0.0', 6587))
 
     def start_brodcast_router_local_network(self):
-
+        self.bo = True
         router = start_client(self.source_id)
         next(router)
+        print("Starting brodcast router")
         while self.running:
             source_id, connection = next(router)
+            print(f"Infos :{source_id}, connection :{connection}")
             self.add_client_route(source_id, connection)
             router.send(self.running)
 
