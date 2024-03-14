@@ -121,8 +121,11 @@ class DaemonUtil:
                                 valid_clients[identifier] = known_clients[identifier]
                                 self._on_register(identifier, data)
                         else:
-                            get_logger().warning(f"Validating Failed: {identifier}")
-                            sender({'Validating Failed': -1}, eval(identifier))
+                            valid_clients[identifier] = known_clients[identifier]
+                            self._on_register(identifier, data)
+                            # TODO: add support for verification
+                            # get_logger().warning(f"Validating Failed: {identifier}")
+                            # sender({'Validating Failed': -1}, eval(identifier))
                         get_logger().info(f"Validating New: {identifier}")
                         del known_clients[identifier]
 
