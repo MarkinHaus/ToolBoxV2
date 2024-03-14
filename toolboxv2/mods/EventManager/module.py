@@ -300,8 +300,10 @@ class EventManagerClass:
             pr.client.get('sender')({"id": self._identification, "continue": False})
             time.sleep(0.25)
             self.add_c_route(source_id, pr)
+            return True
         except Exception as e:
             print(f"Check the port {addr} Sever likely not Online : {e}")
+            return False
 
     def add_mini_client(self, name: str, addr: Tuple[str, int]):
 
@@ -396,8 +398,11 @@ class EventManagerClass:
                     self.add_client_route("P0", (data.get("host"), os.getenv("TOOLBOXV2_BASE_PORT", 6568)))
             elif not self.bo and "P0" not in self.routes_client and os.getenv("TOOLBOXV2_BASE_HOST",
                                                                               "localhost") != "localhost":
-                self.add_client_route("P0", (os.getenv("TOOLBOXV2_BASE_HOST", "localhost"), os.getenv("TOOLBOXV2_BASE_PORT", 6568)))
-                self.bo = True
+                do = self.add_client_route("P0", (os.getenv("TOOLBOXV2_BASE_HOST", "localhost"), os.getenv("TOOLBOXV2_BASE_PORT", 6568)))
+                self.bo = do
+                if not do:
+                    print("Connection failed")
+                    os.environ["TOOLBOXV2_BASE_HOST"] = "localhost"
 
         if event.scope.name == Scope.global_network.name:
             self.add_server_route(self.source_id, ('0.0.0.0', os.getenv("TOOLBOXV2_REMOTE_PORT", 6587)))
