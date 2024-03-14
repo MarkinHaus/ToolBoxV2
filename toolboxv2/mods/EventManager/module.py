@@ -382,7 +382,7 @@ class EventManagerClass:
                         except TimeoutError:
                             print("No P0 found in network or on device")
                             return
-                    self.add_client_route("P0", (data[0].get("host"), data[1]))
+                    self.add_client_route("P0", (data.get("host"), 6568))
 
         if event.scope.name == Scope.global_network.name:
             self.add_server_route(self.source_id, ('0.0.0.0', 6587))

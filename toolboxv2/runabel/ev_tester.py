@@ -95,8 +95,8 @@ def run___(app, _):  # Event von Pn to Pn over P0
         ev.identification = "P0"
     elif e_id := input('T:'):
         ev.identification = "Pn1"
-        ev.add_client_route("P0", ("127.0.0.1", 6568))
-        ret = ev.trigger_event(EventID.crate("app.main-DESKTOP-CI57V1L:Pn2:P0", e_id))
+        # ev.add_client_route("P0", ("127.0.0.1", 6568))
+        ret = ev.trigger_event(EventID.crate("app.main-vanillam:Pn2:P0", e_id))
         print("ret :", str(ret))
     else:
         ev.identification = "Pn2"
