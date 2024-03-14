@@ -387,8 +387,11 @@ class EventManagerClass:
 
     def start_brodcast_router_local_network(self):
         self.bo = True
+
+        print("Starting brodcast router 0")
         router = start_client(self.source_id)
-        next(router)
+        print("Starting brodcast router 1")
+        # next(router)
         print("Starting brodcast router")
         while self.running:
             source_id, connection = next(router)

@@ -19,7 +19,7 @@ def make_known(name: str, get_flag: bytes = b"R", port=44667):
     # Set a timeout so the socket does not block
     # indefinitely when trying to receive data.
     server.settimeout(0.2)
-    server.sendto(message, ("localhost", port))
+    server.sendto(message, ("0.0.0.0", port))
     print("message sent!", flush=True)
     time.sleep(1)
     data = server.recv(1024)

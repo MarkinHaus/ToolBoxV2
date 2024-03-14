@@ -364,7 +364,7 @@ class Tools(MainTool, FileHandler):
                     send_(chunk_)
                     pbar.update(1)
                     time.sleep(1 / 10 ** 18)
-            self.print(f"\n\n{len(sender_bytes)=}, {i + package_size}")
+            # self.print(f"\n\n{len(sender_bytes)=}, {i + package_size}")
             if len(sender_bytes) != i + package_size:
                 send_(sender_bytes[i + package_size:])
 
