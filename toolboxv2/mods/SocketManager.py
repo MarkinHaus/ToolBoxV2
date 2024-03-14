@@ -738,6 +738,9 @@ class Tools(MainTool, FileHandler):
         receiver_queue = socket_data['receiver_queue']
         to_receiver = socket_data['client_to_receiver_thread']
         client, address = receiver_queue.get(block=True)
+        while isinstance(client, str) or not receiver_queue.emtpy():
+            print(f"Receiver queue, data,{client} || address {address}")
+            client, address = receiver_queue.get(block=True)
         to_receiver(client, 'client-' + str(address))
 
         file_data = b''
