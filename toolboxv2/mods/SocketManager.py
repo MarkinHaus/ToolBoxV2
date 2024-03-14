@@ -364,6 +364,8 @@ class Tools(MainTool, FileHandler):
                     send_(chunk_)
                     pbar.update(1)
                     time.sleep(1 / 10 ** 18)
+                if len(sender_bytes) != i + package_size:
+                    send_(sender_bytes[i + package_size:])
 
             if len(sender_bytes) < package_size:
                 send_(b' ' * (len(sender_bytes) - package_size))
