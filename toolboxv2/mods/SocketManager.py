@@ -759,13 +759,20 @@ class Tools(MainTool, FileHandler):
                     print(f"{len(file_data) / file_size * 100:.2f}%")
                 if len(file_data) < file_size:
                     continue
+                print(0)
                 decompressed_data = gzip.decompress(file_data)
+                print(1)
                 # Datei speichern
                 if '.' in save_path.split('/')[-1]:
+                    print(2)
                     with open(save_path, 'wb') as f:
+                        print(3)
                         f.write(decompressed_data)
+                        print(4)
                 else:
+                    print(6)
                     unzip_bytes_to_folder(decompressed_data, save_path)
+                    print(7)
                 self.logger.info(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
                 self.print(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
                 break
