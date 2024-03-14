@@ -34,13 +34,13 @@ class ProxyUtil:
 
     def connect(self):
         client_result = self.app.run_local(SOCKETMANAGER.CREATE_SOCKET,
-                                         get_results=True,
-                                         name=self._name,
-                                         host=self.host,
-                                         port=self.port,
-                                         type_id=self.connection_type,
-                                         max_connections=-1,
-                                         return_full_object=True)
+                                           get_results=True,
+                                           name=self._name,
+                                           host=self.host,
+                                           port=self.port,
+                                           type_id=self.connection_type,
+                                           max_connections=-1,
+                                           return_full_object=True)
 
         if client_result.is_error():
             raise Exception(f"Client {self._name} error: {client_result.print(False)}")
@@ -80,7 +80,8 @@ class ProxyUtil:
 
     def verify(self):
         time.sleep(1)
-        self.client.get('sender')({'keepalive': 0})
+        # self.client.get('sender')({'keepalive': 0})
+        self.client.get('sender')(b"verify")
 
     def __getattr__(self, name):
 
