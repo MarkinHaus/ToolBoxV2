@@ -740,7 +740,7 @@ class Tools(MainTool, FileHandler):
         to_receiver = socket_data['client_to_receiver_thread']
         data = receiver_queue.get(block=True)
         client, address = data.get('data')
-        while isinstance(client, str) or not receiver_queue.emtpy():
+        while isinstance(client, str) or receiver_queue.not_empty:
             print(f"Receiver queue, data,{client} || address {address}")
             client, address = receiver_queue.get(block=True)
         to_receiver(client, 'client-' + str(address))
