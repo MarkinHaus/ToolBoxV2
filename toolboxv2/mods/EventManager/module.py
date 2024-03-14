@@ -193,6 +193,7 @@ class EventManagerClass:
     routers_servers: Dict[str, DaemonRout] = {}
 
     receiver_que: queue.Queue
+    response_que: queue.Queue
 
     def add_c_route(self, name, route: ProxyRout):
         self.routes_client[name] = route
@@ -209,8 +210,11 @@ class EventManagerClass:
 
             if isinstance(data, str) and data == "No data":
                 continue
-            elif isinstance(data, EventID):
+            elif isinstance(data, EventID) and len(data.get_source()) != 0:
                 self.trigger_event(data)
+            elif isinstance(data, EventID) and len(data.get_source()) == 0:
+                print(f"Event returned {data.payload}")
+                self.response_que.put(data)
             elif isinstance(data,
                             dict) and 'source' in data and 'path' in data and 'ID' in data and 'identifier' in data:
                 del data['identifier']
@@ -254,6 +258,7 @@ class EventManagerClass:
         self.running = False
         self.source_id = source_id
         self.receiver_que = queue.Queue()
+        self.response_que = queue.Queue()
         self._identification = _identification
         self._name = self._identification + '-' + str(uuid.uuid4()).split('-')[1]
         self.routes = {}
@@ -523,12 +528,12 @@ class EventManagerClass:
     def route_event_id(self, event_id: EventID):
 
         print(f"testing route_event_id for {event_id.get_source()[-1]}")
-        if self.identification == "P0" and event_id.get_source()[-1] == '*':
+        if event_id.get_source()[-1] == '*':  # self.identification == "P0" and
             responses = []
             data = asdict(event_id)
             event_id.source = ':'.join(event_id.get_source()[:-1])
             event_id.add_path(f"{self._name}({self.source_id})")
-            for name, rout_ in self.routes_client:
+            for name, rout_ in self.routes_client.items():
                 ret = rout_.put_data(data)
                 responses.append(ret)
             return responses

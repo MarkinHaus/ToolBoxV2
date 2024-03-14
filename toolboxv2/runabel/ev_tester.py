@@ -95,8 +95,8 @@ def run___(app, _):  # Event von Pn to Pn over P0
         ev.identification = "P0"
     elif e_id := input('T:'):
         ev.identification = "Pn1"
-        # ev.add_client_route("P0", ("127.0.0.1", 6568))
-        ret = ev.trigger_event(EventID.crate("app.main-vanillam:Pn2:P0", e_id))
+        ev.add_client_route("P0", ("127.0.0.1", 6568))
+        ret = ev.trigger_event(EventID.crate("app.main-DESKTOP-CI57V1L:Pn2:P0", e_id))
         print("ret :", str(ret))
     else:
         ev.identification = "Pn2"
@@ -111,7 +111,7 @@ def run___(app, _):  # Event von Pn to Pn over P0
         pass
 
 
-def run(app, _):  # Event von S1 -> S2 über P0 ohne addr
+def run(app, _):  # Event von Pn -> Sn2 über P0 wobei P0 und Pn same device und Sn2 nicht + ohne ip
     from toolboxv2 import tbef, get_app
 
     # app = get_app()
@@ -126,16 +126,15 @@ def run(app, _):  # Event von S1 -> S2 über P0 ohne addr
         ev.identification = "P0"
         ev.register_event(Event("broadcast_event", source=event_fuction, scope=Scope.local_network))
     elif e_id := input('T:'):
-        ev.identification = "Sn1"
-        # ev.add_client_route("P0", ("127.0.0.1", 6568))
-        ev.register_event(Event("broadcast_event", source=event_fuction, scope=Scope.local_network))
-        ret = ev.trigger_event(EventID.crate("*:*", "broadcast_event"))
-        print("ret :", str(ret))
-        ret = ev.trigger_event(EventID.crate("app.main-DESKTOP-CI57V1L:Sn2:P0", e_id))
+        ev.identification = "Pn"
+        # Pn und P0 same diveice
+        ev.add_client_route("P0", ("127.0.0.1", 6568))
+        # Pn und P0 on different devices in same network
+        # ev.register_event(Event("broadcast_event", source=event_fuction, scope=Scope.local_network))
+        ret = ev.trigger_event(EventID.crate("app.main-vanillam:*:*", e_id))
         print("ret :", str(ret))
     else:
         ev.identification = "Sn2"
-        # ev.add_client_route("P0", ("127.0.0.1", 6568))
         ev.register_event(Event("broadcast_event", source=event_fuction, scope=Scope.local_network))
         event = ev.make_event_from_fuction(event_fuction, "event_fuction", num=0)
         ev_id = event.event_id
