@@ -19,8 +19,11 @@ def make_known(name: str, get_flag: bytes = b"R", port=44667):
     # Set a timeout so the socket does not block
     # indefinitely when trying to receive data.
     server.settimeout(0.2)
-    server.sendto(message, ("0.0.0.0", port))
+    server.bind(("", port))
+    # server.send(message)
+    server.sendto(message, ("255.255.255.255", port))
     print("message sent!", flush=True)
-    time.sleep(1)
+    time.sleep(4)
     data = server.recv(1024)
+    print(f"data received! {data} {data.decode()}", flush=True)
     return json.loads(data)

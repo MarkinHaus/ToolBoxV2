@@ -3,7 +3,7 @@ import os
 import socket
 
 
-def start_client(s_name, port=44667):
+def start_client(host_ip, port=44667):
     known = {}
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)  # UDP
 
@@ -30,6 +30,6 @@ def start_client(s_name, port=44667):
             client.sendto(json.dumps(known).encode('utf-8'), addr)
         if info_t == "R":
             client.sendto(json.dumps(
-                {'name': s_name, 'host': os.getenv("TOOLBOXV2_BASE_HOST"), 'port': int(os.getenv("TOOLBOXV2_BASE_PORT"))
+                {'host': host_ip, 'port': int(os.getenv("TOOLBOXV2_BASE_PORT"))
                  }).encode('utf-8'), addr)
         alive = yield name, addr

@@ -10,6 +10,7 @@ from typing import Dict, Tuple, List, Optional, Any, Callable, Union
 from concurrent.futures import ThreadPoolExecutor
 
 from toolboxv2 import get_app, Result, Spinner, MainTool, get_logger
+from toolboxv2.mods.SocketManager import get_local_ip
 from toolboxv2.utils import Singleton
 from toolboxv2.utils.brodcast.client import start_client
 from toolboxv2.utils.brodcast.server import make_known
@@ -372,15 +373,16 @@ class EventManagerClass:
                 t0.start()
             elif not self.bo and "P0" not in self.routes_client:
                 self.bo = True
+                # self.add_server_route(self.identification, ("127.0.0.1", 44667))
                 with Spinner(message="Sercheing for Rooter instance", count_down=True, time_in_s=6):
                     with ThreadPoolExecutor(max_workers=1) as executor:
-                        t0 = executor.submit(make_known, self.source_id)
+                        t0 = executor.submit(make_known, self.identification)
                         try:
                             data = t0.result(timeout=6)
                         except TimeoutError:
                             print("No P0 found in network or on device")
                             return
-                    self.add_server_route(data.get("name", self.source_id), (data.get("host"), data.get("port")))
+                    self.add_client_route("P0", (data, 6568))
 
         if event.scope.name == Scope.global_network.name:
             self.add_server_route(self.source_id, ('0.0.0.0', 6587))
@@ -389,14 +391,14 @@ class EventManagerClass:
         self.bo = True
 
         print("Starting brodcast router 0")
-        router = start_client(self.source_id)
+        router = start_client(get_local_ip())
         print("Starting brodcast router 1")
         # next(router)
         print("Starting brodcast router")
         while self.running:
             source_id, connection = next(router)
             print(f"Infos :{source_id}, connection :{connection}")
-            self.add_client_route(source_id, connection)
+            self.routes[source_id] = connection[0]
             router.send(self.running)
 
         router.send(False)
