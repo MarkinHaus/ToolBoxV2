@@ -129,6 +129,8 @@ def run(app, _):  # Event von S1 -> S2 über P0 ohne addr
         ev.identification = "Sn1"
         # ev.add_client_route("P0", ("127.0.0.1", 6568))
         ev.register_event(Event("broadcast_event", source=event_fuction, scope=Scope.local_network))
+        ret = ev.trigger_event(EventID.crate("*:*", "broadcast_event"))
+        print("ret :", str(ret))
         ret = ev.trigger_event(EventID.crate("app.main-DESKTOP-CI57V1L:Sn2:P0", e_id))
         print("ret :", str(ret))
     else:
