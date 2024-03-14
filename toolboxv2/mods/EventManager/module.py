@@ -402,6 +402,8 @@ class EventManagerClass:
         elif isinstance(event_id, EventID):
             events = [e for e in self.events if e.event_id.ID == event_id.ID]
             if len(events) < 1:
+                events = [e for e in self.events if e.name == event_id.ID]
+            if len(events) < 1:
                 return Result.default_user_error("Event not registered")
             event = events[0]
 
@@ -606,7 +608,7 @@ class Tools(MainTool, EventManagerClass):
         if self.app.args_sto.background_application_runner:
             self.identification = 'P0'
         else:
-            self.start()
+            self.identification = self.app.id.split('-')[0]
 
     @export(mod_name=Name, name='closeEventManager', version=version)
     def closeEventManager(self):

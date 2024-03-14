@@ -2,7 +2,7 @@ import socket
 import time
 from time import sleep
 
-from toolboxv2.mods.EventManager.module import EventManagerClass, Event, EventID, Scope
+from toolboxv2.mods.EventManager.module import EventManagerClass, Event, EventID, Scope, SourceTypes
 
 NAME = "evT"
 
@@ -101,6 +101,40 @@ def run___(app, _):  # Event von Pn to Pn over P0
     else:
         ev.identification = "Pn2"
         ev.add_client_route("P0", ("127.0.0.1", 6568))
+        event = ev.make_event_from_fuction(event_fuction, "event_fuction", num=0)
+        ev_id = event.event_id
+        event.scope = Scope.local
+        print("event ID :", str(ev_id))
+        ev.register_event(event)
+
+    while True:
+        pass
+
+
+def run(app, _):  # Event von S1 -> S2 über P0 ohne addr
+    from toolboxv2 import tbef, get_app
+
+    # app = get_app()
+    # get_local_ip()
+    ev: EventManagerClass = app.run_any(tbef.EVENTMANAGER.GETEVENTMANAGERC)
+
+    def event_fuction(num=-1):
+        print(f"event_fuction triggered num {num}")
+        return f"EV{num}"
+
+    if 'y' in input('as p0:'):
+        ev.identification = "P0"
+        ev.register_event(Event("broadcast_event", source=event_fuction, scope=Scope.local_network))
+    elif e_id := input('T:'):
+        ev.identification = "Sn1"
+        # ev.add_client_route("P0", ("127.0.0.1", 6568))
+        ev.register_event(Event("broadcast_event", source=event_fuction, scope=Scope.local_network))
+        ret = ev.trigger_event(EventID.crate("app.main-DESKTOP-CI57V1L:Sn2:P0", e_id))
+        print("ret :", str(ret))
+    else:
+        ev.identification = "Sn2"
+        # ev.add_client_route("P0", ("127.0.0.1", 6568))
+        ev.register_event(Event("broadcast_event", source=event_fuction, scope=Scope.local_network))
         event = ev.make_event_from_fuction(event_fuction, "event_fuction", num=0)
         ev_id = event.event_id
         event.scope = Scope.local
