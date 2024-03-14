@@ -48,6 +48,9 @@ setup(
         'console_scripts': [
             'toolboxv2=toolboxv2.cli:main',
         ],
+        'App': [
+            'App=toolboxv2.utils.toolbox:App',
+        ],
     },
     install_requires=install_requires,
     dependency_links=dependency_links,
