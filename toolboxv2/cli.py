@@ -8,17 +8,17 @@ from platform import system, node
 
 from yaml import safe_load
 
-from toolboxv2.runabel import runnable_dict as runnable_dict_func
-from toolboxv2.utils.system.main_tool import MainTool
-from toolboxv2.utils.extras.Style import Style, Spinner
+from .runabel import runnable_dict as runnable_dict_func
+from .utils.system.main_tool import MainTool
+from .utils.extras.Style import Style, Spinner
 # Import public Pages
-from toolboxv2.utils.toolbox import App
+from .utils.toolbox import App
 
-from toolboxv2.utils import show_console
-from toolboxv2.utils import get_app
-from toolboxv2.utils.daemon import DaemonApp
-from toolboxv2.utils.proxy import ProxyApp
-from toolboxv2.utils.system import override_main_app
+from .utils import show_console
+from .utils import get_app
+from .utils.daemon import DaemonApp
+from .utils.proxy import ProxyApp
+from .utils.system import override_main_app
 
 DEFAULT_MODI = "cli"
 
