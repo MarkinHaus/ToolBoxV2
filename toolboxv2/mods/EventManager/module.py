@@ -242,7 +242,7 @@ class EventManagerClass:
         return Rout(
             _from=self.source_id,
             _to=source,
-            _from_port=int(os.getenv("TOOLBOXV2_BASE_PORT")),
+            _from_port=int(os.getenv("TOOLBOXV2_BASE_PORT", 6588)),
             _from_host=os.getenv("TOOLBOXV2_BASE_HOST"),
             _to_port=port,
             _to_host=host,
