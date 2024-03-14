@@ -68,10 +68,11 @@ class EventID:
                 payload = str(payload)
                 self.payload = payload
             except ValueError:
-                #raise ValueError("Payload must be a string or converted")
+                # raise ValueError("Payload must be a string or converted")
                 self.payload = 'ValueError("Payload must be a string or converted")'
         else:
             self.payload = payload
+
     @classmethod
     def crate_empty(cls):
         return cls(source="", path="", ID=str(uuid.uuid4()))
@@ -368,15 +369,19 @@ class EventManagerClass:
             return
 
         if event.scope.name == Scope.local.name:
-            # if self.source_id not in self.routes_client: # for direct communication
-            #     self.routers_servers[self.source_id] = DaemonRout(rout=self.crate_rout(self.source_id), name="D2PN")
+            if not self.bo and "P0" not in self.routes_client and os.getenv("TOOLBOXV2_BASE_HOST",
+                                                                            "localhost") != "localhost":
+                self.add_client_route("P0", (os.getenv("TOOLBOXV2_BASE_HOST", "localhost"),
+                                             os.getenv("TOOLBOXV2_BASE_PORT", 6568)))
+                self.bo = True
             return
 
         if event.scope.name == Scope.local_network.name:
             if self.identification == "P0" and not self.bo:
                 t0 = threading.Thread(target=self.start_brodcast_router_local_network, daemon=True)
                 t0.start()
-            elif not self.bo and "P0" not in self.routes_client:
+            elif not self.bo and "P0" not in self.routes_client and os.getenv("TOOLBOXV2_BASE_HOST",
+                                                                              "localhost") == "localhost":
                 self.bo = True
                 # self.add_server_route(self.identification, ("127.0.0.1", 44667))
                 with Spinner(message="Sercheing for Rooter instance", count_down=True, time_in_s=6):
@@ -388,10 +393,17 @@ class EventManagerClass:
                             print("No P0 found in network or on device")
                             return
                     print(f"Found P0 on {type(data)} {data.get('host')}")
-                    self.add_client_route("P0", (data.get("host"), 6568))
+                    self.add_client_route("P0", (data.get("host"), os.getenv("TOOLBOXV2_BASE_PORT", 6568)))
+            elif not self.bo and "P0" not in self.routes_client and os.getenv("TOOLBOXV2_BASE_HOST",
+                                                                              "localhost") != "localhost":
+                self.add_client_route("P0", (os.getenv("TOOLBOXV2_BASE_HOST", "localhost"), os.getenv("TOOLBOXV2_BASE_PORT", 6568)))
+                self.bo = True
 
         if event.scope.name == Scope.global_network.name:
-            self.add_server_route(self.source_id, ('0.0.0.0', 6587))
+            self.add_server_route(self.source_id, ('0.0.0.0', os.getenv("TOOLBOXV2_REMOTE_PORT", 6587)))
+
+    def connect_to_remote(self, host=os.getenv("TOOLBOXV2_REMOTE_IP"), port=os.getenv("TOOLBOXV2_REMOTE_PORT", 6587)):
+        self.add_client_route("S0", (host, port))
 
     def start_brodcast_router_local_network(self):
         self.bo = True
@@ -545,7 +557,7 @@ class EventManagerClass:
             route = self.routes_client.get(event_id.get_path()[-1])
         if route is None:
             return event_id.add_path(f"404#{self.identification}")
-        #time.sleep(0.25)
+        # time.sleep(0.25)
         event_id.source = ':'.join(event_id.get_source()[:-1])
         event_id.add_path(f"{self._name}({self.source_id})")
         return route.put_data(asdict(event_id))

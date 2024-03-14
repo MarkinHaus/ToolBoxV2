@@ -131,6 +131,8 @@ def run(app, _):  # Event von Pn -> Sn2 über P0 wobei P0 und Pn same device und
         ev.add_client_route("P0", ("127.0.0.1", 6568))
         # Pn und P0 on different devices in same network
         # ev.register_event(Event("broadcast_event", source=event_fuction, scope=Scope.local_network))
+        surce = "app.main-vanillam:Sn2:P0"
+        surce = "app.main-vanillam:*:*"
         ret = ev.trigger_event(EventID.crate("app.main-vanillam:*:*", e_id))
         print("ret :", str(ret))
     else:
