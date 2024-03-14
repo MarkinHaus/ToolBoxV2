@@ -25,5 +25,5 @@ def make_known(name: str, get_flag: bytes = b"R", port=44667):
     print("message sent!", flush=True)
     time.sleep(4)
     data = server.recv(1024)
-    print(f"data received! {data} {data.decode()}", flush=True)
-    return json.loads(data)
+    print(f"data received! {data.decode()}", flush=True)
+    return json.loads(data.decode())
