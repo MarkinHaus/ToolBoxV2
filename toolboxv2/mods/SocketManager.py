@@ -762,6 +762,10 @@ class Tools(MainTool, FileHandler):
                     print(f"{len(file_data) / file_size * 100:.2f}%")
                 if len(file_data) < file_size:
                     continue
+
+                if len(file_data) > file_size:
+                    file_data = file_data[:file_size]
+
                 print(0)
                 decompressed_data = gzip.decompress(file_data)
                 print(1)

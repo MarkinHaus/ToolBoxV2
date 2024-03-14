@@ -11,7 +11,7 @@ from setuptools import setup, find_packages
 with open('README.md') as readme_file:
     readme = readme_file.read()
 
-with open(os.getenv('CONFIG_FILE', 'toolbox.yaml'), 'r') as config_file:
+with open(os.getenv('CONFIG_FILE', '/toolboxv2/toolbox.yaml'), 'r') as config_file:
     _version = safe_load(config_file)
     version = _version.get('main', {}).get('version', '-.-.-')
 
@@ -63,7 +63,7 @@ setup(
     keywords='toolboxv2',
     name='ToolBoxV2',
     packages=find_packages(include=['toolboxv2', 'toolboxv2.mods.*',  'toolboxv2.mods_dev.*', 'toolboxv2.*']),
-    package_data={"toolboxv2": ["toolboxv2/init.config", "toolbox.yaml"]},
+    package_data={"toolboxv2": ["toolboxv2/init.config", "toolboxv2/toolbox.yaml"]},
     setup_requires=setup_requirements,
     test_suite='tests',
     tests_require=test_requirements,

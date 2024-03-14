@@ -19,7 +19,9 @@ except ImportError as e:
 __author__ = """Markin Hausmanns"""
 __email__ = 'Markinhausmanns@gmail.com'
 
-with open(os.getenv('CONFIG_FILE', 'toolbox.yaml'), 'r') as config_file:
+print(os.system('dir'))
+
+with open(os.getenv('CONFIG_FILE', f'{os.path.abspath(__file__).replace("__init__.py", "")}toolbox.yaml'), 'r') as config_file:
     _version = safe_load(config_file)
     __version__ = _version.get('main', {}).get('version', '-.-.-')
 

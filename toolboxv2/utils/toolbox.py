@@ -26,13 +26,7 @@ from .extras.Style import Style, stram_print, Spinner
 import logging
 from dotenv import load_dotenv
 
-
 load_dotenv()
-
-with open(os.getenv('CONFIG_FILE', 'toolbox.yaml'), 'r') as config_file:
-    _version = safe_load(config_file)
-    __version__ = _version.get('main', {}).get('version', '-.-.-')
-
 
 
 class App(AppType, metaclass=Singleton):
@@ -115,6 +109,10 @@ class App(AppType, metaclass=Singleton):
             if self.start_dir not in sys.path:
                 sys.path.append(self.start_dir)
             _initialize_toolBox(args.init, args.init_file, self.id)
+
+        with open(os.getenv('CONFIG_FILE', f'{dir_name}/toolbox.yaml'), 'r') as config_file:
+            _version = safe_load(config_file)
+            __version__ = _version.get('main', {}).get('version', '-.-.-')
 
         self.version = __version__
 
@@ -664,7 +662,8 @@ class App(AppType, metaclass=Singleton):
             if thread.name == "MainThread":
                 continue
             try:
-                with Spinner(f"closing Thread {thread.name:^50}|", symbols="s", count_down=True, time_in_s=0.251 if not self.debug else 0.1):
+                with Spinner(f"closing Thread {thread.name:^50}|", symbols="s", count_down=True,
+                             time_in_s=0.251 if not self.debug else 0.1):
                     thread.join(timeout=0.251 if not self.debug else 0.1)
             except TimeoutError as e:
                 self.logger.error(f"Timeout error on exit {thread.name} {str(e)}")

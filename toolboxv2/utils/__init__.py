@@ -17,11 +17,6 @@ from .system.getting_and_closing_app import get_app
 from .extras.Style import Style, remove_styles, Spinner
 from .extras.show_and_hide_console import show_console
 
-
-with open(os.getenv('CONFIG_FILE', 'toolbox.yaml'), 'r') as config_file:
-    _version = safe_load(config_file)
-    __version__ = _version.get('main', {}).get('version', '-.-.-')
-
 __all__ = [
     "App",
     "Singleton",
