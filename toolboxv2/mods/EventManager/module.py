@@ -534,6 +534,8 @@ class EventManagerClass:
             event_id.add_path(f"{self._name}({self.source_id})")
             data = asdict(event_id)
             for name, rout_ in self.routes_client.items():
+                if name in event_id.path:
+                    continue
                 ret = rout_.put_data(data)
                 responses.append(ret)
             return responses
