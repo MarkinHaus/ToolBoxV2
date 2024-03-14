@@ -3,17 +3,15 @@
 """The setup script."""
 
 import io
-from os import path
-from yaml import safe_load
+from os import path, getenv
 from setuptools import setup, find_packages
-
 
 with open('README.md') as readme_file:
     readme = readme_file.read()
 
-with open(os.getenv('CONFIG_FILE', '/toolboxv2/toolbox.yaml'), 'r') as config_file:
-    _version = safe_load(config_file)
-    version = _version.get('main', {}).get('version', '-.-.-')
+with open(getenv('CONFIG_FILE', './toolboxv2/toolbox.yaml'), 'r') as config_file:
+    _version = config_file.read().split('version')[-1].split('\n')[0].split(':')[-1].strip()
+    version = _version  # _version.get('main', {}).get('version', '-.-.-')
 
 here = path.abspath(path.dirname(__file__))
 
@@ -62,7 +60,7 @@ setup(
     include_package_data=True,
     keywords='toolboxv2',
     name='ToolBoxV2',
-    packages=find_packages(include=['toolboxv2', 'toolboxv2.mods.*',  'toolboxv2.mods_dev.*', 'toolboxv2.*']),
+    packages=find_packages(include=['toolboxv2', 'toolboxv2.mods.*', 'toolboxv2.mods_dev.*', 'toolboxv2.*']),
     package_data={"toolboxv2": ["toolboxv2/init.config", "toolboxv2/toolbox.yaml"]},
     setup_requires=setup_requirements,
     test_suite='tests',
