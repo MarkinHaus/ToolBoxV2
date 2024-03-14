@@ -530,9 +530,9 @@ class EventManagerClass:
         print(f"testing route_event_id for {event_id.get_source()[-1]}")
         if event_id.get_source()[-1] == '*':  # self.identification == "P0" and
             responses = []
-            data = asdict(event_id)
             event_id.source = ':'.join(event_id.get_source()[:-1])
             event_id.add_path(f"{self._name}({self.source_id})")
+            data = asdict(event_id)
             for name, rout_ in self.routes_client.items():
                 ret = rout_.put_data(data)
                 responses.append(ret)
