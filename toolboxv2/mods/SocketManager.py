@@ -455,7 +455,8 @@ class Tools(MainTool, FileHandler):
                 #     f"{name} :R Parsed Time ; {time.perf_counter() - t0:.2f} port :{endpoint_port if type_id == SocketType.peer.name else port}")
 
             self.print(f"{name} :closing connection to {host}")
-            self.sockets[name]['alive'] = False
+            if name in self.sockets:
+                self.sockets[name]['alive'] = False
             r_socket_.close()
             if type_id == SocketType.peer.name:
                 sock.close()
