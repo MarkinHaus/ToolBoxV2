@@ -499,7 +499,7 @@ class Tools(MainTool, FileHandler):
 
             def to_receive(client, identifier='main'):
                 if isinstance(client, str):
-                    print("Client", client, identifier)
+                    print("Client $$", client, identifier)
                     return
                 t = threading.Thread(target=receive, args=(client, identifier,), daemon=True)
                 t.start()
