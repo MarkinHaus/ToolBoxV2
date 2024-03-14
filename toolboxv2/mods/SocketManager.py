@@ -413,7 +413,7 @@ class Tools(MainTool, FileHandler):
                 if max_size > -1 and len(data_buffer) > 0 and data_type == b'b':
                     print(
                         f"don {chunk[0] == b'E'[0] and chunk[-1] == b'E'[0]} {(len(data_buffer) / max_size) * 100:.2f}% total byts: {len(data_buffer)} von {max_size}",
-                        end='\r')
+                    )#end='\r')
                 if data_type == b'e':
                     running_dict["receive"][identifier] = False
                     self.logger.info(f"{name} -- received exit signal --")
