@@ -15,7 +15,7 @@ import readchar
 from toolboxv2 import App, Style
 from toolboxv2.utils import Singleton
 
-NAME = "cli"
+NAME = "cli-leg"
 
 prefix = Style.CYAN(f"~{node()}@>")
 

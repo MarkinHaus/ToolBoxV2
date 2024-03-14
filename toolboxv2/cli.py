@@ -5,16 +5,22 @@ import argparse
 import time
 from functools import wraps
 from platform import system, node
+
+from yaml import safe_load
+
+from toolboxv2.runabel import runnable_dict as runnable_dict_func
+from toolboxv2.utils.system.main_tool import MainTool
+from toolboxv2.utils.extras.Style import Style, Spinner
 # Import public Pages
-from toolboxv2 import App, MainTool, runnable_dict as runnable_dict_func, Style, __version__, Spinner
+from toolboxv2.utils.toolbox import App
+
 from toolboxv2.utils import show_console
 from toolboxv2.utils import get_app
 from toolboxv2.utils.daemon import DaemonApp
 from toolboxv2.utils.proxy import ProxyApp
 from toolboxv2.utils.system import override_main_app
 
-
-DEFAULT_MODI = "minicli"
+DEFAULT_MODI = "cli"
 
 try:
     import hmr
@@ -469,7 +475,10 @@ def main():
     # test=None,
     # profiler=None
     # )
-
+    with open(os.getenv('CONFIG_FILE', f'{os.path.abspath(__file__).replace("cli.py", "")}toolbox.yaml'),
+              'r') as config_file:
+        _version = safe_load(config_file)
+        __version__ = _version.get('main', {}).get('version', '-.-.-')
     # print(args)
     # abspath = os.path.dirname(os.path.abspath(__file__))
     abspath = os.path.dirname(os.path.abspath(__file__))
