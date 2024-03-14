@@ -74,19 +74,6 @@ class EMAIL_WAITING_LIST(Enum):
 
 
 @dataclass
-class EVENTMANAGER(Enum):
-    NAME = 'EventManager'
-    VERSION: str = 'Version'  # Input: (['self']), Output: <class 'inspect._empty'>
-    STARTEVENTMANAGER: str = 'startEventManager'  # Input: (['self']), Output: <class 'inspect._empty'>
-    CLOSEEVENTMANAGER: str = 'closeEventManager'  # Input: (['self']), Output: <class 'inspect._empty'>
-    GETEVENTMANAGERC: str = 'getEventManagerC'  # Input: (['self']), Output: <class 'toolboxv2.mods.EventManager.module.EventManagerClass'>
-    ON_EXIT: str = 'on_exit'  # Input: (), Output: None
-    EVENTMANAGER: str = 'EventManager'  # Input: (['app']), Output: <class 'inspect._empty'>
-    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
-    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
-
-
-@dataclass
 class SCHEDULERMANAGER(Enum):
     NAME = 'SchedulerManager'
     VERSION: str = 'Version'  # Input: (['self']), Output: <class 'inspect._empty'>
@@ -173,6 +160,19 @@ class SOCKETMANAGER(Enum):
 
 
 @dataclass
+class EVENTMANAGER(Enum):
+    NAME = 'EventManager'
+    VERSION: str = 'Version'  # Input: (['self']), Output: <class 'inspect._empty'>
+    STARTEVENTMANAGER: str = 'startEventManager'  # Input: (['self']), Output: <class 'inspect._empty'>
+    CLOSEEVENTMANAGER: str = 'closeEventManager'  # Input: (['self']), Output: <class 'inspect._empty'>
+    GETEVENTMANAGERC: str = 'getEventManagerC'  # Input: (['self']), Output: <class 'toolboxv2.mods.EventManager.module.EventManagerClass'>
+    ON_EXIT: str = 'on_exit'  # Input: (), Output: None
+    EVENTMANAGER: str = 'EventManager'  # Input: (['app']), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+
+
+@dataclass
 class DB(Enum):
     NAME = 'DB'
     VERSION: str = 'Version'  # Input: (['self']), Output: <class 'inspect._empty'>
@@ -200,6 +200,22 @@ class DOCKERENV(Enum):
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
     VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
     BUILD_CUSTOM_IMAGES: str = 'build_custom_images'  # Input: (['img_name', 'file_data', 'path']), Output: <class 'inspect._empty'>
+
+
+@dataclass
+class GMAILPROVIDER(Enum):
+    NAME = 'gmailProvider'
+    GMAIL_AUTHENTICATE: str = 'gmail_authenticate'  # Input: ([]), Output: <class 'inspect._empty'>
+    SEND_MESSAGE: str = 'send_message'  # Input: (['service', 'destination', 'obj', 'body', 'attachments']), Output: <class 'inspect._empty'>
+    SEARCH_MESSAGES: str = 'search_messages'  # Input: (['service', 'query']), Output: <class 'inspect._empty'>
+    READ_MESSAGE: str = 'read_message'  # Input: (['service', 'message']), Output: <class 'inspect._empty'>
+    MARK_AS_READ: str = 'mark_as_read'  # Input: (['service', 'query']), Output: <class 'inspect._empty'>
+    DELETE_MESSAGES: str = 'delete_messages'  # Input: (['service', 'query']), Output: <class 'inspect._empty'>
+    LOG_IN: str = 'log_in'  # Input: (['username', 'password', 'imap_server']), Output: <class 'inspect._empty'>
+    GET_MSG: str = 'get_msg'  # Input: (['imap', 'N']), Output: <class 'inspect._empty'>
+    LOG_LOUT: str = 'log_lout'  # Input: (['imap']), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
 
 
 @dataclass

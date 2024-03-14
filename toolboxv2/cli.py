@@ -140,7 +140,7 @@ def stop(pidfile, pidname):
         os.remove(pidfile)
 
 
-def create_service_file(user, group, working_dir):
+def create_service_file(user, group, working_dir, runner):
     service_content = f"""[Unit]
 Description=ToolBoxService
 After=network.target
@@ -149,7 +149,7 @@ After=network.target
 User={user}
 Group={group}
 WorkingDirectory={working_dir}
-ExecStart=toolboxv2 -bgr -m bg
+ExecStart=toolboxv2 -bgr -m {runner}
 Restart=always
 RestartSec=5
 
@@ -163,9 +163,12 @@ WantedBy=multi-user.target
 def init_service():
     user = input("Enter the user name: ")
     group = input("Enter the group name: ")
+    runner = "bg"
+    if runner_ := input("enter a runner default bg: ").strip():
+        runner = runner_
     working_dir = get_app().start_dir
 
-    create_service_file(user, group, working_dir)
+    create_service_file(user, group, working_dir, runner)
 
     subprocess.run(["sudo", "mv", "tb.service", "/etc/systemd/system/"])
     subprocess.run(["sudo", "systemctl", "daemon-reload"])
@@ -204,11 +207,14 @@ def setup_service_windows():
         path = input("Enter the path that opened: ")
 
     if mode == "1":
+        runner = "bg"
+        if runner_ := input("enter a runner default bg: ").strip():
+            runner = runner_
         if os.path.exists(path + '/tb_start.bat'):
             os.remove(path + '/tb_start.bat')
         with open(path + '/tb_start.bat', "a") as f:
             f.write(
-                f"""{sys.executable} -m toolboxv2 -bg"""
+                f"""{sys.executable} -m toolboxv2 -bg -m {runner}"""
             )
         print(f"Init Service in {path}")
         print(f"run toolboxv2 -bg to start the service")
