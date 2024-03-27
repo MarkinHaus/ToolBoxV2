@@ -78,6 +78,10 @@ class EventID:
         return cls(source="", path="", ID=str(uuid.uuid4()))
 
     @classmethod
+    def crate_name_as_id(cls, name: str):
+        return cls(source="", path="", ID=name)
+
+    @classmethod
     def crate_with_source(cls, source: str):
         return cls(source=source, path="E", ID=str(uuid.uuid4()))
 
@@ -107,11 +111,10 @@ class Event:
     source_types: SourceTypes = SourceTypes.F
     scope: Scope = Scope.local
     exec_in: ExecIn = ExecIn.local
-    event_id: EventID = EventID.crate_empty()
+    event_id: EventID = field(default_factory=EventID.crate_empty())
     threaded: bool = False
-
     args: Optional[Tuple] = None
-    kwargs: Optional[Dict] = None
+    kwargs_: Optional[Dict] = None
 
     def __eq__(self, other):
         if not isinstance(other, Event):
@@ -286,12 +289,20 @@ class EventManagerClass:
         self.running = True
         threading.Thread(target=self.receiver, daemon=True).start()
 
-    def make_event_from_fuction(self, fuction, name, *args, **kwargs):
+    def make_event_from_fuction(self, fuction, name, *args, source_types=SourceTypes.F,
+                                scope=Scope.local,
+                                exec_in=ExecIn.local,
+                                threaded=False,  **kwargs):
 
         return Event(source=fuction,
                      name=name,
                      event_id=EventID.crate_with_source(self.source_id), args=args,
-                     kwargs=kwargs)
+                     kwargs_=kwargs,
+                     source_types=source_types,
+                     scope=scope,
+                     exec_in=exec_in,
+                     threaded=threaded,
+                     )
 
     def add_client_route(self, source_id, addr):
         try:
@@ -398,7 +409,8 @@ class EventManagerClass:
                     self.add_client_route("P0", (data.get("host"), os.getenv("TOOLBOXV2_BASE_PORT", 6568)))
             elif not self.bo and "P0" not in self.routes_client and os.getenv("TOOLBOXV2_BASE_HOST",
                                                                               "localhost") != "localhost":
-                do = self.add_client_route("P0", (os.getenv("TOOLBOXV2_BASE_HOST", "localhost"), os.getenv("TOOLBOXV2_BASE_PORT", 6568)))
+                do = self.add_client_route("P0", (
+                    os.getenv("TOOLBOXV2_BASE_HOST", "localhost"), os.getenv("TOOLBOXV2_BASE_PORT", 6568)))
                 self.bo = do
                 if not do:
                     print("Connection failed")
@@ -490,14 +502,14 @@ class EventManagerClass:
             return self.route_event_id(event_id)
 
         if event.source_types.name is SourceTypes.P.name:
-            return event.source(*event.args, payload=event_id, **event.kwargs)
+            return event.source(*event.args, payload=event_id, **event.kwargs_)
 
         if event.source_types.name is SourceTypes.F.name:
-            return event.source(*event.args, **event.kwargs)
+            return event.source(*event.args, **event.kwargs_)
 
         if event.source_types.name is SourceTypes.R.name:
             return get_app(str(event_id)).run_any(mod_function_name=event.source, get_results=True, args_=event.args,
-                                                  kwargs_=event.kwargs)
+                                                  kwargs_=event.kwargs_)
 
         if event.source_types.name is SourceTypes.S.name:
             return eval(event.source, __locals={'app': get_app(str(event_id)), 'event': event, 'eventManagerC': self})
@@ -524,6 +536,9 @@ class EventManagerClass:
             result = result.encode()
 
         return result
+
+    def trigger_evnet_by_name(self, name: str):
+        self.trigger_event(EventID.crate_name_as_id(name=name))
 
     def trigger_event(self, event_id: EventID):
 

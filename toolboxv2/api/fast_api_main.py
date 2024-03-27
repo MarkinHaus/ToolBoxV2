@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import datetime, timedelta
 from inspect import signature
@@ -5,7 +6,7 @@ from inspect import signature
 import fastapi
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse, FileResponse
 from starlette.websockets import WebSocketDisconnect
 from fastapi.responses import RedirectResponse
 
@@ -16,7 +17,7 @@ import sys
 import time
 from fastapi.middleware.cors import CORSMiddleware
 
-from toolboxv2 import tbef, AppArgs
+from toolboxv2 import tbef, AppArgs, ApiResult
 
 from toolboxv2.utils.system.state_system import get_state_from_app
 from ..utils.toolbox import get_app
@@ -94,6 +95,14 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         }
         self.cookie_key = tb_app.config_fh.one_way_hash(tb_app.id, 'session')
 
+    async def set_body(self, request: Request):
+        receive_ = await request._receive()
+
+        async def receive():
+            return receive_
+
+        request._receive = receive
+
     def crate_new_session_id(self, request: Request, jwt_claim: str or None, username: str or None,
                              session_id: str = None):
 
@@ -118,9 +127,9 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             'c': 0,
             'h-sid': h_session_id
         }
-        print("[jwt_claim]:, ", jwt_claim)
-        print(username)
-        print(request.json())
+        # print("[jwt_claim]:, ", jwt_claim)
+        # print(username)
+        # print(request.json())
         if request.client.host in self.GRAY_LIST and not request.url.path.split('/')[-1] in ['login', 'signup']:
             return JSONResponse(
                 status_code=403,
@@ -218,33 +227,48 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         tb_app.logger.debug(f"({request.session} --> {request.url.path})")
 
         if request.url.path == '/validateSession':
-            body = await request.json()
+            await self.set_body(request)
+            body = await request.body()
+            print("BODY #####", body)
+            if body == b'':
+                return JSONResponse(
+                    status_code=401,
+                    content={"message": "Invalid Auth data.", "valid": False}
+                )
+            body = json.loads(body)
             jwt_token = body.get('Jwt_claim', None)
             username = body.get('Username', None)
             session_id = self.crate_new_session_id(request, jwt_token, username, session_id=request.session.get('ID'))
         elif not session:
             session_id = self.crate_new_session_id(request, None, "Unknown")
+        elif request.session.get('ID', '') not in self.sessions:
+            print("Session Not Found")
+            session_id = self.crate_new_session_id(request, None, "Unknown", session_id=request.session.get('ID'))
+            request.session['valid'] = False
         else:
             session_id: str = request.session.get('ID', '')
         request.session['live_data'] = {}
+        print("testing session")
         if self.validate_session(session_id):
+            print("valid session")
             request.session['valid'] = True
             request.session['live_data'] = self.sessions[session_id]['live_data']
-            if request.url.path == '/logout':
+            if request.url.path == '/web/logoutS':
                 uid = tb_app.run_any(tbef.CLOUDM_USERINSTANCES.GET_INSTANCE_SI_ID,
                                      si_id=self.sessions[session_id]['live_data']['SiID']).get('save', {}).get('uid')
                 if uid is not None:
+                    print("start closing istance :t", uid)
                     tb_app.run_any(tbef.CLOUDM_USERINSTANCES.CLOSE_USER_INSTANCE, uid=uid)
                     del self.sessions[session_id]
+                    print("Return redirect :t", uid)
+                    return RedirectResponse(
+                        url="/web/logout")  # .delete_cookie(tb_app.config_fh.one_way_hash(tb_app.id, 'session'))
+                else:
+                    del request.session['live_data']
                     return JSONResponse(
-                        status_code=200,
-                        content={"message": "Session terminated successfully"}
-                    ).delete_cookie(tb_app.config_fh.one_way_hash(tb_app.id, 'session'))
-                del request.session['live_data']
-                return JSONResponse(
-                    status_code=403,
-                    content={"message": "Invalid Auth data."}
-                )
+                        status_code=403,
+                        content={"message": "Invalid Auth data."}
+                    )
             elif request.url.path == '/SessionAuthMiddlewareLIST':
                 return JSONResponse(
                     status_code=200,
@@ -253,31 +277,17 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             elif request.url.path == '/validateSession':
                 return JSONResponse(
                     status_code=200,
-                    content={"message": "Valid Session started"}
+                    content={"message": "Valid Session started", "valid": True}
                 )  # .set_cookie(self.cookie_key, value=request.cookies.get('session'))
         elif request.url.path == '/validateSession':
             return JSONResponse(
                 status_code=401,
-                content={"message": "Invalid Auth data."}
+                content={"message": "Invalid Auth data.", "valid": False}
             )
         elif session_id == '#0':
-            pass
+            return await call_next(request)
         elif isinstance(session_id, JSONResponse):
             return session_id
-        elif session_id not in self.sessions:
-            request.session['valid'] = False
-            body = {}
-            try:
-                body = await request.json()
-            except:
-                pass
-            jwt_token = body.get('Jwt_claim', None)
-            username = body.get('Username', None)
-            if self.crate_new_session_id(request, username, jwt_token,
-                                         session_id if session_id.startswith('0x') else None):
-                request.session['valid'] = self.validate_session(session_id)
-            if request.session['valid']:
-                request.session['live_data'] = self.sessions[session_id].get('live_data', {})
         else:
             request.session['valid'] = False
             ip = self.sessions[session_id].get('ip', "unknown")
@@ -288,9 +298,11 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
                 c = self.sessions[session_id]['c']
                 if c < 20:
                     tb_app.logger.warning(f"SuS Request : IP : {ip} ")
+                    return await call_next(request)
                 elif c == 460:
                     self.GRAY_LIST.append(self.sessions[session_id].get('ip', "unknown"))
                     self.sessions[session_id]['what_user'] = True
+                    return await call_next(request)
                 elif c == 6842:
                     self.GRAY_LIST.append(self.sessions[session_id].get('ip', "unknown"))
                     self.sessions[session_id]['ratelimitWarning'] = True
@@ -304,15 +316,16 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
                         status_code=403,
                         content={"message": "u got BLACK_LISTED"}
                     )
-
-        response = await call_next(request)
+                else:
+                    return await call_next(request)
+            else:
+                return await call_next(request)
+        return await call_next(request)
 
         # if session:
         #     response.set_cookie(
         #         self.cookie_key,
         #     )
-
-        return response
 
 
 app = FastAPI()
@@ -353,10 +366,6 @@ async def session_protector(request: Request, call_next):
     response = await call_next(request)
     if 'session' in request.scope.keys() and 'live_data' in request.session.keys():
         del request.session['live_data']
-    # s_key = tb_app.config_fh.one_way_hash(tb_app.id, 'session')
-    # session = request.cookies.get(s_key)
-    # if session:
-    #     response.set_cookie(key=s_key, value=request.cookies.get(s_key), httponly=True)
     return response
 
 
@@ -432,15 +441,12 @@ async def protector(request: Request, call_next):
     needs_protection = protect_url_split_helper(request.url.path.split('/'))
     if needs_protection and not request.session.get('valid'):
         # do level test
-        return JSONResponse(
-            status_code=401,
-            content={"message": "Protected resource"}
-        )
+        return FileResponse("./web/assets/401.html", media_type="text/html", status_code=401)
 
     elif needs_protection and not protect_level_test(request):
         return JSONResponse(
             status_code=403,
-            content={"message": "Protected resource invalid_level"}
+            content={"message": "Protected resource invalid_level  <a href='/web'>Back To Start</a>"}
         )
     # elif needs_protection and :
     #     return JSONResponse(
@@ -457,7 +463,6 @@ async def user_runner(request, call_next):
     if not run_fuction:
         response = await call_next(request)
         return response
-
     print("user_runner", request.session.get('live_data'))
     print(request.url.path.split('/'))
 
@@ -477,10 +482,13 @@ async def user_runner(request, call_next):
     result = tb_app.run_function((modul_name, fuction_name),
                                  tb_run_with_specification=request.session['live_data'].get('spec', 'app'),
                                  args_=path_params.values(),
-                                 kwargs_=query_params).print()
+                                 kwargs_=query_params)
 
     request.session['live_data']['RUN'] = False
     request.session['live_data']['GET_R'] = False
+
+    if not isinstance(result, Request) and not isinstance(result, ApiResult) and isinstance(result, str):
+        return HTMLResponse(status_code=200, content=result)
 
     if result.info.exec_code == 100:
         response = await call_next(request)
@@ -498,6 +506,11 @@ async def user_runner(request, call_next):
 @app.get("/")
 async def index():
     return RedirectResponse(url="/web/core0/index.html")
+
+
+@app.get("/tauri")
+async def index():
+    return RedirectResponse(url="/web/assets/widgetControllerLogin.html")
 
 
 @app.get("/favicon.ico")

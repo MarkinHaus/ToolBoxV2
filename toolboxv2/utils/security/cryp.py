@@ -98,7 +98,7 @@ class Code:
         return Fernet.generate_key().decode()
 
     @staticmethod
-    def encrypt_symmetric(text: str, key: str) -> str:
+    def encrypt_symmetric(text: str or bytes, key: str) -> str:
         """
         Verschlüsselt einen Text mit einem gegebenen symmetrischen Schlüssel.
 
@@ -109,9 +109,12 @@ class Code:
         Returns:
             str: Der verschlüsselte Text.
         """
+        if isinstance(text, str):
+            text = text.encode()
+
         try:
             fernet = Fernet(key.encode())
-            return fernet.encrypt(text.encode()).decode()
+            return fernet.encrypt(text).decode()
         except Exception as e:
             get_logger().error(f"Error encrypt_symmetric #{str(e)}#")
             return "Error encrypt"

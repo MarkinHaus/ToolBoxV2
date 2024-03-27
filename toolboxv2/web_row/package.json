@@ -1,9 +1,0 @@
-{
-  "dependencies": {
-    "highlight.js": "^11.8.0",
-    "htmx.org": "^1.9.10",
-    "marked": "^5.1.0",
-    "marked-highlight": "^2.0.1",
-    "three": "^0.153.0"
-  }
-}

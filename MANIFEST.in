@@ -1,7 +1,7 @@
 include LICENSE
 include README.md
 include requirements.txt
-include toolboxv2/init.config
+include toolboxv2/toolbox.yaml
 recursive-exclude * __pycache__
 recursive-exclude * *.py[co]
 

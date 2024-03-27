@@ -44,15 +44,19 @@ def getsMSG(app: App = None):
                                     from_file=True, to_str=False)
 
     return systemMSG_content
-@export(mod_name=Name, version=version, level=1, api=True, name="getsInsightsWidget", interface=ToolBoxInterfaces.remote)
+
+
+@export(mod_name=Name, version=version, level=1, api=True, name="getsInsightsWidget",
+        interface=ToolBoxInterfaces.remote)
 def getsInsightsWidget(app: App = None):
     if app is None:
         app = get_app(from_=f"{Name}.getTextWidget")
     # Sendeng system MSG message
-    insights_content = app.run_any(tbef.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="./web/1/insightsWidget/insights.html",
-                                    element_id="widgetInsights",
-                                    externals=[],
-                                    from_file=True, to_str=False)
+    insights_content = app.run_any(tbef.WEBSOCKETMANAGER.CONSTRUCT_RENDER,
+                                   content="./web/1/insightsWidget/insights.html",
+                                   element_id="widgetInsights",
+                                   externals=[],
+                                   from_file=True, to_str=False)
 
     return insights_content['render']['content']
 

@@ -1,0 +1,31 @@
+<div>
+      <script src="/web/0/logic.js"></script>
+
+    <script src="/web/node_modules/htmx.org/dist/htmx.min.js"></script>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+    <h1> User : $username </h1>
+   <div id="counter-$WidgetID"><h2 > counter : $value </h2> </div>
+    <div id="test-$WidgetID"></div>
+    <input id="iCounter-$WidgetID" type="number"/>
+    <hr/>
+    <div>
+        <button hx-target="#counter-$WidgetID" hx-swap="innerHTML" hx-trigger="click" id="aButton-$WidgetID"  hx-get="$root/add" > add </button>
+        <button id="amButton-$WidgetID" onclick="
+            htmx.ajax('POST', this.getAttribute('data-url')+'?value=' + encodeURIComponent(document.getElementById('iCounter-$WidgetID').value), {
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                target: '#counter-$WidgetID' });" data-url="$root/addM"> M add </button>
+        <button hx-target="#counter-$WidgetID" hx-swap="innerHTML" hx-trigger="click" id="mButton-$WidgetID"  hx-get="$root/reset" > reset </button>
+    </div>
+    <h1> Frond end counter </h1>
+<div>
+    <h2 id="counter2">Counter: <span id="counterValue">0</span></h2>
+</div>
+<input id="iCounter" type="number"/>
+<hr/>
+<div>
+      <button onclick="document.getElementById('counterValue').textContent = parseInt(document.getElementById('counterValue').textContent) + 1;">Add</button>
+        <button onclick="document.getElementById('counterValue').textContent = parseInt(document.getElementById('counterValue').textContent) + (parseInt(document.getElementById('iCounter').value) || 0);">M Add</button>
+        <button onclick="document.getElementById('counterValue').textContent = 0;">Reset</button>
+</div>
+
+</div>

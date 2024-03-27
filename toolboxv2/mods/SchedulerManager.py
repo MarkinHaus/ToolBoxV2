@@ -284,6 +284,7 @@ class Tools(MainTool, SchedulerManagerClass):
     def on_exit(self):
         self.stop()
         self.save_jobs(self.app.data_dir + '/jobs.compact')
+        return self
 
     @export(mod_name=Name, name='instance', version=version)
     def get_instance(self):

@@ -595,6 +595,7 @@ class AppType:
                           post_compute=None,
                           memory_cache=False,
                           file_cache=False,
+                          row=False,
                           request_as_kwarg=False,
                           memory_cache_max_size=100,
                           memory_cache_ttl=300):
@@ -633,6 +634,7 @@ class AppType:
            test_only: bool = False,
            memory_cache: bool = False,
            file_cache: bool = False,
+           row=False,
            request_as_kwarg: bool = False,
            state: bool or None = None,
            level: int = -1,
@@ -662,6 +664,7 @@ class AppType:
         memory_cache (bool, optional): Flag to enable memory caching for the function.
         request_as_kwarg (bool, optional): Flag to get request if the fuction is calld from api.
         file_cache (bool, optional): Flag to enable file caching for the function.
+        row (bool, optional): rather to auto wrap the result in Result type default False means no row data aka result type
         state (bool or None, optional): Flag to indicate if the function maintains state.
         level (int, optional): The level of the function, used for prioritization or categorization.
         memory_cache_max_size (int, optional): Maximum size of the memory cache.
@@ -695,6 +698,7 @@ class AppType:
                                       post_compute=post_compute,
                                       memory_cache=memory_cache,
                                       file_cache=file_cache,
+                                      row=row,
                                       request_as_kwarg=request_as_kwarg,
                                       memory_cache_max_size=memory_cache_max_size,
                                       memory_cache_ttl=memory_cache_ttl)

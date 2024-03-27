@@ -1,0 +1,17 @@
+<div>
+    <h2>User Controller</h2>
+    <p><strong>Username:</strong> $username</p>
+    <div>
+        <label for="userLevel-$userId">User Level: $userLevel</label>
+        <input type="number" id="userLevel-$userId" name="userLevel" value="$userLevel" hx-post="$root/setUserLevel?user=$userId" hx-target="#userLevelStatus-$userId" hx-trigger="change">
+        <span id="userLevelStatus-$userId"></span>
+    </div>
+    <div>
+        <button hx-post="$root/sendMagicLink?user=$userId" hx-target="#magicLinkStatus-$userId">Send Magic Link Email</button>
+        <span id="magicLinkStatus-$userId"></span>
+    </div>
+    <div>
+        <button hx-delete="$root/deleteUser?user=$userId" hx-target="#userController-$userId" hx-confirm="Are you sure you want to delete this user?">Delete User</button>
+        <span id="userController-$userId"></span>
+    </div>
+</div>

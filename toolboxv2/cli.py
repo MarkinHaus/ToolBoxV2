@@ -508,9 +508,9 @@ def main():
     if args.test:
         test_path = os.path.dirname(os.path.abspath(__file__))
         if system() == "Windows":
-            test_path = test_path.replace("toolboxv2\\toolboxv2", "toolboxv2") + "\\tests\\test_mods"
+            test_path = test_path + "\\tests\\test_mods"
         else:
-            test_path = test_path.replace("ToolBoxV2/toolboxv2", "ToolBoxV2") + "/tests/test_mods"
+            test_path = test_path + "/tests/test_mods"
         print(f"Testing in {test_path}")
 
         if os.system(f"{sys.executable} -m unittest discover -s {test_path}") != 0:

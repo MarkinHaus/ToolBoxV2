@@ -82,8 +82,8 @@
 
 .widget-action-button {
     position: absolute;
-    top: 25px;
-    right: 0;
+    top: 1px;
+    right: 20px;
     cursor: pointer;
 }
 

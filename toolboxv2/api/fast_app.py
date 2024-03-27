@@ -55,6 +55,11 @@ async def login_page(access_allowed: bool = Depends(lambda: check_access_level(0
     return serve_app_func('assets/login.html')
 
 
+@router.get("/logout")
+async def login_page(access_allowed: bool = Depends(lambda: check_access_level(0))):
+    return serve_app_func('assets/logout.html')
+
+
 @router.get("/signup")
 async def signup_page(access_allowed: bool = Depends(lambda: check_access_level(2))):
     return serve_app_func('assets/signup.html')
@@ -62,7 +67,7 @@ async def signup_page(access_allowed: bool = Depends(lambda: check_access_level(
 
 @router.get("/dashboard")
 async def quicknote(access_allowed: bool = Depends(lambda: check_access_level(2))):
-    return serve_app_func('dashboards/user_dashboard.html')  # 'dashboards/dashboard_builder.html')
+    return serve_app_func('dashboards/dashboard.html')  # 'dashboards/dashboard_builder.html')
 
 
 @router.get("/{path:path}")
@@ -97,4 +102,4 @@ def serve_app_func(path: str, prefix: str = os.getcwd() + "/web/"):
     request_file_path.is_file()
     if request_file_path.exists():
         return FileResponse(request_file_path, media_type=content_type)
-    return FileResponse("./web/3Dbg.html", media_type=content_type)
+    return FileResponse("./web/assets/404.html", media_type=content_type)

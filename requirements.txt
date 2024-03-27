@@ -25,3 +25,4 @@ python-multipart
 playwright~=1.33.0
 pydantic~=1.10.8
 pyyaml~=6.0
+itsdangerous~=2.1.2

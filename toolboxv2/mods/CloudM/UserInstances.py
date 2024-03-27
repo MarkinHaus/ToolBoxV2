@@ -155,7 +155,9 @@ def get_user_instance(uid: str,
         else:
             chash = chash_data.get()
     if chash != {}:
-        app.print(chash)
+        # app.print(chash)
+        if isinstance(chash, list):
+            chash = chash[0]
         if isinstance(chash, dict):
             instance['save'] = chash["saves"]
         else:

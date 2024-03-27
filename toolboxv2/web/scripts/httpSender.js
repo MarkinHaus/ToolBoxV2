@@ -112,7 +112,7 @@ function wrapInResult(data, from_string=false) {
 }
 
 // Modified httpPostUrl function
-export function httpPostUrl(module_name, function_name, params, errorCallback, successCallback) {
+export function httpPostUrl(module_name, function_name, params, errorCallback, successCallback, from_string=false) {
     fetch('/api/' + module_name + '/' + function_name + '?' + params, {
         method: 'POST',
         headers: {
@@ -122,7 +122,8 @@ export function httpPostUrl(module_name, function_name, params, errorCallback, s
     })
         .then(response => response.json())
         .then(data => {
-            const result = wrapInResult(data)
+            console.log("DATA:", data)
+            const result = wrapInResult(data, from_string)
             result.log()
             if (result.error !== ToolBoxError.none) {
                 // Handle error case
@@ -215,7 +216,7 @@ async function handleHtmxAfterRequest(event) {
         const result = wrapInResult(json, true)
         result.log()
 
-        console.log("rsult:", result.origin.at(2) === 'REMOTE')
+        console.log("result:", result.origin.at(2) === 'REMOTE')
         console.log(result.get().toString().startsWith('<'), result.origin.at(2))
 
         if (result.error !== ToolBoxError.none) {
@@ -254,17 +255,19 @@ export function resultHtmxWrapper(){
 
 }
 
-function getContent(path){
-    if (WS !== undefined){
-        WS.send(JSON.stringify({"ServerAction":path}))
-    } else{
-        httpPostUrl('DashProvider', path, '', (result)=>{
+export function getContent(path, name='DashProvider', parms=''){
+    try{
+        if (WS !== undefined){
+            WS.send(JSON.stringify({"ServerAction":path}))
+        }
+    }catch (e){
+        httpPostUrl(name, path, parms, (result)=>{
             result.log()
         }, (result)=>{
             rendererPipeline(result.get()).then(r => {
                 console.log("[Don redering]")
             })
-        })
+        }, true)
     }
 
 }

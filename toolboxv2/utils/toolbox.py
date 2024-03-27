@@ -327,7 +327,6 @@ class App(AppType, metaclass=Singleton):
             app_instance_type = "functions/class"
         else:
             instance.spec = spec
-
         # if private:
         #     self.functions[modular_id][f"{spec}_private"] = private
 
@@ -346,7 +345,6 @@ class App(AppType, metaclass=Singleton):
                 raise ImportError(f"Module already known {modular_id}")
 
             on_start = self.functions[modular_id].get("on_start")
-
             if on_start is not None:
                 i = 1
                 for f in on_start:
@@ -523,6 +521,7 @@ class App(AppType, metaclass=Singleton):
 
         try:
             if mlm in action_list:
+
                 return action_list.get(mlm)()
             else:
                 self.logger.critical(
@@ -764,6 +763,7 @@ class App(AppType, metaclass=Singleton):
         parameters = function_data.get('params')
         modular_name = function_data.get('module_name')
         function_name = function_data.get('func_name')
+        row = function_data.get('row')
         mod_function_name = f"{modular_name}.{function_name}"
 
         if_self_state = 1 if 'self' in parameters else 0
@@ -786,6 +786,8 @@ class App(AppType, metaclass=Singleton):
                 formatted_result = res
                 if formatted_result.origin is None:
                     formatted_result.as_result().set_origin(mod_function_name).to_api_result()
+            elif row:
+                formatted_result = res
             else:
                 # Wrap the result in a Result object
                 formatted_result = Result.ok(
@@ -794,8 +796,12 @@ class App(AppType, metaclass=Singleton):
                     data=res,
                     info="Function executed successfully"
                 ).set_origin(mod_function_name)
-            self.logger.info(
-                f"Function Exec coed: {formatted_result.info.exec_code} Info's: {formatted_result.info.help_text}")
+            if not row:
+                self.logger.info(
+                    f"Function Exec coed: {formatted_result.info.exec_code} Info's: {formatted_result.info.help_text}")
+            else:
+                self.logger.info(
+                    f"Function Exec data: {formatted_result}")
         except Exception as e:
             self.logger.error(
                 Style.YELLOW(Style.Bold(
@@ -909,6 +915,7 @@ class App(AppType, metaclass=Singleton):
                           memory_cache=False,
                           file_cache=False,
                           request_as_kwarg=False,
+                          row=False,
                           memory_cache_max_size=100,
                           memory_cache_ttl=300):
 
@@ -937,6 +944,8 @@ class App(AppType, metaclass=Singleton):
                 result = func(*args, **kwargs)
                 if post_compute is not None:
                     result = post_compute(result)
+                if row:
+                    return result
                 if not isinstance(result, Result):
                     result = Result.ok(data=result)
                 if result.origin is None:
@@ -1005,6 +1014,7 @@ class App(AppType, metaclass=Singleton):
                 "__module__": func.__module__,
                 "signature": sig,
                 "params": params,
+                "row": row,
                 "state": (
                     False if len(params) == 0 else params[0] in ['self', 'state', 'app']) if state is None else state,
                 "do_test": test,
@@ -1041,6 +1051,7 @@ class App(AppType, metaclass=Singleton):
            memory_cache: bool = False,
            file_cache: bool = False,
            request_as_kwarg: bool = False,
+           row: bool = False,
            state: bool or None = None,
            level: int = -1,
            memory_cache_max_size: int = 100,
@@ -1069,6 +1080,7 @@ class App(AppType, metaclass=Singleton):
         memory_cache (bool, optional): Flag to enable memory caching for the function.
         request_as_kwarg (bool, optional): Flag to get request if the fuction is calld from api.
         file_cache (bool, optional): Flag to enable file caching for the function.
+        row (bool, optional): rather to auto wrap the result in Result type default False means no row data aka result type
         state (bool or None, optional): Flag to indicate if the function maintains state.
         level (int, optional): The level of the function, used for prioritization or categorization.
         memory_cache_max_size (int, optional): Maximum size of the memory cache.
@@ -1103,6 +1115,7 @@ class App(AppType, metaclass=Singleton):
                                       memory_cache=memory_cache,
                                       file_cache=file_cache,
                                       request_as_kwarg=request_as_kwarg,
+                                      row=row,
                                       memory_cache_max_size=memory_cache_max_size,
                                       memory_cache_ttl=memory_cache_ttl)
 
