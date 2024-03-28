@@ -309,6 +309,12 @@ class EventManagerClass:
                      )
 
     def add_client_route(self, source_id, addr):
+        if source_id in self.routes_client:
+            if self.routes_client[source_id].client is None or not self.routes_client[source_id].client.get('alive'):
+                self.routes_client[source_id].reconnect()
+                return True
+            print("Already connected")
+            return False
         try:
             pr = ProxyRout.toProxy(rout=self.crate_rout(source_id, addr=addr), name=source_id)
             time.sleep(0.25)

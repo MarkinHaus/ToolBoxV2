@@ -154,6 +154,10 @@ class CLOUDM(Enum):
     REGISTER_INITIAL_ROOT_USER: str = 'register_initial_root_user'  # Input: (['app']), Output: <class 'inspect._empty'>
     CLEAR_DB: str = 'clear_db'  # Input: (['self', 'do_root']), Output: <class 'inspect._empty'>
     SHOW_VERSION: str = 'show_version'  # Input: (['self']), Output: <class 'inspect._empty'>
+    LIST_MODULES: str = 'list_modules'  # Input: (['app']), Output: <class 'inspect._empty'>
+    MAKE_INSTALL: str = 'make_install'  # Input: (['app', 'module_name']), Output: <class 'inspect._empty'>
+    UNINSTALL: str = 'uninstall'  # Input: (['app', 'module_name']), Output: <class 'inspect._empty'>
+    INSTALL: str = 'install'  # Input: (['app', 'module_name', 'version']), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
     MODINSTALLER: str = 'mod-installer'  # Input: (['name']), Output: <class 'inspect._empty'>
@@ -240,7 +244,10 @@ class DASHPROVIDER(Enum):
 @dataclass
 class CICD(Enum):
     NAME = 'cicd'
-    WEB_UPDATE: str = 'web_update'  # Input: (['app', 't']), Output: <class 'inspect._empty'>
+    WEB_GET: str = 'web_get'  # Input: (['app']), Output: <class 'inspect._empty'>
+    MODS_GET: str = 'mods_get'  # Input: (['app']), Output: <class 'inspect._empty'>
+    SEND_WEB: str = 'send_web'  # Input: (['app']), Output: <class 'inspect._empty'>
+    SEND_MOD: str = 'send_mod'  # Input: (['app', 'mod_name']), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
 

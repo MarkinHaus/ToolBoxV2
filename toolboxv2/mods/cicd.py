@@ -4,6 +4,7 @@ import time
 
 from toolboxv2 import get_app, App, Result, tbef, Spinner
 from toolboxv2.mods.EventManager.module import EventManagerClass, SourceTypes, Scope, EventID
+from toolboxv2.utils.extras.blobs import BlobFile
 from toolboxv2.utils.system.types import ToolBoxInterfaces
 from fastapi import Request
 import os
@@ -54,6 +55,7 @@ def update_core(flags):
 def install_dependencies(web_row_path):
     # Prüfen Sie, ob das Befehlsprogramm vorhanden ist
     os.chdir(web_row_path)
+
     def command_exists(cmd):
         return shutil.which(cmd) is not None
 
@@ -88,6 +90,21 @@ def downloaded(payload: EventID):
     return "Done installing"
 
 
+def downloaded_mod(payload: EventID):
+    app = get_app("Event saving new web data")
+    print("downloaded", payload)
+    # if isinstance(payload.payload, str):
+    print("payload.payload", payload.payload)
+    #    payload.payload = json.loads(payload.payload)
+    if 'DESKTOP-CI57V1L' not in payload.get_path()[-1]:
+        return "Invalid payload"
+
+    with BlobFile(f"/root-mods/mods/{payload.payload['name']}/{str(payload)}/{payload.payload['filename']}") as file:
+        file.write(payload.payload['module'])
+    print("Don installing modules")
+    return "Done installing"
+
+
 def copy_files(src_dir, dest_dir, exclude_dirs):
     for root, dirs, files in os.walk(src_dir):
         # Exclude specified directories
@@ -101,30 +118,83 @@ def copy_files(src_dir, dest_dir, exclude_dirs):
 
 
 @export(mod_name=Name)
-def web_update(app, t):
+def web_get(app, ):
     if app is None:
         app = get_app(f"{Name}.web_update")
-    if 's' in t:
         # register download event
-        ev: EventManagerClass = app.run_any(tbef.EVENTMANAGER.NAME)
+    ev: EventManagerClass = app.run_any(tbef.EVENTMANAGER.NAME)
+    if ev.identification != "P0|S0":
         ev.identification = "P0|S0"
-        dw_event = ev.make_event_from_fuction(downloaded, "receive-web-data-s0",
-                                              source_types=SourceTypes.P,
-                                              scope=Scope.global_network,
-                                              threaded=True)
-        ev.register_event(dw_event)
-    else:
-        ev: EventManagerClass = app.run_any(tbef.EVENTMANAGER.NAME)
-        ev.identification = "PN"
-        ev.connect_to_remote()  # add_client_route("P0", ('139.162.136.35', 6568))
-        # source = input("Surece: ")
-        # e_id = input("evid")
-        res = ev.trigger_event(EventID.crate("app.main-localhost:S0", "receive-web-data-s0",
-                                             payload={'keyOneTime': 'event',
-                                                      'port': 6560}))
-        print(res)
-        src_dir = "./web"
-        dest_dir = "./web_row"
-        exclude_dirs = [".idea", "node_modules", "src-tauri"]
-        copy_files(src_dir, dest_dir, exclude_dirs)
-        app.run_any(tbef.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath='./web_row', host='139.162.136.35', port=6560)
+    dw_event = ev.make_event_from_fuction(downloaded,
+                                          "receive-web-data-port-s0",
+                                          source_types=SourceTypes.P,
+                                          scope=Scope.global_network,
+                                          threaded=True)
+    ev.register_event(dw_event)
+
+
+@export(mod_name=Name)
+def mods_get(app, ):
+    if app is None:
+        app = get_app(f"{Name}.web_update")
+        # register download event
+    ev: EventManagerClass = app.run_any(tbef.EVENTMANAGER.NAME)
+    if ev.identification != "P0|S0":
+        ev.identification = "P0|S0"
+    mods_event = ev.make_event_from_fuction(downloaded_mod,
+                                            "receive-mod-module-filename-name-s0",
+                                            source_types=SourceTypes.P,
+                                            scope=Scope.global_network,
+                                            threaded=True)
+    ev.register_event(mods_event)
+
+
+@export(mod_name=Name)
+def send_web(app):
+    if app is None:
+        app = get_app(f"{Name}.web_update")
+
+    ev: EventManagerClass = app.run_any(tbef.EVENTMANAGER.NAME)
+    if ev.identification not in "PN":
+        ev.identification = "PN-" + ev.identification
+    ev.connect_to_remote()  # add_client_route("P0", ('139.162.136.35', 6568))
+    # source = input("Surece: ")
+    # e_id = input("evid")
+    res = ev.trigger_event(EventID.crate("app.main-localhost:S0", "receive-web-data-s0",
+                                         payload={'keyOneTime': 'event',
+                                                  'port': 6560}))
+    print(res)
+    src_dir = "./web"
+    dest_dir = "./web_row"
+    exclude_dirs = [".idea", "node_modules", "src-tauri"]
+    copy_files(src_dir, dest_dir, exclude_dirs)
+    app.run_any(tbef.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath='./web_row', host='139.162.136.35', port=6560)
+
+
+@export(mod_name=Name)
+def send_mod(app, mod_name):
+    if app is None:
+        app = get_app(f"{Name}.web_update")
+    if mod_name not in app.get_all_mods():
+        return "Unknown mod " + mod_name
+
+    ev: EventManagerClass = app.run_any(tbef.EVENTMANAGER.NAME)
+    if ev.identification not in "PN":
+        ev.identification = "PN-" + ev.identification
+    ev.connect_to_remote()
+
+    zip_file = app.run_any(tbef.CLOUDM.MAKE_INSTALL, module_name=mod_name)
+
+    with open(zip_file, 'rb') as zip_file_:
+        data = zip_file_.read()
+
+    res = ev.trigger_event(EventID.crate("app.main-localhost:S0", "receive-mod-module-filename-name-s0",
+                                         payload={'module': data,
+                                                  'filename': zip_file,
+                                                  'name': mod_name}))
+    print(res)
+    src_dir = "./web"
+    dest_dir = "./web_row"
+    exclude_dirs = [".idea", "node_modules", "src-tauri"]
+    copy_files(src_dir, dest_dir, exclude_dirs)
+    app.run_any(tbef.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath='./web_row', host='139.162.136.35', port=6560)
