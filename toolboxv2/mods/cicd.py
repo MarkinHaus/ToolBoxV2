@@ -170,7 +170,7 @@ def send_web(app):
 
 
 @export(mod_name=Name)
-def send_moda(app):
+def send_mod_build(app):
     if app is None:
         app = get_app(f"{Name}.web_update")
 
@@ -178,6 +178,11 @@ def send_moda(app):
         for mod_name in app.get_all_mods():
             app.run_any(tbef.CLOUDM.MAKE_INSTALL, module_name=mod_name)
 
+
+@export(mod_name=Name)
+def send_mod_start_sver_event(app):
+    if app is None:
+        app = get_app(f"{Name}.web_update")
     ev: EventManagerClass = app.run_any(tbef.EVENTMANAGER.NAME)
     if ev.identification != "PN":
         ev.identification = "PN"
@@ -186,6 +191,12 @@ def send_moda(app):
     res = ev.trigger_event(EventID.crate("app.main-localhost:S0", "receive-mod-module-filename-name-s0",
                                          payload={'filename': "./mods_sto", 'port': 6561}))
 
-    print(res)
-    app.run_any(tbef.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath="./mods_sto", host='139.162.136.35', port=6561)
+    return res
+
+
+@export(mod_name=Name)
+def send_mod_uploade_data(app):
+    if app is None:
+        app = get_app(f"{Name}.web_update")
+    res = app.run_any(tbef.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath="./mods_sto", host='139.162.136.35', port=6561)
     return res
