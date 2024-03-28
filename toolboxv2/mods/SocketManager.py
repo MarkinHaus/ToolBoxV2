@@ -770,11 +770,11 @@ class Tools(MainTool, FileHandler):
                 # Daten dekomprimieren
                 if len(file_data) > 0:
                     print(f"{len(file_data) / file_size * 100:.2f}%")
-                if len(file_data) < file_size:
-                    continue
 
                 if len(file_data) > file_size:
                     file_data = file_data[:file_size]
+                else:
+                    continue
 
                 decompressed_data = gzip.decompress(file_data)
                 # Datei speichern
@@ -787,6 +787,7 @@ class Tools(MainTool, FileHandler):
                 self.print(f"Datei erfolgreich empfangen und gespeichert in {save_path}")
                 break
             elif 'exit' in data:
+                print(f"{len(file_data) / file_size * 100:.2f}%")
                 break
             else:
                 self.print(f"Unexpected data : {data}")
