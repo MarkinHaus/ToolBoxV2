@@ -11,9 +11,13 @@ def show_console(show=True):
             # Show console
             ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 4)
             TBRUNNER_console_viabel = True
+            return True
         elif not show and TBRUNNER_console_viabel:
             # Hide console
             ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
             TBRUNNER_console_viabel = False
+            return True
     except:
         print(f"Could not show_console {show=}", )
+        return False
+    return False

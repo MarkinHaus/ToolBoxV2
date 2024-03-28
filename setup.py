@@ -8,10 +8,10 @@ from setuptools import setup, find_packages
 
 with open('README.md') as readme_file:
     readme = readme_file.read()
-
-with open(getenv('CONFIG_FILE', './toolboxv2/toolbox.yaml'), 'r') as config_file:
-    _version = config_file.read().split('version')[-1].split('\n')[0].split(':')[-1].strip()
-    version = _version  # _version.get('main', {}).get('version', '-.-.-')
+#
+#with open(getenv('CONFIG_FILE', '/toolboxv2/toolbox.yaml'), 'r') as config_file:
+#    _version = config_file.read().split('version')[-1].split('\n')[0].split(':')[-1].strip()
+version = "0.1.12" #_version  # _version.get('main', {}).get('version', '-.-.-')
 
 here = path.abspath(path.dirname(__file__))
 
@@ -47,10 +47,7 @@ setup(
     entry_points={
         'console_scripts': [
             'toolboxv2=toolboxv2.cli:main',
-        ],
-        'App': [
-            'App=toolboxv2.utils.toolbox:App',
-        ],
+        ]
     },
     install_requires=install_requires,
     dependency_links=dependency_links,
@@ -66,8 +63,9 @@ setup(
                                     'toolboxv2.utils.*',
                                     'toolboxv2.utils.system*',
                                     'toolboxv2.utils.extras*',
+                                    '"toolboxv2/toolbox.yaml"',
                                     'toolboxv2.*']),
-    package_data={"toolboxv2": ["toolboxv2/init.config", "toolboxv2/toolbox.yaml"]},
+    package_data={"toolboxv2": ["toolboxv2/toolbox.yaml"]},
     setup_requires=setup_requirements,
     test_suite='tests',
     tests_require=test_requirements,

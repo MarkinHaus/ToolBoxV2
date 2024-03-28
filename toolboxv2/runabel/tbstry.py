@@ -2,11 +2,9 @@ import os
 import threading
 import time
 
-import pystray
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from toolboxv2 import App, show_console, get_app, Spinner
-from toolboxv2.utils.extras.show_and_hide_console import TBRUNNER_console_viabel
 
 path_to_installer = r"C:\Users\Markin\Workspace\tb_ui_installer\dist\UiInstallerTB\UiInstallerTB.exe"
 
@@ -62,6 +60,7 @@ def showI(icon, item):
 
 
 def get_initial_icon(app: App):
+    import pystray
     icon = pystray.Icon(name="RE-Simple-ToolBoxV2",
                         title=f"ToolBox {app.version}",
                         icon=create_image(),

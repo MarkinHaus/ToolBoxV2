@@ -26,15 +26,14 @@ def override_main_app(app):
 def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None) -> AppType:
     global registered_apps
 
-    # print(f"get app requested from: {from_}")
+    logger = get_logger()
+    logger.info(Style.GREYBG(f"get app requested from: {from_}"))
     if registered_apps[0] is not None:
         return registered_apps[0]
 
     if app_con is None:
         from ... import App
         app_con = App
-    logger = get_logger()
-    logger.info(Style.GREYBG(f"get app requested from: {from_}"))
     if name:
         app = app_con(name, args=args)
     else:

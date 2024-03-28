@@ -1,0 +1,10 @@
+<div>
+    <h2>Danger Zone</h2>
+    <button hx-post="$root/stop" hx-confirm="Sind Sie sicher, dass Sie das System stoppen möchten?" hx-target="#System-$WidgetID" hx-trigger="click">System stoppen</button>
+    <span id="System-$WidgetID"></span>
+    <button hx-post="$root/reset" hx-confirm="Sind Sie sicher, dass Sie Ihren Account zurücksetzen möchten?" hx-target="#Account-$WidgetID" hx-trigger="click">Account Entfernen</button>
+    <span id="Account-$WidgetID"></span>
+    <button hx-get="$root/link" hx-target="#Magischen-$WidgetID" hx-trigger="click">Magischen Link anfordern</button>
+    <span id="Magischen-$WidgetID"></span>
+    $rootSys
+</div>
