@@ -9,7 +9,7 @@ from fastapi import Request
 Name = 'cicd'
 export = get_app("cicd.Export").tb
 default_export = export(mod_name=Name)
-version = '0.0.1'
+version = '0.0.2'
 spec = ''
 
 """
@@ -50,9 +50,9 @@ def update_core(flags):
 
 def downloaded(payload):
     app = get_app("Event saving new web data")
-    print(payload)
-    app.run_any(tbef.SOCKETMANAGER.RECEIVE_AND_DECOMPRESS_FILE_AS_SERVER, save_path="./web", listening_port=payload)
-    return "listening on Port " + payload
+    print("downloaded", payload)
+    app.run_any(tbef.SOCKETMANAGER.RECEIVE_AND_DECOMPRESS_FILE_AS_SERVER, save_path="./web", listening_port=payload.payload)
+    return "listening on Port " + payload.payload
 
 
 @export(mod_name=Name)
@@ -72,8 +72,8 @@ def web_update(app, t):
         ev: EventManagerClass = app.run_any(tbef.EVENTMANAGER.NAME)
         ev.identification = "PN"
         ev.connect_to_remote()  # add_client_route("P0", ('139.162.136.35', 6568))
-        source = input("Surece")
-        e_id = input("Surece")
-        res = ev.trigger_event(EventID.crate(source+":S0", "receive-web-data-s0"))
+        source = input("Surece: ")
+        e_id = input("evid")
+        res = ev.trigger_event(EventID.crate(source+"app.main-localhost:S0", "receive-web-data-s0", payload=6560))
         print(res)
-        app.run_any(tbef.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath='./web', host='139.162.136.35', port=6568)
+        app.run_any(tbef.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath='./web', host='139.162.136.35', port=6560)
