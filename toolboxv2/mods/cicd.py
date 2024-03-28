@@ -74,9 +74,10 @@ def downloaded(payload):
     app = get_app("Event saving new web data")
     print("downloaded", payload)
     if isinstance(payload.payload, str):
-        payload.payload = json.loads(payload.payload)
-    if payload.payload.get("keyOneTime") != "event":
-        return "Invalid payload"
+        print("payload.payload", payload.payload)
+    #    payload.payload = json.loads(payload.payload)
+    #if payload.payload.get("keyOneTime") != "event":
+    #    return "Invalid payload"
     app.run_any(tbef.SOCKETMANAGER.RECEIVE_AND_DECOMPRESS_FILE_AS_SERVER, save_path="./web",
                 listening_port=payload.payload['port'])
     print("Don installing modules")
@@ -117,8 +118,8 @@ def web_update(app, t):
         # source = input("Surece: ")
         # e_id = input("evid")
         res = ev.trigger_event(EventID.crate("app.main-localhost:S0", "receive-web-data-s0",
-                                             payload=json.dumps({'keyOneTime': 'event',
-                                                      'port': 6560})))
+                                             payload={'keyOneTime': 'event',
+                                                      'port': 6560}))
         print(res)
         src_dir = "./web"
         dest_dir = "./web_row"
