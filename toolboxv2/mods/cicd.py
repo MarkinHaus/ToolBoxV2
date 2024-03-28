@@ -53,21 +53,23 @@ def update_core(flags):
 
 def install_dependencies(web_row_path):
     # Prüfen Sie, ob das Befehlsprogramm vorhanden ist
+    os.chdir(web_row_path)
     def command_exists(cmd):
         return shutil.which(cmd) is not None
 
     # Installieren von Bun, falls nicht vorhanden
     if not command_exists("bun"):
-        os.system(f"{web_row_path} npm install -g bun")
+        os.system("npm install -g bun")
 
-    # Installation von fehlenden Modulen
-    os.system(f"{web_row_path} bun install")
+        # Installation von fehlenden Modulen
+    os.system("bun install")
 
     # Aktualisieren von Bun
-    os.system(f"{web_row_path} bun update")
+    os.system("bun update")
 
     # Installation oder Aktualisierung von Abhängigkeiten aus package.json
-    os.system(f"{web_row_path} bun install")
+    os.system("bun install")
+    os.chdir("..")
 
 
 def downloaded(payload: EventID):
