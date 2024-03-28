@@ -52,6 +52,7 @@ class EventID:
     path: str
     ID: str
     payload: Any
+    rpayload: Any
 
     def __str__(self):
         return f"ID:{self.ID:-^20} [{self.source:}] - ({self.path:})"
@@ -61,17 +62,18 @@ class EventID:
         self.path = path
         self.ID = ID
         self.payload = payload
+        self.rpayload = None
 
     def set_payload(self, payload):
         if not isinstance(payload, str):
             try:
                 payload = str(payload)
-                self.payload = payload
+                self.payloadr = payload
             except ValueError:
                 # raise ValueError("Payload must be a string or converted")
-                self.payload = 'ValueError("Payload must be a string or converted")'
+                self.payloadr = 'ValueError("Payload must be a string or converted")'
         else:
-            self.payload = payload
+            self.rpayload = payload
 
     @classmethod
     def crate_empty(cls):
