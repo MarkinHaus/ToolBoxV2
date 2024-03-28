@@ -170,6 +170,15 @@ def send_web(app):
 
 
 @export(mod_name=Name)
+def send_mod_all_in_one(app):
+    if app is None:
+        app = get_app(f"{Name}.web_update")
+    send_mod_build(app)
+    print(send_mod_start_sver_event(app))
+    return send_mod_uploade_data(app)
+
+
+@export(mod_name=Name)
 def send_mod_build(app):
     if app is None:
         app = get_app(f"{Name}.web_update")
