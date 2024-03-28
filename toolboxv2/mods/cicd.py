@@ -12,7 +12,7 @@ import shutil
 Name = 'cicd'
 export = get_app("cicd.Export").tb
 default_export = export(mod_name=Name)
-version = '0.0.2'
+version = '0.0.3'
 spec = ''
 
 """
@@ -70,20 +70,20 @@ def install_dependencies(web_row_path):
     os.system(f"{web_row_path} bun install")
 
 
-def downloaded(payload):
+def downloaded(payload: EventID):
     app = get_app("Event saving new web data")
     print("downloaded", payload)
-    if isinstance(payload.payload, str):
-        print("payload.payload", payload.payload)
+    # if isinstance(payload.payload, str):
+    print("payload.payload", payload.payload)
     #    payload.payload = json.loads(payload.payload)
-    #if payload.payload.get("keyOneTime") != "event":
-    #    return "Invalid payload"
+    if 'DESKTOP-CI57V1L' not in payload.get_path()[-1]:
+        return "Invalid payload"
     app.run_any(tbef.SOCKETMANAGER.RECEIVE_AND_DECOMPRESS_FILE_AS_SERVER, save_path="./web",
                 listening_port=payload.payload['port'])
     print("Don installing modules")
     with Spinner("installing web dependencies"):
         install_dependencies("./web")
-    return "listening on Port " + payload.payload['port']
+    return "Done installing"
 
 
 def copy_files(src_dir, dest_dir, exclude_dirs):
