@@ -725,7 +725,7 @@ class Tools(MainTool, FileHandler):
             send({'data_size': len(compressed_data)})
             # Komprimierte Daten senden
             time.sleep(2)
-            send(compressed_data)
+            send(compressed_data+b'EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
             self.logger.info(f"Datei {filepath} erfolgreich gesendet.")
             self.print(f"Datei {filepath} erfolgreich gesendet.")
             send({'exit': True})
