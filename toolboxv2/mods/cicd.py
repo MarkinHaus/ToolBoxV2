@@ -51,7 +51,6 @@ def update_core(flags):
 
 
 def install_dependencies(web_row_path):
-
     # Prüfen Sie, ob das Befehlsprogramm vorhanden ist
     def command_exists(cmd):
         return shutil.which(cmd) is not None
@@ -73,12 +72,14 @@ def install_dependencies(web_row_path):
 def downloaded(payload):
     app = get_app("Event saving new web data")
     print("downloaded", payload)
+    if payload.payload.get("keyOneTime") != "event":
+        return "Invalid payload"
     app.run_any(tbef.SOCKETMANAGER.RECEIVE_AND_DECOMPRESS_FILE_AS_SERVER, save_path="./web",
-                listening_port=payload.payload)
+                listening_port=payload.payload['port'])
     print("Don installing modules")
     with Spinner("installing web dependencies"):
         install_dependencies("./web")
-    return "listening on Port " + payload.payload
+    return "listening on Port " + payload.payload['port']
 
 
 def copy_files(src_dir, dest_dir, exclude_dirs):
@@ -112,8 +113,10 @@ def web_update(app, t):
         ev.connect_to_remote()  # add_client_route("P0", ('139.162.136.35', 6568))
         # source = input("Surece: ")
         # e_id = input("evid")
-        # res = ev.trigger_event(EventID.crate("app.main-localhost:S0", "receive-web-data-s0", payload=6560))
-        # print(res)
+        res = ev.trigger_event(EventID.crate("app.main-localhost:S0", "receive-web-data-s0",
+                                             payload={'keyOneTime': 'event',
+                                                      'port': 6560}))
+        print(res)
         src_dir = "./web"
         dest_dir = "./web_row"
         exclude_dirs = [".idea", "node_modules", "src-tauri"]
