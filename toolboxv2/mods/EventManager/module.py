@@ -86,8 +86,8 @@ class EventID:
         return cls(source=source, path="E", ID=str(uuid.uuid4()))
 
     @classmethod
-    def crate(cls, source: str, ID, path="E"):
-        return cls(source=source, path=path, ID=ID)
+    def crate(cls, source: str, ID, path="E", payload=None):
+        return cls(source=source, path=path, ID=ID, payload=payload)
 
     def add_source(self, source):
         self.source += ':' + source
@@ -247,6 +247,8 @@ class EventManagerClass:
         if addr is None:
             addr = ('0.0.0.0', 6588)
         host, port = addr
+        if isinstance(port, str):
+            port = int(port)
         return Rout(
             _from=self.source_id,
             _to=source,

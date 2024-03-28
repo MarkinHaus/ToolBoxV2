@@ -1,10 +1,12 @@
 import threading
 import time
 
-from toolboxv2 import get_app, App, Result, tbef
+from toolboxv2 import get_app, App, Result, tbef, Spinner
 from toolboxv2.mods.EventManager.module import EventManagerClass, SourceTypes, Scope, EventID
 from toolboxv2.utils.system.types import ToolBoxInterfaces
 from fastapi import Request
+import os
+import shutil
 
 Name = 'cicd'
 export = get_app("cicd.Export").tb
@@ -48,11 +50,47 @@ def update_core(flags):
     """
 
 
+def install_dependencies(web_row_path):
+
+    # Prüfen Sie, ob das Befehlsprogramm vorhanden ist
+    def command_exists(cmd):
+        return shutil.which(cmd) is not None
+
+    # Installieren von Bun, falls nicht vorhanden
+    if not command_exists("bun"):
+        os.system(f"{web_row_path} npm install -g bun")
+
+    # Installation von fehlenden Modulen
+    os.system(f"{web_row_path} bun install")
+
+    # Aktualisieren von Bun
+    os.system(f"{web_row_path} bun update")
+
+    # Installation oder Aktualisierung von Abhängigkeiten aus package.json
+    os.system(f"{web_row_path} bun install")
+
+
 def downloaded(payload):
     app = get_app("Event saving new web data")
     print("downloaded", payload)
-    app.run_any(tbef.SOCKETMANAGER.RECEIVE_AND_DECOMPRESS_FILE_AS_SERVER, save_path="./web", listening_port=payload.payload)
+    app.run_any(tbef.SOCKETMANAGER.RECEIVE_AND_DECOMPRESS_FILE_AS_SERVER, save_path="./web",
+                listening_port=payload.payload)
+    print("Don installing modules")
+    with Spinner("installing web dependencies"):
+        install_dependencies("./web")
     return "listening on Port " + payload.payload
+
+
+def copy_files(src_dir, dest_dir, exclude_dirs):
+    for root, dirs, files in os.walk(src_dir):
+        # Exclude specified directories
+        dirs[:] = [d for d in dirs if d not in exclude_dirs]
+
+        for file in files:
+            src_file_path = os.path.join(root, file)
+            dest_file_path = os.path.join(dest_dir, os.path.relpath(src_file_path, src_dir))
+            os.makedirs(os.path.dirname(dest_file_path), exist_ok=True)
+            shutil.copy2(src_file_path, dest_file_path)
 
 
 @export(mod_name=Name)
@@ -72,8 +110,12 @@ def web_update(app, t):
         ev: EventManagerClass = app.run_any(tbef.EVENTMANAGER.NAME)
         ev.identification = "PN"
         ev.connect_to_remote()  # add_client_route("P0", ('139.162.136.35', 6568))
-        source = input("Surece: ")
-        e_id = input("evid")
-        res = ev.trigger_event(EventID.crate(source+"app.main-localhost:S0", "receive-web-data-s0", payload=6560))
-        print(res)
-        app.run_any(tbef.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath='./web', host='139.162.136.35', port=6560)
+        # source = input("Surece: ")
+        # e_id = input("evid")
+        # res = ev.trigger_event(EventID.crate("app.main-localhost:S0", "receive-web-data-s0", payload=6560))
+        # print(res)
+        src_dir = "./web"
+        dest_dir = "./web_row"
+        exclude_dirs = [".idea", "node_modules", "src-tauri"]
+        copy_files(src_dir, dest_dir, exclude_dirs)
+        app.run_any(tbef.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath='./web_row', host='139.162.136.35', port=6560)

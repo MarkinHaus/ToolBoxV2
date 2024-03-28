@@ -41,7 +41,17 @@ def zip_folder_to_bytes(folder_path):
             for file in files:
                 file_path = os.path.join(root, file)
                 arcname = os.path.relpath(file_path, folder_path)
-                zipf.write(file_path, arcname)
+                # Get the modification time of the file
+                mtime = os.path.getmtime(file_path)
+                # If modification time is before 1980, set it to 1980
+                if mtime < 315532800:  # 315532800 seconds represent the beginning of 1980
+                    mtime = 315532800
+                    # Add the file to the ZIP archive with the modified modification time
+                # Set the modification time of the added file in the ZIP archive
+                try:
+                    zipf.write(file_path, arcname, compress_type=zipfile.ZIP_DEFLATED)
+                except ValueError:
+                    print(f"skipping arcname {arcname}")
     return bytes_buffer.getvalue()
 
 

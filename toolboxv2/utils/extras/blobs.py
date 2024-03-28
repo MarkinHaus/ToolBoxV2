@@ -149,7 +149,7 @@ class BlobStorage(metaclass=Singleton):
     def _load_blob(self, blob_id):
         blob_file = self._get_blob_filename(blob_id)
         if not os.path.exists(blob_file):
-            return self.create_blob(b"{}", blob_id)
+            return self.create_blob(pickle.dumps({}), blob_id)
         with open(blob_file, 'rb') as f:
             return pickle.load(f)
 
@@ -206,10 +206,13 @@ class BlobFile(io.IOBase):
         if 'w' in self.mode:
             data = self.data
             if self.key is not None:
-                data = Code.encrypt_symmetric(self.data, self.key)
+                data = Code.encrypt_symmetric(data, self.key)
             blob_data = pickle.loads(self.storage.read_blob(self.blob_id))
             if self.folder not in blob_data:
                 blob_data[self.folder] = {self.datei: data}
+            else:
+                blob_data[self.folder][self.datei] = data
+
             self.storage.update_blob(self.blob_id, pickle.dumps(blob_data))
 
     def write(self, data):
@@ -217,8 +220,8 @@ class BlobFile(io.IOBase):
             raise ValueError("File not opened in write mode.")
         self.data += data
 
-    def add_save_on_disk(self, storage_id, one_time_token):
-        self.storage.save(self.filename, storage_id, one_time_token)
+    # def add_save_on_disk(self, storage_id, one_time_token):
+    #     self.storage.save(self.filename, storage_id, one_time_token)
 
     def clear(self):
         self.data = b""
