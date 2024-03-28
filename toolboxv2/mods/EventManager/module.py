@@ -296,7 +296,7 @@ class EventManagerClass:
     def make_event_from_fuction(self, fuction, name, *args, source_types=SourceTypes.F,
                                 scope=Scope.local,
                                 exec_in=ExecIn.local,
-                                threaded=False,  **kwargs):
+                                threaded=False, **kwargs):
 
         return Event(source=fuction,
                      name=name,
@@ -620,10 +620,8 @@ class EventManagerClass:
 
     def stop(self):
         self.running = False
-        for route_id, route in self.routes_client.items():
-            route.disconnect()
-        for route_id, route in self.routers_servers.items():
-            route.stop()
+        list(map(lambda x: x.disconnect(), self.routes_client.values()))
+        list(map(lambda x: x.stop(), self.routers_servers.values()))
 
     def reconnect(self, name):
         if name is None:
@@ -631,8 +629,7 @@ class EventManagerClass:
         elif name in self.routes_client:
             self.routes_client[name].reconnect()
             return
-        for route_id, route in self.routes_client.items():
-            route.reconnect()
+        list(map(lambda x: x.reconnect(), self.routes_client.values()))
 
     def verify(self, name):
         if name is None:
@@ -640,8 +637,8 @@ class EventManagerClass:
         elif name in self.routes_client:
             self.routes_client[name].verify()
             return
-        for route_id, route in self.routes_client.items():
-            route.verify()
+
+        list(map(lambda x: x.verify(), self.routes_client.values()))
 
 
 @export(name=Name, mod_name=Name, version=version)

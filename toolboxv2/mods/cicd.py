@@ -98,11 +98,9 @@ def downloaded_mod(payload: EventID):
     #    payload.payload = json.loads(payload.payload)
     if 'DESKTOP-CI57V1L' not in payload.get_path()[-1]:
         return "Invalid payload"
-
-    with BlobFile(f"/root-mods/mods/{payload.payload['name']}/{str(payload)}/{payload.payload['filename']}") as file:
-        file.write(payload.payload['module'])
-    print("Don installing modules")
-    return "Done installing"
+    app.run_any(tbef.SOCKETMANAGER.RECEIVE_AND_DECOMPRESS_FILE_AS_SERVER, save_path=payload.payload['filename'],
+                listening_port=payload.payload['port'])
+    return "Done uploading"
 
 
 def copy_files(src_dir, dest_dir, exclude_dirs):
@@ -118,7 +116,7 @@ def copy_files(src_dir, dest_dir, exclude_dirs):
 
 
 @export(mod_name=Name)
-def web_get(app, ):
+def web_get(app):
     if app is None:
         app = get_app(f"{Name}.web_update")
         # register download event
@@ -134,7 +132,7 @@ def web_get(app, ):
 
 
 @export(mod_name=Name)
-def mods_get(app, ):
+def mods_get(app):
     if app is None:
         app = get_app(f"{Name}.web_update")
         # register download event
@@ -179,8 +177,8 @@ def send_mod(app, mod_name):
         return "Unknown mod " + mod_name
 
     ev: EventManagerClass = app.run_any(tbef.EVENTMANAGER.NAME)
-    if ev.identification not in "PN":
-        ev.identification = "PN-" + ev.identification
+    if ev.identification != "PN":
+        ev.identification = "PN"
     ev.connect_to_remote()
 
     zip_file = app.run_any(tbef.CLOUDM.MAKE_INSTALL, module_name=mod_name)
@@ -189,12 +187,9 @@ def send_mod(app, mod_name):
         data = zip_file_.read()
 
     res = ev.trigger_event(EventID.crate("app.main-localhost:S0", "receive-mod-module-filename-name-s0",
-                                         payload={'module': data,
-                                                  'filename': zip_file,
-                                                  'name': mod_name}))
+                                         payload={'filename': zip_file,
+                                                  'name': mod_name, 'port': 6561}))
+
     print(res)
-    src_dir = "./web"
-    dest_dir = "./web_row"
-    exclude_dirs = [".idea", "node_modules", "src-tauri"]
-    copy_files(src_dir, dest_dir, exclude_dirs)
-    app.run_any(tbef.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath='./web_row', host='139.162.136.35', port=6560)
+    app.run_any(tbef.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath=zip_file, host='139.162.136.35', port=6561)
+    return res
