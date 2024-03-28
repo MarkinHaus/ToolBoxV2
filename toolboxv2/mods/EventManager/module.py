@@ -615,6 +615,7 @@ class EventManagerClass:
 
             if time.time() - t0 > 5:
                 self.receive_all_client_data()
+                t0 = time.time()
 
     def info(self):
         return {"source": self.source_id, "known_routs:": self.routers_servers, "_router": self.routes_client,

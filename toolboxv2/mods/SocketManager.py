@@ -722,8 +722,7 @@ class Tools(MainTool, FileHandler):
         # Komprimierte Daten senden
         try:
             # Größe der komprimierten Daten senden
-            print(len(compressed_data), compressed_data.__sizeof__(), len(compressed_data) == compressed_data.__sizeof__())
-            send({'data_size': compressed_data.__sizeof__()})
+            send({'data_size': len(compressed_data)})
             # Komprimierte Daten senden
             time.sleep(2)
             send(compressed_data+b'EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
