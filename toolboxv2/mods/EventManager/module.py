@@ -279,6 +279,8 @@ class EventManagerClass:
         self._name = self._identification + '-' + str(uuid.uuid4()).split('-')[1]
         if _identification == "P0":
             self.add_server_route(_identification, ('0.0.0.0', 6568))
+        if _identification == "P0|S0":
+            self.add_server_route(_identification, ('0.0.0.0', 6567))
         self.start()
         self.reconnect("ALL")
 
@@ -500,6 +502,14 @@ class EventManagerClass:
                 # self.routers[self.source_id] = DaemonRout(rout=self.crate_rout(self.source_id))
                 self.add_client_route("P0", ('127.0.0.1', 6568))
             return self.route_event_id(event_id)
+
+        if event.threaded:
+            threading.Thread(target=self.runner, args=(event, event_id), daemon=True).start()
+            return "Event running In Thread"
+        else:
+            return self.runner(event, event_id)
+
+    def runner(self, event, event_id):
 
         if event.source_types.name is SourceTypes.P.name:
             return event.source(*event.args, payload=event_id, **event.kwargs_)
