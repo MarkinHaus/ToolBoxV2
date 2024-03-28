@@ -170,26 +170,22 @@ def send_web(app):
 
 
 @export(mod_name=Name)
-def send_mod(app, mod_name):
+def send_moda(app):
     if app is None:
         app = get_app(f"{Name}.web_update")
-    if mod_name not in app.get_all_mods():
-        return "Unknown mod " + mod_name
+
+    with Spinner("Preparing Mods"):
+        for mod_name in app.get_all_mods():
+            app.run_any(tbef.CLOUDM.MAKE_INSTALL, module_name=mod_name)
 
     ev: EventManagerClass = app.run_any(tbef.EVENTMANAGER.NAME)
     if ev.identification != "PN":
         ev.identification = "PN"
     ev.connect_to_remote()
 
-    zip_file = app.run_any(tbef.CLOUDM.MAKE_INSTALL, module_name=mod_name)
-
-    with open(zip_file, 'rb') as zip_file_:
-        data = zip_file_.read()
-
     res = ev.trigger_event(EventID.crate("app.main-localhost:S0", "receive-mod-module-filename-name-s0",
-                                         payload={'filename': zip_file,
-                                                  'name': mod_name, 'port': 6561}))
+                                         payload={'filename': "./mods_sto", 'port': 6561}))
 
     print(res)
-    app.run_any(tbef.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath=zip_file, host='139.162.136.35', port=6561)
+    app.run_any(tbef.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath="./mods_sto", host='139.162.136.35', port=6561)
     return res
