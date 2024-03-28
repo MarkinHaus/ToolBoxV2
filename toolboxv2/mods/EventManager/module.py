@@ -57,12 +57,12 @@ class EventID:
     def __str__(self):
         return f"ID:{self.ID:-^20} [{self.source:}] - ({self.path:})"
 
-    def __init__(self, source, path, ID, payload=None):
+    def __init__(self, source, path, ID, payload=None, rpayload=None):
         self.source = source
         self.path = path
         self.ID = ID
         self.payload = payload
-        self.rpayload = None
+        self.rpayload = rpayload
 
     def set_payload(self, payload):
         if not isinstance(payload, str):
