@@ -147,6 +147,23 @@ def mods_get(app):
     ev.register_event(mods_event)
 
 
+@export(mod_name=Name, state=False)
+def build_edv_blob():
+
+    src_dir = r"C:\Users\Markin\Workspace\ToolBoxV2"
+    dest_dir = r"C:\Users\Markin\Workspace\ReSimpleToolBox"
+    exclude_dirs = [".config", ".data", ".git", ".github", ".idea", ".info", ".pytest_cache",
+                    "build", "dist", "logs", "ToolBoxV2.egg-info", ".editorconfig",
+                    ".env", ".gitignore", "auto_uploade_pypi_twine.bat", "Pipfile.lock", "Pipfile",
+                    "toolboxv2\\.config", "toolboxv2\\.data", "toolboxv2\\.info",
+                    "toolboxv2\\__pycache__", "toolboxv2\\api\\__pycache__", "toolboxv2\\.data", "toolboxv2\\.info",
+                    "toolboxv2\\installer\\dist\\UiInstallerTB", "toolboxv2\\mods\\__pycache__", "toolboxv2\\mods_dev",
+                    "toolboxv2\\mods_sto", "toolboxv2\\runabel\\__pycache__", "toolboxv2\\tests\\__pycache__",
+                    "toolboxv2\\utils\\__pycache__", "toolboxv2\\web", "toolboxv2\\web_row", "toolboxv2\\litellm_uuid.txt",
+                    "toolboxv2\\token.pickle", "toolboxv2\\token-0.pickle", "toolboxv2\\token-1.pickle", "toolboxv2\\token-main.pickle",
+                    "node_modules", "src-tauri"]
+    copy_files(src_dir, dest_dir, exclude_dirs)
+
 @export(mod_name=Name)
 def send_web(app):
     if app is None:

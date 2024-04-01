@@ -88,15 +88,12 @@ async def create_upload_file(file: UploadFile):
 def download_file(path: str):
     file_name = path
     TB_DIR = get_app().start_dir
-    print(TB_DIR)
     if platform.system() == "Darwin" or platform.system() == "Linux":
         directory = file_name.split("/")
     else:
         directory = file_name.split("\\")
-    print(directory)
     if len(directory) == 1:
         directory = file_name.split("%5")
-    print(directory)
     get_logger().info(f"Request file {file_name}")
 
     if ".." in file_name:
@@ -107,11 +104,10 @@ def download_file(path: str):
     else:
         file_path = TB_DIR + "\\" + file_name
 
-    print(file_path)
     if len(directory) > 1:
         directory = directory[0]
 
-        if directory not in ["mods", "runnable", "tests", "data", "requirements", "pconfig", "utils", "installer"]:
+        if directory not in ["mods_sto", "runnable", "tests", "data", "installer"]:
             get_logger().warning(f"{file_path} not public")
             return JSONResponse(content={"message": f"directory not public {directory}"}, status_code=100)
 
