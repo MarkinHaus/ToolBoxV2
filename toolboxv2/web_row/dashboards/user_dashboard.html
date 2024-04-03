@@ -1,0 +1,395 @@
+<html lang="en">
+
+<head>
+
+    <title>Simple</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="application-name" content="simple">
+    <meta name="apple-mobile-web-app-title" content="simple">
+    <meta name="msapplication-starturl" content="/web/dashboard">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+    <link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/default.min.css">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Symbols+Outlined">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+
+    <link rel="icon" sizes="192X192" href="/web/webapp/icon-192.png">
+    <link rel="apple-touch-icon" sizes="192X192" href="/web/webapp/icon-192.png">
+    <link rel="icon" sizes="512X512" href="/web/webapp/icon-512.png">
+    <link rel="apple-touch-icon" sizes="512X512" href="/web/webapp/icon-512.png">
+    <link rel="manifest" href="/web/webapp/manifest.json">
+
+    <link rel="stylesheet" href="/web/assets/styles.css">
+    <link rel="stylesheet" href="/web/assets/Wiget.css">
+
+    <script src="/web/scripts/scripts.js" type="module"></script>
+    <script src="/web/scripts/AutoMarkdown.js" type="module" defer></script>
+    <script src="/web/scripts/infos.js" defer></script>
+    <script src="/web/scripts/httpSender.js" type="module" defer></script>
+    <script src="/web/scripts/WorkerSocketRenderer.js" type="module" defer></script>
+    <script src="/web/scripts/WidgetUtility.js" defer></script>
+    <script src="/web/scripts/OverlayUtility.js"></script>
+    <script src="/web/scripts/util.js" defer></script>
+
+    <script src="/web/node_modules/htmx.org/dist/htmx.min.js"></script>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+    <style>
+        .button-container button {
+            background-color: var(--primary-color);
+            color: var(--text-color);
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+            border: 2px var(--secondary-color) outset;
+            max-width: fit-content;
+            align-self: center;
+            width: min-content; /* Definiert eine feste Breite */
+            min-height: fit-content;
+            display: inline-flex; /* Ermöglicht das Zentrieren von Inhalten */
+            justify-content: center; /* Zentriert Inhalte horizontal */
+            align-items: center; /* Zentriert Inhalte vertikal */
+        }
+
+        .button-container button:hover {
+            background-color: var(--secondary-color);
+        }
+
+    </style>
+
+
+</head>
+
+<header>
+    <nav id="NAV" class="none" >
+        <div id="MainControls" class="none">
+            <div id="DragControls" ><button id="initDrag" hx-get="/api/DashProvider/getDrag" hx-target="#DragControls" hx-swap="beforeend" hx-trigger="load"> Start Drag </button></div>
+            <div id="SpeechBallonControls" ><button id="initSpeechBallon" hx-get="/api/DashProvider/getsMSG" hx-target="#SpeechBallonControls" hx-swap="beforeend" hx-trigger="load"> Start SpeechBallon </button></div>
+            <div id="controls"><button id="Options" hx-get="/api/DashProvider/getWidgetNave" hx-target="#controls" hx-swap="beforeend" style="scale: 1.2" hx-trigger="load"> ⚙️ </button></div>
+            </div>
+        <div class="dark-mode-toggle" style="background-color: var(--background-color);
+    width: 30px;
+    height: 30px;
+    border-radius: 25%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    ">
+            <input type="checkbox" id="darkModeToggle">
+            <label for="darkModeToggle" style="cursor: pointer" id="toggleLabel">☀️</label>
+        </div>
+    </nav>
+</header>
+<body>
+<div id="overlay"></div>
+<main id="MainContent" class="autoMarkdownVisible">
+    <div id="infoPopup" class="form-container" style="z-index: 1000;">
+        <p id="infoText"></p>
+    </div>
+    <div id="threeDScene">
+
+        <link rel="stylesheet" href="/web/assets/loder/styles.css">
+        <div class="loaderCenter">
+            <div class="loader">
+                <div class="box box0">
+                    <div></div>
+                </div>
+                <div class="box box1">
+                    <div></div>
+                </div>
+                <div class="box box2">
+                    <div></div>
+                </div>
+                <div class="box box3">
+                    <div></div>
+                </div>
+                <div class="box box4">
+                    <div></div>
+                </div>
+                <div class="box box5">
+                    <div></div>
+                </div>
+                <div class="box box6">
+                    <div></div>
+                </div>
+                <div class="box box7">
+                    <div></div>
+                </div>
+                <div class="ground">
+                    <div></div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+    <div class="inv-main" id="main" style="width: 90vw;text-align: center">
+
+        <input type="text"
+               style="
+                    border-radius: 16px;
+                    max-width: min-content;
+                    min-width: 30%;
+                    text-align: center;
+                    "
+               id="inputField"
+               class="inputField"
+               hx-get="/autocomplete"
+               hx-trigger="keyup changed delay:500ms"
+               hx-target="#autocompleteBox"
+               hx-indicator="#loadingIndicator"
+               placeholder="Type here..."/>
+        <div id="button-container" class="button-container" style="margin-top: 10px;">
+            <button id="action-button-0" class="icon-button" onclick="buttonAction(0)" title="Tooltip 0"><span class="material-symbols-outlined">token</span></button>
+            <button id="action-button-1" class="icon-button" onclick="buttonAction(1)" title="Tooltip 1"><span class="material-symbols-outlined">all_inclusive</span></button>
+            <button id="action-button-2" class="icon-button" onclick="buttonAction(2)" title="Tooltip 2"><span class="material-symbols-outlined">folder_managed</span></button>
+        </div>
+            <div id="autocompleteBox" class="autocomplete-box"></div>
+
+        <div id="loadingIndicator" style="display: none;">Loading...</div>
+
+    </div>
+</main>
+
+<div id="extras" class="none">
+    <div id="extra"></div>
+    <div id="SpeechBallonControls2"></div>
+</div>
+
+<script  type="module">
+
+    import {resultHtmxWrapper, httpPostUrl, getContent} from "/web/scripts/httpSender.js";
+    import {Set_animation_xyz, EndBgInteract} from "/web/scripts/scripts.js";
+    //import {widgetUtility} from "/web/scripts/WidgetUtility.js"
+
+    resultHtmxWrapper()
+
+    let dropdownOptions = null
+
+    function setIcon(buttonIndex, iconName) {
+        const buttons = document.querySelectorAll('.icon-button .material-icons');
+        if (buttons[buttonIndex]) {
+            buttons[buttonIndex].textContent = iconName;
+        }
+    }
+
+    // Funktion zum Anpassen des Tooltips
+    function setTooltip(buttonIndex, tooltipText) {
+        const buttons = document.querySelectorAll('.icon-button');
+        if (buttons[buttonIndex]) {
+            buttons[buttonIndex].title = tooltipText;
+        }
+    }
+
+
+    // Funktion zum Ändern der Aktion (Callback) beim Klick
+    function setAction(buttonIndex, newAction) {
+        const buttons = document.querySelectorAll('.icon-button');
+        if (buttons[buttonIndex]) {
+            buttons[buttonIndex].onclick = newAction;
+        }
+    }
+
+
+    // Funktion zum Hinzufügen neuer Einträge (Beispiel)
+    function addItem(item) {
+        let items = JSON.parse(localStorage.getItem('ACUBordSItems')) || ["Main-User-DBord"];
+        if (!items.includes(item)) {
+            items.push(item);
+            localStorage.setItem('ACUBordSItems', JSON.stringify(items));
+        }
+    }
+
+    function initACUBorddropdownMenu() {
+        const dropdown = document.getElementById('ACUBorddropdownMenu');
+
+        // Initialisiere die Liste, falls noch nicht im Local Storage vorhanden
+        let items = JSON.parse(localStorage.getItem('ACUBordSItems')) || ["Main-User-DBord"];
+        let selectedItem = localStorage.getItem('ACUBord') || items[0];
+
+        // Funktion zum Aktualisieren des Dropdowns
+        function updateDropdown() {
+            dropdown.innerHTML = ''; // Dropdown leeren
+            items.forEach(function(item) {
+                const option = document.createElement('option');
+                option.value = item;
+                option.text = item;
+                option.selected = item === selectedItem;
+                dropdown.appendChild(option);
+            });
+        }
+
+
+        // Event-Listener für Änderungen am Dropdown
+        dropdown.addEventListener('change', function() {
+            selectedItem = this.value;
+            localStorage.setItem('ACUBord', selectedItem);
+        });
+
+        // Initialisiere das Dropdown beim Laden
+        updateDropdown();
+
+        // Beispiel: Hinzufügen eines neuen Eintrags
+        // addItem('Option 3');
+    }
+
+    // Beispiel für eine Aktion
+    function buttonAction(index) {
+        console.log(`Button ${index} clicked`);
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        let ac_bord = window.localStorage.getItem("ACUBord")
+        if (!ac_bord){
+            window.localStorage.setItem("ACUBord", "Main-User-DBord")
+            ac_bord = "Main-User-DBord"
+        }
+
+        widgetUtility.ackey = ac_bord;
+
+        setTooltip(0, 'In widget öffnen'); // Setzt den Tooltip des ersten Buttons auf 'Suchen'
+        setTooltip(1, 'web Suchen durchführen'); // Setzt den Tooltip des ersten Buttons auf 'Suchen'
+        setTooltip(2, 'Settings öffnen'); // Setzt den Tooltip des ersten Buttons auf 'Suchen'
+
+        setAction(0, async () => {
+                const content = document.getElementById("inputField").value
+                if (content) {
+                    await httpPostUrl("WidgetsProvider", "open_widget", "name=" + content,
+                        (e) => {
+                            console.log(e)
+                            overlayUtility.createOverlay({
+                                content: `<h1>Error  ` + e.toString() + name + `</h1>`,
+                                closeOnOutsideClick: true,
+                            })
+                        }, (result) => {
+                            console.log("Susses",result)
+                            widgetUtility.createWidget({
+                                titel: "TEST", template: result.get()
+                            })
+
+                        }, true
+                    )
+                    resultHtmxWrapper()
+                } else {
+                    overlayUtility.createOverlay({
+                        content: `<p>No Text entered</p>`,
+                        closeOnOutsideClick: true,
+                    })
+                }
+            }
+        );
+        setAction(1, () =>
+            addBalloon("button-container", 0,
+                ["I see you decided not to use isaa or ended up here by accident.",
+                    "that's not a problem isaa is an extension just like any other tool.",
+                    " You can add extensions at any time.",
+                    "You can also just look around in the store like so"],
+                [["Starte Suche", ()=>{
+                    console.log("Suche wird ausgeführt")}], ])
+        );
+        let val = widgetUtility.ackey
+        setAction(2, () => {
+            overlayUtility.createOverlay({
+                content: `<p>Widget Bord Settings</p> <div id="settings-container">
+<h3> Current Bord key :`+val+` </h3>
+<h4> Switch Bort : <select id="ACUBorddropdownMenu"></select></h4>
+
+<hr/>
+        <input type="text" id="key-input"  style="width: 100%" placeholder="new bord"><hr/>
+    </div>`,
+                closeOnOutsideClick: false,
+                onClose: null,
+                afterCrate: initACUBorddropdownMenu,
+                buttons: [
+                    {text: "Abbrechen", action: () => overlayUtility.closeOverlay()},
+                    {text: "Speicher", action: () => { val = document.getElementById("key-input").value;
+                        if (!val){
+                            val = window.localStorage.getItem("ACUBord")
+                        }else{
+                            addItem(val)
+                        }
+                        overlayUtility.closeOverlay(); overlayUtility.createOverlay({
+                            content: `<p>Key wurde auf "`+val+`" gesetzen </p>`,
+                            buttons: [
+                                {text: "Abbrechen", action: () => {
+                                        val = widgetUtility.ackey;
+                                        overlayUtility.closeOverlay()
+                                    }},
+                            ],
+                        onClose: ()=> {
+                                if (val !== widgetUtility.ackey){
+                                    widgetUtility.save_clos_all()
+                                    widgetUtility.ackey = val
+                                    widgetUtility.get_storage()
+                                    StateLoadBtn_drag()
+                                }
+                        }
+                            })
+                        }
+                    }
+                ]
+            })
+        });
+
+        document.getElementById('inputField').addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' && e.ctrlKey) {
+                this.type = 'textarea'; // Ändert den Typ dynamisch zu textarea
+            this.style.height = "auto"; // Passt die Höhe an
+            this.style.height = this.scrollHeight + "px";
+        }
+        });
+
+        document.getElementById('inputField').addEventListener('input', function() {
+            // Logik zur Positionierung des Autocomplete-Fensters
+            var inputFieldRect = this.getBoundingClientRect();
+            var autocompleteBox = document.getElementById('autocompleteBox');
+            autocompleteBox.style.left = inputFieldRect.left + "px";
+            autocompleteBox.style.top = (inputFieldRect.bottom + 5) + "px"; // 5px Abstand vom Inputfeld
+        });
+
+        setTimeout(()=>{
+            document.getElementById("MainControls").classList.remove('none')
+            document.getElementById("MainControls").classList.add('fade-in')
+        }, 280)
+
+    });
+
+
+    setTimeout(()=>{
+        Set_animation_xyz(0.02, 0, 0)
+    }, 10)
+
+    setTimeout(()=>{
+        document.getElementById("NAV").classList.remove('none')
+        document.getElementById("NAV").classList.add('fade-in')
+    }, 600)
+
+    setTimeout(()=>{
+        Set_animation_xyz(0, 0.02, 0, 16)
+    }, 800)
+    setTimeout(()=>{
+        Set_animation_xyz(0, -0.2, 0, 4)
+    }, 1250)
+    setTimeout(()=>{
+        Set_animation_xyz(0, 0.01, 0.01, 16)
+    }, 1450)
+    setTimeout(()=>{
+        Set_animation_xyz(0, 0.2, 0, 4)
+    }, 1750)
+    setTimeout(()=>{
+        Set_animation_xyz(0.3, 0.2, 0, 24)
+    }, 1798)
+
+    setTimeout(()=>{
+        EndBgInteract()
+        widgetUtility.get_storage()
+        StateLoadBtn_drag()
+        document.getElementById("loaderCenter").remove()
+    }, 1800)
+
+
+
+</script>
+
+</body>
+</html>

@@ -1,0 +1,101 @@
+<div id="Controller-$id" class="widget frosted-glass draggable">
+
+
+<link rel="stylesheet" href="/web/assets/styles.css">
+<link rel="stylesheet" href="/web/assets/Wiget.css">
+<link rel="stylesheet" href="/web/1/Controler/editor.css">
+<script src="/web/1/Controler/controller.js" defer></script>
+
+<div id="settings"></div>
+
+
+    <style>
+        #editor {
+            margin: 0 auto;
+            padding: 20px;
+            border-radius: 5px;
+        }
+
+        #editor select {
+            width: 100%;
+            padding: 5px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+
+
+        #editor .key-value-group {
+            border: 1px solid var(--text-color);
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 3px;
+        }
+
+
+
+        #editorFrame {
+            width: 300px;
+            margin: 0 auto;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+
+
+        .key-value-pair {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 10px;
+        }
+
+    </style>
+    <div class="widget-inner widget draggable" id="settingsWidget-widget">
+        <div class="widget-from" id="settingsWidget-widget-from">Controls</div>
+        <span class="widget-close-button" id="settingsWidget-widget-close-button">X</span>
+        <label for="search-input-mods"></label>
+        <div style="    padding: 20px;
+    border: 1px solid #ccc;
+    border-radius: 5px;">
+            <input type="text" id="search-input-mods" placeholder="Search..." list="mods-list">
+            <datalist id="mods-list" class="mods-list">
+                <option>Welcome</option>
+                <option>Isaa</option>
+            </datalist>
+            <button id="install-mod">Install Selected Mod</button>
+            <hr/>
+            <div id="Mods" class="mod-Aria">
+
+            </div>
+            <hr/>
+        </div>
+        <hr/>
+        <div id="editorFrame">
+            <h1>Task Editor</h1>
+            <div id="editor">
+                <input type="text" id="task-input" placeholder="Enter Name" list="task-list">
+                <datalist id="task-list">
+                </datalist>
+                <div id="task-form">
+                    <!-- Task key-value pairs will be added here -->
+                </div>
+                <select id="key-select">
+                    <option value=disabled selected>Select a key</option>
+                    <option value="name" title="self|think|summary|todolist|search|execution">name</option>
+                    <option value="args" title="$user-input">args</option>
+                    <option value="return" title="$return">return</option>
+                    <option value="mode" title="text|free|tools|conversation|planning|execution|generate">Mode</option>
+                    <option value="completion-mode" title="text|chat|edit">Completion-Mode</option>
+                    <option value="infos" title="$Infos">infos</option>
+                    <option value="short-mem" title="full|summary|clear">Memory</option>
+                    <option value="text-splitter" title=10000>text-splitter</option>
+                    <!-- Add more options here -->
+                </select>
+                <button id=save-task>Save Task</button>
+                <button id=new-task>New Task</button>
+            </div>
+        </div>
+        <div class="widget-items" id="settingsWidget-widget-items"></div>
+    </div>
+
+</div>

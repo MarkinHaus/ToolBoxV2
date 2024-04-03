@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="/web/scripts/scripts.js" type="module" defer></script>
+    <link rel="stylesheet" href="/web/assets/styles.css">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Symbols+Outlined">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+</head>
+<body>
+<div id="overlay"></div>
+<header>
+    <div class="dark-mode-toggle">
+        <input type="checkbox" id="darkModeToggle">
+        <label for="darkModeToggle" id="toggleLabel">☀️</label>
+    </div>
+</header>
+<!-- Your main content goes here -->
+<main>
+
+    <div class="main-content frosted-glass">
+        <section id="login">
+            <div class="form-container">
+                <div>
+                    <h3>Enter Magick Link</h3>
+                    <hr/>
+                    <input type="text" id="link" placeholder="Magic link"/>
+                    <hr/>
+                    <button onclick="{
+                        const vau = document.getElementById('link').value
+    console.log(vau)
+    if (vau) {
+         window.location.href = document.getElementById('link').value
+    }
+                    }"> Start </button>
+                </div>
+            </div>
+        </section>
+    </div>
+</main>
+
+<script>
+
+    fetch("/validateSession", {
+        method: 'POST',
+        headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+
+        },body: JSON.stringify({
+            Jwt_claim: localStorage.getItem("jwt_claim_device"),
+            Username: "root"
+        })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (data["valid"] || data.valid){
+                window.location.href = '/web/dashboards/widgetbord.html'
+            }else{
+                // auto validation using som local data myb
+            }
+        })
+
+</script>
+</body>
+</html>

@@ -181,7 +181,7 @@ def send_web(app):
     print(res)
     src_dir = "./web"
     dest_dir = "./web_row"
-    exclude_dirs = [".idea", "node_modules", "src-tauri"]
+    exclude_dirs = [".idea", "node_modules"]
     copy_files(src_dir, dest_dir, exclude_dirs)
     app.run_any(tbef.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath='./web_row', host='139.162.136.35', port=6560)
 

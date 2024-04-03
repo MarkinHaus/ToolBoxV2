@@ -1,0 +1,24 @@
+<link rel="stylesheet" href="/web/assets/Wiget.css">
+<link rel="stylesheet" href="/web/assets/styles.css">
+<link rel="stylesheet" href="/web/1/insightsWidget/insights.css">
+<div>
+    <div>
+        <label>Username:</label>
+        <span id="username">$username</span>
+    </div>
+    <div id="emailInput">
+        <label>Email:</label>
+        <span id="email">$Email</span>
+        <button hx-post="/api/CloudM/UpdateEmail" hx-target="#emailInput" hx-swap="innerHTML">Edit</button>
+    </div>
+    <div id="device-form">
+        <label>Personal Device:</label>
+        <span id="personal">$pDevice</span>
+        <button hx-get="/api/CloudM/RegisterDeviceForm" hx-target="#device-form" hx-swap="innerHTML">New</button>
+    </div>
+    <div id="deviceDropdown">
+        <label>Known Devices:</label>
+        <span id="devices">$Device</span>
+        <button hx-post="/api/CloudM/EditDevice" hx-include="#deviceDropdown" hx-target="#deviceDropdown" hx-swap="innerHTML">Edit</button>
+    </div>
+</div>

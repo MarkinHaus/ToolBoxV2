@@ -1,0 +1,22 @@
+{
+  "name": "widgets",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "highlight.js": "^11.8.0",
+    "htmx.org": "^1.9.10",
+    "marked": "^5.1.0",
+    "marked-highlight": "^2.0.1",
+    "tauri": "^0.15.0",
+    "three": "^0.153.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/api": "^1.5.3",
+    "@tauri-apps/cli": "^1.5.11",
+    "@types/bun": "latest"
+  }
+}
