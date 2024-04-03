@@ -32,7 +32,7 @@ load_dotenv()
 class App(AppType, metaclass=Singleton):
 
     def __init__(self, prefix: str = "", args=AppArgs().default()):
-
+        print(f"APP CRATING STARTED WITH {prefix} {args}")
         super().__init__(prefix, args)
         t0 = time.perf_counter()
         abspath = os.path.abspath(__file__)
@@ -653,7 +653,10 @@ class App(AppType, metaclass=Singleton):
         self.alive = False
         self.called_exit = True, time.time()
         self.save_exit()
-        self.config_fh.save_file_handler()
+        try:
+            self.config_fh.save_file_handler()
+        except SystemExit:
+            print("If u ar testing this is fine else ...")
 
         import threading
 

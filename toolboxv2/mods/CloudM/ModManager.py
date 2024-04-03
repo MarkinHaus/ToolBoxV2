@@ -99,6 +99,7 @@ def create_and_pack_module(path, module_name='', version='-.-.-', additional_dir
         with open(config_path, 'w') as config_file:
             yaml.dump({"version": version, "module_name": module_name, **yaml_data}, config_file)
 
+        bundle_dependencies(module_path, config_path)
     # Datei oder Ordner in das Modulverzeichnis kopieren
     if os.path.isdir(module_path):
         shutil.copytree(module_path, os.path.join(temp_dir, os.path.basename(module_path)), dirs_exist_ok=True)
@@ -107,7 +108,7 @@ def create_and_pack_module(path, module_name='', version='-.-.-', additional_dir
         config_path = os.path.join(temp_dir, f"{module_name}.yaml")
         with open(config_path, 'w') as config_file:
             yaml.dump({"version": version, "module_name": module_name, **yaml_data}, config_file)
-
+        bundle_dependencies(temp_dir, config_path)
     # Zusätzliche Verzeichnisse hinzufügen
     for dir_name, dir_paths in additional_dirs.items():
         if isinstance(dir_paths, str):
@@ -131,7 +132,7 @@ def create_and_pack_module(path, module_name='', version='-.-.-', additional_dir
                 file_path = os.path.join(root, file)
                 zipf.write(file_path, os.path.relpath(file_path, temp_dir))
 
-    # Ursprüngliches Modulverzeichnis löschen
+    # Temperatures Modulverzeichnis löschen
     shutil.rmtree(temp_dir)
 
     return zip_path
@@ -259,7 +260,7 @@ def uninstaller(app: Optional[App], module_name: str):
 
 
 @export(mod_name=Name, name="install", test=False)
-def installer(app: Optional[App], module_name: str, version:str="-.-.-"):
+def installer(app: Optional[App], module_name: str, version: str = "-.-.-"):
     if app is None:
         app = get_app(f"{Name}.installer")
 
@@ -268,10 +269,10 @@ def installer(app: Optional[App], module_name: str, version:str="-.-.-"):
         if version == version_:
             return "module already installed found"
 
-    zip_path = "" #create_and_pack_module(f".\\mods\\{module_name}", module_name, version_)
+    zip_path = ""  # create_and_pack_module(f".\\mods\\{module_name}", module_name, version_)
     if 'y' in input("install zip file ?"):
         unpack_and_move_module(zip_path, module_name)
-
+    # install_dependencies('dependencies.yaml')
     return zip_path
 
 
@@ -283,10 +284,69 @@ def run_command(command, cwd=None):
     return result.stdout
 
 
+def test_bundle_dependencies():
+    _ = get_app("test_bundle_dependencies", "test")
+    print("Testing bundle", _.id)
+    dep = bundle_dependencies(r"C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\SchedulerManager.py", return_dependencies=True)
+    print(dep)
+
+
+def bundle_dependencies(start_directory, output_file="dependencies.yaml", return_dependencies=False):
+    dependencies = set()
+
+    # Durchlaufen des Startverzeichnisses und Identifizieren von Abhängigkeiten
+    # Hier ist ein vereinfachtes Beispiel, das externe Importe identifiziert
+    # und zu den Abhängigkeiten hinzufügt
+    def _(root_, file_):
+        with open(os.path.join(root_, file_), 'r') as f:
+            lines = f.readlines()
+            for line in lines:
+                if line.startswith('import') or line.startswith('from'):
+                    parts = line.split()
+                    if len(parts) > 1 and parts[0] in ['import', 'from']:
+                        dependencies.add(parts[1].split('.')[0])
+
+    if start_directory.endswith('.py'):
+        _("", start_directory)
+    else:
+        for root, dirs, files in os.walk(start_directory):
+            for file in files:
+                if file.endswith('.py'):
+                    _(root, file)
+    if "toolboxv2" in dependencies:
+        dependencies.remove("toolboxv2")
+    if return_dependencies:
+        return list(dependencies)
+    # Schreiben der Abhängigkeiten in YAML-Datei
+    with open(output_file, 'w') as f:
+        yaml.dump({"dependencies": list(dependencies)}, f)
+
+
+def install_dependencies(yaml_file):
+    with open(yaml_file, 'r') as f:
+        dependencies = yaml.safe_load(f)
+
+    if "dependencies" in dependencies:
+        dependencies = dependencies["dependencies"]
+
+    # Installation der Abhängigkeiten mit pip
+    for dependency in dependencies:
+        subprocess.call(['pip', 'install', dependency])
+
+
+def uninstall_dependencies(yaml_file):
+    with open(yaml_file, 'r') as f:
+        dependencies = yaml.safe_load(f)
+
+    # Installation der Abhängigkeiten mit pip
+    for dependency in dependencies:
+        subprocess.call(['pip', 'uninstall', dependency])
+
+
 if __name__ == "__main__":
     app = get_app()
     print(app.get_all_mods())
-    for module_ in app.get_all_mods():#['dockerEnv', 'email_waiting_list',  'MinimalHtml', 'SchedulerManager', 'SocketManager', 'WebSocketManager', 'welcome']:
+    for module_ in app.get_all_mods():  # ['dockerEnv', 'email_waiting_list',  'MinimalHtml', 'SchedulerManager', 'SocketManager', 'WebSocketManager', 'welcome']:
         print(f"Building module {module_}")
         make_installer(app, module_)
         time.sleep(0.1)
