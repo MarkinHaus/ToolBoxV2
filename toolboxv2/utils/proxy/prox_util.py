@@ -10,7 +10,7 @@ from ..system.all_functions_enums import SOCKETMANAGER
 
 class ProxyUtil:
     def __init__(self, class_instance: Any, host='0.0.0.0', port=6587, timeout=15, app: Optional[App or AppType] = None,
-                 remote_functions=None, peer=False, name='daemonApp-client', do_connect=True):
+                 remote_functions=None, peer=False, name='daemonApp-client', do_connect=True, unix_socket=False):
         self.class_instance = class_instance
         self.client = None
         self.port = port
@@ -18,6 +18,7 @@ class ProxyUtil:
         self.timeout = timeout
         self.app = app
         self._name = name
+        self.unix_socket = unix_socket
         if remote_functions is None:
             remote_functions = ["run_any", "remove_mod", "save_load", "exit_main", "show_console", "hide_console",
                                 "rrun_runnable",
@@ -40,7 +41,8 @@ class ProxyUtil:
                                            port=self.port,
                                            type_id=self.connection_type,
                                            max_connections=-1,
-                                           return_full_object=True)
+                                           return_full_object=True,
+                                           unix_file=self.unix_socket)
 
         if client_result.is_error():
             raise Exception(f"Client {self._name} error: {client_result.print(False)}")

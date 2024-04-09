@@ -55,7 +55,7 @@ def handle_requirements(requirements_url, module_name, print_func):
 def list_modules(app: App = None):
     if app is None:
         app = get_app("cm.list_modules")
-    return list(map(lambda x: '/api/installer/' + x + '-installer.json', app.get_all_mods()))
+    return app.get_all_mods()
 
 
 def create_and_pack_module(path, module_name='', version='-.-.-', additional_dirs=None, yaml_data=None):
@@ -85,7 +85,8 @@ def create_and_pack_module(path, module_name='', version='-.-.-', additional_dir
         module_path += '.py'
 
     temp_dir = tempfile.mkdtemp(dir=os.path.join(".\\mods_sto\\", "temp"))
-    zip_path = f".\\mods_sto\\RST${module_name}&{__version__}§{version}.zip"
+    zip_file_name = f"RST${module_name}&{__version__}§{version}.zip"
+    zip_path = f".\\mods_sto\\{zip_file_name}"
 
     print(f"\n{base_path=}\n{module_path=}\n{temp_dir=}\n{zip_path=}")
 
@@ -97,7 +98,7 @@ def create_and_pack_module(path, module_name='', version='-.-.-', additional_dir
         # tbConfig.yaml erstellen
         config_path = os.path.join(module_path, "tbConfig.yaml")
         with open(config_path, 'w') as config_file:
-            yaml.dump({"version": version, "module_name": module_name, **yaml_data}, config_file)
+            yaml.dump({"version": version, "module_name": module_name, "zip": zip_file_name, **yaml_data}, config_file)
 
         bundle_dependencies(module_path, config_path)
     # Datei oder Ordner in das Modulverzeichnis kopieren

@@ -32,7 +32,6 @@ load_dotenv()
 class App(AppType, metaclass=Singleton):
 
     def __init__(self, prefix: str = "", args=AppArgs().default()):
-        print(f"APP CRATING STARTED WITH {prefix} {args}")
         super().__init__(prefix, args)
         t0 = time.perf_counter()
         abspath = os.path.abspath(__file__)

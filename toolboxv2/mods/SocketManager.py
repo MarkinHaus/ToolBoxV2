@@ -183,7 +183,7 @@ class Tools(MainTool, FileHandler):
                       type_id: SocketType = SocketType.client,
                       max_connections=-1, endpoint_port=None,
                       return_full_object=False, keepalive_interval=6, test_override=False, package_size=1024,
-                      start_keep_alive=True):
+                      start_keep_alive=True, unix_file=False):
 
         if 'test' in self.app.id and not test_override:
             return "No api in test mode allowed"
@@ -212,14 +212,23 @@ class Tools(MainTool, FileHandler):
             self.local_ip = get_local_ip()
 
         self.print(f"Device IP : {self.local_ip}")
+
+        if unix_file:
+            socket_type = socket.AF_UNIX
+        else:
+            socket_type = socket.AF_INET
+
         if type_id == SocketType.server.name:
             # create sever
             self.logger.debug(f"Starting:{name} server on port {port} with host {host}")
 
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock = socket.socket(socket_type, socket.SOCK_STREAM)
 
             try:
-                sock.bind((host, port))
+                if unix_file:
+                    sock.bind(host)
+                else:
+                    sock.bind((host, port))
                 sock.listen(max_connections)
                 self.print(f"Server:{name} online at {host}:{port}")
             except Exception as e:
@@ -229,9 +238,12 @@ class Tools(MainTool, FileHandler):
         elif type_id == SocketType.client.name:
             # create client
             self.logger.debug(f"Starting:{name} client on port {port} with host {host}")
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock = socket.socket(socket_type, socket.SOCK_STREAM)
             time.sleep(random.choice(range(1, 100)) // 100)
-            connection_error = sock.connect_ex((host, port))
+            if unix_file:
+                connection_error = sock.connect_ex(host)
+            else:
+                connection_error = sock.connect_ex((host, port))
             if connection_error != 0:
                 sock.close()
                 self.print(f"Client:{name}-{host}-{port} connection_error:{connection_error}")

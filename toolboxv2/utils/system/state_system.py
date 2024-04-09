@@ -13,14 +13,17 @@
 
  trans form state from on to an other.
  """
-
+from dataclasses import dataclass, asdict
 import os
 import hashlib
 from typing import Dict
 
+import yaml
+
 from .getting_and_closing_app import get_app
 
 
+@dataclass
 class DefaultFilesFormatElement:
     version: str = "-1"
     shasum: str = "-1"
@@ -31,9 +34,11 @@ class DefaultFilesFormatElement:
         return f"{self.version=}{self.shasum=}{self.provider=}{self.url=}|"
 
 
+@dataclass
 class TbState:
     utils: Dict[str, DefaultFilesFormatElement]
     mods: Dict[str, DefaultFilesFormatElement]
+    installable: Dict[str, DefaultFilesFormatElement]
     runnable: Dict[str, DefaultFilesFormatElement]
     api: Dict[str, DefaultFilesFormatElement]
     app: Dict[str, DefaultFilesFormatElement]
@@ -44,6 +49,9 @@ class TbState:
             fstr += f"  {name} | {str(item)}\n"
         fstr += "Mods\n"
         for name, item in self.mods.items():
+            fstr += f"  {name} | {str(item)}\n"
+        fstr += "Mods installable\n"
+        for name, item in self.installable.items():
             fstr += f"  {name} | {str(item)}\n"
         fstr += "runnable\n"
         for name, item in self.runnable.items():
@@ -71,15 +79,22 @@ def calculate_shasum(file_path: str) -> str:
 
 
 def process_files(directory: str) -> TbState:
-    state = TbState()
-
-    state.utils = {}
-    state.mods = {}
-    state.runnable = {}
-    state.api = {}
-    state.app = {}
+    utils = {}
+    mods = {}
+    runnable = {}
+    installable = {}
+    api = {}
+    app = {}
     for root, dirs, files in os.walk(directory):
         for file_name in files:
+            if file_name.endswith(".zip") and 'mods_sto' in root:
+                file_path = os.path.join(root, file_name)
+                shasum = calculate_shasum(file_path)
+
+                element = DefaultFilesFormatElement()
+                element.shasum = shasum
+                installable[file_name] = element
+
             if file_name.endswith(".py"):
                 file_path = os.path.join(root, file_name)
                 shasum = calculate_shasum(file_path)
@@ -88,17 +103,23 @@ def process_files(directory: str) -> TbState:
                 element.shasum = shasum
 
                 if 'utils' in root:
-                    state.utils[file_name] = element
+                    utils[file_name] = element
                 elif 'mods' in root:
-                    state.mods[file_name] = element
+                    mods[file_name] = element
                 elif 'runnable' in root:
-                    state.runnable[file_name] = element
+                    runnable[file_name] = element
                 elif 'api' in root:
-                    state.api[file_name] = element
+                    api[file_name] = element
                 elif 'app' in root:
-                    state.app[file_name] = element
-
-    return state
+                    app[file_name] = element
+    return TbState(
+        utils=utils,
+        mods=mods,
+        installable=installable,
+        runnable=runnable,
+        api=api,
+        app=app,
+    )
 
 
 def get_state_from_app(app, simple_core_hub_url="https://SimpleCoreHub.com/Mods/",
@@ -115,20 +136,20 @@ def get_state_from_app(app, simple_core_hub_url="https://SimpleCoreHub.com/Mods/
 
     # and unit information
     # current time being units ar installed and managed via GitHub
-
+    version = app.version
     for file_name, file_data in state.utils.items():
         file_data.provider = "git"
-        file_data.version = app.version
+        file_data.version = version
         file_data.url = github_url + "utils/" + file_name
 
     for file_name, file_data in state.api.items():
         file_data.provider = "git"
-        file_data.version = app.version
+        file_data.version = version
         file_data.url = github_url + "api/" + file_name
 
     for file_name, file_data in state.app.items():
         file_data.provider = "git"
-        file_data.version = app.version
+        file_data.version = version
         file_data.url = github_url + "app/" + file_name
 
     # and mods information
@@ -137,13 +158,24 @@ def get_state_from_app(app, simple_core_hub_url="https://SimpleCoreHub.com/Mods/
     for file_name, file_data in state.mods.items():
         file_data.provider = "SimpleCore"
         try:
-            file_data.version = app.get_mod(
-                file_name.replace(".py", "")).version if file_name != "__init__.py" else app.version
+            module_name = file_name.replace(".py", "")
+            file_data.version = app.get_mod(module_name).version if file_name != "__init__.py" else version
         except Exception:
             file_data.version = "dependency"
 
         file_data.url = simple_core_hub_url + "mods/" + file_name
 
+    for file_name, file_data in state.installable.items():
+        file_data.provider = "SimpleCore"
+        try:
+            file_data.version = file_name.replace(".py", "").replace(".zip", "").split("&")[-1].split("§")
+        except Exception:
+            file_data.version = "dependency"
+
+        file_data.url = simple_core_hub_url + "installer/download/mods_sto%5C" + file_name
+
+    with open("tbState.yaml", "w") as config_file:
+        yaml.dump(asdict(state), config_file)
     return state
 
 

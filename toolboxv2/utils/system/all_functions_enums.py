@@ -22,18 +22,6 @@ class API_MANAGER(Enum):
 
 
 @dataclass
-class MINIMALHTML(Enum):
-    NAME = 'MinimalHtml'
-    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
-    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
-    VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
-    ADD_GROUP: str = 'add_group'  # Input: (['command']), Output: <class 'inspect._empty'>
-    ADD_COLLECTION_TO_GROUP: str = 'add_collection_to_group'  # Input: (['group_name', 'collection']), Output: <class 'inspect._empty'>
-    GENERATE_HTML: str = 'generate_html'  # Input: (['group_name', 'collection_name']), Output: <class 'inspect._empty'>
-    FUSE_TO_STRING: str = 'fuse_to_string'  # Input: (['html_elements', 'join_chat']), Output: <class 'inspect._empty'>
-
-
-@dataclass
 class WELCOME(Enum):
     NAME = 'welcome'
     VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
@@ -43,6 +31,18 @@ class WELCOME(Enum):
     ANIMATION: str = 'Animation'  # Input: ([]), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+
+
+@dataclass
+class MINIMALHTML(Enum):
+    NAME = 'MinimalHtml'
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+    VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
+    ADD_GROUP: str = 'add_group'  # Input: (['command']), Output: <class 'inspect._empty'>
+    ADD_COLLECTION_TO_GROUP: str = 'add_collection_to_group'  # Input: (['group_name', 'collection']), Output: <class 'inspect._empty'>
+    GENERATE_HTML: str = 'generate_html'  # Input: (['group_name', 'collection_name']), Output: <class 'inspect._empty'>
+    FUSE_TO_STRING: str = 'fuse_to_string'  # Input: (['html_elements', 'join_chat']), Output: <class 'inspect._empty'>
 
 
 @dataclass
@@ -95,7 +95,7 @@ class SCHEDULERMANAGER(Enum):
 @dataclass
 class SOCKETMANAGER(Enum):
     NAME = 'SocketManager'
-    CREATE_SOCKET: str = 'create_socket'  # Input: (['self', 'name', 'host', 'port', 'type_id', 'max_connections', 'endpoint_port', 'return_full_object', 'keepalive_interval', 'test_override', 'package_size', 'start_keep_alive']), Output: <class 'inspect._empty'>
+    CREATE_SOCKET: str = 'create_socket'  # Input: (['self', 'name', 'host', 'port', 'type_id', 'max_connections', 'endpoint_port', 'return_full_object', 'keepalive_interval', 'test_override', 'package_size', 'start_keep_alive', 'unix_file']), Output: <class 'inspect._empty'>
     RUN_AS_IP_ECHO_SERVER_A: str = 'run_as_ip_echo_server_a'  # Input: (['self', 'name', 'host', 'port', 'max_connections', 'test_override']), Output: <class 'inspect._empty'>
     RUN_AS_SINGLE_COMMUNICATION_SERVER: str = 'run_as_single_communication_server'  # Input: (['self', 'name', 'host', 'port', 'test_override']), Output: <class 'inspect._empty'>
     SEND_FILE_TO_SEVER: str = 'send_file_to_sever'  # Input: (['self', 'filepath', 'host', 'port']), Output: <class 'inspect._empty'>
@@ -104,7 +104,7 @@ class SOCKETMANAGER(Enum):
     RECEIVE_AND_DECOMPRESS_FILE: str = 'receive_and_decompress_file'  # Input: (['self', 'save_path', 'listening_port', 'sender_ip']), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
-    SOCKETMANAGER_0: str = 'SocketManager_0'  # Input: (['name', 'host', 'port', 'type_id', 'max_connections', 'endpoint_port', 'return_full_object', 'keepalive_interval', 'test_override', 'package_size', 'start_keep_alive']), Output: <class 'inspect._empty'>
+    SOCKETMANAGER_0: str = 'SocketManager_0'  # Input: (['name', 'host', 'port', 'type_id', 'max_connections', 'endpoint_port', 'return_full_object', 'keepalive_interval', 'test_override', 'package_size', 'start_keep_alive', 'unix_file']), Output: <class 'inspect._empty'>
     TBSOCKETCONTROLLER: str = 'tbSocketController'  # Input: (['name', 'host', 'port', 'test_override']), Output: <class 'inspect._empty'>
     VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
 
@@ -115,6 +115,7 @@ class EVENTMANAGER(Enum):
     VERSION: str = 'Version'  # Input: (['self']), Output: <class 'inspect._empty'>
     STARTEVENTMANAGER: str = 'startEventManager'  # Input: (['self']), Output: <class 'inspect._empty'>
     CLOSEEVENTMANAGER: str = 'closeEventManager'  # Input: (['self']), Output: <class 'inspect._empty'>
+    START_WEB_EVENTS: str = 'start_web_events'  # Input: (['self']), Output: <class 'inspect._empty'>
     GETEVENTMANAGERC: str = 'getEventManagerC'  # Input: (['self']), Output: <class 'toolboxv2.mods.EventManager.module.EventManagerClass'>
     ON_EXIT: str = 'on_exit'  # Input: (), Output: None
     EVENTMANAGER: str = 'EventManager'  # Input: (['app']), Output: <class 'inspect._empty'>
@@ -216,15 +217,6 @@ class CLI_FUNCTIONS(Enum):
 
 
 @dataclass
-class DOCKERENV(Enum):
-    NAME = 'dockerEnv'
-    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
-    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
-    VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
-    BUILD_CUSTOM_IMAGES: str = 'build_custom_images'  # Input: (['img_name', 'file_data', 'path']), Output: <class 'inspect._empty'>
-
-
-@dataclass
 class DASHPROVIDER(Enum):
     NAME = 'DashProvider'
     VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
@@ -246,8 +238,12 @@ class CICD(Enum):
     NAME = 'cicd'
     WEB_GET: str = 'web_get'  # Input: (['app']), Output: <class 'inspect._empty'>
     MODS_GET: str = 'mods_get'  # Input: (['app']), Output: <class 'inspect._empty'>
+    BUILD_EDV_BLOB: str = 'build_edv_blob'  # Input: ([]), Output: <class 'inspect._empty'>
     SEND_WEB: str = 'send_web'  # Input: (['app']), Output: <class 'inspect._empty'>
-    SEND_MOD: str = 'send_mod'  # Input: (['app', 'mod_name']), Output: <class 'inspect._empty'>
+    SEND_MOD_ALL_IN_ONE: str = 'send_mod_all_in_one'  # Input: (['app']), Output: <class 'inspect._empty'>
+    SEND_MOD_BUILD: str = 'send_mod_build'  # Input: (['app']), Output: <class 'inspect._empty'>
+    SEND_MOD_START_SVER_EVENT: str = 'send_mod_start_sver_event'  # Input: (['app']), Output: <class 'inspect._empty'>
+    SEND_MOD_UPLOADE_DATA: str = 'send_mod_uploade_data'  # Input: (['app']), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
 
@@ -271,19 +267,6 @@ class CLOUDM_UI_WIDGET(Enum):
 
 
 @dataclass
-class TESTWIDGET(Enum):
-    NAME = 'TestWidget'
-    ADD: str = 'add'  # Input: (['request']), Output: <class 'inspect._empty'>
-    ADDM: str = 'addM'  # Input: (['value', 'request']), Output: <class 'inspect._empty'>
-    RESET: str = 'reset'  # Input: (['request']), Output: <class 'inspect._empty'>
-    SYNC: str = 'sync'  # Input: (['request', 'counter', 'id']), Output: <class 'inspect._empty'>
-    GET_WIDGET: str = 'get_widget'  # Input: (['app', 'request']), Output: <class 'inspect._empty'>
-    GET_WIDGET_R: str = 'get_widget_r'  # Input: (['app', 'request']), Output: <class 'inspect._empty'>
-    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
-    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
-
-
-@dataclass
 class WEBSOCKETMANAGER(Enum):
     NAME = 'WebSocketManager'
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
@@ -296,6 +279,19 @@ class WEBSOCKETMANAGER(Enum):
     GET: str = 'get'  # Input: (['name']), Output: <class 'inspect._empty'>
     SRQW: str = 'srqw'  # Input: (['url', 'websocket_id']), Output: <class 'inspect._empty'>
     CONSTRUCT_RENDER: str = 'construct_render'  # Input: (['content', 'element_id', 'externals', 'placeholder_content', 'from_file', 'to_str']), Output: <class 'inspect._empty'>
+
+
+@dataclass
+class TESTWIDGET(Enum):
+    NAME = 'TestWidget'
+    ADD: str = 'add'  # Input: (['request']), Output: <class 'inspect._empty'>
+    ADDM: str = 'addM'  # Input: (['value', 'request']), Output: <class 'inspect._empty'>
+    RESET: str = 'reset'  # Input: (['request']), Output: <class 'inspect._empty'>
+    SYNC: str = 'sync'  # Input: (['request', 'counter', 'id']), Output: <class 'inspect._empty'>
+    GET_WIDGET: str = 'get_widget'  # Input: (['app', 'request']), Output: <class 'inspect._empty'>
+    GET_WIDGET_R: str = 'get_widget_r'  # Input: (['app', 'request']), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
 
 
 @dataclass
@@ -326,6 +322,15 @@ class QUICKNOTE(Enum):
     VIEW: str = 'VIEW'  # Input: (['show', 'data']), Output: <class 'inspect._empty'>
     FIND: str = 'Find'  # Input: (['show', 'data']), Output: <class 'inspect._empty'>
     INIT: str = 'init'  # Input: (['username', 'sign', 'jwt']), Output: <class 'inspect._empty'>
+
+
+@dataclass
+class DOCKERENV(Enum):
+    NAME = 'dockerEnv'
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+    VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
+    BUILD_CUSTOM_IMAGES: str = 'build_custom_images'  # Input: (['img_name', 'file_data', 'path']), Output: <class 'inspect._empty'>
 
 
 @dataclass

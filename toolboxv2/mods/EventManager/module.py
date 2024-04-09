@@ -166,23 +166,23 @@ class Rout:
 
 
 class DaemonRout(DaemonUtil):
-    def __init__(self, rout: Rout, t=True, name="daemonRoute", on_r=None, on_c=None):
+    def __init__(self, rout: Rout, t=True, name="daemonRoute", on_r=None, on_c=None, unix_socket=False):
         host, port = rout.to_host, rout.to_port
         super().__init__(class_instance=rout, host=host, port=port, t=t, app=get_app(from_=f"{Name}.Rout.Daemon"),
-                         peer=False, name=name, on_register=on_r, on_client_exit=on_c)
+                         peer=False, name=name, on_register=on_r, on_client_exit=on_c, unix_socket=unix_socket)
 
 
 class ProxyRout(ProxyUtil):
 
     @classmethod
-    def toProxy(cls, rout, timeout=10, name="proxyRout"):
+    def toProxy(cls, rout, timeout=10, name="proxyRout", unix_socket=False):
         host, port = rout.to_host, rout.to_port
         return cls(
             class_instance=rout,
             host=host,
             port=port, timeout=timeout,
             app=get_app(from_=f"{Name}.Rout.Proxy"),
-            remote_functions=["put_data"], peer=False, name=name
+            remote_functions=["put_data"], peer=False, name=name, unix_socket=unix_socket
         )
 
     # def put_data(self, *args, **kwargs):
@@ -381,6 +381,9 @@ class EventManagerClass:
                                                          on_r=self.on_register)
         except Exception as e:
             print(f"Sever already Online : {e}")
+
+    def add_js_route(self, source_id="js:web"):
+        self.add_server_route(source_id, ("./web/scripts/tb_socket.sock", 0))
 
     def register_event(self, event: Event):
 
@@ -682,6 +685,10 @@ class Tools(MainTool, EventManagerClass):
     @export(mod_name=Name, name='closeEventManager', version=version)
     def closeEventManager(self):
         self.stop()
+
+    @export(mod_name=Name, name='start_web_events', version=version)
+    def closeEventManager(self):
+        self.add_js_route()
 
     @export(mod_name=Name, name='getEventManagerC', version=version, exit_f=True)
     def get_manager(self) -> EventManagerClass:

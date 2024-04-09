@@ -533,7 +533,6 @@ async def websocket_endpoint(websocket: WebSocket, ws_id: str):
         await websocket.close()
         return
     try:
-
         while True:
             try:
                 data = await websocket.receive_text()
@@ -651,81 +650,74 @@ if __name__ == 'toolboxv2.api.fast_api_main':
     tb_app.save_load("WebSocketManager")
     manager = tb_app.get_mod("WebSocketManager")
 
-    if "modInstaller" in tb_app.id:
-        print("ModInstaller Init")
-        from .fast_api_install import router as install_router
+    from .fast_app import router as app_router
 
-        cm = tb_app.get_mod("cloudM")
-        all_mods = tb_app.get_all_mods()
-        provider = os.environ.get("MOD_PROVIDER", default="http://127.0.0.1:5000/")
-        tb_state = get_state_from_app(tb_app, simple_core_hub_url=provider)
-        for mod_name in all_mods:
-            ret = cm.save_mod_snapshot(mod_name, provider=provider, tb_state=tb_state)
-            # app.get('/' + mod_name)(lambda: f"./installer/{mod_name}-installer.json")
-        tb_func, error = tb_app.get_function(("cloudm.modmanager", "list_modules"), state=True, specification="app")
+    app.include_router(app_router)
 
-        if error == 0:
-            install_router.add_api_route('/' + "cloudm.modmanager", tb_func, methods=["POST"],
-                                         description="get all mods")
-        app.include_router(install_router)
-        app.get('/web/core0/index.html')(lambda: RedirectResponse(url="/docs"))
+    for mod_name, functions in tb_app.functions.items():
+        router = APIRouter(
+            prefix=f"/api/{mod_name}",
+            tags=["token", mod_name],
+            # dependencies=[Depends(get_token_header)],
+            # responses={404: {"description": "Not found"}},
+        )
+        # "type": type_,
+        # "level": level,
+        # "restrict_in_virtual_mode": restrict_in_virtual_mode,
+        # "func": func,
+        # "api": api,
+        # "helper": helper,
+        # "version": version,
+        # "initial": initial,
+        # "exit_f": exit_f,
+        # "__module__": func.__module__,
+        # "signature": sig,
+        # "params": params,
+        # "state": (False if len(params) == 0 else params[0] in ['self', 'state']) if state is None else state,
+        # "do_test": test,
+        # "samples": samples,
 
-    else:
+        for function_name, function_data in functions.items():
+            if not isinstance(function_data, dict):
+                continue
+            api: list = function_data.get('api')
+            if api is False:
+                continue
+            params: list = function_data.get('params')
+            sig: signature = function_data.get('signature')
+            state: bool = function_data.get('state')
 
-        from .fast_app import router as app_router
-        from .fast_api import router as api_router
+            tb_func, error = tb_app.get_function((mod_name, function_name), state=state, specification="app")
 
-        app.include_router(app_router)
-        app.include_router(api_router)
+            tb_app.logger.debug(f"Loading fuction {function_name} , exec : {error}")
 
-        for mod_name, functions in tb_app.functions.items():
-            router = APIRouter(
-                prefix=f"/api/{mod_name}",
-                tags=["token", mod_name],
-                # dependencies=[Depends(get_token_header)],
-                # responses={404: {"description": "Not found"}},
-            )
-            # "type": type_,
-            # "level": level,
-            # "restrict_in_virtual_mode": restrict_in_virtual_mode,
-            # "func": func,
-            # "api": api,
-            # "helper": helper,
-            # "version": version,
-            # "initial": initial,
-            # "exit_f": exit_f,
-            # "__module__": func.__module__,
-            # "signature": sig,
-            # "params": params,
-            # "state": (False if len(params) == 0 else params[0] in ['self', 'state']) if state is None else state,
-            # "do_test": test,
-            # "samples": samples,
+            if error != 0:
+                continue
+            try:
+                if tb_func:
+                    if len(params):
+                        router.add_api_route('/' + function_name, tb_func, methods=["POST"],
+                                             description=function_data.get("helper", ""))
+                    else:
+                        router.add_api_route('/' + function_name, tb_func, methods=["GET"],
+                                             description=function_data.get("helper", ""))
+            except fastapi.exceptions.FastAPIError as e:
+                raise SyntaxError(f"fuction '{function_name}' prove the signature error {e}")
 
-            for function_name, function_data in functions.items():
-                if not isinstance(function_data, dict):
-                    continue
-                api: list = function_data.get('api')
-                if api is False:
-                    continue
-                params: list = function_data.get('params')
-                sig: signature = function_data.get('signature')
-                state: bool = function_data.get('state')
+        app.include_router(router)
 
-                tb_func, error = tb_app.get_function((mod_name, function_name), state=state, specification="app")
+    # if "modInstaller" in tb_app.id:
+    #    print("ModInstaller Init")
 
-                tb_app.logger.debug(f"Loading fuction {function_name} , exec : {error}")
+    from .fast_api_install import router as install_router
 
-                if error != 0:
-                    continue
-                try:
-                    if tb_func:
-                        if len(params):
-                            router.add_api_route('/' + function_name, tb_func, methods=["POST"],
-                                                 description=function_data.get("helper", ""))
-                        else:
-                            router.add_api_route('/' + function_name, tb_func, methods=["GET"],
-                                                 description=function_data.get("helper", ""))
-                except fastapi.exceptions.FastAPIError as e:
-                    raise SyntaxError(f"fuction '{function_name}' prove the signature error {e}")
+    cm = tb_app.get_mod("CloudM")
+    all_mods = tb_app.get_all_mods()
+    provider = os.environ.get("MOD_PROVIDER", default="http://127.0.0.1:5000/")
+    tb_state = get_state_from_app(tb_app, simple_core_hub_url=provider)
 
-            app.include_router(router)
+    def get_d(mod_name_="CloudM"):
+        return cm.save_mod_snapshot(mod_name_, provider=provider, tb_state=tb_state)
+
+    install_router.add_api_route('/' + "get", get_d, methods=["GET"], description="get_species_data")
+    app.include_router(install_router)
