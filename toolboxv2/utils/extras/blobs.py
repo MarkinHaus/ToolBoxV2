@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List
 
 import reedsolo
+import yaml
 
 from ..security.cryp import Code
 from ... import get_app, Singleton
@@ -159,7 +160,9 @@ class BlobStorage(metaclass=Singleton):
 
 
 class BlobFile(io.IOBase):
-    def __init__(self, filename, mode='r', storage=None, key=None):
+    def __init__(self, filename:str, mode='r', storage=None, key=None):
+        if filename.startswith('/') or filename.startswith('\\'):
+            filename = filename[1:]
         self.filename = filename
         self.blob_id, self.folder, self.datei = self.path_splitter(filename)
         self.mode = mode
@@ -215,10 +218,17 @@ class BlobFile(io.IOBase):
 
             self.storage.update_blob(self.blob_id, pickle.dumps(blob_data))
 
-    def write(self, data):
+    def write(self, data: str):
         if 'w' not in self.mode:
             raise ValueError("File not opened in write mode.")
-        self.data += data
+        if isinstance(data, str):
+            self.data += data.encode()
+        elif isinstance(data, bytes):
+            self.data += data
+        elif isinstance(data, dict):
+            self.write_yaml(data)
+        else:
+            raise ValueError("Invalid Data type not supported")
 
     # def add_save_on_disk(self, storage_id, one_time_token):
     #     self.storage.save(self.filename, storage_id, one_time_token)
@@ -234,6 +244,8 @@ class BlobFile(io.IOBase):
     def read_json(self):
         if 'r' not in self.mode:
             raise ValueError("File not opened in read mode.")
+        if self.data == b"":
+            return {}
         return json.loads(self.data.decode())
 
     def write_json(self, data):
@@ -244,9 +256,23 @@ class BlobFile(io.IOBase):
     def read_pickle(self):
         if 'r' not in self.mode:
             raise ValueError("File not opened in read mode.")
+        if self.data == b"":
+            return {}
         return pickle.loads(self.data)
 
     def write_pickle(self, data):
         if 'w' not in self.mode:
             raise ValueError("File not opened in write mode.")
         self.data += pickle.dumps(data)
+
+    def read_yaml(self):
+        if 'r' not in self.mode:
+            raise ValueError("File not opened in read mode.")
+        if self.data == b"":
+            return {}
+        return yaml.safe_load(self.data)
+
+    def write_yaml(self, data):
+        if 'w' not in self.mode:
+            raise ValueError("File not opened in write mode.")
+        yaml.dump(data, self)

@@ -4,8 +4,8 @@
     "withGlobalTauri": true,
     "beforeBuildCommand": "",
     "beforeDevCommand": "",
-    "devPath": "http://localhost:8000/tauri",
-    "distDir": "http://localhost:8000/tauri"
+    "devPath": "http://localhost:5000/tauri",
+    "distDir": "http://localhost:5000/tauri"
   },
   "package": {
     "productName": "widgets",
@@ -24,10 +24,7 @@
             "all": true,
             "create": true,
             "center": true
-        },
-        "fs": {
-        "scope": ["$RESOURCE/*"]
-      }
+        }
     },
     "systemTray": {
       "iconPath": "icons/icon.png",
@@ -57,9 +54,6 @@
         "providerShortName": null,
         "signingIdentity": null
       },
-      "resources": [
-          "..\\..\\installer\\dist\\UiInstallerTB"
-      ],
       "shortDescription": "",
       "targets": "all",
       "windows": {

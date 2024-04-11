@@ -497,7 +497,13 @@ async def user_runner(request, call_next):
     if result.info.exec_code == 0:
         result.info.exec_code = 200
 
-    content = result.to_api_result().json()
+    result.print()
+
+    try:
+        content = result.to_api_result().json()
+    except TypeError:
+        result.result.data = await result.result.data
+        content = result.to_api_result().json()
 
     return JSONResponse(status_code=result.info.exec_code if result.info.exec_code > 0 else 500,
                         content=content)

@@ -340,7 +340,7 @@ read -p " END " T"""
     with open(f"./installer/{custom_script_name}", "w") as script_file:
         script_file.write(script)
 
-    await ws_send(f"Link: /installer/download/installer%5C{custom_script_name}", websocket=websocket)
+    await ws_send(f"Link: /installer/download/installer\\{custom_script_name}", websocket=websocket)
     await ws_send(f"Press the Download button to Download the script", websocket=websocket)
     await websocket.close()
 
@@ -462,27 +462,3 @@ def download_file(path: str):
     else:
         return JSONResponse(content={"message": f"directory not public ."}, status_code=100)
 
-# def mount_mod_files(app: FastAPI):
-#     routes = [
-#         Mount("/mods", StaticFiles(directory="./mods"), name="mods"),
-#         Mount("/runnable", StaticFiles(directory="./runabel"), name="runnable"),
-#         Mount("/requirements", StaticFiles(directory="./requirements"), name="requirements"),
-#         Mount("/test", StaticFiles(directory="./mod_data"), name="data"),
-#         Mount("/data", StaticFiles(directory="./../tests"), name="test")
-#
-#     ]
-#     s_app = Starlette(routes=routes)
-#
-#     app.route("/install", routes, name="installer")
-#     app.mount("/installer2", s_app, name="installer2")
-#
-#     # s_app der app hinzufügen unter /install Route
-#     @app.middleware("http")
-#     async def mount_static_files(request: Request, call_next):
-#         if request.url.path.startswith("/install"):
-#             # Weiterleitung an die Starlette-Anwendung
-#             state = request.state
-#             return await s_app()
-#         # Weiterleitung an die nächste Middleware oder die Route-Handler-Funktion
-#         return await call_next(request)
-#

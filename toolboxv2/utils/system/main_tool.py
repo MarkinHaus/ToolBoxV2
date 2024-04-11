@@ -10,7 +10,7 @@ class MainTool:
     toolID: str = ""
     # app = None
     interface = None
-    spec = ""
+    spec = "app"
 
     def __init__(self, *args, **kwargs):
         self.version = kwargs["v"]

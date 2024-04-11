@@ -3,6 +3,7 @@
 import sys
 import argparse
 import time
+import asyncio
 from functools import wraps
 from platform import system, node
 
@@ -281,13 +282,10 @@ def parse_args():
                         help="get version of ToolBox and all mods with -l",
                         action="store_true")
 
-    parser.add_argument("--mm",
-                        help="all Main all files ar saved in Main Node",
-                        action="store_true")
-
     parser.add_argument("--sm", help=f"Service Manager for {system()} manage auto start and auto restart",
                         default=False,
                         action="store_true")
+
     parser.add_argument("--lm", help=f"Log Manager remove and edit log files", default=False,
                         action="store_true")
 
@@ -299,17 +297,16 @@ def parse_args():
     parser.add_argument("--kill", help="Kill current local tb instance", default=False,
                         action="store_true")
 
-    parser.add_argument("--remote", help=f"Open a remote toolbox session", default=False,
+    parser.add_argument("-bg", "--background-application", help="Start an interface in the background",
+                        default=False,
                         action="store_true")
-    parser.add_argument("--remote-direct-key", type=str or None, help=f"Open a remote toolbox session", default=None)
+    parser.add_argument("-bgr", "--background-application-runner",
+                        help="The Flag to run the background runner in the current terminal/process",
+                        default=False,
+                        action="store_true")
 
-    parser.add_argument("-bg", "--background-application", help="Start an interface as background application",
-                        default=False,
-                        action="store_true")
-    parser.add_argument("-bgr", "--background-application-runner", help="Start an interface as background application",
-                        default=False,
-                        action="store_true")
-    parser.add_argument("-fg", "--proxy-application", help="Start an interface as proxy application",
+    parser.add_argument("-fg", "--live-application",
+                        help="Start an interface as live application not using a background runner",
                         default=True,
                         action="store_false")
 
@@ -321,12 +318,6 @@ def parse_args():
     parser.add_argument("-r", "--remove", help="Uninstall a mod or interface via name", type=str or None, default=None)
     parser.add_argument("-u", "--update", help="Update a mod or interface via name", type=str or None, default=None)
 
-    parser.add_argument('-mvn', '--mod-version-name',
-                        metavar="name",
-                        type=str,
-                        help="Name of mod",
-                        default="mainTool")
-
     parser.add_argument('-n', '--name',
                         metavar="name",
                         type=str,
@@ -337,7 +328,7 @@ def parse_args():
                         metavar="port",
                         type=int,
                         help="Specify a port for interface",
-                        default=8000)  # 1268945
+                        default=5000)  # 1268945
 
     parser.add_argument("-w", "--host",
                         metavar="host",
@@ -351,11 +342,6 @@ def parse_args():
 
     parser.add_argument("-sfe", "--save-function-enums-in-file",
                         help="run with -l to gather to generate all_function_enums.py files",
-                        action="store_true")
-
-    parser.add_argument("-hr", "--hot-reload",
-                        help="run -hr automatically reload the toolboxv2 module on changes good for development and"
-                             " for long running instances in save environments",
                         action="store_true")
 
     # parser.add_argument("--mods-folder",
@@ -445,36 +431,10 @@ def edit_logs():
         edit_log_files(name=name, date=date, level=level, n=0)
 
 
-def main():
+async def main(loop=None):
     """Console script for toolboxv2."""
     args = parse_args()
 
-    # (
-    # init=None,
-    # init_file='init.config',
-    # get_version=False,
-    # mm=False,
-    # sm=False,
-    # lm=False,
-    # modi='cli',
-    # kill=False,
-    # remote=False,
-    # remote_direct_key=None,
-    # background_application=False,
-    # docker=False,
-    # install=None,
-    # remove=None,
-    # update=None,
-    # mod_version_name='mainTool',
-    # name='main',
-    # port=8000,
-    # host='0.0.0.0',
-    # load_all_mod_in_files=False,
-    # mods_folder='toolboxv2.mods.',
-    # debug=None,
-    # test=None,
-    # profiler=None
-    # )
     with open(os.getenv('CONFIG_FILE', f'{os.path.abspath(__file__).replace("cli.py", "")}toolbox.yaml'),
               'r') as config_file:
         _version = safe_load(config_file)
@@ -484,8 +444,6 @@ def main():
     abspath = os.path.dirname(os.path.abspath(__file__))
 
     identification = args.name + '-' + node() + '\\'
-    if args.mm:
-        identification = "MainNode\\"
 
     data_folder = abspath + '\\.data\\'
     config_folder = abspath + '\\.config\\'
@@ -513,8 +471,7 @@ def main():
             test_path = test_path + "/tests/test_mods"
         print(f"Testing in {test_path}")
 
-        if os.system(f"{sys.executable} -m unittest discover -s {test_path}") != 0:
-            os.system(f"{sys.executable} -m unittest discover -s {test_path}")
+        os.system(f"{sys.executable} -m unittest discover -s {test_path}")
         return 0
 
     app_pid = str(os.getpid())
@@ -530,19 +487,9 @@ def main():
         tb_app.daemon_app = daemon_app
         with open(pid_file + '-app.pid', 'w') as f:
             f.write(app_pid)
-        args.proxy_application = False
+        args.live_application = False
     elif args.background_application:
-        if not args.kill and not args.hot_reload:
-            start(args.name, sys.argv)
-        elif args.hot_reload:
-            try:
-                _ = ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
-                             args.port if args.port != 8000 else 6587, timeout=6)
-                if _.exit_main() != "No data look later":
-                    stop(pid_file + '-app.pid', args.name)
-            except Exception:
-                stop(pid_file + '-app.pid', args.name)
-            time.sleep(2)
+        if not args.kill:
             start(args.name, sys.argv)
         else:
             if '-m ' not in sys.argv:
@@ -554,7 +501,7 @@ def main():
                     stop(pid_file + '-app.pid', args.name)
             except Exception:
                 stop(pid_file + '-app.pid', args.name)
-    elif args.proxy_application:
+    elif args.live_application:
         tb_app = override_main_app(ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
                                             args.port if args.port != 8000 else 6587))
 
@@ -579,7 +526,7 @@ def main():
         exit(0)
 
     if args.load_all_mod_in_files or args.save_function_enums_in_file or args.get_version or args.profiler or args.background_application_runner:
-        if not args.proxy_application:
+        if not args.live_application:
             tb_app.load_all_mods_in_file()
         if args.save_function_enums_in_file:
             tb_app.save_registry_as_enums("utils\\system", "all_functions_enums.py")
@@ -614,7 +561,7 @@ def main():
         with open(pid_file, "w") as f:
             f.write(app_pid)
 
-        if not args.proxy_application:
+        if not args.live_application:
             runnable_dict = runnable_dict_func()
             tb_app.set_runnable(runnable_dict)
             if args.modi in runnable_dict.keys():
@@ -657,7 +604,7 @@ def main():
             else:
                 os.system(f"kill -9 {app_pid}")
 
-    if args.proxy_application and args.debug:
+    if args.live_application and args.debug:
         tb_app.hide_console()
 
     if tb_app.alive:
@@ -672,9 +619,13 @@ def main():
     return 0
 
 
-if __name__ == "__main__":
+def main_runner():
+    asyncio.run(main())
 
-    sys.exit(main())
+
+if __name__ == "__main__":
+    print("STARTED START FROM CLI")
+    sys.exit(main_runner())
     # init main : ToolBoxV2 -init main -f init.config
     # Exit
     # y

@@ -274,7 +274,6 @@ class A(metaclass=Singleton):
             "module-load-mode": "load~mode:",
             "comm-his": "comm-his~:",
             "develop-mode": "dev~mode~:",
-            "all_main": "all~main~:",
         }
 
         self.HELPER = DEFAULT_HELPER

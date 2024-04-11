@@ -169,7 +169,10 @@ class Tools(MainTool, FileHandler):  # FileHandler
             return "No such api_pid file found on the filesystem"
         with open(f"./.data/api_pid_{api_name}", "r") as f:
             api_pid = f.read()
-            requests.get(f"http://{host}:{port}/api/exit/{api_pid}")
+            try:
+                requests.get(f"http://{host}:{port}/api/exit/{api_pid}")
+            except Exception as e:
+                self.print("API Not Responding")
             if system() == "Windows":
                 os.system(f"taskkill /pid {api_pid} /F")
             else:

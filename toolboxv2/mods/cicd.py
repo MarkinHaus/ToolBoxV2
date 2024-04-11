@@ -115,7 +115,7 @@ def copy_files(src_dir, dest_dir, exclude_dirs):
             shutil.copy2(src_file_path, dest_file_path)
 
 
-@export(mod_name=Name)
+@export(mod_name=Name, test=False)
 def web_get(app):
     if app is None:
         app = get_app(f"{Name}.web_update")
@@ -131,7 +131,7 @@ def web_get(app):
     ev.register_event(dw_event)
 
 
-@export(mod_name=Name)
+@export(mod_name=Name, test=False)
 def mods_get(app):
     if app is None:
         app = get_app(f"{Name}.web_update")
@@ -147,9 +147,8 @@ def mods_get(app):
     ev.register_event(mods_event)
 
 
-@export(mod_name=Name, state=False)
+@export(mod_name=Name, state=False, test=False)
 def build_edv_blob():
-
     src_dir = r"C:\Users\Markin\Workspace\ToolBoxV2"
     dest_dir = r"C:\Users\Markin\Workspace\ReSimpleToolBox"
     exclude_dirs = [".config", ".data", ".git", ".github", ".idea", ".info", ".pytest_cache",
@@ -159,12 +158,15 @@ def build_edv_blob():
                     "toolboxv2\\__pycache__", "toolboxv2\\api\\__pycache__", "toolboxv2\\.data", "toolboxv2\\.info",
                     "toolboxv2\\installer\\dist\\UiInstallerTB", "toolboxv2\\mods\\__pycache__", "toolboxv2\\mods_dev",
                     "toolboxv2\\mods_sto", "toolboxv2\\runabel\\__pycache__", "toolboxv2\\tests\\__pycache__",
-                    "toolboxv2\\utils\\__pycache__", "toolboxv2\\web", "toolboxv2\\web_row", "toolboxv2\\litellm_uuid.txt",
-                    "toolboxv2\\token.pickle", "toolboxv2\\token-0.pickle", "toolboxv2\\token-1.pickle", "toolboxv2\\token-main.pickle",
+                    "toolboxv2\\utils\\__pycache__", "toolboxv2\\web", "toolboxv2\\web_row",
+                    "toolboxv2\\litellm_uuid.txt",
+                    "toolboxv2\\token.pickle", "toolboxv2\\token-0.pickle", "toolboxv2\\token-1.pickle",
+                    "toolboxv2\\token-main.pickle",
                     "node_modules", "src-tauri"]
     copy_files(src_dir, dest_dir, exclude_dirs)
 
-@export(mod_name=Name)
+
+@export(mod_name=Name, test=False)
 def send_web(app):
     if app is None:
         app = get_app(f"{Name}.web_update")
@@ -186,7 +188,7 @@ def send_web(app):
     app.run_any(tbef.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath='./web_row', host='139.162.136.35', port=6560)
 
 
-@export(mod_name=Name)
+@export(mod_name=Name, test=False)
 def send_mod_all_in_one(app):
     if app is None:
         app = get_app(f"{Name}.web_update")
@@ -195,7 +197,7 @@ def send_mod_all_in_one(app):
     return send_mod_uploade_data(app)
 
 
-@export(mod_name=Name)
+@export(mod_name=Name, test=False)
 def send_mod_build(app):
     if app is None:
         app = get_app(f"{Name}.web_update")
@@ -205,7 +207,7 @@ def send_mod_build(app):
             app.run_any(tbef.CLOUDM.MAKE_INSTALL, module_name=mod_name)
 
 
-@export(mod_name=Name)
+@export(mod_name=Name, test=False)
 def send_mod_start_sver_event(app):
     if app is None:
         app = get_app(f"{Name}.web_update")
@@ -220,7 +222,7 @@ def send_mod_start_sver_event(app):
     return res
 
 
-@export(mod_name=Name)
+@export(mod_name=Name, test=False)
 def send_mod_uploade_data(app):
     if app is None:
         app = get_app(f"{Name}.web_update")

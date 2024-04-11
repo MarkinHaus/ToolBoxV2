@@ -154,14 +154,18 @@ def get_state_from_app(app, simple_core_hub_url="https://SimpleCoreHub.com/Mods/
 
     # and mods information
     # current time being mods ar installed and managed via SimpleCoreHub.com
-
+    all_mods = app.get_all_mods()
     for file_name, file_data in state.mods.items():
         file_data.provider = "SimpleCore"
-        try:
-            module_name = file_name.replace(".py", "")
-            file_data.version = app.get_mod(module_name).version if file_name != "__init__.py" else version
-        except Exception:
-            file_data.version = "dependency"
+
+        module_name = file_name.replace(".py", "")
+        if module_name in all_mods:
+            try:
+                file_data.version = app.get_mod(module_name).version if file_name != "__init__.py" else version
+            except Exception:
+                file_data.version = "dependency"
+        else:
+            file_data.version = "legacy"
 
         file_data.url = simple_core_hub_url + "mods/" + file_name
 
@@ -172,7 +176,7 @@ def get_state_from_app(app, simple_core_hub_url="https://SimpleCoreHub.com/Mods/
         except Exception:
             file_data.version = "dependency"
 
-        file_data.url = simple_core_hub_url + "installer/download/mods_sto%5C" + file_name
+        file_data.url = simple_core_hub_url + "installer/download/mods_sto\\" + file_name
 
     with open("tbState.yaml", "w") as config_file:
         yaml.dump(asdict(state), config_file)

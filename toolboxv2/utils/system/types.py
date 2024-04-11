@@ -1,4 +1,6 @@
 import logging
+import os
+import subprocess
 import threading
 from dataclasses import field
 from inspect import signature
@@ -296,18 +298,25 @@ class CallingObject:
 
 def analyze_data(data):
     report = []
-
     for mod_name, mod_info in data.items():
         if mod_name in ['modular_run', 'modular_fatal_error', 'modular_sug']:
             continue  # Überspringen der allgemeinen Statistiken
         if mod_name in ['errors']:
             report.append(f"Total errors: {mod_info}")
             continue
+        if mod_name == 'total_coverage':
+            report.append(f"Total coverage: {mod_info}")
+            continue
+        if mod_name == 'coverage':
+            _ = '\t'.join(mod_info)
+            report.append(f"Total coverage: {_}")
+            continue
         report.append(f"Modul: {mod_name}")
         report.append(f"  Funktionen ausgeführt: {mod_info.get('functions_run', 0)}")
         report.append(f"  Funktionen mit Fatalen Fehler: {mod_info.get('functions_fatal_error', 0)}")
         report.append(f"  Funktionen mit Fehler: {mod_info.get('error', 0)}")
         report.append(f"  Funktionen erfolgreich: {mod_info.get('functions_sug', 0)}")
+        report.append(f"  coverage run:testet {mod_info.get('coverage')[0]/mod_info.get('coverage')[1]:.2f}")
 
         if 'callse' in mod_info and mod_info['callse']:
             report.append("  Fehler:")
@@ -316,7 +325,6 @@ def analyze_data(data):
                     if isinstance(error, str):
                         error = error.replace('\n', ' - ')
                     report.append(f"    - {func_name}, Fehler: {error}")
-
     return "\n".join(report)
 
 
@@ -394,7 +402,6 @@ class AppType:
         "st-load": "mute~load:",
         "comm-his": "comm-his~:",
         "develop-mode": "dev~mode~:",
-        "all_main": "all~main~:",
         "provider::": "provider::",
     }
 
@@ -407,7 +414,6 @@ class AppType:
         "st-load": False,
         "comm-his": List[List],
         "develop-mode": bool,
-        "all_main": bool,
     }
 
     config_fh: FileHandler
@@ -422,6 +428,7 @@ class AppType:
     alive: bool
     called_exit: Tuple[bool, float]
     args_sto: AppArgs
+    system_flag = None
 
     def __init__(self, prefix: Optional[str] = None, args: Optional[AppArgs] = None):
         """proxi attr"""
@@ -738,6 +745,8 @@ class AppType:
             "modular_fatal_error": 0,
             "errors": 0,
             "modular_sug": 0,
+            "coverage": [],
+            "total_coverage": {},
         }
         items = list(self.functions.items()).copy()
         for module_name, functions in items:
@@ -747,7 +756,8 @@ class AppType:
                 "error": 0,
                 "functions_sug": 0,
                 'calls': {},
-                'callse': {}
+                'callse': {},
+                "coverage": [0, 0],
             }
             all_data['modular_run'] += 1
             if not module_name.startswith(m_query):
@@ -763,8 +773,12 @@ class AppType:
                         continue
                     test: list = function_data.get('do_test')
                     # print(test, module_name, function_name, function_data)
+                    infos["coverage"][0] += 1
                     if test is False:
                         continue
+
+                    if not function_name.startswith("test"):
+                        infos["coverage"][1] += 1
 
                     with Spinner(message=f"\t\t\t\t\t\tfuction {function_name}..."):
                         params: list = function_data.get('params')
@@ -780,12 +794,15 @@ class AppType:
                             # print(test_kwargs[0])
                             # test_kwargs = test_kwargs_list[0]
                         # print(module_name, function_name, test_kwargs_list)
+                        infos["coverage"][1] += 1
                         for test_kwargs in test_kwargs_list:
                             try:
                                 # print(f"test Running {state=} |{module_name}.{function_name}")
                                 result = self.run_function((module_name, function_name),
                                                            tb_run_function_with_state=state,
                                                            **test_kwargs)
+                                if not isinstance(result, Result):
+                                    result = Result.ok(result)
                                 if result.info.exec_code == 0:
                                     infos['calls'][function_name] = [test_kwargs, str(result)]
                                     infos['functions_sug'] += 1
@@ -807,7 +824,41 @@ class AppType:
                     all_data['errors'] += infos['error']
 
                 all_data[module_name] = infos
-        print(f"\n{all_data['modular_run']=}\n{all_data['modular_sug']=}\n{all_data['modular_fatal_error']=}")
+                all_data["coverage"].append(f"{module_name}:{infos['coverage'][1]/infos['coverage'][0]:.2f}\n")
+        total_coverage = sum([float(t.split(":")[-1]) for t in all_data["coverage"]])/len(all_data["coverage"])
+        print(f"\n{all_data['modular_run']=}\n{all_data['modular_sug']=}\n{all_data['modular_fatal_error']=}\n{total_coverage=}")
 
         return Result.ok(data=all_data, data_info=analyze_data(all_data))
 
+    @staticmethod
+    def calculate_complexity(filename_or_code):
+        from radon.complexity import cc_rank, cc_visit
+        if os.path.exists(filename_or_code):
+            with open(filename_or_code, 'r') as file:
+                code = file.read()
+        else:
+            code = filename_or_code
+
+        # Calculate and print Cyclomatic Complexity
+        complexity_results = cc_visit(code)
+        i = -1
+        avg_complexity = 0
+        rang_complexity = 0
+        for block in complexity_results:
+            complexity = block.complexity
+            i += 1
+            print(f"block: {block.name} {i} Class/Fuction/Methode : {block.letter}")
+            print(f"    fullname: {block.fullname}")
+            print(f"    Cyclomatic Complexity: {complexity}")
+            # Optional: Get complexity rank
+            avg_complexity += complexity
+            rank = cc_rank(complexity)
+            print(f"    Complexity Rank: {rank}")
+            #print(f"    lineno: {block.lineno}")
+            print(f"    endline: {block.endline}")
+            print(f"    col_offset: {block.col_offset}\n")
+        if i <= 0:
+            i += 2
+        avg_complexity = avg_complexity/i
+        print(f"\nAVG Complexity: {avg_complexity:.2f}")
+        print(f"Total Rank: {cc_rank(int(avg_complexity+i//10))}")

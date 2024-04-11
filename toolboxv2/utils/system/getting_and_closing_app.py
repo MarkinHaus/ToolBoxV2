@@ -25,7 +25,7 @@ def override_main_app(app):
 
 def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None) -> AppType:
     global registered_apps
-    print(f"get app requested from: {from_}")
+    # print(f"get app requested from: {from_}")
     logger = get_logger()
     logger.info(Style.GREYBG(f"get app requested from: {from_}"))
     if registered_apps[0] is not None:
@@ -44,7 +44,7 @@ def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None) -> Ap
 
 
 @atexit.register
-def sav_closing_app():
+def save_closing_app():
 
     if registered_apps[0] is None:
         return
@@ -52,6 +52,10 @@ def sav_closing_app():
     app = registered_apps[0]
     if not app.alive:
         app.print(Style.Bold(Style.ITALIC("- end -")))
+        return
+
+    if not app.called_exit[0] and time.time() - app.called_exit[1] < 10:
+        app.print(Style.Bold(Style.ITALIC("- Killing a kid is not ok -")))
         return
 
     if not app.called_exit[0]:

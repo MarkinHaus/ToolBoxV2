@@ -184,14 +184,14 @@ def reload_widget_system(app, user, WidgetID):
     app.run_any(tbef.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=system_person)
 
 
-def load_widget(app, display_name="Cud be ur name"):
+def load_widget(app, display_name="Cud be ur name", WidgetID=str(uuid.uuid4())[:4]):
     if display_name != "Cud be ur name":
         user = app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=display_name)
     else:
         user = User()
 
     app.run_any(tbef.MINIMALHTML.ADD_GROUP, command=Name)
-    WidgetID = str(uuid.uuid4())[:4]
+
     reload_widget_main(app, user, WidgetID)
     reload_widget_info(app, user, WidgetID)
     reload_widget_system(app, user, WidgetID)
@@ -213,7 +213,7 @@ def get_user_from_request(app, request):
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
 def removed(app, index, request: Request or None = None):
     if request is None:
-        return
+        return Result.default_internal_error("No request specified")
     user: User = get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
@@ -227,7 +227,7 @@ def removed(app, index, request: Request or None = None):
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
 def danger(app, request: Request or None = None):
     if request is None:
-        return
+        return Result.default_internal_error("No request specified")
     user = get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
@@ -242,7 +242,7 @@ def danger(app, request: Request or None = None):
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
 def stop(app, request: Request or None = None):
     if request is None:
-        return
+        return Result.default_internal_error("No request specified")
     user = get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
@@ -256,7 +256,7 @@ def stop(app, request: Request or None = None):
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
 def reset(app, request: Request or None = None):
     if request is None:
-        return
+        return Result.default_internal_error("No request specified")
     user = get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
@@ -268,7 +268,7 @@ def reset(app, request: Request or None = None):
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
 def link(app, request: Request or None = None):
     if request is None:
-        return
+        return Result.default_internal_error("No request specified")
     user = get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
@@ -278,7 +278,7 @@ def link(app, request: Request or None = None):
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
 def info(app, request: Request or None = None):
     if request is None:
-        return
+        return Result.default_internal_error("No request specified")
     user = get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
@@ -292,7 +292,7 @@ def info(app, request: Request or None = None):
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
 def deleteUser(app, user: str, request: Request or None = None):
     if request is None:
-        return
+        return Result.default_internal_error("No request specified")
     user_ob = get_user_from_request(app, request=request)
     if user_ob.name != 'root':
         return f"<h2>Invalid User</h2>"
@@ -305,7 +305,7 @@ def deleteUser(app, user: str, request: Request or None = None):
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
 def sendMagicLink(app, user: str, request: Request or None = None):
     if request is None:
-        return
+        return Result.default_internal_error("No request specified")
     user_ob = get_user_from_request(app, request=request)
     if user_ob.name != 'root':
         return f"<h2>Invalid User</h2>"
@@ -322,7 +322,7 @@ def sendMagicLink(app, user: str, request: Request or None = None):
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
 def setUserLevel(app, user: str, data: dict, request: Request or None = None):
     if request is None:
-        return
+        return Result.default_internal_error("No request specified")
     user_ob = get_user_from_request(app, request=request)
     if user_ob.name != 'root':
         return f"<h2>Invalid User</h2>"
@@ -338,7 +338,7 @@ def setUserLevel(app, user: str, data: dict, request: Request or None = None):
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
 def mods(app, request: Request or None = None):
     if request is None:
-        return
+        return Result.default_internal_error("No request specified")
     user = get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
@@ -352,7 +352,7 @@ def mods(app, request: Request or None = None):
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
 def addMod(app, modId: str, request: Request or None = None):
     if request is None:
-        return
+        return Result.default_internal_error("No request specified")
     user = get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
@@ -367,7 +367,7 @@ def addMod(app, modId: str, request: Request or None = None):
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
 def remove(app, modId: str, request: Request or None = None):
     if request is None:
-        return
+        return Result.default_internal_error("No request specified")
     user = get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"

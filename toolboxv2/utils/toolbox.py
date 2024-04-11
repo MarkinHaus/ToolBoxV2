@@ -72,8 +72,6 @@ class App(AppType, metaclass=Singleton):
         }
 
         identification = self.id
-        if args.mm:
-            identification = "MainNode"
 
         if "test" in prefix:
 
@@ -124,7 +122,6 @@ class App(AppType, metaclass=Singleton):
             "st-load": "mute~load:",
             "comm-his": "comm-his~:",
             "develop-mode": "dev~mode~:",
-            "all_main": "all~main~:",
             "provider::": "provider::",
         }
 
@@ -137,9 +134,7 @@ class App(AppType, metaclass=Singleton):
             "st-load": False,
             "comm-his": [[]],
             "develop-mode": False,
-            "all_main": True,
         }
-        FileHandler.all_main = args.mm
         self.config_fh = FileHandler(self.id + ".config", keys=self.keys, defaults=defaults)
         self.config_fh.load_file_handler()
         self._debug = args.debug

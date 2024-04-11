@@ -1,4 +1,5 @@
 import json
+from dataclasses import asdict
 
 import requests
 
@@ -6,13 +7,12 @@ from toolboxv2 import MainTool, FileHandler, App, Style, Result, tbef
 from .types import *
 from ..CloudM import User
 from ..DB.types import DatabaseModes
+from ...utils.extras.blobs import BlobFile
 
 
 class Tools(MainTool, FileHandler):  # FileHandler
 
     def __init__(self, app=None):
-        self.edit_note = None
-        self.remove_note = None
         self.version = "0.0.1"
         self.name = "quickNote"
         self.logs = app.logger if app else None
@@ -27,8 +27,6 @@ class Tools(MainTool, FileHandler):  # FileHandler
             "Tags": {},
         }
         self.inbox_sto = []
-        self.tag = Tag.crate_root()
-        self.note = Note.crate_root()
         self.tools = {
             "all": [["Version", "Shows current Version"],
                     ["ADD", "Add a new note to inbox"],
@@ -58,11 +56,17 @@ class Tools(MainTool, FileHandler):  # FileHandler
         self.print("Version: ", self.version)
         return self.version
 
+    def set_user(self, user):
+        if self.user is not None:
+            return
+        self.user = user
+
     def init(self, username: str, sign: str or None = None, jwt: str or None = None):
 
         result = Result.default_internal_error(info="Error Log in Module")
         if jwt is not None:
-            result = self.app.run_any(tbef.CLOUDM_AUTHMANAGER.JWT_CHECK_CLAIM_SERVER_SIDE, username=username, jwt_claim=jwt,
+            result = self.app.run_any(tbef.CLOUDM_AUTHMANAGER.JWT_CHECK_CLAIM_SERVER_SIDE, username=username,
+                                      jwt_claim=jwt,
                                       get_results=True)
             if result.is_data() and not result.is_error() and result.get() is True:
                 self.user = self.app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username)
@@ -89,41 +93,51 @@ class Tools(MainTool, FileHandler):  # FileHandler
         return result
 
     def on_exit(self):
+        self.print(f'exit QN')
         if self.user is not None:
-            if len(self.inbox.get("Notes", {}).keys()) == 0:
-                self.add_note(self.note)
-            if len(self.inbox.get("Tags", {}).keys()) == 0:
-                self.add_tag(self.tag)
-            self.app.run_any(tbef.DB.SET, tb_run_with_specification=self.spec,
-                             query=self.keys["inbox"] + self.user.uid, data=self.inbox)
+            self.print(f"SAVED DATAT {self.spec[10:]}")
+            self.app.run_any(tbef.DB.SET, query=self.keys["inbox"] + self.user.uid, data=self.inbox)
+            with BlobFile(f"users/{self.spec}/{self.name}/index.yaml", 'w') as f:
+                f.write_yaml(self.inbox)
         self.save_file_handler()
 
-    def open_inbox(self):
+    def open_inbox(self, uid=None):
         self.print("Loading inbox | ", end="")
         self.logs.info("quickNote try access inbox")
-        inbox = self.app.run_any(tbef.DB.GET, tb_run_with_specification=self.spec,
-                                 query=self.keys["inbox"] + self.user.uid, get_results=True)
+        if uid is None and self.user is not None:
+            uid = self.user.uid
+        if uid is None:
+            uid = "public"
+        inbox = self.app.run_any(tbef.DB.GET, query=self.keys["inbox"] + uid, get_results=True)
 
-        if not inbox.is_error():
-            self.inbox = inbox.get()
-            self.note = self.get_note_by_name("root")
-            self.note = self.get_tag_by_name("root")
-            self.print(Style.GREEN("load inbox | "), end="")
+        if not inbox.is_error() and inbox.is_data():
+            inbox = inbox.get()[0]
+            if isinstance(inbox, bytes):
+                self.inbox = json.loads(inbox.decode("utf-8").replace("'", '"'))
+            self.print(Style.GREEN("load inbox | "))
             self.logs.info("quickNote loaded inbox")
         else:
             self.print(Style.YELLOW("No inbox found | "), end="")
-            self.logs.info(Style.RED("No inbox found"))
+            with BlobFile(f"users/{self.spec}/{self.name}/index.yaml", 'r') as f:
+                inbox = f.read_yaml()
+            if inbox:
+                if isinstance(inbox, bytes):
+                    inbox = json.loads(inbox.decode("utf-8").replace("'", '"'))
+                self.inbox = inbox
+                self.logs.info(Style.Bold("inbox recovered"))
+            else:
+                self.logs.info(Style.RED("No inbox found"))
 
     @staticmethod
     def get_by_id_ny_name(name: str, t="note"):
-        return get_id(name=name+t)
+        return get_id(name=name + t)
 
     def add_note(self, note: Note):
 
         if note is None:
             return
 
-        self.inbox["Notes"][note.id] = note
+        self.inbox["Notes"][note.id] = asdict(note)
 
         self.print(f"Adding note... {note.name}")
 
@@ -132,7 +146,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
         if tag is None:
             return
 
-        self.inbox["Tags"][tag.id] = tag
+        self.inbox["Tags"][tag.id] = asdict(tag)
 
         self.print(f"Adding tag... {tag.name}")
 
@@ -141,9 +155,9 @@ class Tools(MainTool, FileHandler):  # FileHandler
         if note_id is None:
             return Result.default_user_error(info="Note not found no id provided")
         note = self.inbox["Notes"].get(note_id, None)
-        if note is None:
-            return Result.default_user_error(info="Note not found", exec_code=404)
-        return Result.ok(data=note, info="Noted data")
+        if note is not None:
+            return Result.ok(data=Note(**note), info="Noted data")
+        return Result.default_user_error(info="Note not found", exec_code=404)
 
     def get_tag(self, tag_id: str):
 
@@ -153,7 +167,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
         if tag is None:
             return Result.default_user_error(info="Note not found", exec_code=404)
 
-        return Result.ok(data=tag, info="Tag data")
+        return Result.ok(data=Tag(**tag), info="Tag data")
 
     def get_note_by_name(self, note_name: str):
         return self.get_note(self.get_by_id_ny_name(note_name, t=":Note"))
@@ -206,3 +220,4 @@ class Tools(MainTool, FileHandler):  # FileHandler
             tags.append(res)
 
         return tags
+

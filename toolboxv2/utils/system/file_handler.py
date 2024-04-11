@@ -10,8 +10,6 @@ from ..security.cryp import Code
 
 class FileHandler(Code):
 
-    all_main = False
-
     def __init__(self, filename, name='mainTool', keys=None, defaults=None):
         if defaults is None:
             defaults = {}
@@ -26,7 +24,7 @@ class FileHandler(Code):
         self.file_handler_storage = None
         self.file_handler_max_loaded_index_ = 0
         self.file_handler_file_prefix = (f".{filename.split('.')[1]}/"
-                                         f"{'MainNode'if FileHandler.all_main else name.replace('.', '-')}/")
+                                         f"{name.replace('.', '-')}/")
         # self.load_file_handler()
         self.set_defaults_keys_file_handler(keys, defaults)
 

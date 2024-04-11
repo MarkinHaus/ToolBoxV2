@@ -1,3 +1,4 @@
+import json
 import os
 from typing import List, Dict, Optional
 
@@ -7,6 +8,7 @@ from toolboxv2.utils.system.types import ToolBoxInterfaces
 from fastapi import Request
 
 from ..CloudM import User
+from ...utils.extras.blobs import BlobFile
 
 Name = 'WidgetsProvider'
 export = get_app("WidgetsProvider.Export").tb
@@ -33,6 +35,42 @@ def get_all_widget_mods(app: App):
     return all_widgets
 
 
+@export(mod_name=Name, version=version)
+def get_user_from_request(app, request):
+    if request is None:
+        return User()
+    name = request.session.get('live_data', {}).get('user_name', "Cud be ur name")
+    if name != "Cud be ur name":
+        user = app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=app.config_fh.decode_code(name))
+    else:
+        user = User()
+    return user
+
+
+@export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True)
+async def save_user_sto(app, request, name: str = "Main-User-DBord"):
+    if app is None:
+        app = get_app(f"{Name}.open")
+    user = get_user_from_request(app, request)
+    b = await request.body()
+
+    with BlobFile(f"users/{Code.one_way_hash(name, 'userWidgetSto', user.uid)}/{name}/bords", 'w') as f:
+        f.clear()
+        f.write(b)
+
+
+@export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True)
+async def get_user_sto(app, request, name: str = "Main-User-DBord"):
+    if app is None:
+        app = get_app(f"{Name}.open")
+    if request is None:
+        return
+    user = get_user_from_request(app, request)
+    with BlobFile(f"users/{Code.one_way_hash(name, 'userWidgetSto', user.uid)}/{name}/bords", 'r') as f:
+        data = f.read()
+    return data
+
+
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="open_widget")
 def open_widget(app, request, name: str, **kwargs):
     if app is None:
@@ -42,5 +80,4 @@ def open_widget(app, request, name: str, **kwargs):
     if name not in all_widgets:
         return "invalid widget name " + str(all_widgets)
 
-    return app.run_any((name, "get_widget"), request=request, kwargs_=kwargs)
-
+    return app.run_any((name, "get_widget"), request=request, **kwargs)
