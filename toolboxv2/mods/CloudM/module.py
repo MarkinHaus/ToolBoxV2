@@ -80,8 +80,6 @@ class Tools(MainTool, FileHandler):
                 ["make_installable", "crate pack for toolbox"],
             ],
             "name": "cloudM",
-            "mod-installer": self.install_module,
-            "mod-uninstaller": self.uninstall_module,
         }
 
         self.logger.info("init FileHandler cloudM")
@@ -106,40 +104,6 @@ class Tools(MainTool, FileHandler):
         self.logger.info(f"Time to initialize MainTool {time.perf_counter() - t1}")
         self.logger.info(
             f"Time to initialize Tools {self.name} {time.perf_counter() - t0}")
-
-    def install_module(self, name):
-
-        if isinstance(
-            name, list
-        ) and len(name) == 2:
-            name = name[1]
-
-        self.print(f"Installing module : {name}")
-
-        mod_installer_url = self.get_file_handler(self.keys["URL"]) + fr"/install/installer\{name}-installer.json"
-        self.print(f"Installer file url: {mod_installer_url}")
-        try:
-            pass
-            #installer(mod_installer_url, self.app.debug)
-        except Exception as e:
-            self.print(f"Error : {e}")
-
-    def uninstall_module(self, name):
-
-        if isinstance(
-            name, list
-        ) and len(name) == 2:
-            name = name[1]
-
-        self.print(f"Installing module : {name}")
-
-        mod_installer_url = self.get_file_handler(self.keys["URL"]) + fr"/install/installer\{name}-installer.json"
-        self.print(f"Installer file url: {mod_installer_url}")
-        try:
-            pass
-            # delete_package(mod_installer_url)
-        except Exception as e:
-            self.print(f"Error : {e}")
 
     def load_open_file(self):
         self.logger.info("Starting cloudM")

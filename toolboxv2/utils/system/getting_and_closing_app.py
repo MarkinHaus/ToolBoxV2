@@ -54,7 +54,7 @@ def save_closing_app():
         app.print(Style.Bold(Style.ITALIC("- end -")))
         return
 
-    if not app.called_exit[0] and time.time() - app.called_exit[1] < 10:
+    if not app.called_exit[0] and time.time() - app.called_exit[1] < 8:
         app.print(Style.Bold(Style.ITALIC("- Killing a kid is not ok -")))
         return
 

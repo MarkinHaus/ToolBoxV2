@@ -25,6 +25,35 @@ version = '0.0.1'
 default_export = export(mod_name=Name, version=version, interface=ToolBoxInterfaces.native, test=False)
 
 
+def find_highest_zip_version_entry(name, target_app_version=None, filepath='tbState.yaml'):
+    """
+    Findet den Eintrag mit der höchsten ZIP-Version für einen gegebenen Namen und eine optionale Ziel-App-Version in einer YAML-Datei.
+
+    :param name: Der Name des gesuchten Eintrags.
+    :param target_app_version: Die Zielversion der App als String (optional).
+    :param filepath: Der Pfad zur YAML-Datei.
+    :return: Den Eintrag mit der höchsten ZIP-Version innerhalb der Ziel-App-Version oder None, falls nicht gefunden.
+    """
+    highest_zip_ver = None
+    highest_entry = None
+
+    with open(filepath, 'r') as file:
+        data = yaml.safe_load(file)
+
+        for key, value in data.get('installable', {}).items():
+            # Prüfe, ob der Name im Schlüssel enthalten ist
+            if name in key:
+                app_ver, zip_ver = value['version']
+                # Wenn eine Ziel-App-Version angegeben ist, vergleiche sie
+                if target_app_version is None or version.parse(app_ver) == version.parse(target_app_version):
+                    current_zip_ver = version.parse(zip_ver)
+                    if highest_zip_ver is None or current_zip_ver > highest_zip_ver:
+                        highest_zip_ver = current_zip_ver
+                        highest_entry = value
+
+    return highest_entry
+
+
 def download_files(urls, directory, desc, print_func, filename=None):
     """ Hilfsfunktion zum Herunterladen von Dateien. """
     for url in tqdm(urls, desc=desc):
@@ -270,11 +299,22 @@ def installer(app: Optional[App], module_name: str, version: str = "-.-.-"):
         if version == version_:
             return "module already installed found"
 
-    zip_path = ""  # create_and_pack_module(f".\\mods\\{module_name}", module_name, version_)
-    if 'y' in input("install zip file ?"):
+    module_name = find_highest_zip_version_entry(module_name).get('url').split('mods_sto\\')[-1]
+    if module_name is None:
+        return False
+    zip_path = f".\\mods_sto\\{module_name}"
+    if 'y' in input(f"install zip file {module_name} ?"):
         unpack_and_move_module(zip_path, module_name)
     # install_dependencies('dependencies.yaml')
-    return zip_path
+    return True
+
+
+@export(mod_name=Name, test=False, api=True, state=False)
+def get_latest(module_name: str):
+    module_name = find_highest_zip_version_entry(module_name).get('url').split('mods_sto\\')[-1]
+    if module_name is None:
+        return False
+    return f"/installer/download/mods_sto\\{module_name}"
 
 
 #  =================== v2 functions =================
@@ -288,7 +328,8 @@ def run_command(command, cwd=None):
 def test_bundle_dependencies():
     _ = get_app("test_bundle_dependencies", "test")
     print("Testing bundle", _.id)
-    dep = bundle_dependencies(r"C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\SchedulerManager.py", return_dependencies=True)
+    dep = bundle_dependencies(r"C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\SchedulerManager.py",
+                              return_dependencies=True)
     print(dep)
 
 

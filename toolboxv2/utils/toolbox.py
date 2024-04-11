@@ -143,7 +143,7 @@ class App(AppType, metaclass=Singleton):
         self.runnable = {}
         self.dev_modi = self.config_fh.get_file_handler(self.keys["develop-mode"])
         if self.config_fh.get_file_handler("provider::") is None:
-            self.config_fh.add_to_save_file_handler("provider::", os.environ.get("HOSTNAME", "https://simplecore.app"))
+            self.config_fh.add_to_save_file_handler("provider::", "http://localhost:"+self.args_sto.port if "localhost" == os.environ.get("HOSTNAME", "localhost") else "https://simplecore.app")
         self.functions = {}
 
         self.interface_type = ToolBoxInterfaces.native
@@ -169,6 +169,16 @@ class App(AppType, metaclass=Singleton):
         )
 
         self.args_sto = args
+
+    def get_username(self):
+        user_name = self.config_fh.get_file_handler("ac_user:::")
+        if user_name is None and user_name != "None":
+            user_name = input("Input your username One Time Plies bes sure to make no typos: ")
+            self.config_fh.add_to_save_file_handler("ac_user:::", user_name)
+        return user_name
+
+    def reset_username(self):
+        self.config_fh.add_to_save_file_handler("ac_user:::", "None")
 
     @staticmethod
     def exit_main(*args, **kwargs):

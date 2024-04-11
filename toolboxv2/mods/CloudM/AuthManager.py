@@ -570,7 +570,7 @@ def validate_persona(app: App, data: VpUSER) -> ApiResult:
     if user.is_persona == "":
         return Result.default_user_error(info="No Persona key registered")
 
-    valid_origen = ["https://simplecore.app", "http://localhost:5000"] + (
+    valid_origen = ["https://simplecore.app"] + (
         ["http://localhost:5000"] if app.debug else [])
 
     try:

@@ -170,7 +170,7 @@ def update_core(self, backup=False, name=""):
 def create_magic_log_in(app: App, username: str):
     user = app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username)
     key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
-    base_url = app.config_fh.get_file_handler("provider::") + (f':{app.args_sto.port}' if app.args_sto.host == 'localhost' else "5000")
+    base_url = app.config_fh.get_file_handler("provider::") + (f':{app.args_sto.port}' if app.args_sto.host == 'localhost' else "")
     url = f"{base_url}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
     return url
 

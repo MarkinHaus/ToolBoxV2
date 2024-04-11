@@ -61,6 +61,7 @@
 
         username = document.getElementById('username').value;
         document.getElementById('username').classList.add('none')
+        localStorage.setItem("StartMLogIN", "True")
         await generateAsymmetricKeys().then(async keys => {
             privateKey_base64 = keys.privateKey_base64
             await storePrivateKey(privateKey_base64, username)
@@ -119,6 +120,7 @@
             localStorage.setItem("local_ws.onopen:installMod-welcome", 'false');
             await AuthHttpPostData(username, get_handleLoginError("Session Error"), (_)=>{
                 window.location.href = "/web/dashboard";
+                localStorage.removeItem("StartMLogIN")
             })
 
         }, 200);

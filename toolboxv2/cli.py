@@ -7,11 +7,13 @@ import asyncio
 from functools import wraps
 from platform import system, node
 
+import requests
 from yaml import safe_load
 
 from toolboxv2.runabel import runnable_dict as runnable_dict_func
 from toolboxv2.utils.system.main_tool import MainTool
 from toolboxv2.utils.extras.Style import Style, Spinner
+from toolboxv2.utils.system.session import Session
 # Import public Pages
 from toolboxv2.utils.toolbox import App
 
@@ -474,6 +476,7 @@ async def main(loop=None):
         os.system(f"{sys.executable} -m unittest discover -s {test_path}")
         return 0
 
+
     app_pid = str(os.getpid())
 
     pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
@@ -512,9 +515,30 @@ async def main(loop=None):
         except:
             print("Auto starting Starting Local if u know ther is no bg instance use -fg to run in the frond ground")
 
-
     # tb_app.load_all_mods_in_file()
     # tb_app.save_registry_as_enums("utils", "all_functions_enums.py")
+
+    if args.install:
+        if not tb_app.run_any("CloudM", "install", args.install):
+            if 'n' not in input("Mod not found in local mods_sto install from remote ? (yes,no)"):
+                session = Session(tb_app.get_username())
+                if not await session.login():
+                    mk = input("bitte geben sie ihren magik link ein")
+                    if '/web/' not in mk:
+                        print("Link is not in Valid format")
+                        return
+                    if not await session.init_log_in_mk_link(mk):
+                        print("Link is not in Valid")
+                        return
+                response = await session.fetch("/api/CloudM/get_latest?module_name="+args.install, method="GET")
+                json_response = await response.json()
+                print(json_response)
+                print(json_response['data'])
+
+                r2 = await session.fetch(json_response['data'], method="GET")
+                json_response = await response.json()
+                print(json_response)
+                print(json_response['data'])
 
     if args.lm:
         edit_logs()

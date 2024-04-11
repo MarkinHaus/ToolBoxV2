@@ -754,6 +754,9 @@ class AppType:
     def get_autocompletion_dict(self):
         """proxi attr"""
 
+    def get_username(self):
+        """proxi attr"""
+
     def save_registry_as_enums(self, directory: str, filename: str):
         """proxi attr"""
 

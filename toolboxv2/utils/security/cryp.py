@@ -41,6 +41,10 @@ DEVICE_KEY = get_or_create_device_key
 class Code:
     application_key = None
 
+    @staticmethod
+    def DK():
+        return DEVICE_KEY
+
     def decode_code(self, encrypted_data, key=None):
 
         if not isinstance(encrypted_data, str):
