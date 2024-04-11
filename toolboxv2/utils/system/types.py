@@ -31,7 +31,6 @@ class AppArgs:
     install = None
     remove = None
     update = None
-    mod_version_name = 'mainTool'
     name = 'main'
     port = 8000
     host = '0.0.0.0'
@@ -73,6 +72,7 @@ class ToolBoxInterfaces(str, Enum):
     remote = "REMOTE"
     native = "NATIVE"
     internal = "INTERNAL"
+    future = "FUTURE"
 
 
 @dataclass
@@ -194,6 +194,13 @@ class Result:
         return cls(error=error, info=info, result=result)
 
     @classmethod
+    def future(cls, data=None, data_info="", info="OK", interface=ToolBoxInterfaces.future):
+        error = ToolBoxError.none
+        info = ToolBoxInfo(exec_code=0, help_text=info)
+        result = ToolBoxResult(data_to=interface, data=data, data_info=data_info, data_type="future")
+        return cls(error=error, info=info, result=result)
+
+    @classmethod
     def custom_error(cls, data=None, data_info="", info="", exec_code=-1, interface=ToolBoxInterfaces.native):
         error = ToolBoxError.custom_error
         info = ToolBoxInfo(exec_code=exec_code, help_text=info)
@@ -241,6 +248,19 @@ class Result:
         if key is not None and isinstance(data, dict):
             return data.get(key, default)
         return data if data is not None else default
+
+    async def aget(self, key=None, default=None):
+        if self.result.data_to.name == ToolBoxInterfaces.future.name:
+            data = await self.result.data
+        else:
+            data = self.aget(key=None, default=None)
+        if isinstance(data, Result):
+            return data.get(key=key, default=default)
+        if key is not None and isinstance(data, dict):
+            return data.get(key, default)
+        return data if data is not None else default
+
+
 
     def lazy_return(self, _=0, data=None, **kwargs):
         flags = ['raise', 'logg', 'user', 'intern']
@@ -305,18 +325,17 @@ def analyze_data(data):
             report.append(f"Total errors: {mod_info}")
             continue
         if mod_name == 'total_coverage':
-            report.append(f"Total coverage: {mod_info}")
             continue
         if mod_name == 'coverage':
             _ = '\t'.join(mod_info)
-            report.append(f"Total coverage: {_}")
+            report.append(f"Total coverage:\n {_}")
             continue
         report.append(f"Modul: {mod_name}")
         report.append(f"  Funktionen ausgeführt: {mod_info.get('functions_run', 0)}")
         report.append(f"  Funktionen mit Fatalen Fehler: {mod_info.get('functions_fatal_error', 0)}")
         report.append(f"  Funktionen mit Fehler: {mod_info.get('error', 0)}")
         report.append(f"  Funktionen erfolgreich: {mod_info.get('functions_sug', 0)}")
-        report.append(f"  coverage run:testet {mod_info.get('coverage')[0]/mod_info.get('coverage')[1]:.2f}")
+        report.append(f"  coverage run:testet {(mod_info.get('coverage')[0]+2)/(mod_info.get('coverage')[1]+1):.2f}")
 
         if 'callse' in mod_info and mod_info['callse']:
             report.append("  Fehler:")
@@ -738,7 +757,7 @@ class AppType:
     def save_registry_as_enums(self, directory: str, filename: str):
         """proxi attr"""
 
-    def execute_all_functions(self, m_query='', f_query=''):
+    async def execute_all_functions(self, m_query='', f_query=''):
         print("Executing all functions")
         all_data = {
             "modular_run": 0,
@@ -827,8 +846,9 @@ class AppType:
                 all_data["coverage"].append(f"{module_name}:{infos['coverage'][1]/infos['coverage'][0]:.2f}\n")
         total_coverage = sum([float(t.split(":")[-1]) for t in all_data["coverage"]])/len(all_data["coverage"])
         print(f"\n{all_data['modular_run']=}\n{all_data['modular_sug']=}\n{all_data['modular_fatal_error']=}\n{total_coverage=}")
-
-        return Result.ok(data=all_data, data_info=analyze_data(all_data))
+        d = analyze_data(all_data)
+        print(d)
+        return Result.ok(data=all_data, data_info=d)
 
     @staticmethod
     def calculate_complexity(filename_or_code):

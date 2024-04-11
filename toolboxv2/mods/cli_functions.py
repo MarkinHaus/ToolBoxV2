@@ -315,8 +315,7 @@ def user_input(app,
                             )
     call_obj = CallingObject.empty()
     try:
-        text = session.prompt(default=active_modul,
-                              mouse_support=True)
+        text = session.prompt(default=active_modul, mouse_support=True, in_thread=True)
     except KeyboardInterrupt:
 
         return user_input(app, completer_dict, get_rprompt, bottom_toolbar, active_modul)
@@ -352,7 +351,7 @@ def user_input(app,
     ),
     "build_in_commands": {},
 }])
-def co_evaluate(app: App,
+async def co_evaluate(app: App,
                 obj: CallingObject or None,
                 build_in_commands: dict,
                 threaded=False,
@@ -371,6 +370,9 @@ def co_evaluate(app: App,
         return Result.default_user_error(info="No module Provided").set_origin("cli_functions.co_evaluate").print()
 
     if command in build_in_commands:
+        if command == "exit":
+            await build_in_commands[command](None)
+            return
         return build_in_commands[command](obj).print()
 
     function_name = obj.function_name

@@ -502,12 +502,16 @@ async def main(loop=None):
             except Exception:
                 stop(pid_file + '-app.pid', args.name)
     elif args.live_application:
-        tb_app = override_main_app(ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
-                                            args.port if args.port != 8000 else 6587))
+        try:
+            tb_app = override_main_app(ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
+                                                args.port if args.port != 8000 else 6587))
 
-        tb_app.verify()
-        if args.debug:
-            tb_app.show_console()
+            tb_app.verify()
+            if args.debug:
+                tb_app.show_console()
+        except:
+            print("Auto starting Starting Local if u know ther is no bg instance use -fg to run in the frond ground")
+
 
     # tb_app.load_all_mods_in_file()
     # tb_app.save_registry_as_enums("utils", "all_functions_enums.py")
@@ -570,17 +574,17 @@ async def main(loop=None):
                 raise ValueError(
                     f"Modi : [{args.modi}] not found on device installed modi : {list(runnable_dict.keys())}")
             # open(f"./config/{args.modi}.pid", "w").write(app_pid)
-            tb_app.run_runnable(args.modi)
+            await tb_app.run_runnable(args.modi)
         elif 'cli' in args.modi:
             runnable_dict = runnable_dict_func('cli')
             tb_app.set_runnable(runnable_dict)
-            tb_app.run_runnable(args.modi)
+            await tb_app.run_runnable(args.modi)
         elif args.remote:
-            tb_app.rrun_runnable(args.modi)
+            await tb_app.rrun_runnable(args.modi)
         else:
             runnable_dict = runnable_dict_func(args.modi[:2])
             tb_app.set_runnable(runnable_dict)
-            tb_app.run_runnable(args.modi)
+            await tb_app.run_runnable(args.modi)
 
     elif args.docker:
 

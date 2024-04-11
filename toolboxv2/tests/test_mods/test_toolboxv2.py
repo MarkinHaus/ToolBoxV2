@@ -318,7 +318,8 @@ class TestToolboxv2(unittest.TestCase):
 
     def test_all_functions(self):
         print("STARTING test")
-        res = self.app.execute_all_functions()
+        import asyncio
+        res = asyncio.run(self.app.execute_all_functions())
         print("RES: ", res.result.data_info)
         # data = res.get()
         # print(res.result.data_info)

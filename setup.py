@@ -11,7 +11,7 @@ with open('README.md') as readme_file:
 #
 #with open(getenv('CONFIG_FILE', '/toolboxv2/toolbox.yaml'), 'r') as config_file:
 #    _version = config_file.read().split('version')[-1].split('\n')[0].split(':')[-1].strip()
-version = "0.1.12" #_version  # _version.get('main', {}).get('version', '-.-.-')
+version = "0.1.13" #_version  # _version.get('main', {}).get('version', '-.-.-')
 
 here = path.abspath(path.dirname(__file__))
 

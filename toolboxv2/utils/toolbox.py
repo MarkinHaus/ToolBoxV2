@@ -1,5 +1,7 @@
 """Main module."""
+import asyncio
 import concurrent.futures
+import inspect
 import os
 import sys
 import time
@@ -158,9 +160,7 @@ class App(AppType, metaclass=Singleton):
 
         if args.get_version:
             v = self.version
-            if args.mod_version_name != "mainTool":
-                v = self.run_any(args.mod_version_name, 'Version')
-            self.print(f"Version {args.mod_version_name} : {v}")
+            self.print(f"Version main : {v}")
 
         self.logger.info(
             Style.GREEN(
@@ -230,9 +230,12 @@ class App(AppType, metaclass=Singleton):
     def set_runnable(self, r):
         self.runnable = r
 
-    def run_runnable(self, name, **kwargs):
+    async def run_runnable(self, name, **kwargs):
         if name in self.runnable.keys():
-            return self.runnable[name](get_app(from_="runner"), self.args_sto, **kwargs)
+            if inspect.iscoroutinefunction(self.runnable[name]):
+                return await self.runnable[name](get_app(from_="runner"), self.args_sto, **kwargs)
+            else:
+                return self.runnable[name](get_app(from_="runner"), self.args_sto, **kwargs)
         self.print("Runnable Not Available")
 
     @debug.setter
@@ -753,7 +756,10 @@ class App(AppType, metaclass=Singleton):
                                                  info=f"function not found function").set_origin(mod_function_name)
 
         self.logger.info(f"Profiling function")
-        return self.fuction_runner(function, function_data, args, kwargs)
+        if inspect.iscoroutinefunction(function):
+            return Result.future(asyncio.create_task(self.fuction_runner(function, function_data, args, kwargs).get()))
+        else:
+            return self.fuction_runner(function, function_data, args, kwargs)
 
     def fuction_runner(self, function, function_data: dict, args: list, kwargs: dict):
 

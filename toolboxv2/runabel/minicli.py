@@ -12,7 +12,7 @@ from toolboxv2.utils.system.types import CallingObject
 NAME = 'cli'
 
 
-def run(app: App, args):
+async def run(app: App, args):
     try:
         set_title(f"ToolBox : {app.version}")
     except:
@@ -24,16 +24,11 @@ def run(app: App, args):
                     f'<b><style bg="ansired">c+space</style></b> Autocompletion tips '
                     f'<b><style bg="ansired">s+up</style></b> run in shell')
 
-    def exit_(_):
+    async def exit_(_):
+        print("EXITING")
         if app.debug:
             app.hide_console()
-        if 'main' in app.id:
-            res = yes_no_dialog(
-                title='Exit ToolBox',
-                text='Do you want to Close the ToolBox?').run()
-            app.alive = not res
-        else:
-            app.alive = False
+        app.alive = False
         return Result.ok().set_origin("minicli::build-in")
 
     def set_debug_mode(call_: CallingObject) -> Result:
@@ -208,11 +203,11 @@ def run(app: App, args):
             autocompletion_dict = app.run_any(tbef.CLI_FUNCTIONS.UPDATE_AUTOCOMPLETION_MODS,
                                               autocompletion_dict=autocompletion_dict)
 
-        running_instance = app.run_any(tbef.CLI_FUNCTIONS.CO_EVALUATE,
-                                       obj=call,
-                                       build_in_commands=bic,
-                                       threaded=threaded,
-                                       helper=helper_exequtor[0])
+        running_instance = await app.run_any(tbef.CLI_FUNCTIONS.CO_EVALUATE,
+                                             obj=call,
+                                             build_in_commands=bic,
+                                             threaded=threaded,
+                                             helper=helper_exequtor[0])
 
         print("", end="" + "done ->>\r")
         running = app.alive

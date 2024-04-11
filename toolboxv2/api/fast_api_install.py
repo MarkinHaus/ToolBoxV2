@@ -108,7 +108,7 @@ async def generate_download_zip(websocket: WebSocket):
         await ws_send(f"mods @> {mod_name} infos: provider = {mod_data.get('provider')}", websocket=websocket)
     await ws_send(f"root @> adding Core", websocket=websocket)
     if target_version is None:
-        target_version = '0.1.12'
+        target_version = '0.1.13'
     if dir_f := data.get("installationFolder"):
         installation_data['core'] = f"pip install --target={dir_f} ToolBoxV2==" + target_version
     else:
