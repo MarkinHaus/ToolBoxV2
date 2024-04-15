@@ -38,6 +38,10 @@ class FileHandler(Code):
             self.file_handler_storage = open(self.file_handler_file_prefix + self.file_handler_filename, mode)
             self.file_handler_max_loaded_index_ += 1
         except FileNotFoundError:
+            if self.file_handler_max_loaded_index_ == 2:
+                os.makedirs(self.file_handler_file_prefix, exist_ok=True)
+            if self.file_handler_max_loaded_index_ == 3:
+                os.makedirs(".config/mainTool", exist_ok=True)
             if self.file_handler_max_loaded_index_ >= 5:
                 print(Style.RED(f"pleas create this file to prosed : {self.file_handler_file_prefix}"
                                 f"{self.file_handler_filename}"))

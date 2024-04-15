@@ -5,6 +5,8 @@ The SocketManager Supports 2 types of connections
 
 """
 import gzip
+import inspect
+import io
 import json
 import os
 import random
@@ -15,12 +17,13 @@ from enum import Enum
 import zipfile
 from io import BytesIO
 import shutil
+from typing import Optional
 from zipfile import ZipInfo, ZIP_LZMA
 import uuid
 
 from tqdm import tqdm
 
-from toolboxv2 import MainTool, FileHandler, App, Style, get_app
+from toolboxv2 import MainTool, FileHandler, App, Style, get_app, Result
 import requests
 
 import socket
@@ -28,7 +31,7 @@ import threading
 import queue
 import asyncio
 
-version = "0.1.8"
+version = "0.1.9"
 Name = "SocketManager"
 
 export = get_app("SocketManager.Export").tb
@@ -148,11 +151,16 @@ class Tools(MainTool, FileHandler):
                           name=self.name, logs=self.logger, color=self.color, on_exit=self.on_exit)
         self.sockets = {}
 
-    def on_start(self):
+    async def on_start(self):
         self.logger.info(f"Starting SocketManager")
+        t0 = asyncio.create_task(asyncio.to_thread(self.set_print_public_ip))
+        t1 = asyncio.create_task(asyncio.to_thread(self.set_print_local_ip))
+        await asyncio.sleep(3)
+        await t0
+        await t1
         # ~ self.load_file_handler()
 
-    def on_exit(self):
+    async def on_exit(self):
         self.logger.info(f"Closing SocketManager")
         for socket_name, socket_data in self.sockets.items():
             self.print(f"consing Socket : {socket_name}")
@@ -169,353 +177,696 @@ class Tools(MainTool, FileHandler):
             # '['running_dict']["keep_alive_var"] ': keep_alive_var,
             socket_data['running_dict']["keep_alive_var"] = False
             try:
-                socket_data['sender']({'exit': True})
+                await socket_data['sender']({'exit': True})
             except:
                 pass
+            self.exit_socket(socket_name)
         # ~ self.save_file_handler()
 
     def show_version(self):
         self.print("Version: ", self.version)
         return self.version
 
+    async def set_print_local_ip(self):
+
+        if self.local_ip is None:
+            self.local_ip = get_local_ip()
+            self.print(f"Device IP : {self.local_ip}")
+
+    async def set_print_public_ip(self):
+
+        if self.local_ip is None:
+            self.public_ip = get_public_ip()
+            self.print(f"Network IP : {self.public_ip}")
+
+    def create_server(self, name: str, port: int, host: str, socket_type, max_connections=-1, unix_file=False,
+                      handler=None) -> Result:
+        self.logger.debug(f"Starting:{name} server on port {port} with host {host}")
+
+        sock = socket.socket(socket_type, socket.SOCK_STREAM)
+
+        try:
+            if unix_file:
+                sock.bind(host)
+            else:
+                sock.bind((host, port))
+            sock.listen(max_connections)
+            self.print(f"Server:{name} online at {host}:{port}")
+        except Exception as e:
+            self.print(Style.RED(f"Server:{name} error at {host}:{port} {e}"))
+            return Result.default_internal_error(exec_code=-1, info=str(e), data="Server creation failed")
+
+        def start_server():
+            if handler is None:
+                return sock
+            s_thread = threading.Thread(target=handler, args=(name, sock,), daemon=True)
+            s_thread.start()
+            return s_thread
+
+        return Result.ok(start_server())
+
+    async def server_handler(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        pass
+
+    async def a_create_server(self, name: str, port: int, host: str, unix_file=False, handler=None) -> Result:
+        self.logger.debug(f"Starting:{name} server on port {port} with host {host}")
+
+        if handler is None:
+            handler = self.server_handler
+
+        try:
+            if unix_file:
+                server = await asyncio.start_unix_server(handler, host)
+            else:
+                server = await asyncio.start_server(handler, host, port)
+            self.print(f"Server:{name} online at {host}:{port}")
+        except Exception as e:
+            self.print(Style.RED(f"Server:{name} error at {host}:{port} {e}"))
+            return Result.default_internal_error(exec_code=-1, info=str(e), data="Server creation failed")
+
+        async def running_server_instance():
+            async with server:
+                await server.start_serving()
+                while server.is_serving():
+                    if not self.app.alive or self.sockets[name]["running_dict"]["server_receiver"]:
+                        break
+                    await asyncio.sleep(1)
+
+        return Result.future(asyncio.create_task(running_server_instance()))
+
+    def create_client(self, name: str, port: int, host: str, socket_type, unix_file: bool, handler=None) -> Result:
+        self.logger.debug(f"Starting:{name} client on port {port} with host {host}")
+        sock = socket.socket(socket_type, socket.SOCK_STREAM)
+        time.sleep(random.choice(range(1, 100)) // 100)
+        if unix_file:
+            connection_error = sock.connect_ex(host)
+        else:
+            connection_error = sock.connect_ex((host, port))
+        if connection_error != 0:
+            sock.close()
+            self.print(f"Client:{name}-{host}-{port} connection_error:{connection_error}")
+            return Result.default_internal_error(exec_code=connection_error,
+                                                 info="Client creation failed, check connection and Server")
+        else:
+            self.print(f"Client:{name} online at {host}:{port}")
+
+        # sock.sendall(bytes(self.app.id, 'utf-8'))
+
+        def start_client():
+            if handler is None:
+                return None, sock
+            c_thread = threading.Thread(target=handler, args=(sock,), daemon=True)
+            c_thread.start()
+            return c_thread, sock
+
+        return Result.ok(start_client())
+
+    async def a_create_client(self, name: str, port: int, host: str, unix_file: bool) -> Result:
+        self.logger.debug(f"Starting:{name} client on port {port} with host {host}")
+
+        time.sleep(random.choice(range(1, 100)) // 100)
+        try:
+            if unix_file:
+                reader, writer = await asyncio.open_unix_connection(host)
+            else:
+                reader, writer = await asyncio.open_connection(host, port)
+        except Exception as e:
+            self.print(f"Client:{name}-{host}-{port} connection_error:{str(e)}")
+            return Result.default_internal_error(exec_code=-1,
+                                                 info="Client creation failed, check connection and Server",
+                                                 data=str(e))
+        self.print(f"Client:{name} online at {host}:{port}")
+        # sock.sendall(bytes(self.app.id, 'utf-8'))
+        return Result.ok((reader, writer))
+
+    def create_peer(self, name: str, port: int, endpoint_port: int, host: str) -> Result:
+
+        if host == "localhost" or host == "127.0.0.1":
+            self.print("LocalHost Peer2Peer is not supported use server client architecture")
+            return Result.default_internal_error(exec_code=-1,
+                                                 info="LocalHost Peer2Peer is not supported use server client architecture")
+
+        if host == '0.0.0.0':
+            public_ip = self.local_ip
+        else:
+            if self.public_ip is None:
+                self.print("Getting IP address")
+                self.public_ip = get_public_ip()
+            public_ip = self.public_ip
+
+        self.logger.debug(f"Starting:{name} peer on port {port} with host {host}")
+
+        try:
+
+            r_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            r_socket.bind(('0.0.0.0', endpoint_port))
+            self.print(f"Peer:{name} receiving on {public_ip}:{endpoint_port}")
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.bind(('0.0.0.0', port))
+            sock.sendto(b'k', (host, endpoint_port))
+            self.print(f"Peer:{name} sending to on {host}:{port}")
+            return Result.ok((sock, r_socket))
+        except Exception as e:
+            return Result.default_internal_error(exec_code=-1,
+                                                 info="Client creation failed, check connection and Server",
+                                                 data=str(e))
+
+    async def a_create_peer(self, name, port, endpoint_port, host):
+        if host == "localhost" or host == "127.0.0.1":
+            self.print("LocalHost Peer2Peer is not supported use server client architecture")
+            return Result.default_internal_error(exec_code=-1,
+                                                 info="LocalHost Peer2Peer is not supported use server client architecture")
+
+        if host == '0.0.0.0':
+            public_ip = self.local_ip
+        else:
+            if self.public_ip is None:
+                self.print("Getting IP address")
+                await self.set_print_public_ip()
+            public_ip = self.public_ip
+
+        self.logger.debug(f"Starting:{name} peer on port {port} with host {host}")
+
+        try:
+
+            r_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            r_socket.bind(('0.0.0.0', endpoint_port))
+
+            self.print(f"Peer:{name} receiving on {public_ip}:{endpoint_port}")
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.bind(('0.0.0.0', port))
+            sock.sendto(b'k', (host, endpoint_port))
+
+            server = await self.a_create_server(name, endpoint_port, '0.0.0.0', False)
+
+            clinet = await self.a_create_client(name, port, host, False)
+
+            self.print(f"Peer:{name} sending to on {host}:{port}")
+            return Result.ok((sock, r_socket))
+        except Exception as e:
+            return Result.default_internal_error(exec_code=-1,
+                                                 info="Client creation failed, check connection and Server",
+                                                 data=str(e))
+
+    ############ Helper fuction ###################
+
+    def exit_socket(self, name):
+        self.sockets[name]["running_dict"]["server_receiver"] = False
+        self.sockets[name]["running_dict"]["keep_alive_var"] = False
+        for r in self.sockets[name]["running_dict"]["receive"].keys():
+            self.sockets[name]["running_dict"]["receive"][r] = False
+
+    async def a_exit_socket(self, name):
+        pass
+
+    def register_identifier(self, name, connection, identifier="main"):
+        connection_key = None
+        if isinstance(connection, tuple) and isinstance(connection[1], socket.socket) and connection[0] is None:
+            # Therefor the connection is synchrony and no receiver running
+            if self.sockets[name]["type_id"] == SocketType.client.name:
+                addr = connection[1].getpeername()
+            else:
+                addr = connection[1].getsockname()
+            connection_key = addr[0] + str(addr[1])
+            if connection_key in self.sockets[name]["client_sockets_dict"].keys():
+                pass
+            else:
+                connection_key = None
+        elif isinstance(connection, socket.socket):
+            if self.sockets[name]["type_id"] == SocketType.server.name:
+                addr = connection.getpeername()
+            else:
+                addr = connection.getsockname()
+            connection_key = addr[0] + str(addr[1])
+            if connection_key in self.sockets[name]["client_sockets_dict"].keys():
+                pass
+            else:
+                connection_key = None
+        else:
+            for _k, _v in self.sockets[name]["client_sockets_dict"].items():
+                # print(f"\nregister_identifier {name} {_k=}, {_v=} {connection=}\n")
+                if _v == connection:
+                    connection_key = _k
+                    break
+        if connection_key is None:
+            raise ValueError(f"No Unknown Connection : {connection} known {self.sockets[name]['client_sockets_dict']}")
+        self.print(f"{name} registered with {connection_key} as {identifier}")
+        self.sockets[name]["client_sockets_identifier"][identifier] = connection_key
+
+    def register_new_connection_helper(self, name, client_socket, endpoint):
+        self.sockets[name]["connections"] += 1
+        self.print(
+            f"New connection: on {name} acc:{self.sockets[name]['connections']}"
+            f" max:{self.sockets[name]['max_connections']} connect on :{endpoint}")
+        self.sockets[name]["client_sockets_dict"][endpoint[0] + str(endpoint[1])] = client_socket
+        if self.sockets[name]['max_connections'] != -1:
+            if self.sockets[name]["connections"] >= self.sockets[name]['max_connections']:
+                self.sockets[name]["running_dict"]["server_receiver"] = False
+
+    async def a_register_new_connection(self, name, client_socket, endpoint):
+        await self.sockets[name]["a_receiver_queue"].put({'data': (client_socket, endpoint), 'identifier': "new_con"})
+        self.register_new_connection_helper(name, client_socket, endpoint)
+
+    def register_new_connection(self, name, client_socket, endpoint):
+        self.sockets[name]["receiver_queue"].put({'data': (client_socket, endpoint), 'identifier': "new_con"})
+        self.register_new_connection_helper(name, client_socket, endpoint)
+
+    def server_receiver(self, name, sock_):
+        self.print(f"Server {name} receiver started")
+        while self.sockets[name]["running_dict"]["server_receiver"]:
+            try:
+                client_socket, endpoint = sock_.accept()
+            except OSError:
+                self.sockets[name]["running_dict"]["server_receiver"] = False
+                break
+
+            self.register_new_connection(name, client_socket, endpoint)
+        self.print(f"Server {name} receiver Closed")
+
+    async def send(self, name, msg: bytes or dict, identifier="main"):
+        receiver = None
+
+        self.print(f"Sending data to {identifier} as {name}")
+
+        async def send_(chunk, address=None, drain=False):
+            async def a_send_():
+                try:
+                    writer.write(chunk)
+                    if drain:
+                        await writer.drain()
+                except Exception as e:
+                    self.logger.error(f"Error sending data: {e}")
+
+            def s_send_():
+                try:
+                    if self.sockets[name]["type_id"] == SocketType.client.name:
+                        # self.print(f"Start sending data to client {_socket.getpeername()}")
+                        _socket.sendall(chunk)
+                    elif address is not None and self.sockets[name]["type_id"] == SocketType.server.name:
+                        # self.print(f"Start sending data to {address}")
+                        _socket.sendto(chunk, address)
+                    elif self.sockets[name]["type_id"] == SocketType.peer.name:
+                        # self.print(
+                        #     f"Start sending data to peer at {(self.sockets[name]['host'], self.sockets[name]['p2p-port'])}")
+                        _socket.sendto(chunk, (self.sockets[name]["host"], self.sockets[name]["p2p-port"]))
+                    else:
+                        self.print(f"Start sending data with {_socket}")
+                        _socket.sendall(chunk)
+                except Exception as e:
+                    self.logger.error(f"Error sending data: {e}")
+
+            if self.sockets[name]["do_async"]:
+                _, writer = receiver
+                await a_send_()
+            else:
+                _socket = receiver
+                s_send_()
+
+        t0 = time.perf_counter()
+        if identifier in self.sockets[name]["client_sockets_identifier"]:
+            receiver = self.sockets[name]["client_sockets_dict"][
+                self.sockets[name]["client_sockets_identifier"][identifier]]
+        else:
+            raise ValueError(f"Invalid {identifier=} valid ar : {self.sockets[name]['client_sockets_identifier']}")
+
+        # if self.sockets[name]["type_id"] == SocketType.client.name:
+        #     to = (host, port)
+        # else:
+        #     to = (host, endpoint_port)
+
+        # Prüfen, ob die Nachricht ein Dictionary ist und Bytes direkt unterstützen
+        if isinstance(msg, bytes):
+            sender_bytes = b'b' + msg  # Präfix für Bytes
+            msg_json = 'sending bytes'
+        elif isinstance(msg, dict):
+            if 'exit' in msg:
+                sender_bytes = b'e'  # Präfix für "exit"
+                msg_json = 'exit'
+                self.sockets[name]["running_dict"]["receive"]["main"] = False
+            elif 'keepalive' in msg:
+                sender_bytes = b'k'  # Präfix für "keepalive"
+                msg_json = 'keepalive'
+            else:
+                msg_json = json.dumps(msg)
+                sender_bytes = b'j' + msg_json.encode('utf-8')  # Präfix für JSON
+        else:
+            self.print(Style.YELLOW(f"Unsupported message type: {type(msg)}"))
+            return
+
+        if sender_bytes != b'k' and self.app.debug:
+            self.print(Style.GREY(f"Sending Data: {msg_json} {self.sockets[name]['host']}"))
+
+        if sender_bytes == b'k':
+            await send_(sender_bytes)
+            return
+        if sender_bytes == b'e':
+            await send_(sender_bytes)
+            if self.sockets[name]["do_async"]:
+                await self.a_exit_socket(name)
+            else:
+                self.exit_socket(name)
+            return
+
+        total_steps = len(sender_bytes) // self.sockets[name]["package_size"]
+        if len(sender_bytes) % self.sockets[name]["package_size"] != 0:
+            total_steps += 1  # Einen zusätzlichen Schritt hinzufügen, falls ein Rest existiert
+        self.logger.info("Start sending data")
+        # tqdm Fortschrittsanzeige initialisieren
+        with tqdm(total=total_steps, unit='chunk', desc='Sending data') as pbar:
+            for i in range(0, len(sender_bytes), self.sockets[name]["package_size"]):
+                chunk_ = sender_bytes[i:i + self.sockets[name]["package_size"]]
+                await send_(chunk_, receiver)
+                pbar.update(1)
+                time.sleep(1 / 10 ** 18)
+        # self.print(f"\n\n{len(sender_bytes)=}, {i + package_size}")
+        if len(sender_bytes) != i + self.sockets[name]["package_size"]:
+            await send_(sender_bytes[i + self.sockets[name]["package_size"]:], receiver)
+
+        if len(sender_bytes) < self.sockets[name]["package_size"]:
+            await send_(b' ' * (len(sender_bytes) - self.sockets[name]["package_size"]), receiver)
+        if len(sender_bytes) % self.sockets[name]["package_size"] != 0:
+            pass
+        if self.sockets[name]["type_id"] == SocketType.peer.name:
+            await send_(b'E' * 6, receiver)
+        else:
+            await send_(b'E' * self.sockets[name]["package_size"], receiver)
+
+        if self.sockets[name]["do_async"]:
+            _, writer = receiver
+            await writer.drain()
+
+        # print(" ", end='\r')
+        self.logger.info(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
+
+    async def chunk_receive(self, name, r_socket_, identifier="main"):
+        try:
+            if self.sockets[name]["do_async"]:
+                chunk = await r_socket_.read(self.sockets[name]["package_size"])
+            elif self.sockets[name]["type_id"] == SocketType.client.name:
+                chunk, _ = await asyncio.to_thread(r_socket_.recvfrom,self.sockets[name]["package_size"])
+            else:
+                chunk = await asyncio.to_thread(r_socket_.recv, self.sockets[name]["package_size"])
+        except ConnectionResetError and ConnectionAbortedError as e:
+            self.print(f"Closing Receiver {name}:{identifier} {str(e)}")
+            self.sockets[name]["running_dict"]["receive"][identifier] = False
+            if self.sockets[name]["do_async"]:
+                await self.a_exit_socket(name)
+            else:
+                self.exit_socket(name)
+            return Result.custom_error(data=str(e), data_info="Connection down and closed")
+        if not chunk:
+            return Result.default_internal_error("No data available pleas exit")
+
+        return Result.ok(chunk)
+
+    async def compute_bytes(self, name, row_data, identifier="main"):
+        if self.sockets[name]["do_async"]:
+            await self.sockets[name]["a_receiver_queue"].put({'bytes': row_data, 'identifier': identifier})
+        else:
+            self.sockets[name]["receiver_queue"].put({'bytes': row_data, 'identifier': identifier})
+        self.logger.info(f"{name} -- received bytes --")
+        await asyncio.sleep(0)
+
+    async def compute_json(self, name, row_data, identifier="main"):
+        try:
+            msg = json.loads(row_data)
+            msg['identifier'] = identifier
+            if self.sockets[name]["do_async"]:
+                await self.sockets[name]["a_receiver_queue"].put(msg)
+            else:
+                self.sockets[name]["receiver_queue"].put(msg)
+            self.logger.info(f"{name} -- received JSON -- {msg['identifier']} {len(msg.keys())}")
+            if 'data_size' in msg.keys():
+                max_size = msg['data_size']
+                self.logger.info(f"Erwartete Bytes: {max_size}")
+                return max_size
+        except json.JSONDecodeError and UnicodeDecodeError as e:
+            self.logger.error(f"JSON decode error: {e}")
+
+        return -1
+
+    async def compute_data(self, name, row_data, data_type, identifier="main"):
+        if data_type == b'b':
+            # Behandlung von Byte-Daten
+            await self.compute_bytes(name, row_data, identifier)
+        elif data_type == b'j':
+            # Behandlung von JSON-Daten
+            return await self.compute_json(name, row_data, identifier)
+        else:
+            self.logger.error("Unbekannter Datentyp")
+            self.print(f"Received unknown data type: {data_type}")
+        return None
+
+    async def receive(self, name, identifier="main"):
+        print("Received Started")
+        data_type = None
+        data_buffer = io.BytesIO()
+        max_size = -1
+        ac_size = 0
+        extra = None
+
+        if identifier in self.sockets[name]["client_sockets_identifier"]:
+            receiver = self.sockets[name]["client_sockets_dict"][
+                self.sockets[name]["client_sockets_identifier"][identifier]]
+        else:
+            return Result.default_internal_error(f"Unknown identifier {identifier} ",
+                                                 data=self.sockets[name]["client_sockets_identifier"].keys())
+
+        if self.sockets[name]["do_async"]:
+            r_socket_, extra = receiver
+        else:
+            _, r_socket_ = receiver
+        self.sockets[name]["running_dict"]["receive"][identifier] = True
+        self.print(f"Receiver running for {name} to {identifier}")
+        while self.sockets[name]["running_dict"]["receive"][identifier]:
+            # t0 = time.perf_counter()
+            chunk_result = await self.chunk_receive(name, r_socket_, identifier=identifier)
+
+            chunk_result.print()
+
+            if chunk_result.is_error():
+                return chunk_result
+
+            chunk = chunk_result.get()
+
+            if chunk == b'k':
+                # Behandlung von Byte-Daten
+                self.logger.info(f"{name} -- received keepalive signal--")
+                continue
+
+            if not data_type:
+                data_type = chunk[:1]  # Erstes Byte ist der Datentyp
+                chunk = chunk[1:]  # Rest der Daten
+                self.print(f"Register date type : {data_type}")
+
+            if max_size > -1 and ac_size > 0 and data_type == b'b':
+                print(
+                    f"don {chunk[0] == b'E'[0] and chunk[-1] == b'E'[0]} {(ac_size / max_size) * 100:.2f}% total byts: {ac_size} von {max_size}",
+                    end='\r')
+            if data_type == b'e':
+                self.sockets[name]["running_dict"]["receive"][identifier] = False
+                self.logger.info(f"{name} -- received exit signal --")
+                self.sockets[name]['running_dict']["keep_alive_var"] = False
+                break
+            elif chunk[0] == b'E'[0] and chunk[-1] == b'E'[0] and ac_size > 0 and (
+                ac_size == max_size or max_size == -1):
+                max_size = -1
+                ac_size = 0
+                # Letzter Teil des Datensatzes
+                max_size_r = await self.compute_data(name, data_buffer.getvalue(), data_type, identifier=identifier)
+                if max_size_r is None:
+                    max_size = max_size_r
+                # Zurücksetzen für den nächsten Datensatz
+                data_buffer.flush()
+                data_type = None
+            else:
+                # Check if adding this chunk would exceed the max size limit
+                if ac_size + len(chunk) > max_size:
+                    # If the chunk would exceed the max size, add only the necessary part of it
+                    chunk = chunk[:max_size - ac_size]
+                    data_buffer.write(chunk)
+                else:
+                    data_buffer.write(chunk)
+                ac_size += len(chunk)
+        data_buffer.close()
+        self.print(f"{name} :closing connection to {self.sockets[name]['host']}")
+        if name in self.sockets:
+            self.sockets[name]['alive'] = False
+        if self.sockets[name]["do_async"] and extra is not None:
+            if self.sockets[name]['type_id'] == SocketType.peer.name or self.sockets[name][
+                'type_id'] == SocketType.client.name:
+                extra.write(b'e')
+                await extra.drain(b'e')
+            extra.close()
+            await extra.wait_close()
+        else:
+            r_socket_.close()
+            # if type_id == SocketType.peer.name and extra is not None:
+            #    extra.close()
+
+    ############### END ###############
+
     @export(mod_name="SocketManager", version=version, samples=create_socket_samples, test=False)
-    def create_socket(self, name: str = 'local-host', host: str = '0.0.0.0', port: int or None = None,
-                      type_id: SocketType = SocketType.client,
-                      max_connections=-1, endpoint_port=None,
-                      return_full_object=False, keepalive_interval=6, test_override=False, package_size=1024,
-                      start_keep_alive=True, unix_file=False):
+    async def create_socket(self, name: str = 'local-host', host: str = '0.0.0.0', port: int or None = None,
+                            type_id: SocketType = SocketType.client,
+                            max_connections=-1, endpoint_port=None,
+                            return_full_object=False, keepalive_interval=6, test_override=False, package_size=1024,
+                            start_keep_alive=True, unix_file=False, do_async=True) -> Result:
+
+        # start queues sender, receiver, acceptor
+        a_receiver_queue = asyncio.Queue()
+        receiver_queue = queue.Queue()
+
+        if host == "localhost":
+            host = '127.0.0.1'
 
         if 'test' in self.app.id and not test_override:
             return "No api in test mode allowed"
-
-        if endpoint_port is None and port is None:
-            port = 62435
-
-        if port is None:
-            port = endpoint_port - 1
-
-        if endpoint_port is None:
-            endpoint_port = port + 1
-
-        if endpoint_port == port:
-            endpoint_port += 1
 
         if not isinstance(type_id, SocketType):
             return
 
         # setup sockets
         type_id = type_id.name
-
-        r_socket = None
+        server_result = Result.default()
         connection_error = 0
-        if self.local_ip is None:
-            self.local_ip = get_local_ip()
 
-        self.print(f"Device IP : {self.local_ip}")
+        if self.local_ip is None:
+            self.local_ip = await self.set_print_local_ip()
 
         if unix_file:
             socket_type = socket.AF_UNIX
         else:
             socket_type = socket.AF_INET
 
+        def close_helper():
+            if do_async:
+                return lambda: self.a_exit_socket(name)
+            return lambda: self.exit_socket(name)
+
+        async def to_receive(client, identifier='main'):
+            if isinstance(client, str):
+                print("Client $$", client, identifier)
+                return
+            self.register_identifier(name, client, identifier)
+            print("Client $$ valid", client, identifier)
+            client_task = self.app.loop.create_task(self.receive(name, identifier))
+            print(client_task.done())
+            self.sockets[name]["client_receiver_threads"][identifier] = client_task
+
+        self.sockets[name] = {
+            'alive': True,
+            'close': close_helper(),
+            'max_connections': max_connections,
+            'type_id': type_id,
+            'do_async': do_async,
+            'package_size': package_size,
+            'host': host,
+            'port': port,
+            'p2p-port': endpoint_port,
+            'sender': lambda msg, identifier: self.send(name, msg=msg, identifier=identifier),
+            'connections': 0,
+            'receiver_queue': receiver_queue,
+            'a_receiver_queue': a_receiver_queue,
+            'connection_error': connection_error,
+            'running_dict': {
+                "server_receiver": True,
+                "receive": {
+                    "main": True,
+                },
+                "keep_alive_var": True
+            },
+            'client_sockets_dict': {},
+            'client_sockets_identifier': {},
+            'client_to_receiver_thread': to_receive,
+            'client_receiver_threads': {},
+        }
+
+        # server receiver
+
         if type_id == SocketType.server.name:
+
+            async def a_server_receiver(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+                endpoint = writer.get_extra_info("peername")
+                await self.a_register_new_connection(name, (reader, writer), endpoint)
+
             # create sever
-            self.logger.debug(f"Starting:{name} server on port {port} with host {host}")
+            server_result = self.create_server(name=name,
+                                               port=port,
+                                               host=host,
+                                               socket_type=socket_type,
+                                               max_connections=max_connections,
+                                               unix_file=unix_file,
+                                               handler=self.server_receiver) \
+                if not do_async else await self.a_create_server(name=name,
+                                                                port=port,
+                                                                host=host,
+                                                                unix_file=unix_file,
+                                                                handler=a_server_receiver)
 
-            sock = socket.socket(socket_type, socket.SOCK_STREAM)
+            if server_result.is_error():
+                return server_result
 
-            try:
-                if unix_file:
-                    sock.bind(host)
-                else:
-                    sock.bind((host, port))
-                sock.listen(max_connections)
-                self.print(f"Server:{name} online at {host}:{port}")
-            except Exception as e:
-                connection_error = -1
-                self.print(Style.RED(f"Server:{name} error at {host}:{port} {e}"))
+            # sock = await server_result.aget()
 
         elif type_id == SocketType.client.name:
             # create client
-            self.logger.debug(f"Starting:{name} client on port {port} with host {host}")
-            sock = socket.socket(socket_type, socket.SOCK_STREAM)
-            time.sleep(random.choice(range(1, 100)) // 100)
-            if unix_file:
-                connection_error = sock.connect_ex(host)
+            client_result = self.create_client(name, port, host, socket_type, unix_file) \
+                if not do_async else await self.a_create_client(name, port, host, unix_file)
+
+            if client_result.is_error():
+                return client_result
+
+            if do_async:
+                c_thread, c_socket = client_result.get()
+                r_socket = c_socket
             else:
-                connection_error = sock.connect_ex((host, port))
-            if connection_error != 0:
-                sock.close()
-                self.print(f"Client:{name}-{host}-{port} connection_error:{connection_error}")
-            else:
-                self.print(f"Client:{name} online at {host}:{port}")
-            # sock.sendall(bytes(self.app.id, 'utf-8'))
-            r_socket = sock
+                r_socket = await client_result.aget()
+            self.sockets[name]["client_sockets_dict"][host + str(port)] = r_socket
+            await to_receive(r_socket, "main")
 
         elif type_id == SocketType.peer.name:
             # create peer
 
-            if host == "localhost" or host == "127.0.0.1":
-                self.print("LocalHost Peer2Peer is not supported use server client architecture")
-                return
+            if endpoint_port is None and port is None:
+                port = 62435
 
-            if host == '0.0.0.0':
-                public_ip = self.local_ip
-            else:
-                if self.public_ip is None:
-                    self.print("Getting IP address")
-                    self.public_ip = get_public_ip()
-                public_ip = self.public_ip
+            if port is None:
+                port = endpoint_port - 1
 
-            self.logger.debug(f"Starting:{name} peer on port {port} with host {host}")
+            if endpoint_port is None:
+                endpoint_port = port + 1
 
-            try:
+            if endpoint_port == port:
+                endpoint_port += 1
 
-                r_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                r_socket.bind(('0.0.0.0', endpoint_port))
-                self.print(f"Peer:{name} receiving on {public_ip}:{endpoint_port}")
-                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                sock.bind(('0.0.0.0', port))
-                sock.sendto(b'k', (host, endpoint_port))
-                self.print(f"Peer:{name} sending to on {host}:{port}")
+            if do_async:
+                raise NotImplementedError("peer is not supported yet in async")
+            peer_result = self.create_peer(name, port, endpoint_port, host)
+            if peer_result.is_error():
+                return peer_result
 
-            except Exception:
-                connection_error = -1
-
+            sock, r_socket = peer_result.get()
         else:
             self.print(f"Invalid SocketType {type_id}:{name}")
             raise ValueError(f"Invalid SocketType {type_id}:{name}")
 
-        # start queues sender, receiver, acceptor
-        receiver_queue = queue.Queue()
-
-        running_dict = {
-            "server_receiver": True,
-            "receive": {
-                "main": True,
-            },
-            "keep_alive_var": True
-        }
-
-        client_sockets = {}
-
-        # server receiver
-
-        def server_receiver(sock_):
-            connctions = 0
-            while running_dict["server_receiver"]:
-                try:
-                    client_socket, endpoint = sock_.accept()
-                except OSError:
-                    running_dict["server_receiver"] = False
-                    break
-                connctions += 1
-                self.print(f"Server Receiver:{name} new connection:{connctions}:{max_connections} {endpoint=}")
-                receiver_queue.put({'data': (client_socket, endpoint), 'identifier': "new_con"})
-                client_sockets[endpoint[0] + str(endpoint[1])] = client_socket
-                if max_connections != -1:
-                    if connctions >= max_connections:
-                        running_dict["server_receiver"] = False
-
-        def send(msg: bytes or dict, address=None):
-            t0 = time.perf_counter()
-
-            if type_id == SocketType.client.name:
-                to = (host, port)
-            elif address is not None:
-                to = address
-            else:
-                to = (host, endpoint_port)
-
-            # Prüfen, ob die Nachricht ein Dictionary ist und Bytes direkt unterstützen
-            if isinstance(msg, bytes):
-                sender_bytes = b'b' + msg  # Präfix für Bytes
-                msg_json = 'sending bytes'
-            elif isinstance(msg, dict):
-                if 'exit' in msg:
-                    sender_bytes = b'e'  # Präfix für "exit"
-                    msg_json = 'exit'
-                    running_dict["receive"]["main"] = False
-                elif 'keepalive' in msg:
-                    sender_bytes = b'k'  # Präfix für "keepalive"
-                    msg_json = 'keepalive'
-                else:
-                    msg_json = json.dumps(msg)
-                    sender_bytes = b'j' + msg_json.encode('utf-8')  # Präfix für JSON
-            else:
-                self.print(Style.YELLOW(f"Unsupported message type: {type(msg)}"))
-                return
-
-            if sender_bytes != b'k' and self.app.debug:
-                self.print(Style.GREY(f"Sending Data: {msg_json} {to}"))
-
-            def send_(chunk):
-                try:
-                    if type_id == SocketType.client.name:
-                        # self.print(f"Start sending data to client {sock.getpeername()}")
-                        sock.sendall(chunk)
-                    elif address is not None and type_id == SocketType.server.name:
-                        _sock = client_sockets.get(address[0] + str(address[1]), sock)
-                        # self.print(f"Start sending data to {address}")
-                        _sock.sendto(chunk, address)
-                    elif address is not None:
-                        # self.print(f"Start sending data to {address}")
-                        sock.sendto(chunk, address)
-                    else:
-                        # self.print(f"Start sending data to {(host, endpoint_port)}")
-                        sock.sendto(chunk, (host, endpoint_port))
-                except Exception as e:
-                    self.logger.error(f"Error sending data: {e}")
-
-            if sender_bytes == b'k':
-                send_(sender_bytes)
-                return
-            if sender_bytes == b'e':
-                send_(sender_bytes)
-                sock.close()
-                return
-
-            total_steps = len(sender_bytes) // package_size
-            if len(sender_bytes) % package_size != 0:
-                total_steps += 1  # Einen zusätzlichen Schritt hinzufügen, falls ein Rest existiert
-            self.logger.info("Start sending data")
-            # tqdm Fortschrittsanzeige initialisieren
-            with tqdm(total=total_steps, unit='chunk', desc='Sending data') as pbar:
-                for i in range(0, len(sender_bytes), package_size):
-                    chunk_ = sender_bytes[i:i + package_size]
-                    send_(chunk_)
-                    pbar.update(1)
-                    time.sleep(1 / 10 ** 18)
-            # self.print(f"\n\n{len(sender_bytes)=}, {i + package_size}")
-            if len(sender_bytes) != i + package_size:
-                send_(sender_bytes[i + package_size:])
-
-            if len(sender_bytes) < package_size:
-                send_(b' ' * (len(sender_bytes) - package_size))
-            if len(sender_bytes) % package_size != 0:
-                pass
-            if type_id == SocketType.peer.name:
-                send_(b'E' * 6)
-            else:
-                send_(b'E' * 1024)
-            print(" ", end='\r')
-            self.logger.info(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
-
-        def receive(r_socket_, identifier="main"):
-            data_type = None
-            data_buffer = b''
-            max_size = -1
-            running_dict["receive"][identifier] = True
-            while running_dict["receive"][identifier]:
-                # t0 = time.perf_counter()
-                try:
-                    if type_id == SocketType.client.name:
-                        chunk, add = r_socket_.recvfrom(1024)
-
-                        if not chunk:
-                            break
-
-                    else:
-                        chunk = r_socket_.recv(1024)
-
-                        if not chunk:
-                            continue
-                except ConnectionResetError and ConnectionAbortedError and Exception:
-                    print(f"Closing Receiver {identifier}")
-                    running_dict["receive"][identifier] = False
-                    break
-
-                if chunk == b'k':
-                    # Behandlung von Byte-Daten
-                    self.logger.info(f"{name} -- received keepalive signal--")
-                    continue
-
-                if not data_type:
-                    data_type = chunk[:1]  # Erstes Byte ist der Datentyp
-                    chunk = chunk[1:]  # Rest der Daten
-                    self.print(f"Register date type : {data_type}")
-
-                if max_size > -1 and len(data_buffer) > 0 and data_type == b'b':
-                    print(
-                        f"don {chunk[0] == b'E'[0] and chunk[-1] == b'E'[0]} {(len(data_buffer) / max_size) * 100:.2f}% total byts: {len(data_buffer)} von {max_size}",
-                        end='\r')
-                if data_type == b'e':
-                    running_dict["receive"][identifier] = False
-                    self.logger.info(f"{name} -- received exit signal --")
-                    self.sockets[name]['running_dict']["keep_alive_var"] = False
-                elif chunk[0] == b'E'[0] and chunk[-1] == b'E'[0] and len(data_buffer) > 0:
-                    max_size = -1
-                    # Letzter Teil des Datensatzes
-                    if data_type == b'b':
-                        # Behandlung von Byte-Daten
-                        receiver_queue.put({'bytes': data_buffer, 'identifier': identifier})
-                        self.logger.info(f"{name} -- received bytes --")
-                    elif data_type == b'j':
-                        # Behandlung von JSON-Daten
-                        try:
-                            msg = json.loads(data_buffer)
-                            msg['identifier'] = identifier
-                            receiver_queue.put(msg)
-                            self.logger.info(f"{name} -- received JSON -- {msg['identifier']} {len(msg.keys())}")
-                            if 'data_size' in msg.keys():
-                                max_size = msg['data_size']
-
-                                self.logger.info(f"Erwartete Bytes: {max_size}")
-                                self.print(f"Erwartete Bytes: {max_size}")
-                        except json.JSONDecodeError and UnicodeDecodeError as e:
-                            self.logger.error(f"JSON decode error: {e}")
-                    else:
-                        self.logger.error("Unbekannter Datentyp")
-                        self.print(f"Received unknown data type: {data_type}")
-                    # Zurücksetzen für den nächsten Datensatz
-                    data_buffer = b''
-                    data_type = None
-                else:
-                    # print(b' ' in chunk, b' '[0], chunk)
-                    if b' ' in chunk and chunk[-1] == b' '[0] and type_id == SocketType.client.name:
-                        chunk = chunk.replace(b' ', b'')
-                    data_buffer += chunk
-
-                # self.print(
-                #     f"{name} :R Parsed Time ; {time.perf_counter() - t0:.2f} port :{endpoint_port if type_id == SocketType.peer.name else port}")
-
-            self.print(f"{name} :closing connection to {host}")
-            if name in self.sockets:
-                self.sockets[name]['alive'] = False
-            r_socket_.close()
-            if type_id == SocketType.peer.name:
-                sock.close()
-
-        s_thread = None
-
-        if connection_error == 0:
-            if type_id == SocketType.server.name:
-                s_thread = threading.Thread(target=server_receiver, args=(sock,), daemon=True)
-                s_thread.start()
-            elif connection_error == 0:
-                s_thread = threading.Thread(target=receive, args=(r_socket,), daemon=True)
-                s_thread.start()
-            else:
-                self.print(f"No receiver connected {name}:{type_id}")
-
-        keep_alive_thread = None
-        to_receive = None
-        threeds = []
+        # manually starting server/(client:peer)receive if needed
 
         if type_id == SocketType.peer.name:
 
             def keep_alive():
                 i = 0
-                while running_dict["keep_alive_var"]:
+                while self.sockets[name]["running_dict"]["keep_alive_var"]:
                     time.sleep(keepalive_interval)
                     try:
-                        send({'keepalive': True}, (host, endpoint_port))
+                        self.send(name, {'keepalive': True})
                     except Exception as e:
                         self.print(f"Exiting keep alive {e}")
                         break
                     i += 1
                 self.print("Closing KeepAlive")
-                send({"exit": True})
+                self.send(name, {"exit": True})
 
             keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
             if start_keep_alive:
@@ -523,39 +874,15 @@ class Tools(MainTool, FileHandler):
 
         elif type_id == SocketType.server.name:
 
-            def to_receive(client, identifier='main'):
-                if isinstance(client, str):
-                    print("Client $$", client, identifier)
-                    return
-                t = threading.Thread(target=receive, args=(client, identifier,), daemon=True)
-                t.start()
-                threeds.append(t)
-
+            self.sockets[name]["client_to_receiver_thread"] = to_receive
+            await asyncio.sleep(1)
         elif type_id == SocketType.client.name:
-            time.sleep(2)
-
-        self.sockets[name] = {
-            'alive': True,
-            'socket': socket,
-            'receiver_socket': r_socket,
-            'host': host,
-            'port': port,
-            'p2p-port': endpoint_port,
-            'sender': send,
-            'receiver_queue': receiver_queue,
-            'connection_error': connection_error,
-            'receiver_thread': s_thread,
-            'keepalive_thread': keep_alive_thread,
-            'running_dict': running_dict,
-            'client_sockets_dict': client_sockets,
-            'client_to_receiver_thread': to_receive,
-            'client_receiver_threads': threeds,
-        }
+            await asyncio.sleep(1)
 
         if return_full_object:
-            return self.sockets[name]
+            return Result.ok(self.sockets[name])
 
-        return send, receiver_queue
+        return Result.ok(self.sockets[name]["sender"], receiver_queue)
 
         # sender queue
 
@@ -737,7 +1064,7 @@ class Tools(MainTool, FileHandler):
             send({'data_size': len(compressed_data)})
             # Komprimierte Daten senden
             time.sleep(2)
-            send(compressed_data+b'EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
+            send(compressed_data + b'EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE')
             self.logger.info(f"Datei {filepath} erfolgreich gesendet.")
             self.print(f"Datei {filepath} erfolgreich gesendet.")
             send({'exit': True})

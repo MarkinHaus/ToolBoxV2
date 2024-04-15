@@ -7,12 +7,11 @@ import asyncio
 from functools import wraps
 from platform import system, node
 
-import requests
 from yaml import safe_load
 
 from toolboxv2.runabel import runnable_dict as runnable_dict_func
 from toolboxv2.utils.system.main_tool import MainTool
-from toolboxv2.utils.extras.Style import Style, Spinner
+from toolboxv2.utils.extras.Style import Style
 from toolboxv2.utils.system.session import Session
 # Import public Pages
 from toolboxv2.utils.toolbox import App
@@ -21,7 +20,7 @@ from toolboxv2.utils import show_console
 from toolboxv2.utils import get_app
 from toolboxv2.utils.daemon import DaemonApp
 from toolboxv2.utils.proxy import ProxyApp
-from toolboxv2.utils.system import override_main_app
+from toolboxv2.utils.system import override_main_app, get_state_from_app
 
 DEFAULT_MODI = "cli"
 
@@ -482,6 +481,8 @@ async def main(loop=None):
     pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
 
     tb_app = get_app(from_="InitialStartUp", name=args.name, args=args, app_con=App)
+    tb_app.loop = loop
+    await asyncio.to_thread(get_state_from_app, tb_app, os.environ.get("TOOLBOXV2_REMOTE_BASE"), "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/")
     daemon_app = None
     if args.background_application_runner:
         daemon_app = DaemonApp(tb_app, args.host, args.port if args.port != 8000 else 6587, t=args.modi != 'bg')
@@ -552,10 +553,10 @@ async def main(loop=None):
             setup_service_windows()
         tb_app.exit()
         exit(0)
-
     if args.load_all_mod_in_files or args.save_function_enums_in_file or args.get_version or args.profiler or args.background_application_runner:
+        _min_info = ""
         if not args.live_application:
-            tb_app.load_all_mods_in_file()
+            _min_info = await tb_app.load_all_mods_in_file()
         if args.save_function_enums_in_file:
             tb_app.save_registry_as_enums("utils\\system", "all_functions_enums.py")
             tb_app.alive = False
@@ -563,6 +564,8 @@ async def main(loop=None):
             return 0
         if args.debug:
             tb_app.print_functions()
+        if _min_info:
+            print(_min_info)
         if args.get_version:
             print(f"\n{' Version ':-^45}\n\n{Style.Bold(Style.CYAN(Style.ITALIC('RE')))+Style.ITALIC('Simple')+'ToolBox':<35}:{__version__:^10}\n")
             for mod_name in tb_app.functions:
@@ -648,7 +651,9 @@ async def main(loop=None):
 
 
 def main_runner():
-    asyncio.run(main())
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(main(loop))
+
 
 
 if __name__ == "__main__":

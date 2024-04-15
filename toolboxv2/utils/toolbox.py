@@ -4,14 +4,18 @@ import concurrent.futures
 import inspect
 import os
 import sys
+import threading
 import time
 import types
+from asyncio import Handle, Task
 from enum import Enum
 from platform import node, system
 from importlib import import_module
 from inspect import signature
 from types import ModuleType
 from functools import partial, wraps
+from typing import List
+
 import requests
 from yaml import safe_load
 
@@ -143,7 +147,7 @@ class App(AppType, metaclass=Singleton):
         self.runnable = {}
         self.dev_modi = self.config_fh.get_file_handler(self.keys["develop-mode"])
         if self.config_fh.get_file_handler("provider::") is None:
-            self.config_fh.add_to_save_file_handler("provider::", "http://localhost:"+self.args_sto.port if "localhost" == os.environ.get("HOSTNAME", "localhost") else "https://simplecore.app")
+            self.config_fh.add_to_save_file_handler("provider::", "http://localhost:"+str(self.args_sto.port) if "localhost" == os.environ.get("HOSTNAME", "localhost") else "https://simplecore.app")
         self.functions = {}
 
         self.interface_type = ToolBoxInterfaces.native
@@ -515,7 +519,6 @@ class App(AppType, metaclass=Singleton):
 
     def load_mod(self, mod_name: str, mlm='I', **kwargs):
 
-        self.logger.info(f"try opening module {mod_name}")
         action_list_helper = ['I (inplace load dill on error python)',
                               # 'C (coppy py file to runtime dir)',
                               # 'S (save py file to dill)',
@@ -547,26 +550,41 @@ class App(AppType, metaclass=Singleton):
 
         return Result.default_internal_error(info="info's in logs.")
 
-    def load_all_mods_in_file(self, working_dir="mods"):
+    async def load_all_mods_in_file(self, working_dir="mods"):
         t0 = time.perf_counter()
-        opened = 0
         # Get the list of all modules
         module_list = self.get_all_mods(working_dir)
-
         open_modules = self.functions.keys()
+        start_len = len(open_modules)
 
         for om in open_modules:
             if om in module_list:
                 module_list.remove(om)
 
+        tasks: set[Task] = set()
+
+        if 'isaa' in module_list:
+            threading.Thread(target=self.save_load, args=("isaa", 'app'), daemon=True).start()
+            module_list.remove('isaa')
+
         with concurrent.futures.ThreadPoolExecutor() as executor:
             # Load modules in parallel using threads
-            futures = {executor.submit(self.save_load, mod, 'app') for mod in module_list}
+            _ = {tasks.add(self.loop.create_task(asyncio.to_thread(self.save_load, mod, 'app'))) for mod in module_list}
+            for t in asyncio.as_completed(tasks):
+                try:
+                    result = await t
+                    if hasattr(result, 'Name'):
+                        print('Opened result:', result.Name)
+                    elif hasattr(result, 'name'):
+                        print('Opened result:', result.name)
+                    else:
+                        print('Opened result:', result)
+                except Exception as e:
+                    self.logger.error(Style.RED(f"An Error occurred while opening all modules error: {str(e)}"))
+        opened = len(self.functions.keys()) - start_len
 
-            for _ in concurrent.futures.as_completed(futures):
-                opened += 1
         self.logger.info(f"Opened {opened} modules in {time.perf_counter() - t0:.2f}s")
-        return True
+        return f"Opened {opened} modules in {time.perf_counter() - t0:.2f}s"
 
     def get_all_mods(self, working_dir="mods", path_to="./runtime"):
         self.logger.info(f"collating all mods in working directory {working_dir}")
@@ -597,7 +615,10 @@ class App(AppType, metaclass=Singleton):
                 return word[:-3]
             return word
 
-        return list(map(r_endings, filter(do_helper, res)))
+        mods_list = list(map(r_endings, filter(do_helper, res)))
+
+        self.logger.info(f"found : {len(mods_list)} Modules")
+        return mods_list
 
     def remove_all_modules(self, delete=False):
         for mod in list(self.functions.keys()):
@@ -617,9 +638,12 @@ class App(AppType, metaclass=Singleton):
                 del self.functions[mod_name][f"{spec}_instance_type"]
 
         if on_exit is None and self.functions[mod_name].get(f"{spec}_instance_type", "").endswith("/BC"):
-            instanc = self.functions[mod_name].get(f"{spec}_instance", None)
-            if instanc is not None:
-                instanc._on_exit()
+            instance = self.functions[mod_name].get(f"{spec}_instance", None)
+            if instance is not None:
+                if inspect.iscoroutinefunction(instance.on_exit):
+                    self.loop.call_soon_threadsafe(instance.on_exit)
+                else:
+                    instance.on_exit()
 
         if on_exit is None and delete:
             self.functions[mod_name] = {}

@@ -388,7 +388,7 @@ document.getElementById('threeDScene').appendChild(renderer.domElement);
 
 setTimeout(()=>{
 const s = document.getElementsByClassName('loaderCenter')
-    if (s){if(s[0]){s[0].remove()}}}, 122)
+    if (s){if(s[0]){s[0].classList.add("htmx-indicator")}}}, 122)
 
 document.addEventListener('mousedown', () => {
     startBgInteract()

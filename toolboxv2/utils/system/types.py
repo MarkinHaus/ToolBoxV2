@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import subprocess
@@ -253,7 +254,7 @@ class Result:
         if self.result.data_to.name == ToolBoxInterfaces.future.name:
             data = await self.result.data
         else:
-            data = self.aget(key=None, default=None)
+            data = self.get(key=None, default=None)
         if isinstance(data, Result):
             return data.get(key=key, default=default)
         if key is not None and isinstance(data, dict):
@@ -411,6 +412,7 @@ class AppType:
     logging_filename: str
 
     version: str
+    loop: asyncio.AbstractEventLoop
 
     keys: Dict[str, str] = {
         "MACRO": "macro~~~~:",
@@ -450,6 +452,7 @@ class AppType:
     system_flag = None
 
     def __init__(self, prefix: Optional[str] = None, args: Optional[AppArgs] = None):
+        self.args_sto = args
         """proxi attr"""
 
     @staticmethod

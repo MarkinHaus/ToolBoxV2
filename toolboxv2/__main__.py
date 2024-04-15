@@ -1,10 +1,11 @@
 import asyncio
 import sys
 
-from toolboxv2.utils.system import AppType
+
 from .cli import main
 
 if __name__ == "__main__":
     print("Starting From Main Guard")
-    asyncio.run(main())
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(main(loop))
     sys.exit(0)

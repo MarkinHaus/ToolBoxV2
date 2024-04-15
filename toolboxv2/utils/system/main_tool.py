@@ -1,3 +1,6 @@
+import asyncio
+import inspect
+
 from toolboxv2.utils.extras import Style
 
 from .types import Result, ToolBoxInterfaces, ToolBoxError, ToolBoxInfo, ToolBoxResult
@@ -6,13 +9,38 @@ from .tb_logger import get_logger
 from .all_functions_enums import CLOUDM_AUTHMANAGER
 
 
-class MainTool:
+class AsyncMixin:
+    def __init__(self, *args, **kwargs):
+        """
+        Standard constructor used for arguments pass
+        Do not override. Use __ainit__ instead
+        """
+        self.__storedargs = args, kwargs
+        self.async_initialized = False
+
+    async def __ainit__(self, *args, **kwargs):
+        """Async constructor, you should implement this"""
+
+    async def __initobj(self):
+        """Crutch used for __await__ after spawning"""
+        assert not self.async_initialized
+        self.async_initialized = True
+        # pass the parameters to __ainit__ that passed to __init__
+        await self.__ainit__(*self.__storedargs[0], **self.__storedargs[1])
+        return self
+
+    def __await__(self):
+        return self.__initobj().__await__()
+
+
+class MainTool(AsyncMixin):
     toolID: str = ""
     # app = None
     interface = None
     spec = "app"
+    stuf = False
 
-    def __init__(self, *args, **kwargs):
+    async def __ainit__(self, *args, **kwargs):
         self.version = kwargs["v"]
         self.tools = kwargs.get("tool", {})
         self.name = kwargs["name"]
@@ -21,8 +49,6 @@ class MainTool:
             self.logger = get_logger()
         self.color = kwargs.get("color", "WHITE")
         self.todo = kwargs.get("load", lambda: None)
-        self._on_exit = kwargs.get("on_exit", lambda: None)
-        self.stuf = False
         if not hasattr(self, 'config'):
             self.config = {}
         self.user = None
@@ -30,7 +56,19 @@ class MainTool:
         if MainTool.interface is None:
             MainTool.interface = self.app.interface_type
         # Result.default(self.app.interface)
-        self.load()
+        if self.todo:
+            try:
+                if inspect.iscoroutinefunction(self.todo):
+                    self.app.loop.call_soon_threadsafe(self.todo)
+                else:
+                    self.todo()
+                await asyncio.sleep(0)
+            except Exception as e:
+                get_logger().error(f" Error loading mod {self.name} {e}")
+        else:
+            get_logger().info(f"{self.name} no load require")
+
+        self.app.print(f"TOOL : {self.spec}.{self.name} online")
 
     @property
     def app(self):
@@ -62,17 +100,6 @@ class MainTool:
             ToolBoxResult(data_info=data_info, data=data, data_to=data_to),
             ToolBoxInfo(exec_code=exec_code, help_text=help_text)
         )
-
-    def load(self):
-        if self.todo:
-            try:
-                self.todo()
-            except Exception as e:
-               get_logger().error(f" Error loading mod {self.name} {e}")
-        else:
-            get_logger().info(f"{self.name} no load require")
-
-        self.app.print(f"TOOL : {self.spec}.{self.name} online")
 
     def print(self, message, end="\n", **kwargs):
         if self.stuf:

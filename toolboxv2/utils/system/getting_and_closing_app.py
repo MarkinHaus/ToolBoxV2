@@ -1,3 +1,4 @@
+import asyncio
 import atexit
 import time
 from typing import List, Optional
@@ -39,6 +40,8 @@ def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None) -> Ap
     else:
         app = app_con()
     logger.info(Style.Bold(f"App instance, returned ID: {app.id}"))
+    if from_ != "InitialStartUp" and not hasattr(app, 'loop'):
+        app.loop = asyncio.new_event_loop()
     registered_apps[0] = app
     return app
 
@@ -65,6 +68,10 @@ def save_closing_app():
     if app.called_exit[0] and time.time() - app.called_exit[1] > 15:
         app.print(Style.Bold(Style.ITALIC(f"- zombie sice|{time.time() - app.called_exit[1]:.2f}s kill -")))
         app.exit()
+
+    if hasattr(app, 'loop'):
+        if not app.loop.is_closed():
+            app.loop.close()
 
     app.print(Style.Bold(Style.ITALIC("- completed -")))
     registered_apps[0] = None

@@ -183,6 +183,67 @@ def get_state_from_app(app, simple_core_hub_url="https://SimpleCoreHub.com/Mods/
     return state
 
 
+async def get_astate_from_app(app, simple_core_hub_url="https://SimpleCoreHub.com/Mods/",
+                              github_url="https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/"):
+    if simple_core_hub_url[-1] != '/':
+        simple_core_hub_url += '/'
+
+    simple_core_hub_url += 'api/'
+
+    if github_url[-1] != '/':
+        github_url += '/'
+
+    state: TbState = process_files(app.start_dir)
+
+    # and unit information
+    # current time being units ar installed and managed via GitHub
+    version = app.version
+    for file_name, file_data in state.utils.items():
+        file_data.provider = "git"
+        file_data.version = version
+        file_data.url = github_url + "utils/" + file_name
+
+    for file_name, file_data in state.api.items():
+        file_data.provider = "git"
+        file_data.version = version
+        file_data.url = github_url + "api/" + file_name
+
+    for file_name, file_data in state.app.items():
+        file_data.provider = "git"
+        file_data.version = version
+        file_data.url = github_url + "app/" + file_name
+
+    # and mods information
+    # current time being mods ar installed and managed via SimpleCoreHub.com
+    all_mods = app.get_all_mods()
+    for file_name, file_data in state.mods.items():
+        file_data.provider = "SimpleCore"
+
+        module_name = file_name.replace(".py", "")
+        if module_name in all_mods:
+            try:
+                file_data.version = app.get_mod(module_name).version if file_name != "__init__.py" else version
+            except Exception:
+                file_data.version = "dependency"
+        else:
+            file_data.version = "legacy"
+
+        file_data.url = simple_core_hub_url + "mods/" + file_name
+
+    for file_name, file_data in state.installable.items():
+        file_data.provider = "SimpleCore"
+        try:
+            file_data.version = file_name.replace(".py", "").replace(".zip", "").split("&")[-1].split("§")
+        except Exception:
+            file_data.version = "dependency"
+
+        file_data.url = simple_core_hub_url + "installer/download/mods_sto\\" + file_name
+
+    with open("tbState.yaml", "w") as config_file:
+        yaml.dump(asdict(state), config_file)
+    return state
+
+
 if __name__ == "__main__":
     # Provide the directory to search for Python files
     app = get_app()

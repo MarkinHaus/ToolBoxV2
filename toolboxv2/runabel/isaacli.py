@@ -336,7 +336,7 @@ def run(app: App, args):
 
             if do_next_ == 1:  # person
                 print("Retrieving Memory Date")
-                memdata = isaa.agent_memory.get_context_for(user_text)
+                memdata = isaa.get_context_memory().get_context_for(user_text)
                 if memdata:
                     isaa.get_agent_class("self").messages.append({"content": memdata, "role": "system"})
                 return_parm = [Result.ok(data=memdata)]
