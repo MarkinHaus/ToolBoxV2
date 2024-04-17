@@ -24,7 +24,7 @@ def override_main_app(app):
     return registered_apps[0]
 
 
-def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None) -> AppType:
+def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None, sync=False) -> AppType:
     global registered_apps
     # print(f"get app requested from: {from_}")
     logger = get_logger()
@@ -40,8 +40,12 @@ def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None) -> Ap
     else:
         app = app_con()
     logger.info(Style.Bold(f"App instance, returned ID: {app.id}"))
-    if from_ != "InitialStartUp" and not hasattr(app, 'loop'):
-        app.loop = asyncio.new_event_loop()
+    if from_ != "InitialStartUp" and not hasattr(app, 'loop') and not sync:
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+        app.loop = loop
     registered_apps[0] = app
     return app
 
@@ -49,6 +53,14 @@ def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None) -> Ap
 @atexit.register
 def save_closing_app():
 
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+    loop.run_until_complete(a_save_closing_app())
+
+
+async def a_save_closing_app():
     if registered_apps[0] is None:
         return
 
@@ -70,6 +82,9 @@ def save_closing_app():
         app.exit()
 
     if hasattr(app, 'loop'):
+        if len(app.exit_tasks) > 0:
+            print("Waiting for exit tasks :", app.exit_tasks)
+            await asyncio.gather(*app.exit_tasks)
         if not app.loop.is_closed():
             app.loop.close()
 

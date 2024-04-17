@@ -19,6 +19,8 @@ from fastapi import WebSocket, HTTPException
 
 
 async def valid_id(ws_id, id_v, websocket=None):
+    if ws_id is None or id_v is None:
+        raise HTTPException(status_code=403, detail="Access forbidden invalid id")
     if not ws_id.startswith(id_v):
         if websocket is not None:
             await websocket.close()

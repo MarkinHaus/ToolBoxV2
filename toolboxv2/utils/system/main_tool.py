@@ -9,7 +9,15 @@ from .tb_logger import get_logger
 from .all_functions_enums import CLOUDM_AUTHMANAGER
 
 
-class AsyncMixin:
+class MainTool:
+    toolID: str = ""
+    # app = None
+    interface = None
+    spec = "app"
+    name = ""
+    color = "Bold"
+    stuf = False
+
     def __init__(self, *args, **kwargs):
         """
         Standard constructor used for arguments pass
@@ -19,34 +27,10 @@ class AsyncMixin:
         self.async_initialized = False
 
     async def __ainit__(self, *args, **kwargs):
-        """Async constructor, you should implement this"""
-
-    async def __initobj(self):
-        """Crutch used for __await__ after spawning"""
-        assert not self.async_initialized
-        self.async_initialized = True
-        # pass the parameters to __ainit__ that passed to __init__
-        await self.__ainit__(*self.__storedargs[0], **self.__storedargs[1])
-        return self
-
-    def __await__(self):
-        return self.__initobj().__await__()
-
-
-class MainTool(AsyncMixin):
-    toolID: str = ""
-    # app = None
-    interface = None
-    spec = "app"
-    stuf = False
-
-    async def __ainit__(self, *args, **kwargs):
         self.version = kwargs["v"]
         self.tools = kwargs.get("tool", {})
         self.name = kwargs["name"]
-        self.logger = kwargs.get("logs")
-        if self.logger is None:
-            self.logger = get_logger()
+        self.logger = kwargs.get("logs", get_logger())
         self.color = kwargs.get("color", "WHITE")
         self.todo = kwargs.get("load", lambda: None)
         if not hasattr(self, 'config'):
@@ -72,7 +56,8 @@ class MainTool(AsyncMixin):
 
     @property
     def app(self):
-        return get_app(from_=f"{self.spec}.{self.name}|{self.toolID if self.toolID else '*'+MainTool.toolID} {self.interface if self.interface else MainTool.interface}")
+        return get_app(
+            from_=f"{self.spec}.{self.name}|{self.toolID if self.toolID else '*' + MainTool.toolID} {self.interface if self.interface else MainTool.interface}")
 
     @app.setter
     def app(self, v):
@@ -117,6 +102,20 @@ class MainTool(AsyncMixin):
     def webInstall(self, user_instance, construct_render) -> str:
         """"Returns a web installer for the given user instance and construct render template"""
 
+    def get_version(self) -> str:
+        """"Returns the version"""
+        return self.version
+
     def get_user(self, username: str) -> Result:
         return self.app.run_any(CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username, get_results=True)
 
+    async def __initobj(self):
+        """Crutch used for __await__ after spawning"""
+        assert not self.async_initialized
+        self.async_initialized = True
+        # pass the parameters to __ainit__ that passed to __init__
+        await self.__ainit__(*self.__storedargs[0], **self.__storedargs[1])
+        return self
+
+    def __await__(self):
+        return self.__initobj().__await__()

@@ -17,7 +17,7 @@ def stram_print(text):
         "",
         text,
         min_typing_speed=min_typing_speed,
-        max_typing_speed=max_typing_speed)
+        max_typing_speed=max_typing_speed, auto_new_line=False)
 
 
 
@@ -329,7 +329,7 @@ def print_to_console(
     title_color,
     content,
     min_typing_speed=0.05,
-    max_typing_speed=0.01):
+    max_typing_speed=0.01, auto_new_line=True):
     print(title_color + title + Style.BLUE("") + " ", end="")
     if content:
         if isinstance(content, list):
@@ -353,7 +353,8 @@ def print_to_console(
             # type faster after each word
             min_typing_speed = min_typing_speed * 0.95
             max_typing_speed = max_typing_speed * 0.95
-    print()
+    if auto_new_line:
+        print()
 
 
 class JSONExtractor(JSONDecoder):

@@ -475,14 +475,13 @@ async def main(loop=None):
         os.system(f"{sys.executable} -m unittest discover -s {test_path}")
         return 0
 
-
     app_pid = str(os.getpid())
 
     pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
 
     tb_app = get_app(from_="InitialStartUp", name=args.name, args=args, app_con=App)
     tb_app.loop = loop
-    await asyncio.to_thread(get_state_from_app, tb_app, os.environ.get("TOOLBOXV2_REMOTE_BASE"), "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/")
+    await asyncio.to_thread(get_state_from_app, tb_app, os.environ.get("TOOLBOXV2_REMOTE_BASE", "https://simplecore.app"), "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/")
     daemon_app = None
     if args.background_application_runner:
         daemon_app = DaemonApp(tb_app, args.host, args.port if args.port != 8000 else 6587, t=args.modi != 'bg')

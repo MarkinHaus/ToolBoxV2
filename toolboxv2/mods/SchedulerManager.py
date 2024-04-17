@@ -251,7 +251,7 @@ class Tools(MainTool, SchedulerManagerClass):
 
         self.keys = {"mode": "db~mode~~:"}
         self.encoding = 'utf-8'
-
+        self.tools = {'Version': self.get_version, 'name': Name}
         SchedulerManagerClass.__init__(self)
         MainTool.__init__(self,
                           load=self.init_sm,
@@ -362,7 +362,7 @@ class Tools(MainTool, SchedulerManagerClass):
 
     """
         if job_data is None:
-            self.logger.error("No job data provided")
+            self.app.logger.error("No job data provided")
             return None
         job_id = job_data["job_id"]
         second = job_data.get("second", 0)

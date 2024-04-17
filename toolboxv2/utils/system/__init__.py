@@ -1,6 +1,6 @@
 from .all_functions_enums import *
 from .cache import FileCache, MemoryCache
-from .state_system import get_state_from_app, get_astate_from_app
+from .state_system import get_state_from_app
 from .tb_logger import get_logger, setup_logging, edit_log_files, remove_styles, unstyle_log_files
 from .types import (AppArgs, ApiOb, ToolBoxError, ToolBoxInterfaces, ToolBoxResult, ToolBoxInfo,
                     ToolBoxResultBM, ToolBoxInfo, ApiResult, Result, CallingObject, AppType, MainToolType)
@@ -18,7 +18,6 @@ __all__ = [
     "override_main_app",
     "MemoryCache",
     "get_state_from_app",
-    "get_astate_from_app",
     "get_logger",
     "setup_logging",
     "edit_log_files",

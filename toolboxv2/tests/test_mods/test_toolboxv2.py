@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 
 """Tests for `toolboxv2` package."""
+import asyncio
 import unittest
 from toolboxv2 import MainTool, FileHandler, Style, get_app
 from rich.traceback import install
 
 from toolboxv2.utils.security.cryp import Code
 import time
-
 
 install(show_locals=True)
 
@@ -19,13 +19,13 @@ class TestToolboxv2(unittest.TestCase):
     app = None
 
     @classmethod
-    def setUpClass(cls):
+    async def setUpClass(cls):
         # Code, der einmal vor allen Tests ausgeführt wird
         cls.t0 = time.perf_counter()
         cls.app = get_app(from_="test.toolbox", name="test-debug")
         cls.app.mlm = "I"
         cls.app.debug = True
-        cls.app.load_all_mods_in_file()
+        await cls.app.load_all_mods_in_file()
 
     @classmethod
     def tearDownClass(cls):
@@ -188,8 +188,8 @@ class TestToolboxv2(unittest.TestCase):
         self.app.logger.info(Style.WHITE("cleaning up"))
         fh2.delete_file()
 
-    def test_main_tool(self):
-        main_tool = MainTool(v="1.0.0", tool={}, name="TestTool", logs=[], color="RED", on_exit=None, load=None)
+    async def test_main_tool(self):
+        main_tool = await MainTool(v="1.0.0", tool={}, name="TestTool", logs=[], color="RED", on_exit=None, load=None)
         main_tool.print("Hello, world!")
         # uid, err = main_tool.get_uid([ob, ], self.app)
         # self.assertTrue(err)
@@ -268,9 +268,9 @@ class TestToolboxv2(unittest.TestCase):
         # # Überprüfen Sie das Ergebnis
         # self.assertIsNotNone(result)
 
-    def test_load_all_mods_in_file(self):
+    async def test_load_all_mods_in_file(self):
         # Testen der load_all_mods_in_file-Funktion
-        result = self.app.load_all_mods_in_file()
+        result = await self.app.load_all_mods_in_file()
         # Überprüfen Sie das Ergebnis
         self.assertTrue(result)
 
@@ -316,13 +316,28 @@ class TestToolboxv2(unittest.TestCase):
         self.app.remove_mod("welcome")
         self.assertEqual(self.app.run_any(("welcome", "Version")), self.app.run_function(("welcome", "Version")).get())
 
-    def test_all_functions(self):
+    async def test_all_functions(self):
         print("STARTING test")
-        import asyncio
-        res = asyncio.run(self.app.execute_all_functions())
+        res = await self.app.execute_all_functions()
         print("RES: ", res.result.data_info)
         # data = res.get()
         # print(res.result.data_info)
         # time.sleep(15)
         self.assertEqual(res.get('modular_run', 0), res.get('modular_sug', -1))
         print("DONE RUNNING ALL FUNCTIONS")
+
+
+# This allows running the async tests with `unittest`
+def async_test(coro):
+    def wrapper(*args, **kwargs):
+        loop = asyncio.new_event_loop()
+        return loop.run_until_complete(coro(*args, **kwargs))
+
+    return wrapper
+
+
+# Apply async_test decorator to each async test method
+TestToolboxv2.test_all_functions = async_test(TestToolboxv2.test_all_functions)
+TestToolboxv2.setUpClass = async_test(TestToolboxv2.setUpClass)
+TestToolboxv2.test_main_tool = async_test(TestToolboxv2.test_main_tool)
+TestToolboxv2.test_load_all_mods_in_file = async_test(TestToolboxv2.test_load_all_mods_in_file)

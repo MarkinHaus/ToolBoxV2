@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from datetime import datetime, timedelta
@@ -20,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from toolboxv2 import tbef, AppArgs, ApiResult
 
 from toolboxv2.utils.system.state_system import get_state_from_app
+from ..mods.CloudM import User
 from ..utils.toolbox import get_app
 
 
@@ -606,23 +608,8 @@ def test_rate_limiting_middleware():
 
 '''
 
-print("API: ", __name__)
-if __name__ == 'toolboxv2.api.fast_api_main':
 
-    id_name = ""
-    debug = False
-    for i in sys.argv[2:]:
-        if i.startswith('data'):
-            d = i.split(':')
-            debug = True if d[1] == "True" else False
-            id_name = d[2]
-
-    args = AppArgs().default()
-    args.name = id_name
-    args.debug = debug
-
-    tb_app = get_app(from_="init-api-get-tb_app", name=id_name, args=args)
-
+async def helper(tb_app, id_name):
     from ..mods.CloudM import User
 
     app.add_middleware(SessionAuthMiddleware)
@@ -637,7 +624,7 @@ if __name__ == 'toolboxv2.api.fast_api_main':
         async def exit_code():
             if tb_app.debug:
                 tb_app.remove_all_modules()
-                tb_app.load_all_mods_in_file()
+                await tb_app.load_all_mods_in_file()
                 return "OK"
             return "Not found"
 
@@ -648,13 +635,12 @@ if __name__ == 'toolboxv2.api.fast_api_main':
         f.write(str(os.getpid()))
         f.close()
 
-    tb_app.load_all_mods_in_file()
+    await tb_app.load_all_mods_in_file()
 
     time.sleep(0.5)
 
     tb_app.save_load("welcome")
     tb_app.save_load("WebSocketManager")
-    manager = tb_app.get_mod("WebSocketManager")
 
     from .fast_app import router as app_router
 
@@ -727,3 +713,23 @@ if __name__ == 'toolboxv2.api.fast_api_main':
 
     install_router.add_api_route('/' + "get", get_d, methods=["GET"], description="get_species_data")
     app.include_router(install_router)
+
+
+print("API: ", __name__)
+if __name__ == 'toolboxv2.api.fast_api_main':
+
+    id_name = ""
+    debug = False
+    for i in sys.argv[2:]:
+        if i.startswith('data'):
+            d = i.split(':')
+            debug = True if d[1] == "True" else False
+            id_name = d[2]
+
+    args = AppArgs().default()
+    args.name = id_name
+    args.debug = debug
+    loop = asyncio.new_event_loop()
+    tb_app = get_app(from_="init-api-get-tb_app", name=id_name, args=args)
+    manager = tb_app.get_mod("WebSocketManager")
+    loop.run_until_complete(helper(tb_app, id_name))

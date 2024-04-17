@@ -381,6 +381,8 @@ class App(AppType, metaclass=Singleton):
             self.functions[modular_id][f"{spec}_instance_type"] = instance_type
 
             try:
+                if not hasattr(tools_class, 'tools'):
+                    tools_class.tools = {"Version": tools_class.get_version, 'name': tools_class.name}
                 for function_name in list(tools_class.tools.keys()):
                     if function_name != "all" and function_name != "name":
                         self.tb(function_name, mod_name=modular_id)(tools_class.tools.get(function_name))
@@ -567,20 +569,18 @@ class App(AppType, metaclass=Singleton):
             threading.Thread(target=self.save_load, args=("isaa", 'app'), daemon=True).start()
             module_list.remove('isaa')
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            # Load modules in parallel using threads
-            _ = {tasks.add(self.loop.create_task(asyncio.to_thread(self.save_load, mod, 'app'))) for mod in module_list}
-            for t in asyncio.as_completed(tasks):
-                try:
-                    result = await t
-                    if hasattr(result, 'Name'):
-                        print('Opened result:', result.Name)
-                    elif hasattr(result, 'name'):
-                        print('Opened result:', result.name)
-                    else:
-                        print('Opened result:', result)
-                except Exception as e:
-                    self.logger.error(Style.RED(f"An Error occurred while opening all modules error: {str(e)}"))
+        _ = {tasks.add(asyncio.create_task(asyncio.to_thread(self.save_load, mod, 'app'))) for mod in module_list}
+        for t in asyncio.as_completed(tasks):
+            try:
+                result = await t
+                if hasattr(result, 'Name'):
+                    print('Opened :', result.Name)
+                elif hasattr(result, 'name'):
+                    print('Opened :', result.name)
+                else:
+                    print('Opened :', result)
+            except Exception as e:
+                self.logger.error(Style.RED(f"An Error occurred while opening all modules error: {str(e)}"))
         opened = len(self.functions.keys()) - start_len
 
         self.logger.info(f"Opened {opened} modules in {time.perf_counter() - t0:.2f}s")
@@ -641,7 +641,8 @@ class App(AppType, metaclass=Singleton):
             instance = self.functions[mod_name].get(f"{spec}_instance", None)
             if instance is not None:
                 if inspect.iscoroutinefunction(instance.on_exit):
-                    self.loop.call_soon_threadsafe(instance.on_exit)
+                    o = self.loop.create_task(instance.on_exit())
+                    self.exit_tasks.append(o)
                 else:
                     instance.on_exit()
 
@@ -652,13 +653,18 @@ class App(AppType, metaclass=Singleton):
         if on_exit is None:
             helper()
             return
+
         i = 1
         for f in on_exit:
             try:
                 f_, e = self.get_function((mod_name, f), state=True, specification=spec)
                 if e == 0:
                     self.logger.info(Style.GREY(f"Running On exit {f} {i}/{len(on_exit)}"))
-                    o = f_()
+                    if inspect.iscoroutinefunction(f_):
+                        o = self.loop.create_task(f_())
+                        self.exit_tasks.append(o)
+                    else:
+                        o = f_()
                     if o is not None:
                         self.print(f"Function On Exit result: {o}")
                 else:
@@ -669,11 +675,11 @@ class App(AppType, metaclass=Singleton):
             finally:
                 i += 1
 
-            helper()
+        helper()
 
-            if delete:
-                self.functions[mod_name] = {}
-                del self.functions[mod_name]
+        if delete:
+            self.functions[mod_name] = {}
+            del self.functions[mod_name]
 
     def exit(self):
         if self.args_sto.debug:
@@ -794,6 +800,9 @@ class App(AppType, metaclass=Singleton):
             return Result.future(asyncio.create_task(self.fuction_runner(function, function_data, args, kwargs).get()))
         else:
             return self.fuction_runner(function, function_data, args, kwargs)
+
+    def run_a_from_sync(self, function, *args):
+        self.loop.call_soon_threadsafe(function, *args)
 
     def fuction_runner(self, function, function_data: dict, args: list, kwargs: dict):
 

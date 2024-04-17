@@ -232,7 +232,7 @@ class Tools(MainTool, FileHandler):
         if a.log(prifix="initialize_database: ").is_error():
             raise RuntimeError("DB Autoresize Error " + a.print(show=False))
 
-        self.logger.info(f"Running DB in mode : {self.mode.value}")
+        self.app.logger.info(f"Running DB in mode : {self.mode.value}")
 
     def _autoresize(self):
 
@@ -287,7 +287,7 @@ class Tools(MainTool, FileHandler):
     @export(mod_name=Name, interface=ToolBoxInterfaces.native, samples=[{"mode": DatabaseModes.crate("LC")}])
     def edit_programmable(self, mode: DatabaseModes = DatabaseModes.LC):
         if mode is None:
-            self.logger.warning("No mode parsed")
+            self.app.logger.warning("No mode parsed")
             return Result.default_user_error(info="mode is None")
         if mode.name not in ["LC", "RC", "LR", "RR"]:
             return Result.default_user_error(info=f"Mode not supported used : {mode.name}")
@@ -301,7 +301,7 @@ class Tools(MainTool, FileHandler):
     @export(mod_name=Name, interface=ToolBoxInterfaces.cli)
     def edit_cli(self, mode: str = "LC"):
         if mode is None:
-            self.logger.warning("No mode parsed")
+            self.app.logger.warning("No mode parsed")
             return Result.default_user_error(info="mode is None")
         if mode not in ["LC", "RC", "LR", "RR"]:
             return Result.default_user_error(info=f"Mode not supported")
@@ -315,7 +315,7 @@ class Tools(MainTool, FileHandler):
     @export(mod_name=Name, interface=ToolBoxInterfaces.remote, api=False, helper="Avalabel modes: LC RC LR RR")
     def edit_dev_web_ui(self, mode: str = "LC"):
         if mode is None:
-            self.logger.warning("No mode parsed")
+            self.app.logger.warning("No mode parsed")
             return Result.default_user_error(info="mode is None")
         if mode not in ["LC", "RC", "LR", "RR"]:
             return Result.default_user_error(info=f"Mode not supported")

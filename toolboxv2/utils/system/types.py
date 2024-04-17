@@ -336,7 +336,11 @@ def analyze_data(data):
         report.append(f"  Funktionen mit Fatalen Fehler: {mod_info.get('functions_fatal_error', 0)}")
         report.append(f"  Funktionen mit Fehler: {mod_info.get('error', 0)}")
         report.append(f"  Funktionen erfolgreich: {mod_info.get('functions_sug', 0)}")
-        report.append(f"  coverage run:testet {(mod_info.get('coverage')[0]+2)/(mod_info.get('coverage')[1]+1):.2f}")
+        if mod_info.get('coverage', [0])[0] == 0:
+            c = 0
+        else:
+            c = mod_info.get('coverage', [0, 1])[1] / mod_info.get('coverage', [1])[0]
+        report.append(f"  coverage: {c:.2f}")
 
         if 'callse' in mod_info and mod_info['callse']:
             report.append("  Fehler:")
@@ -450,6 +454,7 @@ class AppType:
     called_exit: Tuple[bool, float]
     args_sto: AppArgs
     system_flag = None
+    exit_tasks = []
 
     def __init__(self, prefix: Optional[str] = None, args: Optional[AppArgs] = None):
         self.args_sto = args
@@ -530,7 +535,7 @@ class AppType:
     def load_mod(self, mod_name: str, mlm='I', **kwargs):
         """proxi attr"""
 
-    def load_all_mods_in_file(self, working_dir="mods"):
+    async def load_all_mods_in_file(self, working_dir="mods"):
         """proxi attr"""
 
     def get_all_mods(self, working_dir="mods", path_to="./runtime"):
@@ -562,6 +567,11 @@ class AppType:
                 stateful: (function_data, higher_order_function), 0
             state::boolean
                 specification::str default app
+        """
+
+    def run_a_from_sync(self, function):
+        """
+        run a async fuction
         """
 
     def run_function(self, mod_function_name: Enum or tuple,
@@ -802,9 +812,6 @@ class AppType:
                     if test is False:
                         continue
 
-                    if not function_name.startswith("test"):
-                        infos["coverage"][1] += 1
-
                     with Spinner(message=f"\t\t\t\t\t\tfuction {function_name}..."):
                         params: list = function_data.get('params')
                         sig: signature = function_data.get('signature')
@@ -849,11 +856,14 @@ class AppType:
                     all_data['errors'] += infos['error']
 
                 all_data[module_name] = infos
-                all_data["coverage"].append(f"{module_name}:{infos['coverage'][1]/infos['coverage'][0]:.2f}\n")
+                if infos['coverage'][0] == 0:
+                    c = 0
+                else:
+                    c = infos['coverage'][1] / infos['coverage'][0]
+                all_data["coverage"].append(f"{module_name}:{c:.2f}\n")
         total_coverage = sum([float(t.split(":")[-1]) for t in all_data["coverage"]])/len(all_data["coverage"])
         print(f"\n{all_data['modular_run']=}\n{all_data['modular_sug']=}\n{all_data['modular_fatal_error']=}\n{total_coverage=}")
         d = analyze_data(all_data)
-        print(d)
         return Result.ok(data=all_data, data_info=d)
 
     @staticmethod

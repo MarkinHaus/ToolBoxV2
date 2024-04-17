@@ -8,6 +8,7 @@ import os
 export = get_app(from_="welcome.EXPORT").tb
 Name = 'welcome'
 version = '0.0.1'
+Version = '0.0.1'
 
 
 def webInstall(self, user_instance, construct_render) -> str:
@@ -26,7 +27,7 @@ def webInstall_app_wrapper(self, command):
 
 
 @export(name="Version", mod_name=Name)
-def print_t():
+def get_version():
     print(f"Version: {version} : {system()}")
     return version
 

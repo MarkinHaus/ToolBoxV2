@@ -23,7 +23,7 @@ import uuid
 
 from tqdm import tqdm
 
-from toolboxv2 import MainTool, FileHandler, App, Style, get_app, Result
+from toolboxv2 import MainTool, FileHandler, App, Style, get_app, Result, Spinner
 import requests
 
 import socket
@@ -131,6 +131,7 @@ def get_local_ip():
 class Tools(MainTool, FileHandler):
 
     def __init__(self, app=None):
+        self.tasks = {}
         self.running = False
         self.version = version
         self.name = "SocketManager"
@@ -150,6 +151,7 @@ class Tools(MainTool, FileHandler):
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                           name=self.name, logs=self.logger, color=self.color, on_exit=self.on_exit)
         self.sockets = {}
+        self.loop = asyncio.new_event_loop()
 
     async def on_start(self):
         self.logger.info(f"Starting SocketManager")
@@ -175,7 +177,7 @@ class Tools(MainTool, FileHandler):
             # 'receiver_thread': s_thread,
             # 'keepalive_thread': keep_alive_thread,
             # '['running_dict']["keep_alive_var"] ': keep_alive_var,
-            socket_data['running_dict']["keep_alive_var"] = False
+            socket_data['running_dict']["keep_alive_var"].set()
             try:
                 await socket_data['sender']({'exit': True})
             except:
@@ -371,19 +373,33 @@ class Tools(MainTool, FileHandler):
     ############ Helper fuction ###################
 
     def exit_socket(self, name):
-        self.sockets[name]["running_dict"]["server_receiver"] = False
-        self.sockets[name]["running_dict"]["keep_alive_var"] = False
-        for r in self.sockets[name]["running_dict"]["receive"].keys():
-            self.sockets[name]["running_dict"]["receive"][r] = False
+        self.sockets[name]["alive"] = False
+        self.sockets[name]["running_dict"]["server_receiver"].set()
+        self.sockets[name]["running_dict"]["keep_alive_var"].set()
+        list(map(lambda client_receiver_threads_event: client_receiver_threads_event.set(),
+                 self.sockets[name]["running_dict"]["receive"].values()))
+
+        if self.sockets[name]["running_dict"]["thread_receiver"] is not None:
+            try:
+                self.sockets[name]["running_dict"]["thread_receiver"].join(timeout=0.251 if not self.app.debug else 0.1)
+                if not self.sockets[name]["do_async"] and self.sockets[name]["running_dict"][
+                    "server_receiver_"] is not None:
+                    self.sockets[name]["running_dict"]["server_receiver_"].join(
+                        timeout=0.251 if not self.app.debug else 0.1)
+            except TimeoutError as e:
+                pass
+            self.sockets[name]["running_dict"]["thread_receiver"] = None
 
     async def a_exit_socket(self, name):
-        pass
+        if self.sockets[name]["type_id"] == SocketType.client.name:
+            await self.sockets[name]["sender"]({"exit": True})
+        self.exit_socket(name)
 
     def register_identifier(self, name, connection, identifier="main"):
         connection_key = None
         if isinstance(connection, tuple) and isinstance(connection[1], socket.socket) and connection[0] is None:
             # Therefor the connection is synchrony and no receiver running
-            if self.sockets[name]["type_id"] == SocketType.client.name:
+            if self.sockets[name]["type_id"] == SocketType.server.name:
                 addr = connection[1].getpeername()
             else:
                 addr = connection[1].getsockname()
@@ -393,10 +409,7 @@ class Tools(MainTool, FileHandler):
             else:
                 connection_key = None
         elif isinstance(connection, socket.socket):
-            if self.sockets[name]["type_id"] == SocketType.server.name:
-                addr = connection.getpeername()
-            else:
-                addr = connection.getsockname()
+            addr = connection.getpeername()
             connection_key = addr[0] + str(addr[1])
             if connection_key in self.sockets[name]["client_sockets_dict"].keys():
                 pass
@@ -421,7 +434,7 @@ class Tools(MainTool, FileHandler):
         self.sockets[name]["client_sockets_dict"][endpoint[0] + str(endpoint[1])] = client_socket
         if self.sockets[name]['max_connections'] != -1:
             if self.sockets[name]["connections"] >= self.sockets[name]['max_connections']:
-                self.sockets[name]["running_dict"]["server_receiver"] = False
+                self.sockets[name]["running_dict"]["server_receiver"].set()
 
     async def a_register_new_connection(self, name, client_socket, endpoint):
         await self.sockets[name]["a_receiver_queue"].put({'data': (client_socket, endpoint), 'identifier': "new_con"})
@@ -433,11 +446,12 @@ class Tools(MainTool, FileHandler):
 
     def server_receiver(self, name, sock_):
         self.print(f"Server {name} receiver started")
-        while self.sockets[name]["running_dict"]["server_receiver"]:
+        while not self.sockets[name]["running_dict"]["server_receiver"].is_set() and self.sockets[name]["alive"]:
             try:
                 client_socket, endpoint = sock_.accept()
-            except OSError:
-                self.sockets[name]["running_dict"]["server_receiver"] = False
+            except OSError as e:
+                print("Error", e)
+                self.sockets[name]["running_dict"]["server_receiver"].set()
                 break
 
             self.register_new_connection(name, client_socket, endpoint)
@@ -448,7 +462,7 @@ class Tools(MainTool, FileHandler):
 
         self.print(f"Sending data to {identifier} as {name}")
 
-        async def send_(chunk, address=None, drain=False):
+        async def send_(chunk, drain=False):
             async def a_send_():
                 try:
                     writer.write(chunk)
@@ -462,9 +476,9 @@ class Tools(MainTool, FileHandler):
                     if self.sockets[name]["type_id"] == SocketType.client.name:
                         # self.print(f"Start sending data to client {_socket.getpeername()}")
                         _socket.sendall(chunk)
-                    elif address is not None and self.sockets[name]["type_id"] == SocketType.server.name:
+                    elif self.sockets[name]["type_id"] == SocketType.server.name:
                         # self.print(f"Start sending data to {address}")
-                        _socket.sendto(chunk, address)
+                        _socket.sendto(chunk, (self.sockets[name]["host"], self.sockets[name]["port"]))
                     elif self.sockets[name]["type_id"] == SocketType.peer.name:
                         # self.print(
                         #     f"Start sending data to peer at {(self.sockets[name]['host'], self.sockets[name]['p2p-port'])}")
@@ -487,12 +501,9 @@ class Tools(MainTool, FileHandler):
             receiver = self.sockets[name]["client_sockets_dict"][
                 self.sockets[name]["client_sockets_identifier"][identifier]]
         else:
-            raise ValueError(f"Invalid {identifier=} valid ar : {self.sockets[name]['client_sockets_identifier']}")
-
-        # if self.sockets[name]["type_id"] == SocketType.client.name:
-        #     to = (host, port)
-        # else:
-        #     to = (host, endpoint_port)
+            self.logger.warn(
+                Style.YELLOW(f"Invalid {identifier=} valid ar : {self.sockets[name]['client_sockets_identifier']}"))
+            return f"Invalid {identifier=} valid ar : {self.sockets[name]['client_sockets_identifier']}"
 
         # Prüfen, ob die Nachricht ein Dictionary ist und Bytes direkt unterstützen
         if isinstance(msg, bytes):
@@ -502,7 +513,7 @@ class Tools(MainTool, FileHandler):
             if 'exit' in msg:
                 sender_bytes = b'e'  # Präfix für "exit"
                 msg_json = 'exit'
-                self.sockets[name]["running_dict"]["receive"]["main"] = False
+                self.sockets[name]["running_dict"]["receive"][identifier].set()
             elif 'keepalive' in msg:
                 sender_bytes = b'k'  # Präfix für "keepalive"
                 msg_json = 'keepalive'
@@ -521,10 +532,7 @@ class Tools(MainTool, FileHandler):
             return
         if sender_bytes == b'e':
             await send_(sender_bytes)
-            if self.sockets[name]["do_async"]:
-                await self.a_exit_socket(name)
-            else:
-                self.exit_socket(name)
+            self.exit_socket(name)
             return
 
         total_steps = len(sender_bytes) // self.sockets[name]["package_size"]
@@ -549,7 +557,7 @@ class Tools(MainTool, FileHandler):
         if self.sockets[name]["type_id"] == SocketType.peer.name:
             await send_(b'E' * 6, receiver)
         else:
-            await send_(b'E' * self.sockets[name]["package_size"], receiver)
+            await send_(b'E' * (self.sockets[name]["package_size"] // 10), receiver)
 
         if self.sockets[name]["do_async"]:
             _, writer = receiver
@@ -563,12 +571,12 @@ class Tools(MainTool, FileHandler):
             if self.sockets[name]["do_async"]:
                 chunk = await r_socket_.read(self.sockets[name]["package_size"])
             elif self.sockets[name]["type_id"] == SocketType.client.name:
-                chunk, _ = await asyncio.to_thread(r_socket_.recvfrom,self.sockets[name]["package_size"])
+                chunk, _ = await asyncio.to_thread(r_socket_.recvfrom, self.sockets[name]["package_size"])
             else:
                 chunk = await asyncio.to_thread(r_socket_.recv, self.sockets[name]["package_size"])
         except ConnectionResetError and ConnectionAbortedError as e:
             self.print(f"Closing Receiver {name}:{identifier} {str(e)}")
-            self.sockets[name]["running_dict"]["receive"][identifier] = False
+            self.sockets[name]["running_dict"]["receive"][identifier].set()
             if self.sockets[name]["do_async"]:
                 await self.a_exit_socket(name)
             else:
@@ -577,29 +585,18 @@ class Tools(MainTool, FileHandler):
         if not chunk:
             return Result.default_internal_error("No data available pleas exit")
 
-        return Result.ok(chunk)
+        return Result.ok(data=chunk).set_origin((name, identifier))
 
     async def compute_bytes(self, name, row_data, identifier="main"):
-        if self.sockets[name]["do_async"]:
-            await self.sockets[name]["a_receiver_queue"].put({'bytes': row_data, 'identifier': identifier})
-        else:
-            self.sockets[name]["receiver_queue"].put({'bytes': row_data, 'identifier': identifier})
         self.logger.info(f"{name} -- received bytes --")
-        await asyncio.sleep(0)
+        return {'bytes': row_data, 'identifier': identifier}
 
     async def compute_json(self, name, row_data, identifier="main"):
         try:
             msg = json.loads(row_data)
             msg['identifier'] = identifier
-            if self.sockets[name]["do_async"]:
-                await self.sockets[name]["a_receiver_queue"].put(msg)
-            else:
-                self.sockets[name]["receiver_queue"].put(msg)
-            self.logger.info(f"{name} -- received JSON -- {msg['identifier']} {len(msg.keys())}")
-            if 'data_size' in msg.keys():
-                max_size = msg['data_size']
-                self.logger.info(f"Erwartete Bytes: {max_size}")
-                return max_size
+            self.logger.info(f"{name} -- received JSON -- {msg['identifier']}")
+            return msg
         except json.JSONDecodeError and UnicodeDecodeError as e:
             self.logger.error(f"JSON decode error: {e}")
 
@@ -608,7 +605,7 @@ class Tools(MainTool, FileHandler):
     async def compute_data(self, name, row_data, data_type, identifier="main"):
         if data_type == b'b':
             # Behandlung von Byte-Daten
-            await self.compute_bytes(name, row_data, identifier)
+            return await self.compute_bytes(name, row_data, identifier)
         elif data_type == b'j':
             # Behandlung von JSON-Daten
             return await self.compute_json(name, row_data, identifier)
@@ -617,8 +614,38 @@ class Tools(MainTool, FileHandler):
             self.print(f"Received unknown data type: {data_type}")
         return None
 
+    def helper_1_receive(self, name, identifier="main"):
+        task = self.loop.create_task(self.receive(name, identifier))
+        self.tasks[name] = task
+
+    async def helper_0_receive(self):
+        await asyncio.gather(*self.tasks.values())
+
+    async def receive_helper(self, name, identifier="mian"):
+
+        self.sockets[name]["running_dict"]["receive"][identifier] = asyncio.Event()
+
+        self.helper_1_receive(name, identifier)
+
+        if self.sockets[name]["running_dict"]["thread_receiver_"] or self.loop.is_running():
+            return
+
+        def helper_():
+            self.loop.run_until_complete(self.helper_0_receive())
+
+        t = threading.Thread(
+            target=helper_, daemon=True
+        )
+
+        await asyncio.sleep(1)
+
+        t.start()
+
+        self.sockets[name]["running_dict"]["thread_receiver"] = t
+        self.sockets[name]["running_dict"]["thread_receiver_"] = True
+
     async def receive(self, name, identifier="main"):
-        print("Received Started")
+        print(f"Received Started for {name} {identifier}")
         data_type = None
         data_buffer = io.BytesIO()
         max_size = -1
@@ -635,14 +662,13 @@ class Tools(MainTool, FileHandler):
         if self.sockets[name]["do_async"]:
             r_socket_, extra = receiver
         else:
-            _, r_socket_ = receiver
-        self.sockets[name]["running_dict"]["receive"][identifier] = True
+            r_socket_ = receiver
         self.print(f"Receiver running for {name} to {identifier}")
-        while self.sockets[name]["running_dict"]["receive"][identifier]:
+        while not self.sockets[name]["running_dict"]["receive"][identifier].is_set() and self.sockets[name]["alive"]:
             # t0 = time.perf_counter()
             chunk_result = await self.chunk_receive(name, r_socket_, identifier=identifier)
 
-            chunk_result.print()
+            # chunk_result.print()
 
             if chunk_result.is_error():
                 return chunk_result
@@ -654,40 +680,56 @@ class Tools(MainTool, FileHandler):
                 self.logger.info(f"{name} -- received keepalive signal--")
                 continue
 
-            if not data_type:
+            print("?", data_type, chunk)
+            if data_type is None:
                 data_type = chunk[:1]  # Erstes Byte ist der Datentyp
                 chunk = chunk[1:]  # Rest der Daten
-                self.print(f"Register date type : {data_type}")
+                self.print(f"Register date type : {data_type} :{name}-{identifier}")
+            if data_type == b'e':
+                self.sockets[name]["running_dict"]["receive"][identifier].set()
+                self.logger.info(f"{name} -- received exit signal --")
+                print(f"{name} -- received exit signal --")
+                self.sockets[name]['running_dict']["keep_alive_var"].set()
+                break
+            if not (chunk[0] == b'E'[0] and chunk[-1] == b'E'[0]):
+                # Check if adding this chunk would exceed the max size limit
+                if max_size != -1 and ac_size + len(chunk) > max_size:
+                    # If the chunk would exceed the max size, add only the necessary part of it
+                    chunk = chunk[:(max_size - ac_size) + 1]
+                    data_buffer.write(chunk)
+                else:
+                    data_buffer.write(chunk)
+                ac_size += len(chunk)
+            print("data", chunk)
 
             if max_size > -1 and ac_size > 0 and data_type == b'b':
                 print(
                     f"don {chunk[0] == b'E'[0] and chunk[-1] == b'E'[0]} {(ac_size / max_size) * 100:.2f}% total byts: {ac_size} von {max_size}",
                     end='\r')
-            if data_type == b'e':
-                self.sockets[name]["running_dict"]["receive"][identifier] = False
-                self.logger.info(f"{name} -- received exit signal --")
-                self.sockets[name]['running_dict']["keep_alive_var"] = False
-                break
+
             elif chunk[0] == b'E'[0] and chunk[-1] == b'E'[0] and ac_size > 0 and (
                 ac_size == max_size or max_size == -1):
                 max_size = -1
                 ac_size = 0
                 # Letzter Teil des Datensatzes
-                max_size_r = await self.compute_data(name, data_buffer.getvalue(), data_type, identifier=identifier)
-                if max_size_r is None:
-                    max_size = max_size_r
+                data = await self.compute_data(name, data_buffer.getvalue(), data_type, identifier=identifier)
+
+                if data:
+                    self.print(f"Daten wurden empfangen {name} {identifier}")
+                    if max_size == -1 and isinstance(data, dict) and "max_size" in data:
+                        max_size = data.get("max_size")
+                    if self.sockets[name]["type_id"] == SocketType.client.name and 'identifier' in data and data.get(
+                        "identifier") == 'main':
+                        del data['identifier']
+                    if self.sockets[name]["do_async"]:
+                        await self.sockets[name]["a_receiver_queue"].put(data)
+                    else:
+                        self.sockets[name]["receiver_queue"].put(data)
                 # Zurücksetzen für den nächsten Datensatz
-                data_buffer.flush()
+                del data_buffer
+                data_buffer = io.BytesIO()
                 data_type = None
-            else:
-                # Check if adding this chunk would exceed the max size limit
-                if ac_size + len(chunk) > max_size:
-                    # If the chunk would exceed the max size, add only the necessary part of it
-                    chunk = chunk[:max_size - ac_size]
-                    data_buffer.write(chunk)
-                else:
-                    data_buffer.write(chunk)
-                ac_size += len(chunk)
+
         data_buffer.close()
         self.print(f"{name} :closing connection to {self.sockets[name]['host']}")
         if name in self.sockets:
@@ -711,14 +753,11 @@ class Tools(MainTool, FileHandler):
                             type_id: SocketType = SocketType.client,
                             max_connections=-1, endpoint_port=None,
                             return_full_object=False, keepalive_interval=6, test_override=False, package_size=1024,
-                            start_keep_alive=True, unix_file=False, do_async=True) -> Result:
+                            start_keep_alive=True, unix_file=False, do_async=False) -> Result:
 
         # start queues sender, receiver, acceptor
         a_receiver_queue = asyncio.Queue()
         receiver_queue = queue.Queue()
-
-        if host == "localhost":
-            host = '127.0.0.1'
 
         if 'test' in self.app.id and not test_override:
             return "No api in test mode allowed"
@@ -740,19 +779,14 @@ class Tools(MainTool, FileHandler):
             socket_type = socket.AF_INET
 
         def close_helper():
-            if do_async:
-                return lambda: self.a_exit_socket(name)
-            return lambda: self.exit_socket(name)
+            return lambda: self.a_exit_socket(name)
 
         async def to_receive(client, identifier='main'):
             if isinstance(client, str):
                 print("Client $$", client, identifier)
                 return
             self.register_identifier(name, client, identifier)
-            print("Client $$ valid", client, identifier)
-            client_task = self.app.loop.create_task(self.receive(name, identifier))
-            print(client_task.done())
-            self.sockets[name]["client_receiver_threads"][identifier] = client_task
+            await self.receive_helper(name, identifier)
 
         self.sockets[name] = {
             'alive': True,
@@ -764,22 +798,24 @@ class Tools(MainTool, FileHandler):
             'host': host,
             'port': port,
             'p2p-port': endpoint_port,
-            'sender': lambda msg, identifier: self.send(name, msg=msg, identifier=identifier),
+            'sender': lambda msg, identifier="main": self.send(name, msg=msg, identifier=identifier),
             'connections': 0,
             'receiver_queue': receiver_queue,
             'a_receiver_queue': a_receiver_queue,
             'connection_error': connection_error,
             'running_dict': {
-                "server_receiver": True,
+                "server_receiver": asyncio.Event(),
+                "server_receiver_": None,
+                "thread_receiver": None,
+                "thread_receiver_": False,
                 "receive": {
-                    "main": True,
+
                 },
-                "keep_alive_var": True
+                "keep_alive_var": asyncio.Event()
             },
             'client_sockets_dict': {},
             'client_sockets_identifier': {},
             'client_to_receiver_thread': to_receive,
-            'client_receiver_threads': {},
         }
 
         # server receiver
@@ -806,7 +842,8 @@ class Tools(MainTool, FileHandler):
 
             if server_result.is_error():
                 return server_result
-
+            if not do_async:
+                self.sockets[name]["running_dict"]["server_receiver_"] = server_result.get()
             # sock = await server_result.aget()
 
         elif type_id == SocketType.client.name:
@@ -818,10 +855,10 @@ class Tools(MainTool, FileHandler):
                 return client_result
 
             if do_async:
+                r_socket = await client_result.aget()
+            else:
                 c_thread, c_socket = client_result.get()
                 r_socket = c_socket
-            else:
-                r_socket = await client_result.aget()
             self.sockets[name]["client_sockets_dict"][host + str(port)] = r_socket
             await to_receive(r_socket, "main")
 
@@ -857,7 +894,7 @@ class Tools(MainTool, FileHandler):
 
             def keep_alive():
                 i = 0
-                while self.sockets[name]["running_dict"]["keep_alive_var"]:
+                while not self.sockets[name]["running_dict"]["keep_alive_var"].is_set() and self.sockets[name]["alive"]:
                     time.sleep(keepalive_interval)
                     try:
                         self.send(name, {'keepalive': True})
@@ -886,14 +923,17 @@ class Tools(MainTool, FileHandler):
 
         # sender queue
 
+    ####### P2P server ##############
     @export(mod_name=Name, name="run_as_ip_echo_server_a", test=False)
-    def run_as_ip_echo_server_a(self, name: str = 'local-host', host: str = '0.0.0.0', port: int = 62435,
-                                max_connections: int = -1, test_override=False):
+    async def run_as_ip_echo_server_a(self, name: str = 'local-host', host: str = '0.0.0.0', port: int = 62435,
+                                      max_connections: int = -1, test_override=False):
 
         if 'test' in self.app.id and not test_override:
             return "No api in test mode allowed"
-        send, receiver_queue = self.create_socket(name, host, port, SocketType.server, max_connections=max_connections)
-
+        socket_data = await self.create_socket(name, host, port, SocketType.server, max_connections=max_connections)
+        if not socket_data.is_error():
+            return socket_data
+        send, receiver_queue = socket_data.get()
         clients = {}
 
         self.running = True
@@ -961,13 +1001,17 @@ class Tools(MainTool, FileHandler):
             client_socket.sendall("exit".encode('utf-8'))
 
     @export(mod_name=Name, name="run_as_single_communication_server", test=False)
-    def run_as_single_communication_server(self, name: str = 'local-host', host: str = '0.0.0.0', port: int = 62435,
-                                           test_override=False):
+    async def run_as_single_communication_server(self, name: str = 'local-host', host: str = '0.0.0.0',
+                                                 port: int = 62435,
+                                                 test_override=False):
 
         if 'test' in self.app.id and not test_override:
             return "No api in test mode allowed"
 
-        send, receiver_queue = self.create_socket(name, host, port, SocketType.server, max_connections=1)
+        socket_data = await self.create_socket(name, host, port, SocketType.server, max_connections=1)
+        if not socket_data.is_error():
+            return socket_data
+        send, receiver_queue = socket_data.get()
         status_queue = queue.Queue()
         running = [True]  # Verwenden einer Liste, um den Wert referenzierbar zu machen
 
@@ -1022,7 +1066,7 @@ class Tools(MainTool, FileHandler):
         return {"stop_server": stop_server, "get_status": get_status}
 
     @export(mod_name=Name, name="send_file_to_sever", test=False)
-    def send_file_to_sever(self, filepath, host, port):
+    async def send_file_to_sever(self, filepath, host, port):
         if isinstance(port, str):
             try:
                 port = int(port)
@@ -1042,7 +1086,7 @@ class Tools(MainTool, FileHandler):
         compressed_data = gzip.compress(to_send_data)
 
         # Peer-to-Peer Socket erstellen und verbinden
-        socket_data: dict = self.create_socket(name="sender", host=host, port=port, type_id=SocketType.client,
+        socket_data = await self.create_socket(name="sender", host=host, port=port, type_id=SocketType.client,
                                                return_full_object=True)
 
         # 'socket': socket,
@@ -1055,7 +1099,10 @@ class Tools(MainTool, FileHandler):
         # 'connection_error': connection_error,
         # 'receiver_thread': s_thread,
         # 'keepalive_thread': keep_alive_thread,
+        if not socket_data.is_error():
+            return socket_data
 
+        socket_data = socket_data.get()
         send = socket_data['sender']
 
         # Komprimierte Daten senden
@@ -1074,10 +1121,10 @@ class Tools(MainTool, FileHandler):
             self.print(f"Fehler beim Senden der Datei: {e}")
             return False
         finally:
-            socket_data['running_dict']["keep_alive_var"] = False
+            socket_data['running_dict']["keep_alive_var"].set()
 
     @export(mod_name=Name, name="receive_and_decompress_file_as_server", test=False)
-    def receive_and_decompress_file_from_client(self, save_path, listening_port):
+    async def receive_and_decompress_file_from_client(self, save_path, listening_port):
         # Empfangs-Socket erstellen
         if isinstance(listening_port, str):
             try:
@@ -1085,9 +1132,12 @@ class Tools(MainTool, FileHandler):
             except:
                 return self.return_result(exec_code=-1, data_info=f"{listening_port} is not an int or not cast to int")
 
-        socket_data = self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
-                                         type_id=SocketType.server,
-                                         return_full_object=True, max_connections=1)
+        socket_data = await self.create_socket(name="receiver", host='0.0.0.0', port=listening_port,
+                                               type_id=SocketType.server,
+                                               return_full_object=True, max_connections=1)
+        if not socket_data.is_error():
+            return socket_data
+        socket_data = socket_data.get()
         receiver_queue = socket_data['receiver_queue']
         to_receiver = socket_data['client_to_receiver_thread']
         data = receiver_queue.get(block=True)
@@ -1131,10 +1181,10 @@ class Tools(MainTool, FileHandler):
             else:
                 self.print(f"Unexpected data : {data}")
 
-        socket_data['running_dict']["keep_alive_var"] = False
+        socket_data['running_dict']["keep_alive_var"].set()
 
     @export(mod_name=Name, name="send_file_to_peer", test=False)
-    def send_file_to_peer(self, filepath, host, port):
+    async def send_file_to_peer(self, filepath, host, port):
         if isinstance(port, str):
             try:
                 port = int(port)
@@ -1154,8 +1204,12 @@ class Tools(MainTool, FileHandler):
         compressed_data = gzip.compress(to_send_data)
 
         # Peer-to-Peer Socket erstellen und verbinden
-        socket_data = self.create_socket(name="sender", host=host, endpoint_port=port, type_id=SocketType.peer,
-                                         return_full_object=True, keepalive_interval=1, start_keep_alive=False)
+        socket_data = await self.create_socket(name="sender", host=host, endpoint_port=port, type_id=SocketType.peer,
+                                               return_full_object=True, keepalive_interval=1, start_keep_alive=False)
+
+        if not socket_data.is_error():
+            return socket_data
+        socket_data = socket_data.get()
 
         # 'socket': socket,
         # 'receiver_socket': r_socket,
@@ -1188,10 +1242,10 @@ class Tools(MainTool, FileHandler):
             self.print(f"Fehler beim Senden der Datei: {e}")
             return False
         finally:
-            socket_data['running_dict']["keep_alive_var"] = False
+            socket_data['running_dict']["keep_alive_var"].set()
 
     @export(mod_name=Name, name="receive_and_decompress_file", test=False)
-    def receive_and_decompress_file_peer(self, save_path, listening_port, sender_ip='0.0.0.0'):
+    async def receive_and_decompress_file_peer(self, save_path, listening_port, sender_ip='0.0.0.0'):
         # Empfangs-Socket erstellen
         if isinstance(listening_port, str):
             try:
@@ -1199,9 +1253,14 @@ class Tools(MainTool, FileHandler):
             except:
                 return self.return_result(exec_code=-1, data_info=f"{listening_port} is not an int or not cast to int")
 
-        socket_data = self.create_socket(name="receiver", host=sender_ip, port=listening_port,
-                                         type_id=SocketType.peer,
-                                         return_full_object=True, max_connections=1)
+        socket_data = await self.create_socket(name="receiver", host=sender_ip, port=listening_port,
+                                               type_id=SocketType.peer,
+                                               return_full_object=True, max_connections=1)
+
+        if not socket_data.is_error():
+            return socket_data
+        socket_data = socket_data.get()
+
         receiver_queue: queue.Queue = socket_data['receiver_queue']
 
         file_data = b''
