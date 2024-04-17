@@ -18,7 +18,7 @@ import sys
 import time
 from fastapi.middleware.cors import CORSMiddleware
 
-from toolboxv2 import tbef, AppArgs, ApiResult
+from toolboxv2 import tbef, AppArgs, ApiResult, Spinner
 
 from toolboxv2.utils.system.state_system import get_state_from_app
 from ..mods.CloudM import User
@@ -609,7 +609,7 @@ def test_rate_limiting_middleware():
 '''
 
 
-async def helper(tb_app, id_name):
+def helper(tb_app, id_name):
     from ..mods.CloudM import User
 
     app.add_middleware(SessionAuthMiddleware)
@@ -635,7 +635,7 @@ async def helper(tb_app, id_name):
         f.write(str(os.getpid()))
         f.close()
 
-    await tb_app.load_all_mods_in_file()
+    # await tb_app.load_all_mods_in_file()
 
     time.sleep(0.5)
 
@@ -715,6 +715,7 @@ async def helper(tb_app, id_name):
     app.include_router(install_router)
 
 
+
 print("API: ", __name__)
 if __name__ == 'toolboxv2.api.fast_api_main':
 
@@ -729,7 +730,16 @@ if __name__ == 'toolboxv2.api.fast_api_main':
     args = AppArgs().default()
     args.name = id_name
     args.debug = debug
-    loop = asyncio.new_event_loop()
     tb_app = get_app(from_="init-api-get-tb_app", name=id_name, args=args)
     manager = tb_app.get_mod("WebSocketManager")
-    loop.run_until_complete(helper(tb_app, id_name))
+
+    with Spinner("loding mods", symbols="b"):
+        module_list = tb_app.get_all_mods()
+        open_modules = tb_app.functions.keys()
+        start_len = len(open_modules)
+        for om in open_modules:
+            if om in module_list:
+                module_list.remove(om)
+        _ = {tb_app.save_load(mod, 'app') for mod in module_list}
+
+    helper(tb_app, id_name)

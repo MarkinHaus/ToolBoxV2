@@ -218,7 +218,7 @@ class BlobFile(io.IOBase):
 
             self.storage.update_blob(self.blob_id, pickle.dumps(blob_data))
 
-    def write(self, data: str):
+    def write(self, data: str or bytes or dict):
         if 'w' not in self.mode:
             raise ValueError("File not opened in write mode.")
         if isinstance(data, str):

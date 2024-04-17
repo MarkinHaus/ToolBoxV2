@@ -354,6 +354,10 @@ def parse_args():
                         help="start in debug mode",
                         action="store_true")
 
+    parser.add_argument("--remote",
+                        help="start in remote mode",
+                        action="store_true")
+
     parser.add_argument("--delete-config-all",
                         help="start in debug mode",
                         action="store_true")

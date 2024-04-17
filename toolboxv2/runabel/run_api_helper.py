@@ -6,7 +6,7 @@ def stest_from_js(payload=None):
     return "done"
 
 
-def run(_, _0):
+async def run(_, _0):
     from toolboxv2.mods.EventManager.module import EventManagerClass, SourceTypes, Scope
     from toolboxv2 import tbef
 
@@ -27,9 +27,9 @@ def run(_, _0):
     ev.register_event(event)
 
     try:
-        _.run_runnable('TBtray')
+        await _.run_runnable('TBtray')
     except:
-        _.run_runnable('cli')
+        await _.run_runnable('cli')
 
 
 if __name__ == "__main__":

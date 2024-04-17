@@ -289,7 +289,7 @@ export async function registerUser(registrationData, sing, errorCallback, sucess
             //residentKey: "preferred",
             //authenticatorAttachment: "platform",
             requireResidentKey: true, // Setzen Sie dies auf true, um einen residenten Schlüssel zu erfordern
-            userVerification: "required" // Kann "required", "preferred" oder "discouraged" sein
+            userVerification: "preferred" // Kann "required", "preferred" oder "discouraged" sein
         },
     };
 
@@ -373,7 +373,7 @@ export async function authorisazeUser(rawId, challenge, username, errorCallback,
             type: "public-key",
             id: base64ToArrayBuffer(rawId)
         }],
-        userVerification: "required",
+        userVerification: "preferred",
     }
     const asBase64 = ab => btoa(String.fromCharCode(...new Uint8Array(ab)))
     try {

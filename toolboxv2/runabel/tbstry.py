@@ -74,9 +74,9 @@ def get_initial_icon(app: App):
     return icon
 
 
-def run(app, args):
+async def run(app, args):
     with Spinner("Initial"):
         icon = get_initial_icon(app)
 
     threading.Thread(target=icon.run, daemon=True).start()
-    app.run_runnable('cli')
+    await app.run_runnable('cli')
