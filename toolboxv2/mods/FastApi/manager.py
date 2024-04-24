@@ -10,6 +10,7 @@ import requests
 from toolboxv2 import MainTool, FileHandler, get_app
 from toolboxv2.utils.extras.blobs import BlobFile
 from toolboxv2.utils.system.session import Session
+import uvicorn
 
 export = get_app("api_manager.Export").tb
 Name = "FastApi"
@@ -43,6 +44,14 @@ class Tools(MainTool, FileHandler):  # FileHandler
                 self.conf_api,
             "stop-api":
                 self.stop_api,
+            "start":
+                self.start_live,
+            "startE":
+                self._start_api,
+            "startDev":
+                self.start_dev,
+            "startDUG":
+                self.start_debug,
             "info":
                 self.info,
             "restart-api":
@@ -100,25 +109,22 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         self.print(self.api_config[api_name])
 
-    @export(mod_name="api_manager", test=False)
-    def start_dev(self, api_name: str, *modules):
+    def start_dev(self, api_name: str, *modules, **kwargs):
         if modules:
             api_name += '_D'
             with BlobFile(f"FastApiManager/{api_name}.specs", 'w') as f:
                 f.write_json({
                     'modules': modules,
                 })
-        return self._start_api(api_name, live=False, reload=True, test_override=True)
+            print("Started FastApiManagerDev", api_name)
+        return self._start_api(api_name, live=False, reload=True, test_override=False)
 
-    @export(mod_name="api_manager", test=False)
     def start_live(self, api_name):
         return self._start_api(api_name, live=True, reload=False, test_override=False)
 
-    @export(mod_name="api_manager", test=False)
     def start_debug(self, api_name):
-        return self._start_api(api_name, live=False, reload=True, test_override=False)
+        return self._start_api(api_name, live=False, reload=False, test_override=True)
 
-    @export(mod_name="api_manager", test=False)
     def _start_api(self, api_name: str, live=False, reload=False, test_override=False):
 
         if 'test' in self.app.id and not test_override:
@@ -164,8 +170,12 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         print("Running command : " + g)
 
+        # def runner():
+        #     uvicorn.run("toolboxv2.mods.FastApi.fast_api_main:app", host=api_data['host'],
+        #                 port=api_data['port'], headers=[('data', str(self.app.debug)+':'+ api_name)], reload=reload)
+
         if api_thread is None:
-            self.running_apis[api_name] = threading.Thread(target=os.system, args=(g,), daemon=True)
+            self.running_apis[api_name] = threading.Thread(target=os.system, args=(g, ), daemon=True)
             self.running_apis[api_name].start()
             return "starting api"
 
@@ -225,9 +235,9 @@ class Tools(MainTool, FileHandler):  # FileHandler
         else:
             self.api_config = data
 
-    def on_exit(self):
+    async def on_exit(self):
         self.add_to_save_file_handler(self.keys["Apis"], json.dumps(self.api_config))
         for key in self.running_apis:
-            self.stop_api(key, delete=False)
+            await self.stop_api(key, delete=False)
         self.running_apis = {}
         self.save_file_handler()

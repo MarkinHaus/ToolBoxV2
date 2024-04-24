@@ -11,7 +11,7 @@ from toolboxv2.utils.extras.blobs import BlobStorage, BlobFile
 class TestBlobStorage(unittest.TestCase):
 
     def setUp(self):
-        self.mock_storage_directory = Path("/tmp/test_blob_storage")
+        self.mock_storage_directory = Path(".data/tmp/test_blob_storage").absolute()
         self.blob_storage = BlobStorage(storage_directory=str(self.mock_storage_directory))
 
     @patch('os.path.exists')

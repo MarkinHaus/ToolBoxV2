@@ -538,11 +538,12 @@ async def main(loop=None):
     # tb_app.save_registry_as_enums("utils", "all_functions_enums.py")
 
     if args.install:
-        if not tb_app.run_any("CloudM", "install", args.install):
+        report = False # tb_app.run_any("CloudM", "install", module_name=args.install)
+        if not report:
             if 'n' not in input("Mod not found in local mods_sto install from remote ? (yes,no)"):
-                session = Session(tb_app.get_username())
+                session = Session(tb_app.get_username(), base=os.getenv("MOD_PROVIDER"))
                 if not await session.login():
-                    mk = input("bitte geben sie ihren magik link ein")
+                    mk = input(f"bitte geben sie ihren magik link ein {session.base}/")
                     if '/web/' not in mk:
                         print("Link is not in Valid format")
                         return
@@ -610,7 +611,7 @@ async def main(loop=None):
         tb_app.exit()
         return 0
 
-    if args.command:
+    if args.command and not args.background_application:
         for command in args.command:
             if len(command) < 1:
                 tb_app.print_functions()
@@ -618,6 +619,9 @@ async def main(loop=None):
                     "minimum command length is 2 {module_name} {function_name} optional args...")
                 continue
             if len(command) == 1:
+                if command[0].lower() == 'true':
+                    while tb_app.alive:
+                        await asyncio.sleep(1)
                 tb_app.get_mod(command[0])
                 tb_app.print_functions(command[0])
                 tb_app.print(
@@ -626,14 +630,18 @@ async def main(loop=None):
 
             tb_app.print(f"Running command: {' '.join(command)}")
             call = CallingObject().empty()
+            tb_app.get_mod(command[0], spec='app')
             call.module_name = command[0]
             call.function_name = command[1]
             call.args = command[1:]
-            await tb_app.run_any(tbef.CLI_FUNCTIONS.CO_EVALUATE,
-                                                    obj=call,
-                                                    build_in_commands={},
-                                                    threaded=False,
-                                                    helper=None)
+            spec = 'app' if not args.live_application else tb_app.id
+            r = tb_app.run_any((call.module_name, call.function_name),tb_run_with_specification=spec,  args_=call.args,  get_results=True)
+            if asyncio.iscoroutine(r):
+                r = await r
+            if isinstance(r, asyncio.Task):
+                r = await r
+
+            print("Running", spec, r)
 
     elif not args.kill and not args.docker and tb_app.alive and not args.background_application:
 

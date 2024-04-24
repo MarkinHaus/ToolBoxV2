@@ -199,6 +199,9 @@ class DaemonUtil:
                                 if res is None:
                                     res = {'data': res}
                                 elif isinstance(res, Result):
+                                    if asyncio.iscoroutine(res.get()) or isinstance(res.get(), asyncio.Task):
+                                        res_ = await res.aget()
+                                        res.result.data = res_
                                     res = json.loads(res.to_api_result().json())
                                 elif isinstance(res, bytes):
                                     pass

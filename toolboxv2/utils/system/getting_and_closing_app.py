@@ -45,6 +45,7 @@ def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None, sync=
             loop = asyncio.get_event_loop()
         except RuntimeError:
             loop = asyncio.new_event_loop()
+        print("ADDET A LOOP")
         app.loop = loop
     registered_apps[0] = app
     return app

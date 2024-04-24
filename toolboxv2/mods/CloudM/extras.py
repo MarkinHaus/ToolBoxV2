@@ -258,15 +258,11 @@ def show_version(self):
     return self.version
 
 
-def test_helper_register_initial_root_user():
-    tb_test_register_initial_root_user[0]()
-
-
 @test_only
-def tb_test_register_initial_root_user():
+async def tb_test_register_initial_root_user():
     app = get_app(from_="test_register_initial_root_user", name="debug-test")
     db = app.get_mod("DB")
     db.edit_programmable()
 
-    app.loop.run_until_complete(register_initial_root_user(app, "test@test.com"))
+    await register_initial_root_user(app, "test@test.com")
 

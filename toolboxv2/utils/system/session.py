@@ -27,10 +27,12 @@ class Session(metaclass=Singleton):
 
     # user: LocalUser
 
-    def __init__(self, username):
+    def __init__(self, username, base=None):
         self.username = username
         self.session: Optional[ClientSession] = None
-        self.base = os.environ.get("TOOLBOXV2_REMOTE_BASE")
+        if base is None:
+            base = os.environ.get("TOOLBOXV2_REMOTE_BASE")
+        self.base = base
 
     async def init_log_in_mk_link(self, mak_link):
         from playwright.async_api import async_playwright
@@ -74,7 +76,7 @@ class Session(metaclass=Singleton):
         self.session = ClientSession()
         with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="r") as blob:
             claim = blob.read()
-            print("Claim:", claim)
+            # print("Claim:", claim)
 
         async with self.session.post(f"{self.base}/validateSession",
                                      data={'Jwt_claim': claim, 'Username': self.username}) as response:
@@ -110,14 +112,26 @@ class Session(metaclass=Singleton):
         with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="w") as blob:
             blob.clear()
 
+async def helper_session_invalid():
+    s = Session('root')
+
+    t = await s.init_log_in_mk_link("/")
+    print(t)
+    t1 = await s.login()
+    print(t1)
+    assert t1 == False
 
 def test_session_invalid():
     import asyncio
+
+
+    asyncio.run(helper_session_invalid())
+
+
+def test_session_invalid_log_in():
+    import asyncio
     async def helper():
         s = Session('root')
-
-        t = await s.init_log_in_mk_link("/")
-        print(t)
         t1 = await s.login()
         print(t1)
         assert t1 == False
