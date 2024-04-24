@@ -75,19 +75,15 @@ async def a_save_closing_app():
 
     if not app.called_exit[0]:
         app.print(Style.Bold(Style.ITALIC("- auto exit -")))
-        app.exit()
+        await app.a_exit()
 
     if app.called_exit[0] and time.time() - app.called_exit[1] > 15:
         app.print(Style.Bold(Style.ITALIC(f"- zombie sice|{time.time() - app.called_exit[1]:.2f}s kill -")))
-        app.exit()
+        await app.a_exit()
 
     if hasattr(app, 'loop'):
-        if len(app.exit_tasks) > 0:
-            print("Waiting for exit tasks :", app.exit_tasks)
-            await asyncio.gather(*app.exit_tasks)
         if not app.loop.is_closed():
             app.loop.close()
 
     app.print(Style.Bold(Style.ITALIC("- completed -")))
     registered_apps[0] = None
-

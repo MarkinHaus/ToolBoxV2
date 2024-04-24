@@ -1,4 +1,7 @@
+import asyncio
 import os
+import re
+import subprocess
 from dataclasses import dataclass, field
 from threading import Thread
 
@@ -35,6 +38,170 @@ Name = 'cli_functions'
 export = get_app("cli_functions.Export").tb
 default_export = export(mod_name=Name)
 version = '0.0.1'
+
+
+
+
+def parse_linux_command_output():
+    # Führe den Linux-Befehl aus und erhalte die Ausgabe
+    result = subprocess.run(["bash", "-c", "compgen -A function -abck"], capture_output=True, text=True)
+    output = result.stdout
+
+    # Trennen der Daten in Zeilen
+    lines = output.strip().split('\n')
+
+    # Hier könnten weitere Filter- oder Verarbeitungsschritte hinzugefügt werden,
+    # falls die Daten weitergehend bereinigt oder analysiert werden müssten.
+
+    return lines
+
+
+def parse_command_output():
+    # Führe den PowerShell-Befehl aus und erhalte die Ausgabe
+    result = subprocess.run(["powershell", "-Command", "Get-Command *"], capture_output=True, text=True)
+    output = result.stdout
+
+    # Trennen der Daten in Zeilen
+    lines = output.split('\n')
+
+    # Erstellen einer Liste für die Namen der Dateien und ein Dictionary für die gesamten Daten
+    exe_names = []
+    applications = []
+
+    # Schleife über die Zeilen der Ausgabe, um die Daten zu extrahieren
+    for line in lines:
+        parts = line.split()
+
+        if len(parts) >= 2 and parts[0] == "Alias":
+            # Nehme an, dass der Dateiname und die Version immer vorhanden sind
+            # und der Rest der Zeile ist der Pfad
+            app_type = parts[0]
+            exe_name = parts[1]
+            if len(exe_name) < 2:
+                continue
+
+            location = ' '.join(parts[3:])
+
+            # Füge den Dateinamen zur Liste hinzu
+            exe_names.append(exe_name)
+
+            # Erstelle ein Dictionary für die aktuelle Anwendung und füge es zur Liste hinzu
+            application_info = {
+                'type': app_type,
+                'name': exe_name,
+                'infos': location
+            }
+            applications.append(application_info)
+
+        if len(parts) >= 2 and parts[0] == "Cmdlet":
+            # Nehme an, dass der Dateiname und die Version immer vorhanden sind
+            # und der Rest der Zeile ist der Pfad
+            app_type = parts[0]
+            exe_name = parts[1]
+            if len(exe_name) < 2:
+                continue
+
+            location = ' '.join(parts[2:])
+
+            # Füge den Dateinamen zur Liste hinzu
+            exe_names.append(exe_name)
+
+            # Erstelle ein Dictionary für die aktuelle Anwendung und füge es zur Liste hinzu
+            application_info = {
+                'type': app_type,
+                'name': exe_name,
+                'infos': location
+            }
+            applications.append(application_info)
+
+        if len(parts) >= 3 and parts[0] == "ExternalScript":
+            # Nehme an, dass der Dateiname und die Version immer vorhanden sind
+            # und der Rest der Zeile ist der Pfad
+            app_type = parts[0]
+            exe_name = parts[1]
+            if len(exe_name) < 2:
+                continue
+
+            location = ' '.join(parts[2:])
+
+            # Füge den Dateinamen zur Liste hinzu
+            exe_names.append(exe_name)
+
+            # Erstelle ein Dictionary für die aktuelle Anwendung und füge es zur Liste hinzu
+            application_info = {
+                'type': app_type,
+                'name': exe_name,
+                'infos': location
+            }
+            applications.append(application_info)
+        if len(parts) >= 2 and parts[0] == "Function":
+            # Nehme an, dass der Dateiname und die Version immer vorhanden sind
+            # und der Rest der Zeile ist der Pfad
+            app_type = parts[0]
+            exe_name = parts[1]
+            if len(exe_name) < 2 and not exe_name.endswith(':'):
+                continue
+
+            location = ' '.join(parts[2:])
+
+            # Füge den Dateinamen zur Liste hinzu
+            exe_names.append(exe_name)
+
+            # Erstelle ein Dictionary für die aktuelle Anwendung und füge es zur Liste hinzu
+            application_info = {
+                'type': app_type,
+                'name': exe_name,
+                'infos': location
+            }
+            applications.append(application_info)
+
+        if len(parts) >= 4 and parts[0] == "Application":
+            # Nehme an, dass der Dateiname und die Version immer vorhanden sind
+            # und der Rest der Zeile ist der Pfad
+            app_type = parts[0]
+            exe_name = parts[1]
+            version = parts[2]
+            location = ' '.join(parts[3:])
+
+            # Füge den Dateinamen zur Liste hinzu
+            exe_names.append(exe_name)
+
+            # Erstelle ein Dictionary für die aktuelle Anwendung und füge es zur Liste hinzu
+            application_info = {
+                'type': app_type,
+                'name': exe_name,
+                'version': version,
+                'location': location
+            }
+            applications.append(application_info)
+
+    return exe_names, applications
+
+
+def replace_bracketed_content(text, replacements, inlist=False):
+    """
+    Ersetzt Inhalte in eckigen Klammern mit entsprechenden Werten aus einem Wörterbuch.
+
+    :param text: Der zu verarbeitende Text als String.
+    :param replacements: Ein Wörterbuch mit Schlüssel-Wert-Paaren für die Ersetzung.
+    :return: Den modifizierten Text.
+    """
+    # Finde alle Vorkommen von Texten in eckigen Klammern
+    matches = re.findall(r'\[([^\]]+)\]', text)
+
+    # Ersetze jeden gefundenen Text durch den entsprechenden Wert aus dem Wörterbuch
+    as_list = text.split(' ')
+    i = 0
+    for key in matches:
+        if key in replacements:
+            if not inlist:
+                text = text.replace(f'[{key}]', str(replacements[key]))
+            else:
+                as_list[i] = replacements[key]
+        i += 1
+    if not inlist:
+        return text
+    return as_list
 
 
 @export(mod_name=Name, name='Version', version=version)
@@ -192,7 +359,7 @@ def user_input(app,
                active_modul="",
                password=False,
                bindings=None,
-               message=f"~{node()}@>") -> CallingObject:
+               message=f"~{node()}@>",fh=None) -> CallingObject:
     if app is None:
         app = get_app(from_="cliF.user_input")
     if completer_dict is None:
@@ -215,7 +382,8 @@ def user_input(app,
         bindings = KeyBindings()
 
     completer = NestedCompleter.from_nested_dict(completer_dict)
-    fh = FileHistory(f'{app.data_dir}/{app.args_sto.modi}-cli.txt')
+    if fh is None:
+        fh = FileHistory(f'{app.data_dir}/{app.args_sto.modi}-cli.txt')
     auto_suggest = AutoSuggestFromHistory()
 
     @bindings.add('s-up')
@@ -247,12 +415,12 @@ def user_input(app,
             try:
                 result = eval(buff, app.globals['root'], app.locals['user'])
                 if result is not None:
-                    print(f"#{app.locals['user']['counts']}>", result)
+                    print(f"+ {buff}\n#{app.locals['user']['counts']}>", result)
                 else:
-                    print(f"#{app.locals['user']['counts']}>")
+                    print(f"- {buff}\n#{app.locals['user']['counts']}>")
             except SyntaxError:
                 exec(buff, app.globals['root'], app.locals['user'])
-                print(f"#{app.locals['user']['counts']}> Statement executed")
+                print(f"* {buff}\n#{app.locals['user']['counts']}> Statement executed")
             except Exception as e:
                 print(f"Error: {e}")
 
@@ -373,7 +541,11 @@ async def co_evaluate(app: App,
         if command == "exit":
             await build_in_commands[command](None)
             return
-        return build_in_commands[command](obj).print()
+        if asyncio.iscoroutinefunction(build_in_commands[command]):
+            res = await build_in_commands[command](obj)
+        else:
+            res = build_in_commands[command](obj)
+        return res.print()
 
     function_name = obj.function_name
 
@@ -395,6 +567,7 @@ async def co_evaluate(app: App,
                                  kwargs_=obj_.kwargs)
 
             app.locals['user'][f"result{app.locals['user']['res_id']}"] = result
+            print(f"\n~> result{app.locals['user']['res_id']} = ")
             app.locals['user']['res_id'] += 1
 
             if isinstance(result, Result) or isinstance(result, ApiResult):

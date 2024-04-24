@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import datetime
 import json
@@ -58,9 +59,9 @@ class CustomRegistrationCredential(RegistrationCredential):
 
 # app Helper functions interaction with the db
 
-def db_helper_test_exist(app: App, username: str):
+async def db_helper_test_exist(app: App, username: str):
     c = app.run_any(tbef.DB.IF_EXIST, query=f"USER::{username}::*", get_results=True)
-    if c.is_error(): raise f"DB - error {c.print(show=False)}"
+    if c.is_error(): raise RuntimeError(f"DB - error {c.print(show=False)}")
     b = c.get() > 0
     get_logger().info(f"TEST IF USER EXIST : {username} {b}")
     return b
@@ -171,12 +172,12 @@ def reade_jwt(jwt_key: str) -> dict or str:
 # Export functions
 
 
-@export(mod_name=Name, state=True, test=False)
-def get_user_by_name(app: App, username: str, uid: str = '*') -> Result:
+@export(mod_name=Name, state=True, test=False, interface=ToolBoxInterfaces.future)
+async def get_user_by_name(app: App, username: str, uid: str = '*') -> Result:
     if app is None:
         app = get_app(Name + '.get_user_by_name')
 
-    if not db_helper_test_exist(app, username):
+    if not await db_helper_test_exist(app, username):
         return Result.default_user_error(info=f"get_user_by_name failed username'{username}'not registered")
 
     user_data = db_helper_get_user(app, username, uid)
@@ -184,7 +185,7 @@ def get_user_by_name(app: App, username: str, uid: str = '*') -> Result:
     if user_data.is_error():
         return Result.default_internal_error(info="get_user_by_name failed no User data found is_error")
 
-    user_data = user_data.get()
+    user_data = await user_data.aget()
 
     if isinstance(user_data, bytes):
         return Result.ok(data=User(**eval(user_data.decode())))
@@ -243,7 +244,7 @@ class AddUserDeviceObject(BaseModel):
 
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True, test=False)
-def create_user(app: App, data: CreateUserObject = None, username: str = 'test-user', email: str = 'test@user.com',
+async def create_user(app: App, data: CreateUserObject = None, username: str = 'test-user', email: str = 'test@user.com',
                 pub_key: str = '',
                 invitation: str = '', web_data=False, as_base64=False) -> ApiResult:
     username = data.name if data is not None else username
@@ -256,7 +257,7 @@ def create_user(app: App, data: CreateUserObject = None, username: str = 'test-u
     if app is None:
         app = get_app(Name + '.crate_user')
 
-    if db_helper_test_exist(app, username):
+    if await db_helper_test_exist(app, username):
         return Result.default_user_error(info=f"Username '{username}' already taken",
                                          interface=ToolBoxInterfaces.remote)
 
@@ -296,14 +297,15 @@ def create_user(app: App, data: CreateUserObject = None, username: str = 'test-u
 
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True, test=False)
-def get_magick_link_email(app: App, username):
+async def get_magick_link_email(app: App, username):
     if app is None:
         app = get_app(Name + '.get_magick_link_email')
 
-    if not db_helper_test_exist(app, username):
+    if not await db_helper_test_exist(app, username):
         return Result.default_user_error(info=f"Username '{username}' not known", interface=ToolBoxInterfaces.remote)
 
-    user: User = get_user_by_name(app, username=username).get()
+    user_r: Result = await get_user_by_name(app, username=username)
+    user: User = user_r.get()
 
     if user.challenge == '':
         user = UserCreator(**asdict(user))
@@ -326,7 +328,7 @@ def get_magick_link_email(app: App, username):
 
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True, test=False)
-def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 'test-user',
+async def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 'test-user',
                     pub_key: str = '',
                     invitation: str = '', web_data=False, as_base64=False) -> ApiResult:
     username = data.name if data is not None else username
@@ -338,7 +340,7 @@ def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 
     if app is None:
         app = get_app(Name + '.add_user_device')
 
-    if not db_helper_test_exist(app, username):
+    if not await db_helper_test_exist(app, username):
         return Result.default_user_error(info=f"Username '{username}' not known", interface=ToolBoxInterfaces.remote)
 
     if not invitation.startswith("01#"):  # not db_valid_invitation(app, invitation):
@@ -359,7 +361,8 @@ def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 
     if test_bub_key == "Invalid":
         return Result.default_user_error(info="Invalid public key parsed", interface=ToolBoxInterfaces.remote)
 
-    user: User = get_user_by_name(app, username=username).get()
+    user_r: Result = await get_user_by_name(app, username=username)
+    user: User = user_r.get()
 
     if invitation != Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email"):
         return Result.default_user_error(info=f"Invalid invitation", interface=ToolBoxInterfaces.remote)
@@ -392,11 +395,11 @@ class PersonalData(BaseModel):
 
 
 @export(mod_name=Name, api=True, test=False)
-def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
-    if not db_helper_test_exist(app, data.username):
+async def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
+    if not await db_helper_test_exist(app, data.username):
         return Result.default_user_error(info=f"Username '{data.username}' not known")
 
-    user_result = get_user_by_name(app, data.username, from_base64(data.userId).decode())
+    user_result = await get_user_by_name(app, data.username, from_base64(data.userId).decode())
 
     if user_result.is_error() and not user_result.is_data():
         return Result.default_internal_error(info="No user found", data=user_result)
@@ -467,11 +470,11 @@ def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
 
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.cli, test=False)
-def crate_local_account(app: App, username: str, email: str = '', invitation: str = '', create=None) -> Result:
+async def crate_local_account(app: App, username: str, email: str = '', invitation: str = '', create=None) -> Result:
     if app is None:
         app = get_app(Name + '.crate_local_account')
     user_pri = app.config_fh.get_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8])
-    if user_pri is not None and db_helper_test_exist(app=app, username=username):
+    if user_pri is not None and await db_helper_test_exist(app=app, username=username):
         return Result.default_user_error(info="User already registered on this device")
     pub, pri = Code.generate_asymmetric_keys()
     app.config_fh.add_to_save_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8], pri)
@@ -484,7 +487,7 @@ def crate_local_account(app: App, username: str, email: str = '', invitation: st
     if create is not None:
         create_user_ = create
 
-    res = create_user_(username, email, pub, invitation)
+    res = await create_user_(username, email, pub, invitation)
 
     if res.info.exec_code != 0:
         return Result.custom_error(data=res, info="user creation failed!", exec_code=res.info.exec_code)
@@ -493,17 +496,20 @@ def crate_local_account(app: App, username: str, email: str = '', invitation: st
 
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.cli, test=False)
-def local_login(app: App, username: str) -> Result:
+async def local_login(app: App, username: str) -> Result:
     if app is None:
         app = get_app(Name + '.crate_local_account')
     user_pri = app.config_fh.get_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8])
     if user_pri is None:
         return Result.ok(info="No User registered on this device")
 
-    signature = Code.create_signature(get_to_sing_data(app, username=username).as_result().get('challenge'), user_pri
+    s = await get_to_sing_data(app, username=username)
+
+    signature = Code.create_signature(s.as_result().get('challenge'), user_pri
                                       , row=True)
 
-    res = jwt_get_claim(app, username, signature, web=False).as_result()
+    res = await jwt_get_claim(app, username, signature, web=False)
+    res = res.as_result()
 
     if res.info.exec_code != 0:
         return Result.custom_error(data=res, info="user login failed!", exec_code=res.info.exec_code)
@@ -512,11 +518,11 @@ def local_login(app: App, username: str) -> Result:
 
 
 @export(mod_name=Name, api=True, test=False)
-def get_to_sing_data(app: App, username, personal_key=False):
+async def get_to_sing_data(app: App, username, personal_key=False):
     if app is None:
         app = get_app(from_=Name + '.get_to_sing_data')
 
-    user_result = get_user_by_name(app, username)
+    user_result = await get_user_by_name(app, username)
 
     if user_result.is_error() and not user_result.is_data():
         return Result.default_user_error(info=f"User {username} is not a valid user")
@@ -556,11 +562,11 @@ class VpUSER(VdUSER, BaseModel):
 
 
 @export(mod_name=Name, api=True, test=False)
-def validate_persona(app: App, data: VpUSER) -> ApiResult:
+async def validate_persona(app: App, data: VpUSER) -> ApiResult:
     if app is None:
         app = get_app(".validate_persona")
 
-    user_result = get_user_by_name(app, data.username)
+    user_result = await get_user_by_name(app, data.username)
 
     if user_result.is_error() or not user_result.is_data():
         return Result.default_user_error(info=f"Invalid username : {data.username}")
@@ -600,11 +606,11 @@ def validate_persona(app: App, data: VpUSER) -> ApiResult:
 
 
 @export(mod_name=Name, api=True, test=False)
-def validate_device(app: App, data: VdUSER) -> ApiResult:
+async def validate_device(app: App, data: VdUSER) -> ApiResult:
     if app is None:
         app = get_app(".validate_device")
 
-    user_result = get_user_by_name(app, data.username)
+    user_result = await get_user_by_name(app, data.username)
 
     if user_result.is_error() or not user_result.is_data():
         return Result.default_user_error(info=f"Invalid username : {data.username}")
@@ -646,12 +652,13 @@ def validate_device(app: App, data: VdUSER) -> ApiResult:
 
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.remote, api=True, test=False)
-def authenticate_user_get_sync_key(app: App, username: str, signature: str or bytes, get_user=False,
+async def authenticate_user_get_sync_key(app: App, username: str, signature: str or bytes, get_user=False,
                                    web=False) -> ApiResult:
     if app is None:
         app = get_app(Name + '.authenticate_user_get_sync_key')
 
-    user: User = get_user_by_name(app, username).get()
+    user_r: Result = await get_user_by_name(app, username=username)
+    user: User = user_r.get()
 
     if user is None:
         return Result.default_internal_error(info="User not found", exec_code=404)
@@ -684,19 +691,21 @@ def authenticate_user_get_sync_key(app: App, username: str, signature: str or by
 # local user functions
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.native, test=False)
-def get_user_sync_key_local(app: App, username: str, ausk=None) -> Result:
+async def get_user_sync_key_local(app: App, username: str, ausk=None) -> Result:
     if app is None:
         app = get_app(Name + '.get_user_sync_key')
 
     user_pri = app.config_fh.get_file_handler("Pk" + Code.one_way_hash(username)[:8])
 
-    signature = Code.create_signature(get_to_sing_data(app, username=username).get('challenge'), user_pri)
+    sing_r = await get_to_sing_data(app, username=username)
+    signature = Code.create_signature(sing_r.get('challenge'), user_pri)
 
     authenticate_user_get_sync_key_ = lambda *args: authenticate_user_get_sync_key(*args)
     if ausk is not None:
         authenticate_user_get_sync_key_ = ausk
 
-    res = authenticate_user_get_sync_key_(app, username, signature).as_result()
+    res = await authenticate_user_get_sync_key_(app, username, signature)
+    res = res.as_result()
 
     if res.info.exec_code != 0:
         return Result.custom_error(data=res, info="user get_user_sync_key failed!", exec_code=res.info.exec_code)
@@ -711,11 +720,12 @@ def get_user_sync_key_local(app: App, username: str, ausk=None) -> Result:
 # jwt claim
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.remote, api=True, test=False)
-def jwt_get_claim(app: App, username: str, signature: str or bytes, web=False) -> ApiResult:
+async def jwt_get_claim(app: App, username: str, signature: str or bytes, web=False) -> ApiResult:
     if app is None:
         app = get_app(Name + '.jwt_claim_server_side_sync')
 
-    res = authenticate_user_get_sync_key(app, username, signature, get_user=True, web=web).as_result()
+    res = await authenticate_user_get_sync_key(app, username, signature, get_user=True, web=web)
+    res = res.as_result()
 
     if res.info.exec_code != 0:
         return res.custom_error(data=res)
@@ -732,11 +742,11 @@ def jwt_get_claim(app: App, username: str, signature: str or bytes, web=False) -
 
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.remote, api=False, test=False)
-def jwt_claim_local_decrypt(app: App, username: str, crypt_sing_jwt_claim: str, aud=None) -> Result:
+async def jwt_claim_local_decrypt(app: App, username: str, crypt_sing_jwt_claim: str, aud=None) -> Result:
     if app is None:
         app = get_app(Name + '.jwt_claim_server_side_sync_local')
 
-    user_sync_key_res = get_user_sync_key_local(app, username, ausk=aud)
+    user_sync_key_res = await get_user_sync_key_local(app, username, ausk=aud)
 
     if user_sync_key_res.info.exec_code != 0:
         return Result.custom_error(data=user_sync_key_res)
@@ -744,12 +754,13 @@ def jwt_claim_local_decrypt(app: App, username: str, crypt_sing_jwt_claim: str, 
     user_sync_key = user_sync_key_res.get()
 
     sing_jwt_claim = Code.decrypt_symmetric(crypt_sing_jwt_claim, user_sync_key)
-    return jwt_check_claim_server_side(app, username, sing_jwt_claim).as_result().lazy_return('raise')
+    claim = await jwt_check_claim_server_side(app, username, sing_jwt_claim)
+    return claim.as_result().lazy_return('raise')
 
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.remote, api=True, test=False)
-def jwt_check_claim_server_side(app: App, username: str, jwt_claim: str) -> ApiResult:
-    res = get_user_by_name(app, username)
+async def jwt_check_claim_server_side(app: App, username: str, jwt_claim: str) -> ApiResult:
+    res = await get_user_by_name(app, username)
     if res.info.exec_code != 0:
         return Result.custom_error(data=res)
     user: User = res.get()
@@ -781,7 +792,7 @@ def get_test_app_gen(app=None):
 def helper_gen_test_app():
     _ = get_test_app_gen(None)
     TestAppGen.t = _, next(_)
-    prep_test()
+    prep_test[0]()
     return TestAppGen
 
 
@@ -794,16 +805,16 @@ class TestAppGen:
 
 
 @test_only
-def test_user():
+async def helper_test_user():
     app: App
     test_app, app = helper_gen_test_app().get()
     username = "testUser123"+uuid.uuid4().hex
     email = "test_mainqmail.com"
     db_helper_delete_user(app, username, "*", matching=True)
     # Benutzer erstellen
-    r = crate_local_account(app, username, email, get_invitation(app).get())
+    r = await crate_local_account(app, username, email, get_invitation(app).get())
     assert not r.is_error(), r.print(show=False)
-    r = crate_local_account(app, username, email, get_invitation(app).get())
+    r = await crate_local_account(app, username, email, get_invitation(app).get())
     assert r.is_error(), r.print(show=False)
     # Aufräumen
     db_helper_delete_user(app, username, "*", matching=True)
@@ -812,13 +823,13 @@ def test_user():
 
 
 @test_only
-def test_create_user_and_login():
+async def helper_test_create_user_and_login():
     app: App
     test_app, app = helper_gen_test_app().get()
     username = "testUser123"+uuid.uuid4().hex
     email = "test_mainqmail.com"
-    r = crate_local_account(app, username, email, get_invitation(app).get())
-    r2 = local_login(app, username)
+    r = await crate_local_account(app, username, email, get_invitation(app).get())
+    r2 = await local_login(app, username)
     assert not r.is_error(), r.print(show=False)
     assert not r2.is_error(), r2.print(show=False)
     app.config_fh.remove_key_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8])
@@ -827,9 +838,8 @@ def test_create_user_and_login():
 
 
 @test_only
-def test_validate_device(app: App = None):
-    if app is None:
-        app = get_app(f"{Name}.test_validate_device", name="test-debug")
+async def helper_test_validate_device(app: App = None):
+    test_app, app = helper_gen_test_app().get()
 
     # Schritt 1: Benutzer erstellen
     username = "testUser"+uuid.uuid4().hex
@@ -839,13 +849,15 @@ def test_validate_device(app: App = None):
     db_helper_save_user(app, asdict(user))
 
     # Schritt 2: Signatur generieren
-    signature = Code.create_signature(get_to_sing_data(app, username=username).as_result().get('challenge'),
+    s = await get_to_sing_data(app, username=username)
+    signature = Code.create_signature(s.as_result().get('challenge'),
                                       pri_key, row=False, salt_length=32)
 
     # Schritt 3: Testdaten vorbereiten
     test_data = VdUSER(username=username, signature=signature)
     # Schritt 4: validate_device Funktion testen
-    result = validate_device(app, test_data).as_result()
+    result = await validate_device(app, test_data)
+    result = result.as_result()
     result.print()
     # Schritt 5: Ergebnisse überprüfen
     assert not result.is_error(), f"Test fehlgeschlagen: {result.print(show=False)}"
@@ -855,3 +867,16 @@ def test_validate_device(app: App = None):
     db_helper_delete_user(app, username, user.uid)
 
     return Result.ok()
+
+
+def test_helper0():
+    asyncio.run(helper_test_user[0]())
+
+
+def test_helper1():
+    asyncio.run(helper_test_create_user_and_login[0]())
+
+
+def test_helper2():
+    asyncio.run(helper_test_validate_device[0]())
+

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from typing import List, Dict, Optional
@@ -71,13 +72,17 @@ async def get_user_sto(app, request, name: str = "Main-User-DBord"):
     return data
 
 
-@export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="open_widget")
-def open_widget(app, request, name: str, **kwargs):
+@export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="open_widget", row=True)
+async def open_widget(app: App, request, name: str, **kwargs):
     if app is None:
         app = get_app(f"{Name}.open")
     if len(all_widgets) == 0:
         get_all_widget_mods(app)
     if name not in all_widgets:
         return "invalid widget name " + str(all_widgets)
-
-    return app.run_any((name, "get_widget"), request=request, **kwargs)
+    w = app.run_any((name, "get_widget"), request=request, **kwargs)
+    if isinstance(w, asyncio.Task):
+        w = await w
+        w = w.as_result().get()
+    app.print(f"open_widget, {w}")
+    return w

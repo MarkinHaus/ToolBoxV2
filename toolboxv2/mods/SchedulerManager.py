@@ -284,7 +284,7 @@ class Tools(MainTool, SchedulerManagerClass):
     def on_exit(self):
         self.stop()
         self.save_jobs(self.app.data_dir + '/jobs.compact')
-        return self
+        return f"saved {len(self.jobs.keys())} jobs in {self.app.data_dir + '/jobs.compact'}"
 
     @export(mod_name=Name, name='instance', version=version)
     def get_instance(self):

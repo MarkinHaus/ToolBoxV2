@@ -184,9 +184,10 @@ def reload_widget_system(app, user, WidgetID):
     app.run_any(tbef.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=system_person)
 
 
-def load_widget(app, display_name="Cud be ur name", WidgetID=str(uuid.uuid4())[:4]):
+async def load_widget(app, display_name="Cud be ur name", WidgetID=str(uuid.uuid4())[:4]):
     if display_name != "Cud be ur name":
-        user = app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=display_name)
+        user = await app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=display_name)
+        user = user.get()
     else:
         user = User()
 
@@ -380,7 +381,7 @@ def remove(app, modId: str, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="get_widget")
-def get_widget(app: App = None, request: Request or None = None):
+async def get_widget(app: App = None, request: Request or None = None):
     if app is None:
         app = get_app(from_=f"{Name}.get_widget")
 
@@ -393,6 +394,6 @@ def get_widget(app: App = None, request: Request or None = None):
     else:
         username = username_c
 
-    widget = load_widget(app, username)
+    widget = await load_widget(app, username)
 
     return widget

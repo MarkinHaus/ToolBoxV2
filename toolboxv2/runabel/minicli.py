@@ -1,15 +1,60 @@
+import asyncio
 import datetime
+import os
+import subprocess
+import threading
+
 import psutil
 
 from prompt_toolkit import HTML
+from prompt_toolkit.history import FileHistory
 from prompt_toolkit.shortcuts import set_title, yes_no_dialog
 
 from toolboxv2 import App, Result, tbef
+from toolboxv2.mods.cli_functions import parse_command_output, parse_linux_command_output, replace_bracketed_content
 from toolboxv2.utils import show_console
-from toolboxv2.utils.extras.Style import cls
+from toolboxv2.utils.extras.Style import cls, Spinner, Style
 from toolboxv2.utils.system.types import CallingObject
 
 NAME = 'cli'
+
+
+def run_in_console(buff, fh, pw=False):
+    # if buff.startswith('cd'):
+    #     print("CD not available")
+    #     return
+    fh.append_string(buff)
+    print(Style.BEIGE2('## ') + buff)
+    _ = ""
+    if pw:
+        _ = "powershell -Command "
+    os.system(_ + buff)
+
+
+def run_in_terminal(app, buff, fh):
+    if app.locals['user'].get('counts') is None:
+        app.locals['user']['counts'] = 0
+
+    try:
+        result = eval(buff, app.globals['root'], app.locals['user'])
+        if result is not None:
+            print(f"+ #{app.locals['user']['counts']}>", result)
+        else:
+            print(f"- #{app.locals['user']['counts']}>")
+    except SyntaxError:
+        try:
+            exec(buff, app.globals['root'], app.locals['user'])
+            print(f"* #{app.locals['user']['counts']}> Statement executed")
+        except Exception as e:
+            print(f"Error: {e}")
+            return False
+    except Exception as e:
+        print(f"Error: {e}")
+        return False
+
+    fh.append_string(buff)
+    app.locals['user']['counts'] += 1
+    return True
 
 
 async def run(app: App, args):
@@ -27,7 +72,7 @@ async def run(app: App, args):
     async def exit_(_):
         print("EXITING")
         if app.debug:
-            app.hide_console()
+            await app.hide_console()
         app.alive = False
         return Result.ok().set_origin("minicli::build-in")
 
@@ -70,12 +115,12 @@ async def run(app: App, args):
             return Result.default_internal_error().set_origin("minicli::build-in")
         return Result.ok().set_origin("minicli::build-in")
 
-    def run_(call_: CallingObject) -> Result:
+    async def run_(call_: CallingObject) -> Result:
         if not call_.function_name:
             return (Result.default_user_error(info=f"Avalabel are : {list(app.runnable.keys())}")
                     .set_origin("minicli::build-in"))
         if call_.function_name in app.runnable:
-            app.run_runnable(call_.function_name)
+            await app.run_runnable(call_.function_name)
             return Result.ok().set_origin("minicli::build-in")
         return Result.default_user_error("404").set_origin("minicli::build-in")
 
@@ -137,9 +182,9 @@ async def run(app: App, args):
         "exit": exit_,
         "cls": cls_,
         "sdm:set_debug_mode": set_debug_mode,
-        "open": open_,
-        "close": close_,
-        "run": run_,
+        "openM": open_,
+        "closeM": close_,
+        "runM": run_,
         "infos": infos,
         "reload": hr,
         "remote": remote,
@@ -158,23 +203,39 @@ async def run(app: App, args):
                                       autocompletion_dict=autocompletion_dict)
 
     autocompletion_dict_ = app.get_autocompletion_dict()
-
     if autocompletion_dict is None:
         autocompletion_dict = {}
 
     if autocompletion_dict_ is not None:
-        autocompletion_dict = {**autocompletion_dict, **autocompletion_dict_}
+        while asyncio.iscoroutine(autocompletion_dict_):
+            autocompletion_dict_ = await autocompletion_dict_
+        while asyncio.iscoroutine(autocompletion_dict):
+            autocompletion_dict = await autocompletion_dict
+        if isinstance(autocompletion_dict, dict) and isinstance(autocompletion_dict_, dict):
+            autocompletion_dict = {**autocompletion_dict, **autocompletion_dict_}
 
     autocompletion_dict["sdm:set_debug_mode"] = {arg: None for arg in ['on', 'off']}
-    autocompletion_dict["open"] = autocompletion_dict["close"] = autocompletion_dict["reload"] = \
+    autocompletion_dict["openM"] = autocompletion_dict["closeM"] = autocompletion_dict["reload"] = \
         {arg: None for arg in all_modes}
-    autocompletion_dict["run"] = {arg: None for arg in list(app.runnable.keys())}
+    autocompletion_dict["runM"] = {arg: None for arg in list(app.runnable.keys())}
 
     active_modular = ""
+
+    with Spinner("importing System Commands"):
+
+        if app.system_flag == "Windows":
+            exe_names, _ = parse_command_output()
+        else:
+            exe_names = parse_linux_command_output()
+
+        for exe in exe_names:
+            autocompletion_dict[exe] = None
 
     running_instance = None
     call = CallingObject.empty()
     running = True
+    fh = FileHistory(f'{app.data_dir}/{app.args_sto.modi}-cli.txt')
+    print("", end="" + "start ->>\r")
     while running:
         # Get CPU usage
         cpu_usage = psutil.cpu_percent(interval=1)
@@ -192,36 +253,68 @@ async def run(app: App, args):
                 f'{app.id} \nCPU: {cpu_usage}% Memory: {memory_usage}% Disk :{disk_usage}%\nTime: {current_time}</b>')
 
         call = app.run_any(tbef.CLI_FUNCTIONS.USER_INPUT, completer_dict=autocompletion_dict,
-                           get_rprompt=get_rprompt, bottom_toolbar=bottom_toolbar, active_modul=active_modular)
+                           get_rprompt=get_rprompt, bottom_toolbar=bottom_toolbar, active_modul=active_modular, fh=fh)
 
-        print("", end="" + "start ->>\r")
+        if asyncio.iscoroutine(call):
+            call = await call
+            print("D", call, call.module_name.split('.')[0])
+
+        print("", end="" + "eval ->>\r")
 
         if call is None:
             continue
-
-        if call.module_name == "open":
+        if call.module_name == "openM":
             autocompletion_dict = app.run_any(tbef.CLI_FUNCTIONS.UPDATE_AUTOCOMPLETION_MODS,
                                               autocompletion_dict=autocompletion_dict)
+        elif call.module_name.split('.')[0] in all_modes or call.module_name in bic.keys():
+            if call.function_name.strip() == '' and call.module_name not in bic.keys():
+                app.print_functions(call.module_name)
+            else:
+                if call.args is not None:
+                    call.args = replace_bracketed_content(' '.join(call.args), app.locals['user'], inlist=True)
+                running_instance = await app.run_any(tbef.CLI_FUNCTIONS.CO_EVALUATE,
+                                                     obj=call,
+                                                     build_in_commands=bic,
+                                                     threaded=threaded,
+                                                     helper=helper_exequtor[0])
+        elif call.module_name in exe_names:
+            buff = str(call)
+            buff = replace_bracketed_content(buff, app.locals['user'])
+            run_in_console(buff, fh, app.system_flag == "Windows" and "powershell.exe" in exe_names)
+            running_instance = None
+        elif len(str(call).strip()) == 0:
+            app.print_functions()
+        else:
+            buff = str(call)
+            buff = replace_bracketed_content(buff, app.locals['user'])
+            res_ = run_in_terminal(app, buff, fh)
+            running_instance = None
+            if not res_:
+                pass  # shell ginei
 
-        running_instance = await app.run_any(tbef.CLI_FUNCTIONS.CO_EVALUATE,
-                                             obj=call,
-                                             build_in_commands=bic,
-                                             threaded=threaded,
-                                             helper=helper_exequtor[0])
+        if isinstance(running_instance, asyncio.Task):
+            v = await running_instance
+            running_instance = None
 
         print("", end="" + "done ->>\r")
         running = app.alive
 
     if hasattr(app, 'timeout'):
         app.timeout = 2
-
     if running_instance is not None:
         print("Closing running instance")
-        running_instance.join()
+        if isinstance(running_instance, Result):
+            running_instance.print()
+        elif isinstance(running_instance, threading.Thread):
+            running_instance.join()
+        elif isinstance(running_instance, asyncio.Task):
+            await running_instance
+        else:
+            print(running_instance)
         print("Done")
 
     try:
         set_title("")
     except:
         pass
-    app.exit()
+    await app.a_exit()

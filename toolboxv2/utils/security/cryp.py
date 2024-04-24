@@ -3,7 +3,6 @@ import random
 import os
 import hashlib
 
-from cryptography.exceptions import InvalidSignature
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -124,14 +123,14 @@ class Code:
             return "Error encrypt"
 
     @staticmethod
-    def decrypt_symmetric(encrypted_text: str, key: str) -> str:
+    def decrypt_symmetric(encrypted_text: str, key: str, to_str=True) -> str or bytes:
         """
         Entschlüsselt einen Text mit einem gegebenen symmetrischen Schlüssel.
 
         Args:
             encrypted_text (str): Der zu entschlüsselnde Text.
             key (str): Der symmetrische Schlüssel.
-
+            to_str (bool): default true returns str if false returns bytes
         Returns:
             str: Der entschlüsselte Text.
         """
@@ -141,9 +140,14 @@ class Code:
 
         try:
             fernet = Fernet(key)
-            return fernet.decrypt(encrypted_text).decode()
+            text_b = fernet.decrypt(encrypted_text)
+            if not to_str:
+                return text_b
+            return text_b.decode()
         except Exception as e:
             get_logger().error(f"Error decrypt_symmetric {e}")
+            if not to_str:
+                return f"Error decoding".encode()
             return f"Error decoding"
 
     @staticmethod
@@ -255,8 +259,6 @@ class Code:
                 algorithm=hashes.SHA512()
             )
             return True
-        except InvalidSignature:
-            pass
         except Exception as e:
             get_logger().error(f"Error validating signature: {e}")
             print(e)
@@ -285,8 +287,6 @@ class Code:
                 signature_algorithm=signature_algorithm
             )
             return True
-        except InvalidSignature:
-            pass
         except Exception as e:
             print(e)
             get_logger().error(f"Error validating signature: {e}")

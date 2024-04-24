@@ -71,10 +71,10 @@ class App(AppType, metaclass=Singleton):
         self.id = prefix + '-' + node()
 
         self.globals = {
-            "root": {},
+            "root": {**globals()},
         }
         self.locals = {
-            "user": {'app': self},
+            "user": {'app': self, **locals()},
         }
 
         identification = self.id
@@ -147,7 +147,9 @@ class App(AppType, metaclass=Singleton):
         self.runnable = {}
         self.dev_modi = self.config_fh.get_file_handler(self.keys["develop-mode"])
         if self.config_fh.get_file_handler("provider::") is None:
-            self.config_fh.add_to_save_file_handler("provider::", "http://localhost:"+str(self.args_sto.port) if "localhost" == os.environ.get("HOSTNAME", "localhost") else "https://simplecore.app")
+            self.config_fh.add_to_save_file_handler("provider::", "http://localhost:" + str(
+                self.args_sto.port) if "localhost" == os.environ.get("HOSTNAME",
+                                                                     "localhost") else "https://simplecore.app")
         self.functions = {}
 
         self.interface_type = ToolBoxInterfaces.native
@@ -174,10 +176,10 @@ class App(AppType, metaclass=Singleton):
 
         self.args_sto = args
 
-    def get_username(self):
+    def get_username(self, get_input=False):
         user_name = self.config_fh.get_file_handler("ac_user:::")
         if user_name is None and user_name != "None":
-            user_name = input("Input your username One Time Plies bes sure to make no typos: ")
+            user_name = input("Input your username\nbe sure to make no typos: ")
             self.config_fh.add_to_save_file_handler("ac_user:::", user_name)
         return user_name
 
@@ -639,7 +641,7 @@ class App(AppType, metaclass=Singleton):
 
         if on_exit is None and self.functions[mod_name].get(f"{spec}_instance_type", "").endswith("/BC"):
             instance = self.functions[mod_name].get(f"{spec}_instance", None)
-            if instance is not None:
+            if instance is not None and hasattr(instance, 'on_exit'):
                 if inspect.iscoroutinefunction(instance.on_exit):
                     o = self.loop.create_task(instance.on_exit())
                     self.exit_tasks.append(o)
@@ -681,11 +683,71 @@ class App(AppType, metaclass=Singleton):
             self.functions[mod_name] = {}
             del self.functions[mod_name]
 
-    def exit(self):
+    async def a_remove_all_modules(self, delete=False):
+        for mod in list(self.functions.keys()):
+            self.logger.info(f"closing: {mod}")
+            await self.a_remove_mod(mod, delete=delete)
+
+    async def a_remove_mod(self, mod_name, spec='app', delete=True):
+        if mod_name not in self.functions:
+            self.logger.info(f"mod not active {mod_name}")
+            return
+        on_exit = self.functions[mod_name].get("on_exit")
+
+        def helper():
+            if f"{spec}_instance" in self.functions[mod_name]:
+                del self.functions[mod_name][f"{spec}_instance"]
+            if f"{spec}_instance_type" in self.functions[mod_name]:
+                del self.functions[mod_name][f"{spec}_instance_type"]
+
+        if on_exit is None and self.functions[mod_name].get(f"{spec}_instance_type", "").endswith("/BC"):
+            instance = self.functions[mod_name].get(f"{spec}_instance", None)
+            if instance is not None and hasattr(instance, 'on_exit'):
+                if inspect.iscoroutinefunction(instance.on_exit):
+                    await instance.on_exit()
+                else:
+                    instance.on_exit()
+
+        if on_exit is None and delete:
+            self.functions[mod_name] = {}
+            del self.functions[mod_name]
+            return
+        if on_exit is None:
+            helper()
+            return
+
+        i = 1
+        for f in on_exit:
+            try:
+                f_, e = self.get_function((mod_name, f), state=True, specification=spec)
+                if e == 0:
+                    self.logger.info(Style.GREY(f"Running On exit {f} {i}/{len(on_exit)}"))
+                    if inspect.iscoroutinefunction(f_):
+                        o = await f_()
+                    else:
+                        o = f_()
+                    if o is not None:
+                        self.print(f"Function On Exit result: {o}")
+                else:
+                    self.logger.warning("closing function not found")
+            except Exception as e:
+                self.logger.debug(
+                    Style.YELLOW(Style.Bold(f"modular:{mod_name}.{f} on_exit error {i}/{len(on_exit)} -> {e}")))
+            finally:
+                i += 1
+
+        helper()
+
+        if delete:
+            self.functions[mod_name] = {}
+            del self.functions[mod_name]
+
+    def exit(self, remove_all=True):
         if self.args_sto.debug:
             self.hide_console()
         self.disconnect()
-        self.remove_all_modules()
+        if remove_all:
+            self.remove_all_modules()
         self.logger.info("Exiting ToolBox interface")
         self.alive = False
         self.called_exit = True, time.time()
@@ -707,6 +769,10 @@ class App(AppType, metaclass=Singleton):
             except TimeoutError as e:
                 self.logger.error(f"Timeout error on exit {thread.name} {str(e)}")
                 print(str(e), f"Timeout {thread.name}")
+
+    async def a_exit(self):
+        await self.a_remove_all_modules()
+        self.exit(remove_all=False)
 
     def save_load(self, modname, spec='app'):
         self.logger.debug(f"Save load module {modname}")
@@ -797,6 +863,8 @@ class App(AppType, metaclass=Singleton):
 
         self.logger.info(f"Profiling function")
         if inspect.iscoroutinefunction(function):
+            if function_data.get('row', False):
+                return Result.future(asyncio.create_task(self.fuction_runner(function, function_data, args, kwargs)))
             return Result.future(asyncio.create_task(self.fuction_runner(function, function_data, args, kwargs).get()))
         else:
             return self.fuction_runner(function, function_data, args, kwargs)
@@ -892,7 +960,8 @@ class App(AppType, metaclass=Singleton):
                                         tb_run_function_with_state=tb_run_function_with_state,
                                         tb_run_with_specification=tb_run_with_specification,
                                         args_=args, kwargs_=kwargs).as_result()
-
+        if self.debug:
+            res.log(show_data=False)
         if not get_results and isinstance(res, Result):
             return res.get()
 
@@ -912,16 +981,14 @@ class App(AppType, metaclass=Singleton):
             return self.load_mod(name, spec=spec)
         return self.functions[name].get(f"{spec}_instance")
 
-    @staticmethod
-    def print(text, *args, **kwargs):
+    def print(self, text, *args, **kwargs):
         # self.logger.info(f"Output : {text}")
-        print(Style.CYAN("System:"), end=" ")
+        print(Style.CYAN(f"System${self.id}:"), end=" ")
         print(text, *args, **kwargs)
 
-    @staticmethod
-    def sprint(text, *args, **kwargs):
+    def sprint(self, text, *args, **kwargs):
         # self.logger.info(f"Output : {text}")
-        print(Style.CYAN("System:"), end=" ")
+        print(Style.CYAN(f"System${self.id}:"), end=" ")
         if isinstance(text, str) and kwargs == {} and text:
             stram_print(text + ' '.join(args))
             print()
@@ -981,13 +1048,68 @@ class App(AppType, metaclass=Singleton):
 
         version = self.version if version is None else self.version + ':' + version
 
+        def a_additional_process(func):
+
+            async def executor(*args, **kwargs):
+
+                if pre_compute is not None:
+                    args, kwargs = await pre_compute(*args, **kwargs)
+                if inspect.iscoroutinefunction(func):
+                    result = await func(*args, **kwargs)
+                else:
+                    result = func(*args, **kwargs)
+                if post_compute is not None:
+                    result = await post_compute(result)
+                if row:
+                    return result
+                if not isinstance(result, Result):
+                    result = Result.ok(data=result)
+                if result.origin is None:
+                    result.set_origin((mod_name if mod_name else func.__module__.split('.')[-1]
+                                       , name if name else func.__name__
+                                       , type_))
+                if result.result.data_to == ToolBoxInterfaces.native.name:
+                    result.result.data_to = ToolBoxInterfaces.remote if api else ToolBoxInterfaces.native
+                # Wenden Sie die to_api_result Methode auf das Ergebnis an, falls verfügbar
+                if api and hasattr(result, 'to_api_result'):
+                    return result.to_api_result()
+                return result
+
+            @wraps(func)
+            async def wrapper(*args, **kwargs):
+
+                if not use_cache:
+                    return await executor(*args, **kwargs)
+
+                try:
+                    cache_key = (f"{mod_name if mod_name else func.__module__.split('.')[-1]}"
+                                 f"-{func.__name__}-{str(args)},{str(kwargs.items())}")
+                except ValueError:
+                    cache_key = (f"{mod_name if mod_name else func.__module__.split('.')[-1]}"
+                                 f"-{func.__name__}-{bytes(args)},{str(kwargs.items())}")
+
+                result = cache.get(cache_key)
+                if result is not None:
+                    return result
+
+                result = await executor(*args, **kwargs)
+
+                cache.set(cache_key, result)
+
+                return result
+
+            return wrapper
+
         def additional_process(func):
 
             def executor(*args, **kwargs):
 
                 if pre_compute is not None:
                     args, kwargs = pre_compute(*args, **kwargs)
-                result = func(*args, **kwargs)
+                if inspect.iscoroutinefunction(func):
+                    result = func(*args, **kwargs)
+                else:
+                    result = func(*args, **kwargs)
                 if post_compute is not None:
                     result = post_compute(result)
                 if row:
@@ -1040,7 +1162,10 @@ class App(AppType, metaclass=Singleton):
             if func_name == 'on_exit':
                 func_name = 'on_close'
             if api or pre_compute is not None or post_compute is not None or memory_cache or file_cache:
-                func = additional_process(func)
+                if inspect.iscoroutinefunction(func):
+                    func = a_additional_process(func)
+                else:
+                    func = additional_process(func)
             if api and 'Result' == str(sig.return_annotation):
                 raise ValueError(f"Fuction {module_name}.{func_name} registered as "
                                  f"Api fuction but uses {str(sig.return_annotation)}\n"
@@ -1164,25 +1289,6 @@ class App(AppType, metaclass=Singleton):
                                       row=row,
                                       memory_cache_max_size=memory_cache_max_size,
                                       memory_cache_ttl=memory_cache_ttl)
-
-    def print_functions(self):
-        if not self.functions:
-            print("Nothing to see")
-            return
-
-        for module, functions in self.functions.items():
-            print(f"\nModule: {module}; Type: {functions.get('app_instance_type', 'Unknown')}")
-
-            for func_name, data in functions.items():
-                if not isinstance(data, dict):
-                    continue
-
-                func_type = data.get('type', 'Unknown')
-                func_level = 'r' if data['level'] == -1 else data['level']
-                api_status = 'Api' if data.get('api', False) else 'Non-Api'
-
-                print(f"  Function: {func_name}{data.get('signature', '()')}; "
-                      f"Type: {func_type}, Level: {func_level}, {api_status}")
 
     def save_autocompletion_dict(self):
         autocompletion_dict = {}

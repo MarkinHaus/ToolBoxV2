@@ -66,7 +66,7 @@ class TestBlobFile(unittest.TestCase):
             self.assertEqual(file.data, self.mock_data)
 
         mock_pickle_loads.assert_called_once_with(self.mock_storage.read_blob(self.mock_blob_id))
-        mock_code.decrypt_symmetric.assert_called_once_with(self.mock_encrypted_data, self.mock_key)
+        mock_code.decrypt_symmetric.assert_called_once_with(self.mock_encrypted_data, self.mock_key, to_str=False)
 
     @patch('toolboxv2.utils.extras.blobs.Code')
     @patch('pickle.loads')

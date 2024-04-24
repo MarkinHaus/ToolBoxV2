@@ -1,4 +1,5 @@
 import os
+from json.decoder import WHITESPACE
 from random import uniform
 import re
 import time
@@ -358,11 +359,11 @@ def print_to_console(
 
 
 class JSONExtractor(JSONDecoder):
-    def decode(self, s):
+    def decode(self, s, _w=WHITESPACE.match):
         self.raw_decode(s)
         return s
 
-    def raw_decode(self, s):
+    def raw_decode(self, s, _w=WHITESPACE.match):
         try:
             obj, end = super().raw_decode(s)
             return obj, end

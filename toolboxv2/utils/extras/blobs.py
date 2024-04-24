@@ -38,7 +38,7 @@ class BlobStorage(metaclass=Singleton):
         current_blob_id = 0
         for all_link in all_links:
             link_len = len(all_link)
-            splitter = link_len // all_links_len-1
+            splitter = link_len // all_links_len - 1
             index_ = 0
             for i in range(0, link_len, splitter):
                 if index_ == current_blob_id:
@@ -160,14 +160,16 @@ class BlobStorage(metaclass=Singleton):
 
 
 class BlobFile(io.IOBase):
-    def __init__(self, filename:str, mode='r', storage=None, key=None):
+    def __init__(self, filename: str, mode='r', storage=None, key=None):
         if filename.startswith('/') or filename.startswith('\\'):
             filename = filename[1:]
         self.filename = filename
         self.blob_id, self.folder, self.datei = self.path_splitter(filename)
         self.mode = mode
         if storage is None:
-            storage = BlobStorage()
+            if get_app('storage').sto is None:
+                get_app('storage').sto = BlobStorage()
+            storage = get_app('storage').sto
         self.storage = storage
         self.data = b""
         if key is not None:
@@ -198,7 +200,7 @@ class BlobFile(io.IOBase):
                 if self.datei in blob_folder:
                     self.data = blob_folder[self.datei]
                 if self.key is not None:
-                    self.data = Code.decrypt_symmetric(self.data, self.key)
+                    self.data = Code.decrypt_symmetric(self.data, self.key, to_str=False)
         elif 'w' in self.mode:
             self.data = b""
         else:

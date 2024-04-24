@@ -1,3 +1,4 @@
+import asyncio
 import json
 import queue
 import threading
@@ -14,9 +15,30 @@ from ..extras.show_and_hide_console import show_console
 
 
 class DaemonUtil:
-    def __init__(self, class_instance: Any, host='0.0.0.0', port=6587, t=False, app: Optional[App or AppType] = None,
-                 peer=False, name='daemonApp-server', on_register=None, on_client_exit=None, on_server_exit=None,
-                 unix_socket=False):
+
+    def __init__(self, *args, **kwargs):
+        """
+        Standard constructor used for arguments pass
+        Do not override. Use __ainit__ instead
+        """
+        self.__storedargs = args, kwargs
+        self.async_initialized = False
+
+    async def __initobj(self):
+        """Crutch used for __await__ after spawning"""
+        assert not self.async_initialized
+        self.async_initialized = True
+        # pass the parameters to __ainit__ that passed to __init__
+        await self.__ainit__(*self.__storedargs[0], **self.__storedargs[1])
+        return self
+
+    def __await__(self):
+        return self.__initobj().__await__()
+
+    async def __ainit__(self, class_instance: Any, host='0.0.0.0', port=6587, t=False,
+                        app: Optional[App or AppType] = None,
+                        peer=False, name='daemonApp-server', on_register=None, on_client_exit=None, on_server_exit=None,
+                        unix_socket=False):
         self.class_instance = class_instance
         self.server = None
         self.port = port
@@ -33,18 +55,17 @@ class DaemonUtil:
             on_server_exit = lambda: None
         self.on_server_exit = on_server_exit
         self.unix_socket = unix_socket
+        self.online = None
         from toolboxv2.mods.SocketManager import SocketType
         connection_type = SocketType.server
         if peer:
             connection_type = SocketType.peer
 
         self.start_server(connection_type)
+        app = app if app is not None else get_app(from_=f"DaemonUtil.{self._name}")
+        self.online = await asyncio.to_thread(self.connect, app)
         if t:
-            app = app if app is not None else get_app(from_=f"DaemonUtil.{self._name}")
-            threading.Thread(target=self.connect,
-                             daemon=True,
-                             args=(app,)
-                             ).start()
+            await self.online
 
     def start_server(self, connection_type):
         """Start the server using app and the socket manager"""
@@ -60,8 +81,6 @@ class DaemonUtil:
         if server_result.is_error():
             raise Exception(f"Server error: {server_result.print(False)}")
         if not server_result.is_data():
-            raise Exception(f"Server error: {server_result.print(False)}")
-        if server_result.get('connection_error') != 0:
             raise Exception(f"Server error: {server_result.print(False)}")
         self.alive = True
         self.server = server_result
@@ -79,12 +98,17 @@ class DaemonUtil:
         # 'client_to_receiver_thread': to_receive,
         # 'client_receiver_threads': threeds,
 
-    def send(self, data: dict or bytes or str, identifier: Tuple[str, int]):
-        sender = self.server.get('sender')
-        sender(data, identifier)
+    async def send(self, data: dict or bytes or str, identifier: Tuple[str, int] or str = "main"):
+        result = await self.server.aget()
+        sender = result.get('sender')
+        await sender(data, identifier)
         return "Data Transmitted"
 
-    def connect(self, app):
+    async def connect(self, app):
+        result = await self.server.aget()
+        if not isinstance(result, dict) or result.get('connection_error') != 0:
+            raise Exception(f"Server error: {result}")
+        self.server = Result.ok(result)
         receiver_queue: queue.Queue = self.server.get('receiver_queue')
         client_to_receiver_thread = self.server.get('client_to_receiver_thread')
         running_dict = self.server.get('running_dict')
@@ -107,9 +131,10 @@ class DaemonUtil:
                         client, address = data.get('data')
                         get_logger().info(f"New connection: {address}")
                         known_clients[str(address)] = client
-                        client_to_receiver_thread(client, str(address))
+                        await client_to_receiver_thread(client, str(address))
                         self._on_register(identifier, address)
 
+                    print("Receiver queue", identifier, identifier in known_clients, identifier in valid_clients)
                     # validation
                     if identifier in known_clients:
                         get_logger().info(identifier)
@@ -146,25 +171,30 @@ class DaemonUtil:
 
                         if name == 'show_console':
                             show_console(True)
-                            sender({'ok': 0}, eval(identifier))
+                            await sender({'ok': 0}, identifier)
                             continue
 
                         if name == 'hide_console':
                             show_console(False)
-                            sender({'ok': 0}, eval(identifier))
+                            await sender({'ok': 0}, identifier)
                             continue
 
                         if name == 'rrun_runnable':
                             show_console(True)
                             runnner = getattr(self.class_instance, "run_runnable")
                             threading.Thread(target=runnner, args=args, kwargs=kwargs, daemon=True).start()
-                            sender({'ok': 0}, eval(identifier))
+                            await sender({'ok': 0}, identifier)
                             show_console(False)
                             continue
 
-                        def helper_runner():
+                        async def _helper_runner():
                             try:
-                                res = getattr(self.class_instance, name)(*args, **kwargs)
+                                attr_f = getattr(self.class_instance, name)
+
+                                if asyncio.iscoroutinefunction(attr_f):
+                                    res = await attr_f(*args, **kwargs)
+                                else:
+                                    res = attr_f(*args, **kwargs)
 
                                 if res is None:
                                     res = {'data': res}
@@ -179,11 +209,11 @@ class DaemonUtil:
 
                                 get_logger().info(f"sending response {res} {type(res)}")
 
-                                sender(res, eval(identifier))
+                                await sender(res, identifier)
                             except Exception as e:
-                                sender({"data": str(e)}, eval(identifier))
+                                await sender({"data": str(e)}, identifier)
 
-                        threading.Thread(target=helper_runner, daemon=True).start()
+                        await _helper_runner()
 
                 except Exception as e:
                     get_logger().warning(Style.RED(f"An error occurred on {identifier} {str(e)}"))
@@ -195,6 +225,12 @@ class DaemonUtil:
             running_dict["receive"][x] = False
         running_dict["keep_alive_var"] = False
         self.on_server_exit()
+        return Result.ok()
 
-    def stop(self):
+    async def a_exit(self):
+        result = await self.server.aget()
+        await result.get("close")()
         self.alive = False
+        if self.result is not None:
+            r = await self.result
+            print("Connection result :", r)

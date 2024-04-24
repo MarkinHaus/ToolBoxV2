@@ -8,17 +8,19 @@ from platform import system
 import requests
 
 from toolboxv2 import MainTool, FileHandler, get_app
+from toolboxv2.utils.extras.blobs import BlobFile
+from toolboxv2.utils.system.session import Session
 
 export = get_app("api_manager.Export").tb
-Name = "api_manager"
+Name = "FastApi"
 
 
 class Tools(MainTool, FileHandler):  # FileHandler
 
     def __init__(self, app=None):
         self.running_apis = {}
-        self.version = "0.0.2"
-        self.name = "api_manager"
+        self.version = "0.2.0"
+        self.name = "FastApi"
         self.logger: logging.Logger = app.logger if app else None
         self.color = "WHITE"
         self.keys = {"Apis": "api~config"}
@@ -39,8 +41,6 @@ class Tools(MainTool, FileHandler):  # FileHandler
                 self.show_version,
             "edit-api":
                 self.conf_api,
-            "start-api":
-                self.start_api,
             "stop-api":
                 self.stop_api,
             "info":
@@ -101,7 +101,25 @@ class Tools(MainTool, FileHandler):  # FileHandler
         self.print(self.api_config[api_name])
 
     @export(mod_name="api_manager", test=False)
-    def start_api(self, api_name: str, live=False, reload=False, test_override=False):
+    def start_dev(self, api_name: str, *modules):
+        if modules:
+            api_name += '_D'
+            with BlobFile(f"FastApiManager/{api_name}.specs", 'w') as f:
+                f.write_json({
+                    'modules': modules,
+                })
+        return self._start_api(api_name, live=False, reload=True, test_override=True)
+
+    @export(mod_name="api_manager", test=False)
+    def start_live(self, api_name):
+        return self._start_api(api_name, live=True, reload=False, test_override=False)
+
+    @export(mod_name="api_manager", test=False)
+    def start_debug(self, api_name):
+        return self._start_api(api_name, live=False, reload=True, test_override=False)
+
+    @export(mod_name="api_manager", test=False)
+    def _start_api(self, api_name: str, live=False, reload=False, test_override=False):
 
         if 'test' in self.app.id and not test_override:
             return "No api in test mode allowed"
@@ -141,7 +159,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
         api_data = self.api_config[api_name]
 
         self.print(api_data)
-        g = f"uvicorn toolboxv2.api.fast_api_main:app --host {api_data['host']}" \
+        g = f"uvicorn toolboxv2.mods.FastApi.fast_api_main:app --host {api_data['host']}" \
             f" --port {api_data['port']} --header data:{self.app.debug}:{api_name} {'--reload' if reload else ''}"
 
         print("Running command : " + g)
@@ -153,7 +171,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         self.print("API is already running")
 
-    def stop_api(self, api_name: str, delete=True):
+    async def stop_api(self, api_name: str, delete=True):
         if api_name not in list(self.api_config.keys()):
             return f"Api with the name {api_name} is not listed"
 
@@ -171,6 +189,11 @@ class Tools(MainTool, FileHandler):  # FileHandler
             api_pid = f.read()
             try:
                 requests.get(f"http://{host}:{port}/api/exit/{api_pid}")
+                session = Session(self.app.get_username())
+                if not await session.login():
+                    print(f"Couldn't login with username : {self.app.get_username()}'")
+                response = await session.fetch(f"http://{host}:{port}/api/exit/{api_pid}", method="POST")
+                print(response)
             except Exception as e:
                 self.print("API Not Responding")
             if system() == "Windows":
@@ -184,11 +207,15 @@ class Tools(MainTool, FileHandler):  # FileHandler
             del self.running_apis[api_name]
         os.remove(f"./.data/api_pid_{api_name}")
 
+    def show_running(self):
+        self.print(f"Status : {list(self.running_apis.keys())}")
+        return list(self.running_apis.keys())
+
     @export(mod_name="api_manager", test=False)
-    def restart_api(self, api_name: str):
-        self.stop_api(api_name)
+    async def restart_api(self, api_name: str):
+        await self.stop_api(api_name)
         time.sleep(4)
-        self.start_api(api_name)
+        self._start_api(api_name)
 
     def on_start(self):
         self.load_file_handler()

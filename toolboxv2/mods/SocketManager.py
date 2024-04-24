@@ -165,25 +165,16 @@ class Tools(MainTool, FileHandler):
     async def on_exit(self):
         self.logger.info(f"Closing SocketManager")
         for socket_name, socket_data in self.sockets.items():
+            if not socket_data.get("alive"):
+                continue
             self.print(f"consing Socket : {socket_name}")
-            # 'socket': socket,
-            # 'receiver_socket': r_socket,
-            # 'host': host,
-            # 'port': port,
-            # 'p2p-port': endpoint_port,
-            # 'sender': send,
-            # 'receiver_queue': receiver_queue,
-            # 'connection_error': connection_error,
-            # 'receiver_thread': s_thread,
-            # 'keepalive_thread': keep_alive_thread,
-            # '['running_dict']["keep_alive_var"] ': keep_alive_var,
-            socket_data['running_dict']["keep_alive_var"].set()
             try:
-                await socket_data['sender']({'exit': True})
+                await socket_data.get("close")()
             except:
-                pass
-            self.exit_socket(socket_name)
-        # ~ self.save_file_handler()
+                self.print(f"consing Socket : {socket_name}")
+            self.sockets[socket_name] = None
+        self.sockets = {}
+        return "OK"
 
     def show_version(self):
         self.print("Version: ", self.version)
@@ -391,6 +382,8 @@ class Tools(MainTool, FileHandler):
             self.sockets[name]["running_dict"]["thread_receiver"] = None
 
     async def a_exit_socket(self, name):
+        if name not in self.sockets:
+            return
         if self.sockets[name]["type_id"] == SocketType.client.name:
             await self.sockets[name]["sender"]({"exit": True})
         self.exit_socket(name)
@@ -406,6 +399,12 @@ class Tools(MainTool, FileHandler):
             connection_key = addr[0] + str(addr[1])
             if connection_key in self.sockets[name]["client_sockets_dict"].keys():
                 pass
+            elif addr[0] == "127.0.0.1":
+                connection_key = "localhost]" + str(addr[1])
+                if connection_key in self.sockets[name]["client_sockets_dict"].keys():
+                    pass
+                else:
+                    connection_key = None
             else:
                 connection_key = None
         elif isinstance(connection, socket.socket):
@@ -413,6 +412,12 @@ class Tools(MainTool, FileHandler):
             connection_key = addr[0] + str(addr[1])
             if connection_key in self.sockets[name]["client_sockets_dict"].keys():
                 pass
+            elif addr[0] == "127.0.0.1":
+                connection_key = "localhost" + str(addr[1])
+                if connection_key in self.sockets[name]["client_sockets_dict"].keys():
+                    pass
+                else:
+                    connection_key = None
             else:
                 connection_key = None
         else:
@@ -563,7 +568,6 @@ class Tools(MainTool, FileHandler):
             _, writer = receiver
             await writer.drain()
 
-        # print(" ", end='\r')
         self.logger.info(f"{name} :S Parsed Time ; {time.perf_counter() - t0:.2f}")
 
     async def chunk_receive(self, name, r_socket_, identifier="main"):
@@ -573,14 +577,18 @@ class Tools(MainTool, FileHandler):
             elif self.sockets[name]["type_id"] == SocketType.client.name:
                 chunk, _ = await asyncio.to_thread(r_socket_.recvfrom, self.sockets[name]["package_size"])
             else:
-                chunk = await asyncio.to_thread(r_socket_.recv, self.sockets[name]["package_size"])
+                try:
+                    chunk = await asyncio.to_thread(r_socket_.recv, self.sockets[name]["package_size"])
+                except Exception as e:
+                    return Result.custom_error(data=str(e), data_info="Connection down and closed")
         except ConnectionResetError and ConnectionAbortedError as e:
             self.print(f"Closing Receiver {name}:{identifier} {str(e)}")
             self.sockets[name]["running_dict"]["receive"][identifier].set()
-            if self.sockets[name]["do_async"]:
-                await self.a_exit_socket(name)
-            else:
-                self.exit_socket(name)
+            if self.sockets[name]["type_id"] == SocketType.client.name:
+                if self.sockets[name]["do_async"]:
+                    await self.a_exit_socket(name)
+                else:
+                    self.exit_socket(name)
             return Result.custom_error(data=str(e), data_info="Connection down and closed")
         if not chunk:
             return Result.default_internal_error("No data available pleas exit")
@@ -627,7 +635,7 @@ class Tools(MainTool, FileHandler):
 
         self.helper_1_receive(name, identifier)
 
-        if self.sockets[name]["running_dict"]["thread_receiver_"] or self.loop.is_running():
+        if self.sockets[name]["running_dict"]["thread_receiver_"] and self.loop.is_running():
             return
 
         def helper_():
@@ -664,6 +672,7 @@ class Tools(MainTool, FileHandler):
         else:
             r_socket_ = receiver
         self.print(f"Receiver running for {name} to {identifier}")
+        self.sockets[name]["running_dict"]["receive"][identifier] = asyncio.Event()
         while not self.sockets[name]["running_dict"]["receive"][identifier].is_set() and self.sockets[name]["alive"]:
             # t0 = time.perf_counter()
             chunk_result = await self.chunk_receive(name, r_socket_, identifier=identifier)
@@ -680,16 +689,21 @@ class Tools(MainTool, FileHandler):
                 self.logger.info(f"{name} -- received keepalive signal--")
                 continue
 
-            print("?", data_type, chunk)
             if data_type is None:
                 data_type = chunk[:1]  # Erstes Byte ist der Datentyp
                 chunk = chunk[1:]  # Rest der Daten
                 self.print(f"Register date type : {data_type} :{name}-{identifier}")
             if data_type == b'e':
-                self.sockets[name]["running_dict"]["receive"][identifier].set()
+                if isinstance(self.sockets[name]["running_dict"]["receive"][identifier], asyncio.Event):
+                    self.sockets[name]["running_dict"]["receive"][identifier].set()
+                if isinstance(self.sockets[name]["running_dict"]["receive"][identifier], bool):
+                    self.sockets[name]["running_dict"]["receive"][identifier] = False
+                if isinstance(self.sockets[name]['running_dict']["keep_alive_var"], asyncio.Event):
+                    self.sockets[name]['running_dict']["keep_alive_var"].set()
+                if isinstance(self.sockets[name]['running_dict']["keep_alive_var"], bool):
+                    self.sockets[name]['running_dict']["keep_alive_var"] = False
                 self.logger.info(f"{name} -- received exit signal --")
                 print(f"{name} -- received exit signal --")
-                self.sockets[name]['running_dict']["keep_alive_var"].set()
                 break
             if not (chunk[0] == b'E'[0] and chunk[-1] == b'E'[0]):
                 # Check if adding this chunk would exceed the max size limit
@@ -700,7 +714,6 @@ class Tools(MainTool, FileHandler):
                 else:
                     data_buffer.write(chunk)
                 ac_size += len(chunk)
-            print("data", chunk)
 
             if max_size > -1 and ac_size > 0 and data_type == b'b':
                 print(
@@ -732,7 +745,7 @@ class Tools(MainTool, FileHandler):
 
         data_buffer.close()
         self.print(f"{name} :closing connection to {self.sockets[name]['host']}")
-        if name in self.sockets:
+        if name in self.sockets and self.sockets[name]['type_id'] == SocketType.client.name:
             self.sockets[name]['alive'] = False
         if self.sockets[name]["do_async"] and extra is not None:
             if self.sockets[name]['type_id'] == SocketType.peer.name or self.sockets[name][
@@ -742,6 +755,7 @@ class Tools(MainTool, FileHandler):
             extra.close()
             await extra.wait_close()
         else:
+            print("CLOSING SOKET")
             r_socket_.close()
             # if type_id == SocketType.peer.name and extra is not None:
             #    extra.close()

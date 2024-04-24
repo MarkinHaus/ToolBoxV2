@@ -32,17 +32,3 @@ async def run(_, _0):
         await _.run_runnable('cli')
 
 
-if __name__ == "__main__":
-    import qrcode
-
-    qr = qrcode.main.QRCode(
-        version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_Q,
-        box_size=1,
-        border=2,
-    )
-    qr.add_data('Some data')
-    qr.make(fit=True)
-
-    qr.print_ascii(invert=True)
-    # img.

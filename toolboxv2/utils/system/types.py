@@ -41,6 +41,7 @@ class AppArgs:
     test = None
     profiler = None
     hot_reload = False
+    live_application = True
 
     def default(self):
         return self
@@ -261,8 +262,6 @@ class Result:
             return data.get(key, default)
         return data if data is not None else default
 
-
-
     def lazy_return(self, _=0, data=None, **kwargs):
         flags = ['raise', 'logg', 'user', 'intern']
         if isinstance(_, int):
@@ -457,6 +456,7 @@ class AppType:
     exit_tasks = []
 
     def __init__(self, prefix: Optional[str] = None, args: Optional[AppArgs] = None):
+        self.sto = None
         self.args_sto = args
         """proxi attr"""
 
@@ -492,7 +492,6 @@ class AppType:
 
     def run_runnable(self, name, **kwargs):
         """proxi attr"""
-
 
     def rrun_runnable(self, name, **kwargs):
         """proxi attr"""
@@ -546,6 +545,11 @@ class AppType:
             self.logger.info(f"closing: {mod}")
             self.remove_mod(mod, delete=delete)
 
+    async def a_remove_all_modules(self, delete=False):
+        for mod in list(self.functions.keys()):
+            self.logger.info(f"closing: {mod}")
+            await self.a_remove_mod(mod, delete=delete)
+
     def print_ok(self):
         """proxi attr"""
         self.logger.info("OK")
@@ -553,7 +557,13 @@ class AppType:
     def remove_mod(self, mod_name, spec='app', delete=True):
         """proxi attr"""
 
+    async def a_remove_mod(self, mod_name, spec='app', delete=True):
+        """proxi attr"""
+
     def exit(self):
+        """proxi attr"""
+
+    async def a_exit(self):
         """proxi attr"""
 
     def save_load(self, modname, spec='app'):
@@ -676,7 +686,7 @@ class AppType:
            row=False,
            request_as_kwarg: bool = False,
            state: bool or None = None,
-           level: int = -1,
+           level: int = 0,
            memory_cache_max_size: int = 100,
            memory_cache_ttl: int = 300,
            samples: list or dict or None = None,
@@ -742,15 +752,13 @@ class AppType:
                                       memory_cache_max_size=memory_cache_max_size,
                                       memory_cache_ttl=memory_cache_ttl)
 
-    def print_functions(self):
+    def print_functions(self, name=None):
         if not self.functions:
             print("Nothing to see")
             return
 
-        for module, functions in self.functions.items():
-            print(f"\nModule: {module}; Type: {functions.get('app_instance_type', 'Unknown')}")
-
-            for func_name, data in functions.items():
+        def helper(_functions):
+            for func_name, data in _functions.items():
                 if not isinstance(data, dict):
                     continue
 
@@ -761,13 +769,23 @@ class AppType:
                 print(f"  Function: {func_name}{data.get('signature', '()')}; "
                       f"Type: {func_type}, Level: {func_level}, {api_status}")
 
+        if name is not None:
+            functions = self.functions.get(name)
+            if functions is not None:
+                print(f"\nModule: {name}; Type: {functions.get('app_instance_type', 'Unknown')}")
+                helper(functions)
+                return
+        for module, functions in self.functions.items():
+            print(f"\nModule: {module}; Type: {functions.get('app_instance_type', 'Unknown')}")
+            helper(functions)
+
     def save_autocompletion_dict(self):
         """proxi attr"""
 
     def get_autocompletion_dict(self):
         """proxi attr"""
 
-    def get_username(self):
+    def get_username(self, get_input=False):
         """proxi attr"""
 
     def save_registry_as_enums(self, directory: str, filename: str):
@@ -861,8 +879,9 @@ class AppType:
                 else:
                     c = infos['coverage'][1] / infos['coverage'][0]
                 all_data["coverage"].append(f"{module_name}:{c:.2f}\n")
-        total_coverage = sum([float(t.split(":")[-1]) for t in all_data["coverage"]])/len(all_data["coverage"])
-        print(f"\n{all_data['modular_run']=}\n{all_data['modular_sug']=}\n{all_data['modular_fatal_error']=}\n{total_coverage=}")
+        total_coverage = sum([float(t.split(":")[-1]) for t in all_data["coverage"]]) / len(all_data["coverage"])
+        print(
+            f"\n{all_data['modular_run']=}\n{all_data['modular_sug']=}\n{all_data['modular_fatal_error']=}\n{total_coverage=}")
         d = analyze_data(all_data)
         return Result.ok(data=all_data, data_info=d)
 
@@ -895,6 +914,6 @@ class AppType:
             print(f"    col_offset: {block.col_offset}\n")
         if i <= 0:
             i += 2
-        avg_complexity = avg_complexity/i
+        avg_complexity = avg_complexity / i
         print(f"\nAVG Complexity: {avg_complexity:.2f}")
-        print(f"Total Rank: {cc_rank(int(avg_complexity+i//10))}")
+        print(f"Total Rank: {cc_rank(int(avg_complexity + i // 10))}")

@@ -6,8 +6,6 @@ from PIL import Image
 
 from toolboxv2 import App, show_console, get_app, Spinner
 
-path_to_installer = r"C:\Users\Markin\Workspace\tb_ui_installer\dist\UiInstallerTB\UiInstallerTB.exe"
-
 
 def create_image():
     # Generate an image and draw a pattern
@@ -40,7 +38,7 @@ def hideC(icon, item):
         show = True
 
 
-def open_ui(*args, **kwargs):
+def open_config_ui(*args, **kwargs):
     from toolboxv2.mods.CloudM.UI.vue import MyApp
     MyApp().mainloop()
 
@@ -53,6 +51,15 @@ def exit_(icon, item):
 
 
 def showI(icon, item):
+    path_to_installer = r"C:\Users\Markin\Workspace\tb_ui_installer\dist\UiInstallerTB\UiInstallerTB.exe"
+    if os.system(f"start {path_to_installer}") != 0:
+        icon.notify('Error finding!')
+        time.sleep(6)
+        icon.remove_notification()
+
+
+def open_ui(icon, item):
+    path_to_installer = r"C:\Users\Markin\Workspace\tb_ui_installer\dist\UiInstallerTB\UiInstallerTB.exe"
     if os.system(f"start {path_to_installer}") != 0:
         icon.notify('Error finding!')
         time.sleep(6)
@@ -66,6 +73,7 @@ def get_initial_icon(app: App):
                         icon=create_image(),
                         menu=pystray.Menu(
                             pystray.MenuItem("Open UI", open_ui),
+                            pystray.MenuItem("Open Config UI", open_config_ui),
                             pystray.MenuItem("Open Installer UI", showI),
                             pystray.MenuItem("Show Console", showC, checked=lambda item: show),
                             pystray.MenuItem("Hide Console", hideC, checked=lambda item: not show),

@@ -154,9 +154,9 @@ class Rout:
     def to_port(self):
         return self._to_port
 
-    def put_data(self, event_id_data: Dict[str, str]):
+    async def put_data(self, event_id_data: Dict[str, str]):
         event_id: EventID = EventID(**event_id_data)
-        return self.routing_function(event_id)
+        return await self.routing_function(event_id)
 
     def close(self):
         """ Close """
@@ -204,7 +204,7 @@ class EventManagerClass:
     def add_c_route(self, name, route: ProxyRout):
         self.routes_client[name] = route
 
-    def receive_all_client_data(self):
+    async def receive_all_client_data(self):
 
         close_connections = []
         add_ev = []
@@ -217,7 +217,7 @@ class EventManagerClass:
             if isinstance(data, str) and data == "No data":
                 continue
             elif isinstance(data, EventID) and len(data.get_source()) != 0:
-                self.trigger_event(data)
+                await self.trigger_event(data)
             elif isinstance(data, EventID) and len(data.get_source()) == 0:
                 print(f"Event returned {data.payload}")
                 self.response_que.put(data)
@@ -225,7 +225,7 @@ class EventManagerClass:
                             dict) and 'source' in data and 'path' in data and 'ID' in data and 'identifier' in data:
                 del data['identifier']
                 ev_id = EventID(**data)
-                self.trigger_event(ev_id)
+                await self.trigger_event(ev_id)
             elif isinstance(data, Event):
                 print("Event:", str(data.event_id), data.name)
                 add_ev.append(data)
@@ -235,7 +235,7 @@ class EventManagerClass:
                 print(f"Unknown Data {data}")
 
         for ev in add_ev:
-            self.register_event(ev)
+            await self.register_event(ev)
 
         for client_name in close_connections:
             print(f"Client {client_name} closing connection")
@@ -310,7 +310,7 @@ class EventManagerClass:
                      threaded=threaded,
                      )
 
-    def add_client_route(self, source_id, addr):
+    async def add_client_route(self, source_id, addr):
         if source_id in self.routes_client:
             if self.routes_client[source_id].client is None or not self.routes_client[source_id].client.get('alive'):
                 self.routes_client[source_id].reconnect()
@@ -318,7 +318,7 @@ class EventManagerClass:
             print("Already connected")
             return False
         try:
-            pr = ProxyRout.toProxy(rout=self.crate_rout(source_id, addr=addr), name=source_id)
+            pr = await ProxyRout.toProxy(rout=self.crate_rout(source_id, addr=addr), name=source_id)
             time.sleep(0.25)
             pr.client.get('sender')({"id": self._identification, "continue": False})
             time.sleep(0.25)
@@ -328,11 +328,15 @@ class EventManagerClass:
             print(f"Check the port {addr} Sever likely not Online : {e}")
             return False
 
-    def add_mini_client(self, name: str, addr: Tuple[str, int]):
+    async def add_mini_client(self, name: str, addr: Tuple[str, int]):
 
-        mini_proxy = ProxyRout(class_instance=None, timeout=15, app=get_app(),
-                               remote_functions=[""], peer=False, name=name, do_connect=False)
-        mini_proxy.put_data = lambda x: self.routers_servers[self._identification].send(x, addr)
+        mini_proxy = await ProxyRout(class_instance=None, timeout=15, app=get_app(),
+                                     remote_functions=[""], peer=False, name=name, do_connect=False)
+
+        async def _(x):
+            return await self.routers_servers[self._identification].send(x, addr)
+
+        mini_proxy.put_data = _
         mini_proxy.connect = lambda *x, **_: None
         mini_proxy.reconnect = lambda *x, **_: None
         mini_proxy.close = lambda *x, **_: None
@@ -373,19 +377,20 @@ class EventManagerClass:
             self.remove_c_route(c_name)
             print(f"Removed route to {c_name}")
 
-    def add_server_route(self, source_id, addr=None):
+    async def add_server_route(self, source_id, addr=None):
         if addr is None:
             addr = ('0.0.0.0', 6588)
         try:
-            self.routers_servers[source_id] = DaemonRout(rout=self.crate_rout(source_id, addr=addr), name=source_id,
-                                                         on_r=self.on_register)
+            self.routers_servers[source_id] = await DaemonRout(rout=self.crate_rout(source_id, addr=addr),
+                                                               name=source_id,
+                                                               on_r=self.on_register)
         except Exception as e:
             print(f"Sever already Online : {e}")
 
-    def add_js_route(self, source_id="js:web"):
-        self.add_server_route(source_id, ("./web/scripts/tb_socket.sock", 0))
+    async def add_js_route(self, source_id="js:web"):
+        await self.add_server_route(source_id, ("./web/scripts/tb_socket.sock", 0))
 
-    def register_event(self, event: Event):
+    async def register_event(self, event: Event):
 
         if event in self.events:
             return Result.default_user_error("Event registration failed Event already registered")
@@ -399,8 +404,8 @@ class EventManagerClass:
         if event.scope.name == Scope.local.name:
             if not self.bo and "P0" not in self.routes_client and os.getenv("TOOLBOXV2_BASE_HOST",
                                                                             "localhost") != "localhost":
-                self.add_client_route("P0", (os.getenv("TOOLBOXV2_BASE_HOST", "localhost"),
-                                             os.getenv("TOOLBOXV2_BASE_PORT", 6568)))
+                await self.add_client_route("P0", (os.getenv("TOOLBOXV2_BASE_HOST", "localhost"),
+                                                   os.getenv("TOOLBOXV2_BASE_PORT", 6568)))
                 self.bo = True
             return
 
@@ -421,10 +426,10 @@ class EventManagerClass:
                             print("No P0 found in network or on device")
                             return
                     print(f"Found P0 on {type(data)} {data.get('host')}")
-                    self.add_client_route("P0", (data.get("host"), os.getenv("TOOLBOXV2_BASE_PORT", 6568)))
+                    await self.add_client_route("P0", (data.get("host"), os.getenv("TOOLBOXV2_BASE_PORT", 6568)))
             elif not self.bo and "P0" not in self.routes_client and os.getenv("TOOLBOXV2_BASE_HOST",
                                                                               "localhost") != "localhost":
-                do = self.add_client_route("P0", (
+                do = await self.add_client_route("P0", (
                     os.getenv("TOOLBOXV2_BASE_HOST", "localhost"), os.getenv("TOOLBOXV2_BASE_PORT", 6568)))
                 self.bo = do
                 if not do:
@@ -432,10 +437,11 @@ class EventManagerClass:
                     os.environ["TOOLBOXV2_BASE_HOST"] = "localhost"
 
         if event.scope.name == Scope.global_network.name:
-            self.add_server_route(self.source_id, ('0.0.0.0', os.getenv("TOOLBOXV2_REMOTE_PORT", 6587)))
+            await self.add_server_route(self.source_id, ('0.0.0.0', os.getenv("TOOLBOXV2_REMOTE_PORT", 6587)))
 
-    def connect_to_remote(self, host=os.getenv("TOOLBOXV2_REMOTE_IP"), port=os.getenv("TOOLBOXV2_REMOTE_PORT", 6587)):
-        self.add_client_route("S0", (host, port))
+    async def connect_to_remote(self, host=os.getenv("TOOLBOXV2_REMOTE_IP"),
+                                port=os.getenv("TOOLBOXV2_REMOTE_PORT", 6587)):
+        await self.add_client_route("S0", (host, port))
 
     def start_brodcast_router_local_network(self):
         self.bo = True
@@ -486,7 +492,7 @@ class EventManagerClass:
         else:
             return event
 
-    def _trigger_local(self, event_id: EventID):
+    async def _trigger_local(self, event_id: EventID):
         """
         Exec source based on
 
@@ -513,13 +519,14 @@ class EventManagerClass:
             print(f"Routing to P0 {self.events}")
             if self.source_id not in self.routes_client:
                 # self.routers[self.source_id] = DaemonRout(rout=self.crate_rout(self.source_id))
-                self.add_client_route("P0", ('127.0.0.1', 6568))
-            return self.route_event_id(event_id)
+                await self.add_client_route("P0", ('127.0.0.1', 6568))
+            return await self.route_event_id(event_id)
 
         #if event.threaded:
         #    threading.Thread(target=self.runner, args=(event, event_id), daemon=True).start()
         #    return "Event running In Thread"
         #else:
+
         return self.runner(event, event_id)
 
     def runner(self, event, event_id):
@@ -537,9 +544,9 @@ class EventManagerClass:
         if event.source_types.name is SourceTypes.S.name:
             return eval(event.source, __locals={'app': get_app(str(event_id)), 'event': event, 'eventManagerC': self})
 
-    def routing_function_router(self, event_id: EventID):
+    async def routing_function_router(self, event_id: EventID):
 
-        result = self.trigger_event(event_id)
+        result = await self.trigger_event(event_id)
 
         if result is None:
             result = Result.default_user_error("Invalid Event ID")
@@ -560,27 +567,27 @@ class EventManagerClass:
 
         return result
 
-    def trigger_evnet_by_name(self, name: str):
-        self.trigger_event(EventID.crate_name_as_id(name=name))
+    async def trigger_evnet_by_name(self, name: str):
+        await self.trigger_event(EventID.crate_name_as_id(name=name))
 
-    def trigger_event(self, event_id: EventID):
+    async def trigger_event(self, event_id: EventID):
 
         print(f"event-id Ptah : {event_id.get_path()}")
         print(f"testing trigger_event for {event_id.get_source()} {event_id.get_source()[-1] == self.source_id} ")
         if event_id.get_source()[-1] == self.source_id:
-            payload = self._trigger_local(event_id)
+            payload = await self._trigger_local(event_id)
             event_id.set_payload(payload)
             if len(event_id.path) > 1:
                 event_id.source = ':'.join([e.split('-')[0] for e in event_id.get_path() if e != "E"])
-                res = self.route_event_id(event_id)
+                res = await self.route_event_id(event_id)
                 if isinstance(res, Result):
                     res.print()
                 else:
                     print(res)
             return payload
-        return self.route_event_id(event_id)
+        return await self.route_event_id(event_id)
 
-    def route_event_id(self, event_id: EventID):
+    async def route_event_id(self, event_id: EventID):
 
         print(f"testing route_event_id for {event_id.get_source()[-1]}")
         if event_id.get_source()[-1] == '*':  # self.identification == "P0" and
@@ -591,7 +598,7 @@ class EventManagerClass:
             for name, rout_ in self.routes_client.items():
                 if name in event_id.path:
                     continue
-                ret = rout_.put_data(data)
+                ret = await rout_.put_data(data)
                 responses.append(ret)
             return responses
         route = self.routes_client.get(event_id.get_source()[-1])
@@ -603,9 +610,9 @@ class EventManagerClass:
         # time.sleep(0.25)
         event_id.source = ':'.join(event_id.get_source()[:-1])
         event_id.add_path(f"{self._name}({self.source_id})")
-        return route.put_data(asdict(event_id))
+        return await route.put_data(asdict(event_id))
 
-    def receiver(self):
+    async def receiver(self):
 
         t0 = time.time()
 
@@ -614,10 +621,10 @@ class EventManagerClass:
             if not self.receiver_que.empty():
                 event_id = self.receiver_que.get()
                 print("Receiver Event", str(event_id))
-                self.trigger_event(event_id)
+                await self.trigger_event(event_id)
 
             if time.time() - t0 > 5:
-                self.receive_all_client_data()
+                await self.receive_all_client_data()
                 t0 = time.time()
 
     def info(self):
@@ -637,14 +644,14 @@ class EventManagerClass:
             return
         list(map(lambda x: x.reconnect(), self.routes_client.values()))
 
-    def verify(self, name):
+    async def verify(self, name):
         if name is None:
             pass
         elif name in self.routes_client:
-            self.routes_client[name].verify()
+            await self.routes_client[name].verify()
             return
-
-        list(map(lambda x: x.verify(), self.routes_client.values()))
+        for x in self.routes_client.values():
+            await x.verify()
 
 
 @export(name=Name, mod_name=Name, version=version)
@@ -685,10 +692,11 @@ class Tools(MainTool, EventManagerClass):
     @export(mod_name=Name, name='closeEventManager', version=version)
     def closeEventManager(self):
         self.stop()
+        return "closedEventManager"
 
     @export(mod_name=Name, name='start_web_events', version=version)
-    def closeEventManager(self):
-        self.add_js_route()
+    async def startWebEvents(self):
+        await self.add_js_route()
 
     @export(mod_name=Name, name='getEventManagerC', version=version, exit_f=True)
     def get_manager(self) -> EventManagerClass:

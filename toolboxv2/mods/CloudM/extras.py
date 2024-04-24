@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -11,6 +12,7 @@ Name = 'CloudM'
 version = "0.0.2"
 export = get_app(f"{Name}.EXPORT").tb
 no_test = export(mod_name=Name, test=False, version=version)
+test_only = export(mod_name=Name, test=True, version=version, test_only=True)
 to_api = export(mod_name=Name, api=True, version=version)
 
 
@@ -166,30 +168,44 @@ def update_core(self, backup=False, name=""):
         os.system(com)
     exit(0)
 
+
 @no_test
 def create_magic_log_in(app: App, username: str):
     user = app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username)
     key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
-    base_url = app.config_fh.get_file_handler("provider::") + (f':{app.args_sto.port}' if app.args_sto.host == 'localhost' else "")
+    base_url = app.config_fh.get_file_handler("provider::") + (
+        f':{app.args_sto.port}' if app.args_sto.host == 'localhost' else "")
     url = f"{base_url}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
     return url
 
+
 @no_test
-def register_initial_root_user(app: App):
+async def register_initial_root_user(app: App, email=None):
     root_key = app.config_fh.get_file_handler("Pk" + Code.one_way_hash("root", "dvp-k")[:8])
 
     if root_key is not None:
         return Result.default_user_error(info="root user already Registered")
 
-    email = input("enter ure Email:")
+    if email is None:
+        email = input("enter ure Email:")
     invitation = get_invitation(app=app).get()
     ret = app.run_any(tbef.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
-                       username="root",
-                       email=email,
-                       invitation=invitation, get_results=True)
-    user = app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username="root")
+                      username="root",
+                      email=email,
+                      invitation=invitation, get_results=True)
+    # awaiating user cration
+    rport = await ret.get()
+    print(rport)
+    if rport.is_error():
+        return rport
+    await asyncio.sleep(1)
+    user = await app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username="root")
+    print("User:")
+    print(user)
+    user = user.get()
     key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
-    base_url = app.config_fh.get_file_handler("provider::") + (f':{app.args_sto.port}' if app.args_sto.host == 'localhost' else "5000")
+    base_url = app.config_fh.get_file_handler("provider::") + (
+        f':{app.args_sto.port}' if app.args_sto.host == 'localhost' else "5000")
     url = f"{base_url}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
 
     try:
@@ -240,3 +256,17 @@ def clear_db(self, do_root=False):
 def show_version(self):
     self.print(f"Version: {self.version} {self.api_version}")
     return self.version
+
+
+def test_helper_register_initial_root_user():
+    tb_test_register_initial_root_user[0]()
+
+
+@test_only
+def tb_test_register_initial_root_user():
+    app = get_app(from_="test_register_initial_root_user", name="debug-test")
+    db = app.get_mod("DB")
+    db.edit_programmable()
+
+    app.loop.run_until_complete(register_initial_root_user(app, "test@test.com"))
+

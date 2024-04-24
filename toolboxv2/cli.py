@@ -11,8 +11,9 @@ from yaml import safe_load
 
 from toolboxv2.runabel import runnable_dict as runnable_dict_func
 from toolboxv2.utils.system.main_tool import MainTool
-from toolboxv2.utils.extras.Style import Style
+from toolboxv2.utils.extras.Style import Style, Spinner
 from toolboxv2.utils.system.session import Session
+from toolboxv2.utils.system import all_functions_enums as tbef
 # Import public Pages
 from toolboxv2.utils.toolbox import App
 
@@ -20,7 +21,7 @@ from toolboxv2.utils import show_console
 from toolboxv2.utils import get_app
 from toolboxv2.utils.daemon import DaemonApp
 from toolboxv2.utils.proxy import ProxyApp
-from toolboxv2.utils.system import override_main_app, get_state_from_app
+from toolboxv2.utils.system import override_main_app, get_state_from_app, CallingObject
 
 DEFAULT_MODI = "cli"
 
@@ -274,11 +275,6 @@ def parse_args():
     parser.add_argument("-init",
                         help="ToolBoxV2 init (name) -> default : -n name = main", type=str or None, default=None)
 
-    parser.add_argument('-f', '--init-file',
-                        type=str,
-                        default="init.config",
-                        help="optional init flag init from config file or url")
-
     parser.add_argument("-v", "--get-version",
                         help="get version of ToolBox and all mods with -l",
                         action="store_true")
@@ -301,6 +297,7 @@ def parse_args():
     parser.add_argument("-bg", "--background-application", help="Start an interface in the background",
                         default=False,
                         action="store_true")
+
     parser.add_argument("-bgr", "--background-application-runner",
                         help="The Flag to run the background runner in the current terminal/process",
                         default=False,
@@ -359,19 +356,21 @@ def parse_args():
                         action="store_true")
 
     parser.add_argument("--delete-config-all",
-                        help="start in debug mode",
+                        help="!!! DANGER !!! deletes all config files. incoming data loss",
                         action="store_true")
 
     parser.add_argument("--delete-data-all",
-                        help="start in debug mode",
+                        help="!!! DANGER !!! deletes all data folders. incoming data loss",
                         action="store_true")
 
     parser.add_argument("--delete-config",
-                        help="start in debug mode",
+                        help="!! Warning !! deletes named data folders."
+                             " incoming data loss. useful if an tb instance is not working properly",
                         action="store_true")
 
     parser.add_argument("--delete-data",
-                        help="start in debug mode",
+                        help="!! Warning !! deletes named data folders."
+                             " incoming data loss. useful if an tb instance is not working properly",
                         action="store_true")
 
     parser.add_argument("--test",
@@ -379,8 +378,14 @@ def parse_args():
                         action="store_true")
 
     parser.add_argument("--profiler",
-                        help="run all measurements",
+                        help="run all registered functions and make measurements",
                         action="store_true")
+
+    parser.add_argument("-c", "--command", nargs='*', action='append',
+                        help="run all registered functions and make measurements")
+
+    parser.add_argument( "--sysPrint", action="store_true", default=False,
+                        help="activate system prints / verbose output")
 
     return parser.parse_args()
 
@@ -484,11 +489,18 @@ async def main(loop=None):
     pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
 
     tb_app = get_app(from_="InitialStartUp", name=args.name, args=args, app_con=App)
+    if not args.sysPrint and not (args.debug or args.background_application_runner or args.install or args.kill):
+        tb_app.print = lambda text, *args, **kwargs: None
+
     tb_app.loop = loop
-    await asyncio.to_thread(get_state_from_app, tb_app, os.environ.get("TOOLBOXV2_REMOTE_BASE", "https://simplecore.app"), "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/")
+    with Spinner("Crating State"):
+        await asyncio.to_thread(get_state_from_app, tb_app,
+                                os.environ.get("TOOLBOXV2_REMOTE_BASE", "https://simplecore.app"),
+                                "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/")
     daemon_app = None
+    tb_app.print("OK")
     if args.background_application_runner:
-        daemon_app = DaemonApp(tb_app, args.host, args.port if args.port != 8000 else 6587, t=args.modi != 'bg')
+        daemon_app = await DaemonApp(tb_app, args.host, args.port if args.port != 5000 else 6587, t=False)
         if not args.debug:
             show_console(False)
         tb_app.daemon_app = daemon_app
@@ -502,20 +514,23 @@ async def main(loop=None):
             if '-m ' not in sys.argv:
                 pid_file = f"{info_folder}bg-{args.name}.pid"
             try:
-                _ = ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
-                             args.port if args.port != 8000 else 6587, timeout=6)
+                _ = await ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
+                             args.port if args.port != 5000 else 6587, timeout=6)
+                await _.verify()
                 if _.exit_main() != "No data look later":
                     stop(pid_file + '-app.pid', args.name)
             except Exception:
                 stop(pid_file + '-app.pid', args.name)
     elif args.live_application:
         try:
-            tb_app = override_main_app(ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
-                                                args.port if args.port != 8000 else 6587))
-
-            tb_app.verify()
+            _ = await ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
+                                                args.port if args.port != 5000 else 6587)
+            time.sleep(1)
+            await _.verify()
+            time.sleep(1)
+            tb_app = override_main_app(_)
             if args.debug:
-                tb_app.show_console()
+                await tb_app.show_console()
         except:
             print("Auto starting Starting Local if u know ther is no bg instance use -fg to run in the frond ground")
 
@@ -534,7 +549,7 @@ async def main(loop=None):
                     if not await session.init_log_in_mk_link(mk):
                         print("Link is not in Valid")
                         return
-                response = await session.fetch("/api/CloudM/get_latest?module_name="+args.install, method="GET")
+                response = await session.fetch("/api/CloudM/get_latest?module_name=" + args.install, method="GET")
                 json_response = await response.json()
                 print(json_response)
                 print(json_response['data'])
@@ -556,7 +571,8 @@ async def main(loop=None):
             setup_service_windows()
         tb_app.exit()
         exit(0)
-    if args.load_all_mod_in_files or args.save_function_enums_in_file or args.get_version or args.profiler or args.background_application_runner:
+
+    if args.load_all_mod_in_files or args.save_function_enums_in_file or args.get_version or args.profiler or args.background_application_runner or args.test:
         _min_info = ""
         if not args.live_application:
             _min_info = await tb_app.load_all_mods_in_file()
@@ -570,13 +586,18 @@ async def main(loop=None):
         if _min_info:
             print(_min_info)
         if args.get_version:
-            print(f"\n{' Version ':-^45}\n\n{Style.Bold(Style.CYAN(Style.ITALIC('RE')))+Style.ITALIC('Simple')+'ToolBox':<35}:{__version__:^10}\n")
+            print(
+                f"\n{' Version ':-^45}\n\n{Style.Bold(Style.CYAN(Style.ITALIC('RE'))) + Style.ITALIC('Simple') + 'ToolBox':<35}:{__version__:^10}\n")
             for mod_name in tb_app.functions:
                 if isinstance(tb_app.functions[mod_name].get("app_instance"), MainTool):
                     print(f"{mod_name:^35}:{tb_app.functions[mod_name]['app_instance'].version:^10}")
                 else:
-                    v = tb_app.functions[mod_name].get(list(tb_app.functions[mod_name].keys())[0]).get("version",
-                                                                                                       "unknown (functions only)").replace(f"{__version__}:", '')
+                    try:
+                        v = tb_app.functions[mod_name].get(list(tb_app.functions[mod_name].keys())[0]).get("version",
+                                                                                                       "unknown (functions only)").replace(
+                        f"{__version__}:", '')
+                    except AttributeError:
+                        v = 'unknown'
                     print(f"{mod_name:^35}:{v:^10}")
             print("\n")
             tb_app.alive = False
@@ -589,12 +610,38 @@ async def main(loop=None):
         tb_app.exit()
         return 0
 
-    if not args.kill and not args.docker and tb_app.alive and not args.background_application:
+    if args.command:
+        for command in args.command:
+            if len(command) < 1:
+                tb_app.print_functions()
+                tb_app.print(
+                    "minimum command length is 2 {module_name} {function_name} optional args...")
+                continue
+            if len(command) == 1:
+                tb_app.get_mod(command[0])
+                tb_app.print_functions(command[0])
+                tb_app.print(
+                    "minimum command length is 2 {module_name} {function_name} optional args...")
+                continue
+
+            tb_app.print(f"Running command: {' '.join(command)}")
+            call = CallingObject().empty()
+            call.module_name = command[0]
+            call.function_name = command[1]
+            call.args = command[1:]
+            await tb_app.run_any(tbef.CLI_FUNCTIONS.CO_EVALUATE,
+                                                    obj=call,
+                                                    build_in_commands={},
+                                                    threaded=False,
+                                                    helper=None)
+
+    elif not args.kill and not args.docker and tb_app.alive and not args.background_application:
 
         tb_app.save_autocompletion_dict()
         with open(pid_file, "w") as f:
             f.write(app_pid)
-
+        if args.background_application_runner and args.modi == 'bg':
+            await daemon_app.online
         if not args.live_application:
             runnable_dict = runnable_dict_func()
             tb_app.set_runnable(runnable_dict)
@@ -639,10 +686,11 @@ async def main(loop=None):
                 os.system(f"kill -9 {app_pid}")
 
     if args.live_application and args.debug:
-        tb_app.hide_console()
-
+        hide = tb_app.hide_console()
+        if hide is not None:
+            await hide
     if tb_app.alive:
-        tb_app.exit()
+        await tb_app.a_exit()
         return 0
 
     if os.path.exists(pid_file):
@@ -656,7 +704,6 @@ async def main(loop=None):
 def main_runner():
     loop = asyncio.new_event_loop()
     loop.run_until_complete(main(loop))
-
 
 
 if __name__ == "__main__":
