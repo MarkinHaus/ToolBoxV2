@@ -1,4 +1,4 @@
-import {httpPostData} from "./httpSender.js";
+import {httpPostData} from "./module/1/httpSender.js";
 
 const rpIdUrl_f = ()=> {
     if (window.location.href.match("localhost")) {
@@ -269,7 +269,7 @@ export async function registerUser(registrationData, sing, errorCallback, sucess
         rp: {
             "name": "SimpleCore",
             "id": rpIdUrl, //"localhost",
-            "ico": "/web/favicon.ico"
+            "ico": "/favicon.ico"
         },
         user: {
             id: userId,

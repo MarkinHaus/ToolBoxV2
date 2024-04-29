@@ -275,11 +275,11 @@ links.forEach((link) => {
             transition.style.top = '0';
             transition.style.left = '0';
         }else{
-            window.location.href = e.target.href;
+            // window.location.href = e.target.href;
         }
 
         setTimeout(function() {
-            window.location.href = e.target.href;
+            // window.location.href = e.target.href;
 
             setTimeout(function() {
                 if (transition!==null){
@@ -288,8 +288,8 @@ links.forEach((link) => {
                     transition.style.top = '50%';
                     transition.style.left = '50%';
                 }
-            }, 120);
-        }, 320);
+            }, 45);
+        }, 160);
     });
 });
 

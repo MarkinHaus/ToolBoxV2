@@ -117,15 +117,15 @@ class Tools(MainTool, FileHandler):  # FileHandler
                     'modules': modules,
                 })
             print("Started FastApiManagerDev", api_name)
-        return self._start_api(api_name, live=False, reload=True, test_override=False)
+        return self._start_api(api_name, live=False, reload=True, test_override=False, host="0.0.0.0")
 
     def start_live(self, api_name):
         return self._start_api(api_name, live=True, reload=False, test_override=False)
 
     def start_debug(self, api_name):
-        return self._start_api(api_name, live=False, reload=False, test_override=True)
+        return self._start_api(api_name, live=False, reload=True, test_override=True, host="127.0.0.1")
 
-    def _start_api(self, api_name: str, live=False, reload=False, test_override=False):
+    def _start_api(self, api_name: str, live=False, reload=False, test_override=False, host="localhost"):
 
         if 'test' in self.app.id and not test_override:
             return "No api in test mode allowed"
@@ -145,12 +145,11 @@ class Tools(MainTool, FileHandler):  # FileHandler
             raise ValueError("Live and reload should not be used together")
 
         if api_name not in self.api_config.keys():
-            host = "localhost"
 
             self.api_config[api_name] = {
                 "Name": api_name,
                 "version": self.version,
-                "port": 5000,
+                "port": self.app.args_sto.port,
                 "host": host
             }
 
@@ -166,7 +165,9 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         self.print(api_data)
         g = f"uvicorn toolboxv2.mods.FastApi.fast_api_main:app --host {api_data['host']}" \
-            f" --port {api_data['port']} --header data:{self.app.debug}:{api_name} {'--reload' if reload else ''}"
+            f" --port {api_data['port']} --header data:{self.app.debug}:{api_name}"
+        if test_override:
+            g += ' --reload --reload-dir ./utils' if reload else ''
 
         print("Running command : " + g)
 
@@ -177,7 +178,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
         if api_thread is None:
             self.running_apis[api_name] = threading.Thread(target=os.system, args=(g, ), daemon=True)
             self.running_apis[api_name].start()
-            return "starting api"
+            return "starting api at "+api_data['host']+':'+str(api_data['port'])
 
         self.print("API is already running")
 

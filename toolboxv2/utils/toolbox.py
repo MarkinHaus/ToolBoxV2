@@ -1,20 +1,18 @@
 """Main module."""
 import asyncio
-import concurrent.futures
 import inspect
 import os
 import sys
 import threading
 import time
 import types
-from asyncio import Handle, Task
+from asyncio import Task
 from enum import Enum
 from platform import node, system
-from importlib import import_module
+from importlib import import_module, reload
 from inspect import signature
 from types import ModuleType
 from functools import partial, wraps
-from typing import List
 
 import requests
 from yaml import safe_load
@@ -151,6 +149,7 @@ class App(AppType, metaclass=Singleton):
                 self.args_sto.port) if "localhost" == os.environ.get("HOSTNAME",
                                                                      "localhost") else "https://simplecore.app")
         self.functions = {}
+        self.modules = {}
 
         self.interface_type = ToolBoxInterfaces.native
         self.PREFIX = Style.CYAN(f"~{node()}@>")
@@ -304,23 +303,35 @@ class App(AppType, metaclass=Singleton):
         loc = self._pre_lib_mod(mod_name, file_type)
         return self.inplace_load_instance(mod_name, loc=loc, **kwargs)
 
-    def inplace_load_instance(self, mod_name, loc="toolboxv2.mods.", spec='app', save=True):
+    def inplace_load_instance(self, mod_name, loc="toolboxv2.mods.", spec='app', save=True, mfo=None):
         if self.dev_modi and loc == "toolboxv2.mods.":
             loc = "toolboxv2.mods_dev."
         if self.mod_online(mod_name):
             self.logger.info(f"Reloading mod from : {loc + mod_name}")
             self.remove_mod(mod_name, spec=spec, delete=False)
 
-        try:
-            modular_file_object = import_module(loc + mod_name)
-        except ModuleNotFoundError as e:
-            self.logger.error(Style.RED(f"module {loc + mod_name} not found is type sensitive {e}"))
-            self.print(Style.RED(f"module {loc + mod_name} not found is type sensitive {e}"))
+        if (os.path.exists(self.start_dir+'/mods/'+mod_name) or os.path.exists(self.start_dir+'/mods/'+mod_name+'.py')) and (os.path.isdir(self.start_dir+'/mods/'+mod_name) or os.path.isfile(self.start_dir+'/mods/'+mod_name+'.py')):
+            try:
+                if mfo is None:
+                    modular_file_object = import_module(loc + mod_name)
+                else:
+                    modular_file_object = mfo
+                self.modules[mod_name] = modular_file_object
+            except ModuleNotFoundError as e:
+                self.logger.error(Style.RED(f"module {loc + mod_name} not found is type sensitive {e}"))
+                self.print(Style.RED(f"module {loc + mod_name} not found is type sensitive {e}"))
+                return None
+        else:
+            self.print(f"module {loc + mod_name} is not valid")
             return None
-        try:
+        if hasattr(modular_file_object, "Tools"):
             tools_class = getattr(modular_file_object, "Tools")
-        except AttributeError:
-            tools_class = None
+        else:
+            if hasattr(modular_file_object, "name"):
+                tools_class = modular_file_object
+                modular_file_object = import_module(loc + mod_name)
+            else:
+                tools_class = None
 
         modular_id = None
         instance = modular_file_object
@@ -355,6 +366,7 @@ class App(AppType, metaclass=Singleton):
                 self.functions[modular_id][f"{spec}_instance"] = instance
                 self.functions[modular_id][f"{spec}_instance_type"] = instance_type
             else:
+                self.print("ERROR OVERRIDE")
                 raise ImportError(f"Module already known {modular_id}")
 
             on_start = self.functions[modular_id].get("on_start")
@@ -397,23 +409,6 @@ class App(AppType, metaclass=Singleton):
             self.functions[modular_id][f"{spec}_instance"] = instance
             self.functions[modular_id][f"{spec}_instance_type"] = instance_type
 
-            def is_decorated(func: types.FunctionType):
-                return getattr(func, 'tb_init', False)
-
-            def is_tb_function(func: types.FunctionType):
-                return isinstance(func.__annotations__.get('return'), Result)
-
-            def is_tbapi_function(func: types.FunctionType):
-                return isinstance(func.__annotations__.get('return'), ApiResult)
-
-            for name in dir(instance):
-                obj = getattr(instance, name)
-                if isinstance(obj, types.FunctionType) and not is_decorated(func=obj):
-                    obj.__init__()
-                    obj.__init_subclass__()
-                    # self.tb(name, mod_name=modular_id)(obj)
-
-            # raise ImportError(f"Modular {modular_id} is not a valid mod 2")
         else:
             raise ImportError(f"Modular {modular_id} is not a valid mod")
 
@@ -588,12 +583,14 @@ class App(AppType, metaclass=Singleton):
         self.logger.info(f"Opened {opened} modules in {time.perf_counter() - t0:.2f}s")
         return f"Opened {opened} modules in {time.perf_counter() - t0:.2f}s"
 
-    def get_all_mods(self, working_dir="mods", path_to="./runtime"):
+    def get_all_mods(self, working_dir="mods", path_to="./runtime", use_wd=True):
         self.logger.info(f"collating all mods in working directory {working_dir}")
 
         pr = "_dev" if self.dev_modi else ""
-        if working_dir == "mods":
+        if working_dir == "mods" and use_wd:
             working_dir = f"./mods{pr}"
+        elif use_wd:
+            pass
         else:
             w_dir = self.id.replace(".", "_")
             working_dir = f"{path_to}/{w_dir}/mod_lib{pr}/"
@@ -969,7 +966,8 @@ class App(AppType, metaclass=Singleton):
 
     def get_mod(self, name, spec='app') -> ModuleType or MainToolType:
         if name not in self.functions.keys():
-            if self.save_load(name, spec=spec) is False:
+            mod = self.save_load(name, spec=spec)
+            if mod is False or (isinstance(mod, Result) and mod.is_error()):
                 self.logger.warning(f"Could not find {name} in {list(self.functions.keys())}")
                 raise ValueError(f"Could not find {name} in {list(self.functions.keys())} pleas install the module")
         # private = self.functions[name].get(f"{spec}_private")
@@ -998,15 +996,39 @@ class App(AppType, metaclass=Singleton):
     # ----------------------------------------------------------------
     # Decorators for the toolbox
 
+    def reload_mod(self, mod_name, spec='app', is_file=True, loc="toolboxv2.mods."):
+        if not is_file:
+            mods = self.get_all_mods("./mods/"+mod_name)
+            for mod in mods:
+                try:
+                    reload(import_module(loc+mod_name+'.'+mod))
+                    self.print(f"Reloaded {mod_name}.{mod}")
+                except ImportError:
+                    self.print(f"Could not load {mod_name}.{mod}")
+        self.inplace_load_instance(mod_name, spec=spec, mfo=reload(self.modules[mod_name]))
+
+    def watch_mod(self, mod_name, spec='app', loc="toolboxv2.mods.", use_thread=True):
+        from watchfiles import watch
+
+        is_file = os.path.isfile(self.start_dir+'/mods/'+mod_name+'.py')
+
+        def helper():
+            paths = f'mods/{mod_name}' + ('.py' if is_file else '')
+            self.print(f'Watching Path: {paths}')
+            for changes in watch(paths):
+                print(changes)
+                self.reload_mod(mod_name, spec, is_file, loc)
+        if not use_thread:
+            helper()
+        else:
+            threading.Thread(target=helper, daemon=True).start()
+
     def _register_function(self, module_name, func_name, data):
         if module_name not in self.functions:
             self.functions[module_name] = {}
         if func_name in self.functions[module_name]:
-            count = sum(1
-                        for existing_key in self.functions[module_name] if
-                        existing_key.startswith(module_name))
-            new_key = f"{module_name}_{count}"
-            self.functions[module_name][new_key] = data
+            self.print(f"Overriding function {func_name} from {module_name}")
+            self.functions[module_name][func_name] = data
         else:
             self.functions[module_name][func_name] = data
 
@@ -1362,3 +1384,4 @@ def _initialize_toolBox(init_type, init_from, name):
     fh.file_handler_storage.close()
 
     logger.info("Done!")
+

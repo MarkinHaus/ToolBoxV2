@@ -13,7 +13,7 @@ from ...utils.extras.blobs import BlobFile
 class Tools(MainTool, FileHandler):  # FileHandler
 
     def __init__(self, app=None):
-        self.version = "0.0.1"
+        self.version = "0.0.2"
         self.name = "quickNote"
         self.logs = app.logger if app else None
         self.color = "GREEN"
@@ -46,7 +46,6 @@ class Tools(MainTool, FileHandler):  # FileHandler
             "Find": self.view_note,
             "init": self.init,
         }
-
         FileHandler.__init__(self, "quickNote.data", app.id if app else __name__, self.keys, {"inbox": [],
                                                                                               "token": "#TOKEN#"})
         MainTool.__init__(self, v=self.version, tool=self.tools,

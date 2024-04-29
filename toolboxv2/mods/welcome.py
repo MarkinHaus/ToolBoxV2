@@ -8,7 +8,6 @@ import os
 export = get_app(from_="welcome.EXPORT").tb
 Name = 'welcome'
 version = '0.0.1'
-Version = '0.0.1'
 
 
 def webInstall(self, user_instance, construct_render) -> str:
@@ -619,3 +618,4 @@ def colorize_ascii_art(ascii_art):
             else:
                 colored_line += char
         print(colored_line)
+

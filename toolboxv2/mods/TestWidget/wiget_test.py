@@ -60,6 +60,11 @@ def set_counter_value(id_, value):
     counter[id_] = value
 
 
+@export(mod_name=Name, version=version,  level=1, row=True, name="Version", state=False)
+def Version():
+    return version
+
+
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True, name="add", state=False)
 def add(request: Request or None = None):
     sid = get_s_id(request)

@@ -243,11 +243,18 @@ async function handleHtmxAfterRequest(event) {
 }
 let isHtmxAfterRequestListenerAdded = false;
 export function resultHtmxWrapper(){
-    try{
-        document.body.removeEventListener('htmx:afterRequest', handleHtmxAfterRequest);}catch (e){
-        console.log("Fist init handleHtmxAfterRequest")
+    if (!isHtmxAfterRequestListenerAdded){
+        try{
+            document.body.removeEventListener('htmx:afterRequest', handleHtmxAfterRequest);
+            isHtmxAfterRequestListenerAdded = false
+        }
+        catch (e){
+            console.log("Fist init handleHtmxAfterRequest")
+        }
     }
+
     if (!isHtmxAfterRequestListenerAdded) {
+        console.log("ADD HTMX LISSENER TO body")
         document.body.addEventListener('htmx:afterRequest', handleHtmxAfterRequest);
         isHtmxAfterRequestListenerAdded = true;
     }

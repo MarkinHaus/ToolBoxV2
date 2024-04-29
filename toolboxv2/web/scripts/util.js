@@ -1,4 +1,4 @@
-function autocomplete(inp, arr) {
+export function autocomplete(inp, arr) {
   /*the autocomplete function takes two arguments,
   the text field element and an array of possible autocompleted values:*/
   var currentFocus;
@@ -95,7 +95,7 @@ document.addEventListener("click", function (e) {
 });
 }
 
-async function loadHtmlFile(url) {
+export async function loadHtmlFile(url) {
     try {
         const response = await fetch(url);
         if (!response.ok) {
@@ -104,5 +104,6 @@ async function loadHtmlFile(url) {
         return await response.text();
     } catch (error) {
         console.error("Could not load the HTML file:", error);
+        return error
     }
 }

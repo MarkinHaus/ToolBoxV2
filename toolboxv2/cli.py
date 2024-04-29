@@ -441,6 +441,23 @@ def edit_logs():
         edit_log_files(name=name, date=date, level=level, n=0)
 
 
+def run_tests(test_path):
+    # Konstruiere den Befehl für den Unittest-Testaufruf
+    command = [sys.executable, "-m", "unittest", "discover", "-s", test_path]
+
+    # Führe den Befehl mit subprocess aus
+    try:
+        result = subprocess.run(command, check=True)
+        # Überprüfe den Rückgabewert des Prozesses und gib entsprechend True oder False zurück
+        return result.returncode == 0
+    except subprocess.CalledProcessError as e:
+        print(f"Fehler beim Ausführen der Unittests: {e}")
+        return False
+    except FileNotFoundError:
+        print("Fehler: Python-Interpreter nicht gefunden. Stellen Sie sicher, dass Python installiert ist.")
+        return False
+
+
 async def main(loop=None):
     """Console script for toolboxv2."""
     args = parse_args()
@@ -480,8 +497,9 @@ async def main(loop=None):
         else:
             test_path = test_path + "/tests/test_mods"
         print(f"Testing in {test_path}")
-
-        os.system(f"{sys.executable} -m unittest discover -s {test_path}")
+        if not run_tests(test_path):
+            print("Error in tests")
+            return 1
         return 0
 
     app_pid = str(os.getpid())

@@ -16,18 +16,28 @@
                 name: "lee@webauthn.guide",
                 displayName: "Lee",
             },
-            pubKeyCredParams: [{alg: -7, type: "public-key"}],
-            authenticatorSelection: {
-                authenticatorAttachment: "cross-platform",
-            },
-            timeout: 60000,
-            attestation: "indirect"
+        pubKeyCredParams: [
+            {type: "public-key",alg: -7 }, // -7 steht für ES256
+            {type: "public-key",alg: -256},
+            {type: "public-key",alg: -512}
+        ],
+        timeout: 60000,
+        // Weitere Optionen können hier hinzugefügt werden
+        excludeCredentials: [],
+        authenticatorSelection: {
+            // ... andere Auswahlkriterien ...
+            //residentKey: "preferred",
+            //authenticatorAttachment: "platform",
+            requireResidentKey: true, // Setzen Sie dies auf true, um einen residenten Schlüssel zu erfordern
+            userVerification: "discouraged" // Kann "required", "preferred" oder "discouraged" sein
+        },
         };
 
         const credential = await navigator.credentials.create({
             publicKey: publicKeyCredentialCreationOptions
         });
     }
+
   </script>
   <body>
      <button onclick="javascript:load();"> test </button>

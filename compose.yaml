@@ -1,0 +1,191 @@
+# Comments are provided throughout this file to help you get started.
+# If you need more help, visit the Docker compose reference guide at
+# https://docs.docker.com/compose/compose-file/
+
+# Here the instructions define your application as a service called "server".
+# This service is built from the Dockerfile in the current directory.
+# You can add other services your application may depend on here, such as a
+# database or a cache. For examples, see the Awesome Compose repository:
+# https://github.com/docker/awesome-compose
+services:
+    build_service:
+        build:
+            context: .
+        container_name: re_simple_toolbox_builder_dev
+        ports:
+            - 6587:6587
+        profiles: [ build ]
+
+    live_build_service:
+        build:
+            context: ./DockerfileLive
+        container_name: re_simple_toolbox_builder
+        ports:
+            - 6587:6587
+        profiles: [ testLive, buildLive ]
+
+    re_simple_toolbox_service:
+        image: re_simple_toolbox
+        command: toolboxv2 -bgr -l -m bg
+        ports:
+            - 6587:6587
+        volumes:
+            - ./toolboxv2/.data:/app/toolboxv2/.data
+            - ./toolboxv2/data:/app/toolboxv2/data
+            - ./toolboxv2/.config:/app/toolboxv2/.config
+            - ./toolboxv2/.info:/app/toolboxv2/.info
+        restart: always
+        container_name: re_simple_toolbox
+        profiles: [ docker ]
+
+    api:
+        image: ${LOCAL_DOCKER_IMAGE}
+        command: toolboxv2 -fg -c FastApi start -c true
+        ports:
+            - 5001:5001
+        volumes:
+            - ./toolboxv2/.data:/app/toolboxv2/.data
+            - ./toolboxv2/data:/app/toolboxv2/data
+            - ./toolboxv2/.config:/app/toolboxv2/.config
+            - ./toolboxv2/.info:/app/toolboxv2/.info
+        restart: always
+        profiles: [ live ]
+
+    app:
+        image: ${LOCAL_DOCKER_IMAGE}
+        depends_on:
+            - app
+            # - debug_redis
+        command: toolboxv2 -fg -c runner startLiveApp -c true
+        ports:
+            - 5000:5000
+        volumes:
+            - ./toolboxv2/.data:/app/toolboxv2/.data
+            - ./toolboxv2/data:/app/toolboxv2/data
+            - ./toolboxv2/.config:/app/toolboxv2/.config
+            - ./toolboxv2/.info:/app/toolboxv2/.info
+        restart: always
+        profiles: [ live ]
+
+
+    dev_app:
+        build: .
+        depends_on:
+            - dev_api
+        command: toolboxv2 -fg -c runner devApp -c true
+        ports:
+            - 5000:5000
+        volumes:
+            - ./toolboxv2/.data:/app/toolboxv2/.data
+            - ./toolboxv2/data:/app/toolboxv2/data
+            - ./toolboxv2/.config:/app/toolboxv2/.config
+            - ./toolboxv2/.info:/app/toolboxv2/.info
+        # develop:
+        #     watch:
+        #         - action: sync
+        #           path: "/toolboxv2"
+        #           target: "/app/toolboxv2"
+        #           ignore:
+        #               - "node_modules/"
+        #               - "/toolboxv2/web/node_modules/"
+        #               - "/toolboxv2/node_modules/"
+        #         - action: rebuild
+        #           path:
+        #             - "package.json"
+        #             - "toolboxv2/package.json"
+        #             - "toolboxv2/web/package.json"
+        restart: always
+        profiles: [ dev, test ]
+
+    dev_api:
+        build: .
+        command: toolboxv2 -fg -c FastApi startDev ${DEV_MODULES} -c runner devApp --sysPrint
+        # develop:
+        #     watch:
+        #         - action: sync
+        #           path: "/toolboxv2/web"
+        #           target: "/app/toolboxv2/web"
+        #           ignore:
+        #               - "node_modules/"
+        #               - "/toolboxv2/web/node_modules/"
+        #               - "/toolboxv2/node_modules/"
+        #         - action: rebuild
+        #           path:
+        #               - "package.json"
+        #               - "toolboxv2/package.json"
+        #               - "toolboxv2/web/package.json"
+        restart: always
+        ports:
+            - 5001:5001
+            - 6588:6587
+        volumes:
+            - ./toolboxv2/.data:/app/toolboxv2/.data
+            - ./toolboxv2/data:/app/toolboxv2/data
+            - ./toolboxv2/.config:/app/toolboxv2/.config
+            - ./toolboxv2/mods:/app/toolboxv2/mods
+            - ./toolboxv2/utils:/app/toolboxv2/utils
+            - ./toolboxv2/web:/app/toolboxv2/web
+
+        profiles: [ dev ]
+
+
+    test_service:
+        build: .
+        depends_on:
+            - build_service
+            # - debug_ollama
+        command: toolboxv2 --test
+        profiles: [ test ]
+
+    lve_test_service:
+        build: ./DockerfileLive
+        depends_on:
+            - live_build_service
+            # - debug_ollama
+        command: toolboxv2 --test
+        profiles: [ testLive ]
+
+    # debug_redis:
+    #     image: "redis:alpine"
+
+    # debug_ollama:
+    #     image: "ollama"
+    #     ports:
+    #         - 11434:11434
+
+    # depends_on
+  # redis:
+  #   image: "redis:alpine"
+# The commented out section below is an example of how to define a PostgreSQL
+# database that your application can use. `depends_on` tells Docker Compose to
+# start the database before your application. The `db-data` volume persists the
+# database data between container restarts. The `db-password` secret is used
+# to set the database password. You must create `db/password.txt` and add
+# a password of your choosing to it before running `docker compose up`.
+#     depends_on:
+#       db:
+#         condition: service_healthy
+#   db:
+#     image: postgres
+#     restart: always
+#     user: postgres
+#     secrets:
+#       - db-password
+#     volumes:
+#       - db-data:/var/lib/postgresql/data
+#     environment:
+#       - POSTGRES_DB=example
+#       - POSTGRES_PASSWORD_FILE=/run/secrets/db-password
+#     expose:
+#       - 5432
+#     healthcheck:
+#       test: [ "CMD", "pg_isready" ]
+#       interval: 10s
+#       timeout: 5s
+#       retries: 5
+# volumes:
+#   db-data:
+# secrets:
+#   db-password:
+#     file: db/password.txt
+

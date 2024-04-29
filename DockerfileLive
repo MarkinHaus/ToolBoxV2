@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+
+# Comments are provided throughout this file to help you get started.
+# If you need more help, visit the Dockerfile reference guide at
+# https://docs.docker.com/engine/reference/builder/
+
+ARG PYTHON_VERSION=3.11
+FROM python:${PYTHON_VERSION}-slim as base
+# FROM python
+# Prevents Python from writing pyc files.
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Keeps Python from buffering stdout and stderr to avoid situations where
+# the application crashes without emitting any logs due to buffering.
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+RUN apt-get update
+RUN apt-get install libasound-dev libportaudio2 libportaudiocpp0 portaudio19-dev -y
+RUN apt-get install gcc npm git -y
+RUN npm install bun
+# Create a non-privileged user that the app will run under.
+
+# Copy the source code into the container.
+# cage for live
+
+RUN pip install --target ./ ToolBoxV2
+COPY ./toolboxv2/web ./ToolBoxV2/toolboxv2/web
+RUN npx bun install -y ./ToolBoxV2/toolboxv2/web/
+
+# Install the local application using pip.
+RUN npx bun install -y ./ToolBoxV2/toolboxv2/web/
+# Expose the port that the application listens on.
+EXPOSE 6587
+
+# Run the application.
+CMD toolboxv2 -bgr -l -m bg

@@ -241,7 +241,6 @@ class SchedulerManagerClass:
                 self.register_job(job_info['id'], func=func, **job_info)
 
 
-@export(name=Name, mod_name=Name, version=version)
 class Tools(MainTool, SchedulerManagerClass):
     version = version
 
@@ -251,7 +250,7 @@ class Tools(MainTool, SchedulerManagerClass):
 
         self.keys = {"mode": "db~mode~~:"}
         self.encoding = 'utf-8'
-        self.tools = {'Version': self.get_version, 'name': Name}
+        self.tools = {'name': Name}
         SchedulerManagerClass.__init__(self)
         MainTool.__init__(self,
                           load=self.init_sm,
