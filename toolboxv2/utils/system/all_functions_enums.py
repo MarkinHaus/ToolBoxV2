@@ -132,11 +132,16 @@ class MINIMALHTML(Enum):
 @dataclass
 class RUNNER(Enum):
     NAME = 'runner'
-    STARTLIVEAPP: str = 'startLiveApp'  # Input: (['app']), Output: <class 'inspect._empty'>
-    BUILDAPP: str = 'buildApp'  # Input: (['app']), Output: <class 'inspect._empty'>
-    DEVAPP: str = 'devApp'  # Input: (['app']), Output: <class 'inspect._empty'>
-    APP: str = 'App'  # Input: (['app']), Output: <class 'inspect._empty'>
-    DEVCOMPOSE: str = 'devCompose'  # Input: (['app']), Output: <class 'inspect._empty'>
+    ISAACODE: str = 'IsaaCode'  # Input: (['app', 'extras']), Output: <class 'inspect._empty'>
+    STARTLIVEAPP: str = 'startLiveApp'  # Input: ([]), Output: <class 'inspect._empty'>
+    BUILDAPP: str = 'buildApp'  # Input: ([]), Output: <class 'inspect._empty'>
+    DEVAPP: str = 'devApp'  # Input: ([]), Output: <class 'inspect._empty'>
+    APP: str = 'App'  # Input: ([]), Output: <class 'inspect._empty'>
+    DEVCOMPOSE: str = 'devCompose'  # Input: ([]), Output: <class 'inspect._empty'>
+    LIVECOMPOSE: str = 'liveCompose'  # Input: ([]), Output: <class 'inspect._empty'>
+    D_TESTCOMPOSE: str = 'd_testCompose'  # Input: ([]), Output: <class 'inspect._empty'>
+    PUSHVERSION: str = 'pushVersion'  # Input: ([]), Output: <class 'inspect._empty'>
+    BUILD_LIVE_IMAGE: str = 'build_live_image'  # Input: ([]), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
 
@@ -338,6 +343,7 @@ class WIDGETSPROVIDER(Enum):
 @dataclass
 class API_MANAGER(Enum):
     NAME = 'api_manager'
+    SHOW_RUNNING: str = 'show_running'  # Input: (['self']), Output: <class 'inspect._empty'>
     RESTART_API: str = 'restart_api'  # Input: (['self', 'api_name']), Output: <class 'inspect._empty'>
 
 
@@ -387,3 +393,25 @@ class DIFFUSER(Enum):
     GET_PIPLINE_MANAGER: str = 'get_pipline_manager'  # Input: ([]), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+
+
+@dataclass
+class ISAA_CODINGAGENT(Enum):
+    NAME = 'isaa.CodingAgent'
+    RUNNER: str = 'runner'  # Input: (['request', 'existing_code_base', 'local_sources', 'remote_sources', 'save_changes', 'crate_new_files', 'working_directory']), Output: <class 'inspect._empty'>
+
+
+@dataclass
+class ISAA(Enum):
+    NAME = 'isaa'
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+    VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
+    ADD_TASK: str = 'add_task'  # Input: (['name', 'task']), Output: <class 'inspect._empty'>
+    SAVE_TASK: str = 'save_task'  # Input: (['name']), Output: <class 'inspect._empty'>
+    LOAD_TASK: str = 'load_task'  # Input: (['name']), Output: <class 'inspect._empty'>
+    GET_TASK: str = 'get_task'  # Input: (['name']), Output: <class 'inspect._empty'>
+    LIST_TASK: str = 'list_task'  # Input: ([]), Output: <class 'inspect._empty'>
+    SAVE_TO_MEM: str = 'save_to_mem'  # Input: ([]), Output: <class 'inspect._empty'>
+    MINI_TASK_COMPLETION: str = 'mini_task_completion'  # Input: (['mini_task', 'mode', 'fetch_memory', 'all_mem', 'max_tokens']), Output: <class 'inspect._empty'>
+    SET_LOCAL_FILES_TOOLS: str = 'set_local_files_tools'  # Input: (['local_files_tools']), Output: <class 'inspect._empty'>

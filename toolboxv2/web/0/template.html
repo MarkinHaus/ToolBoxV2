@@ -97,7 +97,7 @@
 
     <button  onclick="{
 
-        overlayUtility.createOverlay({
+        window.overlayUtility.createOverlay({
             content: document.getElementById('searchBar').innerHTML,
             buttons: [
                 {text: 'Hinzufügen',
@@ -109,7 +109,7 @@
                     tag.innerText = document.getElementsByClassName('searchInput')[1].value;
                     tagSection.appendChild(tag);
                     console.log(tagSection, tag, document.getElementsByClassName('searchInput')[1])
-                    //overlayUtility.closeOverlay()
+                    //window.overlayUtility.closeOverlay()
                     }
                 },
             ],

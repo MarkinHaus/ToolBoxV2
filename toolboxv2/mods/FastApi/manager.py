@@ -218,6 +218,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
             del self.running_apis[api_name]
         os.remove(f"./.data/api_pid_{api_name}")
 
+    @export(mod_name="api_manager", test=False)
     def show_running(self):
         self.print(f"Status : {list(self.running_apis.keys())}")
         return list(self.running_apis.keys())

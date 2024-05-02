@@ -819,6 +819,9 @@ class App(AppType, metaclass=Singleton):
         else:
             raise TypeError("Unknown function type")
 
+        if not self.mod_online(modular_name, installed=True):
+            self.get_mod(modular_name)
+
         function_data, error_code = self.get_function(mod_function_name, state=tb_run_function_with_state,
                                                       metadata=True, specification=tb_run_with_specification)
         self.logger.info(f"Received fuction : {mod_function_name}, with execode: {error_code}")

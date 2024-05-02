@@ -1,12 +1,5 @@
 import asyncio
-import json
-import os
-from typing import List, Dict, Optional
-
-from toolboxv2 import get_app, App, Result, tbef, get_logger, Code
-from .types import Widget, Sto
-from toolboxv2.utils.system.types import ToolBoxInterfaces
-from fastapi import Request
+from toolboxv2 import get_app, App, Result, tbef, Code
 
 from ..CloudM import User
 from ...utils.extras.blobs import BlobFile
@@ -18,6 +11,13 @@ version = '0.0.1'
 spec = ''
 
 all_widgets = []
+
+
+def get_s_id(request):
+    if request is None:
+        return Result.default_internal_error("No request specified")
+    sID = request.session.get('ID', '')
+    return Result.ok(sID)
 
 
 @export(mod_name=Name, version=version)

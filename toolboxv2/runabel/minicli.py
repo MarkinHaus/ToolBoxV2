@@ -28,6 +28,8 @@ def run_in_console(buff, fh, pw=False):
     _ = ""
     if pw:
         _ = "powershell -Command "
+    else:
+        _ = "bash -c "
     os.system(_ + buff)
 
 

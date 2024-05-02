@@ -156,6 +156,12 @@ class Result:
         self.origin = origin
         return self
 
+    def set_dir_origin(self, name, extras="assets/"):
+        if self.origin is not None:
+            raise ValueError("You cannot Change the origin of a Result!")
+        self.origin = f"mods/{name}/{extras}"
+        return self
+
     def is_error(self):
         if _test_is_result(self.result.data):
             return self.result.data.is_error()
