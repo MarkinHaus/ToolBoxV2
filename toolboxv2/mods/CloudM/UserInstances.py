@@ -86,7 +86,7 @@ def validate_ws_id(ws_id):  # ToDo refactor
 
 
 @e
-def delete_user_instance(uid: str):   # TODO: async
+def delete_user_instance(uid: str):  # TODO: async
     if uid is None:
         return
     si_id = UserInstances.get_si_id(uid).get()
@@ -123,7 +123,7 @@ def get_instance_si_id(si_id):
 
 @e
 def get_user_instance(uid: str,
-                      hydrate: bool = True):   # TODO: async
+                      hydrate: bool = True):  # TODO: async
     # Test if an instance exist locally -> instance = set of data a dict
     if uid is None:
         return

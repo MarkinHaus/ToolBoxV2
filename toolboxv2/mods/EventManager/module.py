@@ -522,10 +522,10 @@ class EventManagerClass:
                 await self.add_client_route("P0", ('127.0.0.1', 6568))
             return await self.route_event_id(event_id)
 
-        #if event.threaded:
+        # if event.threaded:
         #    threading.Thread(target=self.runner, args=(event, event_id), daemon=True).start()
         #    return "Event running In Thread"
-        #else:
+        # else:
 
         return self.runner(event, event_id)
 

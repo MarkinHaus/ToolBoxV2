@@ -1,4 +1,4 @@
-from toolboxv2 import get_app, App, tbef, Result
+from toolboxv2 import get_app
 from .quickNote import Tools
 from .types import *
 from ..CloudM import User
@@ -43,6 +43,7 @@ def test_quickNote():
     quicknote.open_inbox()
     root_n = quicknote.get_note_by_name("root")
     assert root_n.is_error()
+
 
 @export(mod_name=Name, initial=True)
 def log_in_to_instance(state: Tools, username: str):

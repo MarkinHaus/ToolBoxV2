@@ -18,8 +18,8 @@ from yarl import URL
 from ... import Code
 
 
-#@dataclasses.dataclass
-#class LocalUser:
+# @dataclasses.dataclass
+# class LocalUser:
 #    name:str
 #    uid:str
 
@@ -112,6 +112,7 @@ class Session(metaclass=Singleton):
         with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="w") as blob:
             blob.clear()
 
+
 async def helper_session_invalid():
     s = Session('root')
 
@@ -121,9 +122,9 @@ async def helper_session_invalid():
     print(t1)
     assert t1 == False
 
+
 def test_session_invalid():
     import asyncio
-
 
     asyncio.run(helper_session_invalid())
 

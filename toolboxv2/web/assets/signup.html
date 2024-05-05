@@ -1,22 +1,25 @@
 <script type="module" src="/web/scripts/module/0/singup.js"></script>
+<script src="/index.js" type="module"></script>
 <div>
     <div class="main-content frosted-glass">
-<section id="signup">
-    <div class="form-container">
-        <form id="signupForm" class="form">
-            <h2 id="titel-h2">Sign Up</h2>
+        <section id="signup">
+            <div class="form-container">
+                <form id="signupForm" class="form">
+                    <h2 id="titel-h2">Sign Up</h2>
 
-            <div id="infoPopup" class="form-container" style="display: none; z-index: 1000;">
-            <p id="infoText"></p>
+                    <div id="infoPopup" class="form-container" style="display: none; z-index: 1000;">
+                        <p id="infoText"></p>
+                    </div>
+                    <input id="username" type="text" placeholder="Username">
+                    <input id="email" type="email" placeholder="Email">
+                    <input id="initiation" type="password" placeholder="Initiation-Key">
+                    <button type="submit" id="submit-button">Sign Up</button>
+                    <button class="none" id="skip-persona-button"
+                            onclick="setTimeout(async ()=>{await navigate('/dashboard')},0)">Only Device
+                    </button>
+                </form>
             </div>
-            <input id="username" type="text" placeholder="Username">
-            <input id="email" type="email" placeholder="Email">
-            <input id="initiation" type="password" placeholder="Initiation-Key">
-            <button type="submit" id="submit-button">Sign Up</button>
-            <button class="none" id="skip-persona-button" onclick="setTimeout(async ()=>{await navigate('/dashboard')},0)">Only Device</button>
-        </form>
-    </div>
-</section>
+        </section>
     </div>
 </div>
 

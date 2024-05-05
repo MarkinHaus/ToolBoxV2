@@ -1,6 +1,5 @@
 import uuid
 from dataclasses import dataclass
-from enum import Enum
 
 from toolboxv2.utils.security.cryp import Code
 

@@ -222,7 +222,6 @@ class FileHandler(Code):
         get_logger().warning(Style.GREEN(f"File deleted {self.file_handler_file_prefix + self.file_handler_filename}"))
 
 
-
 """
 Klasse: FileHandler
 Die FileHandler Klasse ist ein Werkzeug zum Verwalten von Dateien, insbesondere zum Speichern, Laden und Verwalten von Schlüssel-Wert-Paaren in Konfigurationsdateien. Sie erbt von der Code Klasse und verfügt über Funktionen zum Öffnen, Schließen, Speichern, Laden und Löschen von Dateien. Es gibt auch Funktionen, um Werte basierend auf ihren Schlüsseln hinzuzufügen, abzurufen oder Standardwerte festzulegen.

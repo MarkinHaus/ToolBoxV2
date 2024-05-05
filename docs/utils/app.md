@@ -2,19 +2,26 @@
 
 ## Summary
 
-The __init__ method initializes an instance of the App class. It sets up the necessary directories, logger, and other configurations based on the provided prefix and command line arguments.
+The __init__ method initializes an instance of the App class. It sets up the necessary directories, logger, and other
+configurations based on the provided prefix and command line arguments.
+
 ### Example Usage
+
 `
 app = App(prefix="myapp", args=AppArgs().default())
 `
+
 ### Code Analysis
+
 ##### Inputs
+
 `
 prefix (str): The prefix for the application.
 args (AppArgs): Command line arguments for the application.
 `
 
 ### Flow
+
 - Get the absolute path of the current file and determine the system flag (Linux, Mac, or Windows).
 - Set the current working directory to the directory of the current file.
 - Set the start directory to the current working directory.
@@ -35,4 +42,5 @@ args (AppArgs): Command line arguments for the application.
 - Log the completion of the initialization.
 
 ### Outputs
+
 An instance of the App class with the necessary configurations and attributes set up.

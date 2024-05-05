@@ -3,15 +3,16 @@
 """The setup script."""
 
 import io
-from os import path, getenv
+from os import path
+
 from setuptools import setup, find_packages
 
 with open('README.md') as readme_file:
     readme = readme_file.read()
 #
-#with open(getenv('CONFIG_FILE', '/toolboxv2/toolbox.yaml'), 'r') as config_file:
+# with open(getenv('CONFIG_FILE', '/toolboxv2/toolbox.yaml'), 'r') as config_file:
 #    _version = config_file.read().split('version')[-1].split('\n')[0].split(':')[-1].strip()
-version = "0.1.15" #_version  # _version.get('main', {}).get('version', '-.-.-')
+version = "0.1.15"  # _version  # _version.get('main', {}).get('version', '-.-.-')
 
 here = path.abspath(path.dirname(__file__))
 

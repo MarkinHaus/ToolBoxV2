@@ -5,8 +5,8 @@ from pathlib import Path
 from urllib.parse import quote
 
 from toolboxv2 import Style, Result, tbef, App
-from .AuthManager import get_invitation
 from toolboxv2 import get_app, Code
+from .AuthManager import get_invitation
 
 Name = 'CloudM'
 version = "0.0.2"
@@ -265,4 +265,3 @@ async def tb_test_register_initial_root_user():
     db.edit_programmable()
 
     await register_initial_root_user(app, "test@test.com")
-

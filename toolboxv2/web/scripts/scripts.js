@@ -384,7 +384,9 @@ dark_mode
 
 });
 
-document.getElementById('threeDScene').appendChild(renderer.domElement);
+const threeDScene = document.getElementById('threeDScene')
+if (threeDScene){
+threeDScene.appendChild(renderer.domElement);}
 
 setTimeout(()=>{
 const s = document.getElementsByClassName('loaderCenter')

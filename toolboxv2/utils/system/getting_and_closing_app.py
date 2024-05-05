@@ -8,7 +8,6 @@ from .types import AppArgs, AppType
 
 from ..extras.Style import Style
 
-
 registered_apps: List[Optional[AppType]] = [None]
 
 
@@ -53,7 +52,6 @@ def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None, sync=
 
 @atexit.register
 def save_closing_app():
-
     try:
         loop = asyncio.get_event_loop()
     except RuntimeError:

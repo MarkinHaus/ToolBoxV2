@@ -60,7 +60,7 @@ def set_counter_value(id_, value):
     counter[id_] = value
 
 
-@export(mod_name=Name, version=version,  level=1, row=True, name="Version", state=False)
+@export(mod_name=Name, version=version, level=1, row=True, name="Version", state=False)
 def Version():
     return version
 
@@ -76,7 +76,7 @@ def add(request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True, name="addM", state=False)
-def addM(value:int=1, request: Request or None = None):
+def addM(value: int = 1, request: Request or None = None):
     sid = get_s_id(request)
     if sid.is_error():
         return f"<h1>Error {sid.print(show=False)}</h1>"

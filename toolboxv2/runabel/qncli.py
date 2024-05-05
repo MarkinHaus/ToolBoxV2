@@ -4,7 +4,6 @@ from prompt_toolkit import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import set_title, yes_no_dialog
 
-
 from toolboxv2 import App, Result, tbef
 from toolboxv2.utils.extras.Style import cls
 from toolboxv2.utils.system.types import CallingObject
@@ -59,8 +58,9 @@ def run(app: App, _):
         data = call_.args[1:]
         if call_.function_name == "":
             return Result.default_user_error(info="No data provided")
-        else: # call_.function_name.lower() in ["t", "text"]:
-            qn_instance.note = Note.crate_new_text(name=call_.function_name, data=' '.join(call_.args), tag=qn_instance.tag, parent=qn_instance.note)
+        else:  # call_.function_name.lower() in ["t", "text"]:
+            qn_instance.note = Note.crate_new_text(name=call_.function_name, data=' '.join(call_.args),
+                                                   tag=qn_instance.tag, parent=qn_instance.note)
         # elif call_.function_name.lower() in ["m", "md"]:
         #     qn_instance.note = Note.crate_new_md(name=name, data=data, tag=qn_instance.tag, parent=qn_instance.note)
         # elif call_.function_name.lower() in ["h", "html"]:
@@ -217,7 +217,6 @@ def run(app: App, _):
     @bindings.add('down')
     def show_ac_note(event):
         qn_instance.note.print(debug=app.debug)
-
 
     bic = {
         "exit": exit_,

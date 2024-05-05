@@ -40,8 +40,6 @@ default_export = export(mod_name=Name)
 version = '0.0.1'
 
 
-
-
 def parse_linux_command_output():
     # Führe den Linux-Befehl aus und erhalte die Ausgabe
     result = subprocess.run(["bash", "-c", "compgen -A function -abck"], capture_output=True, text=True)
@@ -359,7 +357,7 @@ def user_input(app,
                active_modul="",
                password=False,
                bindings=None,
-               message=f"~{node()}@>",fh=None) -> CallingObject:
+               message=f"~{node()}@>", fh=None) -> CallingObject:
     if app is None:
         app = get_app(from_="cliF.user_input")
     if completer_dict is None:
@@ -502,7 +500,7 @@ def user_input(app,
             if call_obj.module_name not in completer_dict:
                 return call_obj
             if call_obj.function_name not in (
-            completer_dict[call_obj.module_name] if completer_dict[call_obj.module_name] is not None else {}):
+                completer_dict[call_obj.module_name] if completer_dict[call_obj.module_name] is not None else {}):
                 return call_obj
             kwargs_name = completer_dict[call_obj.module_name][call_obj.function_name].get(
                 'params')  # TODO FIX parsm ist type list
@@ -520,12 +518,12 @@ def user_input(app,
     "build_in_commands": {},
 }])
 async def co_evaluate(app: App,
-                obj: CallingObject or None,
-                build_in_commands: dict,
-                threaded=False,
-                helper=None,
-                return_parm=False
-                ):
+                      obj: CallingObject or None,
+                      build_in_commands: dict,
+                      threaded=False,
+                      helper=None,
+                      return_parm=False
+                      ):
     if obj is None:
         return Result.default_user_error(info="No object specified")
 

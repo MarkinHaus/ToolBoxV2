@@ -1,5 +1,5 @@
-import os
 import importlib.util
+import os
 import time
 
 
@@ -33,5 +33,5 @@ def runnable_dict(s='.py'):
             if hasattr(module, 'run') and callable(module.run) and hasattr(module, 'NAME'):
                 # print("Collecing :", module.NAME)
                 runnable_dict_[module.NAME] = module.run
-    print(f"Getting all runnable took {time.perf_counter() -to:.2f} for {len(runnable_dict_.keys())} elements")
+    print(f"Getting all runnable took {time.perf_counter() - to:.2f} for {len(runnable_dict_.keys())} elements")
     return runnable_dict_

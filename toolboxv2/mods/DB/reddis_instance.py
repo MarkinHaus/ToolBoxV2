@@ -44,13 +44,15 @@ class MiniRedis:
                 data.append(val)
 
         if not data:
-            return Result.ok(info=f"No data found for key {key}", data=None, data_info=data_info).set_origin("Reddis DB")
+            return Result.ok(info=f"No data found for key {key}", data=None, data_info=data_info).set_origin(
+                "Reddis DB")
 
         return Result.ok(data=data, data_info=data_info + key).set_origin("Reddis DB")
 
     def if_exist(self, query: str):
         if self.rcon is None:
-            return Result.default_user_error(info='Pleas run first-redis-connection to connect to a reddis instance').set_origin("Reddis DB")
+            return Result.default_user_error(
+                info='Pleas run first-redis-connection to connect to a reddis instance').set_origin("Reddis DB")
         if not query.endswith('*'):
             return self.rcon.exists(query)
         i = 0
@@ -60,7 +62,8 @@ class MiniRedis:
 
     def set(self, key: str, value) -> Result:
         if self.rcon is None:
-            return Result.default_user_error(info='Pleas run first-redis-connection to connect to a reddis instance').set_origin("Reddis DB")
+            return Result.default_user_error(
+                info='Pleas run first-redis-connection to connect to a reddis instance').set_origin("Reddis DB")
         try:
             self.rcon.set(key, value)
             return Result.ok().set_origin("Reddis DB")
@@ -80,10 +83,12 @@ class MiniRedis:
         if val:
             val = eval(val)
             if not isinstance(val, list):
-                return Result.default_user_error(info="Error key: " + str(key) + " is not a set", exec_code=-4).set_origin("Reddis DB")
+                return Result.default_user_error(info="Error key: " + str(key) + " is not a set",
+                                                 exec_code=-4).set_origin("Reddis DB")
             for new_val in value:
                 if new_val in val:
-                    return Result.default_user_error(info="Error value: " + str(new_val) + " already in list", exec_code=-5).set_origin("Reddis DB")
+                    return Result.default_user_error(info="Error value: " + str(new_val) + " already in list",
+                                                     exec_code=-5).set_origin("Reddis DB")
                 val.append(new_val)
         else:
             val = value
@@ -94,7 +99,8 @@ class MiniRedis:
 
     def delete(self, key, matching=False) -> Result:
         if self.rcon is None:
-            return Result.default_user_error(info='Pleas run first-redis-connection to connect to a reddis instance').set_origin("Reddis DB")
+            return Result.default_user_error(
+                info='Pleas run first-redis-connection to connect to a reddis instance').set_origin("Reddis DB")
 
         del_list = []
         n = 0
@@ -109,7 +115,8 @@ class MiniRedis:
             del_list.append((key, v))
             n += 1
 
-        return Result.ok(data=del_list, data_info=f"Data deleted successfully removed {n} items").set_origin("Reddis DB")
+        return Result.ok(data=del_list, data_info=f"Data deleted successfully removed {n} items").set_origin(
+            "Reddis DB")
 
     def exit(self) -> Result:
         if self.rcon is None:

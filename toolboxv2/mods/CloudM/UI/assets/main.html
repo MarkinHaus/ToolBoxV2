@@ -1,98 +1,101 @@
 <style>
-.component-title {
-  width: 100%;
-  position: absolute;
-  z-index: 2;
-  top: 30px;
-  left: 0;
-  padding: 0;
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 700;
-  color: var(--text-color);
-  background-color: var(--background-color);
-  text-align: center;
-}
+    .component-title {
+      width: 100%;
+      position: absolute;
+      z-index: 2;
+      top: 30px;
+      left: 0;
+      padding: 0;
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text-color);
+      background-color: var(--background-color);
+      text-align: center;
+    }
 
-.tab-container {
-  text-align: center;
-  position: relative;
-  display: flex;
-  flex-direction: row;
-  align-items: flex-start;
-  padding: 2px;
-  background-color: var(--background-color);
-  color: var(--text-color);
-  border-radius: 9px;
-}
+    .tab-container {
+      text-align: center;
+      position: relative;
+      display: flex;
+      flex-direction: row;
+      align-items: flex-start;
+      padding: 2px;
+      background-color: var(--background-color);
+      color: var(--text-color);
+      border-radius: 9px;
+    }
 
-.indicator {
-  content: "";
-  width: 33%;
-  height: 90%;
-  background:  var(--background-color);
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  z-index: 9;
-  border: 0.5px solid rgba(0,0,0, 0.1);
-  box-shadow: 0px 3px 8px rgba(0,0,0, 0.2), 0px 3px 1px rgba(0, 0, 0, 0.1);
-  border-radius: 7px;
-  transition: all 0.2s ease-out;
-}
+    .indicator {
+      content: "";
+      width: 33%;
+      height: 90%;
+      background:  var(--background-color);
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      z-index: 9;
+      border: 0.5px solid rgba(0,0,0, 0.1);
+      box-shadow: 0px 3px 8px rgba(0,0,0, 0.2), 0px 3px 1px rgba(0, 0, 0, 0.1);
+      border-radius: 7px;
+      transition: all 0.2s ease-out;
+    }
 
-.tab {
-  width: 30%;
-  height: 16%;
-  position: absolute;
-  z-index: 99;
-  outline: none;
-  opacity: 0;
-}
+    .tab {
+      width: 30%;
+      height: 16%;
+      position: absolute;
+      z-index: 99;
+      outline: none;
+      opacity: 0;
+    }
 
-.tab_label {
-  width: 100%;
-  height: 16%;
+    .tab_label {
+      width: 100%;
+      height: 16%;
 
-  position: relative;
-  z-index: 999;
+      position: relative;
+      z-index: 999;
 
-  display: flex;
-  align-items: center;
-  justify-content: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
 
-  border: 0;
+      border: 0;
 
-  font-size: 0.75rem;
-  opacity: 0.6;
+      font-size: 0.75rem;
+      opacity: 0.6;
 
-  cursor: pointer;
-}
+      cursor: pointer;
+    }
 
-.tab--1:checked ~ .indicator {
-  left: 2px;
-}
+    .tab--1:checked ~ .indicator {
+      left: 2px;
+    }
 
-.tab--2:checked ~ .indicator {
-  left: 33%;
-}
+    .tab--2:checked ~ .indicator {
+      left: 33%;
+    }
 
-.tab--3:checked ~ .indicator {
-  left: 66%;
-}
+    .tab--3:checked ~ .indicator {
+      left: 66%;
+    }
 
 </style>
 <div class="tab-container" id="tab-container-$WidgetID">
-  <input type="radio" name="tab" id="tab1-$WidgetID" class="tab tab--1" />
-  <label class="tab_label" for="tab1-$WidgetID" hx-get="$root/info" hx-target="#Mcontent-$WidgetID" hx-trigger="click" >Profile</label>
+    <input type="radio" name="tab" id="tab1-$WidgetID" class="tab tab--1"/>
+    <label class="tab_label" for="tab1-$WidgetID" hx-get="$root/info" hx-target="#Mcontent-$WidgetID"
+           hx-trigger="click">Profile</label>
 
-  <input type="radio" name="tab" id="tab2-$WidgetID" class="tab tab--2" />
-  <label class="tab_label" for="tab2-$WidgetID" hx-get="$root/mods" hx-target="#Mcontent-$WidgetID" hx-trigger="click">Mods</label>
+    <input type="radio" name="tab" id="tab2-$WidgetID" class="tab tab--2"/>
+    <label class="tab_label" for="tab2-$WidgetID" hx-get="$root/mods" hx-target="#Mcontent-$WidgetID"
+           hx-trigger="click">Mods</label>
 
-  <input type="radio" name="tab" id="tab3-$WidgetID" class="tab tab--3" />
-  <label class="tab_label" for="tab3-$WidgetID" hx-get="$root/danger" hx-target="#Mcontent-$WidgetID" hx-trigger="click">Danger Zone</label>
+    <input type="radio" name="tab" id="tab3-$WidgetID" class="tab tab--3"/>
+    <label class="tab_label" for="tab3-$WidgetID" hx-get="$root/danger" hx-target="#Mcontent-$WidgetID"
+           hx-trigger="click">Danger Zone</label>
 
-  <div class="indicator"></div>
+    <div class="indicator"></div>
 </div>
 
 <div id="Mcontent-$WidgetID">

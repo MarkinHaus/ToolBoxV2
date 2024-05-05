@@ -4,9 +4,9 @@ from enum import Enum
 from typing import Any, Optional
 
 from ..extras.Style import Spinner
+from ..system.all_functions_enums import SOCKETMANAGER
 from ..system.types import ApiResult, AppType, Result
 from ..toolbox import App
-from ..system.all_functions_enums import SOCKETMANAGER
 
 
 class ProxyUtil:

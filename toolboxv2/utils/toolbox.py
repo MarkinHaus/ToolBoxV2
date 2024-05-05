@@ -310,7 +310,10 @@ class App(AppType, metaclass=Singleton):
             self.logger.info(f"Reloading mod from : {loc + mod_name}")
             self.remove_mod(mod_name, spec=spec, delete=False)
 
-        if (os.path.exists(self.start_dir+'/mods/'+mod_name) or os.path.exists(self.start_dir+'/mods/'+mod_name+'.py')) and (os.path.isdir(self.start_dir+'/mods/'+mod_name) or os.path.isfile(self.start_dir+'/mods/'+mod_name+'.py')):
+        if (os.path.exists(self.start_dir + '/mods/' + mod_name) or os.path.exists(
+            self.start_dir + '/mods/' + mod_name + '.py')) and (
+            os.path.isdir(self.start_dir + '/mods/' + mod_name) or os.path.isfile(
+            self.start_dir + '/mods/' + mod_name + '.py')):
             try:
                 if mfo is None:
                     modular_file_object = import_module(loc + mod_name)
@@ -1001,10 +1004,10 @@ class App(AppType, metaclass=Singleton):
 
     def reload_mod(self, mod_name, spec='app', is_file=True, loc="toolboxv2.mods."):
         if not is_file:
-            mods = self.get_all_mods("./mods/"+mod_name)
+            mods = self.get_all_mods("./mods/" + mod_name)
             for mod in mods:
                 try:
-                    reload(import_module(loc+mod_name+'.'+mod))
+                    reload(import_module(loc + mod_name + '.' + mod))
                     self.print(f"Reloaded {mod_name}.{mod}")
                 except ImportError:
                     self.print(f"Could not load {mod_name}.{mod}")
@@ -1013,7 +1016,7 @@ class App(AppType, metaclass=Singleton):
     def watch_mod(self, mod_name, spec='app', loc="toolboxv2.mods.", use_thread=True):
         from watchfiles import watch
 
-        is_file = os.path.isfile(self.start_dir+'/mods/'+mod_name+'.py')
+        is_file = os.path.isfile(self.start_dir + '/mods/' + mod_name + '.py')
 
         def helper():
             paths = f'mods/{mod_name}' + ('.py' if is_file else '')
@@ -1021,6 +1024,7 @@ class App(AppType, metaclass=Singleton):
             for changes in watch(paths):
                 print(changes)
                 self.reload_mod(mod_name, spec, is_file, loc)
+
         if not use_thread:
             helper()
         else:
@@ -1387,4 +1391,3 @@ def _initialize_toolBox(init_type, init_from, name):
     fh.file_handler_storage.close()
 
     logger.info("Done!")
-

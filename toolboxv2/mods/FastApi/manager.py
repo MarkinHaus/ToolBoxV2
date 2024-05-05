@@ -1,7 +1,7 @@
 import json
 import logging
+import multiprocessing
 import os
-import threading
 import time
 from platform import system
 
@@ -9,8 +9,8 @@ import requests
 
 from toolboxv2 import MainTool, FileHandler, get_app
 from toolboxv2.utils.extras.blobs import BlobFile
+from toolboxv2.utils.extras.qr import print_qrcode_to_console
 from toolboxv2.utils.system.session import Session
-import uvicorn
 
 export = get_app("api_manager.Export").tb
 Name = "FastApi"
@@ -126,7 +126,6 @@ class Tools(MainTool, FileHandler):  # FileHandler
         return self._start_api(api_name, live=False, reload=True, test_override=True, host="127.0.0.1")
 
     def _start_api(self, api_name: str, live=False, reload=False, test_override=False, host="localhost"):
-
         if 'test' in self.app.id and not test_override:
             return "No api in test mode allowed"
 
@@ -176,9 +175,14 @@ class Tools(MainTool, FileHandler):  # FileHandler
         #                 port=api_data['port'], headers=[('data', str(self.app.debug)+':'+ api_name)], reload=reload)
 
         if api_thread is None:
-            self.running_apis[api_name] = threading.Thread(target=os.system, args=(g, ), daemon=True)
+            self.running_apis[api_name] = True
+            _ = "http" + '' if (api_data.get('host', '0').startswith('0') or api_data.get('host', '0').startswith('1') or
+                                api_data.get('host', '0').startswith('localhost')) else 's'
+            _ += '://'
+            print_qrcode_to_console(_ + api_data['host'] + ':' + str(api_data['port']))
+            self.running_apis[api_name] = multiprocessing.Process(target=os.system, args=(g,), daemon=True)
             self.running_apis[api_name].start()
-            return "starting api at "+api_data['host']+':'+str(api_data['port'])
+            return "starting api at " + api_data['host'] + ':' + str(api_data['port'])
 
         self.print("API is already running")
 
@@ -212,8 +216,8 @@ class Tools(MainTool, FileHandler):  # FileHandler
             else:
                 os.system(f"kill -9 {api_pid}")
         api_thread = self.running_apis.get(api_name)
-        if api_thread:
-            api_thread.join()
+        # if api_thread:
+        #     api_thread.join()
         if delete:
             del self.running_apis[api_name]
         os.remove(f"./.data/api_pid_{api_name}")

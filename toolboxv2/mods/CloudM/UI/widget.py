@@ -2,11 +2,12 @@ import uuid
 from dataclasses import asdict
 from datetime import datetime
 
+from fastapi import Request
+
 from toolboxv2 import get_app, App, Result, tbef
-from toolboxv2.mods.CloudM import User
+from ..types import User
 from toolboxv2.mods.CloudM.AuthManager import db_helper_delete_user, db_helper_save_user
 from toolboxv2.mods.SocketManager import get_local_ip
-from fastapi import Request
 
 Name = 'CloudM.UI.widget'
 export = get_app(f"{Name}.Export").tb

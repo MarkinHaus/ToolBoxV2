@@ -915,7 +915,7 @@ class AppType:
             avg_complexity += complexity
             rank = cc_rank(complexity)
             print(f"    Complexity Rank: {rank}")
-            #print(f"    lineno: {block.lineno}")
+            # print(f"    lineno: {block.lineno}")
             print(f"    endline: {block.endline}")
             print(f"    col_offset: {block.col_offset}\n")
         if i <= 0:

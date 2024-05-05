@@ -384,7 +384,7 @@ def parse_args():
     parser.add_argument("-c", "--command", nargs='*', action='append',
                         help="run all registered functions and make measurements")
 
-    parser.add_argument( "--sysPrint", action="store_true", default=False,
+    parser.add_argument("--sysPrint", action="store_true", default=False,
                         help="activate system prints / verbose output")
 
     return parser.parse_args()
@@ -533,7 +533,7 @@ async def main(loop=None):
                 pid_file = f"{info_folder}bg-{args.name}.pid"
             try:
                 _ = await ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
-                             args.port if args.port != 5000 else 6587, timeout=6)
+                                   args.port if args.port != 5000 else 6587, timeout=6)
                 await _.verify()
                 if _.exit_main() != "No data look later":
                     stop(pid_file + '-app.pid', args.name)
@@ -542,7 +542,7 @@ async def main(loop=None):
     elif args.live_application:
         try:
             _ = await ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
-                                                args.port if args.port != 5000 else 6587)
+                               args.port if args.port != 5000 else 6587)
             time.sleep(1)
             await _.verify()
             time.sleep(1)
@@ -556,7 +556,7 @@ async def main(loop=None):
     # tb_app.save_registry_as_enums("utils", "all_functions_enums.py")
 
     if args.install:
-        report = False # tb_app.run_any("CloudM", "install", module_name=args.install)
+        report = False  # tb_app.run_any("CloudM", "install", module_name=args.install)
         if not report:
             if 'n' not in input("Mod not found in local mods_sto install from remote ? (yes,no)"):
                 session = Session(tb_app.get_username(), base=os.getenv("MOD_PROVIDER"))
@@ -613,8 +613,8 @@ async def main(loop=None):
                 else:
                     try:
                         v = tb_app.functions[mod_name].get(list(tb_app.functions[mod_name].keys())[0]).get("version",
-                                                                                                       "unknown (functions only)").replace(
-                        f"{__version__}:", '')
+                                                                                                           "unknown (functions only)").replace(
+                            f"{__version__}:", '')
                     except AttributeError:
                         v = 'unknown'
                     print(f"{mod_name:^35}:{v:^10}")
@@ -653,7 +653,8 @@ async def main(loop=None):
             call.function_name = command[1]
             call.args = command[1:]
             spec = 'app' if not args.live_application else tb_app.id
-            r = tb_app.run_any((call.module_name, call.function_name),tb_run_with_specification=spec,  args_=call.args,  get_results=True)
+            r = tb_app.run_any((call.module_name, call.function_name), tb_run_with_specification=spec, args_=call.args,
+                               get_results=True)
             if asyncio.iscoroutine(r):
                 r = await r
             if isinstance(r, asyncio.Task):

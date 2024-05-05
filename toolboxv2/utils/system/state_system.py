@@ -183,7 +183,6 @@ def get_state_from_app(app, simple_core_hub_url="https://SimpleCoreHub.com/Mods/
     return state
 
 
-
 if __name__ == "__main__":
     # Provide the directory to search for Python files
     app = get_app()

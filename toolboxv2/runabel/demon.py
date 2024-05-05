@@ -84,6 +84,7 @@ def run(app: App, args: AppArgs, programmabel_interface=False, as_server=True):
                     print(f"Server status :", status_info)
                     if status_info == "Server closed":
                         break
+
         t_1 = Thread(target=helper)
         t_1.start()
         gc = app.run_any(tbef.CLI_FUNCTIONS.GET_CHARACTER)

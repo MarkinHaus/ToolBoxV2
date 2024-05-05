@@ -61,23 +61,23 @@ class DaemonUtil:
         if peer:
             connection_type = SocketType.peer
 
-        self.start_server(connection_type)
+        await self.start_server(connection_type)
         app = app if app is not None else get_app(from_=f"DaemonUtil.{self._name}")
         self.online = await asyncio.to_thread(self.connect, app)
         if t:
             await self.online
 
-    def start_server(self, connection_type):
+    async def start_server(self, connection_type):
         """Start the server using app and the socket manager"""
         server_result = get_app(from_="Starting.Daemon").run_any(SOCKETMANAGER.CREATE_SOCKET,
-                                                                 get_results=True,
-                                                                 name=self._name,
-                                                                 host=self.host,
-                                                                 port=self.port,
-                                                                 type_id=connection_type,
-                                                                 max_connections=-1,
-                                                                 return_full_object=True,
-                                                                 unix_file=self.unix_socket)
+                                                                       get_results=True,
+                                                                       name=self._name,
+                                                                       host=self.host,
+                                                                       port=self.port,
+                                                                       type_id=connection_type,
+                                                                       max_connections=-1,
+                                                                       return_full_object=True,
+                                                                       unix_file=self.unix_socket)
         if server_result.is_error():
             raise Exception(f"Server error: {server_result.print(False)}")
         if not server_result.is_data():

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="/web/scripts/AutoMarkdown.js" type="module" defer></script>
-    <script src="/web/scripts/OverlayUtility.js"></script>
+    <script src="/web/scripts/OverlayUtility.js" type="module"></script>
 
     <script src="/node_modules/htmx.org/dist/htmx.min.js"></script>
     <script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
@@ -39,12 +39,14 @@
 <div class="note_widget-container autoMarkdownVisible">
     <div class="none">
 
-    <div class="search-bar" id="searchBar">
-        <h2>Add Tag</h2>
-        <label for="searchInput">Name</label><input type="text" id="searchInput" class="searchInput" placeholder="tag name">
-        <hr/>
-        <label for="tagColor">Color</label><input type="color" id="tagColor" class="tagColor" style="width: 80%" placeholder="tag color red green blue or #00000 #...">
-    </div>
+        <div class="search-bar" id="searchBar">
+            <h2>Add Tag</h2>
+            <label for="searchInput">Name</label><input type="text" id="searchInput" class="searchInput"
+                                                        placeholder="tag name">
+            <hr/>
+            <label for="tagColor">Color</label><input type="color" id="tagColor" class="tagColor" style="width: 80%"
+                                                      placeholder="tag color red green blue or #00000 #...">
+        </div>
 
     </div>
 
@@ -62,7 +64,7 @@
 
     <hr/>
     <div style="text-align: right;">
-    <button id="editButton" onclick="
+        <button id="editButton" onclick="
 {
         var noteDivData = document.getElementById('noteData');
         var noteDivTarget = document.getElementById('noteTarget');
@@ -93,9 +95,10 @@
             noteDivTarget.dispatchEvent(new CustomEvent('markdownVisible', {bubbles:true, cancelable:false}))
             editButton.innerText = 'Edit';
         }
-    }">Edit</button>
+    }">Edit
+        </button>
 
-    <button  onclick="{
+        <button onclick="{
 
         window.overlayUtility.createOverlay({
             content: document.getElementById('searchBar').innerHTML,
@@ -114,7 +117,10 @@
                 },
             ],
         })
-    }">Add Tag</button></div><div class="tag-section" style="text-align: right;
+    }">Add Tag
+        </button>
+    </div>
+    <div class="tag-section" style="text-align: right;
             margin-top: 10px;" id="tagSection"></div>
 </div>
 <script>

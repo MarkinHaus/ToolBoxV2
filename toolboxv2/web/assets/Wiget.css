@@ -20,7 +20,7 @@
     left: 50%;
     transform: translateX(-50%);
     background: var(--background-color);
-    padding: 0 5px;
+    color: var(--text-color);
     z-index: 1;
     border-radius: 5px;
     font-size: 0.7rem;

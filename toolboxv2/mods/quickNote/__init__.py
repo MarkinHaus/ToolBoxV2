@@ -3,6 +3,7 @@ from toolboxv2 import get_logger
 try:
     from .quickNote import Tools
     from .QnWidget import get_widget
+
     quickNote_ACTIVE = True
 except ImportError as e:
     quickNote_ACTIVE = e

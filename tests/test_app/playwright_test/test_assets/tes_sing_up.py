@@ -1,7 +1,7 @@
 import time
 
 import faker
-from playwright.sync_api import Playwright, sync_playwright, expect
+from playwright.sync_api import Playwright, sync_playwright
 
 from toolboxv2 import get_app, tbef
 

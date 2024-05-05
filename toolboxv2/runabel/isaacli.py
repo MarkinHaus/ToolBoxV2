@@ -168,9 +168,12 @@ def run(app: App, args):
         messages = msg_data.get('messages', {})
         print(Style.GREEN2("PROMPT START "))
         for message in messages:
-            caller = Style.WHITE(message.get('role', 'NONE').upper()) if message.get('role', 'NONE') == 'user' else 'NONE'
-            caller = Style.CYAN(message.get('role', 'NONE').upper()) if message.get('role', 'NONE') == 'system' else caller
-            caller = Style.VIOLET2(message.get('role', 'NONE').upper()) if message.get('role', 'NONE') == 'assistent' else caller
+            caller = Style.WHITE(message.get('role', 'NONE').upper()) if message.get('role',
+                                                                                     'NONE') == 'user' else 'NONE'
+            caller = Style.CYAN(message.get('role', 'NONE').upper()) if message.get('role',
+                                                                                    'NONE') == 'system' else caller
+            caller = Style.VIOLET2(message.get('role', 'NONE').upper()) if message.get('role',
+                                                                                       'NONE') == 'assistent' else caller
             print(f"\n{caller}\n{Style.GREY(message.get('content', '--#--'))}\n")
         print(Style.GREEN("PROMPT END -- "))
 

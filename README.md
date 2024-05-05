@@ -1,23 +1,22 @@
 ## ReSimpleToolBox
+
 [![image](https://img.shields.io/pypi/v/ToolBoxV2.svg)](https://pypi.python.org/pypi/ToolBoxV2)
 [![image](https://img.shields.io/conda/vn/conda-forge/ToolBoxV2.svg)](https://anaconda.org/conda-forge/ToolBoxV2)
 
 [![image](https://pyup.io/repos/github/MarkinHaus/ToolBoxV2/shield.svg)](https://pyup.io/repos/github/MarkinHaus/ToolBoxV2)
 [![image](https://img.shields.io/badge/Donate-Buy%20me%20a%20coffee-yellowgreen.svg)](https://pyup.io/repos/github/MarkinHaus/ToolBoxV2)
 
-
 ** Command line interface for interactions with the ToolBox Network.  **
 
--   License: Apache Software License 2.0
-
+- License: Apache Software License 2.0
 
 Installation
 ------------
 
     pip install ToolBoxV2
 
+- Github
 
--  Github
 ```
 git clone git://github.com/MarkinHaus/ToolBoxV2
 ```
@@ -53,10 +52,10 @@ Usage
       -w host, --host host  Specify a host for dev | api
       -l, --load-all-mod-in-files
 
-
 Setup
 ----------
 Set up main
+
 ~~~~~~~~~~~~~~~~~~~
 ToolBoxV2 -init main -f init.config
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -65,40 +64,54 @@ ToolBoxV2 -init main -f init.config
     ~DESKTOP-GIT@>y
 
 - Set up mod settings config / data
+
 ~~~~~~
 ToolBoxV2 -init {mod name} -n {name} -f {loc of init file}
 ~~~~~~~~~~~~~~~~~~~
 
 First Start
 ----------
+
 ~~~~~~~~~~~~~~~~~~~
     $ ToolBoxV2 || ToolBoxV2 -n {name}
 ~~~~~~~~~~~~~~~~~~~
+
 ~~~~~~~~~~~~~~~~~~~
     ~DESKTOP-GIT@>load-mod cloudM
     ~DESKTOP-GIT:CLOUDM@>create-account
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 - enabling all mods in mods folder
+
 ~~~~~~
     $ ToolBoxV2 -l || ToolBoxV2 -n {name} -l
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 in TB:
+
 ~~~~~~
 cloudM create-account
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 - or
+
 ~~~~~~
 ~DESKTOP-GIT@>cloudM
 ~DESKTOP-GIT:CLOUDM@>create-account
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 - Log in
+
 ~~~~~~
 ~DESKTOP-GIT:CLOUDM@>login {username} {password}
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-** ToolBox is a command line interface for interactions with the ToolBox Network. It provides a command line interface for easy and efficient interactions with the ToolBox Network. With ToolBox, you can interact with the ToolBox Network, a network of tools and resources for various tasks. ToolBox is designed to be easy to use and is extensible. You can add your own tools and resources to the ToolBox Network. **
-
+** ToolBox is a command line interface for interactions with the ToolBox Network. It provides a command line interface
+for easy and efficient interactions with the ToolBox Network. With ToolBox, you can interact with the ToolBox Network, a
+network of tools and resources for various tasks. ToolBox is designed to be easy to use and is extensible. You can add
+your own tools and resources to the ToolBox Network. **
 
 ## Credits
 
-This package was created with [Cookiecutter](https://github.com/cookiecutter/cookiecutter) and the [giswqs/pypackage](https://github.com/giswqs/pypackage) project template.
+This package was created with [Cookiecutter](https://github.com/cookiecutter/cookiecutter) and
+the [giswqs/pypackage](https://github.com/giswqs/pypackage) project template.

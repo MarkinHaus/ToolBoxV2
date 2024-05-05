@@ -2,12 +2,13 @@
 
 """Tests for `toolboxv2` package."""
 import asyncio
+import time
 import unittest
-from toolboxv2 import MainTool, FileHandler, Style, get_app
+
 from rich.traceback import install
 
+from toolboxv2 import MainTool, FileHandler, Style, get_app
 from toolboxv2.utils.security.cryp import Code
-import time
 
 install(show_locals=True)
 

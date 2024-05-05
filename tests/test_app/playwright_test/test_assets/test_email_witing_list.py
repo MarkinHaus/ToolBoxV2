@@ -1,6 +1,6 @@
 import time
 
-from playwright.sync_api import Playwright, sync_playwright, expect
+from playwright.sync_api import Playwright, sync_playwright
 
 
 def test_run_sing_in(playwright: Playwright) -> None:
@@ -41,7 +41,6 @@ def test_run_email(playwright: Playwright) -> None:
 
 
 def test_run_links(playwright: Playwright) -> None:
-
     browser = playwright.chromium.launch(headless=False)
     context = browser.new_context()
     page = context.new_page()

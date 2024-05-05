@@ -30,5 +30,3 @@ async def run(_, _0):
         await _.run_runnable('TBtray')
     except:
         await _.run_runnable('cli')
-
-

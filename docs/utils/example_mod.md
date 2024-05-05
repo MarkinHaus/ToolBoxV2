@@ -42,5 +42,7 @@ Beispielcode für ein einfaches Toolboxv2-Modul
         return "Hallo Toolboxv2!"
 
     # Weitere Funktionen und Logik hier...
+
 `
-Diese Dokumentation bietet einen Überblick über die Erstellung eines Toolboxv2-Moduls. Beachten Sie, dass die spezifischen Anforderungen und Funktionen Ihres Moduls von den Zielen und der Architektur der Toolboxv2 abhängen.
+Diese Dokumentation bietet einen Überblick über die Erstellung eines Toolboxv2-Moduls. Beachten Sie, dass die
+spezifischen Anforderungen und Funktionen Ihres Moduls von den Zielen und der Architektur der Toolboxv2 abhängen.

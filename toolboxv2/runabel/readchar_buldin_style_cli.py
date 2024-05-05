@@ -1,16 +1,15 @@
 """Console script for toolboxv2. min dep readchar Style"""
+import json
+import os
 # Import default Pages
 import sys
-import os
 from platform import system, node
-
-import json
-from pygments import highlight
-from pygments.lexers import JsonLexer
-from pygments.formatters import TerminalFormatter
 
 # Import public Pages
 import readchar
+from pygments import highlight
+from pygments.formatters import TerminalFormatter
+from pygments.lexers import JsonLexer
 
 from toolboxv2 import App, Style
 from toolboxv2.utils import Singleton
@@ -21,7 +20,6 @@ prefix = Style.CYAN(f"~{node()}@>")
 
 
 def user_input(app: App):
-
     get_input = True
     command = ""
     print_command = []

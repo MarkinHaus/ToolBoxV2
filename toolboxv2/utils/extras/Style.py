@@ -21,8 +21,6 @@ def stram_print(text):
         max_typing_speed=max_typing_speed, auto_new_line=False)
 
 
-
-
 def cls():
     if system() == "Windows":
         os.system("cls")
@@ -412,7 +410,8 @@ def extract_python_code(text):
 class Spinner:
     """A simple spinner class"""
 
-    def __init__(self, message: str = "Loading...", delay: float = 0.1, symbols=None, count_down=False, time_in_s=0) -> None:
+    def __init__(self, message: str = "Loading...", delay: float = 0.1, symbols=None, count_down=False,
+                 time_in_s=0) -> None:
         """Initialize the spinner class
         Args:
             message (str): The message to display.
@@ -467,13 +466,13 @@ class Spinner:
         t0 = time.time()
         while self.running:
             if self.contd:
-                _ = self.max_t-(time.time()-t0)
+                _ = self.max_t - (time.time() - t0)
                 extra = f"{_:.2f}"
                 if _ < 0:
                     self.contd = False
                     t0 = time.time()
             else:
-                extra = f"{time.time()-t0:.2f}"
+                extra = f"{time.time() - t0:.2f}"
             sys.stdout.write(f"\r{next(self.spinner)} {self.message} | {extra} ")
             sys.stdout.flush()
             time.sleep(self.delay)

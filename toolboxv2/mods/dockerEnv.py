@@ -3,10 +3,10 @@ import os
 import tempfile
 import time
 
-
 try:
     import docker
     from docker.models.containers import Container
+
     DOCKER = True
 except ModuleNotFoundError:
     DOCKER = False

@@ -1,9 +1,9 @@
-from .types import User
-from .module import Tools
-from .extras import version as _
 from .ModManager import version as _
-from .UserInstances import UserInstances
 from .UI.widget import get_widget
+from .UserInstances import UserInstances
+from .extras import version as _
+from .module import Tools
+from .types import User
 
 tools = Tools
 Name = 'CloudM'

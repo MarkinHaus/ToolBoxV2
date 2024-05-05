@@ -8,9 +8,9 @@ labels: bug
 
 ### Environment Information
 
--   toolboxv2 version:
--   Python version:
--   Operating System:
+- toolboxv2 version:
+- Python version:
+- Operating System:
 
 ### Description
 

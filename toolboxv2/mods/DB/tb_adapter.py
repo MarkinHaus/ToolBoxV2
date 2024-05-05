@@ -3,11 +3,11 @@ from abc import ABC
 from typing import Any
 
 from toolboxv2 import MainTool, FileHandler, Result, get_app
-from .reddis_instance import MiniRedis
-from .local_instance import MiniDictDB
-from .types import DatabaseModes, AuthenticationTypes
-from toolboxv2.utils.system.types import ToolBoxInterfaces
 from toolboxv2.utils.security.cryp import Code
+from toolboxv2.utils.system.types import ToolBoxInterfaces
+from .local_instance import MiniDictDB
+from .reddis_instance import MiniRedis
+from .types import DatabaseModes, AuthenticationTypes
 
 Name = "DB"
 export = get_app(from_="DB.EXPORT").tb
@@ -79,7 +79,9 @@ class Tools(MainTool, FileHandler):
         self.encoding = 'utf-8'
 
         self.data_base: MiniRedis or MiniDictDB or DB or None = None
-        self.mode = DatabaseModes.crate(os.getenv("DB_MODE_KEY", "LC") if 'test' not in get_app("DB_MODE_KEY").id else os.getenv("DB_MODE_KEY_TEST", "LC"))
+        self.mode = DatabaseModes.crate(
+            os.getenv("DB_MODE_KEY", "LC") if 'test' not in get_app("DB_MODE_KEY").id else os.getenv("DB_MODE_KEY_TEST",
+                                                                                                     "LC"))
         self.url = None
         self.passkey = None
         self.user_name = None

@@ -3,22 +3,21 @@ import base64
 import datetime
 import json
 import os
-from urllib.parse import quote
 import uuid
-import webauthn
 from dataclasses import asdict
+from urllib.parse import quote
 
 import jwt
+import webauthn
 from pydantic import BaseModel
+from pydantic import validator
 from webauthn.helpers.exceptions import InvalidAuthenticationResponse, InvalidRegistrationResponse
 from webauthn.helpers.structs import AuthenticationCredential, RegistrationCredential
 
-from toolboxv2.mods.DB.types import DatabaseModes
-from toolboxv2.utils.system.types import ToolBoxInterfaces, ApiResult
 from toolboxv2 import get_app, App, Result, tbef, ToolBox_over, get_logger
-
+from toolboxv2.mods.DB.types import DatabaseModes
 from toolboxv2.utils.security.cryp import Code
-from pydantic import validator
+from toolboxv2.utils.system.types import ToolBoxInterfaces, ApiResult
 from .types import UserCreator, User
 
 Name = 'CloudM.AuthManager'
@@ -244,9 +243,10 @@ class AddUserDeviceObject(BaseModel):
 
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True, test=False)
-async def create_user(app: App, data: CreateUserObject = None, username: str = 'test-user', email: str = 'test@user.com',
-                pub_key: str = '',
-                invitation: str = '', web_data=False, as_base64=False) -> ApiResult:
+async def create_user(app: App, data: CreateUserObject = None, username: str = 'test-user',
+                      email: str = 'test@user.com',
+                      pub_key: str = '',
+                      invitation: str = '', web_data=False, as_base64=False) -> ApiResult:
     username = data.name if data is not None else username
     email = data.email if data is not None else email
     pub_key = data.pub_key if data is not None else pub_key
@@ -329,8 +329,8 @@ async def get_magick_link_email(app: App, username):
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True, test=False)
 async def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 'test-user',
-                    pub_key: str = '',
-                    invitation: str = '', web_data=False, as_base64=False) -> ApiResult:
+                          pub_key: str = '',
+                          invitation: str = '', web_data=False, as_base64=False) -> ApiResult:
     username = data.name if data is not None else username
     pub_key = data.pub_key if data is not None else pub_key
     invitation = data.invitation if data is not None else invitation
@@ -653,7 +653,7 @@ async def validate_device(app: App, data: VdUSER) -> ApiResult:
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.remote, api=True, test=False)
 async def authenticate_user_get_sync_key(app: App, username: str, signature: str or bytes, get_user=False,
-                                   web=False) -> ApiResult:
+                                         web=False) -> ApiResult:
     if app is None:
         app = get_app(Name + '.authenticate_user_get_sync_key')
 
@@ -808,7 +808,7 @@ class TestAppGen:
 async def helper_test_user():
     app: App
     test_app, app = helper_gen_test_app().get()
-    username = "testUser123"+uuid.uuid4().hex
+    username = "testUser123" + uuid.uuid4().hex
     email = "test_mainqmail.com"
     db_helper_delete_user(app, username, "*", matching=True)
     # Benutzer erstellen
@@ -826,7 +826,7 @@ async def helper_test_user():
 async def helper_test_create_user_and_login():
     app: App
     test_app, app = helper_gen_test_app().get()
-    username = "testUser123"+uuid.uuid4().hex
+    username = "testUser123" + uuid.uuid4().hex
     email = "test_mainqmail.com"
     r = await crate_local_account(app, username, email, get_invitation(app).get())
     r2 = await local_login(app, username)
@@ -842,7 +842,7 @@ async def helper_test_validate_device(app: App = None):
     test_app, app = helper_gen_test_app().get()
 
     # Schritt 1: Benutzer erstellen
-    username = "testUser"+uuid.uuid4().hex
+    username = "testUser" + uuid.uuid4().hex
     email = "test@example.com"
     pub_key, pri_key = Code.generate_asymmetric_keys()
     user = UserCreator(name=username, email=email, user_pass_pub_devices=[pub_key], pub_key=pub_key)
@@ -879,4 +879,3 @@ def test_helper1():
 
 def test_helper2():
     asyncio.run(helper_test_validate_device[0]())
-

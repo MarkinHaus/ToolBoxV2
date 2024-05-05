@@ -1,8 +1,7 @@
 import pickle
 import unittest
-from unittest.mock import patch, MagicMock
 from pathlib import Path
-import os
+from unittest.mock import patch, MagicMock
 
 from toolboxv2 import Code
 from toolboxv2.utils.extras.blobs import BlobStorage, BlobFile

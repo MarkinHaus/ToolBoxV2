@@ -2,8 +2,8 @@ import json
 import os
 
 from toolboxv2 import Result
-from .types import AuthenticationTypes
 from toolboxv2.utils.security.cryp import Code
+from .types import AuthenticationTypes
 
 
 class MiniDictDB:
@@ -60,7 +60,8 @@ class MiniDictDB:
         if key and value:
             self.data[key] = value
             return Result.ok().set_origin("Dict DB")
-        return Result.default_user_error(info=f"key is {key}, type{type(key)}, value is {value}, type{type(value)}").set_origin("Dict DB")
+        return Result.default_user_error(
+            info=f"key is {key}, type{type(key)}, value is {value}, type{type(value)}").set_origin("Dict DB")
 
     def append_on_set(self, key: str, value: list):
         if key in self.data:
@@ -140,4 +141,3 @@ def load_from_json(filename):
 
     with open(filename, 'r') as file:
         return json.load(file)
-

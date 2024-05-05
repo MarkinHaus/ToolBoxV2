@@ -1,14 +1,12 @@
 import asyncio
 import datetime
 import os
-import subprocess
 import threading
 
 import psutil
-
 from prompt_toolkit import HTML
 from prompt_toolkit.history import FileHistory
-from prompt_toolkit.shortcuts import set_title, yes_no_dialog
+from prompt_toolkit.shortcuts import set_title
 
 from toolboxv2 import App, Result, tbef
 from toolboxv2.mods.cli_functions import parse_command_output, parse_linux_command_output, replace_bracketed_content

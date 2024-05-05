@@ -618,4 +618,3 @@ def colorize_ascii_art(ascii_art):
             else:
                 colored_line += char
         print(colored_line)
-

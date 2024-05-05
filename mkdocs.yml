@@ -21,19 +21,19 @@ plugins:
     - search
     - mkdocstrings
     - git-revision-date
-    - mkdocs-jupyter:
-          include_source: True
-        #   ignore_h1_titles: True
-        #   execute: True
-        #   execute_ignore: "*.ipynb"
+    -   mkdocs-jupyter:
+            include_source: True
+            #   ignore_h1_titles: True
+            #   execute: True
+            #   execute_ignore: "*.ipynb"
 
 markdown_extensions:
     - attr_list
     - pymdownx.superfences
-    - pymdownx.highlight:
-          linenums: true
-    - toc:
-          permalink: true
+    -   pymdownx.highlight:
+            linenums: true
+    -   toc:
+            permalink: true
 
 # extra:
 #     analytics:
@@ -41,13 +41,13 @@ markdown_extensions:
 #         property: UA-XXXXXXXXX-X
 
 nav:
-    - Home: index.md
-    - Installation: installation.md
-    - Usage: usage.md
-    - Contributing: contributing.md
-    - FAQ: faq.md
-    - Changelog: changelog.md
-    - Report Issues: https://github.com/MarkinHaus/ReSimpleToolBox/issues
-    - API Reference:
-          - toolboxv2 module: toolboxv2.md
-          - utils: /utils
+    -   Home: index.md
+    -   Installation: installation.md
+    -   Usage: usage.md
+    -   Contributing: contributing.md
+    -   FAQ: faq.md
+    -   Changelog: changelog.md
+    -   Report Issues: https://github.com/MarkinHaus/ReSimpleToolBox/issues
+    -   API Reference:
+            -   toolboxv2 module: toolboxv2.md
+            -   utils: /utils
