@@ -114,6 +114,9 @@ class Tools(MainTool, FileHandler):
 
     def get_sender_receiver_que_ws(self, url, websocket_id):
 
+        if not (url and websocket_id):
+            return "Invalid Inputs", None
+
         self.print(Style.WHITE("Starting WebSocket Builder"))
 
         send_queue = queue.Queue()

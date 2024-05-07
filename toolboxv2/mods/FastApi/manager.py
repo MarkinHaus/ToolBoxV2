@@ -165,8 +165,8 @@ class Tools(MainTool, FileHandler):  # FileHandler
         self.print(api_data)
         g = f"uvicorn toolboxv2.mods.FastApi.fast_api_main:app --host {api_data['host']}" \
             f" --port {api_data['port']} --header data:{self.app.debug}:{api_name}"
-        if test_override:
-            g += ' --reload --reload-dir ./utils' if reload else ''
+        # if test_override:
+        #     g += ' --reload --reload-dir ./utils' if reload else ''
 
         print("Running command : " + g)
 
@@ -247,3 +247,4 @@ class Tools(MainTool, FileHandler):  # FileHandler
             await self.stop_api(key, delete=False)
         self.running_apis = {}
         self.save_file_handler()
+

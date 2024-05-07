@@ -42,6 +42,7 @@ class AppArgs:
     profiler = None
     hot_reload = False
     live_application = True
+    sysPrint = False
 
     def default(self):
         return self

@@ -52,6 +52,8 @@ def get_user_from_request(app, request):
 async def save_user_sto(app, request, name: str = "Main-User-DBord"):
     if app is None:
         app = get_app(f"{Name}.open")
+    if request is None:
+        return None
     user = get_user_from_request(app, request)
     b = await request.body()
 

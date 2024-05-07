@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import queue
@@ -293,7 +294,8 @@ class EventManagerClass:
 
     def start(self):
         self.running = True
-        threading.Thread(target=self.receiver, daemon=True).start()
+        asyncio.to_thread(self.receiver)
+        # threading.Thread(target=self.receiver, daemon=True).start()
 
     def make_event_from_fuction(self, fuction, name, *args, source_types=SourceTypes.F,
                                 scope=Scope.local,
@@ -694,7 +696,7 @@ class Tools(MainTool, EventManagerClass):
         self.stop()
         return "closedEventManager"
 
-    @export(mod_name=Name, name='start_web_events', version=version)
+    @export(mod_name=Name, name='start_web_events', version=version, test=False)
     async def startWebEvents(self):
         await self.add_js_route()
 

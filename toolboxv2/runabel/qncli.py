@@ -298,4 +298,3 @@ def run(app: App, _):
         print("Done")
 
     set_title("")
-    app.exit()

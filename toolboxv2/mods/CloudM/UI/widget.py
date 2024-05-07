@@ -242,7 +242,7 @@ def danger(app, request: Request or None = None):
 # danger functions
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-def stop(app, request: Request or None = None):
+async def stop(app, request: Request or None = None):
     if request is None:
         return Result.default_internal_error("No request specified")
     user = get_user_from_request(app, request=request)
@@ -250,7 +250,7 @@ def stop(app, request: Request or None = None):
         return f"<h2>Invalid User</h2>"
     app.run_any(tbef.CLOUDM_USERINSTANCES.CLOSE_USER_INSTANCE, uid=user.uid)
     if user.name == 'root':
-        app.exit()
+        await app.a_exit()
         exit()
     return f"<h2>Stop system {user.name=}</h2>"
 

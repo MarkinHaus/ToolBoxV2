@@ -580,7 +580,7 @@ async def main(loop=None):
 
     if args.lm:
         edit_logs()
-        tb_app.exit()
+        await tb_app.a_exit()
         exit(0)
 
     if args.sm:
@@ -588,7 +588,7 @@ async def main(loop=None):
             setup_service_linux()
         if tb_app.system_flag == "Windows":
             setup_service_windows()
-        tb_app.exit()
+        await tb_app.a_exit()
         exit(0)
 
     if args.load_all_mod_in_files or args.save_function_enums_in_file or args.get_version or args.profiler or args.background_application_runner or args.test:
@@ -598,7 +598,7 @@ async def main(loop=None):
         if args.save_function_enums_in_file:
             tb_app.save_registry_as_enums("utils\\system", "all_functions_enums.py")
             tb_app.alive = False
-            tb_app.exit()
+            await tb_app.a_exit()
             return 0
         if args.debug:
             tb_app.print_functions()
@@ -620,13 +620,13 @@ async def main(loop=None):
                     print(f"{mod_name:^35}:{v:^10}")
             print("\n")
             tb_app.alive = False
-            tb_app.exit()
+            await tb_app.a_exit()
             return 0
 
     if args.profiler:
         profile_execute_all_functions(tb_app)
         tb_app.alive = False
-        tb_app.exit()
+        await tb_app.a_exit()
         return 0
 
     if args.command and not args.background_application:

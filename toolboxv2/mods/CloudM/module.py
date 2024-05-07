@@ -81,6 +81,8 @@ class Tools(MainTool, FileHandler):
                 ["make_installable", "crate pack for toolbox"],
             ],
             "name": "cloudM",
+            "Version": self.get_version,
+            "show_version": self.s_version,
         }
 
         self.logger.info("init FileHandler cloudM")
@@ -111,13 +113,16 @@ class Tools(MainTool, FileHandler):
         self.load_file_handler()
         # self.get_version()
 
+    def s_version(self):
+        return self.version
+
     def on_exit(self):
         self.save_file_handler()
 
     def get_version(self):  # Add root and upper and controll comander pettern
         version_command = self.app.config_fh.get_file_handler("provider::")
 
-        url = version_command + "api/cloudm/show_version"
+        url = version_command + "/api/Cloudm/show_version"
 
         try:
             self.api_version = requests.get(url, timeout=5).json()["res"]
@@ -129,6 +134,7 @@ class Tools(MainTool, FileHandler):
                     f" Error retrieving version from {url}\n\t run : cloudM first-web-connection\n"
                 ))
             self.logger.error(f"Error retrieving version from {url}")
+        return self.version
 
     def save_mod_snapshot(self, mod_name, provider=None, tb_state: TbState or None = None):
         if provider is None:

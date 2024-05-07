@@ -7,6 +7,7 @@ from urllib.parse import quote
 from toolboxv2 import Style, Result, tbef, App
 from toolboxv2 import get_app, Code
 from .AuthManager import get_invitation
+from ...utils.extras.qr import print_qrcode_to_console
 
 Name = 'CloudM'
 version = "0.0.2"
@@ -194,8 +195,8 @@ async def register_initial_root_user(app: App, email=None):
                       email=email,
                       invitation=invitation, get_results=True)
     # awaiating user cration
-    rport = await ret.get()
-    print(rport)
+    rport = await ret.aget()
+    print(f"[{rport=}]")
     if rport.is_error():
         return rport
     await asyncio.sleep(1)
@@ -208,23 +209,10 @@ async def register_initial_root_user(app: App, email=None):
         f':{app.args_sto.port}' if app.args_sto.host == 'localhost' else "5000")
     url = f"{base_url}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
 
-    try:
-        import qrcode
+    print_qrcode_to_console(url)
 
-        qr = qrcode.main.QRCode(
-            version=1,
-            error_correction=qrcode.constants.ERROR_CORRECT_Q,
-            box_size=1,
-            border=2,
-        )
-        qr.add_data(url)
-        qr.make(fit=True)
-
-        qr.print_ascii(invert=True)
-    except ImportError:
-        pass
     print(url)
-    return ret.lazy_return('internal', data=url)
+    return Result.ok(url)
 
 
 @no_test
@@ -258,10 +246,19 @@ def show_version(self):
     return self.version
 
 
-@test_only
-async def tb_test_register_initial_root_user():
-    app = get_app(from_="test_register_initial_root_user", name="debug-test")
-    db = app.get_mod("DB")
-    db.edit_programmable()
-
-    await register_initial_root_user(app, "test@test.com")
+#@test_only
+#async def tb_test_register_initial_root_user(app: App):
+#    print("tb_test_register_initial_root_user 0")
+#    if app is None:
+#        app = get_app(from_="test_register_initial_root_user", name="debug-test")
+#
+#    print("tb_test_register_initial_root_user 1")
+#    db = app.get_mod("DB")
+#
+#    print("tb_test_register_initial_root_user 2")
+#    db.edit_programmable()
+#
+#    print("tb_test_register_initial_root_user 3")
+#    s = await register_initial_root_user(app, "test@test.com")
+#    print("tb_test_register2", s)
+#    print("DONE running tb_test_register_initial_root_user")

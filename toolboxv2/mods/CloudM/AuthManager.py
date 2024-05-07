@@ -9,7 +9,7 @@ from urllib.parse import quote
 
 import jwt
 import webauthn
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from pydantic import validator
 from webauthn.helpers.exceptions import InvalidAuthenticationResponse, InvalidRegistrationResponse
 from webauthn.helpers.structs import AuthenticationCredential, RegistrationCredential
@@ -33,24 +33,24 @@ def b64decode(s: str) -> bytes:
 
 
 class CustomAuthenticationCredential(AuthenticationCredential):
-    @validator('raw_id', pre=True)
+    @field_validator('raw_id')
     def convert_raw_id(cls, v: str):
         assert isinstance(v, str), 'raw_id is not a string'
         return b64decode(v)
 
-    @validator('response', pre=True)
+    @field_validator('response')
     def convert_response(cls, data: dict):
         assert isinstance(data, dict), 'response is not a dictionary'
         return {k: b64decode(v) for k, v in data.items()}
 
 
 class CustomRegistrationCredential(RegistrationCredential):
-    @validator('raw_id', pre=True)
+    @field_validator('raw_id')
     def convert_raw_id(cls, v: str):
         assert isinstance(v, str), 'raw_id is not a string'
         return b64decode(v)
 
-    @validator('response', pre=True)
+    @field_validator('response')
     def convert_response(cls, data: dict):
         assert isinstance(data, dict), 'response is not a dictionary'
         return {k: b64decode(v) for k, v in data.items()}
@@ -498,7 +498,7 @@ async def crate_local_account(app: App, username: str, email: str = '', invitati
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.cli, test=False)
 async def local_login(app: App, username: str) -> Result:
     if app is None:
-        app = get_app(Name + '.crate_local_account')
+        app = get_app(Name + '.local_login')
     user_pri = app.config_fh.get_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8])
     if user_pri is None:
         return Result.ok(info="No User registered on this device")
@@ -792,7 +792,7 @@ def get_test_app_gen(app=None):
 def helper_gen_test_app():
     _ = get_test_app_gen(None)
     TestAppGen.t = _, next(_)
-    prep_test[0]()
+    prep_test()
     return TestAppGen
 
 
@@ -870,12 +870,12 @@ async def helper_test_validate_device(app: App = None):
 
 
 def test_helper0():
-    asyncio.run(helper_test_user[0]())
+    asyncio.run(helper_test_user())
 
 
 def test_helper1():
-    asyncio.run(helper_test_create_user_and_login[0]())
+    asyncio.run(helper_test_create_user_and_login())
 
 
 def test_helper2():
-    asyncio.run(helper_test_validate_device[0]())
+    asyncio.run(helper_test_validate_device())

@@ -395,4 +395,3 @@ def run(app: App, args):
         print("Done")
 
     set_title("")
-    app.exit()

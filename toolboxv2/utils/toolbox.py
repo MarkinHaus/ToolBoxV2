@@ -303,6 +303,24 @@ class App(AppType, metaclass=Singleton):
         loc = self._pre_lib_mod(mod_name, file_type)
         return self.inplace_load_instance(mod_name, loc=loc, **kwargs)
 
+    def helper_install_pip_module(self, module_name):
+        self.print(f"Installing {module_name} GREEDY")
+        os.system(f"pip install {module_name}")
+
+    def python_module_import_classifier(self, mod_name, error_message):
+
+        if error_message.startswith("No module named 'toolboxv2.utils"):
+            return Result.default_internal_error(f"404 {error_message.split('utils')[1]} not found")
+        if error_message.startswith("No module named 'toolboxv2.mods"):
+            # TODO: install from remote optional
+            return Result.default_internal_error(f"404 {error_message.split('mods')[1]} not found")
+        if error_message.startswith("No module named '"):
+            # TODO: install from remote optional
+            pip_requ = error_message.split("'")[1].replace("'", "").strip()
+            # if 'y' in input(f"\t\t\tAuto install {pip_requ} Y/n").lower:
+            return self.helper_install_pip_module(pip_requ)
+            # return Result.default_internal_error(f"404 {pip_requ} not found")
+
     def inplace_load_instance(self, mod_name, loc="toolboxv2.mods.", spec='app', save=True, mfo=None):
         if self.dev_modi and loc == "toolboxv2.mods.":
             loc = "toolboxv2.mods_dev."
@@ -323,6 +341,8 @@ class App(AppType, metaclass=Singleton):
             except ModuleNotFoundError as e:
                 self.logger.error(Style.RED(f"module {loc + mod_name} not found is type sensitive {e}"))
                 self.print(Style.RED(f"module {loc + mod_name} not found is type sensitive {e}"))
+                if self.debug or self.args_sto.sysPrint:
+                    self.python_module_import_classifier(mod_name, str(e))
                 return None
         else:
             self.print(f"module {loc + mod_name} is not valid")
@@ -643,8 +663,7 @@ class App(AppType, metaclass=Singleton):
             instance = self.functions[mod_name].get(f"{spec}_instance", None)
             if instance is not None and hasattr(instance, 'on_exit'):
                 if inspect.iscoroutinefunction(instance.on_exit):
-                    o = self.loop.create_task(instance.on_exit())
-                    self.exit_tasks.append(o)
+                    self.exit_tasks.append(instance.on_exit)
                 else:
                     instance.on_exit()
 
@@ -663,8 +682,8 @@ class App(AppType, metaclass=Singleton):
                 if e == 0:
                     self.logger.info(Style.GREY(f"Running On exit {f} {i}/{len(on_exit)}"))
                     if inspect.iscoroutinefunction(f_):
-                        o = self.loop.create_task(f_())
-                        self.exit_tasks.append(o)
+                        self.exit_tasks.append(f_)
+                        o = None
                     else:
                         o = f_()
                     if o is not None:
@@ -759,19 +778,23 @@ class App(AppType, metaclass=Singleton):
 
         import threading
 
-        for thread in threading.enumerate():
-            if thread.name == "MainThread":
-                continue
-            try:
-                with Spinner(f"closing Thread {thread.name:^50}|", symbols="s", count_down=True,
-                             time_in_s=0.251 if not self.debug else 0.1):
-                    thread.join(timeout=0.251 if not self.debug else 0.1)
-            except TimeoutError as e:
-                self.logger.error(f"Timeout error on exit {thread.name} {str(e)}")
-                print(str(e), f"Timeout {thread.name}")
+        # for thread in threading.enumerate():
+        #     if thread.name == "MainThread":
+        #         continue
+        #     try:
+        #         with Spinner(f"closing Thread {thread.name:^50}|", symbols="s", count_down=True,
+        #                      time_in_s=1.251 if not self.debug else 1.1):
+        #             thread.join(timeout=1.251 if not self.debug else 1.1)
+        #     except TimeoutError as e:
+        #         self.logger.error(f"Timeout error on exit {thread.name} {str(e)}")
+        #         print(str(e), f"Timeout {thread.name}")
 
     async def a_exit(self):
+        print("Exit a_remove_all_modules")
         await self.a_remove_all_modules()
+        results = await asyncio.gather(*[asyncio.create_task(f()) for f in self.exit_tasks if inspect.iscoroutinefunction(f)])
+        for result in results:
+            self.print(f"Function On Exit result: {result}")
         self.exit(remove_all=False)
 
     def save_load(self, modname, spec='app'):
@@ -1014,14 +1037,12 @@ class App(AppType, metaclass=Singleton):
         self.inplace_load_instance(mod_name, spec=spec, mfo=reload(self.modules[mod_name]))
 
     def watch_mod(self, mod_name, spec='app', loc="toolboxv2.mods.", use_thread=True):
-        from watchfiles import watch
-
         is_file = os.path.isfile(self.start_dir + '/mods/' + mod_name + '.py')
-
+        import watchfiles
         def helper():
             paths = f'mods/{mod_name}' + ('.py' if is_file else '')
             self.print(f'Watching Path: {paths}')
-            for changes in watch(paths):
+            for changes in watchfiles.watch(paths):
                 print(changes)
                 self.reload_mod(mod_name, spec, is_file, loc)
 

@@ -65,10 +65,12 @@ async def a_save_closing_app():
 
     app = registered_apps[0]
     if not app.alive:
+        await app.a_exit()
         app.print(Style.Bold(Style.ITALIC("- end -")))
         return
 
     if not app.called_exit[0] and time.time() - app.called_exit[1] < 8:
+        await app.a_exit()
         app.print(Style.Bold(Style.ITALIC("- Killing a kid is not ok -")))
         return
 
