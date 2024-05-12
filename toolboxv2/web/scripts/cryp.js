@@ -1,4 +1,4 @@
-import {httpPostData} from "./module/1/httpSender.js";
+import {httpPostData} from "./httpSender.js";
 
 const rpIdUrl_f = ()=> {
     if (window.location.href.match("localhost")) {

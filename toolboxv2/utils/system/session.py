@@ -1,6 +1,7 @@
 import dataclasses
 import os
 import time
+import socket
 from typing import Optional
 
 import requests
@@ -32,6 +33,8 @@ class Session(metaclass=Singleton):
         self.session: Optional[ClientSession] = None
         if base is None:
             base = os.environ.get("TOOLBOXV2_REMOTE_BASE")
+        if base is not None and base.endswith("/api/"):
+            base = base.replace("api/", "")
         self.base = base
 
     async def init_log_in_mk_link(self, mak_link):
@@ -138,3 +141,27 @@ def test_session_invalid_log_in():
         assert t1 == False
 
     asyncio.run(helper())
+
+
+def get_public_ip():
+    try:
+        response = requests.get('https://api.ipify.org?format=json')
+        ip_address = response.json()['ip']
+        return ip_address
+    except Exception as e:
+        print(f"Fehler beim Ermitteln der öffentlichen IP-Adresse: {e}")
+        return None
+
+
+def get_local_ip():
+    try:
+        # Erstellt einen Socket, um eine Verbindung mit einem öffentlichen DNS-Server zu simulieren
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            # Verwendet Google's öffentlichen DNS-Server als Ziel, ohne tatsächlich eine Verbindung herzustellen
+            s.connect(("8.8.8.8", 80))
+            # Ermittelt die lokale IP-Adresse, die für die Verbindung verwendet würde
+            local_ip = s.getsockname()[0]
+        return local_ip
+    except Exception as e:
+        print(f"Fehler beim Ermitteln der lokalen IP-Adresse: {e}")
+        return None

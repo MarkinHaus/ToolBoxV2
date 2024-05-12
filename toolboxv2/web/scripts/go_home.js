@@ -1,1 +1,1 @@
-window.location.href = "/web"
+window.TBf.router("/web")

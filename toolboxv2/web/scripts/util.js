@@ -94,16 +94,3 @@ document.addEventListener("click", function (e) {
     closeAllLists(e.target);
 });
 }
-
-export async function loadHtmlFile(url) {
-    try {
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        return await response.text();
-    } catch (error) {
-        console.error("Could not load the HTML file:", error);
-        return error
-    }
-}

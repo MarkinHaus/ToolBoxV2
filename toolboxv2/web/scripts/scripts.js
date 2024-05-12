@@ -13,7 +13,7 @@ import {
 
 
 // Create a WebGLRenderer
-const renderer = new WebGLRenderer({ antialias: true });
+export const renderer = new WebGLRenderer({ antialias: true });
 let groops = []
 
 let mashs = []
@@ -103,7 +103,7 @@ function initRenderer() {
 initRenderer()
 
 // Functions to load dark mode state
-function toggleDarkMode() {
+export function toggleDarkMode() {
     let body = document.body;
     body.classList.toggle("dark-mode");
     let darkModeStatus = body.classList.contains("dark-mode") ? "enabled" : "disabled";
@@ -213,7 +213,7 @@ function createSierpinskiTriangle(depth, size) {
     return group;
 }
 
-function startBgInteract() {
+export function StartBgInteract() {
     animantionFactor = animantionFactorKlick;
     animationX = 0.02*Math.random();
     animationY = 0.02*Math.random();
@@ -263,35 +263,6 @@ function updateSlider(slideAmount, axis)
     }
 }
 
-const links = document.querySelectorAll('a');
-
-links.forEach((link) => {
-    link.addEventListener('click', function(e) {
-        e.preventDefault();
-        var transition = document.getElementById('overlay');
-        if (transition!==null){
-            transition.style.width = '100vw';
-            transition.style.height = '100vh';
-            transition.style.top = '0';
-            transition.style.left = '0';
-        }else{
-            // window.location.href = e.target.href;
-        }
-
-        setTimeout(function() {
-            // window.location.href = e.target.href;
-
-            setTimeout(function() {
-                if (transition!==null){
-                    transition.style.width = '0';
-                    transition.style.height = '0';
-                    transition.style.top = '50%';
-                    transition.style.left = '50%';
-                }
-            }, 45);
-        }, 160);
-    });
-});
 
 window.onwheel = e => {
 
@@ -331,27 +302,7 @@ window.addEventListener('resize', () => {
 });
 
 // Call the function to load the dark mode state when entering a file
-//document.addEventListener("DOMContentLoaded", loadDarkModeState);
 document.addEventListener('DOMContentLoaded', () => {
-    const darkModeToggle = document.getElementById('darkModeToggle');
-    darkModeToggle.addEventListener('change', (event) => {
-
-        if (event.target.checked) {
-            document.getElementById('toggleLabel').innerHTML = `<span class="material-symbols-outlined">
-light_mode
-</span>`;
-        } else {
-            document.getElementById('toggleLabel').innerHTML = `<span class="material-symbols-outlined">
-dark_mode
-</span>`;
-        }
-        toggleDarkMode()
-    });
-
-
-    document.body.addEventListener("touchstart", () => {startBgInteract()});
-    document.body.addEventListener("touchend", () => {endBgInteract()});
-
 
     const slideX = document.getElementById("slideX");
     if (slideX !== null){
@@ -384,21 +335,20 @@ dark_mode
 
 });
 
+export const addRenderer = () => {
+
+
+
 const threeDScene = document.getElementById('threeDScene')
 if (threeDScene){
 threeDScene.appendChild(renderer.domElement);}
+}
+addRenderer()
 
 setTimeout(()=>{
 const s = document.getElementsByClassName('loaderCenter')
     if (s){if(s[0]){s[0].classList.add("none")}}}, 122)
 
-document.addEventListener('mousedown', () => {
-    startBgInteract()
-});
-
-document.addEventListener('mouseup', () => {
-    endBgInteract()
-});
 
 // document.addEventListener('mousemove', (event) => {
 //     if (isMouseDown) {

@@ -173,8 +173,9 @@
     }
 }
 
-body, p, span, input, button {
-    font-size: 1rem; /* 16px */
+/* body,p, span,*/
+input, button {
+    font-size: 1rem;
 }
 
 

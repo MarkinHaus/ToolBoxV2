@@ -8,9 +8,12 @@ from toolboxv2.utils.system.types import ToolBoxInterfaces
 from .local_instance import MiniDictDB
 from .reddis_instance import MiniRedis
 from .types import DatabaseModes, AuthenticationTypes
+from dotenv import load_dotenv
 
 Name = "DB"
 export = get_app(from_="DB.EXPORT").tb
+
+load_dotenv(verbose=True)
 
 
 def pre_function(*args, **kwargs) -> (list, dict):
@@ -229,12 +232,12 @@ class Tools(MainTool, FileHandler):
             self.data_base = MiniRedis()
         else:
             return Result.default_internal_error(info="Not implemented")
-        print(f"Starting DB in {self.mode.value} mode")
         a = self._autoresize()
         if a.log(prifix="initialize_database: ").is_error():
             raise RuntimeError("DB Autoresize Error " + a.print(show=False))
 
         self.app.logger.info(f"Running DB in mode : {self.mode.value}")
+        self.print(f"Running DB in mode : {self.mode.value}")
 
     def _autoresize(self):
 

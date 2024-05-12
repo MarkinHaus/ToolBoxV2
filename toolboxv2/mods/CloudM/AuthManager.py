@@ -171,6 +171,14 @@ def reade_jwt(jwt_key: str) -> dict or str:
 # Export functions
 
 
+@export(mod_name=Name, state=True, initial=True, test=False)
+async def on_start(app: App) -> Result:
+    if app is None:
+        app = get_app(Name + '.get_user_by_name')
+    app.print("INIT DB")
+    return app.get_mod("DB").edit_programmable(DatabaseModes.RR)
+
+
 @export(mod_name=Name, state=True, test=False, interface=ToolBoxInterfaces.future)
 async def get_user_by_name(app: App, username: str, uid: str = '*') -> Result:
     if app is None:

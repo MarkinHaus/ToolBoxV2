@@ -171,12 +171,13 @@ def update_core(self, backup=False, name=""):
 
 
 @no_test
-def create_magic_log_in(app: App, username: str):
-    user = app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username)
+async def create_magic_log_in(app: App, username: str):
+    user = await app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username)
     key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
     base_url = app.config_fh.get_file_handler("provider::") + (
         f':{app.args_sto.port}' if app.args_sto.host == 'localhost' else "")
     url = f"{base_url}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
+    print_qrcode_to_console(url)
     return url
 
 
@@ -221,7 +222,7 @@ def clear_db(self, do_root=False):
 
     if db.data_base is None or not db:
         self.print(
-            "No redis instance provided from db run DB first-redis-connection")
+            "No redis instance provided from db")
         return "Pleas connect first to a redis instance"
 
     if not do_root:

@@ -210,6 +210,8 @@ class Tools(MainTool, FileHandler):
         del self.active_connections_client[websocket_id]
 
     async def connect(self, websocket: WebSocket, websocket_id):
+        if websocket is None or websocket_id is None:
+            return "websocket not set"
         websocket_id_sto = await valid_id(websocket_id, self.app_id, websocket)
 
         data = self.app.run_any("cloudM", "validate_ws_id", [websocket_id])
@@ -237,6 +239,8 @@ class Tools(MainTool, FileHandler):
         return True
 
     async def disconnect(self, websocket: WebSocket, websocket_id):
+        if websocket is None or websocket_id is None:
+            return "websocket not set"
         websocket_id_sto = await valid_id(websocket_id, self.app_id)
         await self.send_message(json.dumps({"res": f"Closing connection : {websocket_id}"}), websocket, websocket_id)
         self.active_connections[websocket_id_sto].remove(websocket)
@@ -245,6 +249,8 @@ class Tools(MainTool, FileHandler):
         await websocket.close()
 
     async def send_message(self, message: str, websocket: WebSocket or None, websocket_id):
+        if websocket is None or websocket_id is None:
+            return "websocket not set"
         websocket_id_sto = await valid_id(websocket_id, self.app_id)
         for connection in self.active_connections[websocket_id_sto]:
             if connection != websocket:
@@ -268,6 +274,8 @@ class Tools(MainTool, FileHandler):
 
     async def manage_data_flow(self, websocket, websocket_id, data):
         self.logger.info(f"Managing data flow: data {data}")
+        if websocket is None or websocket_id is None:
+            return "websocket not set"
         websocket_id_sto = await valid_id(websocket_id, self.app_id)
 
         if websocket_id_sto not in self.active_connections.keys():

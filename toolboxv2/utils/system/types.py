@@ -855,7 +855,7 @@ class AppType:
                         for test_kwargs in test_kwargs_list:
                             try:
                                 # print(f"test Running {state=} |{module_name}.{function_name}")
-                                result = self.run_function((module_name, function_name),
+                                result = await self.a_run_function((module_name, function_name),
                                                            tb_run_function_with_state=state,
                                                            **test_kwargs)
                                 if not isinstance(result, Result):
@@ -924,3 +924,6 @@ class AppType:
         avg_complexity = avg_complexity / i
         print(f"\nAVG Complexity: {avg_complexity:.2f}")
         print(f"Total Rank: {cc_rank(int(avg_complexity + i // 10))}")
+
+    async def a_run_function(self, param, tb_run_function_with_state, param1):
+        pass

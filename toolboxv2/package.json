@@ -1,0 +1,21 @@
+{
+  "name": "re_simple_toolboxv2",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "tauri": "bun tauri ",
+    "dev": "npx vite serve --debug",
+    "build": "bun vite build",
+    "preview": "bun vite preview"
+  },
+  "dependencies": {
+    "tauri": "^0.15.0",
+    "vite": "^5.2.10"
+  },
+  "devDependencies": {
+    "@tauri-apps/api": "^1.5.3",
+    "@tauri-apps/cli": "^1.5.11",
+    "@types/bun": "latest"
+  }
+}

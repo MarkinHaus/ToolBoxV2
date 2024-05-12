@@ -24,7 +24,7 @@ class MiniRedis:
     def get(self, key: str) -> Result:
         data = []
         if self.rcon is None:
-            return (Result.default_user_error(info='Pleas run first-redis-connection to connect to a reddis instance')
+            return (Result.default_user_error(info='Pleas run initialize to connect to a reddis instance')
                     .set_origin("Reddis DB"))
 
         if key == 'all':
@@ -52,7 +52,7 @@ class MiniRedis:
     def if_exist(self, query: str):
         if self.rcon is None:
             return Result.default_user_error(
-                info='Pleas run first-redis-connection to connect to a reddis instance').set_origin("Reddis DB")
+                info='Pleas run initialize to connect to a reddis instance').set_origin("Reddis DB")
         if not query.endswith('*'):
             return self.rcon.exists(query)
         i = 0
@@ -63,7 +63,7 @@ class MiniRedis:
     def set(self, key: str, value) -> Result:
         if self.rcon is None:
             return Result.default_user_error(
-                info='Pleas run first-redis-connection to connect to a reddis instance').set_origin("Reddis DB")
+                info='Pleas run initialize to connect to a reddis instance').set_origin("Reddis DB")
         try:
             self.rcon.set(key, value)
             return Result.ok().set_origin("Reddis DB")
@@ -76,7 +76,7 @@ class MiniRedis:
     def append_on_set(self, key: str, value: list) -> Result:
 
         if self.rcon is None:
-            return Result.default_internal_error(info='Pleas run first-redis-connection').set_origin("Reddis DB")
+            return Result.default_internal_error(info='Pleas run initialize').set_origin("Reddis DB")
 
         val = self.rcon.get(key)
 
@@ -100,7 +100,7 @@ class MiniRedis:
     def delete(self, key, matching=False) -> Result:
         if self.rcon is None:
             return Result.default_user_error(
-                info='Pleas run first-redis-connection to connect to a reddis instance').set_origin("Reddis DB")
+                info='Pleas run initialize to connect to a reddis instance').set_origin("Reddis DB")
 
         del_list = []
         n = 0

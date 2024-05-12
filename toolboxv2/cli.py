@@ -4,6 +4,7 @@ import sys
 import argparse
 import time
 import asyncio
+from asyncio import to_thread
 from functools import wraps
 from platform import system, node
 
@@ -512,7 +513,7 @@ async def main(loop=None):
 
     tb_app.loop = loop
     with Spinner("Crating State"):
-        await asyncio.to_thread(get_state_from_app, tb_app,
+        await to_thread(get_state_from_app, tb_app,
                                 os.environ.get("TOOLBOXV2_REMOTE_BASE", "https://simplecore.app"),
                                 "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/")
     daemon_app = None
@@ -651,9 +652,9 @@ async def main(loop=None):
             tb_app.get_mod(command[0], spec='app')
             call.module_name = command[0]
             call.function_name = command[1]
-            call.args = command[1:]
+            call.args = command[2:]
             spec = 'app' if not args.live_application else tb_app.id
-            r = tb_app.run_any((call.module_name, call.function_name), tb_run_with_specification=spec, args_=call.args,
+            r = await tb_app.a_run_any((call.module_name, call.function_name), tb_run_with_specification=spec, args_=call.args,
                                get_results=True)
             if asyncio.iscoroutine(r):
                 r = await r

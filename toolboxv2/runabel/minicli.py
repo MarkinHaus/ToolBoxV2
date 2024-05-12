@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import inspect
 import os
 import threading
 
@@ -62,7 +63,7 @@ async def run(app: App, args):
         set_title(f"ToolBox : {app.version}")
     except:
         pass
-    threaded = False
+    threaded = [False]
 
     def bottom_toolbar():
         return HTML(f'Hotkeys shift:s control:c  <b><style bg="ansired">s+left</style></b> helper info '
@@ -71,7 +72,7 @@ async def run(app: App, args):
 
     async def exit_(_):
         print("EXITING")
-        if app.debug:
+        if app.debug and inspect.iscoroutinefunction(app.hide_console):
             await app.hide_console()
         app.alive = False
         return Result.ok().set_origin("minicli::build-in")
@@ -162,9 +163,8 @@ async def run(app: App, args):
         return Result.ok(info="cls").set_origin("minicli::build-in")
 
     def toggle_threaded(_):
-        global threaded
-        threaded = not threaded
-        return Result.ok(info=f"in threaded mode {threaded}").set_origin("minicli::build-in").print()
+        threaded[0] = not threaded[0]
+        return Result.ok(info=f"in threaded mode {threaded[0]}").set_origin("minicli::build-in").print()
 
     def infos(_):
         app.print_functions()
@@ -272,11 +272,14 @@ async def run(app: App, args):
             else:
                 if call.args is not None:
                     call.args = replace_bracketed_content(' '.join(call.args), app.locals['user'], inlist=True)
-                running_instance = await app.run_any(tbef.CLI_FUNCTIONS.CO_EVALUATE,
+                running_instance = await app.a_run_any(tbef.CLI_FUNCTIONS.CO_EVALUATE,
                                                      obj=call,
                                                      build_in_commands=bic,
-                                                     threaded=threaded,
+                                                     threaded=threaded[0],
                                                      helper=helper_exequtor[0])
+
+                print("running_instance", running_instance)
+
         elif call.module_name in exe_names:
             buff = str(call)
             buff = replace_bracketed_content(buff, app.locals['user'])
@@ -292,8 +295,14 @@ async def run(app: App, args):
             if not res_:
                 pass  # shell ginei
 
-        if isinstance(running_instance, asyncio.Task):
+        print("d", running_instance)
+
+        if isinstance(running_instance, asyncio.Task) or inspect.iscoroutine(running_instance):
             v = await running_instance
+            if isinstance(v, Result):
+                v.print()
+            else:
+                print(v)
             running_instance = None
 
         print("", end="" + "done ->>\r")

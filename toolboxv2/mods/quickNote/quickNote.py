@@ -57,20 +57,20 @@ class Tools(MainTool, FileHandler):  # FileHandler
             return
         self.user = user
 
-    def init(self, username: str, sign: str or None = None, jwt: str or None = None):
+    async def init(self, username: str, sign: str or None = None, jwt: str or None = None):
 
         result = Result.default_internal_error(info="Error Log in Module")
         if jwt is not None:
-            result = self.app.run_any(tbef.CLOUDM_AUTHMANAGER.JWT_CHECK_CLAIM_SERVER_SIDE, username=username,
+            result = await self.app.a_run_any(tbef.CLOUDM_AUTHMANAGER.JWT_CHECK_CLAIM_SERVER_SIDE, username=username,
                                       jwt_claim=jwt,
                                       get_results=True)
             if result.is_data() and not result.is_error() and result.get() is True:
-                self.user = self.app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username)
+                self.user = await self.app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username)
             else:
                 return result.lazy_return('intern')
 
         elif sign is not None:
-            result = self.app.run_any(tbef.CLOUDM_AUTHMANAGER.AUTHENTICATE_USER_GET_SYNC_KEY, username=username,
+            result = await self.app.a_run_any(tbef.CLOUDM_AUTHMANAGER.AUTHENTICATE_USER_GET_SYNC_KEY, username=username,
                                       signature=sign, get_user=True,
                                       get_results=True)
             if result.is_data() and not result.is_error():
@@ -80,9 +80,9 @@ class Tools(MainTool, FileHandler):  # FileHandler
                 return result.lazy_return('intern')
 
         else:
-            result = self.app.run_any(tbef.CLOUDM_AUTHMANAGER.LOCAL_LOGIN, username=username, get_results=True)
+            result = await self.app.a_run_any(tbef.CLOUDM_AUTHMANAGER.LOCAL_LOGIN, username=username, get_results=True)
             if result.is_data() and not result.is_error():
-                self.user = self.app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username)
+                self.user = await self.app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username)
             else:
                 return result.lazy_return('intern')
 

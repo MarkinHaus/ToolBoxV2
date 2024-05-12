@@ -133,5 +133,5 @@ def serviceWorker(app: App = None):
     # Sendeng system MSG message
     sw_content = app.run_any(tbef.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="",
                              element_id="control1",
-                             externals=["/web/index.js", "/web/sw.js"], to_str=False)
+                             externals=["/index.js", "/web/sw.js"], to_str=False)
     return sw_content

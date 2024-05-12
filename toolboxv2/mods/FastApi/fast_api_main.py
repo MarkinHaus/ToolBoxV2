@@ -23,6 +23,38 @@ from toolboxv2 import tbef, AppArgs, ApiResult, Spinner, get_app
 from toolboxv2.utils.system.state_system import get_state_from_app
 from ..CloudM import User
 
+id_name = ""
+debug = False
+for i in sys.argv[2:]:
+    if i.startswith('data'):
+        d = i.split(':')
+        debug = True if d[1] == "True" else False
+        id_name = d[2]
+
+args = AppArgs().default()
+args.name = id_name
+args.debug = debug
+args.sysPrint = True
+tb_app = get_app(from_="init-api-get-tb_app", name=id_name, args=args)
+
+
+def guard():
+    global tb_app
+    tb_app = get_app(from_="init-api-get-tb_app", name=id_name, args=args)
+    return tb_app
+
+
+manager = tb_app.get_mod("WebSocketManager")
+
+with Spinner("loding mods", symbols="b"):
+    module_list = tb_app.get_all_mods()
+    open_modules = tb_app.functions.keys()
+    start_len = len(open_modules)
+    for om in open_modules:
+        if om in module_list:
+            module_list.remove(om)
+    _ = {tb_app.save_load(mod, 'app') for mod in module_list}
+
 
 class RateLimitingMiddleware(BaseHTTPMiddleware):
     # Rate limiting configurations
@@ -515,6 +547,11 @@ async def index():
     return RedirectResponse(url="/web/core0/index.html")
 
 
+@app.get("/index.js")
+async def index0():
+    return RedirectResponse(url="index.js")
+
+
 @app.get("/tauri")
 async def index():
     return RedirectResponse(url="/web/assets/widgetControllerLogin.html")
@@ -637,8 +674,15 @@ def helper(tb_app, id_name):
 
     time.sleep(0.5)
 
-    tb_app.save_load("welcome")
-    tb_app.save_load("WebSocketManager")
+    tb_app.get_mod("welcome")
+    d = tb_app.get_mod("DB")
+    c = d.initialize_database()
+    # c = d.edit_cli("RR")
+    c = d.initialized()
+    print("DB initialized", c)
+    if not c.get():
+        exit()
+    tb_app.get_mod("WebSocketManager")
 
     from .fast_app import router as app_router
 
@@ -713,31 +757,10 @@ def helper(tb_app, id_name):
     app.include_router(install_router)
 
 
-
 print("API: ", __name__)
-if __name__ == 'toolboxv2.api.fast_api_main':
+helper(tb_app, id_name)
 
-    id_name = ""
-    debug = False
-    for i in sys.argv[2:]:
-        if i.startswith('data'):
-            d = i.split(':')
-            debug = True if d[1] == "True" else False
-            id_name = d[2]
+# print("API: ", __name__)
+# if __name__ == 'toolboxv2.api.fast_api_main':
+#     global tb_app
 
-    args = AppArgs().default()
-    args.name = id_name
-    args.debug = debug
-    tb_app = get_app(from_="init-api-get-tb_app", name=id_name, args=args)
-    manager = tb_app.get_mod("WebSocketManager")
-
-    with Spinner("loding mods", symbols="b"):
-        module_list = tb_app.get_all_mods()
-        open_modules = tb_app.functions.keys()
-        start_len = len(open_modules)
-        for om in open_modules:
-            if om in module_list:
-                module_list.remove(om)
-        _ = {tb_app.save_load(mod, 'app') for mod in module_list}
-
-    helper(tb_app, id_name)

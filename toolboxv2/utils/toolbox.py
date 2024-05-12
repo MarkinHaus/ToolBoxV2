@@ -778,19 +778,18 @@ class App(AppType, metaclass=Singleton):
 
         import threading
 
-        # for thread in threading.enumerate():
-        #     if thread.name == "MainThread":
-        #         continue
-        #     try:
-        #         with Spinner(f"closing Thread {thread.name:^50}|", symbols="s", count_down=True,
-        #                      time_in_s=1.251 if not self.debug else 1.1):
-        #             thread.join(timeout=1.251 if not self.debug else 1.1)
-        #     except TimeoutError as e:
-        #         self.logger.error(f"Timeout error on exit {thread.name} {str(e)}")
-        #         print(str(e), f"Timeout {thread.name}")
+        for thread in threading.enumerate():
+            if thread.name == "MainThread":
+                continue
+            try:
+                with Spinner(f"closing Thread {thread.name:^50}|", symbols="s", count_down=True,
+                             time_in_s=0.751 if not self.debug else 0.6):
+                    thread.join(timeout=0.751 if not self.debug else 0.6)
+            except TimeoutError as e:
+                self.logger.error(f"Timeout error on exit {thread.name} {str(e)}")
+                print(str(e), f"Timeout {thread.name}")
 
     async def a_exit(self):
-        print("Exit a_remove_all_modules")
         await self.a_remove_all_modules()
         results = await asyncio.gather(*[asyncio.create_task(f()) for f in self.exit_tasks if inspect.iscoroutinefunction(f)])
         for result in results:
@@ -823,6 +822,75 @@ class App(AppType, metaclass=Singleton):
             return self._get_function(None, as_str=name, **kwargs)
         else:
             return self._get_function(name, **kwargs)
+
+    async def a_run_function(self, mod_function_name: Enum or tuple,
+                     tb_run_function_with_state=True,
+                     tb_run_with_specification='app',
+                     args_=None,
+                     kwargs_=None,
+                     *args,
+                     **kwargs) -> Result:
+
+        if kwargs_ is not None and not kwargs:
+            kwargs = kwargs_
+        if args_ is not None and not args:
+            args = args_
+        if isinstance(mod_function_name, tuple):
+            modular_name, function_name = mod_function_name
+        elif isinstance(mod_function_name, list):
+            modular_name, function_name = mod_function_name[0], mod_function_name[1]
+        elif isinstance(mod_function_name, Enum):
+            modular_name, function_name = mod_function_name.__class__.NAME.value, mod_function_name.value
+        else:
+            raise TypeError("Unknown function type")
+
+        if not self.mod_online(modular_name, installed=True):
+            self.get_mod(modular_name)
+
+        function_data, error_code = self.get_function(mod_function_name, state=tb_run_function_with_state,
+                                                      metadata=True, specification=tb_run_with_specification)
+        self.logger.info(f"Received fuction : {mod_function_name}, with execode: {error_code}")
+        if error_code == 1 or error_code == 3 or error_code == 400:
+            self.get_mod(modular_name)
+            function_data, error_code = self.get_function(mod_function_name, state=tb_run_function_with_state,
+                                                          metadata=True, specification=tb_run_with_specification)
+
+        if error_code == 2:
+            self.logger.warning(Style.RED(f"Function Not Found"))
+            return (Result.default_user_error(interface=self.interface_type,
+                                              exec_code=404,
+                                              info=f"function not found function is not decorated").
+                    set_origin(mod_function_name))
+
+        if error_code == -1:
+            return Result.default_internal_error(interface=self.interface_type,
+                                                 info=f"module {modular_name}"
+                                                      f" has no state (instance)").set_origin(mod_function_name)
+
+        if error_code != 0:
+            return Result.default_internal_error(interface=self.interface_type,
+                                                 exec_code=error_code,
+                                                 info=f"Internal error"
+                                                      f" {modular_name}."
+                                                      f"{function_name}").set_origin(mod_function_name)
+
+        if not tb_run_function_with_state:
+            function_data, _ = function_data
+            function = function_data.get('func')
+        else:
+            function_data, function = function_data
+
+        if not function:
+            self.logger.warning(Style.RED(f"Function {function_name} not found"))
+            return Result.default_internal_error(interface=self.interface_type,
+                                                 exec_code=404,
+                                                 info=f"function not found function").set_origin(mod_function_name)
+
+        self.logger.info(f"Profiling function")
+        if inspect.iscoroutinefunction(function):
+            return await self.a_fuction_runner(function, function_data, args, kwargs)
+        else:
+            return self.fuction_runner(function, function_data, args, kwargs)
 
     def run_function(self, mod_function_name: Enum or tuple,
                      tb_run_function_with_state=True,
@@ -889,9 +957,7 @@ class App(AppType, metaclass=Singleton):
 
         self.logger.info(f"Profiling function")
         if inspect.iscoroutinefunction(function):
-            if function_data.get('row', False):
-                return Result.future(asyncio.create_task(self.fuction_runner(function, function_data, args, kwargs)))
-            return Result.future(asyncio.create_task(self.fuction_runner(function, function_data, args, kwargs).get()))
+            raise ValueError(f"Fuction {function_name} is Async use a_run_any")
         else:
             return self.fuction_runner(function, function_data, args, kwargs)
 
@@ -963,6 +1029,71 @@ class App(AppType, metaclass=Singleton):
 
         return formatted_result
 
+    async def a_fuction_runner(self, function, function_data: dict, args: list, kwargs: dict):
+
+        parameters = function_data.get('params')
+        modular_name = function_data.get('module_name')
+        function_name = function_data.get('func_name')
+        row = function_data.get('row')
+        mod_function_name = f"{modular_name}.{function_name}"
+
+        if_self_state = 1 if 'self' in parameters else 0
+
+        try:
+            if len(parameters) == 0:
+                res = await function()
+            elif len(parameters) == len(args) + if_self_state:
+                res = await function(*args)
+            elif len(parameters) == len(kwargs.keys()) + if_self_state:
+                res = await function(**kwargs)
+            else:
+                res = await function(*args, **kwargs)
+            self.logger.info(f"Execution done")
+            if isinstance(res, Result):
+                formatted_result = res
+                if formatted_result.origin is None:
+                    formatted_result.set_origin(mod_function_name)
+            elif isinstance(res, ApiResult):
+                formatted_result = res
+                if formatted_result.origin is None:
+                    formatted_result.as_result().set_origin(mod_function_name).to_api_result()
+            elif row:
+                formatted_result = res
+            else:
+                # Wrap the result in a Result object
+                formatted_result = Result.ok(
+                    interface=self.interface_type,
+                    data_info="Auto generated result",
+                    data=res,
+                    info="Function executed successfully"
+                ).set_origin(mod_function_name)
+            if not row:
+                self.logger.info(
+                    f"Function Exec coed: {formatted_result.info.exec_code} Info's: {formatted_result.info.help_text}")
+            else:
+                self.logger.info(
+                    f"Function Exec data: {formatted_result}")
+        except Exception as e:
+            self.logger.error(
+                Style.YELLOW(Style.Bold(
+                    f"! Function ERROR: in {modular_name}.{function_name}")))
+            # Wrap the exception in a Result object
+            formatted_result = Result.default_internal_error(info=str(e)).set_origin(mod_function_name)
+            # res = formatted_result
+            self.logger.error(
+                f"Function {modular_name}.{function_name}"
+                f" executed wit an error {str(e)}, {type(e)}")
+            self.debug_rains(e)
+
+        else:
+            self.print_ok()
+
+            self.logger.info(
+                f"Function {modular_name}.{function_name}"
+                f" executed successfully")
+
+        return formatted_result
+
     def run_local(self, *args, **kwargs):
         return self.run_any(*args, **kwargs)
 
@@ -986,6 +1117,37 @@ class App(AppType, metaclass=Singleton):
                                         tb_run_function_with_state=tb_run_function_with_state,
                                         tb_run_with_specification=tb_run_with_specification,
                                         args_=args, kwargs_=kwargs).as_result()
+        if self.debug:
+            res.log(show_data=False)
+        if not get_results and isinstance(res, Result):
+            return res.get()
+
+        return res
+
+    async def a_run_any(self, mod_function_name: Enum or str or tuple, backwords_compability_variabel_string_holder=None,
+                get_results=False, tb_run_function_with_state=True, tb_run_with_specification='app', args_=None,
+                kwargs_=None,
+                *args, **kwargs):
+
+        # if self.debug:
+        #     self.logger.info(f'Called from: {getouterframes(currentframe(), 2)}')
+
+        if kwargs_ is not None and not kwargs:
+            kwargs = kwargs_
+        if args_ is not None and not args:
+            args = args_
+
+        if isinstance(mod_function_name, str) and isinstance(backwords_compability_variabel_string_holder, str):
+            mod_function_name = (mod_function_name, backwords_compability_variabel_string_holder)
+
+        res: Result = await self.a_run_function(mod_function_name,
+                                        tb_run_function_with_state=tb_run_function_with_state,
+                                        tb_run_with_specification=tb_run_with_specification,
+                                        args_=args, kwargs_=kwargs)
+
+        if isinstance(res, ApiResult):
+            res = res.as_result()
+
         if self.debug:
             res.log(show_data=False)
         if not get_results and isinstance(res, Result):

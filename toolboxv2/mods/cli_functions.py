@@ -557,10 +557,10 @@ async def co_evaluate(app: App,
         app.locals['user']['res_id'] = 0
 
     if helper is None:
-        def helper_function(obj_):
+        async def helper_function(obj_):
 
             # obj_.print()
-            result = app.run_any((obj_.module_name, obj_.function_name), get_results=True,
+            result = await app.a_run_any((obj_.module_name, obj_.function_name), get_results=True,
                                  args_=obj_.args,
                                  kwargs_=obj_.kwargs)
 
@@ -583,10 +583,9 @@ async def co_evaluate(app: App,
         helper = helper_function
 
     if threaded:
-        t = Thread(target=helper, args=(obj,))
+        t = await asyncio.to_thread(helper, obj)
         if return_parm:
             return_parm = [Result.default_internal_error(info="No Data"), 0]
-        t.start()
         return t
 
-    return helper(obj)
+    return await helper(obj)

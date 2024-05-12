@@ -10,7 +10,7 @@ import requests
 from toolboxv2 import MainTool, FileHandler, get_app
 from toolboxv2.utils.extras.blobs import BlobFile
 from toolboxv2.utils.extras.qr import print_qrcode_to_console
-from toolboxv2.utils.system.session import Session
+from toolboxv2.utils.system.session import Session, get_local_ip, get_public_ip
 
 export = get_app("api_manager.Export").tb
 Name = "FastApi"
@@ -179,7 +179,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
             _ = "http" + '' if (api_data.get('host', '0').startswith('0') or api_data.get('host', '0').startswith('1') or
                                 api_data.get('host', '0').startswith('localhost')) else 's'
             _ += '://'
-            print_qrcode_to_console(_ + api_data['host'] + ':' + str(api_data['port']))
+            print_qrcode_to_console(_ + (get_public_ip() if api_data['host'] == '0.0.0.0' else (get_local_ip() if api_data['host'] in ['127.0.0.1', 'localhost'] else api_data['host'])) + ':' + str(api_data['port']))
             self.running_apis[api_name] = multiprocessing.Process(target=os.system, args=(g,), daemon=True)
             self.running_apis[api_name].start()
             return "starting api at " + api_data['host'] + ':' + str(api_data['port'])
