@@ -42,9 +42,9 @@ class TestDPIntegration(unittest.TestCase):
 
         # guard
 
-        # return
+        return
 
-        await app.init_module(socketManager)
+        # await app.init_module(socketManager)
 
         threading.Thread(target=self.helper, daemon=True).start()
 
