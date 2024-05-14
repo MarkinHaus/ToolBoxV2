@@ -50,5 +50,5 @@ jobs:
                     pip install --user -r requirements_dev.txt
             -   name: PKG-TEST
                 run: |
-                    python -m unittest discover tests/
+                    python -m unittest discover -s toolboxv2/tests/
 
