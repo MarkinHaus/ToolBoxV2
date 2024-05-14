@@ -7,6 +7,7 @@ from ..extras.Style import Spinner
 from ..system.all_functions_enums import SOCKETMANAGER
 from ..system.types import ApiResult, AppType, Result
 from ..toolbox import App
+from ... import get_app
 
 
 class ProxyUtil:
@@ -31,12 +32,16 @@ class ProxyUtil:
 
     async def __ainit__(self, class_instance: Any, host='0.0.0.0', port=6587, timeout=15,
                         app: Optional[App or AppType] = None,
-                        remote_functions=None, peer=False, name='daemonApp-client', do_connect=True, unix_socket=False):
+                        remote_functions=None, peer=False, name='daemonApp-client', do_connect=True, unix_socket=False,
+                        test_override=False):
         self.class_instance = class_instance
         self.client = None
+        self.test_override = test_override
         self.port = port
         self.host = host
         self.timeout = timeout
+        if app is None:
+            app = get_app("ProxyUtil")
         self.app = app
         self._name = name
         self.unix_socket = unix_socket
@@ -55,7 +60,7 @@ class ProxyUtil:
             await self.connect()
 
     async def connect(self):
-        client_result = self.app.run_local(SOCKETMANAGER.CREATE_SOCKET,
+        client_result = await self.app.a_run_local(SOCKETMANAGER.CREATE_SOCKET,
                                            get_results=True,
                                            name=self._name,
                                            host=self.host,
@@ -63,6 +68,7 @@ class ProxyUtil:
                                            type_id=self.connection_type,
                                            max_connections=-1,
                                            return_full_object=True,
+                                           test_override=self.test_override,
                                            unix_file=self.unix_socket)
 
         if client_result.is_error():
@@ -144,7 +150,7 @@ class ProxyUtil:
                                 data = ApiResult(**data).as_result()
                             return data
                         except:
-                            print("No data look later with app.r")
+                            print("No data look later with class_instance.r")
                             return "No data"
             except:
                 if self.client.get('socket') is None:

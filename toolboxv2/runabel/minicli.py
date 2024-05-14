@@ -295,8 +295,6 @@ async def run(app: App, args):
             if not res_:
                 pass  # shell ginei
 
-        print("d", running_instance)
-
         if isinstance(running_instance, asyncio.Task) or inspect.iscoroutine(running_instance):
             v = await running_instance
             if isinstance(v, Result):

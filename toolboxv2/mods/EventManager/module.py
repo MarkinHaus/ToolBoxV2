@@ -459,7 +459,8 @@ class EventManagerClass:
             self.routes[source_id] = connection[0]
             router.send(self.running)
 
-        router.send(False)
+        router.send("e")
+        router.close()
 
     def _get_event_by_id_or_name(self, event_id: str or EventID):
         if isinstance(event_id, str):

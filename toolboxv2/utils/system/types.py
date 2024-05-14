@@ -310,7 +310,7 @@ class CallingObject:
 
     def __str__(self):
         if self.args is not None and self.kwargs is not None:
-            return (f"{self.module_name} {self.function_name} " + ' '.join(self.args) +
+            return (f"{self.module_name} {self.function_name} " + ' '.join(self.args) + ' ' +
                     ' '.join([key + '-' + str(val) for key, val in self.kwargs.items()]))
         if self.args is not None:
             return f"{self.module_name} {self.function_name} " + ' '.join(self.args)
@@ -452,6 +452,7 @@ class AppType:
     runnable: Dict[str, Callable]
     dev_modi: bool
     functions: Dict[str, Any]
+    modules: Dict[str, Any]
 
     interface_type: ToolBoxInterfaces
     REFIX: str
@@ -541,6 +542,10 @@ class AppType:
     def load_mod(self, mod_name: str, mlm='I', **kwargs):
         """proxi attr"""
 
+    @staticmethod
+    async def init_module(modular):
+        return await modular
+
     async def load_all_mods_in_file(self, working_dir="mods"):
         """proxi attr"""
 
@@ -600,6 +605,15 @@ class AppType:
                      **kwargs) -> Result:
 
         """proxi attr"""
+    async def a_run_function(self, mod_function_name: Enum or tuple,
+                     tb_run_function_with_state=True,
+                     tb_run_with_specification='app',
+                     args_=None,
+                     kwargs_=None,
+                     *args,
+                     **kwargs) -> Result:
+
+        """proxi attr"""
 
     def fuction_runner(self, function, function_data: dict, args: list, kwargs: dict):
         """
@@ -610,8 +624,23 @@ class AppType:
 
         proxi attr
         """
+    async def a_fuction_runner(self, function, function_data: dict, args: list, kwargs: dict):
+        """
+        parameters = function_data.get('params')
+        modular_name = function_data.get('module_name')
+        function_name = function_data.get('func_name')
+        mod_function_name = f"{modular_name}.{function_name}"
+
+        proxi attr
+        """
 
     def run_any(self, mod_function_name: Enum or str or tuple, backwords_compability_variabel_string_holder=None,
+                get_results=False, tb_run_function_with_state=True, tb_run_with_specification='app', args_=None,
+                kwargs_=None,
+                *args, **kwargs):
+        """proxi attr"""
+
+    async def a_run_any(self, mod_function_name: Enum or str or tuple, backwords_compability_variabel_string_holder=None,
                 get_results=False, tb_run_function_with_state=True, tb_run_with_specification='app', args_=None,
                 kwargs_=None,
                 *args, **kwargs):
@@ -925,5 +954,3 @@ class AppType:
         print(f"\nAVG Complexity: {avg_complexity:.2f}")
         print(f"Total Rank: {cc_rank(int(avg_complexity + i // 10))}")
 
-    async def a_run_function(self, param, tb_run_function_with_state, param1):
-        pass

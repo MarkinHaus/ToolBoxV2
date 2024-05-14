@@ -8,12 +8,13 @@ import unittest
 from rich.traceback import install
 
 from toolboxv2 import MainTool, FileHandler, Style, get_app
+from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.security.cryp import Code
 
 install(show_locals=True)
 
 
-class TestToolboxv2(unittest.TestCase):
+class TestToolboxv2Mods(unittest.TestCase):
     """Tests for `toolboxv2` package."""
 
     t0 = None
@@ -329,16 +330,10 @@ class TestToolboxv2(unittest.TestCase):
 
 
 # This allows running the async tests with `unittest`
-def async_test(coro):
-    def wrapper(*args, **kwargs):
-        loop = asyncio.new_event_loop()
-        return loop.run_until_complete(coro(*args, **kwargs))
-
-    return wrapper
 
 
 # Apply async_test decorator to each async test method
-TestToolboxv2.test_all_functions = async_test(TestToolboxv2.test_all_functions)
-TestToolboxv2.setUpClass = async_test(TestToolboxv2.setUpClass)
-TestToolboxv2.test_main_tool = async_test(TestToolboxv2.test_main_tool)
-TestToolboxv2.test_load_all_mods_in_file = async_test(TestToolboxv2.test_load_all_mods_in_file)
+TestToolboxv2Mods.test_all_functions = async_test(TestToolboxv2Mods.test_all_functions)
+TestToolboxv2Mods.setUpClass = async_test(TestToolboxv2Mods.setUpClass)
+TestToolboxv2Mods.test_main_tool = async_test(TestToolboxv2Mods.test_main_tool)
+TestToolboxv2Mods.test_load_all_mods_in_file = async_test(TestToolboxv2Mods.test_load_all_mods_in_file)

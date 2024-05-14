@@ -13,6 +13,8 @@ from ..system.tb_logger import get_logger
 from ..extras.Style import Style
 from ..extras.show_and_hide_console import show_console
 
+from toolboxv2.mods.SocketManager import SocketType
+
 
 class DaemonUtil:
 
@@ -38,12 +40,13 @@ class DaemonUtil:
     async def __ainit__(self, class_instance: Any, host='0.0.0.0', port=6587, t=False,
                         app: Optional[App or AppType] = None,
                         peer=False, name='daemonApp-server', on_register=None, on_client_exit=None, on_server_exit=None,
-                        unix_socket=False):
+                        unix_socket=False, test_override=False):
         self.class_instance = class_instance
         self.server = None
         self.port = port
         self.host = host
         self.alive = False
+        self.test_override = test_override
         self._name = name
         if on_register is None:
             on_register = lambda *args: None
@@ -56,7 +59,6 @@ class DaemonUtil:
         self.on_server_exit = on_server_exit
         self.unix_socket = unix_socket
         self.online = None
-        from toolboxv2.mods.SocketManager import SocketType
         connection_type = SocketType.server
         if peer:
             connection_type = SocketType.peer
@@ -67,17 +69,18 @@ class DaemonUtil:
         if t:
             await self.online
 
-    async def start_server(self, connection_type):
+    async def start_server(self, connection_type=SocketType.server):
         """Start the server using app and the socket manager"""
-        server_result = get_app(from_="Starting.Daemon").run_any(SOCKETMANAGER.CREATE_SOCKET,
-                                                                       get_results=True,
-                                                                       name=self._name,
-                                                                       host=self.host,
-                                                                       port=self.port,
-                                                                       type_id=connection_type,
-                                                                       max_connections=-1,
-                                                                       return_full_object=True,
-                                                                       unix_file=self.unix_socket)
+        server_result = await get_app(from_="Starting.Daemon").a_run_any(SOCKETMANAGER.CREATE_SOCKET,
+                                                                         get_results=True,
+                                                                         name=self._name,
+                                                                         host=self.host,
+                                                                         port=self.port,
+                                                                         type_id=connection_type,
+                                                                         max_connections=-1,
+                                                                         return_full_object=True,
+                                                                         test_override=self.test_override,
+                                                                         unix_file=self.unix_socket)
         if server_result.is_error():
             raise Exception(f"Server error: {server_result.print(False)}")
         if not server_result.is_data():
@@ -234,6 +237,7 @@ class DaemonUtil:
         result = await self.server.aget()
         await result.get("close")()
         self.alive = False
-        if self.result is not None:
-            r = await self.result
-            print("Connection result :", r)
+        if asyncio.iscoroutine(self.online):
+            await self.online
+        print("Connection result :", result.get("host"), result.get("port"),
+              "total connections:", result.get("connections"))

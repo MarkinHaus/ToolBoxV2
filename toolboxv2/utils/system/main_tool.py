@@ -43,7 +43,7 @@ class MainTool:
         if self.todo:
             try:
                 if inspect.iscoroutinefunction(self.todo):
-                    self.app.loop.call_soon_threadsafe(self.todo)
+                    await self.todo()
                 else:
                     self.todo()
                 await asyncio.sleep(0)

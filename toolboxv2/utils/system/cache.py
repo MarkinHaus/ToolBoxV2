@@ -4,8 +4,9 @@ from cachetools import TTLCache
 
 
 class FileCache:
-    def __init__(self, folder='', filename='cache.db'):
-        self.filename = filename
+    def __init__(self, folder='./FileCache/', filename='cache.db'):
+        self.filename = folder+filename
+        self.folder = folder
         if not os.path.exists(folder):
             os.makedirs(folder, exist_ok=True)
 
@@ -16,6 +17,16 @@ class FileCache:
     def set(self, key, value):
         with shelve.open(self.filename, writeback=True) as db:
             db[key] = value
+
+    def cleanup(self):
+        # Check if the folder exists and is empty
+        # Also, remove the file associated with the cache
+        if os.path.exists(self.filename):
+            os.remove(self.filename)
+        if len(os.listdir(self.folder)) == 3:
+            for filename in os.listdir(self.folder):
+                os.remove(self.folder+filename)
+            os.rmdir(self.folder)
 
 
 class MemoryCache:

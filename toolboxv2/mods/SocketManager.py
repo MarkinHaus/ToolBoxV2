@@ -154,8 +154,9 @@ class Tools(MainTool, FileHandler):
 
     async def on_start(self):
         self.logger.info(f"Starting SocketManager")
-        t0 = asyncio.create_task(asyncio.to_thread(self.set_print_public_ip))
-        t1 = asyncio.create_task(asyncio.to_thread(self.set_print_local_ip))
+        self.print(f"{Name} is Starting")
+        t0 = await asyncio.to_thread(self.set_print_public_ip)
+        t1 = await asyncio.to_thread(self.set_print_local_ip)
         await asyncio.sleep(3)
         await t0
         await t1
@@ -505,7 +506,7 @@ class Tools(MainTool, FileHandler):
             receiver = self.sockets[name]["client_sockets_dict"][
                 self.sockets[name]["client_sockets_identifier"][identifier]]
         else:
-            self.logger.warn(
+            self.logger.warning(
                 Style.YELLOW(f"Invalid {identifier=} valid ar : {self.sockets[name]['client_sockets_identifier']}"))
             return f"Invalid {identifier=} valid ar : {self.sockets[name]['client_sockets_identifier']}"
 
@@ -638,6 +639,8 @@ class Tools(MainTool, FileHandler):
             return
 
         def helper_():
+            if self.loop.is_running():
+                return
             self.loop.run_until_complete(self.helper_0_receive())
 
         t = threading.Thread(
@@ -773,10 +776,10 @@ class Tools(MainTool, FileHandler):
         receiver_queue = queue.Queue()
 
         if 'test' in self.app.id and not test_override:
-            return "No api in test mode allowed"
+            return Result.default_user_error("No api in test mode allowed")
 
         if not isinstance(type_id, SocketType):
-            return
+            return Result.default_user_error(f"type_id type must be socket type is {type(type_id)}")
 
         # setup sockets
         type_id = type_id.name
@@ -852,7 +855,6 @@ class Tools(MainTool, FileHandler):
                                                                 host=host,
                                                                 unix_file=unix_file,
                                                                 handler=a_server_receiver)
-
             if server_result.is_error():
                 return server_result
             if not do_async:

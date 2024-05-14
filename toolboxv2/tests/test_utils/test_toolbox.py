@@ -5,259 +5,129 @@ import os
 import sys
 import threading
 import time
-import types
+import unittest
 from asyncio import Task
 from enum import Enum
-from platform import node, system
 from importlib import import_module, reload
 from inspect import signature
 from types import ModuleType
 from functools import partial, wraps
+from typing import Callable
+from unittest.mock import Mock
 
 import requests
 from yaml import safe_load
 
-from .singelton_class import Singleton
-
-from .system.cache import FileCache, MemoryCache
-from .system.tb_logger import get_logger, setup_logging
-from .system.types import AppArgs, ToolBoxInterfaces, ApiResult, Result, AppType, MainToolType
-from .system.getting_and_closing_app import get_app
-from .system.file_handler import FileHandler
-
-from .extras.Style import Style, stram_print, Spinner
-
 import logging
 from dotenv import load_dotenv
+
+from toolboxv2 import get_app, Style, runnable_dict
+from toolboxv2.tests.a_util import async_test
+from toolboxv2.utils.system import ToolBoxInterfaces
 
 load_dotenv()
 
 
-class App(AppType, metaclass=Singleton):
+class TestToolboxv2(unittest.TestCase):
+    """Tests for `toolboxv2` package."""
 
-    def __init__(self, prefix: str = "", args=AppArgs().default()):
-        super().__init__(prefix, args)
-        t0 = time.perf_counter()
-        abspath = os.path.abspath(__file__)
-        self.system_flag = system()  # Linux: Linux Mac: Darwin Windows: Windows
-        if self.system_flag == "Darwin" or self.system_flag == "Linux":
-            dir_name = os.path.dirname(abspath).replace("/utils", "")
+    t0 = None
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        # Code, der einmal vor allen Tests ausgeführt wird
+        cls.t0 = time.perf_counter()
+        cls.app = get_app(from_="test.toolbox", name="test-debug")
+        cls.app.mlm = "I"
+        cls.app.debug = True
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.app.exit()
+        cls.app.logger.info(f"Accomplished in {time.perf_counter() - cls.t0}")
+
+    def setUp(self):
+        self.app.logger.info(Style.BEIGEBG(f"Next Test"))
+        """Set up test fixtures, if any."""
+
+    def tearDown(self):
+        """Tear down test fixtures, if any."""
+        # self.app.remove_all_modules()
+        self.app.logger.info(Style.BEIGEBG(f"tearDown"))
+
+    def test__init__(self):
+        self.assertTrue(os.path.exists(self.app.data_dir))
+        self.assertTrue(os.path.exists(self.app.config_dir))
+        self.assertTrue(os.path.exists(self.app.info_dir))
+
+        # Check if the directories are created with the correct paths based on the prefix
+        self.assertTrue(self.app.data_dir.endswith("\\.data\\test"))
+        self.assertTrue(self.app.config_dir.endswith("\\.config\\test"))
+        self.assertTrue(self.app.info_dir.endswith("\\.info\\test"))
+
+        self.assertTrue(self.app._debug)
+        self.assertEqual(self.app.interface_type, ToolBoxInterfaces.native)
+
+        if self.app.alive:
+
+            self.assertFalse(self.app.called_exit[0])
+            self.assertTrue(self.app.alive)
+
+            self.assertEqual(self.app.runnable, {})
+            self.assertEqual(self.app.functions, {})
+            self.assertEqual(self.app.modules, {})
+
         else:
-            dir_name = os.path.dirname(abspath).replace("\\utils", "")
-        os.chdir(dir_name)
 
-        self.start_dir = dir_name
+            self.assertTrue(self.app.called_exit[0])
+            self.assertFalse(self.app.alive)
+            self.assertNotEqual(self.app.functions, {})
+            self.assertNotEqual(self.app.modules, {})
 
-        lapp = dir_name + '\\.data\\'
+    def test_set_logger_debug_mode(self):
 
-        if not prefix:
-            if not os.path.exists(f"{lapp}last-app-prefix.txt"):
-                os.makedirs(lapp, exist_ok=True)
-                open(f"{lapp}last-app-prefix.txt", "a").close()
-            with open(f"{lapp}last-app-prefix.txt", "r") as prefix_file:
-                cont = prefix_file.read()
-                if cont:
-                    prefix = cont
-        else:
-            if not os.path.exists(f"{lapp}last-app-prefix.txt"):
-                os.makedirs(lapp, exist_ok=True)
-                open(f"{lapp}last-app-prefix.txt", "a").close()
-            with open(f"{lapp}last-app-prefix.txt", "w") as prefix_file:
-                prefix_file.write(prefix)
+        logger_info_str, logger, logging_filename = self.app.set_logger()
+        # Check if the logger is initialized with DEBUG level
+        self.assertEqual(logger.getEffectiveLevel(), logging.NOTSET)
+        self.assertEqual(logger_info_str, "in Test Mode")
 
-        self.prefix = prefix
-        self.id = prefix + '-' + node()
+        logger_info_str, logger, logging_filename = self.app.set_logger(True)
+        # Check if the logger is initialized with DEBUG level
+        self.assertEqual(logger.getEffectiveLevel(), logging.DEBUG)
+        self.assertEqual(logger_info_str, "in debug Mode")
 
-        self.globals = {
-            "root": {**globals()},
-        }
-        self.locals = {
-            "user": {'app': self, **locals()},
-        }
+    def test_debug_raise(self):
 
-        identification = self.id
+        with self.assertRaises(ValueError):
+            self.app.debug_rains(ValueError)
 
-        if "test" in prefix:
+    async def test_run_runnable(self):
 
-            if self.system_flag == "Darwin" or self.system_flag == "Linux":
-                start_dir = self.start_dir.replace("ToolBoxV2/toolboxv2", "toolboxv2")
-            else:
-                start_dir = self.start_dir.replace("ToolBoxV2\\toolboxv2", "toolboxv2")
-            self.data_dir = start_dir + '\\.data\\' + "test"
-            self.config_dir = start_dir + '\\.config\\' + "test"
-            self.info_dir = start_dir + '\\.info\\' + "test"
-        else:
-            self.data_dir = self.start_dir + '\\.data\\' + identification
-            self.config_dir = self.start_dir + '\\.config\\' + identification
-            self.info_dir = self.start_dir + '\\.info\\' + identification
+        res = await self.app.run_runnable("None")
+        self.assertEqual(res, None)
+        self.assertEqual(len(self.app.runnable.keys()), 0)
 
-        if not os.path.exists(self.data_dir):
-            os.makedirs(self.data_dir, exist_ok=True)
-        if not os.path.exists(self.config_dir):
-            os.makedirs(self.config_dir, exist_ok=True)
-        if not os.path.exists(self.info_dir):
-            os.makedirs(self.info_dir, exist_ok=True)
+        data = runnable_dict("bg")
 
-        print(f"Starting ToolBox as {prefix} from :", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
+        self.assertIn("bg", data.keys())
+        self.assertIsInstance(data.get("bg"), Callable)
 
-        logger_info_str, self.logger, self.logging_filename = self.set_logger(args.debug)
+        self.app.set_runnable(data)
 
-        print("Logger " + logger_info_str)
-        print("================================")
-        self.logger.info("Logger initialized")
-        get_logger().info(Style.GREEN("Starting Application instance"))
-        if args.init and args.init is not None:
-            if self.start_dir not in sys.path:
-                sys.path.append(self.start_dir)
-            _initialize_toolBox(args.init, args.init_file, self.id)
+        self.assertEqual(len(self.app.runnable.keys()), 1)
+        self.app.daemon_app = Mock()
+        self.app.daemon_app.connect = Mock()
 
-        with open(os.getenv('CONFIG_FILE', f'{dir_name}/toolbox.yaml'), 'r') as config_file:
-            _version = safe_load(config_file)
-            __version__ = _version.get('main', {}).get('version', '-.-.-')
+        await self.app.run_runnable("bg")
 
-        self.version = __version__
-
-        self.keys = {
-            "MACRO": "macro~~~~:",
-            "MACRO_C": "m_color~~:",
-            "HELPER": "helper~~~:",
-            "debug": "debug~~~~:",
-            "id": "name-spa~:",
-            "st-load": "mute~load:",
-            "comm-his": "comm-his~:",
-            "develop-mode": "dev~mode~:",
-            "provider::": "provider::",
-        }
-
-        defaults = {
-            "MACRO": ['Exit'],
-            "MACRO_C": {},
-            "HELPER": {},
-            "debug": args.debug,
-            "id": self.id,
-            "st-load": False,
-            "comm-his": [[]],
-            "develop-mode": False,
-        }
-        self.config_fh = FileHandler(self.id + ".config", keys=self.keys, defaults=defaults)
-        self.config_fh.load_file_handler()
-        self._debug = args.debug
-        self.runnable = {}
-        self.dev_modi = self.config_fh.get_file_handler(self.keys["develop-mode"])
-        if self.config_fh.get_file_handler("provider::") is None:
-            self.config_fh.add_to_save_file_handler("provider::", "http://localhost:" + str(
-                self.args_sto.port) if "localhost" == os.environ.get("HOSTNAME",
-                                                                     "localhost") else "https://simplecore.app")
-        self.functions = {}
-        self.modules = {}
-
-        self.interface_type = ToolBoxInterfaces.native
-        self.PREFIX = Style.CYAN(f"~{node()}@>")
-        self.alive = True
-        self.called_exit = False, time.time()
-
-        self.print(f"Infos:\n  {'Name':<8} -> {node()}\n  {'ID':<8} -> {self.id}\n  {'Version':<8} -> {self.version}\n")
-
-        if args.update:
-            os.system("git pull")
-            # self.save_load("CloudM")
-            # self.run_any("CloudM", "update_core")
-
-        if args.get_version:
-            v = self.version
-            self.print(f"Version main : {v}")
-
-        self.logger.info(
-            Style.GREEN(
-                f"Finish init up in {time.perf_counter() - t0:.2f}s"
-            )
-        )
-
-        self.args_sto = args
-
-    def get_username(self, get_input=False):
-        user_name = self.config_fh.get_file_handler("ac_user:::")
-        if user_name is None and user_name != "None":
-            user_name = input("Input your username\nbe sure to make no typos: ")
-            self.config_fh.add_to_save_file_handler("ac_user:::", user_name)
-        return user_name
-
-    def reset_username(self):
-        self.config_fh.add_to_save_file_handler("ac_user:::", "None")
-
-    @staticmethod
-    def exit_main(*args, **kwargs):
-        """proxi attr"""
-
-    @staticmethod
-    def hide_console(*args, **kwargs):
-        """proxi attr"""
-
-    @staticmethod
-    def show_console(*args, **kwargs):
-        """proxi attr"""
-
-    @staticmethod
-    def disconnect(*args, **kwargs):
-        """proxi attr"""
-
-    def set_logger(self, debug=False):
-        if "test" in self.prefix and not debug:
-            logger, logging_filename = setup_logging(logging.NOTSET, name="toolbox-test", interminal=True,
-                                                     file_level=logging.NOTSET)
-            logger_info_str = "in Test Mode"
-        elif "live" in self.prefix and not debug:
-            logger, logging_filename = setup_logging(logging.DEBUG, name="toolbox-live", interminal=False,
-                                                     file_level=logging.WARNING)
-            logger_info_str = "in Live Mode"
-            # setup_logging(logging.WARNING, name="toolbox-live", is_online=True
-            #              , online_level=logging.WARNING).info("Logger initialized")
-        elif "debug" in self.prefix or self.prefix.endswith("D"):
-            self.prefix = self.prefix.replace("-debug", '').replace("debug", '')
-            logger, logging_filename = setup_logging(logging.DEBUG, name="toolbox-debug", interminal=True,
-                                                     file_level=logging.WARNING)
-            logger_info_str = "in debug Mode"
-            self.debug = True
-        elif debug:
-            logger, logging_filename = setup_logging(logging.DEBUG, name=f"toolbox-{self.prefix}-debug",
-                                                     interminal=True,
-                                                     file_level=logging.DEBUG)
-            logger_info_str = "in args debug Mode"
-        else:
-            logger, logging_filename = setup_logging(logging.ERROR, name=f"toolbox-{self.prefix}")
-            logger_info_str = "in Default"
-
-        return logger_info_str, logger, logging_filename
-
-    @property
-    def debug(self):
-        return self._debug
-
-    @debug.setter
-    def debug(self, value):
-        if not isinstance(value, bool):
-            self.logger.debug(f"Value must be an boolean. is : {value} type of {type(value)}")
-            raise ValueError("Value must be an boolean.")
-
-        # self.logger.info(f"Setting debug {value}")
-        self._debug = value
-
-    def debug_rains(self, e):
-        if self.debug:
-            raise e
-
-    def set_runnable(self, r):
-        self.runnable = r
-
-    async def run_runnable(self, name, **kwargs):
-        if name in self.runnable.keys():
-            if inspect.iscoroutinefunction(self.runnable[name]):
-                return await self.runnable[name](get_app(from_="runner"), self.args_sto, **kwargs)
-            else:
-                return self.runnable[name](get_app(from_="runner"), self.args_sto, **kwargs)
-        self.print("Runnable Not Available")
+        self.app.daemon_app.connect.assert_called_once()
+        self.app.daemon_app.connect.assert_called_with(self.app)
 
 
+TestToolboxv2.test_run_runnable = async_test(TestToolboxv2.test_run_runnable)
+
+'''
 
     def _coppy_mod(self, content, new_mod_dir, mod_name, file_type='py'):
 
@@ -774,7 +644,7 @@ class App(AppType, metaclass=Singleton):
 
         import threading
 
-        for thread in threading.enumerate()[::-1]:
+        for thread in threading.enumerate():
             if thread.name == "MainThread":
                 continue
             try:
@@ -1093,9 +963,6 @@ class App(AppType, metaclass=Singleton):
 
     def run_local(self, *args, **kwargs):
         return self.run_any(*args, **kwargs)
-
-    async def a_run_local(self, *args, **kwargs):
-        return await self.a_run_any(*args, **kwargs)
 
     def run_any(self, mod_function_name: Enum or str or tuple, backwords_compability_variabel_string_holder=None,
                 get_results=False, tb_run_function_with_state=True, tb_run_with_specification='app', args_=None,
@@ -1558,3 +1425,4 @@ def _initialize_toolBox(init_type, init_from, name):
     logger = get_logger()
     # legacy
     logger.info("Done!")
+'''

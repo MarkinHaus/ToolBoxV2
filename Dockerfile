@@ -52,6 +52,7 @@ COPY ./toolboxv2/toolbox.yaml ./toolboxv2/toolbox.yaml
 COPY ./toolboxv2/vite.config.js ./toolboxv2/vite.config.js
 
 # Install the local application using pip.
+RUN npx bun install -y ./toolboxv2/
 RUN npx bun install -y ./toolboxv2/web/
 RUN pip install -e .
 # Expose the port that the application listens on.

@@ -32,4 +32,12 @@ def start_client(host_ip, port=44667):
             client.sendto(json.dumps(
                 {'host': host_ip, 'port': int(os.getenv("TOOLBOXV2_BASE_PORT"))
                  }).encode('utf-8'), addr)
-        alive = yield name, addr
+        ret_data = yield name, addr
+        if "e" in ret_data:
+            client.close()
+            alive = False
+
+    while not alive:
+        pass
+
+    print(f"DATTA FROM DONE")

@@ -494,9 +494,9 @@ async def main(loop=None):
     if args.test:
         test_path = os.path.dirname(os.path.abspath(__file__))
         if system() == "Windows":
-            test_path = test_path + "\\tests\\test_mods"
+            test_path = test_path + "\\tests"
         else:
-            test_path = test_path + "/tests/test_mods"
+            test_path = test_path + "/tests"
         print(f"Testing in {test_path}")
         if not run_tests(test_path):
             print("Error in tests")

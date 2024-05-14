@@ -31,7 +31,7 @@ class DefaultFilesFormatElement:
     url: str = "-1"
 
     def __str__(self):
-        return f"{self.version=}{self.shasum=}{self.provider=}{self.url=}|"
+        return f"{self.version=}{self.shasum=}{self.provider=}{self.url=}|".replace("self.", "")
 
 
 @dataclass
