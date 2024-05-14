@@ -88,32 +88,31 @@ class SchedulerManagerClass:
            """
 
         if job is None and func is None:
-            raise ValueError("Both job and func are not specified. Please specify either job or func.")
+            return Result.default_internal_error("Both job and func are not specified."
+                                                 " Please specify either job or func.")
         if job is not None and func is not None:
-            raise ValueError("Both job and func are specified. Please specify either job or func.")
+            return Result.default_internal_error("Both job and func are specified. Please specify either job or func.")
 
         if job is not None:
             func = lambda x: x
-            self._save_job(job_id=job_id,
-                           job=job,
-                           save=save,
-                           func=func,
-                           args=args,
-                           kwargs=kwargs,
-                           serializer=serializer)
-            return
+            return self._save_job(job_id=job_id,
+                                  job=job,
+                                  save=save,
+                                  func=func,
+                                  args=args,
+                                  kwargs=kwargs,
+                                  serializer=serializer)
 
-        try:
-            parsed_attr = self._parse_function(func=func,
-                                               object_name=object_name)
-        except:
-            print(f"Error parsing function fro job : {job_id}")
-            return
+        parsed_attr = self._parse_function(func=func, object_name=object_name)
+
+        if parsed_attr.is_error():
+            parsed_attr.result.data_info = f"Error parsing function for job : {job_id}"
+            return parsed_attr
 
         if receive_job:
-            job = parsed_attr
+            job = parsed_attr.get()
         else:
-            func = parsed_attr
+            func = parsed_attr.get()
 
         time_passer = self._prepare_time_passer(time_passer=time_passer,
                                                 second=second)
@@ -131,14 +130,18 @@ class SchedulerManagerClass:
                                   job_func=job_func,
                                   args=args,
                                   kwargs=kwargs)
+        if job.is_error():
+            return job
 
-        self._save_job(job_id=job_id,
-                       job=job,
-                       save=save,
-                       func=func,
-                       args=args,
-                       kwargs=kwargs,
-                       serializer=serializer)
+        job = job.get()
+
+        return self._save_job(job_id=job_id,
+                              job=job,
+                              save=save,
+                              func=func,
+                              args=args,
+                              kwargs=kwargs,
+                              serializer=serializer)
 
     @staticmethod
     def _parse_function(func: str or Callable, object_name):
@@ -152,16 +155,19 @@ class SchedulerManagerClass:
                 with open(func, 'rb') as file:
                     func = dill.load(file)
             except FileNotFoundError:
-                raise ValueError(f"Function file {func} not found or dill not installed")
+                return Result.default_internal_error(f"Function file {func} not found or dill not installed")
         elif isinstance(func, str):
             local_vars = {'app': get_app(from_=Name + f".pasing.{object_name}")}
-            exec(func.strip(), {}, local_vars)
+            try:
+                exec(func.strip(), {}, local_vars)
+            except Exception as e:
+                return Result.default_internal_error(f"Function parsing failed withe {e}")
             func = local_vars[object_name]
         elif isinstance(func, Callable):
             pass
         else:
-            raise ValueError("Could not parse object scheduler_manager.parse_function")
-        return func
+            return Result.default_internal_error("Could not parse object scheduler_manager.parse_function")
+        return Result.ok(func)
 
     @staticmethod
     def _prepare_time_passer(time_passer, second):
@@ -171,7 +177,7 @@ class SchedulerManagerClass:
             raise ValueError(f"second must be greater than 0")
         return time_passer
 
-    def _prepare_job_func(self, func, max_live, second, job_id, *args, **kwargs):
+    def _prepare_job_func(self, func: Callable, max_live: bool, second: float, job_id: str, *args, **kwargs):
         if max_live:
             end_time = datetime.now() + timedelta(seconds=second)
 
@@ -195,18 +201,19 @@ class SchedulerManagerClass:
         elif job is not None:
             pass
         else:
-            raise ValueError(f"No Final job found for register")
-        return job
+            return Result.default_internal_error(f"No Final job found for register")
+        return Result.ok(job)
 
     def _save_job(self, job_id, job, save, func, serializer=serializer_default, args=None, **kwargs):
         if job is not None:
-            self.jobs[job_id] = {'id': job_id, 'job': job, 'save': save, 'func': serializer.dumps(func), 'args': args,
+            self.jobs[job_id] = {'id': job_id, 'job': job, 'save': save, 'func': serializer.dumps(func) if not job_id.endswith(".py") else job_id, 'args': args,
                                  'kwargs': kwargs}
-            print(f"Added Job {job_id} :{' - saved' if save else ''}"
+            f = (f"Added Job {job_id} :{' - saved' if save else ''}"
                   f"{' - args ' + str(len(args)) if args else ''}"
                   f"{' - kwargs ' + str(len(kwargs.keys())) if kwargs else ''}")
+            return Result.ok(f)
         else:
-            raise ValueError("")
+            return Result.default_internal_error(job_id)
 
     def cancel_job(self, job_id):
         if job_id not in self.jobs:
@@ -392,43 +399,45 @@ class Tools(MainTool, SchedulerManagerClass):
         )
 
 
-if __name__ == '__main__':
-    '''
-    def example_basic():
-        print("example")
+def example_basic():
+    print("example")
 
 
-    def example_args(test='default'):
-        print("example args=", test)
+def example_args(test='default'):
+    print("example args=", test)
 
 
-    test_var_int = 0
-    test_var_list = [0]
-    test_var_dict = {"data": 0}
+test_var_int = 0
+test_var_list = [0]
+test_var_dict = {"data": 0}
 
 
-    def example_closer():
-        print(f"data :\n\t{test_var_int=}\t{test_var_list=}\t{test_var_dict=}")
+def example_closer():
+    print(f"data :\n\t{test_var_int=}\t{test_var_list=}\t{test_var_dict=}")
 
 
-    from_string = """def example_basic():
+@export(test_only=True, mod_name=Name)
+def test_scheduler():
+    from_string = """def example_basic_S():
     print("example_from_string")"""
 
     with open('example_file.py', 'w') as f1:
-        f1.write(from_string.replace('_from_string', '_from_file'))
+        f1.write(from_string.replace('_from_string', '_from_file').replace('_S', '_D'))
 
+    # def example_dill():
+    #     print("example_dill")
 
-    def example_dill():
-        print("example_dill")
+    # import dill
+    #
+    # with open('example_file.dill', 'wb') as f:
+    #     dill.dump(example_dill, f)
 
+    # or  from toolboxv2 import get_app, tbef ;
+    app = get_app(name='debug')
+    shm = app.save_load(Name)
+    shm.init_sm()
 
-    import dill
-
-    with open('example_file.dill', 'wb') as f:
-        dill.dump(example_dill, f)
-
-    init_sm(get_app(name='debug'))  # or  from toolboxv2 import get_app, tbef ; app = get_app()
-    register_instance(  # or app.run_any(tbef.SCHEDULER_MANAGER.ADD,
+    assert not shm.register_instance(  # or app.run_any(tbef.SCHEDULER_MANAGER.ADD,
         job_data={
             "job_id": "job-example_basic",
             "second": 20,
@@ -439,8 +448,8 @@ if __name__ == '__main__':
             "receive_job": False,
             "save": False,
             "max_live": False
-        })
-    register_instance(job_data={
+        }).print().is_error()
+    assert not shm.register_instance(job_data={
         "job_id": "job-example_args",
         "second": 10,
         "func": example_args,
@@ -451,8 +460,8 @@ if __name__ == '__main__':
         "save": False,
         "max_live": False,
         "args": ['update']
-    })
-    register_instance(job_data={
+    }).print().is_error()
+    assert not shm.register_instance(job_data={
         "job_id": "job-example_closer",
         "second": 5,
         "func": example_closer,
@@ -462,47 +471,48 @@ if __name__ == '__main__':
         "receive_job": False,
         "save": False,
         "max_live": False
-    })
-    register_instance(job_data={
-        "job_id": "job-from_string",
-        "second": 25,
-        "func": from_string,
-        "job": None,
-        "time_passer": None,
-        "object_name": "example_basic",
-        "receive_job": False,
-        "save": False,
-        "max_live": False
-    })
-    register_instance(job_data={
-        "job_id": "job-example_file.dill",
-        "second": 35,
-        "func": "example_file.dill",
-        "job": None,
-        "time_passer": None,
-        "object_name": "example_dill",
-        "receive_job": False,
-        "save": False,
-        "max_live": False
-    })
-    register_instance(job_data={
+    }).print().is_error()
+
+    # shm.register_instance(job_data={
+    #     "job_id": "job-from_string",
+    #     "second": 25,
+    #     "func": from_string,
+    #     "job": None,
+    #     "time_passer": None,
+    #     "object_name": "example_basic_S",
+    #     "receive_job": False,
+    #     "save": False,
+    #     "max_live": False
+    # }) not in same file possible
+    # shm.register_instance(job_data={
+    #     "job_id": "job-example_file.dill",
+    #     "second": 35,
+    #     "func": "example_file.dill",
+    #     "job": None,
+    #     "time_passer": None,
+    #     "object_name": "example_dill",
+    #     "receive_job": False,
+    #     "save": False,
+    #     "max_live": False
+    # }) unsafe inport dill extra
+    assert not shm.register_instance(job_data={
         "job_id": "job-example_file.py",
-        "second": 37,
+        "second": 2,
         "func": "example_file.py",
         "job": None,
         "time_passer": None,
-        "object_name": "example_basic",
+        "object_name": "example_basic_D",
         "receive_job": False,
         "save": False,
         "max_live": False
-    })
+    }).print().is_error()
     import schedule
 
     # >>> schedule.every(10).minutes
     # >>> schedule.every(5).to(10).days
     # >>> schedule.every().hour
     # >>> schedule.every().day.at("10:30")
-    register_instance(job_data={
+    assert not shm.register_instance(job_data={
         "job_id": "job-example_basic-at-10",
         "second": 0,
         "func": example_args,
@@ -513,7 +523,7 @@ if __name__ == '__main__':
         "save": False,
         "max_live": False,
         "args": (" at 22:04",)
-    })
+    }).print().is_error()
 
     time.sleep(15)
     print("SET DATA TO 1")
@@ -522,83 +532,8 @@ if __name__ == '__main__':
     test_var_list[0] = 1
     test_var_dict["data"] = 1
 
-    time.sleep(60)
-    on_exit(app=get_app(name='debug'))  # or  app.exit() # for clean up wen using the app
-    """
-Expected output :
+    time.sleep(15)  # or  app.exit() # for clean up wen using the app
 
-Starting ToolBox as test from : \\ToolBoxV2\\toolboxv2
-Logger in Test Mode
-================================
-2024-03-06 22:29:17 INFO - Logger initialized
-2024-03-06 22:29:17 INFO - Starting Application instance
-2024-03-06 22:29:17 INFO - loading test-DESKTOP-CI57V1L.config
-2024-03-06 22:29:17 INFO - Opening file in mode : r+
-2024-03-06 22:29:17 INFO - Collecting data from storage key : dev~mode~:
-2024-03-06 22:29:17 INFO - Collecting data from storage key : provider::
-2024-03-06 22:29:17 INFO - Finish init up in t-0.022403000009944662s
-2024-03-06 22:29:17 INFO - App instance, returned ID: test-DESKTOP-CI57V1L
-SYSTEM :: DESKTOP-CI57V1L
-ID -> test-DESKTOP-CI57V1L,
-Version -> 0.1.8,
 
-STARTING SchedulerManager
-Added Job job-example_basic : - kwargs 1
-Added Job job-example_args : - args 1 - kwargs 1
-Added Job job-example_closer : - kwargs 1
-Added Job job-from_string : - kwargs 1
-Added Job job-example_file.dill : - kwargs 1
-Added Job job-example_file.py : - kwargs 1
-Added Job job-example_basic-at-10 : - args 1 - kwargs 1
-
-2024-03-06 22:29:22 DEBUG - Running job Job(interval=5, unit=seconds, do=example_closer, args=(), kwargs={})
-data :
-	test_var_int=0	test_var_list=[0]	test_var_dict={'data': 0}
-
-2024-03-06 22:29:27 DEBUG - Running job Job(interval=10, unit=seconds, do=example_args, args=('update',), kwargs={})
-example args= update
-...
-
-SET DATA TO 1
-
-2024-03-06 22:29:32 DEBUG - Running job Job(interval=5, unit=seconds, do=example_closer, args=(), kwargs={})
-data :
-	test_var_int=0	test_var_list=[1]	test_var_dict={'data': 1}
-
-...
-2024-03-06 22:29:42 DEBUG - Running job Job(interval=25, unit=seconds, do=example_basic, args=(), kwargs={})
-2024-03-06 22:29:42 DEBUG - Running job Job(interval=5, unit=seconds, do=example_closer, args=(), kwargs={})
-
-example args= update
-data :
-	test_var_int=0	test_var_list=[1]	test_var_dict={'data': 1}
-
-2024-03-06 22:29:47 DEBUG - Running job Job(interval=10, unit=seconds, do=example_args, args=('update',), kwargs={})
-2024-03-06 22:29:47 DEBUG - Running job Job(interval=5, unit=seconds, do=example_closer, args=(), kwargs={})
-
-example_dill
-data :
-	test_var_int=0	test_var_list=[1]	test_var_dict={'data': 1}
-
-2024-03-06 22:29:52 DEBUG - Running job Job(interval=35, unit=seconds, do=example_dill, args=(), kwargs={})
-2024-03-06 22:29:52 DEBUG - Running job Job(interval=5, unit=seconds, do=example_closer, args=(), kwargs={})
-2024-03-06 22:29:54 DEBUG - Running job Job(interval=37, unit=seconds, do=example_basic, args=(), kwargs={})
-
-example_from_file
-example
-example args= update
-data :
-	test_var_int=0	test_var_list=[1]	test_var_dict={'data': 1}
-...
-2024-03-06 22:29:57 DEBUG - Running job Job(interval=5, unit=seconds, do=example_closer, args=(), kwargs={})
-2024-03-06 22:30:00 DEBUG - Running job Job(interval=1, unit=days, do=example_args, args=(' at 22:04',), kwargs={})
-
-example args=  at 22:04
-    # maby u wondering why the system time is 22:30:00 but the args for the timed functions is 22:04 '26mins debug time..'
-data :
-	test_var_int=0	test_var_list=[1]	test_var_dict={'data': 1}
-2024-03-06 22:30:02 DEBUG - Running job Job(interval=5, unit=seconds, do=example_closer, args=(), kwargs={})
-...
-    """
-'''
-    pass
+if __name__ == '__main__':
+    test_scheduler()

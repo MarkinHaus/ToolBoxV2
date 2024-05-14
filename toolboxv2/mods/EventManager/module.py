@@ -315,7 +315,7 @@ class EventManagerClass:
     async def add_client_route(self, source_id, addr):
         if source_id in self.routes_client:
             if self.routes_client[source_id].client is None or not self.routes_client[source_id].client.get('alive'):
-                self.routes_client[source_id].reconnect()
+                await self.routes_client[source_id].reconnect()
                 return True
             print("Already connected")
             return False
@@ -573,7 +573,23 @@ class EventManagerClass:
         await self.trigger_event(EventID.crate_name_as_id(name=name))
 
     async def trigger_event(self, event_id: EventID):
+        """
+        Exec source based on
 
+        source_types
+            F -> call directly
+            R -> use get_app(str(event_id)).run_any(*args, **kwargs)
+            S -> evaluate string
+        scope
+            instance -> _trigger_local
+            local -> if you ar proxy app run the event through get_app(str(event_id)).run_any(tbef.EventManager._trigger_local, args=args, kwargs=kwargs, get_result=True)
+            local_network -> use proxy0 app to communicate withe Daemon0 then local
+            global_network ->
+        exec_in
+        event_id
+        threaded
+
+                       """
         print(f"event-id Ptah : {event_id.get_path()}")
         print(f"testing trigger_event for {event_id.get_source()} {event_id.get_source()[-1] == self.source_id} ")
         if event_id.get_source()[-1] == self.source_id:

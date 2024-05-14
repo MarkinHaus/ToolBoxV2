@@ -24,7 +24,7 @@ async def run(_, _0):
     ev_id = event.event_id
     event.scope = Scope.local
     print("event ID :", str(ev_id))
-    ev.register_event(event)
+    await ev.register_event(event)
 
     try:
         await _.run_runnable('TBtray')

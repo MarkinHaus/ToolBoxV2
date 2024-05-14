@@ -83,8 +83,13 @@ async def a_save_closing_app():
         await app.a_exit()
 
     if hasattr(app, 'loop'):
-        if not app.loop.is_closed():
-            app.loop.close()
+        if app.loop.is_closed():
+           app.loop.close()
+        else:
+            await app.loop.shutdown_asyncgens()
+            await app.loop.shutdown_default_executor()
+            if not app.loop.is_closed():
+                print("Loop still running")
 
     app.print(Style.Bold(Style.ITALIC("- completed -")))
     registered_apps[0] = None

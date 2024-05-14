@@ -80,9 +80,9 @@ class App(AppType, metaclass=Singleton):
         if "test" in prefix:
 
             if self.system_flag == "Darwin" or self.system_flag == "Linux":
-                start_dir = self.start_dir.replace("/toolboxv2", "")
+                start_dir = self.start_dir.replace("ToolBoxV2/toolboxv2", "toolboxv2")
             else:
-                start_dir = self.start_dir.replace("\\toolboxv2", "")
+                start_dir = self.start_dir.replace("ToolBoxV2\\toolboxv2", "toolboxv2")
             self.data_dir = start_dir + '\\.data\\' + "test"
             self.config_dir = start_dir + '\\.config\\' + "test"
             self.info_dir = start_dir + '\\.info\\' + "test"
@@ -169,7 +169,7 @@ class App(AppType, metaclass=Singleton):
 
         self.logger.info(
             Style.GREEN(
-                f"Finish init up in t-{time.perf_counter() - t0}s"
+                f"Finish init up in {time.perf_counter() - t0:.2f}s"
             )
         )
 
@@ -212,17 +212,12 @@ class App(AppType, metaclass=Singleton):
             logger_info_str = "in Live Mode"
             # setup_logging(logging.WARNING, name="toolbox-live", is_online=True
             #              , online_level=logging.WARNING).info("Logger initialized")
-        elif "debug" in self.prefix:
+        elif "debug" in self.prefix or self.prefix.endswith("D"):
             self.prefix = self.prefix.replace("-debug", '').replace("debug", '')
             logger, logging_filename = setup_logging(logging.DEBUG, name="toolbox-debug", interminal=True,
                                                      file_level=logging.WARNING)
             logger_info_str = "in debug Mode"
             self.debug = True
-        elif debug:
-            logger, logging_filename = setup_logging(logging.DEBUG, name=f"toolbox-{self.prefix}-debug",
-                                                     interminal=True,
-                                                     file_level=logging.DEBUG)
-            logger_info_str = "in args debug Mode"
         elif debug:
             logger, logging_filename = setup_logging(logging.DEBUG, name=f"toolbox-{self.prefix}-debug",
                                                      interminal=True,
@@ -305,7 +300,7 @@ class App(AppType, metaclass=Singleton):
 
     def helper_install_pip_module(self, module_name):
         self.print(f"Installing {module_name} GREEDY")
-        os.system(f"pip install {module_name}")
+        os.system(f"{sys.executable} -m pip install {module_name}")
 
     def python_module_import_classifier(self, mod_name, error_message):
 
@@ -315,7 +310,6 @@ class App(AppType, metaclass=Singleton):
             # TODO: install from remote optional
             return Result.default_internal_error(f"404 {error_message.split('mods')[1]} not found")
         if error_message.startswith("No module named '"):
-            # TODO: install from remote optional
             pip_requ = error_message.split("'")[1].replace("'", "").strip()
             # if 'y' in input(f"\t\t\tAuto install {pip_requ} Y/n").lower:
             return self.helper_install_pip_module(pip_requ)
@@ -791,7 +785,8 @@ class App(AppType, metaclass=Singleton):
 
     async def a_exit(self):
         await self.a_remove_all_modules()
-        results = await asyncio.gather(*[asyncio.create_task(f()) for f in self.exit_tasks if inspect.iscoroutinefunction(f)])
+        results = await asyncio.gather(
+            *[asyncio.create_task(f()) for f in self.exit_tasks if inspect.iscoroutinefunction(f)])
         for result in results:
             self.print(f"Function On Exit result: {result}")
         self.exit(remove_all=False)
@@ -824,12 +819,12 @@ class App(AppType, metaclass=Singleton):
             return self._get_function(name, **kwargs)
 
     async def a_run_function(self, mod_function_name: Enum or tuple,
-                     tb_run_function_with_state=True,
-                     tb_run_with_specification='app',
-                     args_=None,
-                     kwargs_=None,
-                     *args,
-                     **kwargs) -> Result:
+                             tb_run_function_with_state=True,
+                             tb_run_with_specification='app',
+                             args_=None,
+                             kwargs_=None,
+                             *args,
+                             **kwargs) -> Result:
 
         if kwargs_ is not None and not kwargs:
             kwargs = kwargs_
@@ -1124,10 +1119,11 @@ class App(AppType, metaclass=Singleton):
 
         return res
 
-    async def a_run_any(self, mod_function_name: Enum or str or tuple, backwords_compability_variabel_string_holder=None,
-                get_results=False, tb_run_function_with_state=True, tb_run_with_specification='app', args_=None,
-                kwargs_=None,
-                *args, **kwargs):
+    async def a_run_any(self, mod_function_name: Enum or str or tuple,
+                        backwords_compability_variabel_string_holder=None,
+                        get_results=False, tb_run_function_with_state=True, tb_run_with_specification='app', args_=None,
+                        kwargs_=None,
+                        *args, **kwargs):
 
         # if self.debug:
         #     self.logger.info(f'Called from: {getouterframes(currentframe(), 2)}')
@@ -1141,9 +1137,9 @@ class App(AppType, metaclass=Singleton):
             mod_function_name = (mod_function_name, backwords_compability_variabel_string_holder)
 
         res: Result = await self.a_run_function(mod_function_name,
-                                        tb_run_function_with_state=tb_run_function_with_state,
-                                        tb_run_with_specification=tb_run_with_specification,
-                                        args_=args, kwargs_=kwargs)
+                                                tb_run_function_with_state=tb_run_function_with_state,
+                                                tb_run_with_specification=tb_run_with_specification,
+                                                args_=args, kwargs_=kwargs)
 
         if isinstance(res, ApiResult):
             res = res.as_result()
@@ -1555,22 +1551,5 @@ class App(AppType, metaclass=Singleton):
 
 def _initialize_toolBox(init_type, init_from, name):
     logger = get_logger()
-
-    logger.info("Initialing ToolBox: " + init_type)
-    if init_type.startswith("http"):
-        logger.info("Download from url: " + init_from + "\n->temp_config.config")
-        try:
-            data = requests.get(init_from).json()["res"]
-        except TimeoutError:
-            logger.error(Style.RED("Error retrieving config information "))
-            exit(1)
-        # init_type = "main"
-    else:
-        data = open(init_from, 'r+').read()
-
-    fh = FileHandler(name + ".config")
-    fh.open_s_file_handler()
-    fh.file_handler_storage.write(str(data))
-    fh.file_handler_storage.close()
-
+    # legacy
     logger.info("Done!")
