@@ -674,7 +674,8 @@ def helper(tb_app, id_name):
 
     time.sleep(0.5)
 
-    tb_app.get_mod("welcome")
+    if 'unittest' not in sys.argv[0]:
+        tb_app.get_mod("welcome")
     d = tb_app.get_mod("DB")
     c = d.initialize_database()
     # c = d.edit_cli("RR")

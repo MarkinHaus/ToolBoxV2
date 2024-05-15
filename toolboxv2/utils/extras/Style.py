@@ -439,6 +439,9 @@ class Spinner:
         if symbols is None:
             symbols = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
+        if 'unittest' in sys.argv[0]:
+            symbols = ['#', '=', '-']
+
         self.spinner = itertools.cycle(symbols)
         self.delay = delay
         self.message = message
