@@ -1,0 +1,6 @@
+dependencies:
+- ''
+- fastapi
+- asyncio
+- typing
+- os

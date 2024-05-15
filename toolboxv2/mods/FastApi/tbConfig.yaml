@@ -1,0 +1,23 @@
+dependencies:
+- ''
+- datetime
+- starlette
+- time
+- fastapi
+- inspect
+- packaging
+- pydantic
+- platform
+- typing
+- pathlib
+- multiprocessing
+- re
+- logging
+- zipfile
+- asyncio
+- sys
+- yaml
+- json
+- uuid
+- requests
+- os
