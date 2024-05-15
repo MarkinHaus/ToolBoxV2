@@ -23,7 +23,7 @@ class TestBlobStorage(unittest.TestCase):
 
         self.blob_storage._save_blob(blob_id, blob_data)
 
-        mock_open.assert_called_once_with(str(self.mock_storage_directory) + "\\" + blob_id, 'wb')
+        mock_open.assert_called_once_with(str(self.mock_storage_directory / blob_id), 'wb')
         mock_pickle_dump.assert_called_once_with(blob_data, mock_open())
 
     @patch('os.path.exists')
@@ -36,7 +36,7 @@ class TestBlobStorage(unittest.TestCase):
 
         result = self.blob_storage._load_blob(blob_id)
 
-        mock_open.assert_called_once_with(str(self.mock_storage_directory) + "\\" + blob_id, 'rb')
+        mock_open.assert_called_once_with(str(self.mock_storage_directory / blob_id), 'rb')
         self.assertEqual(result, {"data": b"test data"})
 
 

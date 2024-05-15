@@ -1,3 +1,4 @@
+import atexit
 import dataclasses
 import os
 import sys
@@ -18,6 +19,7 @@ from aiohttp import ClientSession, ClientResponse
 from yarl import URL
 
 from ... import Code
+from ...tests.a_util import async_test
 
 
 # @dataclasses.dataclass
@@ -33,10 +35,14 @@ class Session(metaclass=Singleton):
         self.username = username
         self.session: Optional[ClientSession] = None
         if base is None:
-            base = os.environ.get("TOOLBOXV2_REMOTE_BASE")
+            base = os.environ.get("TOOLBOXV2_REMOTE_BASE", "http://localhost:5000")
         if base is not None and base.endswith("/api/"):
             base = base.replace("api/", "")
         self.base = base
+
+        async def helper(): await self.session.close() if self.session is not None else None
+
+        atexit.register(async_test(helper))
 
     async def init_log_in_mk_link(self, mak_link, download=True, b_name="chromium"):
         from playwright.async_api import async_playwright
