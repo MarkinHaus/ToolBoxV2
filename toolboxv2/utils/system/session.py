@@ -44,18 +44,20 @@ class Session(metaclass=Singleton):
 
         atexit.register(async_test(helper))
 
-    async def init_log_in_mk_link(self, mak_link, download=True, b_name="chromium"):
+    async def init_log_in_mk_link(self, mak_link, download=True, b_name="chromium", headless=False):
         from playwright.async_api import async_playwright
         async with async_playwright() as playwright:
             try:
                 browser = await playwright.chromium.launch(
-                    headless=False)  # Set headless=False if you want to see the browser UI
+                    headless=headless)  # Set headless=False if you want to see the browser UI
             except Exception as e:
                 if download and "Executable doesn't exist at" in str(e):
                     print("starting installation")
                     os.system(sys.executable+' -m playwright install '+b_name+' --with-deps --force')
+                if not download:
+                    return "install a browser"
                 browser = await playwright.chromium.launch(
-                    headless=False)
+                    headless=headless)
             context = await browser.new_context()
 
             # Open a new page
