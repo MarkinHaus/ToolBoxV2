@@ -129,6 +129,9 @@ class Tools(MainTool, FileHandler):  # FileHandler
         if 'test' in self.app.id and not test_override:
             return "No api in test mode allowed"
 
+        if api_name is None:
+            return
+
         if isinstance(live, str):
             live = bool(live)
         if isinstance(reload, str):
@@ -162,7 +165,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         api_data = self.api_config[api_name]
 
-        # self.print(api_data)
+        self.print(api_data)
         g = f"uvicorn toolboxv2.mods.FastApi.fast_api_main:app --host {api_data['host']}" \
             f" --port {api_data['port']} --header data:{self.app.debug}:{api_name}"
         # if test_override:

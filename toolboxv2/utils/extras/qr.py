@@ -1,3 +1,5 @@
+import sys
+
 import qrcode
 
 
@@ -11,5 +13,6 @@ def print_qrcode_to_console(content):
     qr.add_data(content)
     qr.make(fit=True)
     print("QR: ", content)
-    qr.print_ascii(invert=True)
+    if 'unittest' not in sys.argv[0]:
+        qr.print_ascii(invert=True)
     return qr
