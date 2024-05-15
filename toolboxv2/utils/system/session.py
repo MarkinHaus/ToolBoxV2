@@ -35,7 +35,7 @@ class Session(metaclass=Singleton):
         self.username = username
         self.session: Optional[ClientSession] = None
         if base is None:
-            base = os.environ.get("TOOLBOXV2_REMOTE_BASE", "http://localhost:5000")
+            base = os.environ.get("TOOLBOXV2_REMOTE_BASE", "https://simplecore.app")
         if base is not None and base.endswith("/api/"):
             base = base.replace("api/", "")
         self.base = base
@@ -54,8 +54,8 @@ class Session(metaclass=Singleton):
                 if download and "Executable doesn't exist at" in str(e):
                     print("starting installation")
                     os.system(sys.executable+' -m playwright install '+b_name+' --with-deps --force')
-                    browser = await playwright.chromium.launch(
-                        headless=False)
+                browser = await playwright.chromium.launch(
+                    headless=False)
             context = await browser.new_context()
 
             # Open a new page

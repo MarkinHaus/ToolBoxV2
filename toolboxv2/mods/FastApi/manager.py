@@ -149,7 +149,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
                 "Name": api_name,
                 "version": self.version,
                 "port": self.app.args_sto.port,
-                "host": host
+                "host": host if host is not None and isinstance(host, str) else "localhost",
             }
 
             if live:

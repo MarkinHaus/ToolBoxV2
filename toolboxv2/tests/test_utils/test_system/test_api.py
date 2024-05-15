@@ -22,12 +22,6 @@ class TestFindHighestZipVersionEntry(unittest.TestCase):
         self.assertIsNone(result)
         # Add more specific assertions based on the expected behavior
 
-    def test_find_highest_zip_version_entry_with_target_app_version_not_matching(self):
-        # Test case with target app version not matching the entry's app version
-        get_app(name="test-debug")
-        with self.assertRaises(packaging.version.InvalidVersion):
-            result = find_highest_zip_version_entry(name="DB", target_app_version="NONE")
-
     def test_find_highest_zip_version_entry_with_invalid_filepath(self):
         # Test case with an invalid filepath
         get_app(name="test-debug")

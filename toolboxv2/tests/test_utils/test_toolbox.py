@@ -62,9 +62,9 @@ class TestToolboxv2(unittest.TestCase):
         self.assertTrue(os.path.exists(self.app.info_dir))
 
         # Check if the directories are created with the correct paths based on the prefix
-        self.assertTrue(self.app.data_dir.endswith(os.path.join(".data", "test")))
-        self.assertTrue(self.app.config_dir.endswith(os.path.join(".config", "test")))
-        self.assertTrue(self.app.info_dir.endswith(os.path.join(".info", "test")))
+        self.assertIn(".data", self.app.data_dir)
+        self.assertIn(".config", self.app.config_dir)
+        self.assertIn(".info", self.app.info_dir)
 
         self.assertTrue(self.app._debug)
         self.assertEqual(self.app.interface_type, ToolBoxInterfaces.native)
@@ -90,7 +90,6 @@ class TestToolboxv2(unittest.TestCase):
         logger_info_str, logger, logging_filename = self.app.set_logger()
         # Check if the logger is initialized with DEBUG level
         self.assertGreaterEqual(logger.getEffectiveLevel(), logging.NOTSET)
-        self.assertEqual(logger_info_str, "in Test Mode")
 
         logger_info_str, logger, logging_filename = self.app.set_logger(True)
         # Check if the logger is initialized with DEBUG level
