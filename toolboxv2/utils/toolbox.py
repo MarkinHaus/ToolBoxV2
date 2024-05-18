@@ -163,10 +163,6 @@ class App(AppType, metaclass=Singleton):
             # self.save_load("CloudM")
             # self.run_any("CloudM", "update_core")
 
-        if args.get_version:
-            v = self.version
-            self.print(f"Version main : {v}")
-
         self.logger.info(
             Style.GREEN(
                 f"Finish init up in {time.perf_counter() - t0:.2f}s"
@@ -472,7 +468,7 @@ class App(AppType, metaclass=Singleton):
 
         if function_id not in self.functions[modular_id]:
             self.logger.warning(f"function data not found {modular_id}.{function_id} 404")
-            return "404", 200
+            return "404", 404
 
         function_data = self.functions[modular_id][function_id]
 
@@ -847,19 +843,21 @@ class App(AppType, metaclass=Singleton):
         function_data, error_code = self.get_function(mod_function_name, state=tb_run_function_with_state,
                                                       metadata=True, specification=tb_run_with_specification)
         self.logger.info(f"Received fuction : {mod_function_name}, with execode: {error_code}")
-        if error_code == 1 or error_code == 3 or error_code == 400:
-            self.get_mod(modular_name)
+        if error_code == 404:
+            mod = self.get_mod(modular_name)
+            if hasattr(mod, "async_initialized") and not mod.async_initialized:
+                await mod
             function_data, error_code = self.get_function(mod_function_name, state=tb_run_function_with_state,
                                                           metadata=True, specification=tb_run_with_specification)
 
-        if error_code == 2:
+        if error_code == 404:
             self.logger.warning(Style.RED(f"Function Not Found"))
             return (Result.default_user_error(interface=self.interface_type,
                                               exec_code=404,
                                               info=f"function not found function is not decorated").
                     set_origin(mod_function_name))
 
-        if error_code == -1:
+        if error_code == 300:
             return Result.default_internal_error(interface=self.interface_type,
                                                  info=f"module {modular_name}"
                                                       f" has no state (instance)").set_origin(mod_function_name)
@@ -1001,7 +999,7 @@ class App(AppType, metaclass=Singleton):
                 ).set_origin(mod_function_name)
             if not row:
                 self.logger.info(
-                    f"Function Exec coed: {formatted_result.info.exec_code} Info's: {formatted_result.info.help_text}")
+                    f"Function Exec code: {formatted_result.info.exec_code} Info's: {formatted_result.info.help_text}")
             else:
                 self.logger.info(
                     f"Function Exec data: {formatted_result}")
@@ -1066,7 +1064,7 @@ class App(AppType, metaclass=Singleton):
                 ).set_origin(mod_function_name)
             if not row:
                 self.logger.info(
-                    f"Function Exec coed: {formatted_result.info.exec_code} Info's: {formatted_result.info.help_text}")
+                    f"Function Exec code: {formatted_result.info.exec_code} Info's: {formatted_result.info.help_text}")
             else:
                 self.logger.info(
                     f"Function Exec data: {formatted_result}")
@@ -1166,6 +1164,9 @@ class App(AppType, metaclass=Singleton):
         # if private is not None:
         #     if private and spec != 'app':
         #         raise ValueError("Module is private")
+        if name not in self.functions:
+            self.logger.warning(f"Module '{name}' is not found")
+            return None
         instance = self.functions[name].get(f"{spec}_instance")
         if instance is None:
             return self.load_mod(name, spec=spec)

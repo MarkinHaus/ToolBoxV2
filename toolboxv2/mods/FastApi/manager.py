@@ -12,7 +12,6 @@ from toolboxv2.utils.extras.blobs import BlobFile
 from toolboxv2.utils.extras.qr import print_qrcode_to_console
 from toolboxv2.utils.system.session import Session, get_local_ip, get_public_ip
 
-export = get_app("api_manager.Export").tb
 Name = "FastApi"
 
 
@@ -168,11 +167,10 @@ class Tools(MainTool, FileHandler):  # FileHandler
         self.print(api_data)
         g = f"uvicorn toolboxv2.mods.FastApi.fast_api_main:app --host {api_data['host']}" \
             f" --port {api_data['port']} --header data:{self.app.debug}:{api_name}"
-        # if test_override:
-        #     g += ' --reload --reload-dir ./utils' if reload else ''
+        if reload:
+            g += ' --reload --reload-dir ./utils' if reload else ''
 
         print("Running command : " + g)
-
         # def runner():
         #     uvicorn.run("toolboxv2.mods.FastApi.fast_api_main:app", host=api_data['host'],
         #                 port=api_data['port'], headers=[('data', str(self.app.debug)+':'+ api_name)], reload=reload)
@@ -225,12 +223,10 @@ class Tools(MainTool, FileHandler):  # FileHandler
             del self.running_apis[api_name]
         os.remove(f"./.data/api_pid_{api_name}")
 
-    @export(mod_name="api_manager", test=False)
     def show_running(self):
         self.print(f"Status : {list(self.running_apis.keys())}")
         return list(self.running_apis.keys())
 
-    @export(mod_name="api_manager", test=False)
     async def restart_api(self, api_name: str):
         await self.stop_api(api_name)
         time.sleep(4)

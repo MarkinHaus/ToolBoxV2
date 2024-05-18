@@ -1,5 +1,5 @@
-<script type="module" src="/web/scripts/module/0/m_link.js"></script>
 <script src="/index.js" type="module"></script>
+<script type="module" src="/web/scripts/m_link.js"></script>
 <div>
     <div class="main-content frosted-glass">
         <section id="login">
@@ -8,14 +8,8 @@
             </div>
             <div class="form-container" id="Main-content">
                 <div id="loginForm" class="form">
-                    <h2>Login With Magick Link</h2>
-                    <input type="text" id="username" oninput="function checkInputLength(param) {
-
-            if (param.value.length >= NL) {
-                startMkLink();
-            }
-          }
-          checkInputLength(this)" placeholder="Username">
+                    <h2>Login With Magic Link</h2>
+                    <input type="text" id="username"  placeholder="Username">
                 </div>
             </div>
             <div class="form-container none" id="error-content">

@@ -95,7 +95,7 @@ def getWidgetNave(app: App = None):
     # Sendeng system MSG message
     widgetNav_content = app.run_any(tbef.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="./web/1/WigetNav/navDrow.html",
                                     element_id="controls",
-                                    externals=["/web/1/WigetNav/module/navDrow.js"],
+                                    externals=["/web/1/WigetNav/navDrow.js"],
                                     from_file=True, to_str=False)
 
     return widgetNav_content
@@ -108,7 +108,7 @@ def getDrag(app: App = None):
     # Sendeng system MSG message
     drag_content = app.run_any(tbef.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="./web/Drag/drag.html",
                                element_id="DragControls",
-                               externals=["/web/Drag/module/drag.js"],
+                               externals=["/web/Drag/drag.js"],
                                from_file=True, to_str=False)
     return drag_content
 

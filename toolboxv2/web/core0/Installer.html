@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="de">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <link rel="icon" sizes="192X192" href="/web/webapp/icon-192.png">
+    <link rel="apple-touch-icon" sizes="192X192" href="/web/webapp/icon-192.png">
+    <link rel="icon" sizes="512X512" href="/web/webapp/icon-512.png">
+    <link rel="apple-touch-icon" sizes="512X512" href="/web/webapp/icon-512.png">
+
+    <script src="/web/scripts/infos.js" defer></script>
+    <script src="/index.js" defer></script>
+
+    <link rel="stylesheet" type="text/css" href="/web/core0/styles.css">
+    <title>Installer</title>
+    <link rel="stylesheet" type="text/css" href="style.css">
+    <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
+    />
+    <script src="installer.js" defer></script>
+    <style>
+        body {
+            line-height: 1.6;
+            padding: 5px;
+            text-align: center;
+            align-items: center;
+        }
+
+        #installer-container, #manual-install-link {
+            margin-top: 5px;
+            border-radius: 5px;
+            box-shadow: var(--secondary-color) 5px 2px 15px;
+            padding: 5%;
+        }
+
+        #os-info {
+            font-style: italic;
+        }
+
+        #os-selection {
+            width: 50%;
+            text-align: center;
+            padding: 5px;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+            margin-bottom: 10px;
+        }
+
+        a {
+            color: lightblue;
+            font-size: xx-large;
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        p {
+            margin-bottom: 15px;
+        }
+
+        /* Spezifische Stile für Download-Optionen */
+        #download-options a {
+            display: inline-block;
+            background-color: #4CAF50;
+            color: white;
+            padding: 3px 5px;
+            margin: 5px 0;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+
+        #download-options a:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+
+<body>
+<div class="main-page" style="padding-top: 5vh;padding-bottom: 2vh;">
+    <div class="wrapper fade-class">
+<h2>Install engine + interface</h2>
+<h3>#Supported-OS: Windows, Linux, Mac, iOS, Android</h3>
+<select id="os-selection">
+    <option value="">Automatic</option>
+    <option value="Desktop_cli">Engine (Python)</option>
+    <option value="Desktop_rust">Desktop App Windows only (Rust)</option>
+    <option value="Desktop_web">Desktop (Web-App)</option>
+    <option value="Mobile_web">Mobile (Web-App)</option>
+</select>
+<div id="installer-container" style="min-height: fit-content">
+    <h3>ToolBoxV2 Installer</h3>
+    <p id="os-info">Erkennung Ihres Betriebssystems...</p>
+    <div id="auto-download-options"></div>
+</div>
+</div>
+</div>
+<footer style="position: relative;padding-top: 50%;">
+    <h3><a href="/web/core0/index.html">Home</a></h3>
+    <h4>Weitere Informationen</h4>
+    <h5>
+        <p>Entdecken Sie, wo wir momentan stehen und was unsere nächsten Ziele sind auf unserer <a href="/web/core0/roadmap.html">Routenplanung</a>.</p>
+        <p>Unterstützen Sie uns auf <a href="https://www.buymeacoffee.com/markinhaus" target="_blank">BuyMeACoffee</a> oder <a href="https://www.patreon.com/de-DE" target="_blank">Patreon</a>.</p>
+    </h5>
+</footer>
+
+</body>
+
+
+</html>

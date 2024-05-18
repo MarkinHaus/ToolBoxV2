@@ -8,6 +8,7 @@ from toolboxv2 import Style, Result, tbef, App
 from toolboxv2 import get_app, Code
 from .AuthManager import get_invitation
 from ...utils.extras.qr import print_qrcode_to_console
+from .types import User
 
 Name = 'CloudM'
 version = "0.0.2"
@@ -173,10 +174,12 @@ def update_core(self, backup=False, name=""):
 @no_test
 async def create_magic_log_in(app: App, username: str):
     user = await app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username)
-    key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
+    if not isinstance(user, User):
+        return Result.default_internal_error("Invalid user or db connection", data="Add -c DB edit_cli [RR, LR, LD, RD]")
+    key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
     base_url = app.config_fh.get_file_handler("provider::") + (
-        f':{app.args_sto.port}' if app.args_sto.host == 'localhost' else "")
-    url = f"{base_url}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
+        f':8080' if app.args_sto.host == 'localhost' else "")
+    url = f"{base_url}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}".replace(":5000/", ":8080/")
     print_qrcode_to_console(url)
     return url
 
@@ -205,7 +208,7 @@ async def register_initial_root_user(app: App, email=None):
     print("User:")
     print(user)
     user = user.get()
-    key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
+    key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
     base_url = app.config_fh.get_file_handler("provider::") + (
         f':{app.args_sto.port}' if app.args_sto.host == 'localhost' else "5000")
     url = f"{base_url}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"

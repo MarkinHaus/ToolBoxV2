@@ -1,0 +1,328 @@
+<script src="/index.js" type="module"></script>
+<div class="inv-main" id="main" style="width: 90vw;text-align: center">
+    <input  autocomplete="off" type="text"
+           style="
+                border-radius: 16px;
+                max-width: min-content;
+                min-width: 30%;
+                text-align: center;
+                "
+           id="inputField"
+           class="inputField"
+           placeholder="Type here..."/>
+    <div id="button-container" class="button-container" style="margin-top: 10px;">
+        <button id="action-button-0" class="icon-button" onclick="buttonAction(0)" title="Tooltip 0"><span class="material-symbols-outlined">token</span></button>
+        <button id="action-button-1" class="icon-button" onclick="buttonAction(1)" title="Tooltip 1"><span class="material-symbols-outlined">all_inclusive</span></button>
+        <button id="action-button-2" class="icon-button" onclick="buttonAction(2)" title="Tooltip 2"><span class="material-symbols-outlined">folder_managed</span></button>
+    </div>
+        <div id="autocompleteBox" class="autocomplete-box"></div>
+
+    <div id="loadingIndicator" style="display: none;">Loading...</div>
+
+</div>
+
+
+<script unSave="true">
+
+    //if (document.getElementById("MainContent") && !window.userDonline){
+        window.userDonline = true
+
+        const animator = window.TBf.animator
+        animator("Y2-8762", "Y2+101")
+
+        setTimeout(()=>{
+        const httpPostUrl = window.TBf.httpPostUrl
+        function autocomplete(inp, arr) {
+            /*the autocomplete function takes two arguments,
+            the text field element and an array of possible autocompleted values:*/
+            var currentFocus;
+            /*execute a function when someone writes in the text field:*/
+            inp.addEventListener("input", function(e) {
+                var a, b, i, val = this.value;
+                /*close any already open lists of autocompleted values*/
+                closeAllLists();
+                if (!val) { return false;}
+                currentFocus = -1;
+                /*create a DIV element that will contain the items (values):*/
+                a = document.createElement("DIV");
+                a.setAttribute("id", this.id + "autocomplete-list");
+                a.setAttribute("class", "autocomplete-items");
+                /*append the DIV element as a child of the autocomplete container:*/
+                this.parentNode.appendChild(a);
+                /*for each item in the array...*/
+                for (i = 0; i < arr.length; i++) {
+                    /*check if the item starts with the same letters as the text field value:*/
+                    if (arr[i].substr(0, val.length).toUpperCase() == val.toUpperCase()) {
+                        /*create a DIV element for each matching element:*/
+                        b = document.createElement("DIV");
+                        /*make the matching letters bold:*/
+                        b.innerHTML = "<strong>" + arr[i].substr(0, val.length) + "</strong>";
+                        b.innerHTML += arr[i].substr(val.length);
+                        /*insert a input field that will hold the current array item's value:*/
+                        b.innerHTML += "<input type='hidden' value='" + arr[i] + "'>";
+                        /*execute a function when someone clicks on the item value (DIV element):*/
+                        b.addEventListener("click", function(e) {
+                            /*insert the value for the autocomplete text field:*/
+                            inp.value = this.getElementsByTagName("input")[0].value;
+                            /*close the list of autocompleted values,
+                            (or any other open lists of autocompleted values:*/
+                            closeAllLists();
+                        });
+                        a.appendChild(b);
+                    }
+                }
+            });
+            /*execute a function presses a key on the keyboard:*/
+            inp.addEventListener("keydown", function(e) {
+                var x = document.getElementById(this.id + "autocomplete-list");
+                if (x) x = x.getElementsByTagName("div");
+                if (e.keyCode == 40) {
+                    /*If the arrow DOWN key is pressed,
+                    increase the currentFocus variable:*/
+                    currentFocus++;
+                    /*and and make the current item more visible:*/
+                    addActive(x);
+                } else if (e.keyCode == 38) { //up
+                    /*If the arrow UP key is pressed,
+                    decrease the currentFocus variable:*/
+                    currentFocus--;
+                    /*and and make the current item more visible:*/
+                    addActive(x);
+                } else if (e.keyCode == 13) {
+                    /*If the ENTER key is pressed, prevent the form from being submitted,*/
+                    e.preventDefault();
+                    if (currentFocus > -1) {
+                        /*and simulate a click on the "active" item:*/
+                        if (x) x[currentFocus].click();
+                    }
+                }
+            });
+            function addActive(x) {
+                /*a function to classify an item as "active":*/
+                if (!x) return false;
+                /*start by removing the "active" class on all items:*/
+                removeActive(x);
+                if (currentFocus >= x.length) currentFocus = 0;
+                if (currentFocus < 0) currentFocus = (x.length - 1);
+                /*add class "autocomplete-active":*/
+                x[currentFocus].classList.add("autocomplete-active");
+            }
+            function removeActive(x) {
+                /*a function to remove the "active" class from all autocomplete items:*/
+                for (var i = 0; i < x.length; i++) {
+                    x[i].classList.remove("autocomplete-active");
+                }
+            }
+            function closeAllLists(elmnt) {
+                /*close all autocomplete lists in the document,
+                except the one passed as an argument:*/
+                var x = document.getElementsByClassName("autocomplete-items");
+                for (var i = 0; i < x.length; i++) {
+                    if (elmnt != x[i] && elmnt != inp) {
+                        x[i].parentNode.removeChild(x[i]);
+                    }
+                }
+            }
+            /*execute a function when someone clicks in the document:*/
+            document.addEventListener("click", function (e) {
+                closeAllLists(e.target);
+            });
+        }
+    let dropdownOptions = null
+
+    function setIcon(buttonIndex, iconName) {
+        const buttons = document.querySelectorAll('.icon-button .material-icons');
+        if (buttons[buttonIndex]) {
+            buttons[buttonIndex].textContent = iconName;
+        }
+    }
+
+    // Funktion zum Anpassen des Tooltips
+    function setTooltip(buttonIndex, tooltipText) {
+        const buttons = document.querySelectorAll('.icon-button');
+        if (buttons[buttonIndex]) {
+            buttons[buttonIndex].title = tooltipText;
+        }
+    }
+
+
+    // Funktion zum Ändern der Aktion (Callback) beim Klick
+    function setAction(buttonIndex, newAction) {
+        const buttons = document.querySelectorAll('.icon-button');
+        if (buttons[buttonIndex]) {
+            buttons[buttonIndex].onclick = newAction;
+        }
+    }
+
+
+    // Funktion zum Hinzufügen neuer Einträge (Beispiel)
+    function addItem(item) {
+        let items = JSON.parse(localStorage.getItem('ACUBordSItems')) || ["Main-User-DBord"];
+        if (!items.includes(item)) {
+            items.push(item);
+            localStorage.setItem('ACUBordSItems', JSON.stringify(items));
+        }
+    }
+
+    function initACUBorddropdownMenu() {
+        const dropdown = document.getElementById('ACUBorddropdownMenu');
+
+        // Initialisiere die Liste, falls noch nicht im Local Storage vorhanden
+        let items = JSON.parse(localStorage.getItem('ACUBordSItems')) || ["Main-User-DBord"];
+        let selectedItem = localStorage.getItem('ACUBord') || items[0];
+
+        // Funktion zum Aktualisieren des Dropdowns
+        function updateDropdown() {
+            dropdown.innerHTML = ''; // Dropdown leeren
+            items.forEach(function(item) {
+                const option = document.createElement('option');
+                option.value = item;
+                option.text = item;
+                option.selected = item === selectedItem;
+                dropdown.appendChild(option);
+            });
+        }
+
+
+        // Event-Listener für Änderungen am Dropdown
+        dropdown.addEventListener('change', function() {
+            selectedItem = this.value;
+            localStorage.setItem('ACUBord', selectedItem);
+        });
+
+        // Initialisiere das Dropdown beim Laden
+        updateDropdown();
+
+        // Beispiel: Hinzufügen eines neuen Eintrags
+        // addItem('Option 3');
+    }
+
+    // Beispiel für eine Aktion
+    function buttonAction(index) {
+        console.log(`Button ${index} clicked`);
+    }
+
+        autocomplete(document.getElementById("inputField"), ['CloudM.UI.widget', 'TestWidget', 'quickNote.QnWidget'])
+        let ac_bord = window.localStorage.getItem("ACUBord")
+        if (!ac_bord){
+            window.localStorage.setItem("ACUBord", "Main-User-DBord")
+            ac_bord = "Main-User-DBord"
+        }
+
+        window.widgetUtility.ackey = ac_bord;
+
+        setTooltip(0, 'In widget öffnen'); // Setzt den Tooltip des ersten Buttons auf 'Suchen'
+        setTooltip(1, 'web Suchen durchführen'); // Setzt den Tooltip des ersten Buttons auf 'Suchen'
+        setTooltip(2, 'Settings öffnen'); // Setzt den Tooltip des ersten Buttons auf 'Suchen'
+
+        setAction(0, async () => {
+                const content = document.getElementById("inputField").value
+                if (content) {
+                    let extras = ""
+                    let w_name = content.substring(0, content.length)
+                    if (content.includes(':')){
+                        w_name = content.substring(0, content.indexOf(":"))
+                    }
+                    if (content.startsWith("quickNote.QnWidget:")){
+                        extras = "&Wid=" + content.substring(content.indexOf(":")+1, content.length);
+                    }
+                    await httpPostUrl("WidgetsProvider", "open_widget", "name=" + w_name + extras,
+                        (e) => {
+                            console.log(e)
+                            window.overlayUtility.createOverlay({
+                                content: `<h1>Error  ` + e.toString() + name + `</h1>`,
+                                closeOnOutsideClick: true,
+                            })
+                        }, (result) => {
+                            console.log("Susses",result)
+                            window.widgetUtility.createWidget({
+                                titel: content.substring(content.indexOf(":")+1, content.length), template: result.get()
+                            })
+
+                        }, true
+                    )
+                } else {
+                    window.overlayUtility.createOverlay({
+                        content: `<p>No Text entered</p>`,
+                        closeOnOutsideClick: true,
+                    })
+                }
+            }
+        );
+        setAction(1, () =>
+            addBalloon("button-container", 0,
+                ["I see you decided not to use isaa or ended up here by accident.",
+                    "that's not a problem isaa is an extension just like any other tool.",
+                    " You can add extensions at any time.",
+                    "You can also just look around in the store like so"],
+                [["Starte Suche", ()=>{
+                    console.log("Suche wird ausgeführt")}], ])
+        );
+        let val = window.widgetUtility.ackey
+        setAction(2, () => {
+            window.overlayUtility.createOverlay({
+                content: `<p>Widget Bord Settings</p> <div id="settings-container">
+<h3> Current Bord key :`+val+` </h3>
+<h4> Switch Bort : <select id="ACUBorddropdownMenu"></select></h4>
+
+<hr/>
+        <input type="text" id="key-input"  style="width: 100%" placeholder="new bord"><hr/>
+    </div>`,
+                closeOnOutsideClick: false,
+                onClose: null,
+                afterCrate: initACUBorddropdownMenu,
+                buttons: [
+                    {text: "Abbrechen", action: () => window.overlayUtility.closeOverlay()},
+                    {text: "Speicher", action: () => { val = document.getElementById("key-input").value;
+                        if (!val){
+                            val = window.localStorage.getItem("ACUBord")
+                        }else{
+                            addItem(val)
+                        }
+                        window.overlayUtility.closeOverlay(); window.overlayUtility.createOverlay({
+                            content: `<p>Key wurde auf "`+val+`" gesetzen </p>`,
+                            buttons: [
+                                {text: "Abbrechen", action: () => {
+                                        val = window.widgetUtility.ackey;
+                                        window.overlayUtility.closeOverlay()
+                                    }},
+                            ],
+                        onClose: ()=> {
+                                if (val !== window.widgetUtility.ackey){
+                                    window.widgetUtility.save_clos_all()
+                                    window.widgetUtility.ackey = val
+                                    window.widgetUtility.get_storage()
+                                    StateLoadBtn_drag()
+                                }
+                        }
+                            })
+                        }
+                    }
+                ]
+            })
+        });
+
+        document.getElementById('inputField').addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' && e.ctrlKey) {
+                this.type = 'textarea'; // Ändert den Typ dynamisch zu textarea
+            this.style.height = "auto"; // Passt die Höhe an
+            this.style.height = this.scrollHeight + "px";
+        }
+        });
+
+        document.getElementById('inputField').addEventListener('input', function() {
+            // Logik zur Positionierung des Autocomplete-Fensters
+            var inputFieldRect = this.getBoundingClientRect();
+            var autocompleteBox = document.getElementById('autocompleteBox');
+            autocompleteBox.style.left = inputFieldRect.left + "px";
+            autocompleteBox.style.top = (inputFieldRect.bottom + 5) + "px"; // 5px Abstand vom Inputfeld
+        });
+
+
+        window.widgetUtility.get_storage()
+    }, 1800)
+
+    //}
+
+</script>
+

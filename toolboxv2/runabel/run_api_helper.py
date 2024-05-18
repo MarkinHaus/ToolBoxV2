@@ -1,4 +1,6 @@
-NAME = "api"
+import os
+
+NAME = "app"
 
 
 def stest_from_js(payload=None):
@@ -7,6 +9,13 @@ def stest_from_js(payload=None):
 
 
 async def run(_, _0):
+    try:
+        os.system("npm run dev")
+    except:
+        pass
+
+
+async def run_(_, _0):
     from toolboxv2.mods.EventManager.module import EventManagerClass, SourceTypes, Scope
     from toolboxv2 import tbef
 

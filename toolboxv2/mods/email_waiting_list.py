@@ -87,7 +87,7 @@ def crate_sing_in_email(user_email, user_name):
 
 
 @s_export
-def crate_magick_lick_device_email(user_email, user_name, link_id, nl=-1):
+def crate_magic_lick_device_email(user_email, user_name, link_id, nl=-1):
     return {
         'Messages': [
             {
@@ -103,7 +103,7 @@ def crate_magick_lick_device_email(user_email, user_name, link_id, nl=-1):
                 ],
                 "Subject": "Welcome to SimpleCore!",
                 "TextPart": f"Hi {user_name}",
-                "HTMLPart": f"<h3>Dear passenger 1, welcome to <a href=\"https://simplecore.app/web/assets/m_log_in.html?key={link_id}&nl={nl}\">Magick Log in link</a> don not chair!</h3><br />Must enter ur user name on the next page to log in"
+                "HTMLPart": f"<h3>Dear passenger 1, welcome to <a href=\"https://simplecore.app/web/assets/m_log_in.html?key={link_id}&nl={nl}\">Magic Log in link</a> don not chair!</h3><br />Must enter ur user name on the next page to log in"
             }
         ]
     }

@@ -21,16 +21,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from toolboxv2 import tbef, AppArgs, ApiResult, Spinner, get_app
 
 from toolboxv2.utils.system.state_system import get_state_from_app
-from ..CloudM import User
+
 
 id_name = ""
 debug = False
 for i in sys.argv[2:]:
+    print("Running", i)
     if i.startswith('data'):
         d = i.split(':')
         debug = True if d[1] == "True" else False
         id_name = d[2]
-
+print("Running", id_name)
+print("Running", debug)
 args = AppArgs().default()
 args.name = id_name
 args.debug = debug
@@ -136,7 +138,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
 
         request._receive = receive
 
-    def crate_new_session_id(self, request: Request, jwt_claim: str or None, username: str or None,
+    async def crate_new_session_id(self, request: Request, jwt_claim: str or None, username: str or None,
                              session_id: str = None):
 
         if session_id is None:
@@ -176,11 +178,11 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         if jwt_claim is None or username is None:
             tb_app.logger.debug(f"Session Handler New session no jwt no username {username}")
             return '#0'
-        return self.verify_session_id(session_id, username, jwt_claim)
+        return await self.verify_session_id(session_id, username, jwt_claim)
 
-    def verify_session_id(self, session_id, username, jwt_claim):
+    async def verify_session_id(self, session_id, username, jwt_claim):
 
-        if not tb_app.run_any(tbef.CLOUDM_AUTHMANAGER.JWT_CHECK_CLAIM_SERVER_SIDE,
+        if not await tb_app.a_run_any(tbef.CLOUDM_AUTHMANAGER.JWT_CHECK_CLAIM_SERVER_SIDE,
                               username=username,
                               jwt_claim=jwt_claim):
             # del self.sessions[session_id]
@@ -189,7 +191,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             tb_app.logger.debug(f"Session Handler V invalid jwt from : {username}")
             return '#0'
 
-        user_result = tb_app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME,
+        user_result = await tb_app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME,
                                      username=username,
                                      get_results=True)
 
@@ -200,9 +202,9 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             tb_app.logger.debug(f"Session Handler V invalid Username : {username}")
             return '#0'
 
-        user: User = user_result.get()
+        user = user_result.get()
 
-        user_instance = tb_app.run_any(tbef.CLOUDM_USERINSTANCES.GET_USER_INSTANCE, uid=user.uid, hydrate=False,
+        user_instance = await tb_app.a_run_any(tbef.CLOUDM_USERINSTANCES.GET_USER_INSTANCE, uid=user.uid, hydrate=False,
                                        get_results=True)
 
         if user_instance.is_error():
@@ -227,7 +229,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
 
         return session_id
 
-    def validate_session(self, session_id):
+    async def validate_session(self, session_id):
 
         tb_app.logger.debug(f"validating id {session_id}")
 
@@ -250,7 +252,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
 
         if datetime.now() - session.get('exp', datetime.min) > self.SESSION_DURATION:
             user_name = tb_app.config_fh.decode_code(c_user_name)
-            return self.verify_session_id(session_id, user_name, jwt) != 0
+            return await self.verify_session_id(session_id, user_name, jwt) != 0
 
         return True
 
@@ -271,18 +273,18 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             body = json.loads(body)
             jwt_token = body.get('Jwt_claim', None)
             username = body.get('Username', None)
-            session_id = self.crate_new_session_id(request, jwt_token, username, session_id=request.session.get('ID'))
+            session_id = await self.crate_new_session_id(request, jwt_token, username, session_id=request.session.get('ID'))
         elif not session:
-            session_id = self.crate_new_session_id(request, None, "Unknown")
+            session_id = await self.crate_new_session_id(request, None, "Unknown")
         elif request.session.get('ID', '') not in self.sessions:
             print("Session Not Found")
-            session_id = self.crate_new_session_id(request, None, "Unknown", session_id=request.session.get('ID'))
+            session_id = await self.crate_new_session_id(request, None, "Unknown", session_id=request.session.get('ID'))
             request.session['valid'] = False
         else:
             session_id: str = request.session.get('ID', '')
         request.session['live_data'] = {}
         print("testing session")
-        if self.validate_session(session_id):
+        if await self.validate_session(session_id):
             print("valid session")
             request.session['valid'] = True
             request.session['live_data'] = self.sessions[session_id]['live_data']
@@ -512,13 +514,16 @@ async def user_runner(request, call_next):
     if request.session['live_data'].get('GET_R', False):
         query_params['request'] = request
 
-    result = tb_app.run_function((modul_name, fuction_name),
-                                 tb_run_with_specification=request.session['live_data'].get('spec', 'app'),
-                                 args_=path_params.values(),
-                                 kwargs_=query_params)
+    result = await tb_app.a_run_function((modul_name, fuction_name),
+                                   tb_run_with_specification=request.session['live_data'].get('spec', 'app'),
+                                   args_=path_params.values(),
+                                   kwargs_=query_params)
 
     request.session['live_data']['RUN'] = False
     request.session['live_data']['GET_R'] = False
+
+    if not request:
+        return HTMLResponse(status_code=501, content="No response")
 
     if not isinstance(result, Request) and not isinstance(result, ApiResult) and isinstance(result, str):
         return HTMLResponse(status_code=200, content=result)
@@ -646,7 +651,6 @@ def test_rate_limiting_middleware():
 
 
 def helper(tb_app, id_name):
-
     app.add_middleware(SessionAuthMiddleware)
 
     app.add_middleware(SessionMiddleware,
@@ -764,4 +768,3 @@ helper(tb_app, id_name)
 # print("API: ", __name__)
 # if __name__ == 'toolboxv2.api.fast_api_main':
 #     global tb_app
-

@@ -73,7 +73,7 @@ async function handleLoginSuccessVD(data) {
     }else {
         if (base64_privat_key === null){
             document.getElementById('infoText').textContent = "Sie erhalten in kürze eine Email zum einloggen"
-            httpPostUrl('CloudM.AuthManager', 'get_magick_link_email', 'username='+username, get_handleLoginError("mk"), handleLoginSMK);
+            httpPostUrl('CloudM.AuthManager', 'get_magic_link_email', 'username='+username, get_handleLoginError("mk"), handleLoginSMK);
             return data
         }else{
             localStorage.setItem('jwt_claim_device', data.get().key);

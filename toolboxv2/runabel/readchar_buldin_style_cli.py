@@ -234,7 +234,7 @@ def run(app: App, *args):
         command_runner(app, command, args)
 
         #
-        # self.print(f"Function Exec coed: {formatted_result.info.exec_code}"
+        # self.print(f"Function Exec code: {formatted_result.info.exec_code}"
         #            f"\nInfo's: {formatted_result.info.help_text}"
         #            f"\nData: {formatted_result.result.data}")
 

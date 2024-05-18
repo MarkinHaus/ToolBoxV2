@@ -222,7 +222,7 @@ def unpack_and_move_module(zip_path, base_path='.\\mods', module_name=''):
 
 
 @export(mod_name=Name, name="make_install", test=False)
-def make_installer(app: Optional[App], module_name: str):
+def make_installer(app: Optional[App], module_name: str, base=".\\mods"):
     if app is None:
         app = get_app(f"{Name}.installer")
 
@@ -232,7 +232,7 @@ def make_installer(app: Optional[App], module_name: str):
     app.save_load(module_name)
     version_ = app.get_mod(module_name).version
 
-    zip_path = create_and_pack_module(f".\\mods\\{module_name}", module_name, version_)
+    zip_path = create_and_pack_module(f"{base}\\{module_name}", module_name, version_)
 
     # if 'y' in input("uploade zip file ?"):
     #     pass

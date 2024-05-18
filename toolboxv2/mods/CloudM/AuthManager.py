@@ -305,9 +305,9 @@ async def create_user(app: App, data: CreateUserObject = None, username: str = '
 
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True, test=False)
-async def get_magick_link_email(app: App, username):
+async def get_magic_link_email(app: App, username):
     if app is None:
-        app = get_app(Name + '.get_magick_link_email')
+        app = get_app(Name + '.get_magic_link_email')
 
     if not await db_helper_test_exist(app, username):
         return Result.default_user_error(info=f"Username '{username}' not known", interface=ToolBoxInterfaces.remote)
@@ -318,9 +318,9 @@ async def get_magick_link_email(app: App, username):
     if user.challenge == '':
         user = UserCreator(**asdict(user))
 
-    invitation = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
+    invitation = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
     nl = len(user.name)
-    email_data_result = app.run_any(tbef.EMAIL_WAITING_LIST.CRATE_MAGICK_LICK_DEVICE_EMAIL,
+    email_data_result = app.run_any(tbef.EMAIL_WAITING_LIST.CRATE_MAGIC_LICK_DEVICE_EMAIL,
                                     user_email=user.email,
                                     user_name=user.name,
                                     link_id=invitation, nl=nl, get_results=True)
@@ -372,7 +372,7 @@ async def add_user_device(app: App, data: AddUserDeviceObject = None, username: 
     user_r: Result = await get_user_by_name(app, username=username)
     user: User = user_r.get()
 
-    if invitation != Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email"):
+    if invitation != Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email"):
         return Result.default_user_error(info=f"Invalid invitation", interface=ToolBoxInterfaces.remote)
 
     user.user_pass_pub_devices.append(pub_key)
@@ -471,7 +471,7 @@ async def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
     if save_result.is_error():
         return save_result.to_api_result()
 
-    key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
+    key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
     url = f"/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
 
     return Result.ok(info="User registered successfully", data=url)
@@ -608,7 +608,7 @@ async def validate_persona(app: App, data: VpUSER) -> ApiResult:
     if save_result.is_error():
         return save_result.to_api_result()
 
-    key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magick_link_email")
+    key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
     url = f"/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
     return Result.ok(data=url, info="Auto redirect")
 

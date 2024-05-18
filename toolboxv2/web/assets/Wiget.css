@@ -11,7 +11,9 @@
     margin: 15px;
     border: 1px solid var(--text-color);
     resize: both;
-    overflow: visible;
+    overflow: auto;
+    max-height: 90vh;
+    height: fit-content;
 }
 
 .widget-from {

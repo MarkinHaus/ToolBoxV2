@@ -10,7 +10,6 @@ from typing import Any, Optional, List, Tuple, Dict, Callable
 from pydantic import BaseModel
 
 from .all_functions_enums import *
-from ..extras import generate_test_cases
 from .file_handler import FileHandler
 from ..extras.Style import Spinner
 
@@ -233,7 +232,7 @@ class Result:
     def print(self, show=True, show_data=True, prifix=""):
         data = '\n' + f"{((prifix + 'Data: ' + str(self.result.data) if self.result.data is not None else 'NO Data') if not isinstance(self.result.data, Result) else self.result.data.print(show=False, show_data=show_data, prifix=prifix + '-')) if show_data else 'Data: private'}"
         origin = '\n' + f"{prifix + 'Origin: ' + str(self.origin) if self.origin is not None else 'NO Origin'}"
-        text = (f"Function Exec coed: {self.info.exec_code}"
+        text = (f"Function Exec code: {self.info.exec_code}"
                 f"\n{prifix}Info's:"
                 f" {self.info.help_text} {'<|> ' + str(self.result.data_info) if self.result.data_info is not None else ''}"
                 f"{origin}{data if not data.endswith('NO Data') else ''}")
@@ -466,6 +465,7 @@ class AppType:
     def __init__(self, prefix: Optional[str] = None, args: Optional[AppArgs] = None):
         self.sto = None
         self.args_sto = args
+        self.prefix = prefix
         """proxi attr"""
 
     @staticmethod
@@ -829,6 +829,7 @@ class AppType:
 
     async def execute_all_functions(self, m_query='', f_query=''):
         print("Executing all functions")
+        from ..extras import generate_test_cases
         all_data = {
             "modular_run": 0,
             "modular_fatal_error": 0,
@@ -953,4 +954,5 @@ class AppType:
         avg_complexity = avg_complexity / i
         print(f"\nAVG Complexity: {avg_complexity:.2f}")
         print(f"Total Rank: {cc_rank(int(avg_complexity + i // 10))}")
+
 

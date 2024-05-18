@@ -1,8 +1,5 @@
 import asyncio
 import unittest
-from unittest.mock import patch, MagicMock
-
-from toolboxv2.mods.SocketManager import SocketType
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.proxy import ProxyUtil
 

@@ -187,8 +187,11 @@ def reload_widget_system(app, user, WidgetID):
 
 async def load_widget(app, display_name="Cud be ur name", WidgetID=str(uuid.uuid4())[:4]):
     if display_name != "Cud be ur name":
-        user = await app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=display_name)
-        user = user.get()
+        user = await app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=display_name, get_results=True)
+        if user.is_error():
+            user = User()
+        else:
+            user = user.get()
     else:
         user = User()
 
@@ -203,20 +206,20 @@ async def load_widget(app, display_name="Cud be ur name", WidgetID=str(uuid.uuid
     return html_widget[0]['html_element']
 
 
-def get_user_from_request(app, request):
+async def get_user_from_request(app, request):
     name = request.session.get('live_data', {}).get('user_name', "Cud be ur name")
     if name != "Cud be ur name":
-        user = app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=app.config_fh.decode_code(name))
+        user = await app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=app.config_fh.decode_code(name))
     else:
         user = User()
     return user
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-def removed(app, index, request: Request or None = None):
+async def removed(app, index, request: Request or None = None):
     if request is None:
         return Result.default_internal_error("No request specified")
-    user: User = get_user_from_request(app, request=request)
+    user: User = await get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
     if isinstance(index, str):
@@ -227,10 +230,10 @@ def removed(app, index, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-def danger(app, request: Request or None = None):
+async def danger(app, request: Request or None = None):
     if request is None:
         return Result.default_internal_error("No request specified")
-    user = get_user_from_request(app, request=request)
+    user = await get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
     WidgetID = str(uuid.uuid4())[:4]
@@ -245,7 +248,7 @@ def danger(app, request: Request or None = None):
 async def stop(app, request: Request or None = None):
     if request is None:
         return Result.default_internal_error("No request specified")
-    user = get_user_from_request(app, request=request)
+    user = await get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
     app.run_any(tbef.CLOUDM_USERINSTANCES.CLOSE_USER_INSTANCE, uid=user.uid)
@@ -256,10 +259,10 @@ async def stop(app, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-def reset(app, request: Request or None = None):
+async def reset(app, request: Request or None = None):
     if request is None:
         return Result.default_internal_error("No request specified")
-    user = get_user_from_request(app, request=request)
+    user = await get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
     app.run_any(tbef.CLOUDM_USERINSTANCES.DELETE_USER_INSTANCE, uid=user.uid)
@@ -268,20 +271,20 @@ def reset(app, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-def link(app, request: Request or None = None):
+async def link(app, request: Request or None = None):
     if request is None:
         return Result.default_internal_error("No request specified")
-    user = get_user_from_request(app, request=request)
+    user = await get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
     return f"<h2>{app.run_any(tbef.CLOUDM.CREATE_MAGIC_LOG_IN, username=user.name)}</h2>"
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-def info(app, request: Request or None = None):
+async def info(app, request: Request or None = None):
     if request is None:
         return Result.default_internal_error("No request specified")
-    user = get_user_from_request(app, request=request)
+    user = await get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
 
@@ -292,28 +295,28 @@ def info(app, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-def deleteUser(app, user: str, request: Request or None = None):
+async def deleteUser(app, user: str, request: Request or None = None):
     if request is None:
         return Result.default_internal_error("No request specified")
-    user_ob = get_user_from_request(app, request=request)
+    user_ob = await get_user_from_request(app, request=request)
     if user_ob.name != 'root':
         return f"<h2>Invalid User</h2>"
-    user_ed = app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user)
+    user_ed = await app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user)
     app.run_any(tbef.CLOUDM_USERINSTANCES.DELETE_USER_INSTANCE, uid=user_ed.uid)
     db_helper_delete_user(app, user_ed.name, user_ed.uid, matching=True)
     return f"<h2>account gelöscht {user_ed.name=}</h2>"
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-def sendMagicLink(app, user: str, request: Request or None = None):
+async def sendMagicLink(app, user: str, request: Request or None = None):
     if request is None:
         return Result.default_internal_error("No request specified")
-    user_ob = get_user_from_request(app, request=request)
+    user_ob = await get_user_from_request(app, request=request)
     if user_ob.name != 'root':
         return f"<h2>Invalid User</h2>"
     link = app.run_any(tbef.CLOUDM.CREATE_MAGIC_LOG_IN, username=user)
-    user_ed = app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user)
-    msg = app.run_any(tbef.EMAIL_WAITING_LIST.CRATE_MAGICK_LICK_DEVICE_EMAIL,
+    user_ed = await app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user)
+    msg = app.run_any(tbef.EMAIL_WAITING_LIST.CRATE_MAGIC_LICK_DEVICE_EMAIL,
                       user_email=user_ed.email,
                       user_name=user_ed.name,
                       link_id=link, nl=''
@@ -322,14 +325,14 @@ def sendMagicLink(app, user: str, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-def setUserLevel(app, user: str, data: dict, request: Request or None = None):
+async def setUserLevel(app, user: str, data: dict, request: Request or None = None):
     if request is None:
         return Result.default_internal_error("No request specified")
-    user_ob = get_user_from_request(app, request=request)
+    user_ob = await get_user_from_request(app, request=request)
     if user_ob.name != 'root':
         return f"<h2>Invalid User</h2>"
     userLevel = data.get('userLevel', 0)
-    user_ed = app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user)
+    user_ed = await app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user)
     if isinstance(userLevel, str):
         userLevel = int(userLevel)
     user_ed.level = userLevel
@@ -338,10 +341,10 @@ def setUserLevel(app, user: str, data: dict, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-def mods(app, request: Request or None = None):
+async def mods(app, request: Request or None = None):
     if request is None:
         return Result.default_internal_error("No request specified")
-    user = get_user_from_request(app, request=request)
+    user = await get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
 
@@ -352,10 +355,10 @@ def mods(app, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-def addMod(app, modId: str, request: Request or None = None):
+async def addMod(app, modId: str, request: Request or None = None):
     if request is None:
         return Result.default_internal_error("No request specified")
-    user = get_user_from_request(app, request=request)
+    user = await get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
     user_instance = app.run_any(tbef.CLOUDM_USERINSTANCES.GET_USER_INSTANCE, uid=user.uid)
@@ -367,10 +370,10 @@ def addMod(app, modId: str, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-def remove(app, modId: str, request: Request or None = None):
+async def remove(app, modId: str, request: Request or None = None):
     if request is None:
         return Result.default_internal_error("No request specified")
-    user = get_user_from_request(app, request=request)
+    user = await get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
     user_instance = app.run_any(tbef.CLOUDM_USERINSTANCES.GET_USER_INSTANCE, uid=user.uid)

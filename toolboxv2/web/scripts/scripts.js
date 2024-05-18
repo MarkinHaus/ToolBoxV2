@@ -144,9 +144,9 @@ function loadDarkModeState() {
 }
 
 // Animation loop
-function animate() {
+function animateBD() {
 
-    requestAnimationFrame(animate);
+    requestAnimationFrame(animateBD);
     triangleGeometry.rotateX(animationX/animantionFactor)
     triangleGeometry.rotateY(animationY/animantionFactor)
     triangleGeometry.rotateZ(animationZ/animantionFactor)
@@ -367,6 +367,6 @@ const s = document.getElementsByClassName('loaderCenter')
 // });
 
 
-animate();
+animateBD();
 
 

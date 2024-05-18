@@ -93,7 +93,7 @@ class EMAIL_WAITING_LIST(Enum):
     SEND_EMAIL_TO_ALL: str = 'send_email_to_all'  # Input: ([]), Output: <class 'inspect._empty'>
     SEND_EMAIL: str = 'send_email'  # Input: (['data']), Output: <class 'inspect._empty'>
     CRATE_SING_IN_EMAIL: str = 'crate_sing_in_email'  # Input: (['user_email', 'user_name']), Output: <class 'inspect._empty'>
-    CRATE_MAGICK_LICK_DEVICE_EMAIL: str = 'crate_magick_lick_device_email'  # Input: (['user_email', 'user_name', 'link_id', 'nl']), Output: <class 'inspect._empty'>
+    CRATE_MAGIC_LICK_DEVICE_EMAIL: str = 'crate_magic_lick_device_email'  # Input: (['user_email', 'user_name', 'link_id', 'nl']), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
 
@@ -228,7 +228,7 @@ class CLOUDM_AUTHMANAGER(Enum):
     NAME = 'CloudM.AuthManager'
     GET_USER_BY_NAME: str = 'get_user_by_name'  # Input: (['app', 'username', 'uid']), Output: <class 'toolboxv2.utils.system.types.Result'>
     CREATE_USER: str = 'create_user'  # Input: (['app', 'data', 'username', 'email', 'pub_key', 'invitation', 'web_data', 'as_base64']), Output: <class 'toolboxv2.utils.system.types.ApiResult'>
-    GET_MAGICK_LINK_EMAIL: str = 'get_magick_link_email'  # Input: (['app', 'username']), Output: <class 'inspect._empty'>
+    GET_MAGIC_LINK_EMAIL: str = 'get_magic_link_email'  # Input: (['app', 'username']), Output: <class 'inspect._empty'>
     ADD_USER_DEVICE: str = 'add_user_device'  # Input: (['app', 'data', 'username', 'pub_key', 'invitation', 'web_data', 'as_base64']), Output: <class 'toolboxv2.utils.system.types.ApiResult'>
     REGISTER_USER_PERSONAL_KEY: str = 'register_user_personal_key'  # Input: (['app', 'data']), Output: <class 'toolboxv2.utils.system.types.ApiResult'>
     CRATE_LOCAL_ACCOUNT: str = 'crate_local_account'  # Input: (['app', 'username', 'email', 'invitation', 'create']), Output: <class 'toolboxv2.utils.system.types.Result'>

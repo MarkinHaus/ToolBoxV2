@@ -1,3 +1,5 @@
+name: build
+
 on:
     push:
         branches:
@@ -10,7 +12,7 @@ on:
             - mod-server
             - master
 
-name: build
+
 jobs:
     py-check:
         runs-on: ${{ matrix.config.os }}

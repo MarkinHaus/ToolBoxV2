@@ -1,0 +1,76 @@
+<script src="/index.js" type="module"></script>
+<script src="/web/scripts/AutoMarkdown.js" type="module"></script>
+<script src="/web/scripts/infos.js" type="module"></script>
+<script src="/web/scripts/WorkerSocketRenderer.js" type="module"></script>
+<script src="/web/scripts/WidgetUtility.js" type="module"></script>
+<script src="/web/scripts/OverlayUtility.js" type="module"></script>
+<script src="/web/scripts/tauri/autoDetection.js" type="module"></script>
+<script src="/web/1/WigetNav/navDrow.js"></script>
+
+<link rel="stylesheet" href="/web/Drag/drag.css">
+<script src="/web/Drag/drag.js"></script>
+
+<link rel="stylesheet" href="/web/systemMSG/speech_balloon.css">
+<script src="/web/systemMSG/speech_balloon.js"></script>
+
+
+<link rel="stylesheet" href="/web/1/WigetNav/navDrow.css">
+<link rel="stylesheet" href="/web/assets/Wiget.css">
+
+<template id="speech-balloon-template">
+    <div class="speech-balloon">
+        <div class="speech-balloon-from"></div>
+        <span class="speech-balloon-close-button">X</span>
+        <div class="speech-balloon-content"></div>
+        <div class="speech-balloon-options"></div>
+        <div class="speech-balloon-progress-bar-container">
+            <div class="speech-balloon-progress-bar"></div>
+        </div>
+    </div>
+</template>
+<style>
+    .button-container button {
+        background-color: var(--primary-color);
+        color: var(--text-color);
+        cursor: pointer;
+        transition: background-color 0.3s ease;
+        border: 2px var(--secondary-color) outset;
+        max-width: fit-content;
+        align-self: center;
+        width: min-content; /* Definiert eine feste Breite */
+        min-height: fit-content;
+        display: inline-flex; /* Ermöglicht das Zentrieren von Inhalten */
+        justify-content: center; /* Zentriert Inhalte horizontal */
+        align-items: center; /* Zentriert Inhalte vertikal */
+    }
+
+    .button-container button:hover {
+        background-color: var(--secondary-color);
+    }
+
+</style>
+
+<nav id="NAV">
+    <div id="MainControls">
+        <div class="circle-dropdown" id="WidgetNavCircle">
+            <div class="circle" id="profile">
+    <span class="plus material-symbols-outlined"
+    >manage_accounts</span>
+            </div>
+            <div class="circle" id="systemSettings">
+    <span class="plus material-symbols-outlined"
+    >display_settings</span>
+            </div>
+            <div class="circle" id="logOut">
+    <span class="plus material-symbols-outlined"
+    >logout</span>
+            </div>
+        </div>
+
+    </div>
+    <div id="extras" class="none">
+        <div id="extra"></div>
+        <div id="SpeechBallonControls2"></div>
+    </div>
+</nav>
+

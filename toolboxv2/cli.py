@@ -639,8 +639,11 @@ async def main(loop=None):
                 continue
             if len(command) == 1:
                 if command[0].lower() == 'true':
-                    while tb_app.alive:
-                        await asyncio.sleep(1)
+                    try:
+                        while tb_app.alive:
+                            await asyncio.sleep(1)
+                    except:
+                        pass
                 tb_app.get_mod(command[0])
                 tb_app.print_functions(command[0])
                 tb_app.print(
@@ -649,7 +652,9 @@ async def main(loop=None):
 
             tb_app.print(f"Running command: {' '.join(command)}")
             call = CallingObject().empty()
-            tb_app.get_mod(command[0], spec='app')
+            mod = tb_app.get_mod(command[0], spec='app')
+            if hasattr(mod, "async_initialized") and not mod.async_initialized:
+                await mod
             call.module_name = command[0]
             call.function_name = command[1]
             call.args = command[2:]

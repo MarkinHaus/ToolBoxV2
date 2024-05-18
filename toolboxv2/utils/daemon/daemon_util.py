@@ -13,8 +13,6 @@ from ..system.tb_logger import get_logger
 from ..extras.Style import Style
 from ..extras.show_and_hide_console import show_console
 
-from toolboxv2.mods.SocketManager import SocketType
-
 
 class DaemonUtil:
 
@@ -41,6 +39,7 @@ class DaemonUtil:
                         app: Optional[App or AppType] = None,
                         peer=False, name='daemonApp-server', on_register=None, on_client_exit=None, on_server_exit=None,
                         unix_socket=False, test_override=False):
+        from toolboxv2.mods.SocketManager import SocketType
         self.class_instance = class_instance
         self.server = None
         self.port = port
@@ -69,8 +68,11 @@ class DaemonUtil:
         if t:
             await self.online
 
-    async def start_server(self, connection_type=SocketType.server):
+    async def start_server(self, connection_type=None):
         """Start the server using app and the socket manager"""
+        from toolboxv2.mods.SocketManager import SocketType
+        if connection_type is None:
+            connection_type = SocketType.server
         server_result = await get_app(from_="Starting.Daemon").a_run_any(SOCKETMANAGER.CREATE_SOCKET,
                                                                          get_results=True,
                                                                          name=self._name,

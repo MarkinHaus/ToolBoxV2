@@ -82,7 +82,7 @@ async def open_widget(app: App, request, name: str, **kwargs):
         get_all_widget_mods(app)
     if name not in all_widgets:
         return "invalid widget name " + str(all_widgets)
-    w = app.run_any((name, "get_widget"), request=request, **kwargs)
+    w = await app.a_run_any((name, "get_widget"), request=request, **kwargs)
     if isinstance(w, asyncio.Task):
         w = await w
         w = w.as_result().get()
