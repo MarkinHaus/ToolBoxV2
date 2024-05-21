@@ -1,7 +1,7 @@
 import {rendererPipeline} from "./web/scripts/WorkerSocketRenderer";
 import {AuthHttpPostData, httpPostData, httpPostUrl, ToolBoxError, wrapInResult} from "./web/scripts/httpSender";
 import "./web/node_modules/htmx.org";
-import {addRenderer, EndBgInteract, Set_animation_xyz, StartBgInteract, toggleDarkMode} from "./web/scripts/scripts.js";
+import {addRenderer, EndBgInteract, Set_animation_xyz,Set_zoom, StartBgInteract, toggleDarkMode} from "./web/scripts/scripts.js";
 
 const rpIdUrl_f = ()=> {
     if (window.location.href.match("localhost")) {
@@ -21,8 +21,6 @@ const state = {
         renderer,
         getState,
         addState,
-        getWidgetUtility,
-        getOverlayUtility,
         unRegisterServiceWorker: ()=>{
             navigator.serviceWorker.getRegistrations().then(function (registrations) {
                 registrations.forEach(function (registration) {
@@ -58,7 +56,6 @@ const state = {
         httpPostData,
         httpPostUrl,
         AuthHttpPostData,
-        getModule,
         animator,
         loadHtmlFile,
         processRow:updateDome,
@@ -66,6 +63,8 @@ const state = {
         delVar: (v_name)=>{delete state.TBc[v_name]},
         getVar: (v_name)=>{return state.TBc[v_name]},
         setVar: (v_name, v_value)=>{state.TBc[v_name] = v_value},
+        setM: (v_name, v_value)=>{state.TBm[v_name] = v_value},
+        getM: (v_name)=>{return state.TBm[v_name]},
     },
     TBv:{
         base: rpIdUrl_f(),
@@ -81,6 +80,7 @@ const state = {
 }
 
 window.TBf = state.TBf
+console.log("TB Online :", window.TBf)
 
 if (document.getElementById("MainContent")){
     //
@@ -97,6 +97,7 @@ if (document.getElementById("MainContent")){
     document.head.appendChild(baseElement);
     initDome()
     updateDome(DOME)
+    linksInit()
 }else{
     let stoUrl = window.location.href;
 
@@ -152,6 +153,7 @@ if (document.getElementById("MainContent")){
              router("/web/dashboard")
          }
 
+        linksInit()
         // renderer({extend:true, helper:bodyClone})
     }, 350)
     // router("/index.html", false, "root", document.body)
@@ -196,7 +198,7 @@ function linkEffect() {
         }, 160);
     }
 
-function updateDome(dome, add_script=true){
+function updateDome(dome, add_script=true, linkExtra=null){
 
     function addSrc(script){
         let scriptContent = script.textContent;
@@ -218,6 +220,7 @@ function updateDome(dome, add_script=true){
             link.addEventListener("click", function(e) {
                 e.preventDefault();
                 linkEffect()
+                if(linkExtra){linkExtra()}
                 console.log("REGISTERED: [route]", route)
                 router(route); // Use link.href to get the URL of the clicked link
                 // linkEffect()
@@ -260,33 +263,59 @@ function updateDome(dome, add_script=true){
 
 function initDome(){
     const darkModeToggle = document.getElementById('darkModeToggle');
+
     if(!darkModeToggle){
         console.error("No toggle found")
         return
     }
     darkModeToggle.addEventListener('change', (event) => {
 
+        const labelToggel = document.getElementById('toggleLabel')
+        if(!labelToggel){
+            throw "NO Dark mode found"
+        }
+        labelToggel.style.transition = "transform 0.5s ease";
+
         if (event.target.checked) {
-            document.getElementById('toggleLabel').innerHTML = `<span class="material-symbols-outlined">
-light_mode
-</span>`;
-        } else {
-            document.getElementById('toggleLabel').innerHTML = `<span class="material-symbols-outlined">
+            labelToggel.innerHTML = `<span class="material-symbols-outlined">
 dark_mode
 </span>`;
+            labelToggel.style.transform = 'rotate(0deg)'
+
+        } else {
+            labelToggel.innerHTML = `<span class="material-symbols-outlined">
+light_mode
+</span>`;
+            labelToggel.style.transform = 'rotate(360deg)'
         }
         toggleDarkMode()
     });
 
-    document.getElementById('toggleLabel').innerHTML = `<span class="material-symbols-outlined">
-dark_mode
-</span>`
+
 
     document.body.addEventListener('mousedown', () => {StartBgInteract()});
     document.body.addEventListener('mouseup', () => {EndBgInteract()});
 
     document.body.addEventListener("touchstart", () => {StartBgInteract()});
     document.body.addEventListener("touchend", () => {EndBgInteract()});
+
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        // The user prefers dark color scheme
+        toggleDarkMode(true, "dark")
+        document.getElementById('toggleLabel').innerHTML = `<span class="material-symbols-outlined">
+light_mode
+</span>`
+        const labelToggel = document.getElementById('toggleLabel')
+        if(labelToggel){
+            labelToggel.style.transform = 'rotate(360deg)'
+        }
+    } else {
+        // The user prefers light color scheme
+        toggleDarkMode(true, "light")
+        document.getElementById('toggleLabel').innerHTML = `<span class="material-symbols-outlined">
+dark_mode
+</span>`
+    }
 
 }
 
@@ -323,6 +352,7 @@ function dashboard_init() {
 
     init_d = true
     const helper = document.createElement("div");
+    helper.id = "D-Provider"
     const helper_dome = document.getElementById("MainContent");
     helper_dome.classList.add("autoMarkdownVisible");
     if (helper_dome && window.history.state.preUrl){
@@ -336,9 +366,8 @@ function dashboard_init() {
             </div>`
             updateDome(helper_dome)
         }
-    const controls = document.getElementById("Nav-Controls")
+    const controls = document.getElementById("Nav-Main")
     if (controls){
-        document.getElementById("Nav-Main").classList.add("none")
         controls.appendChild(helper)
     }else{
         throw "No Nave found"
@@ -377,6 +406,8 @@ function router(url, extend = false, id = "main", Dome = DOME) {
         is_d = true
     }else if (!init_d && uri.includes("/web/dashboard")){
         router("/web/dashboard")
+    } else if (init_d && uri.endsWith("/web/dashboard") && Dome === DOME){
+        uri = "/web/dashboards/user_dashboard.html"
     }
 
     // try{
@@ -415,7 +446,6 @@ function router(url, extend = false, id = "main", Dome = DOME) {
     const preUrl = window.history.state?window.history.state.url:undefined
 
     window.history.pushState({ url: url, preUrl, TB: state.TBv, TBc: state.TBc }, "", url);
-    window.TBf = state.TBf
     window.TBm = state.TBm
 }
 
@@ -466,18 +496,6 @@ function addState(key, value){
 
 function getState(key){
     return state.TBc[key]
-}
-
-async function getModule(name){
-    if (!name in state.TBm){
-        try{
-            state.TBm[name] =  await import(`/api/${name}/scriptJs`)
-        }catch(e){
-            state.TBm[name] = null
-        }
-
-    }
-    return state.TBm[name]
 }
 
 // lazy load
@@ -543,7 +561,7 @@ async function handleHtmxAfterRequest(event) {
 
 function parseInput(input) {
     // Regular expression to match the input pattern
-    const regex = /^([RPY])(\d+)([+-])(\d+)(\d+)$/;
+    const regex = /^([RPYZ])(\d+)([+-])(\d+)(\d+)$/;
 
     // Use regex to extract animation parameters
     const match = input.match(regex);
@@ -575,6 +593,16 @@ function animator(input, after=null) {
 
     console.log("Animation:", animationParams)
 
+    function repeatZoom(direction, speed, repeat, smo=1) {
+        if (repeat > 0) {
+            // Call Set_zoom after 1000 milliseconds
+            setTimeout(() => {
+                Set_zoom(direction * speed / 10);
+                // Call repeatZoom recursively with repeat - 1
+                repeatZoom(direction, speed, repeat - 1, smo);
+            }, 1000/smo);
+        }
+    }
 
     if (animationParams) {
         const { animationType, repeat, direction, speed, complex } = animationParams;
@@ -589,6 +617,10 @@ function animator(input, after=null) {
                 break;
             case "P":
                 Set_animation_xyz(0, 0, 0.02 * direction * speed, 12 * speed)
+                break;
+            case "Z":
+                let smo = 32
+                repeatZoom(direction, speed, repeat*smo, smo);
                 break;
             default:
                 console.log("Invalid animation type.");
@@ -619,4 +651,72 @@ function animator(input, after=null) {
 
 state.TBf.unRegisterServiceWorker()
 
+// nav
+
+
+window.TBf.initVar("linkToggle", [false])
+
+function linksInit(){
+
+    const linksButton = document.querySelector('#links');
+    linksButton.style.transition = "transform 0.5s ease";
+    let linksContent =  `<div class="links-form" >
+            <ul>
+
+                <li><a href="/web">Start</a></li>
+                <li><a href="/web/signup">Sign Up</a></li>
+                <li><a href="/web/login">Login</a></li>
+                <li><a href="/web/dashboard">Dashboard</a></li>
+   <hr/>
+                <li><a href="/web/assets/terms.html">Terms and Conditions</a></li>
+                <li><a href="/web/assets/terms.html">Contact</a></li>
+                <li><a href="/">Home</a></li>
+            </ul>
+        </div>`
+
+    let linksIcon = document.getElementById("linkIcon");
+    let linksAcker = document.getElementById("overlay");
+
+    async function openLinksOverlay(){
+
+
+        linksButton.style.transform = 'rotate(360deg)  scale(1.26)';
+        // linksButton.style.scale = 1.26
+        linksButton.style.zIndex = '9999';
+
+        linksAcker.insertAdjacentHTML('afterend', linksContent);
+        updateDome(linksAcker.nextElementSibling, false, onCloseLinksOverlay)
+        if (linksIcon){
+            linksIcon.outerHTML = `<span id="linkIcon" class="plus material-symbols-outlined">close</span>`
+            linksIcon = document.getElementById("linkIcon");
+        }
+        window.TBf.getVar("linkToggle")[0] = true
+    }
+
+    function onCloseLinksOverlay(){
+        linksButton.style.transform = 'rotate(0deg) scale(1)';
+        linksButton.style.zIndex = '2'
+        const insertedContent = linksAcker.nextElementSibling;
+        if (insertedContent) {
+            insertedContent.classList.add("fadeOutToLeft")
+            insertedContent.remove();
+        }
+        if (linksIcon){
+            linksIcon.outerHTML = `<span id="linkIcon" class="plus material-symbols-outlined">menu</span>`
+            linksIcon = document.getElementById("linkIcon");
+        }
+        window.TBf.getVar("linkToggle")[0] = false
+    }
+
+    linksButton.addEventListener('click', () => {
+
+        if (!window.TBf.getVar("linkToggle")[0]){
+            openLinksOverlay().then(r => console.log("Links opened"))
+        }else{
+            onCloseLinksOverlay()
+        }
+
+    });
+
+}
 

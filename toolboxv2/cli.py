@@ -637,19 +637,6 @@ async def main(loop=None):
                 tb_app.print(
                     "minimum command length is 2 {module_name} {function_name} optional args...")
                 continue
-            if len(command) == 1:
-                if command[0].lower() == 'true':
-                    try:
-                        while tb_app.alive:
-                            await asyncio.sleep(1)
-                    except:
-                        pass
-                tb_app.get_mod(command[0])
-                tb_app.print_functions(command[0])
-                tb_app.print(
-                    "minimum command length is 2 {module_name} {function_name} optional args...")
-                continue
-
             tb_app.print(f"Running command: {' '.join(command)}")
             call = CallingObject().empty()
             mod = tb_app.get_mod(command[0], spec='app')
@@ -668,7 +655,7 @@ async def main(loop=None):
 
             print("Running", spec, r)
 
-    elif not args.kill and not args.docker and tb_app.alive and not args.background_application:
+    if not args.kill and not args.docker and tb_app.alive and not args.background_application and (not args.command or '-m' in sys.argv):
 
         tb_app.save_autocompletion_dict()
         with open(pid_file, "w") as f:

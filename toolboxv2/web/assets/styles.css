@@ -28,26 +28,25 @@
     --decision-color: #75235e;
     --no-decision-color: #3f9f5a;
 
+    --anti-text-clor: #fff;
+    --light-acent: #045fab;
+    --dark-acent: #011b33;
+    --pico-form-element-spacing-vertical: 0.15rem;
+    --pico-form-element-spacing-horizontal: 0.4rem;
+    --pico-spacing: 0.5rem;
+    --pico-h3-color: var(--text-color);
+    --pico-h4-color: var(--text-color);
+    --pico-h5-color: var(--text-color);
+
     --FILL: 0;
     --wght: 200;
     --GRAD: 50;
     --opsz: 24;
 
-    --pico-primary-background: var(--background-color);
-    --pico-secondary-background: var(--toggle-bg-checked-color);
-    --pico-primary-hover: var(--secondary-color);
-    --pico-primary-hover-background: rgba(var(--secondary-color), 0.2);
-
-    --pico-secondary-hover: var(--dark-nav-link-hover-color);
-    --pico-secondary-hover-background: var(--dark-nav-link-hover-color);
-    --pico-primary-focus: rgba(var(--text-color), 0.5);
-    --pico-primary-color: rgba(0,0,0,0);
-    --pico-secondary-color: var(--secondary-color);
     --pico-dark-text-color: #E9F8F9;
     --pico-dark-nav-link-color: #181823;
     --pico-dark-nav-link-hover-color: #C0EEF2;
     --pico-dark-toggle-bg-color: #181823;
-    --pico-toggle-bg-checked-color: var(--pico-primary-color);
     --pico-error-color: #9c1079;
     --pico-fatal-error-color: #9c1010;
     --pico-info-color: #107b9c;
@@ -55,83 +54,93 @@
     --pico-warning-color: #9c6b10;
     --pico-decision-color: #75235e;
     --pico-no-decision-color: #3f9f5a;
+
+
+    --pico-primary-color: rgba(0,0,0,0);
+
+    --pico-toggle-bg-checked-color: var(--pico-primary-color);
+
+    --pico-background: var(--background-color);
+    --pico-primary-background: var(--background-color);
+    --pico-secondary-background: var(--toggle-bg-checked-color);
+    --pico-primary-hover: var(--secondary-color);
+    --pico-primary-hover-background: rgba(var(--secondary-color), 0.2);
+
+    --pico-color: var(--text-color);
+    --pico-border-color: var(--secondary-color);
+
+    --pico-form-element-background-color: var(--background-color);
+    --pico-form-element-border-color: var(--secondary-color);
+    --pico-form-element-color: var(--primary-color);
+
+    --pico-secondary-hover: var(--dark-nav-link-hover-color);
+    --pico-secondary-hover-background: var(--dark-nav-link-hover-color);
+    --pico-primary-focus: rgba(var(--text-color), 0.5);
+    --pico-secondary-color: var(--secondary-color);
+
 }
 
 
-:root[data-theme="dark"]{
-    /*
-    --primary-color: var(--dark-primary-color);
-    --secondary-color: var(--dark-secondary-color);
-    --background-color: var(--dark-background-color);
-    --text-color: var(--dark-text-color);
+:root[data-theme="light"],
+:root:not([data-theme="dark"]) {
 
-    --nav-link-color: var(--dark-nav-link-color);
-    --nav-link-hover-color: var(--dark-nav-link-hover-color);
-    --toggle-bg-color: var(--dark-toggle-bg-color);
+    --pico-dark-text-color: #E9F8F9;
+    --pico-dark-nav-link-color: #181823;
+    --pico-dark-nav-link-hover-color: #C0EEF2;
+    --pico-dark-toggle-bg-color: #181823;
+    --pico-error-color: #9c1079;
+    --pico-fatal-error-color: #9c1010;
+    --pico-info-color: #107b9c;
+    --pico-success-color: #109c41;
+    --pico-warning-color: #9c6b10;
+    --pico-decision-color: #75235e;
+    --pico-no-decision-color: #3f9f5a;
 
-    --toggle-bg-checked-color: var(--primary-color);
-     */
-
-
-    --primary-color: #537FE7;
-    --secondary-color: #537FE7;
-    --background-color: #181823;
-    --text-color: #181823;
-
-    --nav-link-color: #181823;
-    --nav-link-hover-color: #C0EEF2;
-    --toggle-bg-color: #181823;
-}
-
-:root[data-theme="light"]{
-    /*
-    --primary-color: var(--dark-primary-color);
-    --secondary-color: var(--dark-secondary-color);
-    --background-color: var(--dark-background-color);
-    --text-color: var(--dark-text-color);
-
-    --nav-link-color: var(--dark-nav-link-color);
-    --nav-link-hover-color: var(--dark-nav-link-hover-color);
-    --toggle-bg-color: var(--dark-toggle-bg-color);
-
-    --toggle-bg-checked-color: var(--primary-color);
-
-     */
 
     --primary-color: #181823;
     --secondary-color: #E9F8F9;
     --background-color: #f8f9fa;
-    --text-color: #E9F8F9;
+    --text-color: #000;
 
     --nav-link-color: #888;
     --nav-link-hover-color: #fff;
-    --toggle-bg-color: #ccc;
-}
 
-/* Light Theme */
-:root[data-theme="light"],
-:root:not([data-theme="dark"]) {
-    --pico-primary-background: var(--background-color);
-    --pico-secondary-background: var(--background-color);
+
     --pico-background-color: #f8f9fa;
     --pico-text-color: #E9F8F9;
     --pico-nav-link-color: #888;
     --pico-nav-link-hover-color: #fff;
     --pico-toggle-bg-color: #ccc;
+    --pico-form-element-spacing-vertical: 0.15rem;
+    --pico-form-element-spacing-horizontal: 0.4rem;
+    --pico-spacing: 0.5rem;
+    --pico-primary-color: rgba(0,0,0,0);
+
+    --toggle-bg-color: var(--pico-primary-color);
+    --toggle-bg-checked-color: var(--pico-primary-color);
+
+    --pico-toggle-bg-checked-color: var(--pico-primary-color);
+
+    --pico-primary-background: var(--background-color);
+
+    --pico-secondary-background: var(--toggle-bg-checked-color);
+    --pico-primary-hover: var(--secondary-color);
+    --pico-primary-hover-background: rgba(var(--secondary-color), 0.2);
+
+    --pico-color: var(--primary-color);
+    --pico-border-color: var(--secondary-color);
+
+    --pico-form-element-background-color: var(--background-color);
+    --pico-form-element-border-color: var(--secondary-color);
+    --pico-form-element-color: var(--primary-color);
+
+    --pico-secondary-hover: var(--dark-nav-link-hover-color);
+    --pico-secondary-hover-background: var(--dark-nav-link-hover-color);
+    --pico-primary-focus: rgba(var(--text-color), 0.5);
+    --pico-secondary-color: var(--secondary-color);
 }
 
-/* Dark Theme */
-@media only screen and (prefers-color-scheme: dark) {
-    :root:not([data-theme]) {
-        --pico-primary-background: var(--dark-background-color);
-        --pico-secondary-background: var(--dark-background-color);
-        --pico-background-color: #181823;
-        --pico-text-color: #E9F8F9;
-        --pico-nav-link-color: #181823;
-        --pico-nav-link-hover-color: #C0EEF2;
-        --pico-toggle-bg-color: #181823;
-    }
-}
+
 
 @media screen and (max-width: 2000px) and (min-width: 1024px) {
     .container {
@@ -224,7 +233,7 @@ h5 {
 body {
     font-family: var(--font-family);
     color: var(--text-color);
-    background-color: var(--background-color);
+    /* background-color: var(--background-color); */
     transition: background-color 0.5s ease;
 }
 
@@ -235,51 +244,143 @@ body.dark-mode {
     --secondary-color: var(--dark-secondary-color);
 }
 
-/* Dark mode styles */
+/* Dark mode styles
 .dark-mode-toggle input:checked + label {
     background-color: var(--dark-primary-color);
+}
+*/
+.dark-mode-toggle {
+    position: absolute;
+    right: 15px;
+    top: 0;
+    scale: 1.4;
+    margin-bottom: 5px;
+    padding: 0.25rem 0;
+}
+
+
+/* Navigation */
+@keyframes fadeInFromLeft {
+    0% {
+        opacity: 0;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+/* Keyframe-Animation für das Ausblenden */
+@keyframes fadeOutToLeft {
+    0% {
+        opacity: 1;
+    }
+    100% {
+        opacity: 0;
+    }
+}
+
+/* Animation für das Einblenden */
+.fade-inH {
+    animation: fadeInFromLeft 0.5s ease forwards;
+}
+
+/* Animation für das Ausblenden */
+.fade-outH {
+    animation: fadeOutToLeft 0.5s ease forwards;
 }
 
 /* Navigation */
 header {
-    display: flex;
-    justify-content: end;
-    align-items: center;
+    padding: 0 0.25rem 0 0.5rem;
+    animation: fadeInFromLeft 1s ease forwards;
 }
 
 nav {
-    display: flex;
-    justify-content: center;
-    gap: 2px;
     margin-bottom: 5px;
     padding: 0.5rem 0;
 }
 
-a {
-    color: var(--text-color);
-    text-decoration-color: var(--text-color);
-    text-decoration-style: dotted;
-}
-
-nav ul {
-    list-style-type: none;
-    margin-right: var(--spacing);
-}
-
-ul {
-    margin-left: 1vw;
-    margin-right: 1vw;
-}
 
 nav ul li a {
+    color: var(--text-color);
     text-decoration: none;
-    color: var(--nav-link-color);
 }
 
 nav ul li a:hover {
     text-decoration: underline;
-    color: var(--nav-link-hover-color);
 }
+
+/* Media Query für Mobilgeräte */
+@media only screen and (max-width: 600px) {
+    header {
+        padding: 0.5rem; /* Padding für Mobilgeräte reduzieren */
+    }
+
+    nav ul {
+        flex-direction: column; /* Listenelemente in Spalte für Mobilgeräte anordnen */
+    }
+
+    nav ul li {
+        display: block; /* Listenelemente auf Mobilgeräten als Block anzeigen */
+        margin-bottom: 5px; /* Abstand zwischen Listenelementen auf Mobilgeräten hinzufügen */
+    }
+
+    ul {
+        margin-left: 0; /* Margin für Listen auf Mobilgeräten zurücksetzen */
+        margin-right: 0;
+    }
+}
+
+
+/* Links */
+.NavMain {
+    position: absolute;
+    top: 2vh;
+    left: 2vw;
+    z-index: 99;
+}
+
+.links-form {
+    top: 8vh;
+    left: 5vw;
+    margin: 0;
+    padding: 0;
+    background-color: var(--background-color); /* Hintergrundfarbe transparent */
+    border: 1px solid var(--primary-color);
+    border-radius: 12px;
+    position: absolute;
+    max-width: min-content;
+    min-height: fit-content;
+    display: flow;
+    z-index: 999;
+    animation: fadeInFromLeft 0.5s ease;
+    text-align: center;
+}
+
+.links-form ul {
+    list-style-type: none;
+    margin: 0;
+    padding: 0;
+}
+
+.links-form li {
+    margin-bottom: 10px; /* Abstand zwischen den Links */
+}
+
+.links-form a {
+    display: block;
+    padding: 8px; /* Innenabstand der Links */
+    background-color: transparent; /* Hintergrundfarbe transparent */
+    text-decoration: none;
+    color: var(--text-color);
+    transition: background-color 0.3s; /* Übergangseffekt für Hintergrundfarbe */
+}
+
+.links-form a:hover {
+    background-color: var(--text-color); /* Hintergrundfarbe beim Hover */
+    color: var(--background-color);
+}
+
 
 section {
     margin-bottom: 2rem;
@@ -330,7 +431,7 @@ input {
 }
 
 button {
-    background-color: var(--primary-color);
+    background-color: var(--background-color);
     color: var(--text-color);
     cursor: pointer;
     transition: background-color 0.3s ease;
@@ -359,10 +460,6 @@ input[type="checkbox"] {
     margin-left: 0;
 }
 
-
-.dark-mode-toggle input:checked + label {
-    background-color: var(--toggle-bg-checked-color);
-}
 
 
 .main-content {
@@ -465,6 +562,7 @@ textarea:hover {
     min-width: fit-content;
     padding-bottom: 20px;
     padding-top: 5vh;
+    top: 5vh;
 }
 
 .inputField {

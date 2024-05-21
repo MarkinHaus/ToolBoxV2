@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+</head>
+<body>
+<title>Board Manager</title>
+<style>
+  /* Stil für die Benutzeroberfläche */
+  .board {
+    border: 2px solid #ccc;
+    padding: 10px;
+    margin: 10px;
+    display: none;
+  }
+</style>
+<h2 id="inEdit">In Edit: <span id="currentEditBoard">Main</span></h2>
+<table id="boardTable">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Open/Close</th>
+      <th>Set Edit</th>
+      <th>Delete</th>
+    </tr>
+  </thead>
+  <tbody id="boardTableBody">
+    <!-- Hier werden die Zeilen der Tabelle dynamisch eingefügt -->
+  </tbody>
+</table>
+<button onclick="window.TBf.getM('boards').createNewBoard(document.getElementById('newBordName').value)">Create New Board</button><input id="newBordName"></input>

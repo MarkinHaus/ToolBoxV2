@@ -100,12 +100,14 @@ async def run(app: App, args):
                 return Result.default_internal_error().set_origin("minicli::build-in")
         return Result.ok().set_origin("minicli::build-in")
 
-    def open_(call_: CallingObject) -> Result:
+    async def open_(call_: CallingObject) -> Result:
         if not call_.function_name:
-            app.load_all_mods_in_file()
+            await app.load_all_mods_in_file()
             return Result.default_user_error(info="No module specified").set_origin("minicli::build-in")
-        if not app.save_load(call_.function_name):
+        f = app.save_load(call_.function_name)
+        if not f:
             return Result.default_internal_error().set_origin("minicli::build-in")
+        await f
         return Result.ok().set_origin("minicli::build-in")
 
     def close_(call_: CallingObject) -> Result:

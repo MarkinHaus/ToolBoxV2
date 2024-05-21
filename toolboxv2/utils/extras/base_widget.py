@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 from ..system.all_functions_enums import CLOUDM_AUTHMANAGER
@@ -39,6 +40,18 @@ class BaseWidget:
             x = lambda r: fuction(request=r)
             self.onReload.append(x)
 
+    def reload_guard(self, function):
+        c = None
+        if len(self.onReload) == 0:
+            c = function()
+        return c
+
+    async def oa_reload_guard(self, function):
+        c = None
+        if len(self.onReload) == 0:
+            c = await function() if asyncio.iscoroutinefunction(function) else function()
+        return c
+
     @staticmethod
     def get_a_group(asset_name, template=None, file_path=None, a_kwargs=None):
         if a_kwargs is None:
@@ -65,7 +78,7 @@ class BaseWidget:
             'root': f"/api/{self.name}",
             'WidgetID': asset_id},
                     **kwargs}
-        asset_name = f"{name}{asset_id}"
+        asset_name = f"{name}-{asset_id}"
         if iterator is None:
             group = self.get_a_group(asset_name,
                                      template=template,
@@ -80,7 +93,7 @@ class BaseWidget:
 
         asset = app.run_any(MINIMALHTML.ADD_COLLECTION_TO_GROUP,
                             group_name=self.name,
-                            collection={'name': f"{self.name}-{asset_name}",
+                            collection={'name': f"{asset_name}",
                                         'group': group},
                             get_results=True)
         if asset.is_error():
@@ -95,7 +108,7 @@ class BaseWidget:
     def generate_html(self, app, name="MainWidget", asset_id=str(uuid.uuid4())[:4]):
         return app.run_any(MINIMALHTML.GENERATE_HTML,
                            group_name=self.name,
-                           collection_name=f"{name}{asset_id}")
+                           collection_name=f"{name}-{asset_id}")
 
     def load_widget(self, app, request, name="MainWidget", asset_id=str(uuid.uuid4())[:4]):
         app.run_any(MINIMALHTML.ADD_GROUP, command=self.name)
@@ -124,5 +137,12 @@ class BaseWidget:
     def reload(self, request):
         [_(request) for _ in self.onReload]
 
+    async def oa_reload(self, request):
+        [_(request) if not asyncio.iscoroutinefunction(_) else await _(request) for _ in self.onReload]
+
     async def get_widget(self, request):
         raise NotImplementedError
+
+    def hash_wrapper(self, _id, _salt=''):
+        from ..security.cryp import Code
+        return Code.one_way_hash(text=_id, salt=_salt, pepper=self.name)

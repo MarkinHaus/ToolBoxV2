@@ -11,7 +11,7 @@ default_export = export(mod_name=Name)
 version = '0.0.1'
 spec = ''
 
-DATABASE_SPACE = os.getenv('DATABASE_SPACE') or Name
+DATABASE_SPACE = os.getenv('DATABASE_SPACE', Name) or Name
 
 
 def get_db_query(user_name: str, user_id: str):
@@ -100,27 +100,25 @@ def get_version():
 
 ##### Auto Register all widgets
 
-def get_user_from_request(app, request):
+async def get_user_from_request(app, request):
     if app is None:
         app = get_app(from_=f"{Name}.controller")
     if request is None:
         return Result.default_internal_error("No request specified")
-    if request.session['live_data'].get('spec') != spec:
-        return Result.default_internal_error("Invalid Instance")
     if request.session['live_data'].get('user_name', "") == "":
         return Result.default_internal_error("Invalid User")
     username_c = request.session['live_data'].get('user_name')
     username = app.config_fh.decode_code(username_c)
-    user: User = app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username)
+    user: User = await app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username)
     return Result.ok(user)
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="get_names")
-def get_names(app: App = None, request: Request or None = None):
+async def get_names(app: App = None, request: Request or None = None):
     if app is None:
         app = get_app(from_=f"{Name}.controller")
 
-    user_result = get_user_from_request(app, request)
+    user_result = await get_user_from_request(app, request)
 
     if user_result.is_error() or not user_result.is_data():
         return user_result
@@ -136,13 +134,13 @@ def get_names(app: App = None, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="get_sto")
-def get_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: Request or None = None):
+async def get_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: Request or None = None):
     if sto_name is None:
         return Result.default_user_error(info="No name specified")
     if app is None:
         app = get_app(from_=f"{Name}.controller")
 
-    user_result = get_user_from_request(app, request)
+    user_result = await get_user_from_request(app, request)
 
     if user_result.is_error() or not user_result.is_data():
         return user_result
@@ -156,19 +154,19 @@ def get_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: Re
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="set_sto")
-def set_sto_by_name(app: App = None, sto_name: Optional[str] = None, data=None, request: Request or None = None):
+async def set_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: Request or None = None):
     if sto_name is None:
         return Result.default_user_error(info="No name specified")
     if app is None:
         app = get_app(from_=f"{Name}.controller")
 
-    user_result = get_user_from_request(app, request)
+    user_result = await get_user_from_request(app, request)
 
     if user_result.is_error() or not user_result.is_data():
         return user_result
 
     user: User = user_result.get()
-
+    data = await request.body()
     sto_data_result = set_sto(app, sto_name=sto_name, user_name=user.name, user_id=user.uid, data=data)
     if sto_data_result.is_error() or not sto_data_result.is_data():
         return sto_data_result
@@ -176,13 +174,13 @@ def set_sto_by_name(app: App = None, sto_name: Optional[str] = None, data=None, 
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="add_sto")
-def add_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: Request or None = None):
+async def add_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: Request or None = None):
     if sto_name is None:
         return Result.default_user_error(info="No name specified")
     if app is None:
         app = get_app(from_=f"{Name}.controller")
 
-    user_result = get_user_from_request(app, request)
+    user_result = await get_user_from_request(app, request)
 
     if user_result.is_error() or not user_result.is_data():
         return user_result
@@ -195,14 +193,14 @@ def add_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: Re
     return sto_info_result
 
 
-@export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="delet_sto")
-def remove_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: Request or None = None):
+@export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="delete_sto")
+async def remove_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: Request or None = None):
     if sto_name is None:
         return Result.default_user_error(info="No name specified")
     if app is None:
         app = get_app(from_=f"{Name}.controller")
 
-    user_result = get_user_from_request(app, request)
+    user_result = await get_user_from_request(app, request)
 
     if user_result.is_error() or not user_result.is_data():
         return user_result
@@ -213,3 +211,29 @@ def remove_sto_by_name(app: App = None, sto_name: Optional[str] = None, request:
     if sto_info_result.is_error() or not sto_info_result.is_data():
         return sto_info_result
     return sto_info_result
+
+
+"""@export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True)
+async def save_user_sto(app, request, name: str = "Main"):
+    if app is None:
+        app = get_app(f"{Name}.open")
+    if request is None:
+        return None
+    user = await get_user_from_request(app, request)
+    b = await request.body()
+
+    with BlobFile(f"users/{Code.one_way_hash(name, 'userWidgetSto', user.uid)}/{name}/bords", 'w') as f:
+        f.clear()
+        f.write(b)
+
+
+@export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True)
+async def get_user_sto(app, request, name: str = "Main"):
+    if app is None:
+        app = get_app(f"{Name}.open")
+    if request is None:
+        return
+    user = await get_user_from_request(app, request)
+    with BlobFile(f"users/{Code.one_way_hash(name, 'userWidgetSto', user.uid)}/{name}/bords", 'r') as f:
+        data = f.read()
+    return data"""

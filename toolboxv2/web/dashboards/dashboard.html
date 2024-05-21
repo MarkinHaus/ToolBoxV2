@@ -2,19 +2,18 @@
 <script src="/web/scripts/AutoMarkdown.js" type="module"></script>
 <script src="/web/scripts/infos.js" type="module"></script>
 <script src="/web/scripts/WorkerSocketRenderer.js" type="module"></script>
-<script src="/web/scripts/WidgetUtility.js" type="module"></script>
-<script src="/web/scripts/OverlayUtility.js" type="module"></script>
+<script src="/web/scripts/WidgetUtility.js" type="module" defer></script>
+<script src="/web/scripts/OverlayUtility.js" type="module" defer></script>
 <script src="/web/scripts/tauri/autoDetection.js" type="module"></script>
-<script src="/web/1/WigetNav/navDrow.js"></script>
 
 <link rel="stylesheet" href="/web/Drag/drag.css">
-<script src="/web/Drag/drag.js"></script>
+<script src="/web/Drag/drag.js" defer></script>
 
 <link rel="stylesheet" href="/web/systemMSG/speech_balloon.css">
-<script src="/web/systemMSG/speech_balloon.js"></script>
-
-
+<script src="/web/systemMSG/speech_balloon.js" defer></script>
+<script src="/web/1/WigetNav/navDrow.js" defer></script>
 <link rel="stylesheet" href="/web/1/WigetNav/navDrow.css">
+
 <link rel="stylesheet" href="/web/assets/Wiget.css">
 
 <template id="speech-balloon-template">
@@ -30,7 +29,7 @@
 </template>
 <style>
     .button-container button {
-        background-color: var(--primary-color);
+        background-color: var(--background-color);
         color: var(--text-color);
         cursor: pointer;
         transition: background-color 0.3s ease;
@@ -50,7 +49,7 @@
 
 </style>
 
-<nav id="NAV">
+<div id="NAV" style="scale:1.4; position: absolute;top: 0;left: 10vw;">
     <div id="MainControls">
         <div class="circle-dropdown" id="WidgetNavCircle">
             <div class="circle" id="profile">
@@ -72,5 +71,5 @@
         <div id="extra"></div>
         <div id="SpeechBallonControls2"></div>
     </div>
-</nav>
+</div>
 

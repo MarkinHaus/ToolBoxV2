@@ -39,13 +39,6 @@ args.debug = debug
 args.sysPrint = True
 tb_app = get_app(from_="init-api-get-tb_app", name=id_name, args=args)
 
-
-def guard():
-    global tb_app
-    tb_app = get_app(from_="init-api-get-tb_app", name=id_name, args=args)
-    return tb_app
-
-
 manager = tb_app.get_mod("WebSocketManager")
 
 with Spinner("loding mods", symbols="b"):
@@ -57,6 +50,7 @@ with Spinner("loding mods", symbols="b"):
             module_list.remove(om)
     _ = {tb_app.save_load(mod, 'app') for mod in module_list}
 
+tb_app.watch_mod(mod_name="WidgetsProvider")
 
 class RateLimitingMiddleware(BaseHTTPMiddleware):
     # Rate limiting configurations

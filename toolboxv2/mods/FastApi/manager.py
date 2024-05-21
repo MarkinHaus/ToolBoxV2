@@ -167,8 +167,8 @@ class Tools(MainTool, FileHandler):  # FileHandler
         self.print(api_data)
         g = f"uvicorn toolboxv2.mods.FastApi.fast_api_main:app --host {api_data['host']}" \
             f" --port {api_data['port']} --header data:{self.app.debug}:{api_name}"
-        if reload:
-            g += ' --reload --reload-dir ./utils' if reload else ''
+        # if reload:
+        #    g += ' --reload --reload-dir ./utils' if reload else ''
 
         print("Running command : " + g)
         # def runner():

@@ -113,7 +113,15 @@ class Tools(MainTool, FileHandler):
             else:
                 raise ValueError("Invalid arguments nor file_path or template provided")
             template = string.Template(template_content)
-            html_element = template.substitute(**element['kwargs'])
+            html_element = '<h1> invalid Template </h1>'
+            for i in range(len(template_content)):
+                try:
+                    html_element = template.substitute(**element['kwargs'])
+                    break
+                except KeyError as e:
+                    key_name = str(e).split(',')[0].split("'")[1]
+                    element['kwargs'][key_name] = key_name
+                    self.print(f"Template is not valid missing var '{key_name}' auto add withe value '{key_name}'")
             html_elements.append({'name': element['name'], 'html_element': html_element})
 
         self.print(f"Addet {i} element{'s' if i > 1 else ''} {group_name}:{collection_name}")

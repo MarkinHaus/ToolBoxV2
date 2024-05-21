@@ -57,7 +57,7 @@ async function logOutOverlay(){
             "  overflow: hidden;\n" +
             "  transition-duration: .3s;\n" +
             "  box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.199);\n" +
-            "  background-color: var(--primary-color);\n" +
+            "  background-color: var(--background-color);\n" +
             "}\n" +
             "\n" +
             "/* plus sign */\n" +
@@ -106,9 +106,8 @@ async function logOutOverlay(){
             "/* button click effect*/\n" +
             ".Btn:active {\n" +
             "  transform: translate(2px ,2px);\n" +
-            "}</style><h1>Logout</h1><button class=\"Btn\" onclick=\"fetch('/web/logoutS', {method:'GET'});window.TBf.router('/web/logout');\n" +
-            "document.getElementById('Nav-Main').classList.remove('none');\n" +
-            "document.getElementById('NAV').remove();window.overlayUtility.closeOverlay(true)\">\n" +
+            "}</style><h1>Logout</h1><button class=\"Btn\" style='scale:1.8' onclick=\"fetch('/web/logoutS', {method:'GET'});window.TBf.router('/web/logout');\n" +
+            "document.getElementById('D-Provider').remove();window.overlayUtility.closeOverlay(true)\">\n" +
             "  \n" +
             "  <div class=\"sign\">" +
             "<span class=\"material-symbols-outlined\" style='color: #000000'>\n" +
@@ -124,9 +123,6 @@ async function logOutOverlay(){
         onClose: onCloseLogOutOverlay,
     });
 }
-// window.TBf.router('/web/logout');
-// document.getElementById('Nav-Main').classList.remove('none');
-// document.getElementById('NAV').remove();window.overlayUtility.closeOverlay(true)
 
 function onCloseLogOutOverlay(){
         window.TBf.getVar("naturalToggle")[2] = false
@@ -144,12 +140,13 @@ async function openSystemSettingsOverlay(){
     systemSettingsButton.style.zIndex = '9999'
 
     if (systemSettingsContent === null) {
-        systemSettingsContent = await window.TBf.loadHtmlFile('/web/1/insightsWidget/SystemTab.html'); // TODO change wit api call and ad profile specific information in be
+        systemSettingsContent = await window.TBf.loadHtmlFile('/api/WidgetsProvider/open_widget?name=WidgetsProvider.BoardWidget');
     }
     window.overlayUtility.createOverlay({
         content: systemSettingsContent,
         closeOnOutsideClick: true,
         onClose: onCloseSystemSettingsOverlay,
+        afterCrate: window.TBf.getM("initBoard")
     });
 }
 

@@ -566,6 +566,12 @@ class AppType:
         """proxi attr"""
         self.logger.info("OK")
 
+    def reload_mod(self, mod_name, spec='app', is_file=True, loc="toolboxv2.mods."):
+        """proxi attr"""
+
+    def watch_mod(self, mod_name, spec='app', loc="toolboxv2.mods.", use_thread=True, path_name=None):
+        """proxi attr"""
+
     def remove_mod(self, mod_name, spec='app', delete=True):
         """proxi attr"""
 

@@ -1,11 +1,3 @@
-
-
-function doSomething1() {
-    console.log('Do something1');
-}
-function doSomething() {
-    console.log('Do something');
-}
 function addBalloon(element_id, flag, content, options) { // element_id flag:0 System 1 Isaa content: ['text','newline'] options: [['text', function]]
     console.log("ADDING Ballon ", element_id, flag)
     let speechBalloon= createSpeechBalloon(flag, content, options);
@@ -122,4 +114,4 @@ function addBalloon(element_id, flag, content, options) { // element_id flag:0 S
 
 }
 
-
+window.TBf.setM("addBalloon", addBalloon)

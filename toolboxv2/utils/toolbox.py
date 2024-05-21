@@ -253,8 +253,6 @@ class App(AppType, metaclass=Singleton):
                 return self.runnable[name](get_app(from_="runner"), self.args_sto, **kwargs)
         self.print("Runnable Not Available")
 
-
-
     def _coppy_mod(self, content, new_mod_dir, mod_name, file_type='py'):
 
         mode = 'xb'
@@ -1200,11 +1198,13 @@ class App(AppType, metaclass=Singleton):
                     self.print(f"Could not load {mod_name}.{mod}")
         self.inplace_load_instance(mod_name, spec=spec, mfo=reload(self.modules[mod_name]))
 
-    def watch_mod(self, mod_name, spec='app', loc="toolboxv2.mods.", use_thread=True):
-        is_file = os.path.isfile(self.start_dir + '/mods/' + mod_name + '.py')
+    def watch_mod(self, mod_name, spec='app', loc="toolboxv2.mods.", use_thread=True, path_name=None):
+        if path_name is None:
+            path_name = mod_name
+        is_file = os.path.isfile(self.start_dir + '/mods/' + path_name + '.py')
         import watchfiles
         def helper():
-            paths = f'mods/{mod_name}' + ('.py' if is_file else '')
+            paths = f'mods/{path_name}' + ('.py' if is_file else '')
             self.print(f'Watching Path: {paths}')
             for changes in watchfiles.watch(paths):
                 print(changes)

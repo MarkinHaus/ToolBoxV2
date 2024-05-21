@@ -48,32 +48,6 @@ def get_user_from_request(app, request):
     return user
 
 
-@export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True)
-async def save_user_sto(app, request, name: str = "Main-User-DBord"):
-    if app is None:
-        app = get_app(f"{Name}.open")
-    if request is None:
-        return None
-    user = get_user_from_request(app, request)
-    b = await request.body()
-
-    with BlobFile(f"users/{Code.one_way_hash(name, 'userWidgetSto', user.uid)}/{name}/bords", 'w') as f:
-        f.clear()
-        f.write(b)
-
-
-@export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True)
-async def get_user_sto(app, request, name: str = "Main-User-DBord"):
-    if app is None:
-        app = get_app(f"{Name}.open")
-    if request is None:
-        return
-    user = get_user_from_request(app, request)
-    with BlobFile(f"users/{Code.one_way_hash(name, 'userWidgetSto', user.uid)}/{name}/bords", 'r') as f:
-        data = f.read()
-    return data
-
-
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="open_widget", row=True)
 async def open_widget(app: App, request, name: str, **kwargs):
     if app is None:
@@ -86,5 +60,5 @@ async def open_widget(app: App, request, name: str, **kwargs):
     if isinstance(w, asyncio.Task):
         w = await w
         w = w.as_result().get()
-    app.print(f"open_widget, {w}")
+    app.print(f"opened widget {name}")
     return w

@@ -4,7 +4,7 @@ from toolboxv2.utils.extras import BaseWidget
 Name = "WidgetsProvider.BoardWidget"
 version = "0.0.1"
 
-template = """
+template2 = """
 
 <title>Board Management</title>
 <style>
@@ -25,7 +25,7 @@ th {
 
 button {
   padding: 5px 10px;
-  background-color: #4CAF50;
+  background-color: blue;
   color: white;
   border: none;
   cursor: pointer;
@@ -55,7 +55,7 @@ button:hover {
   </tbody>
 </table>
 
-<script>
+<script unSave="true">
 // JavaScript für das Erstellen der Tabelle aus einer Liste von Board-Namen
 if(window.history.state.TB) {
   // Beispiel-Liste von Board-Namen
@@ -66,10 +66,10 @@ if(window.history.state.TB) {
   function addRow(name) {
     var row = tableBody.insertRow();
     row.innerHTML = `
-      <td>${name}</td>
+      <td>`+name+`</td>
       <td><input type="checkbox"></td>
       <td><input type="checkbox"></td>
-      <td><button onclick="confirmDelete('${name}')">Delete</button></td>
+      <td><button onclick="confirmDelete(name)">Delete</button></td>
     `;
   }
 
@@ -80,13 +80,54 @@ if(window.history.state.TB) {
 
   // Funktion zur Bestätigung der Löschung eines Boards
   window.confirmDelete = function(name) {
-    if (confirm(`Are you sure you want to delete "${name}" board?`)) {
+    if (confirm(`Are you sure you want to delete `+name+` board?`)) {
       // Hier kann die Lösch-Logik implementiert werden
-      console.log(`${name} board deleted`);
+      console.log(name+` board deleted`);
     }
   };
 };
 </script>
+"""
+template = """
+<title>Board Manager</title>
+<style>
+  /* Stil für die Benutzeroberfläche */
+  .board {
+    border: 2px solid #ccc;
+    padding: 10px;
+    margin: 10px;
+    display: none;
+  }
+</style>
+<div style="min-height:fit-content" class="">
+    <h2 id="inEdit">In Edit: <span id="currentEditBoard">Main</span></h2>
+    <div>
+        <label for="titel">Titel</label><input id="titel" placholder="titel" class="inputField" ></input>
+        <label for="src">type</label><input id="src" placholder="type" class="inputField"></input>
+        <button onclick="window.TBf.getM('createNewBoard')(document.getElementById('newBordName').value)">Create New Widget</button>
+    </div>
+    <hr/>
+    <table id="boardTable">
+        <thead>
+        <tr>
+            <th>Name</th>
+            <th>Open/Close</th>
+            <th>Set Edit</th>
+            <th>Delete</th>
+        </tr>
+        </thead>
+        <tbody id="boardTableBody">
+        <!-- Hier werden die Zeilen der Tabelle dynamisch eingefügt -->
+        </tbody>
+    </table>
+<div>
+    <button onclick="window.TBf.getM('createNewBoard')(document.getElementById('newBordName').value)">Close All</button>
+    <br/>
+    <label for="newBordName">New Board Name</label><input id="newBordName" class="inputField"></input>
+    <button onclick="window.TBf.getM('createNewBoard')(document.getElementById('newBordName').value)">Create New Board</button>
+</div>
+</div>
+
 """
 
 
@@ -111,7 +152,7 @@ class BoardWidget(MainTool, BaseWidget):
         w_id = self.get_s_id(request)
         if w_id.is_error():
             return w_id
-        self.asset_loder(self.app, self.name, w_id.get(), template=template, boardNames=["pBoard 1",
+        self.asset_loder(self.app, "main", self.hash_wrapper(w_id.get()), template=template, boardNames=["pBoard 1",
                                                                                          "pBoard 2",
                                                                                          "pBoard 3"])
 
@@ -127,6 +168,6 @@ class BoardWidget(MainTool, BaseWidget):
         w_id = self.get_s_id(request)
         if w_id.is_error():
             return w_id
-        return self.load_widget(self.app, request, self.name, w_id.get())
-
+        self.reload_guard(self.on_start)
+        return self.load_widget(self.app, request, "main", self.hash_wrapper(w_id.get()))
 

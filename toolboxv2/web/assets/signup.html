@@ -1,5 +1,5 @@
-<script type="module" src="/web/scripts/module/0/singup.js"></script>
 <script src="/index.js" type="module"></script>
+<script type="module" src="/web/scripts/singup.js"></script>
 <div>
     <div class="main-content frosted-glass">
         <section id="signup">
@@ -15,7 +15,7 @@
                     <input id="initiation" type="password" placeholder="Initiation-Key">
                     <button type="submit" id="submit-button">Sign Up</button>
                     <button class="none" id="skip-persona-button"
-                            onclick="setTimeout(async ()=>{await navigate('/dashboard')},0)">Only Device
+                            onclick="setTimeout(async ()=>{await window.TBf.router('/web/dashboard')},0)">Only Device
                     </button>
                 </form>
             </div>

@@ -22,14 +22,14 @@
 </div>
 
 
-<script unSave="true">
+<script unSave="true" defer>
 
     //if (document.getElementById("MainContent") && !window.userDonline){
         window.userDonline = true
-
+    setTimeout(()=> {
         const animator = window.TBf.animator
         animator("Y2-8762", "Y2+101")
-
+    },420)
         setTimeout(()=>{
         const httpPostUrl = window.TBf.httpPostUrl
         function autocomplete(inp, arr) {
@@ -157,7 +157,7 @@
 
     // Funktion zum Hinzufügen neuer Einträge (Beispiel)
     function addItem(item) {
-        let items = JSON.parse(localStorage.getItem('ACUBordSItems')) || ["Main-User-DBord"];
+        let items = JSON.parse(localStorage.getItem('ACUBordSItems')) || ["Main"];
         if (!items.includes(item)) {
             items.push(item);
             localStorage.setItem('ACUBordSItems', JSON.stringify(items));
@@ -168,7 +168,7 @@
         const dropdown = document.getElementById('ACUBorddropdownMenu');
 
         // Initialisiere die Liste, falls noch nicht im Local Storage vorhanden
-        let items = JSON.parse(localStorage.getItem('ACUBordSItems')) || ["Main-User-DBord"];
+        let items = JSON.parse(localStorage.getItem('ACUBordSItems')) || ["Main"];
         let selectedItem = localStorage.getItem('ACUBord') || items[0];
 
         // Funktion zum Aktualisieren des Dropdowns
@@ -205,8 +205,8 @@
         autocomplete(document.getElementById("inputField"), ['CloudM.UI.widget', 'TestWidget', 'quickNote.QnWidget'])
         let ac_bord = window.localStorage.getItem("ACUBord")
         if (!ac_bord){
-            window.localStorage.setItem("ACUBord", "Main-User-DBord")
-            ac_bord = "Main-User-DBord"
+            window.localStorage.setItem("ACUBord", "Main")
+            ac_bord = "Main"
         }
 
         window.widgetUtility.ackey = ac_bord;

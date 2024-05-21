@@ -49,6 +49,29 @@ export class Result {
         )
     }
 
+    html(){
+        return `<div style="background-color: #fff;
+    border-radius: 5px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    padding: 20px;">
+  <div style="background-color: #f0f0f0;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    padding: 10px;
+    margin-bottom: 20px;
+    white-space: pre-wrap;">
+    <p>======== Result ========</p>
+    <p>Function Exec code: <span id="execCode">`+this.info.exec_code+`</span></p>
+    <p>Info's: <span id="infoText">`+this.info.help_text+`</span> <|> <span id="dataInfo">`+this.result.data_info+`</span></p>
+    <p>Origin: <span id="originText">`+this.origin+`</span></p>
+    <p>Data_to: <span id="dataTo">`+this.result.data_to+`</span></p>
+    <p>Data: <span id="data">`+this.result.data+`</span></p>
+    <p>Error: <span id="errorText">`+this.error+`</span></p>
+    <p>------- EndOfD -------</p>
+  </div>
+</div>`
+    }
+
     get() {
         return this.result.data;
     }
@@ -110,7 +133,7 @@ export function wrapInResult(data, from_string=false) {
 }
 
 async function parseResponse(response){
-    console.log(response)
+    // console.log(response)
     const res = await response.text()
     if (res.toString().startsWith("{")&&res.toString().endsWith("}")){
         return JSON.parse(res.toString())
@@ -120,17 +143,16 @@ async function parseResponse(response){
 
 // Modified httpPostUrl function
 export function httpPostUrl(module_name, function_name, params, errorCallback, successCallback, from_string=false) {
-    fetch('/api/' + module_name + '/' + function_name + '?' + params, {
+    return fetch('/api/' + module_name + '/' + function_name + '?' + params, {
         method: 'POST',
         headers: {
             'Accept': 'application/json',
             'Content-Type': 'application/json'
         },
     })
-        .then(data => {
-            setTimeout(async ()=>{
+        .then(async (data )=> {
                 data = await parseResponse(data)
-                console.log("DATA:", data)
+                // console.log("DATA:", data)
                 if (from_string){data = data.toString()}
                 const result = wrapInResult(data, from_string)
                 result.log()
@@ -141,7 +163,6 @@ export function httpPostUrl(module_name, function_name, params, errorCallback, s
                     // Handle success case
                     return successCallback(result);
                 }
-            }, 1)
 
         })
         .catch((error) => {
@@ -149,7 +170,7 @@ export function httpPostUrl(module_name, function_name, params, errorCallback, s
         });
 }
 export function httpPostData(module_name, function_name, data, errorCallback, successCallback) {
-    fetch('/api/' + module_name + '/' + function_name, {
+    return fetch('/api/' + module_name + '/' + function_name, {
         method: 'POST',
         headers: {
             'Accept': 'application/json',

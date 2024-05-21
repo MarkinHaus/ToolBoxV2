@@ -44,10 +44,10 @@ class MiniRedis:
                 data.append(val)
 
         if not data:
-            return Result.ok(info=f"No data found for key {key}", data=None, data_info=data_info).set_origin(
+            return Result.ok(info=f"No data found for key", data=None, data_info=data_info).set_origin(
                 "Reddis DB")
 
-        return Result.ok(data=data, data_info=data_info + key).set_origin("Reddis DB")
+        return Result.ok(data=data, data_info=data_info).set_origin("Reddis DB")
 
     def if_exist(self, query: str):
         if self.rcon is None:
@@ -77,6 +77,9 @@ class MiniRedis:
 
         if self.rcon is None:
             return Result.default_internal_error(info='Pleas run initialize').set_origin("Reddis DB")
+
+        if not isinstance(value, list):
+            value = [value]
 
         val = self.rcon.get(key)
 

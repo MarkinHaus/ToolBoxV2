@@ -28,21 +28,19 @@
 
     <script src="/index.js" type="module" defer></script>
     <script src="/web/scripts/scripts.js" type="module" defer></script>
+    <link rel="stylesheet" href="/web/node_modules/@picocss/pico/css/pico.min.css">
 
 </head>
 <header>
-
-
-    <div id="Nav-Controls">
-        <nav id="Nav-Main">
-            <ul>
-                <li><a href="/web">Start</a></li>
-                <li><a href="/web/signup">Sign Up</a></li>
-                <li><a href="/web/login">Login</a></li>
-                <li><a href="/web/assets/terms.html">Terms and Conditions</a></li>
-                <li><a href="/web/dashboard">Dashboard</a></li>
-            </ul>
-        </nav>
+    <div id="Nav-Controls" class="NavMain">
+        <div id="Nav-Main" class="fade-inH" >
+            <div class="circle-dropdown" style="scale: 1.4">
+                <div class="circle" id="links">
+    <span id="linkIcon" class="plus material-symbols-outlined"
+    >menu</span>
+                </div>
+            </div>
+        </div>
     </div>
     <div class="dark-mode-toggle">
         <input type="checkbox" id="darkModeToggle">
@@ -88,7 +86,7 @@
     </div>
 
 </div>
-<main id="MainContent">
+<main id="MainContent" style="padding-top: 7vh">
 
 
 </main>

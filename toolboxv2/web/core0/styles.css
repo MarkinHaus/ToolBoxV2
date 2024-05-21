@@ -1,153 +1,14 @@
-*,
-*:before,
-*:after{
-    padding: 0;
-    margin: 0;
-    box-sizing: border-box;
-
-    --background-color : #fffa;
-    --text-clor : #000;
-    --anti-text-clor: #fff;
-    --light-acent: #045fab;
-    --dark-acent: #011b33;
-    --pico-color: var(--text-clor);
-    --pico-h3-color: var(--text-clor);
-    --pico-h4-color: var(--text-clor);
-    --pico-h5-color: var(--text-clor);
+body p {
+    color: var(--text-color);
 }
-
-:root {
-    --font-family: 'Roboto', sans-serif;
-    --spacing: 1rem;
-
-
-    --primary-color: rgba(0,0,0,0);
-    --secondary-color: #537FE7;
-    --text-color: #181823;
-
-
-    --background-color: #f8f9fa;
-    --dark-primary-color: #181823;
-    --dark-secondary-color: #E9F8F9;
-    --dark-background-color: #181823;
-    --dark-text-color: #E9F8F9;
-
-    --dark-nav-link-color: #181823;
-    --dark-nav-link-hover-color: #C0EEF2;
-    --dark-toggle-bg-color: #181823;
-
-    --toggle-bg-checked-color: var(--primary-color);
-
-    --error-color: #9c1079;
-    --fatal-error-color: #9c1010;
-    --info-color: #107b9c;
-    --susess-color: #109c41;
-    --worning-color: #9c6b10;
-
-    --decision-color: #75235e;
-    --no-decision-color: #3f9f5a;
-
-    --FILL: 0;
-    --wght: 200;
-    --GRAD: 50;
-    --opsz: 24;
-
-    --pico-primary-background: var(--background-color);
-    --pico-secondary-background: var(--background-color);
-    --pico-primary-color: rgba(0,0,0,0);
-    --pico-secondary-color: #537FE7;
-    --pico-text-color: #181823;
-    --pico-dark-primary-color: #181823;
-    --pico-dark-secondary-color: #E9F8F9;
-    --pico-dark-background-color: #181823;
-    --pico-dark-text-color: #E9F8F9;
-    --pico-dark-nav-link-color: #181823;
-    --pico-dark-nav-link-hover-color: #C0EEF2;
-    --pico-dark-toggle-bg-color: #181823;
-    --pico-toggle-bg-checked-color: var(--pico-primary-color);
-    --pico-error-color: #9c1079;
-    --pico-fatal-error-color: #9c1010;
-    --pico-info-color: #107b9c;
-    --pico-success-color: #109c41;
-    --pico-warning-color: #9c6b10;
-    --pico-decision-color: #75235e;
-    --pico-no-decision-color: #3f9f5a;
+body h2 {
+    color: var(--text-color);
 }
-
-
-:root[data-theme="dark"]{
-    /*
-    --primary-color: var(--dark-primary-color);
-    --secondary-color: var(--dark-secondary-color);
-    --background-color: var(--dark-background-color);
-    --text-color: var(--dark-text-color);
-
-    --nav-link-color: var(--dark-nav-link-color);
-    --nav-link-hover-color: var(--dark-nav-link-hover-color);
-    --toggle-bg-color: var(--dark-toggle-bg-color);
-
-    --toggle-bg-checked-color: var(--primary-color);
-     */
-
-
-    --primary-color: #537FE7;
-    --secondary-color: #537FE7;
-    --background-color: #181823;
-    --text-color: #181823;
-
-    --nav-link-color: #181823;
-    --nav-link-hover-color: #C0EEF2;
-    --toggle-bg-color: #181823;
+body h3 {
+    color: var(--text-color);
 }
-
-:root[data-theme="light"]{
-    /*
-    --primary-color: var(--dark-primary-color);
-    --secondary-color: var(--dark-secondary-color);
-    --background-color: var(--dark-background-color);
-    --text-color: var(--dark-text-color);
-
-    --nav-link-color: var(--dark-nav-link-color);
-    --nav-link-hover-color: var(--dark-nav-link-hover-color);
-    --toggle-bg-color: var(--dark-toggle-bg-color);
-
-    --toggle-bg-checked-color: var(--primary-color);
-
-     */
-
-    --primary-color: #181823;
-    --secondary-color: #E9F8F9;
-    --background-color: #f8f9fa;
-    --text-color: #E9F8F9;
-
-    --nav-link-color: #888;
-    --nav-link-hover-color: #fff;
-    --toggle-bg-color: #ccc;
-}
-
-/* Light Theme */
-:root[data-theme="light"],
-:root:not([data-theme="dark"]) {
-    --pico-primary-background: var(--background-color);
-    --pico-secondary-background: var(--background-color);
-    --pico-background-color: #f8f9fa;
-    --pico-text-color: #E9F8F9;
-    --pico-nav-link-color: #888;
-    --pico-nav-link-hover-color: #fff;
-    --pico-toggle-bg-color: #ccc;
-}
-
-/* Dark Theme */
-@media only screen and (prefers-color-scheme: dark) {
-    :root:not([data-theme]) {
-        --pico-primary-background: var(--dark-background-color);
-        --pico-secondary-background: var(--dark-background-color);
-        --pico-background-color: #181823;
-        --pico-text-color: #E9F8F9;
-        --pico-nav-link-color: #181823;
-        --pico-nav-link-hover-color: #C0EEF2;
-        --pico-toggle-bg-color: #181823;
-    }
+body h4 {
+    color: var(--text-color);
 }
 
 .wrapper{
@@ -299,15 +160,6 @@ footer {
     font-size: 0.8em;
 }
 
-/* Stil für Links */
-a {
-    color: #537FE7;
-    text-decoration: none;
-}
-
-a:hover {
-    text-decoration: underline;
-}
 
 #installer-container {
     max-width: 600px;
@@ -348,6 +200,7 @@ a:hover {
 }
 
 .roadmap-content {
+    background-color: var(--background-color);
     padding: 10px;
     border-radius: 5px;
     box-shadow: 0 2px 5px rgba(0,0,0,0.1);

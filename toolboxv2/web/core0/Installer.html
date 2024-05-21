@@ -80,7 +80,12 @@
 </head>
 
 <body>
-<div class="main-page" style="padding-top: 5vh;padding-bottom: 2vh;">
+<div class="main-page" style="padding-top: 5vh;padding-bottom: 2vh;background-color: transparent; /* Hintergrund transparent machen */
+    background: rgba(var(--text-color), 0.8); /* Hintergrundfarbe auf Weiß setzen */
+    background-image: radial-gradient(var(--text-color) 2px, transparent 0); /* Hintergrundbild mit größeren schwarzen Punkten erstellen */
+    background-size: 40px 40px; /* Größe des Hintergrundbilds anpassen */
+    background-position: -20px -20px; /* Position des Hintergrundbilds anpassen */
+    ">
     <div class="wrapper fade-class">
 <h2>Install engine + interface</h2>
 <h3>#Supported-OS: Windows, Linux, Mac, iOS, Android</h3>

@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "dependencies": {
+    "@picocss/pico": "^2.0.6",
     "highlight.js": "^11.8.0",
     "htmx.org": "^1.9.10",
     "marked": "^5.1.0",

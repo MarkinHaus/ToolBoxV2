@@ -1,4 +1,3 @@
-
 function getRandomId(length) {
     let result = '';
     const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -9,11 +8,13 @@ function getRandomId(length) {
     return result;
 }
 
+window.TBf.initVar("boards",{});
+
 
 class WidgetUtility {
     constructor() {
         console.log("[WidgetUtility Online]")
-        this.widgetStore = [];
+        this.widgetStore = {};
         this.WidgetIDStore = [];
         this.maxZIndex = 2;
         this.storage = {}
@@ -22,8 +23,93 @@ class WidgetUtility {
 
     // Erstellt ein neues Widget und fügt es dem DOM hinzu
 
-    createWidget({id = undefined, titel , template = "", mount_to_id = "MainContent", max=false}) {
-        console.log("[WidgetUtility Crating]", titel, id, template)
+    async fetchTemplate(identifier, titel=''){
+        try {
+            const template = await window.TBf.httpPostUrl("WidgetsProvider", "open_widget", "name=" + identifier+titel,
+                (e) => {
+                    console.log(e)
+                    return `<h2> Error `+ identifier+ ` `+ titel + `</h2>`
+                }, (result) => {
+                    console.log("Susses",result)
+                    return result.get()
+                }, true
+            )
+            console.log("template:", template)
+            return template
+        } catch (error) {
+            console.error('Error fetching template:', error);
+            return `<h2>Fatal Error ${identifier} ${titel}</h2>`;
+        }
+    }
+
+    async fetchBoard(name){
+        return await window.TBf.httpPostUrl("WidgetsProvider", "get_sto", "sto_name=" + this.ackey,
+            (e) => {
+                console.log(e)
+                window.TBf.getM("addBalloon")("MainContent", 0, ["Error Receiving Board Data for "+ name, e.html()], []);
+                return null
+            }, (result) => {
+                console.log("Susses", result)
+                return result.get()
+            }, true
+        )
+
+    }
+
+    async addBoard(name){
+        await window.TBf.httpPostUrl("WidgetsProvider", "add_sto", "sto_name=" + name,
+            (e) => {
+                console.log(e)
+                window.TBf.getM("addBalloon")("MainContent", 0, ["Error Crating Board "+ name, e.html()], [["retry", ()=>{
+                    this.addBoard(name)}]]);
+            }, (result) => {
+                console.log("Susses",result.get())
+                window.TBf.getM("addBalloon")("MainContent", 0, ["Crating Board "+ name, "Successfully"], [])
+            }, true
+        )
+    }
+    async removeBoard(name){
+        await window.TBf.httpPostUrl("WidgetsProvider", "delete_sto", "sto_name=" + name,
+            (e) => {
+                console.log(e)
+                window.TBf.getM("addBalloon")("MainContent", 0, ["Error Removing Board "+ name, e.html()], [["retry", ()=>{
+                    this.removeBoard(name)}]]);
+            }, (result) => {
+                console.log("Susses",result.get())
+                window.TBf.getM("addBalloon")("MainContent", 0, ["Removed Board :"+ name, "Successfully"], [])
+            }, true
+        )
+    }
+
+    async getAllBordNames(){
+        const data = await window.TBf.httpPostUrl("WidgetsProvider", "get_names", "",
+            (e) => {
+                console.log(e)
+                window.TBf.getM("addBalloon")("MainContent", 0, ["Error Removing Board :"+ name, e.html()], []);
+                return null
+            }, (result) => {
+                console.log("Susses",result)
+                return result.get()
+            }, true
+        )
+        if(!data){
+            return ["Main"]
+        }
+        return data
+    }
+
+    async createWidget({id = undefined, titel , identifier = "", mount_to_id = "MainContent", max= false}) {
+
+        if (!this.ackey){
+            window.TBf.getM("addBalloon")("MainContent", 0, ["Error Adding Widget no Board open!", "open 'Main' Board and retry"], [["retry", ()=>{
+                this.ackey = "Main";
+                this.createWidget({id, titel , identifier, mount_to_id, max})
+            }]]);
+            return
+        }
+        console.log("[WidgetUtility Crating]" ,identifier, titel)
+
+        const template = await this.fetchTemplate(identifier, titel)
 
         if (id === undefined){
             id = getRandomId(16)
@@ -51,11 +137,10 @@ class WidgetUtility {
         widgetUtility.addWidget2Manager(widgetContainer)
 
 
-        this.storage[id] = {id, titel , template, mount_to_id}
+        this.storage[id] = {id, identifier, titel, mount_to_id}
 
-        if (this.ackey){
-            this.saveStorage()
-        }
+        this.saveStorage()
+
         try{
             window.TBf.processRow(widgetContainer);
         }catch (e){
@@ -71,44 +156,64 @@ class WidgetUtility {
         }
         console.log("Saving Widgets Board id:", this.ackey)
         if (Object.values(this.storage).length){
-            for (const widgetDataKey in this.storage) {
-                const w = document.getElementById("widget-conten-"+widgetDataKey)
-                if (w){
-                    this.storage[widgetDataKey].template = w.innerHTML
-                }
-            }
-            window.localStorage.setItem("Widget-Storage-Board-"+this.ackey, JSON.stringify(this.storage))
+            setTimeout(async ()=> {
+                await window.TBf.httpPostData("WidgetsProvider", "set_sto?sto_name="+this.ackey, this.storage, (e)=>{
+                    window.TBf.getM("addBalloon")("MainContent", 0, ["Error Saving Board Data: "+this.ackey, e.html()], [["retry", this.saveStorage]]);
+                },(s)=>{
+                    console.log("Saved", this.ackey)
+                })
+            }, 200)
         }
     }
 
-    save_clos_all(){
+    closeAll(name=null, anker=null, del=false){
+        if (!anker){
+            anker = document.getElementById("MainContent")
+        }
+        Object.keys(this.widgetStore).forEach(board => {
+            if (!name || name===board){
+                this.widgetStore[board].forEach(widget => {
+                    try{
+                        widget.style.animation = 'widget-fadeOut 0.5s';
+                        setTimeout(() => {
+                            if(del){
+                                this.closeWidget(widget, anker)
+                            }else{
+                                anker.removeChild(widget);
+                            }
+                        }, 500);
+                    }catch (e){
+                        console.log(e)
+                    }
+
+                });
+            }
+
+        })
+    }
+
+    save_close(){
         if (!this.ackey){
             console.log("No Bord ac")
             return
         }
         this.saveStorage()
-        const anker = document.getElementById("MainContent")
-        this.widgetStore.forEach(widget => {
-            widget.style.animation = 'widget-fadeOut 0.5s';
-            setTimeout(() => {
-                anker.removeChild(widget);
-            }, 500);
-        });
+        this.closeAll(this.ackey)
 
-        this.widgetStore = [];
+        this.widgetStore[this.ackey] = [];
         this.WidgetIDStore = [];
         this.maxZIndex = 2;
         this.storage = {}
         this.ackey = null
     }
 
-    get_storage(){
+    async get_storage(){
         if (Object.keys(this.storage).length !== 0){
              console.log("Save Storage, before Open New ")
         }
         let saved_widgets_storage;
         try{
-            saved_widgets_storage = JSON.parse(window.localStorage.getItem("Widget-Storage-Board-"+this.ackey))
+            saved_widgets_storage = await this.fetchBoard(this.ackey)
             if (!saved_widgets_storage) {
                 console.log("Invalid Storage data or key =" + this.ackey + 'Data: ' +saved_widgets_storage);
                 return
@@ -122,14 +227,14 @@ class WidgetUtility {
         if(!saved_widgets_storage){
             return
         }
-        console.log("Opening Widgets Board id:", this.ackey, saved_widgets_storage.length, saved_widgets_storage)
+        console.log("Opening Widgets Board id:", this.ackey, saved_widgets_storage.length)
         Object.values(saved_widgets_storage).forEach(widgetData => {
             this.createWidget({
                 id: widgetData.id,
                 titel: widgetData.titel,
-                template: widgetData.template,
+                identifier: widgetData.identifier,
                 mount_to_id: widgetData.mount_to_id
-            });
+            })
         });
     }
 
@@ -146,7 +251,10 @@ class WidgetUtility {
 
     addWidget2Manager(widget){
         widgetUtility.WidgetIDStore.push(widget.id)
-        widgetUtility.widgetStore.push(widget);
+        if (!widgetUtility.widgetStore[this.ackey]){
+            widgetUtility.widgetStore[this.ackey] = []
+        }
+        widgetUtility.widgetStore[this.ackey].push(widget);
         try{
             console.log("makeDraggable")
             makeDraggable(widget)
@@ -162,10 +270,13 @@ class WidgetUtility {
             // Setze den z-index des angeklickten divs auf den maximalen Wert
             widget.style.zIndex = widgetUtility.maxZIndex;
             let currentMax = 2;
-            for (let j = 0; j < widgetUtility.widgetStore.length; j++) {
-                if (widgetUtility.widgetStore[j] !== widget && widgetUtility.widgetStore[j].style.zIndex > 2) {
-                    currentMax = widgetUtility.widgetStore[j].style.zIndex  > currentMax ?  widgetUtility.widgetStore[j].style.zIndex : currentMax;
-                    widgetUtility.widgetStore[j].style.zIndex--;
+            if(!widgetUtility.widgetStore[this.ackey]){
+                return
+            }
+            for (let j = 0; j < widgetUtility.widgetStore[this.ackey].length; j++) {
+                if (widgetUtility.widgetStore[this.ackey][j] !== widget && widgetUtility.widgetStore[this.ackey][j].style.zIndex > 2) {
+                    currentMax = widgetUtility.widgetStore[this.ackey][j].style.zIndex  > currentMax ?  widgetUtility.widgetStore[this.ackey][j].style.zIndex : currentMax;
+                    widgetUtility.widgetStore[this.ackey][j].style.zIndex--;
                 }
             }
             widgetUtility.maxZIndex = currentMax
@@ -206,13 +317,125 @@ class WidgetUtility {
         }
         setTimeout(() => {
             targetElement.removeChild(widgetElement);
-            widgetUtility.widgetStore = widgetUtility.widgetStore.filter(widget => widget !== widgetElement);
+            widgetUtility.widgetStore[this.ackey] = widgetUtility.widgetStore[this.ackey].filter(widget => widget !== widgetElement);
         }, 500);
         window.localStorage.removeItem("WIDGET-"+widgetElement.id)
     }
 }
 window.widgetUtility = new WidgetUtility();
-document.addEventListener('DOMContentLoaded', () => {
+
+// Funktion zum Erstellen eines neuen Boards
+function createNewBoard(boardName) {
+    window.widgetUtility.addBoard(boardName).then(()=>{
+        window.widgetUtility.save_close()
+        window.widgetUtility.ackey = boardName;
+    })
+    window.TBf.getVar("boards")[boardName] = { name: boardName, editing: false, visible: true, widgets: []};
+    editBoard(boardName);
+}
+
+// Funktion zum Anzeigen eines Boards
+function showBoard(name) {
+    window.widgetUtility.get_storage(name).then(()=>{
+        window.TBf.getVar("boards")[name].visible = true;
+    })
+    return renderBoards();
+}
+
+// Funktion zum Ausblenden eines Boards
+function hideBoard(name) {
+    window.TBf.getVar("boards")[name].visible = false;
+    window.widgetUtility.closeAll(name)
+    return renderBoards();
+}
+
+// Funktion zum Anzeigen des Bearbeitungsmodus für ein Board
+function editBoard(name) {
+    for (const boardName in window.TBf.getVar("boards")) {
+        window.TBf.getVar("boards")[boardName].editing = (boardName === name);
+    }
+    window.widgetUtility.ackey = name
+    return renderBoards();
+}
+
+// Funktion zum Rendern der Boards in der Benutzeroberfläche
+function renderBoards() {
+    let boardTableBody = document.getElementById("boardTableBody");
+    let currentEditBoardSpan = document.getElementById("currentEditBoard");
+
+    if(!boardTableBody){boardTableBody = document.createElement("div")}
+    if(!currentEditBoardSpan){currentEditBoardSpan = document.createElement("span")}
+
+    boardTableBody.innerHTML = "";
+
+    for (const name in window.TBf.getVar("boards")) {
+        const board = window.TBf.getVar("boards")[name];
+        const boardRow = document.createElement("tr");
+
+        const nameCell = document.createElement("td");
+        nameCell.textContent = board.name;
+        boardRow.appendChild(nameCell);
+
+        const openCloseCell = document.createElement("td");
+        const openCloseButton = document.createElement("button");
+        openCloseButton.textContent = board.visible ? "Close" : "Open";
+        openCloseButton.onclick = () => board.visible ? hideBoard(name) : showBoard(name);
+        openCloseCell.appendChild(openCloseButton);
+        boardRow.appendChild(openCloseCell);
+
+        const setEditCell = document.createElement("td");
+        const setEditButton = document.createElement("button");
+        setEditButton.textContent = "Set Edit";
+        setEditButton.onclick = () => editBoard(name);
+        setEditCell.appendChild(setEditButton);
+        boardRow.appendChild(setEditCell);
+
+        const deleteCell = document.createElement("td");
+        const deleteButton = document.createElement("button");
+        deleteButton.textContent = "Delete";
+        deleteButton.onclick = () => deleteBoard(name);
+        deleteCell.appendChild(deleteButton);
+        boardRow.appendChild(deleteCell);
+
+        if (board.editing) {
+            boardRow.style.backgroundColor = "lightblue";
+            currentEditBoardSpan.textContent = board.name;
+        }
+
+        boardTableBody.appendChild(boardRow);
+    }
+    return [boardTableBody, currentEditBoardSpan]
+}
+
+// Funktion zum Löschen eines Boards
+function deleteBoard(name) {
+    window.overlayUtility.createOverlay({
+        content: `<h1>Are you sure you want to delete the board "` + name + `"?</h1>`,
+        closeOnOutsideClick:false,
+        buttons:[{text: "Abbrechen"},{text: "Delete", action: () => {
+                delete window.TBf.getVar("boards")[name];
+                window.widgetUtility.closeAll(name, document.getElementById("MainContent"), true)
+                window.widgetUtility.removeBoard(name).then(
+                    renderBoards
+                )
+            }}, ]
+    })
+}
+
+window.TBf.setM("createNewBoard",createNewBoard)
+window.TBf.setM("initBoard",  async ()=>{
+        window.widgetUtility.getAllBordNames()
+            .then(names => {
+                names.forEach(name => {
+                    window.TBf.getVar("boards")[name] = {
+                        name: name,
+                        editing: false,
+                        visible: true,
+                    }
+                })
+                renderBoards()
+            })
+        })
     // Instanz der WidgetUtility erstellen
 
     // setTimeout(()=>{
@@ -236,5 +459,4 @@ document.addEventListener('DOMContentLoaded', () => {
     // }, 1000)
 
 
-});
 

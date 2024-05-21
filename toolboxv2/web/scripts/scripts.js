@@ -103,18 +103,24 @@ function initRenderer() {
 initRenderer()
 
 // Functions to load dark mode state
-export function toggleDarkMode() {
-    let body = document.body;
-    body.classList.toggle("dark-mode");
-    let darkModeStatus = body.classList.contains("dark-mode") ? "enabled" : "disabled";
-    sessionStorage.setItem("darkModeStatus", darkModeStatus);
-    loadDarkModeState()
+export function toggleDarkMode(init=false, theme='') {
+    if (!init){
+        theme = document.body.getAttribute("data-theme")
+        theme = theme === "light" ? "dark" : "light"
+        document.body.setAttribute('data-theme', theme)
+        sessionStorage.setItem("darkModeStatus", theme);
+
+    }else{
+        document.body.setAttribute('data-theme', theme)
+        sessionStorage.setItem("darkModeStatus", theme);
+    }
+    loadDarkModeState(theme)
 }
 
-function loadDarkModeState() {
-    let darkModeStatus = sessionStorage.getItem("darkModeStatus");
+function loadDarkModeState(theme) {
+    let darkModeStatus = theme? theme: sessionStorage.getItem("darkModeStatus");
     let color = 0x181823
-    if (darkModeStatus === "enabled") {
+    if (darkModeStatus === "dark") {
         document.body.classList.add("dark-mode");
         renderer.setClearColor(0x000000)
         scene.remove(ambientLightSto)
@@ -239,6 +245,18 @@ export function Set_animation_xyz(x,y,z,s=animantionFactorKlick+2){
     animationY = y
     animationZ = z
 }
+export function Set_zoom(x){
+
+    camera.position.z += x * (sk2/2);
+    if (camera.position.z <= -2) {
+        camera.position.z = 12
+    }
+    if (camera.position.z > 12) {
+        camera.position.z = -2
+    }
+    camera.updateProjectionMatrix();
+}
+
 
 function updateSlider(slideAmount, axis)
 {

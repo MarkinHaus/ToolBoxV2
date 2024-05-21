@@ -71,8 +71,9 @@ class OverlayUtility {
         this.contentElement.style.padding = '20px';
         this.contentElement.style.borderRadius = '10px';
         this.contentElement.style.minWidth = '300px';
-        this.contentElement.style.maxWidth = '600px';
+        this.contentElement.style.maxWidth = '90vw';
         this.contentElement.style.borderWidth = '3px';
+        this.contentElement.style.textAlign = 'center';
         this.contentElement.innerHTML = content;
 
 
@@ -83,7 +84,11 @@ class OverlayUtility {
         buttons.forEach(button => {
             const btnElement = document.createElement('button');
             btnElement.textContent = button.text;
-            btnElement.addEventListener('click', button.action || (() => this.closeOverlay()))
+            btnElement.addEventListener('click', (e)=> {
+                this.event = e
+                if(button.action){button.action()}
+                this.closeOverlay()
+            })
             // btnElement.onclick =
             contentControlsElement.appendChild(btnElement);
         });
@@ -136,7 +141,7 @@ class OverlayUtility {
 
 // Beispiel für die Verwendung
 window.overlayUtility = new OverlayUtility();
-
+console.log("[OverlayUtility Online]")
 // document.addEventListener('DOMContentLoaded', () => {
 // document.getElementById('show-overlay-btn').addEventListener('click', () => {
 //     overlayUtility.createOverlay({
