@@ -37,12 +37,10 @@ COPY ./MANIFEST.in ./MANIFEST.in
 COPY ./toolboxv2/mods ./toolboxv2/mods
 COPY ./toolboxv2/runabel ./toolboxv2/runabel
 COPY ./toolboxv2/tests ./toolboxv2/tests
-COPY ./toolboxv2/web_build ./toolboxv2/web_build
 COPY ./toolboxv2/web ./toolboxv2/web
 COPY ./toolboxv2/utils ./toolboxv2/utils
 COPY ./toolboxv2/__init__.py ./toolboxv2/__init__.py
 COPY ./toolboxv2/__main__.py ./toolboxv2/__main__.py
-COPY ./toolboxv2/cli.py ./toolboxv2/cli.py
 COPY ./toolboxv2/favicon.ico ./toolboxv2/favicon.ico
 COPY ./toolboxv2/index.html ./toolboxv2/index.html
 COPY ./toolboxv2/index.js ./toolboxv2/index.js

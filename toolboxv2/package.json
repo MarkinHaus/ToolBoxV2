@@ -6,8 +6,9 @@
   "scripts": {
     "tauri": "bun tauri ",
     "dev": "npx vite serve --debug",
-    "build": "bun vite build",
-    "preview": "bun vite preview"
+    "build": "npx vite build",
+    "preview": "npx vite preview",
+    "previewClient": "npx vite preview ./vweb"
   },
   "dependencies": {
     "tauri": "^0.15.0",

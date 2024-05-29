@@ -78,6 +78,13 @@
     --pico-primary-focus: rgba(var(--text-color), 0.5);
     --pico-secondary-color: var(--secondary-color);
 
+
+
+    --primary:  var(--pico-primary-color);
+    --primary-hover:  var(--primary-color);
+    --primary-focus: rgba(var(--secondary-color), 0.25);
+    --primary-inverse: var(--text-color);
+
 }
 
 
@@ -138,8 +145,12 @@
     --pico-secondary-hover-background: var(--dark-nav-link-hover-color);
     --pico-primary-focus: rgba(var(--text-color), 0.5);
     --pico-secondary-color: var(--secondary-color);
-}
 
+    --primary:  var(--primary-color);
+    --primary-hover:  var(--secondary-color);
+    --primary-focus: rgba(var(--secondary-color), 0.25);
+    --primary-inverse: var(--text-color);
+}
 
 
 @media screen and (max-width: 2000px) and (min-width: 1024px) {
@@ -238,9 +249,16 @@ body {
 }
 
 body.dark-mode {
+
     --background-color: var(--dark-background-color);
     --text-color: var(--dark-text-color);
     --primary-color: var(--dark-primary-color);
+
+    --primary:  var(--dark-primary-color);
+    --primary-hover:  var(--dark-secondary-color);
+    --primary-focus: rgba(var(--secondary-color), 0.25);
+    --primary-inverse: var(--dark-text-color);
+
     --secondary-color: var(--dark-secondary-color);
 }
 
@@ -481,6 +499,23 @@ input[type="checkbox"] {
     border-radius: 4px;
 }
 
+.Mcontent {
+    position: relative;
+    margin: 0 auto;
+    text-align: center;
+    min-width: fit-content;
+    padding-bottom: 20px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    min-height: max-content;
+    overflow-y: auto;
+    overflow-x: clip;
+    border-radius: 4px;
+}
+
+#MainContent{
+    width: 100vw;
+    height: 100vh;
+}
 
 /* Scrollbar styles */
 .main-content::-webkit-scrollbar {

@@ -64,7 +64,7 @@ class WidgetUtility {
                     this.addBoard(name)}]]);
             }, (result) => {
                 console.log("Susses",result.get())
-                window.TBf.getM("addBalloon")("MainContent", 0, ["Crating Board "+ name, "Successfully"], [])
+                window.TBf.getM("addBalloon")("MainContent", 0, ["Crating Board "+ name], [])
             }, true
         )
     }
@@ -76,7 +76,7 @@ class WidgetUtility {
                     this.removeBoard(name)}]]);
             }, (result) => {
                 console.log("Susses",result.get())
-                window.TBf.getM("addBalloon")("MainContent", 0, ["Removed Board :"+ name, "Successfully"], [])
+                window.TBf.getM("addBalloon")("MainContent", 0, ["Removed Board :"+ name], [])
             }, true
         )
     }
@@ -102,12 +102,18 @@ class WidgetUtility {
 
         if (!this.ackey){
             window.TBf.getM("addBalloon")("MainContent", 0, ["Error Adding Widget no Board open!", "open 'Main' Board and retry"], [["retry", ()=>{
-                this.ackey = "Main";
+                this.ackey = "main";
                 this.createWidget({id, titel , identifier, mount_to_id, max})
             }]]);
             return
         }
         console.log("[WidgetUtility Crating]" ,identifier, titel)
+
+        if (!identifier && titel){
+        identifier = titel
+        }if (!identifier){
+        throw "invalid identifier"
+
 
         const template = await this.fetchTemplate(identifier, titel)
 
@@ -350,10 +356,19 @@ function hideBoard(name) {
 }
 
 // Funktion zum Anzeigen des Bearbeitungsmodus für ein Board
+function closeAllBoards() {
+    for (const boardName in window.TBf.getVar("boards")) {
+        hideBoard(boardName)
+    }
+    window.widgetUtility.ackey = "main"
+    return renderBoards();
+}
+
 function editBoard(name) {
     for (const boardName in window.TBf.getVar("boards")) {
         window.TBf.getVar("boards")[boardName].editing = (boardName === name);
     }
+    window.TBf.getVar("boards")[name].visible = true;
     window.widgetUtility.ackey = name
     return renderBoards();
 }
@@ -423,6 +438,7 @@ function deleteBoard(name) {
 }
 
 window.TBf.setM("createNewBoard",createNewBoard)
+window.TBf.setM("closeAllBoards",closeAllBoards)
 window.TBf.setM("initBoard",  async ()=>{
         window.widgetUtility.getAllBordNames()
             .then(names => {

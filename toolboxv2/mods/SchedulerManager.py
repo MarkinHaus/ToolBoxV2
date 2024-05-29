@@ -18,7 +18,7 @@ Name = 'SchedulerManager'
 export = get_app(Name).tb
 version = '0.0.2'
 
-safety_mode = ['open', 'strict', 'closed'][0]
+safety_mode = ['open', 'strict', 'closed'][1]
 serializer_default, deserializer_default = [(dill, dill), (dill, dill), (pickle, pickle)] \
     [['open', 'strict', 'closed'].index(safety_mode)]
 
@@ -206,7 +206,7 @@ class SchedulerManagerClass:
 
     def _save_job(self, job_id, job, save, func, serializer=serializer_default, args=None, **kwargs):
         if job is not None:
-            self.jobs[job_id] = {'id': job_id, 'job': job, 'save': save, 'func': serializer.dumps(func) if not job_id.endswith(".py") else job_id, 'args': args,
+            self.jobs[job_id] = {'id': job_id, 'job': job, 'save': save, 'func': job_id, 'args': args,
                                  'kwargs': kwargs}
             f = (f"Added Job {job_id} :{' - saved' if save else ''}"
                   f"{' - args ' + str(len(args)) if args else ''}"

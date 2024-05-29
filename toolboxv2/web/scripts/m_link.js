@@ -12,7 +12,7 @@ import
     from
     "/web/scripts/cryp.js";
 
-if(window.history.state.TB) {
+if(window.history.state && window.history.state.TB) {
     let privateKey_base64 = null
     let username
     // Save the key in a variable

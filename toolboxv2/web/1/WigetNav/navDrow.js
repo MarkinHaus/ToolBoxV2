@@ -118,7 +118,7 @@ async function logOutOverlay(){
             "  <div class=\"text\" style='color: #000000'><span class=\"material-symbols-outlined\">\n" +
             "check_circle\n" +
             "</span></div>\n" +
-            "</button>\n<hr/><a href='/'> Home </a>",
+            "</button>",
         closeOnOutsideClick: true,
         onClose: onCloseLogOutOverlay,
     });

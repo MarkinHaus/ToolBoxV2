@@ -548,7 +548,7 @@ async def index():
 
 @app.get("/index.js")
 async def index0():
-    return RedirectResponse(url="index.js")
+    return RedirectResponse(url="/web/index.js")
 
 
 @app.get("/tauri")

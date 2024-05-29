@@ -47,6 +47,8 @@ class MiniRedis:
             return Result.ok(info=f"No data found for key", data=None, data_info=data_info).set_origin(
                 "Reddis DB")
 
+        if len(data) == 1:
+            data = data[0]
         return Result.ok(data=data, data_info=data_info).set_origin("Reddis DB")
 
     def if_exist(self, query: str):

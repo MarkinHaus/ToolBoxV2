@@ -25,12 +25,11 @@ RUN npm install bun
 # Copy the source code into the container.
 # cage for live
 
-RUN pip install --target ./ ToolBoxV2
-COPY ./toolboxv2/web ./ToolBoxV2/toolboxv2/web
-RUN npx bun install -y ./ToolBoxV2/toolboxv2/web/
+RUN pip install ToolBoxV2 --target ./
+RUN npx bun install -y ./toolboxv2/web/
 
 # Install the local application using pip.
-RUN npx bun install -y ./ToolBoxV2/toolboxv2/web/
+RUN npx bun install -y ./toolboxv2/web/
 # Expose the port that the application listens on.
 EXPOSE 6587
 

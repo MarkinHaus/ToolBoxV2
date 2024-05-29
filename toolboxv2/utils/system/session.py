@@ -96,9 +96,11 @@ class Session(metaclass=Singleton):
         with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="r") as blob:
             claim = blob.read()
             # print("Claim:", claim)
-
-        async with self.session.post(f"{self.base}/validateSession",
-                                     data={'Jwt_claim': claim, 'Username': self.username}) as response:
+        if not claim:
+            return False
+        
+        async with self.session.request("GET", url=f"{self.base}/validateSession", json={'Jwt_claim': claim.decode(),
+                                                                                         'Username': self.username}) as response:
             print(response.status)
             if response.status == 200:
                 json_response = await response.json()

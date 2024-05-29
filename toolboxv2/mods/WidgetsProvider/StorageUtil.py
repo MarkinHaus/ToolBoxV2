@@ -20,7 +20,13 @@ def get_db_query(user_name: str, user_id: str):
 
 def get_all_sto_names(app, user_name="", user_id=""):
     query = f'{get_db_query(user_name=user_name, user_id=user_id)}::AllSTOS'
-    return app.run_any(tbef.DB.GET, query=query, get_results=True)
+    res = app.run_any(tbef.DB.GET, query=query, get_results=True)
+    if res.is_error():
+        return res
+    print('result:::::::::::::::::::', type(res.get()))
+    if isinstance(res.get(), str):
+        res.result.data = [__.strip() for __ in res.get().replace('[', '').replace(']', '').replace("'", '').split(',')]
+    return res
 
 
 def set_sto_names(app, sto_names: List[str], user_name: str = "", user_id: str = "") -> Result:
@@ -58,7 +64,12 @@ def remove_sto_name(app, sto_name: str = "", user_name: str = "", user_id: str =
 
 def get_sto(app, sto_name: str = "", user_name: str = "", user_id: str = "") -> Result:
     query = f'{get_db_query(user_name=user_name, user_id=user_id)}::STO::{sto_name}'
-    return app.run_any(tbef.DB.GET, query=query, get_results=True)
+    res = app.run_any(tbef.DB.GET, query=query, get_results=True)
+    if not res.is_data():
+        return res
+    if isinstance(res.result.data, str):
+        res.result.data = eval(res.result.data)
+    return res
 
 
 def set_sto(app, sto_name: str = "", user_name: str = "", user_id: str = "", data=None) -> Result:
@@ -135,7 +146,7 @@ async def get_names(app: App = None, request: Request or None = None):
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="get_sto")
 async def get_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: Request or None = None):
-    if sto_name is None:
+    if sto_name is None or len(sto_name) <= 1:
         return Result.default_user_error(info="No name specified")
     if app is None:
         app = get_app(from_=f"{Name}.controller")
@@ -155,7 +166,7 @@ async def get_sto_by_name(app: App = None, sto_name: Optional[str] = None, reque
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="set_sto")
 async def set_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: Request or None = None):
-    if sto_name is None:
+    if sto_name is None or len(sto_name) <= 1:
         return Result.default_user_error(info="No name specified")
     if app is None:
         app = get_app(from_=f"{Name}.controller")
@@ -175,7 +186,7 @@ async def set_sto_by_name(app: App = None, sto_name: Optional[str] = None, reque
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="add_sto")
 async def add_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: Request or None = None):
-    if sto_name is None:
+    if sto_name is None or len(sto_name) <= 1:
         return Result.default_user_error(info="No name specified")
     if app is None:
         app = get_app(from_=f"{Name}.controller")
@@ -195,7 +206,7 @@ async def add_sto_by_name(app: App = None, sto_name: Optional[str] = None, reque
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="delete_sto")
 async def remove_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: Request or None = None):
-    if sto_name is None:
+    if sto_name is None or len(sto_name) <= 1:
         return Result.default_user_error(info="No name specified")
     if app is None:
         app = get_app(from_=f"{Name}.controller")

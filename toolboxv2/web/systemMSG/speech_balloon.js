@@ -31,7 +31,11 @@ function addBalloon(element_id, flag, content, options) { // element_id flag:0 S
 
         content.forEach(text => {
             const p_e = document.createElement('p');
-            p_e.textContent = text;
+            if (text.toString().startsWith("<") && text.toString().endsWith(">")){
+                p_e.innerHTML = text;
+            }else{
+                p_e.textContent = text;
+            }
             contentElement.appendChild(p_e);
         });
 

@@ -12,7 +12,7 @@ with open('README.md') as readme_file:
 #
 # with open(getenv('CONFIG_FILE', '/toolboxv2/toolbox.yaml'), 'r') as config_file:
 #    _version = config_file.read().split('version')[-1].split('\n')[0].split(':')[-1].strip()
-version = "0.1.15"  # _version  # _version.get('main', {}).get('version', '-.-.-')
+version = "v0.1.16"  # _version  # _version.get('main', {}).get('version', '-.-.-')
 
 here = path.abspath(path.dirname(__file__))
 
@@ -32,13 +32,12 @@ test_requirements = []
 setup(
     author="Markin Hausmanns",
     author_email='Markinhausmanns@gmail.com',
-    python_requires='>=3.8',
+    python_requires='>=3.9',
     classifiers=[
         'Development Status :: 2 - Pre-Alpha',
         'Intended Audience :: Developers',
         'License :: OSI Approved :: Apache Software License',
         'Natural Language :: English',
-        'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: 3.10',
         'Programming Language :: Python :: 3.11',
@@ -47,8 +46,14 @@ setup(
     description="Command line interface for interactions with the ToolBox Network.",
     entry_points={
         'console_scripts': [
-            'toolboxv2=toolboxv2.cli:main_runner',
-        ]
+            'toolboxv2=toolboxv2.__main__:main_runner',
+        ],
+        # 'setuptools.installation': [
+        #     'setup_hook = mein_paket.setup:setup_function',
+        # ],
+        # 'gui_scripts': [
+        #     'meine_gui = mein_paket.gui_module:main_function',
+        # ],
     },
     install_requires=install_requires,
     dependency_links=dependency_links,
@@ -66,7 +71,7 @@ setup(
                                     'toolboxv2.utils.extras*',
                                     '"toolboxv2/toolbox.yaml"',
                                     'toolboxv2.*']),
-    package_data={"toolboxv2": ["toolboxv2/toolbox.yaml"]},
+    package_data={"toolboxv2": ["toolboxv2/toolbox.yaml", "toolboxv2/vweb"]},
     setup_requires=setup_requirements,
     test_suite='tests',
     tests_require=test_requirements,

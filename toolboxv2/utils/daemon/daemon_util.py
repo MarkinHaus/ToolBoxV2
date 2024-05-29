@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import queue
 import threading
 from typing import Any, Optional, Tuple
@@ -73,7 +74,11 @@ class DaemonUtil:
         from toolboxv2.mods.SocketManager import SocketType
         if connection_type is None:
             connection_type = SocketType.server
-        server_result = await get_app(from_="Starting.Daemon").a_run_any(SOCKETMANAGER.CREATE_SOCKET,
+        app = get_app(from_="Starting.Daemon")
+        print(app.mod_online("SocketManager"), "SocketManager")
+        if not app.mod_online("SocketManager"):
+            await app.load_mod("SocketManager")
+        server_result = await app.a_run_any(SOCKETMANAGER.CREATE_SOCKET,
                                                                          get_results=True,
                                                                          name=self._name,
                                                                          host=self.host,
@@ -121,9 +126,10 @@ class DaemonUtil:
         known_clients = {}
         valid_clients = {}
         while self.alive:
-
             if receiver_queue.not_empty:
                 data = receiver_queue.get()
+                await asyncio.sleep(0.1)
+                # print('received', data)
                 if not data:
                     continue
                 if 'identifier' not in data:
@@ -131,7 +137,6 @@ class DaemonUtil:
 
                 identifier = data.get('identifier', 'unknown')
                 try:
-
                     if identifier == "new_con":
                         client, address = data.get('data')
                         get_logger().info(f"New connection: {address}")
@@ -153,11 +158,15 @@ class DaemonUtil:
                             if do:
                                 valid_clients[identifier] = known_clients[identifier]
                                 self._on_register(identifier, data)
+                        elif data.get("key", False) == os.getenv("TB_R_KEY"):
+                            do = app.run_any(("CloudM.UserInstances", "validate_ws_id"),
+                                             ws_id=data.get("claim"))[0]
+                            get_logger().info(do)
+                            if do:
+                                valid_clients[identifier] = known_clients[identifier]
+                                self._on_register(identifier, data)
                         else:
-                            valid_clients[identifier] = known_clients[identifier]
-                            self._on_register(identifier, data)
-                            # TODO: add support for verification
-                            # get_logger().warning(f"Validating Failed: {identifier}")
+                            get_logger().warning(f"Validating Failed: {identifier}")
                             # sender({'Validating Failed': -1}, eval(identifier))
                         get_logger().info(f"Validating New: {identifier}")
                         del known_clients[identifier]

@@ -41,9 +41,11 @@ class OverlayUtility {
 
     // Erstellt und zeigt das Overlay an
     createOverlay({content = "", closeOnOutsideClick = true, buttons = [], onClose = null, afterCrate = null} = {}) {
-        if (this.overlayElement) {
+        if (this.overlayElement && !this.closeOnOutsideClick) {
             console.log("Ein Overlay ist bereits aktiv.");
             return;
+        }else if(this.overlayElement && this.closeOnOutsideClick){
+            this.closeOverlay(true)
         }
 
         this.onClose = onClose

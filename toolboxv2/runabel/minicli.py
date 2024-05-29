@@ -259,7 +259,6 @@ async def run(app: App, args):
 
         if asyncio.iscoroutine(call):
             call = await call
-            print("D", call, call.module_name.split('.')[0])
 
         print("", end="" + "eval ->>\r")
 
@@ -279,8 +278,6 @@ async def run(app: App, args):
                                                      build_in_commands=bic,
                                                      threaded=threaded[0],
                                                      helper=helper_exequtor[0])
-
-                print("running_instance", running_instance)
 
         elif call.module_name in exe_names:
             buff = str(call)

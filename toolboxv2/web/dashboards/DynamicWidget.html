@@ -136,6 +136,9 @@
         }else {
             add_id = "&Wid="+name
         }
+        if (!type_){
+        throw "invalid type_"
+        }
         await httpPostUrl("WidgetsProvider", "open_widget", "name=" + type_+add_id,
             (e) => {
                 console.log(e)

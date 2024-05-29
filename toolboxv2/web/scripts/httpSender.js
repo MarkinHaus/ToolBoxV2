@@ -50,16 +50,12 @@ export class Result {
     }
 
     html(){
-        return `<div style="background-color: #fff;
+        return `<div style="background-color: var(--background-color);
     border-radius: 5px;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-    padding: 20px;">
-  <div style="background-color: #f0f0f0;
-    border: 1px solid #ccc;
-    border-radius: 5px;
-    padding: 10px;
-    margin-bottom: 20px;
-    white-space: pre-wrap;">
+    padding: 2px;">
+  <div style="background-color: var(--background-color);
+    padding: 5px;text-align:center">
     <p>======== Result ========</p>
     <p>Function Exec code: <span id="execCode">`+this.info.exec_code+`</span></p>
     <p>Info's: <span id="infoText">`+this.info.help_text+`</span> <|> <span id="dataInfo">`+this.result.data_info+`</span></p>
@@ -111,6 +107,9 @@ export function wrapInResult(data, from_string=false) {
     } else {
         try {
             data = JSON.parse(data)
+            if (typeof data === "string") {
+                data = JSON.parse(data)
+            }
             const error_ = data["error"]
             const origen = data["origin"]
             console.log("[s-origin]:", origen)
@@ -125,6 +124,7 @@ export function wrapInResult(data, from_string=false) {
             }
             result = new Result(origen, error_, new ToolBoxResult(data_to, data_info, r_data), new ToolBoxInfo(exec_code, help_text));
         }catch (e){
+            console.log(e)
             result = new Result(["local", "!", "data-parsed"], ToolBoxError.none, new ToolBoxResult("frontend", "ato-wrapped", data), new ToolBoxInfo(0, "generated in httpSender"));
         }
     }
@@ -143,6 +143,7 @@ async function parseResponse(response){
 
 // Modified httpPostUrl function
 export function httpPostUrl(module_name, function_name, params, errorCallback, successCallback, from_string=false) {
+    // console.log("httpPostUrl:", module_name, function_name, params)
     return fetch('/api/' + module_name + '/' + function_name + '?' + params, {
         method: 'POST',
         headers: {
@@ -152,9 +153,9 @@ export function httpPostUrl(module_name, function_name, params, errorCallback, s
     })
         .then(async (data )=> {
                 data = await parseResponse(data)
-                // console.log("DATA:", data)
+            // console.log("httpPostUrl: ",data, typeof data)
                 if (from_string){data = data.toString()}
-                const result = wrapInResult(data, from_string)
+                const result = wrapInResult(data, typeof data === "string" || from_string)
                 result.log()
                 if (result.error !== ToolBoxError.none) {
                     // Handle error case
@@ -170,6 +171,7 @@ export function httpPostUrl(module_name, function_name, params, errorCallback, s
         });
 }
 export function httpPostData(module_name, function_name, data, errorCallback, successCallback) {
+    // console.log("httpPostData:", module_name, function_name)
     return fetch('/api/' + module_name + '/' + function_name, {
         method: 'POST',
         headers: {
@@ -181,7 +183,8 @@ export function httpPostData(module_name, function_name, data, errorCallback, su
         .then(data => {
             setTimeout(async ()=>{
                 data = await parseResponse(data)
-                const result = wrapInResult(data)
+                // console.log("httpPostData: ",data, typeof data)
+                const result = wrapInResult(data, typeof data === "string")
                 result.log()
                 if (result.error !== ToolBoxError.none) {
                     // Handle error case

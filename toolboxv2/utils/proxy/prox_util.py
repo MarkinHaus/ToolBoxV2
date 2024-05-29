@@ -104,10 +104,10 @@ class ProxyUtil:
             await self.disconnect()
         await self.connect()
 
-    async def verify(self):
+    async def verify(self, message=b"verify"):
         await asyncio.sleep(1)
         # self.client.get('sender')({'keepalive': 0})
-        await self.client.get('sender')(b"verify")
+        await self.client.get('sender')(message)
 
     def __getattr__(self, name):
 

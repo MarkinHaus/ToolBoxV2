@@ -38,7 +38,7 @@ CUDA_LAUNCH_BLOCKING=1
 
 HF_HOME="./.data/huggingface"
 HUGGINGFACE_HUB_VERBOSITY="info"
-
+TB_R_KEY="root@remote"
 
 
 HOSTNAME="localhost"
@@ -49,3 +49,4 @@ DEFAULTMODEL2="text-davinci-003"
 DEFAULTMODELCODE="code-davinci-edit-001"
 DEFAULTMODELSUMMERY="text-curie-001"
 DEV_MODULES="welcome CloudM"
+LOCAL_DOCKER_IMAGE=""

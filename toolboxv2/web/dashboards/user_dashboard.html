@@ -13,7 +13,7 @@
     <div id="button-container" class="button-container" style="margin-top: 10px;">
         <button id="action-button-0" class="icon-button" onclick="buttonAction(0)" title="Tooltip 0"><span class="material-symbols-outlined">token</span></button>
         <button id="action-button-1" class="icon-button" onclick="buttonAction(1)" title="Tooltip 1"><span class="material-symbols-outlined">all_inclusive</span></button>
-        <button id="action-button-2" class="icon-button" onclick="buttonAction(2)" title="Tooltip 2"><span class="material-symbols-outlined">folder_managed</span></button>
+        <button id="action-button-2" class="icon-button" onclick="buttonAction(2)" title="Tooltip 2"><span class="material-symbols-outlined">browse</span></button>
     </div>
         <div id="autocompleteBox" class="autocomplete-box"></div>
 
@@ -22,113 +22,19 @@
 </div>
 
 
-<script unSave="true" defer>
+<script unSave="true">
 
-    //if (document.getElementById("MainContent") && !window.userDonline){
+    if (document.getElementById("MainContent") && !window.userDonline){
         window.userDonline = true
     setTimeout(()=> {
         const animator = window.TBf.animator
-        animator("Y2-8762", "Y2+101")
+        animator("Y1-19991", "Y1+641", 0.1, 16)
     },420)
         setTimeout(()=>{
         const httpPostUrl = window.TBf.httpPostUrl
-        function autocomplete(inp, arr) {
-            /*the autocomplete function takes two arguments,
-            the text field element and an array of possible autocompleted values:*/
-            var currentFocus;
-            /*execute a function when someone writes in the text field:*/
-            inp.addEventListener("input", function(e) {
-                var a, b, i, val = this.value;
-                /*close any already open lists of autocompleted values*/
-                closeAllLists();
-                if (!val) { return false;}
-                currentFocus = -1;
-                /*create a DIV element that will contain the items (values):*/
-                a = document.createElement("DIV");
-                a.setAttribute("id", this.id + "autocomplete-list");
-                a.setAttribute("class", "autocomplete-items");
-                /*append the DIV element as a child of the autocomplete container:*/
-                this.parentNode.appendChild(a);
-                /*for each item in the array...*/
-                for (i = 0; i < arr.length; i++) {
-                    /*check if the item starts with the same letters as the text field value:*/
-                    if (arr[i].substr(0, val.length).toUpperCase() == val.toUpperCase()) {
-                        /*create a DIV element for each matching element:*/
-                        b = document.createElement("DIV");
-                        /*make the matching letters bold:*/
-                        b.innerHTML = "<strong>" + arr[i].substr(0, val.length) + "</strong>";
-                        b.innerHTML += arr[i].substr(val.length);
-                        /*insert a input field that will hold the current array item's value:*/
-                        b.innerHTML += "<input type='hidden' value='" + arr[i] + "'>";
-                        /*execute a function when someone clicks on the item value (DIV element):*/
-                        b.addEventListener("click", function(e) {
-                            /*insert the value for the autocomplete text field:*/
-                            inp.value = this.getElementsByTagName("input")[0].value;
-                            /*close the list of autocompleted values,
-                            (or any other open lists of autocompleted values:*/
-                            closeAllLists();
-                        });
-                        a.appendChild(b);
-                    }
-                }
-            });
-            /*execute a function presses a key on the keyboard:*/
-            inp.addEventListener("keydown", function(e) {
-                var x = document.getElementById(this.id + "autocomplete-list");
-                if (x) x = x.getElementsByTagName("div");
-                if (e.keyCode == 40) {
-                    /*If the arrow DOWN key is pressed,
-                    increase the currentFocus variable:*/
-                    currentFocus++;
-                    /*and and make the current item more visible:*/
-                    addActive(x);
-                } else if (e.keyCode == 38) { //up
-                    /*If the arrow UP key is pressed,
-                    decrease the currentFocus variable:*/
-                    currentFocus--;
-                    /*and and make the current item more visible:*/
-                    addActive(x);
-                } else if (e.keyCode == 13) {
-                    /*If the ENTER key is pressed, prevent the form from being submitted,*/
-                    e.preventDefault();
-                    if (currentFocus > -1) {
-                        /*and simulate a click on the "active" item:*/
-                        if (x) x[currentFocus].click();
-                    }
-                }
-            });
-            function addActive(x) {
-                /*a function to classify an item as "active":*/
-                if (!x) return false;
-                /*start by removing the "active" class on all items:*/
-                removeActive(x);
-                if (currentFocus >= x.length) currentFocus = 0;
-                if (currentFocus < 0) currentFocus = (x.length - 1);
-                /*add class "autocomplete-active":*/
-                x[currentFocus].classList.add("autocomplete-active");
-            }
-            function removeActive(x) {
-                /*a function to remove the "active" class from all autocomplete items:*/
-                for (var i = 0; i < x.length; i++) {
-                    x[i].classList.remove("autocomplete-active");
-                }
-            }
-            function closeAllLists(elmnt) {
-                /*close all autocomplete lists in the document,
-                except the one passed as an argument:*/
-                var x = document.getElementsByClassName("autocomplete-items");
-                for (var i = 0; i < x.length; i++) {
-                    if (elmnt != x[i] && elmnt != inp) {
-                        x[i].parentNode.removeChild(x[i]);
-                    }
-                }
-            }
-            /*execute a function when someone clicks in the document:*/
-            document.addEventListener("click", function (e) {
-                closeAllLists(e.target);
-            });
-        }
+
     let dropdownOptions = null
+    let all_widget = []
 
     function setIcon(buttonIndex, iconName) {
         const buttons = document.querySelectorAll('.icon-button .material-icons');
@@ -157,63 +63,130 @@
 
     // Funktion zum Hinzufügen neuer Einträge (Beispiel)
     function addItem(item) {
-        let items = JSON.parse(localStorage.getItem('ACUBordSItems')) || ["Main"];
+        let items = JSON.parse(localStorage.getItem('OpenPages')) || ["main"];
         if (!items.includes(item)) {
             items.push(item);
-            localStorage.setItem('ACUBordSItems', JSON.stringify(items));
+            localStorage.setItem('OpenPages', JSON.stringify(items));
         }
     }
 
-    function initACUBorddropdownMenu() {
-        const dropdown = document.getElementById('ACUBorddropdownMenu');
+    function removeItem(item) {
+        let items = JSON.parse(localStorage.getItem('OpenPages')) || ["main"];
+        function removeItemOnce(arr, value) {
+            var index = arr.indexOf(value);
+            if (index > -1) {
+                arr.splice(index, 1);
+            }
+            return arr;
+        }
+        if (items.includes(item)) {
+            removeItemOnce(items, item);
+            localStorage.setItem('OpenPages', JSON.stringify(items));
+        }
+    }
+
+    function initPageWidgets() {
 
         // Initialisiere die Liste, falls noch nicht im Local Storage vorhanden
-        let items = JSON.parse(localStorage.getItem('ACUBordSItems')) || ["Main"];
-        let selectedItem = localStorage.getItem('ACUBord') || items[0];
+        let items = JSON.parse(localStorage.getItem('OpenPages')) || ["main"];
+        items.forEach(async function(item) {
 
+            if(!document.getElementById(item)){
+                console.log("Adding :"+item)
+                await bgBoardHelper(item)
+            }
+
+        })
         // Funktion zum Aktualisieren des Dropdowns
         function updateDropdown() {
-            dropdown.innerHTML = ''; // Dropdown leeren
             items.forEach(function(item) {
-                const option = document.createElement('option');
-                option.value = item;
-                option.text = item;
-                option.selected = item === selectedItem;
-                dropdown.appendChild(option);
+                const close = document.createElement('button');
+                close.innerText = "Close "+item
+
+                close.addEventListener('click', ()=>{
+                    console.log("closing ", item)
+                    removeItem(item)
+                    const it = document.getElementById(items)
+                    if (it){it.remove()}else{
+                        console.log("Error removing")}
+                    close.remove()
+                })
+                window.overlayUtility.contentElement.appendChild(close)
             });
         }
 
 
-        // Event-Listener für Änderungen am Dropdown
-        dropdown.addEventListener('change', function() {
-            selectedItem = this.value;
-            localStorage.setItem('ACUBord', selectedItem);
-        });
+        if (all_widget.length === 0){
+            window.TBf.httpPostUrl("WidgetsProvider", "get_all_widget_mods", "",
+                (e)=>{e.log()},
+                (s)=> { return s.get()}).then((d) =>{
+                if(d) {
+                    all_widget = d
+                    window.TBf.autocomplete(document.getElementById("bgBoardInput"), d)
+                }else{
+                    window.TBf.autocomplete(document.getElementById("bgBoardInput"), ["404"])
+                }
+            }, true)
+        }else{
+            window.TBf.autocomplete(document.getElementById("bgBoardInput"), all_widget)
+        }
 
-        // Initialisiere das Dropdown beim Laden
         updateDropdown();
 
-        // Beispiel: Hinzufügen eines neuen Eintrags
-        // addItem('Option 3');
     }
 
+    async function bgBoardHelper(bgBoardName) {
+        if (!bgBoardName){
+            bgBoardName = document.getElementById("bgBoardInput").value
+        }
+        if (!bgBoardName){
+            return "invalid bgBoardName"
+        }
+        if (all_widget.length === 0){
+            await window.TBf.httpPostData("WidgetsProvider", "get_all_widget_mods", {},
+                (e)=>{e.log()},
+                (s)=> { s.log();all_widget = s.get()? s.get():all_widget }, true)
+        }
+        if (all_widget.includes(bgBoardName)){
+
+            const url = "/api/WidgetsProvider/open_widget?name="+bgBoardName;
+            window.TBf.router(url, true, bgBoardName, document.body)
+            addItem(bgBoardName)
+        }else{
+            window.TBf.getM("addBalloon")("MainContent", 0, ["Error adding Board '"+ bgBoardName+"'", "valid ar :"+ all_widget], [])
+            return
+        }
+        console.log("all_widget:", all_widget)
+
+    }
     // Beispiel für eine Aktion
     function buttonAction(index) {
         console.log(`Button ${index} clicked`);
     }
 
-        autocomplete(document.getElementById("inputField"), ['CloudM.UI.widget', 'TestWidget', 'quickNote.QnWidget'])
+    window.TBf.httpPostUrl("WidgetsProvider", "get_all_widget_mods", "",
+        (e)=>{e.log()},
+        (s)=> { return s.get()}).then((d) =>{
+        if(d) {
+            window.TBf.autocomplete(document.getElementById("inputField"), d)
+        }else{
+            window.TBf.autocomplete(document.getElementById("inputField"), ["404"])
+        }
+    })
+
         let ac_bord = window.localStorage.getItem("ACUBord")
         if (!ac_bord){
-            window.localStorage.setItem("ACUBord", "Main")
-            ac_bord = "Main"
+            window.localStorage.setItem("ACUBord", "main")
+            ac_bord = "main"
         }
 
-        window.widgetUtility.ackey = ac_bord;
+        if(window.widgetUtility){
+            window.widgetUtility.ackey = ac_bord;
+        }
 
         setTooltip(0, 'In widget öffnen'); // Setzt den Tooltip des ersten Buttons auf 'Suchen'
         setTooltip(1, 'web Suchen durchführen'); // Setzt den Tooltip des ersten Buttons auf 'Suchen'
-        setTooltip(2, 'Settings öffnen'); // Setzt den Tooltip des ersten Buttons auf 'Suchen'
+        setTooltip(2, 'Bg Widget öffnen'); // Setzt den Tooltip des ersten Buttons auf 'Suchen'
 
         setAction(0, async () => {
                 const content = document.getElementById("inputField").value
@@ -258,46 +231,16 @@
                 [["Starte Suche", ()=>{
                     console.log("Suche wird ausgeführt")}], ])
         );
-        let val = window.widgetUtility.ackey
         setAction(2, () => {
             window.overlayUtility.createOverlay({
-                content: `<p>Widget Bord Settings</p> <div id="settings-container">
-<h3> Current Bord key :`+val+` </h3>
-<h4> Switch Bort : <select id="ACUBorddropdownMenu"></select></h4>
-
-<hr/>
-        <input type="text" id="key-input"  style="width: 100%" placeholder="new bord"><hr/>
+                content: `<p>Add BG page widgets</p> <div id="settings-container">
+        <input type="text" id="bgBoardInput"  style="width: 100%" placeholder="name" autocomplete="off">
     </div>`,
-                closeOnOutsideClick: false,
+                closeOnOutsideClick: true,
                 onClose: null,
-                afterCrate: initACUBorddropdownMenu,
+                afterCrate: initPageWidgets,
                 buttons: [
-                    {text: "Abbrechen", action: () => window.overlayUtility.closeOverlay()},
-                    {text: "Speicher", action: () => { val = document.getElementById("key-input").value;
-                        if (!val){
-                            val = window.localStorage.getItem("ACUBord")
-                        }else{
-                            addItem(val)
-                        }
-                        window.overlayUtility.closeOverlay(); window.overlayUtility.createOverlay({
-                            content: `<p>Key wurde auf "`+val+`" gesetzen </p>`,
-                            buttons: [
-                                {text: "Abbrechen", action: () => {
-                                        val = window.widgetUtility.ackey;
-                                        window.overlayUtility.closeOverlay()
-                                    }},
-                            ],
-                        onClose: ()=> {
-                                if (val !== window.widgetUtility.ackey){
-                                    window.widgetUtility.save_clos_all()
-                                    window.widgetUtility.ackey = val
-                                    window.widgetUtility.get_storage()
-                                    StateLoadBtn_drag()
-                                }
-                        }
-                            })
-                        }
-                    }
+                    {text: "Open", action: async () =>await bgBoardHelper()},
                 ]
             })
         });
@@ -322,7 +265,7 @@
         window.widgetUtility.get_storage()
     }, 1800)
 
-    //}
+    }
 
 </script>
 

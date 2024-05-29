@@ -40,7 +40,7 @@ services:
 
     api:
         image: ${LOCAL_DOCKER_IMAGE}
-        command: toolboxv2 -fg -c FastApi start -c true
+        command: toolboxv2 -fg -c FastApi start main -m cli
         ports:
             - 5001:5001
         volumes:
@@ -56,7 +56,7 @@ services:
         depends_on:
             - app
             # - debug_redis
-        command: toolboxv2 -fg -c runner startLiveApp -c true
+        command: npx bun run dev
         ports:
             - 5000:5000
         volumes:
@@ -72,7 +72,7 @@ services:
         build: .
         depends_on:
             - dev_api
-        command: toolboxv2 -fg -c runner devApp -c true
+        command: npx bun run dev
         ports:
             - 5000:5000
         volumes:

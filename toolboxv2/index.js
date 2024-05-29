@@ -1,7 +1,8 @@
 import {rendererPipeline} from "./web/scripts/WorkerSocketRenderer";
 import {AuthHttpPostData, httpPostData, httpPostUrl, ToolBoxError, wrapInResult} from "./web/scripts/httpSender";
-import "./web/node_modules/htmx.org";
 import {addRenderer, EndBgInteract, Set_animation_xyz,Set_zoom, StartBgInteract, toggleDarkMode} from "./web/scripts/scripts.js";
+import {autocomplete} from "./web/scripts/util.js";
+import "./web/node_modules/htmx.org"
 
 const rpIdUrl_f = ()=> {
     if (window.location.href.match("localhost")) {
@@ -14,6 +15,7 @@ const rpIdUrl_f = ()=> {
 let init_d = false
 let DOME;
 let isHtmxAfterRequestListenerAdded = false;
+let scriptSto = [];
 
 const state = {
     TBf: {
@@ -21,6 +23,7 @@ const state = {
         renderer,
         getState,
         addState,
+        autocomplete,
         unRegisterServiceWorker: ()=>{
             navigator.serviceWorker.getRegistrations().then(function (registrations) {
                 registrations.forEach(function (registration) {
@@ -80,6 +83,7 @@ const state = {
 }
 
 window.TBf = state.TBf
+window.TBm = state.TBm
 console.log("TB Online :", window.TBf)
 
 if (document.getElementById("MainContent")){
@@ -252,13 +256,16 @@ function updateDome(dome, add_script=true, linkExtra=null){
         }
         // console.log("[TEST SRC]",js.src===script.src )
         // console.log(js, src !== state.TBv.base+'/index.js')
-        if (!document.querySelector('script[src="'+js.src+'"]') && src.slice(0, state.TBv.base.length+'/index.js'.length) !== state.TBv.base+'/index.js' && !script.src.endsWith("/@vite/client" )&& !script.src.includes("scripts/scripts.js")){
+        if (!scriptSto.includes(js.src) && !document.querySelector('script[src="'+js.src+'"]') && src.slice(0, state.TBv.base.length+'/index.js'.length) !== state.TBv.base+'/index.js' && !script.src.endsWith("/@vite/client" )&& !script.src.includes("scripts/scripts.js")){
             console.log("Adding ", script.src);
             dome.appendChild(js);
+            scriptSto.push(js.src);
         }
     });
     }
+
     htmx.process(dome);
+
 }
 
 function initDome(){
@@ -322,7 +329,6 @@ dark_mode
 function renderer({content="", extend = false, id = "main", Dome = DOME, add_script = true, helper = undefined, insert=false}) {
 
     if (!extend && !insert && Dome){
-        document.createElement('div').hasChildNodes()
         Dome.innerHTML = ''
         if (Dome.hasChildNodes()){
             Dome.outerHTML = '<main id="MainContent"></main>'
@@ -335,6 +341,7 @@ function renderer({content="", extend = false, id = "main", Dome = DOME, add_scr
             helper.innerHTML = content
         }
         helper.id = id
+        helper.classList.add("Mcontent")
         if (insert){
             Dome.insertBefore(helper, Dome.firstChild);
         }else{
@@ -445,8 +452,9 @@ function router(url, extend = false, id = "main", Dome = DOME) {
 
     const preUrl = window.history.state?window.history.state.url:undefined
 
-    window.history.pushState({ url: url, preUrl, TB: state.TBv, TBc: state.TBc }, "", url);
-    window.TBm = state.TBm
+    if (!extend){
+        window.history.pushState({ url: url, preUrl, TB: state.TBv, TBc: state.TBc }, "", url);
+    }
 }
 
 export async function loadHtmlFile(url) {
@@ -588,7 +596,7 @@ function parseInput(input) {
     }
 }
 
-function animator(input, after=null) {
+function animator(input, after=null, f=0.02, s= 12) {
     const animationParams = parseInput(input);
 
     console.log("Animation:", animationParams)
@@ -610,16 +618,16 @@ function animator(input, after=null) {
         // Determine animation based on animationType
         switch(animationType) {
             case "Y":
-                Set_animation_xyz(0, 0.02 * direction * speed, 0, 12 * speed)
+                Set_animation_xyz(0, f * direction * speed, 0, s * speed)
                 break;
             case "R":
-                Set_animation_xyz(0.02 * direction * speed, 0, 0, 12 * speed)
+                Set_animation_xyz(f * direction * speed, 0, 0, s * speed)
                 break;
             case "P":
-                Set_animation_xyz(0, 0, 0.02 * direction * speed, 12 * speed)
+                Set_animation_xyz(0, 0, f * direction * speed, s * speed)
                 break;
             case "Z":
-                let smo = 32
+                let smo = s*3
                 repeatZoom(direction, speed, repeat*smo, smo);
                 break;
             default:
@@ -632,7 +640,7 @@ function animator(input, after=null) {
                     after = after.split(":");
                     animator(after.pop(), after.join(":"));
                 }else{
-                    animator(after)
+                    animator(after, null)
                 }
             }else if (after){
                 after()
@@ -667,10 +675,12 @@ function linksInit(){
                 <li><a href="/web/signup">Sign Up</a></li>
                 <li><a href="/web/login">Login</a></li>
                 <li><a href="/web/dashboard">Dashboard</a></li>
-   <hr/>
+   <hr style="margin: -0.25vh 0"/>
                 <li><a href="/web/assets/terms.html">Terms and Conditions</a></li>
                 <li><a href="/web/assets/terms.html">Contact</a></li>
                 <li><a href="/">Home</a></li>
+ <hrs tyle="margin: -0.25vh 0"/>
+ <li><a href="/web/core0/Poffer/PublicDashboard.html">Offer</a></li>
             </ul>
         </div>`
 
@@ -719,4 +729,3 @@ function linksInit(){
     });
 
 }
-

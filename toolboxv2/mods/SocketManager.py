@@ -31,6 +31,8 @@ import threading
 import queue
 import asyncio
 
+from toolboxv2.tests.a_util import async_test
+
 version = "0.1.9"
 Name = "SocketManager"
 
@@ -155,11 +157,8 @@ class Tools(MainTool, FileHandler):
     async def on_start(self):
         self.logger.info(f"Starting SocketManager")
         self.print(f"{Name} is Starting")
-        t0 = await asyncio.to_thread(self.set_print_public_ip)
-        t1 = await asyncio.to_thread(self.set_print_local_ip)
-        await asyncio.sleep(3)
-        await t0
-        await t1
+        threading.Thread(target=async_test(self.set_print_public_ip), daemon=True).start()
+        threading.Thread(target=async_test(self.set_print_local_ip), daemon=True).start()
         # ~ self.load_file_handler()
 
     async def on_exit(self):
@@ -572,7 +571,9 @@ class Tools(MainTool, FileHandler):
 
     async def chunk_receive(self, name, r_socket_, identifier="main"):
         try:
-            if self.sockets[name]["do_async"]:
+            if not self.app.alive:
+                return Result.default_internal_error("No data available pleas exit")
+            elif self.sockets[name]["do_async"]:
                 chunk = await r_socket_.read(self.sockets[name]["package_size"])
             elif self.sockets[name]["type_id"] == SocketType.client.name:
                 chunk, _ = await asyncio.to_thread(r_socket_.recvfrom, self.sockets[name]["package_size"])
@@ -675,7 +676,7 @@ class Tools(MainTool, FileHandler):
             r_socket_ = receiver
         self.print(f"Receiver running for {name} to {identifier}")
         self.sockets[name]["running_dict"]["receive"][identifier] = asyncio.Event()
-        while not self.sockets[name]["running_dict"]["receive"][identifier].is_set() and self.sockets[name]["alive"]:
+        while (not self.sockets[name]["running_dict"]["receive"][identifier].is_set()) and self.sockets[name]["alive"]:
             # t0 = time.perf_counter()
             chunk_result = await self.chunk_receive(name, r_socket_, identifier=identifier)
 

@@ -100,13 +100,8 @@ template = """
   }
 </style>
 <div style="min-height:fit-content" class="">
-    <h2 id="inEdit">In Edit: <span id="currentEditBoard">Main</span></h2>
-    <div>
-        <label for="titel">Titel</label><input id="titel" placholder="titel" class="inputField" ></input>
-        <label for="src">type</label><input id="src" placholder="type" class="inputField"></input>
-        <button onclick="window.TBf.getM('createNewBoard')(document.getElementById('newBordName').value)">Create New Widget</button>
-    </div>
-    <hr/>
+    <p id="inEdit">In Edit: <span id="currentEditBoard">Main</span></p>
+
     <table id="boardTable">
         <thead>
         <tr>
@@ -121,7 +116,7 @@ template = """
         </tbody>
     </table>
 <div>
-    <button onclick="window.TBf.getM('createNewBoard')(document.getElementById('newBordName').value)">Close All</button>
+    <button onclick="window.TBf.getM('closeAllBoards')()">Close All</button>
     <br/>
     <label for="newBordName">New Board Name</label><input id="newBordName" class="inputField"></input>
     <button onclick="window.TBf.getM('createNewBoard')(document.getElementById('newBordName').value)">Create New Board</button>

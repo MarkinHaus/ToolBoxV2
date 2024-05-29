@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from toolboxv2 import get_app, Result, Spinner, MainTool, get_logger
 from toolboxv2.mods.SocketManager import get_local_ip
+from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils import Singleton
 from toolboxv2.utils.brodcast.client import start_client
 from toolboxv2.utils.brodcast.server import make_known
@@ -294,8 +295,7 @@ class EventManagerClass:
 
     def start(self):
         self.running = True
-        asyncio.to_thread(self.receiver)
-        # threading.Thread(target=self.receiver, daemon=True).start()
+        threading.Thread(target=async_test(self.receiver), daemon=True).start()
 
     def make_event_from_fuction(self, fuction, name, *args, source_types=SourceTypes.F,
                                 scope=Scope.local,

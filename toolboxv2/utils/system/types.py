@@ -504,6 +504,24 @@ class AppType:
     def rrun_runnable(self, name, **kwargs):
         """proxi attr"""
 
+    def idle(self):
+        import time
+        self.print("idle")
+        while self.alive:
+            time.sleep(1)
+        self.print("idle done")
+
+    async def a_idle(self):
+        self.print("a idle")
+        if hasattr(self, 'daemon_app'):
+            self.print("serving daemon")
+            await self.daemon_app.connect(self)
+        else:
+            self.print("serving default")
+            while self.alive:
+                await asyncio.sleep(1)
+        self.print("a idle done")
+
     @debug.setter
     def debug(self, value):
         """proxi attr"""
@@ -611,13 +629,14 @@ class AppType:
                      **kwargs) -> Result:
 
         """proxi attr"""
+
     async def a_run_function(self, mod_function_name: Enum or tuple,
-                     tb_run_function_with_state=True,
-                     tb_run_with_specification='app',
-                     args_=None,
-                     kwargs_=None,
-                     *args,
-                     **kwargs) -> Result:
+                             tb_run_function_with_state=True,
+                             tb_run_with_specification='app',
+                             args_=None,
+                             kwargs_=None,
+                             *args,
+                             **kwargs) -> Result:
 
         """proxi attr"""
 
@@ -630,6 +649,7 @@ class AppType:
 
         proxi attr
         """
+
     async def a_fuction_runner(self, function, function_data: dict, args: list, kwargs: dict):
         """
         parameters = function_data.get('params')
@@ -646,10 +666,11 @@ class AppType:
                 *args, **kwargs):
         """proxi attr"""
 
-    async def a_run_any(self, mod_function_name: Enum or str or tuple, backwords_compability_variabel_string_holder=None,
-                get_results=False, tb_run_function_with_state=True, tb_run_with_specification='app', args_=None,
-                kwargs_=None,
-                *args, **kwargs):
+    async def a_run_any(self, mod_function_name: Enum or str or tuple,
+                        backwords_compability_variabel_string_holder=None,
+                        get_results=False, tb_run_function_with_state=True, tb_run_with_specification='app', args_=None,
+                        kwargs_=None,
+                        *args, **kwargs):
         """proxi attr"""
 
     def get_mod(self, name, spec='app') -> ModuleType or MainToolType:
@@ -892,8 +913,8 @@ class AppType:
                             try:
                                 # print(f"test Running {state=} |{module_name}.{function_name}")
                                 result = await self.a_run_function((module_name, function_name),
-                                                           tb_run_function_with_state=state,
-                                                           **test_kwargs)
+                                                                   tb_run_function_with_state=state,
+                                                                   **test_kwargs)
                                 if not isinstance(result, Result):
                                     result = Result.ok(result)
                                 if result.info.exec_code == 0:
@@ -960,5 +981,3 @@ class AppType:
         avg_complexity = avg_complexity / i
         print(f"\nAVG Complexity: {avg_complexity:.2f}")
         print(f"Total Rank: {cc_rank(int(avg_complexity + i // 10))}")
-
-

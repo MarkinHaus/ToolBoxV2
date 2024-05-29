@@ -50,6 +50,11 @@ async def index2_(access_allowed: bool = Depends(lambda: check_access_level(-1))
     return RedirectResponse(url="/web")
 
 
+@router.get("/index.js")
+async def index_script(access_allowed: bool = Depends(lambda: check_access_level(0))):
+    return serve_app_func('index.js', prefix='')
+
+
 @router.get("/login")
 async def login_page(access_allowed: bool = Depends(lambda: check_access_level(0))):
     return serve_app_func('assets/login.html')

@@ -56,7 +56,12 @@ def save_closing_app():
         loop = asyncio.get_event_loop()
     except RuntimeError:
         loop = asyncio.new_event_loop()
-    loop.run_until_complete(a_save_closing_app())
+    try:
+        loop.run_until_complete(a_save_closing_app())
+    except RuntimeError:
+        if registered_apps[0] is None:
+            return
+        registered_apps[0].exit()
 
 
 async def a_save_closing_app():

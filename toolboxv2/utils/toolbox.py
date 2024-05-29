@@ -494,10 +494,15 @@ class App(AppType, metaclass=Singleton):
             return function, 0
 
         instance = self.functions[modular_id].get(f"{specification}_instance")
+
         # instance_type = self.functions[modular_id].get(f"{specification}_instance_type", "functions/class")
 
         if params[0] == 'app':
             instance = get_app(from_=f"fuction {specification}.{modular_id}.{function_id}")
+
+        if instance is None and self.alive:
+            self.inplace_load_instance(modular_id)
+            instance = self.functions[modular_id].get(f"{specification}_instance")
 
         if instance is None:
             self.logger.warning(f"No live Instance found")

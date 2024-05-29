@@ -4,12 +4,12 @@ setTimeout(() => {
 
     }else if (!window.__TAURI__) {
         console.log(window.history.state.preUrl )
-        if(!window.history.state.preUrl.toString().includes("user_dashboard.html")){
+        //if(!window.history.state.preUrl.toString().includes("user_dashboard.html")){
             window.TBf.router('/web/dashboards/user_dashboard.html')
-        }
+        //)}
     } else {
 
-        const { spawn } =window.__TAURI__.process;
+        const { spawn } = window.__TAURI__.process;
 
 // Funktion zum Ausführen von Toolbox-Befehlen
         function runToolboxCommand(command) {

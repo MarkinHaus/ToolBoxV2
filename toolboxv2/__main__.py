@@ -2,9 +2,9 @@
 # Import default Pages
 import sys
 import argparse
+import threading
 import time
 import asyncio
-from asyncio import to_thread
 from functools import wraps
 from platform import system, node
 
@@ -463,7 +463,7 @@ async def main(loop=None):
     """Console script for toolboxv2."""
     args = parse_args()
 
-    with open(os.getenv('CONFIG_FILE', f'{os.path.abspath(__file__).replace("cli.py", "")}toolbox.yaml'),
+    with open(os.getenv('CONFIG_FILE', f'{os.path.abspath(__file__).replace("__main__.py", "")}toolbox.yaml'),
               'r') as config_file:
         _version = safe_load(config_file)
         __version__ = _version.get('main', {}).get('version', '-.-.-')
@@ -513,9 +513,9 @@ async def main(loop=None):
 
     tb_app.loop = loop
     with Spinner("Crating State"):
-        await to_thread(get_state_from_app, tb_app,
+        threading.Thread(target=get_state_from_app, args=(tb_app,
                                 os.environ.get("TOOLBOXV2_REMOTE_BASE", "https://simplecore.app"),
-                                "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/")
+                                "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/"), daemon=True).start()
     daemon_app = None
     tb_app.print("OK")
     if args.background_application_runner:
@@ -544,9 +544,9 @@ async def main(loop=None):
         try:
             _ = await ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
                                args.port if args.port != 5000 else 6587)
-            time.sleep(1)
-            await _.verify()
-            time.sleep(1)
+            time.sleep(0.2)
+            await _.verify({'key': os.getenv('TB_R_KEY', 'remote@root')} if args.remote else b"verify")
+            time.sleep(0.1)
             tb_app = override_main_app(_)
             if args.debug:
                 await tb_app.show_console()
@@ -563,7 +563,7 @@ async def main(loop=None):
                 session = Session(tb_app.get_username(), base=os.getenv("MOD_PROVIDER"))
                 if not await session.login():
                     mk = input(f"bitte geben sie ihren magik link ein {session.base}/")
-                    if '/web/' not in mk:
+                    if 'web/' not in mk:
                         print("Link is not in Valid format")
                         return
                     if not await session.init_log_in_mk_link(mk):
@@ -709,13 +709,13 @@ async def main(loop=None):
         hide = tb_app.hide_console()
         if hide is not None:
             await hide
-    if tb_app.alive:
-        await tb_app.a_exit()
-        return 0
 
     if os.path.exists(pid_file):
         os.remove(pid_file)
 
+    if not tb_app.called_exit[0]:
+        await tb_app.a_exit()
+        return 0
     # print(
     #    f"\n\nPython-loc: {init_args[0]}\nCli-loc: {init_args[1]}\nargs: {tb_app.pretty_print(init_args[2:])}")
     return 0
