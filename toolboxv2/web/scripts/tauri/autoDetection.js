@@ -65,7 +65,7 @@ setTimeout(() => {
             }
         }
 
-        initialize().then(r =>window.TBf.router('/web/dashboards/widgetbord.html') );
+        initialize().then(r =>window.TBf.router('/web/dashboards/DynamicWidget.html') );
 
 
     }

@@ -551,6 +551,11 @@ async def index0():
     return RedirectResponse(url="/web/index.js")
 
 
+@app.get("/index.html")
+async def indexHtml():
+    return RedirectResponse(url="/web/index.html")
+
+
 @app.get("/tauri")
 async def index():
     return RedirectResponse(url="/web/assets/widgetControllerLogin.html")

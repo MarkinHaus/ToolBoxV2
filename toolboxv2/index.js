@@ -1,8 +1,8 @@
-import {rendererPipeline} from "./web/scripts/WorkerSocketRenderer";
-import {AuthHttpPostData, httpPostData, httpPostUrl, ToolBoxError, wrapInResult} from "./web/scripts/httpSender";
-import {addRenderer, EndBgInteract, Set_animation_xyz,Set_zoom, StartBgInteract, toggleDarkMode} from "./web/scripts/scripts.js";
-import {autocomplete} from "./web/scripts/util.js";
-import "./web/node_modules/htmx.org"
+import {rendererPipeline} from "/web/scripts/WorkerSocketRenderer.js";
+import {AuthHttpPostData, httpPostData, httpPostUrl, ToolBoxError, wrapInResult} from "/web/scripts/httpSender.js";
+import {addRenderer, EndBgInteract, Set_animation_xyz,Set_zoom, StartBgInteract, toggleDarkMode} from "/web/scripts/scripts.js";
+import {autocomplete} from "/web/scripts/util.js";
+import "/web/node_modules/htmx.org/dist/htmx.js";
 
 const rpIdUrl_f = ()=> {
     if (window.location.href.match("localhost")) {
