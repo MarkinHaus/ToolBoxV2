@@ -33,7 +33,7 @@ class TestTbState(unittest.TestCase):
         with patch('os.walk') as mock_walk:
             mock_walk.return_value = [("", [], [""])]
 
-            state = process_files(".")
+            state = process_files("")
             self.assertIsInstance(state, TbState)
             self.assertEqual(len(state.utils), 0)
             self.assertEqual(len(state.mods), 0)

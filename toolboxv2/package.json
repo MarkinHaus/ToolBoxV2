@@ -8,7 +8,7 @@
     "dev": "npx vite serve --debug",
     "build": "npx vite build --debug",
     "preview": "npx vite preview",
-    "live": "npx vite serve"
+    "live": "npx vite serve --host 0.0.0.0"
   },
   "dependencies": {
     "tauri": "^0.15.0",
