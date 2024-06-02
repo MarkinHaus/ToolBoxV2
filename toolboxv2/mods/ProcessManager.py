@@ -47,7 +47,7 @@ def startDev(p1_command="toolboxv2 -fg -c FastApi startDev main-debug -m cli", p
 
 
 @default_export
-def start(p1_command="toolboxv2 -fg -c FastApi start main -m cli", p2_command="npm run preview"):
+def start(p1_command="toolboxv2 -fg -c FastApi start main -m cli", p2_command="npm run live"):
     manager = ProcessManagerClass(p1_command, p2_command)
     manager.monitor_processes()
 

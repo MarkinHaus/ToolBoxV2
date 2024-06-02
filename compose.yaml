@@ -43,21 +43,20 @@ services:
         command: toolboxv2 -fg -c FastApi start main -m cli
         ports:
             - 5001:5001
+            - 5000:5000
         volumes:
             - ./toolboxv2/.data:/app/toolboxv2/.data
             - ./toolboxv2/data:/app/toolboxv2/data
             - ./toolboxv2/.config:/app/toolboxv2/.config
             - ./toolboxv2/.info:/app/toolboxv2/.info
         restart: always
-        profiles: [ live ]
+        profiles: [ liveApi ]
 
-    app:
+    live:
         image: ${LOCAL_DOCKER_IMAGE}
-        depends_on:
-            - app
-            # - debug_redis
-        command: npx bun run dev
+        command: toolboxv2 -fg -c ProcessManager start -m cli
         ports:
+            - 8080:8080
             - 5000:5000
         volumes:
             - ./toolboxv2/.data:/app/toolboxv2/.data
