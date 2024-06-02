@@ -54,10 +54,12 @@ services:
 
     live:
         image: ${LOCAL_DOCKER_IMAGE}
-        command: toolboxv2 -fg -c ProcessManager start -m cli
+        command: toolboxv2 -fg -c ProcessManager start
+
         ports:
             - 8080:8080
             - 5000:5000
+            - 17334:17334
         volumes:
             - ./toolboxv2/.data:/app/toolboxv2/.data
             - ./toolboxv2/data:/app/toolboxv2/data
