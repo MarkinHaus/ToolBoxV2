@@ -783,6 +783,9 @@ class App(AppType, metaclass=Singleton):
             except TimeoutError as e:
                 self.logger.error(f"Timeout error on exit {thread.name} {str(e)}")
                 print(str(e), f"Timeout {thread.name}")
+        if hasattr(self, 'loop'):
+            with Spinner(f"closing Event loop:", symbols="+"):
+                self.loop.stop()
 
     async def a_exit(self):
         await self.a_remove_all_modules()
@@ -960,7 +963,7 @@ class App(AppType, metaclass=Singleton):
             return self.fuction_runner(function, function_data, args, kwargs)
 
     def run_a_from_sync(self, function, *args):
-        self.loop.call_soon_threadsafe(function, *args)
+        return asyncio.ensure_future(function(*args))
 
     def fuction_runner(self, function, function_data: dict, args: list, kwargs: dict):
 

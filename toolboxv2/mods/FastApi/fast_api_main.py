@@ -11,6 +11,7 @@ from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse, F
 from starlette.websockets import WebSocketDisconnect
 from fastapi.responses import RedirectResponse
 
+from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.security.cryp import DEVICE_KEY, Code
 
 from fastapi import FastAPI, Request, WebSocket, APIRouter
@@ -19,38 +20,35 @@ import time
 from fastapi.middleware.cors import CORSMiddleware
 
 from toolboxv2 import tbef, AppArgs, ApiResult, Spinner, get_app
+from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
 
 from toolboxv2.utils.system.state_system import get_state_from_app
-
 
 id_name = ""
 debug = False
 for i in sys.argv[2:]:
-    print("Running", i)
     if i.startswith('data'):
         d = i.split(':')
         debug = True if d[1] == "True" else False
         id_name = d[2]
-print("Running", id_name)
-print("Running", debug)
 args = AppArgs().default()
 args.name = id_name
 args.debug = debug
 args.sysPrint = True
-tb_app = get_app(from_="init-api-get-tb_app", name=id_name, args=args)
+tb_app = get_app(from_="init-api-get-tb_app", name=id_name, args=args, sync=True)
 
 manager = tb_app.get_mod("WebSocketManager")
+# with Spinner("loding mods", symbols="b"):
+#     module_list = tb_app.get_all_mods()
+#     open_modules = tb_app.functions.keys()
+#     start_len = len(open_modules)
+#     for om in open_modules:
+#         if om in module_list:
+#             module_list.remove(om)
+#     _ = {tb_app.save_load(mod, 'app') for mod in module_list}
+#
+# tb_app.watch_mod(mod_name="WidgetsProvider")
 
-with Spinner("loding mods", symbols="b"):
-    module_list = tb_app.get_all_mods()
-    open_modules = tb_app.functions.keys()
-    start_len = len(open_modules)
-    for om in open_modules:
-        if om in module_list:
-            module_list.remove(om)
-    _ = {tb_app.save_load(mod, 'app') for mod in module_list}
-
-tb_app.watch_mod(mod_name="WidgetsProvider")
 
 class RateLimitingMiddleware(BaseHTTPMiddleware):
     # Rate limiting configurations
@@ -133,7 +131,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         request._receive = receive
 
     async def crate_new_session_id(self, request: Request, jwt_claim: str or None, username: str or None,
-                             session_id: str = None):
+                                   session_id: str = None):
 
         if session_id is None:
             session_id = hex(tb_app.config_fh.generate_seed())
@@ -177,8 +175,8 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def verify_session_id(self, session_id, username, jwt_claim):
 
         if not await tb_app.a_run_any(tbef.CLOUDM_AUTHMANAGER.JWT_CHECK_CLAIM_SERVER_SIDE,
-                              username=username,
-                              jwt_claim=jwt_claim):
+                                      username=username,
+                                      jwt_claim=jwt_claim):
             # del self.sessions[session_id]
             self.sessions[session_id]['CHECK'] = 'failed'
             self.sessions[session_id]['c'] += 1
@@ -186,8 +184,8 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             return '#0'
 
         user_result = await tb_app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME,
-                                     username=username,
-                                     get_results=True)
+                                             username=username,
+                                             get_results=True)
 
         if user_result.is_error():
             # del self.sessions[session_id]
@@ -199,7 +197,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         user = user_result.get()
 
         user_instance = await tb_app.a_run_any(tbef.CLOUDM_USERINSTANCES.GET_USER_INSTANCE, uid=user.uid, hydrate=False,
-                                       get_results=True)
+                                               get_results=True)
 
         if user_instance.is_error():
             user_instance.print()
@@ -267,7 +265,8 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             body = json.loads(body)
             jwt_token = body.get('Jwt_claim', None)
             username = body.get('Username', None)
-            session_id = await self.crate_new_session_id(request, jwt_token, username, session_id=request.session.get('ID'))
+            session_id = await self.crate_new_session_id(request, jwt_token, username,
+                                                         session_id=request.session.get('ID'))
         elif not session:
             session_id = await self.crate_new_session_id(request, None, "Unknown")
         elif request.session.get('ID', '') not in self.sessions:
@@ -509,9 +508,9 @@ async def user_runner(request, call_next):
         query_params['request'] = request
 
     result = await tb_app.a_run_function((modul_name, fuction_name),
-                                   tb_run_with_specification=request.session['live_data'].get('spec', 'app'),
-                                   args_=path_params.values(),
-                                   kwargs_=query_params)
+                                         tb_run_with_specification=request.session['live_data'].get('spec', 'app'),
+                                         args_=path_params.values(),
+                                         kwargs_=query_params)
 
     request.session['live_data']['RUN'] = False
     request.session['live_data']['GET_R'] = False
@@ -649,13 +648,9 @@ def test_rate_limiting_middleware():
 '''
 
 
-def helper(tb_app, id_name):
-    app.add_middleware(SessionAuthMiddleware)
-
-    app.add_middleware(SessionMiddleware,
-                       session_cookie=Code.one_way_hash(tb_app.id, 'session'),
-                       https_only='live' in tb_app.id,
-                       secret_key=Code.one_way_hash(DEVICE_KEY(), tb_app.id))
+async def helper(id_name):
+    global tb_app
+    tb_app = await a_get_proxy_app(tb_app)
 
     if "HotReload" in tb_app.id:
         @app.get("/HotReload")
@@ -673,19 +668,17 @@ def helper(tb_app, id_name):
         f.write(str(os.getpid()))
         f.close()
 
-    # await tb_app.load_all_mods_in_file()
+    await tb_app.load_all_mods_in_file()
 
     time.sleep(0.5)
 
-    if 'unittest' not in sys.argv[0]:
-        tb_app.get_mod("welcome")
-    d = tb_app.get_mod("DB")
-    c = d.initialize_database()
-    # c = d.edit_cli("RR")
-    c = d.initialized()
-    print("DB initialized", c)
-    if not c.get():
-        exit()
+    # d = tb_app.get_mod("DB")
+    # c = d.initialize_database()
+    # # c = d.edit_cli("RR")
+    # c = d.initialized()
+    # print("DB initialized", c)
+    # if not c.get():
+    #     exit()
     tb_app.get_mod("WebSocketManager")
 
     from .fast_app import router as app_router
@@ -762,8 +755,16 @@ def helper(tb_app, id_name):
 
 
 print("API: ", __name__)
-helper(tb_app, id_name)
+app.add_middleware(SessionAuthMiddleware)
+
+app.add_middleware(SessionMiddleware,
+                   session_cookie=Code.one_way_hash(tb_app.id, 'session'),
+                   https_only='live' in tb_app.id,
+                   secret_key=Code.one_way_hash(DEVICE_KEY(), tb_app.id))
+tb_app.run_a_from_sync(helper, id_name)
 
 # print("API: ", __name__)
 # if __name__ == 'toolboxv2.api.fast_api_main':
 #     global tb_app
+
+

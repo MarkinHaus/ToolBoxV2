@@ -176,8 +176,8 @@ async def run(app: App, args):
         show_console(False)
         return Result.ok(info=f"").set_origin("minicli::build-in")
 
-    def open_console(_):
-        app.show_console(True)
+    async def open_console(_):
+        await app.show_console(True)
         return Result.ok(info=f"").set_origin("minicli::build-in")
 
     bic = {

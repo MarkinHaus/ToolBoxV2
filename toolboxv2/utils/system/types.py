@@ -615,7 +615,7 @@ class AppType:
                 specification::str default app
         """
 
-    def run_a_from_sync(self, function):
+    def run_a_from_sync(self, function, *args):
         """
         run a async fuction
         """

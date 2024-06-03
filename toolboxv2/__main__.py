@@ -513,11 +513,12 @@ async def main(loop=None):
 
     tb_app.loop = loop
     with Spinner("Crating State"):
-        threading.Thread(target=get_state_from_app, args=(tb_app,
+        st = threading.Thread(target=get_state_from_app, args=(tb_app,
                                 os.environ.get("TOOLBOXV2_REMOTE_BASE", "https://simplecore.app"),
-                                "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/"), daemon=True).start()
+                                "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/"), daemon=True)
     daemon_app = None
     tb_app.print("OK")
+    st.start()
     if args.background_application_runner:
         daemon_app = await DaemonApp(tb_app, args.host, args.port if args.port != 5000 else 6587, t=False)
         if not args.debug:

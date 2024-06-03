@@ -56,4 +56,4 @@ RUN pip install -e .
 # Expose the port that the application listens on.
 
 # Run the application.
-CMD toolboxv2 -bgr -l -m bg
+CMD toolboxv2 -c FastApi start main -p 5000 -w 0.0.0.0

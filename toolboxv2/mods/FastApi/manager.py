@@ -82,9 +82,13 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
     def info(self):
         for api in list(self.api_config.keys()):
-            self.print(f"Name: {api}")
-            self.print(self.api_config[api])
-        return self.api_config
+            print(f"Name: {api}")
+            print(self.api_config[api])
+        print("Running: ")
+        for api in list(self.running_apis.keys()):
+            print(f"Name: {api}")
+            print(self.running_apis[api])
+        return self.api_config, self.running_apis
 
     def conf_api(self, api_name: str, host: str = "localhost", port: int = 5000):
         """Update api configuration

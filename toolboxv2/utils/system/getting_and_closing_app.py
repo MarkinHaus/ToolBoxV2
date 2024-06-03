@@ -50,6 +50,19 @@ def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None, sync=
     return app
 
 
+async def a_get_proxy_app(app, host="localhost", port=6587, key="remote@root"):
+    from toolboxv2.utils.proxy.proxy_app import ProxyApp
+    from os import getenv
+    app.print("INIT PROXY APP")
+    _ = await ProxyApp(app, host, port)
+    time.sleep(0.2)
+    _.print("PROXY APP START VERIFY")
+    await _.verify({'key': getenv('TB_R_KEY', key)})
+    time.sleep(0.1)
+    _.print("PROXY APP CONNECTED")
+    return override_main_app(_)
+
+
 @atexit.register
 def save_closing_app():
     try:
