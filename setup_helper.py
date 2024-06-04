@@ -15,7 +15,7 @@ def install_package(env_path, package):
     subprocess.check_call(['pip', 'install', '--upgrade', package])
 
 
-def run_command(env_path, command):
+def run_command_venv(env_path, command):
     """Führt einen Befehl in der virtuellen Umgebung aus und zeigt stdout/stderr an."""
     if not env_path:
         env_path = Path.home() / ".local/share/virtualenvs/toolboxv2_env"
@@ -46,7 +46,7 @@ def run_command(env_path, command):
     return out, exit_code
 
 
-def main(env_path, retries=5):
+def main2(env_path, retries=5):
     if not env_path:
         env_path = Path.home() / ".local/share/virtualenvs/toolboxv2_env"
     env_path = Path(env_path)
@@ -60,6 +60,11 @@ def main(env_path, retries=5):
     print("Installiere Toolboxv2...")
     install_package(str(env_path), 'ToolBoxV2')
 
+
+def fisx_dep(retries=5, env_path=None):
+    if env_path is None:
+        env_path = Path.home() / ".local/share/virtualenvs/toolboxv2_env"
+    env_path = Path(env_path)
     command = 'toolboxv2 -fg -v'
     for attempt in range(retries):
         print(f"Versuch {attempt + 1} von {retries}...")
@@ -81,18 +86,16 @@ def main(env_path, retries=5):
             print("Fehler beim Ausführen des Befehls:", error)
 
 
-if __name__ == "__main__":
-    #_env_path = sys.argv[1] if len(sys.argv) > 1 else None
-    #main(_env_path)
-
+def inf_test():
     command = 'toolboxv2 --test'
-    while not input("Enter "):
+    errror = True
+    while "n" not in input("[Y/n] :").lower() or errror:
         error, exit_code = run_command(sys.executable.replace('\python.exe', ''), command)
 
         if exit_code == 0:
             print(error)
             print("Erfolgreich ausgeführt!")
-            break
+            errror = False
         else:
             error = str(error)
             info = error.split(':')[-1].strip()
@@ -103,6 +106,115 @@ if __name__ == "__main__":
                 install_package(sys.executable, module)
 
             print("Fehler beim Ausführen des Befehls:", error)
+
+
+import os
+import subprocess
+import platform
+
+
+def input_with_validation(prompt, valid_options=None):
+    while True:
+        user_input = input(prompt).strip().lower()
+        if valid_options is None or user_input in valid_options:
+            return user_input
+        print("Ungültige Eingabe. Bitte wählen Sie eine gültige Option.")
+
+
+def run_command(command, silent=False):
+    try:
+        subprocess.run(command, shell=True, check=True, stdout=subprocess.PIPE if silent else None)
+    except subprocess.CalledProcessError as e:
+        print(f"Fehler beim Ausführen des Befehls: {e}")
+
+
+def install_python_venv():
+    if platform.system() == 'Windows':
+        print("Das Skript unterstützt derzeit keine virtuellen Umgebungen auf Windows.")
+        return
+    try:
+        run_command('python3 -m venv --help', silent=True)
+    except FileNotFoundError:
+        print("Python3-venv nicht gefunden. Installiere Python3-venv...")
+        run_command('sudo apt install python3-venv')
+
+
+def create_venv():
+    if platform.system() == 'Windows':
+        print("Das Skript unterstützt derzeit keine virtuellen Umgebungen auf Windows.")
+        return
+    venv_name = input("Geben Sie den Namen der virtuellen Umgebung ein: ")
+    run_command(f'python3 -m venv {venv_name}')
+    print(f"Virtuelle Umgebung {venv_name} erstellt. Aktivieren Sie es mit: source {venv_name}/bin/activate")
+
+
+def install_docker():
+    if platform.system() == 'Windows':
+        print("Das Skript unterstützt derzeit keine Docker-Installation auf Windows.")
+        return
+    run_command('sudo apt install docker')
+
+
+def install_node():
+    if platform.system() == 'Windows':
+        print("Node.js wird auf Windows nicht unterstützt.")
+        return
+    run_command('sudo apt install nodejs')
+
+
+def install_toolbox(version):
+    if version == 'pip':
+        run_command('pip install toolboxv2')
+    elif version == 'git':
+        run_command('git clone https://github.com/ToolBoxV2/toolboxv2.git')
+        os.chdir('toolboxv2')
+        run_command('pip install -e .')
+
+
+def add_toolbox_to_path():
+    path = os.getenv('PATH')
+    if 'toolboxv2' not in path:
+        print("Fügen Sie den ToolboxV2-Pfad zum Systempfad hinzu...")
+        os.environ['PATH'] += os.pathsep + os.path.abspath(os.path.join(os.getcwd(), 'toolboxv2'))
+
+
+def uninstall_toolbox():
+    uninstall = input_with_validation("Möchten Sie die Toolbox deinstallieren? (ja/nein): ",
+                                      valid_options=['ja', 'nein'])
+    if uninstall == 'ja':
+        run_command('pip uninstall toolboxv2 -y')
+        print("Toolbox wurde erfolgreich deinstalliert.")
+
+
+def main():
+    print("Willkommen zum ToolboxV2 Installer.")
+
+    method = input_with_validation(
+        "Möchten Sie die Toolbox in einer virtuellen Umgebung (venv), im System oder in Docker installieren? (venv/system/docker): ",
+        valid_options=['venv', 'system', 'docker'])
+    if method == 'venv':
+        install_python_venv()
+        create_venv()
+    elif method == 'docker':
+        install_docker()
+    elif method == 'system':
+        install_node()
+
+    version = input_with_validation(
+        "Möchten Sie die stabile (pip) oder die Entwicklerversion (Git) der Toolbox installieren? (pip/git): ",
+        valid_options=['pip', 'git'])
+    install_toolbox(version)
+
+    if version == 'git':
+        add_toolbox_to_path()
+
+    # uninstall_toolbox()
+
+    print("Installation abgeschlossen.")
+
+
+if __name__ == "__main__":
+    main()
 
 """rich>=13.5.2
 coverage>=7.2.7

@@ -727,6 +727,11 @@ def main_runner():
     loop.run_until_complete(main(loop))
 
 
+def setup_tb():
+    print("Set up ReSimpleToolboxV2")
+    input("select 1) base 2) mini 3) dev :")
+    return None
+
 if __name__ == "__main__":
     print("STARTED START FROM CLI")
     sys.exit(main_runner())

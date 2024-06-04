@@ -48,12 +48,6 @@ setup(
         'console_scripts': [
             'toolboxv2=toolboxv2.__main__:main_runner',
         ],
-        # 'setuptools.installation': [
-        #     'setup_hook = mein_paket.setup:setup_function',
-        # ],
-        # 'gui_scripts': [
-        #     'meine_gui = mein_paket.gui_module:main_function',
-        # ],
     },
     install_requires=install_requires,
     dependency_links=dependency_links,
