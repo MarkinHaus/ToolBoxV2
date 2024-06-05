@@ -312,6 +312,8 @@ def parse_args():
     parser.add_argument("--docker", help="start the toolbox in docker (in remote mode is no local docker engin "
                                          "required)", default=False,
                         action="store_true")
+    parser.add_argument("--build", help="build docker image from local source", default=False,
+                        action="store_true")
 
     parser.add_argument("-i", "--install", help="Install a mod or interface via name", type=str or None, default=None)
     parser.add_argument("-r", "--remove", help="Uninstall a mod or interface via name", type=str or None, default=None)
@@ -537,7 +539,7 @@ async def main(loop=None):
                 _ = await ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
                                    args.port if args.port != 5000 else 6587, timeout=6)
                 await _.verify()
-                if _.exit_main() != "No data look later":
+                if await _.exit_main() != "No data look later":
                     stop(pid_file + '-app.pid', args.name)
             except Exception:
                 stop(pid_file + '-app.pid', args.name)
@@ -638,12 +640,20 @@ async def main(loop=None):
                 tb_app.print(
                     "minimum command length is 2 {module_name} {function_name} optional args...")
                 continue
+
             tb_app.print(f"Running command: {' '.join(command)}")
             call = CallingObject().empty()
             mod = tb_app.get_mod(command[0], spec='app')
             if hasattr(mod, "async_initialized") and not mod.async_initialized:
                 await mod
             call.module_name = command[0]
+
+            if len(command) < 2:
+                tb_app.print_functions(command[0])
+                tb_app.print(
+                    "minimum command length is 2 {module_name} {function_name} optional args...")
+                continue
+
             call.function_name = command[1]
             call.args = command[2:]
             spec = 'app' if not args.live_application else tb_app.id

@@ -28,6 +28,7 @@ class AppArgs:
     background_application = False
     background_application_runner = False
     docker = False
+    build = False
     install = None
     remove = None
     update = None
@@ -258,7 +259,7 @@ class Result:
         return data if data is not None else default
 
     async def aget(self, key=None, default=None):
-        if self.result.data_to.name == ToolBoxInterfaces.future.name:
+        if asyncio.isfuture(self.result.data) or asyncio.iscoroutine(self.result.data) or (isinstance(self.result.data_to, Enum) and self.result.data_to.name == ToolBoxInterfaces.future.name):
             data = await self.result.data
         else:
             data = self.get(key=None, default=None)
@@ -816,6 +817,9 @@ class AppType:
                                       memory_cache_ttl=memory_cache_ttl)
 
     def print_functions(self, name=None):
+
+        modules = []
+
         if not self.functions:
             print("Nothing to see")
             return

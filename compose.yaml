@@ -8,155 +8,109 @@
 # database or a cache. For examples, see the Awesome Compose repository:
 # https://github.com/docker/awesome-compose
 services:
-    build_service:
+
+  # Dev-Umgebung mit Hot Reload
+    dev:
+        build:
+          context: .
+        command: tb -bgr -c DB Version -c DB edit_cli RR -c FastApi edit-api main 0.0.0.0 5000 -c FastApi startDev main ${DEV_MODULES} -m idle
+        volumes:
+          - ./toolboxv2/.data:/app/toolboxv2/.data
+          - ./toolboxv2/data:/app/toolboxv2/data
+          - ./toolboxv2/.config:/app/toolboxv2/.config
+          - ./toolboxv2/.info:/app/toolboxv2/.info
+        env_file:
+            - .env
+        environment:
+          - ENVIRONMENT=development
+        ports:
+            - 5000:5000
+            - 6587:6587
+        develop:
+            watch:
+                - action: sync
+                  path: ./toolboxv2/utils
+                  target: /app/toolboxv2/utils
+                - action: sync
+                  path: ./toolboxv2/web
+                  target: /app/toolboxv2/web
+                  ignore:
+                      - node_modules/
+                - action: sync
+                  path: ./toolboxv2/mods
+                  target: /app/toolboxv2/mods
+                - action: rebuild
+                  path: ./toolboxv2/package.json
+                  target: /app/toolboxv2/package.json
+                - action: rebuild
+                  path: ./toolboxv2/runabel
+                  target: /app/toolboxv2/runabel
+
+      # Live-Umgebung mit Zero Downtime
+    live:
         build:
             context: .
-        container_name: re_simple_toolbox_builder_dev
+        command: tb -bgr -c FastApi edit-api main 0.0.0.0 5000 -c FastApi start main -m idle
+        volumes:
+            - ./toolboxv2/.data:/app/toolboxv2/.data
+            - ./toolboxv2/data:/app/toolboxv2/data
+            - ./toolboxv2/.config:/app/toolboxv2/.config
+            - ./toolboxv2/.info:/app/toolboxv2/.info
+        env_file:
+            - .env
+        environment:
+            - ENVIRONMENT=production
         ports:
+            - 5000:5000
             - 6587:6587
-        profiles: [ build ]
+        deploy:
+            update_config:
+                parallelism: 1
+                delay: 10s
+                order: start-first
+                failure_action: rollback
+            restart_policy:
+                condition: any
+        restart: always
 
-    live_build_service:
+    liveIM:
+        image: ${LOCAL_DOCKER_IMAGE}
+        command: tb -bgr -c FastApi edit-api main 0.0.0.0 5000 -c FastApi start main -m idle
+        volumes:
+          - ./toolboxv2/.data:/app/toolboxv2/.data
+          - ./toolboxv2/data:/app/toolboxv2/data
+          - ./toolboxv2/.config:/app/toolboxv2/.config
+          - ./toolboxv2/.info:/app/toolboxv2/.info
+        deploy:
+          update_config:
+            parallelism: 1
+            delay: 10s
+            order: start-first
+            failure_action: rollback
+          restart_policy:
+            condition: any
+        env_file:
+            - .env
+        environment:
+          - ENVIRONMENT=production
+        ports:
+            - 5000:5000
+            - 6587:6587
+        restart: always
+
+      # Testumgebung
+    test:
         build:
-            context: ./DockerfileLive
-        container_name: re_simple_toolbox_builder
+          context: .
+        command: tb --test
         ports:
+            - 5000:5000
             - 6587:6587
-        profiles: [ testLive, buildLive ]
+        env_file:
+            - .env
+        environment:
+          - ENVIRONMENT=test
 
-    re_simple_toolbox_service:
-        image: re_simple_toolbox
-        command: toolboxv2 -bgr -l -m bg
-        ports:
-            - 6587:6587
-        volumes:
-            - ./toolboxv2/.data:/app/toolboxv2/.data
-            - ./toolboxv2/data:/app/toolboxv2/data
-            - ./toolboxv2/.config:/app/toolboxv2/.config
-            - ./toolboxv2/.info:/app/toolboxv2/.info
-        restart: always
-        container_name: re_simple_toolbox
-        profiles: [ docker ]
-
-    api:
-        image: ${LOCAL_DOCKER_IMAGE}
-        command: toolboxv2 -fg -c FastApi start main -m cli
-        ports:
-            - 5001:5001
-            - 5000:5000
-        volumes:
-            - ./toolboxv2/.data:/app/toolboxv2/.data
-            - ./toolboxv2/data:/app/toolboxv2/data
-            - ./toolboxv2/.config:/app/toolboxv2/.config
-            - ./toolboxv2/.info:/app/toolboxv2/.info
-        restart: always
-        profiles: [ liveApi ]
-
-    live:
-        image: ${LOCAL_DOCKER_IMAGE}
-        command: toolboxv2 -fg -c ProcessManager start
-
-        ports:
-            - 8080:8080
-            - 5000:5000
-            - 17334:17334
-        volumes:
-            - ./toolboxv2/.data:/app/toolboxv2/.data
-            - ./toolboxv2/data:/app/toolboxv2/data
-            - ./toolboxv2/.config:/app/toolboxv2/.config
-            - ./toolboxv2/.info:/app/toolboxv2/.info
-        restart: always
-        profiles: [ live ]
-
-
-    dev_app:
-        build: .
-        depends_on:
-            - dev_api
-        command: npx bun run dev
-        ports:
-            - 5000:5000
-        volumes:
-            - ./toolboxv2/.data:/app/toolboxv2/.data
-            - ./toolboxv2/data:/app/toolboxv2/data
-            - ./toolboxv2/.config:/app/toolboxv2/.config
-            - ./toolboxv2/.info:/app/toolboxv2/.info
-        # develop:
-        #     watch:
-        #         - action: sync
-        #           path: "/toolboxv2"
-        #           target: "/app/toolboxv2"
-        #           ignore:
-        #               - "node_modules/"
-        #               - "/toolboxv2/web/node_modules/"
-        #               - "/toolboxv2/node_modules/"
-        #         - action: rebuild
-        #           path:
-        #             - "package.json"
-        #             - "toolboxv2/package.json"
-        #             - "toolboxv2/web/package.json"
-        restart: always
-        profiles: [ dev, test ]
-
-    dev_api:
-        build: .
-        command: toolboxv2 -fg -c FastApi startDev ${DEV_MODULES} -c runner devApp --sysPrint
-        # develop:
-        #     watch:
-        #         - action: sync
-        #           path: "/toolboxv2/web"
-        #           target: "/app/toolboxv2/web"
-        #           ignore:
-        #               - "node_modules/"
-        #               - "/toolboxv2/web/node_modules/"
-        #               - "/toolboxv2/node_modules/"
-        #         - action: rebuild
-        #           path:
-        #               - "package.json"
-        #               - "toolboxv2/package.json"
-        #               - "toolboxv2/web/package.json"
-        restart: always
-        ports:
-            - 5001:5001
-            - 6588:6587
-        volumes:
-            - ./toolboxv2/.data:/app/toolboxv2/.data
-            - ./toolboxv2/data:/app/toolboxv2/data
-            - ./toolboxv2/.config:/app/toolboxv2/.config
-            - ./toolboxv2/mods:/app/toolboxv2/mods
-            - ./toolboxv2/utils:/app/toolboxv2/utils
-            - ./toolboxv2/web:/app/toolboxv2/web
-
-        profiles: [ dev ]
-
-
-    test_service:
-        build: .
-        depends_on:
-            - build_service
-            # - debug_ollama
-        command: toolboxv2 --test
-        profiles: [ test ]
-
-    lve_test_service:
-        build: ./DockerfileLive
-        depends_on:
-            - live_build_service
-            # - debug_ollama
-        command: toolboxv2 --test
-        profiles: [ testLive ]
-
-    # debug_redis:
-    #     image: "redis:alpine"
-
-    # debug_ollama:
-    #     image: "ollama"
-    #     ports:
-    #         - 11434:11434
-
-    # depends_on
-    # redis:
-    #   image: "redis:alpine"
 # The commented out section below is an example of how to define a PostgreSQL
 # database that your application can use. `depends_on` tells Docker Compose to
 # start the database before your application. The `db-data` volume persists the

@@ -672,13 +672,14 @@ async def helper(id_name):
 
     time.sleep(0.5)
 
-    # d = tb_app.get_mod("DB")
-    # c = d.initialize_database()
-    # # c = d.edit_cli("RR")
-    # c = d.initialized()
-    # print("DB initialized", c)
-    # if not c.get():
-    #     exit()
+    d = tb_app.get_mod("DB")
+    d.initialize_database()
+    # c = d.edit_cli("RR")
+    tb_app.watch_mod("CloudM.AuthManager", path_name="/mods/CloudM/AuthManager.py")
+    c = d.initialized()
+    print("DB initialized", c)
+    if not c.get():
+        exit()
     tb_app.get_mod("WebSocketManager")
 
     from .fast_app import router as app_router

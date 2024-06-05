@@ -4,15 +4,10 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "tauri": "bun tauri ",
-    "dev": "npx vite serve --debug",
-    "build": "npx vite build --debug",
-    "preview": "npx vite preview",
-    "live": "npx vite serve --host 0.0.0.0"
+    "tauri": "bun tauri"
   },
   "dependencies": {
-    "tauri": "^0.15.0",
-    "vite": "^5.2.10"
+    "tauri": "^0.15.0"
   },
   "devDependencies": {
     "@tauri-apps/api": "^1.5.3",

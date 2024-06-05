@@ -219,7 +219,6 @@ class Tools(MainTool, FileHandler):
 
         return Result.default_internal_error(info="Database is not configured")
 
-    @export(mod_name=Name, initial=True, helper="init database")
     def initialize_database(self) -> Result:
         if self.data_base is not None:
             return Result.default_user_error(info="Database is already configured")
@@ -281,7 +280,6 @@ class Tools(MainTool, FileHandler):
             return Result.ok()
         return Result.default_internal_error(info=evaluation.get())
 
-    @export(mod_name=Name, exit_f=True, helper="close database")
     def close_db(self) -> Result:
         if self.data_base is None:
             return Result.default_user_error(info="Database is not configured therefor cand be closed")

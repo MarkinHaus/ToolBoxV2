@@ -59,15 +59,15 @@ class CustomRegistrationCredential(RegistrationCredential):
 # app Helper functions interaction with the db
 
 async def db_helper_test_exist(app: App, username: str):
-    c = app.run_any(tbef.DB.IF_EXIST, query=f"USER::{username}::*", get_results=True)
+    c = await app.a_run_any(tbef.DB.IF_EXIST, query=f"USER::{username}::*", get_results=True)
     if c.is_error(): raise RuntimeError(f"DB - error {c.print(show=False)}")
     b = c.get() > 0
     get_logger().info(f"TEST IF USER EXIST : {username} {b}")
     return b
 
 
-def db_delete_invitation(app: App, invitation: str):
-    return app.run_any(tbef.DB.DELETE, query=f"invitation::{invitation}", get_results=True)
+async def db_delete_invitation(app: App, invitation: str):
+    return app.a_run_any(tbef.DB.DELETE, query=f"invitation::{invitation}", get_results=True)
 
 
 def db_valid_invitation(app: App, invitation: str):
@@ -187,9 +187,9 @@ async def get_user_by_name(app: App, username: str, uid: str = '*') -> Result:
     if not await db_helper_test_exist(app, username):
         return Result.default_user_error(info=f"get_user_by_name failed username'{username}'not registered")
 
-    user_data = db_helper_get_user(app, username, uid)
+    user_data = await db_helper_get_user(app, username, uid)
 
-    if user_data.is_error():
+    if isinstance(user_data, str) or user_data.is_error():
         return Result.default_internal_error(info="get_user_by_name failed no User data found is_error")
 
     user_data = await user_data.aget()
@@ -223,10 +223,13 @@ def from_base64(encoded_data: str):
     return base64.b64decode(encoded_data)
 
 
-def initialize_and_return(app: App, user) -> ApiResult:
+async def initialize_and_return(app: App, user) -> ApiResult:
     if isinstance(user, User):
         user = UserCreator(**asdict(user))
-    return db_helper_save_user(app, asdict(user)).lazy_return('intern', data={
+    db_helper = db_helper_save_user(app, asdict(user))
+    if asyncio.iscoroutine(db_helper):
+        db_helper = await db_helper
+    return db_helper.lazy_return('intern', data={
         "challenge": user.challenge,
         "userId": to_base64(user.uid),
         "username": user.name,
@@ -292,10 +295,10 @@ async def create_user(app: App, data: CreateUserObject = None, username: str = '
                 user_pass_pub_devices=[pub_key],
                 pub_key=pub_key)
 
-    db_delete_invitation(app, invitation)
+    await db_delete_invitation(app, invitation)
 
     if web_data:
-        return initialize_and_return(app, user)
+        return await initialize_and_return(app, user)
 
     result_s = db_helper_save_user(app, asdict(user))
 
@@ -381,7 +384,7 @@ async def add_user_device(app: App, data: AddUserDeviceObject = None, username: 
     db_delete_invitation(app, invitation)
 
     if web_data:
-        return initialize_and_return(app, user)
+        return await initialize_and_return(app, user)
 
     result_s = db_helper_save_user(app, asdict(user))
 

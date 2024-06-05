@@ -50,10 +50,18 @@ COPY ./toolboxv2/toolbox.yaml ./toolboxv2/toolbox.yaml
 COPY ./toolboxv2/vite.config.js ./toolboxv2/vite.config.js
 
 # Install the local application using pip.
-RUN npx bun install -y ./toolboxv2/
 RUN npx bun install -y ./toolboxv2/web/
 RUN pip install -e .
 # Expose the port that the application listens on.
 
+EXPOSE 5000/tcp
+EXPOSE 5000/udp
+
+EXPOSE 6587/tcp
+EXPOSE 6587/udp
+
+EXPOSE 17334/tcp
+EXPOSE 17334/udp
+
 # Run the application.
-CMD toolboxv2 -fg -c FastApi start main -p 5000 -w 0.0.0.0 -m cli
+CMD tb -fg -c FastApi start main -p 5000 -w 0.0.0.0 -m idle

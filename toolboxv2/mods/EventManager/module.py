@@ -1,5 +1,3 @@
-import asyncio
-import json
 import os
 import queue
 import threading
@@ -7,13 +5,12 @@ import time
 import uuid
 from dataclasses import dataclass, field, asdict
 from enum import Enum
-from typing import Dict, Tuple, List, Optional, Any, Callable, Union
+from typing import Dict, Tuple, Optional, Any, Callable, Union
 from concurrent.futures import ThreadPoolExecutor
 
 from toolboxv2 import get_app, Result, Spinner, MainTool, get_logger
 from toolboxv2.mods.SocketManager import get_local_ip
 from toolboxv2.tests.a_util import async_test
-from toolboxv2.utils import Singleton
 from toolboxv2.utils.brodcast.client import start_client
 from toolboxv2.utils.brodcast.server import make_known
 from toolboxv2.utils.daemon import DaemonUtil
@@ -673,7 +670,6 @@ class EventManagerClass:
             await x.verify()
 
 
-@export(name=Name, mod_name=Name, version=version)
 class Tools(MainTool, EventManagerClass):
     version = version
 
@@ -683,6 +679,13 @@ class Tools(MainTool, EventManagerClass):
 
         self.keys = {"mode": "db~mode~~:"}
         self.encoding = 'utf-8'
+        self.tools = {
+            "Name": Name,
+            "Version": self.get_version,
+            "startEventManager": self.startEventManager,
+            "closeEventManager": self.closeEventManager,
+            "getEventManagerC": self.get_manager,
+        }
         _identification = "Pn"
         EventManagerClass.__init__(self, f"{self.spec}.{self.app.id}", _identification=_identification)
         MainTool.__init__(self,
@@ -692,31 +695,23 @@ class Tools(MainTool, EventManagerClass):
                           color=self.color,
                           on_exit=self.closeEventManager)
 
-    @export(
-        mod_name=Name,
-        name="Version",
-        version=version,
-    )
     def get_version(self):
         return self.version
 
     # Exportieren der Scheduler-Instanz für die Nutzung in anderen Modulen
-    @export(mod_name=Name, name='startEventManager', version=version)
     def startEventManager(self):
         if self.app.args_sto.background_application_runner:
             self.identification = 'P0'
         else:
             self.identification = self.app.id.split('-')[0]
 
-    @export(mod_name=Name, name='closeEventManager', version=version)
     def closeEventManager(self):
         self.stop()
         return "closedEventManager"
 
-    @export(mod_name=Name, name='start_web_events', version=version, test=False)
+    @export(mod_name=Name, name='startWebEvents', version=version, test=False)
     async def startWebEvents(self):
         await self.add_js_route()
 
-    @export(mod_name=Name, name='getEventManagerC', version=version, exit_f=True)
     def get_manager(self) -> EventManagerClass:
         return self

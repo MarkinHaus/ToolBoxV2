@@ -46,7 +46,7 @@ setup(
     description="Command line interface for interactions with the ToolBox Network.",
     entry_points={
         'console_scripts': [
-            'toolboxv2=toolboxv2.__main__:main_runner',
+            'tb=toolboxv2.__main__:main_runner',
         ],
     },
     install_requires=install_requires,

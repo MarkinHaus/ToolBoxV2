@@ -445,6 +445,8 @@ class Tools(MainTool, FileHandler):
         self.register_new_connection_helper(name, client_socket, endpoint)
 
     def register_new_connection(self, name, client_socket, endpoint):
+        if name not in self.sockets:
+            self.logger.error(f"Socket manager Invalid Name : {name} valid ar : {self.sockets.keys()} additional infos : {endpoint}")
         self.sockets[name]["receiver_queue"].put({'data': (client_socket, endpoint), 'identifier': "new_con"})
         self.register_new_connection_helper(name, client_socket, endpoint)
 
@@ -607,6 +609,7 @@ class Tools(MainTool, FileHandler):
             self.logger.info(f"{name} -- received JSON -- {msg['identifier']}")
             return msg
         except json.JSONDecodeError and UnicodeDecodeError as e:
+            # print("row_data", row_data)  # TODO: remove print
             self.logger.error(f"JSON decode error: {e}")
 
         return -1

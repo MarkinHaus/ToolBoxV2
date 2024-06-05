@@ -125,7 +125,10 @@ class Tools(MainTool, FileHandler):  # FileHandler
     def start_live(self, api_name):
         return self._start_api(api_name, live=True, reload=False, test_override=False)
 
-    def start_debug(self, api_name):
+    def start_debug(self, api_name, *mod_names):
+        for mods in mod_names:
+            self.app.print(f"ADDING :  {mods}")
+            self.app.watch_mod(mods)
         return self._start_api(api_name, live=False, reload=True, test_override=True, host="127.0.0.1")
 
     def _start_api(self, api_name: str, live=False, reload=False, test_override=False, host="localhost"):
@@ -171,8 +174,8 @@ class Tools(MainTool, FileHandler):  # FileHandler
         self.print(api_data)
         g = f"uvicorn toolboxv2.mods.FastApi.fast_api_main:app --host {api_data['host']}" \
             f" --port {api_data['port']} --header data:{self.app.debug}:{api_name}"
-        # if reload:
-        #    g += ' --reload --reload-dir ./utils' if reload else ''
+        if reload:
+            g += ' --reload --reload-dir ./utils' if reload else ''
 
         print("Running command : " + g)
         # def runner():
@@ -181,10 +184,14 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         if api_thread is None:
             self.running_apis[api_name] = True
-            _ = "http" + '' if (api_data.get('host', '0').startswith('0') or api_data.get('host', '0').startswith('1') or
-                                api_data.get('host', '0').startswith('localhost')) else 's'
+            _ = "http" + '' if (
+                    api_data.get('host', '0').startswith('0') or api_data.get('host', '0').startswith('1') or
+                    api_data.get('host', '0').startswith('localhost')) else 's'
             _ += '://'
-            print_qrcode_to_console(_ + (get_public_ip() if api_data['host'] == '0.0.0.0' else (get_local_ip() if api_data['host'] in ['127.0.0.1', 'localhost'] else api_data['host'])) + ':' + str(api_data['port']))
+            print_qrcode_to_console(_ + (get_public_ip() if api_data['host'] == '' else (
+                get_local_ip() if api_data['host'] in ['127.0.0.1', 'localhost'] else api_data['host'] if api_data[
+                                                                                                              'host'] != '0.0.0.0' else '127.0.0.1')) + ':' + str(
+                api_data['port']))
             self.running_apis[api_name] = multiprocessing.Process(target=os.system, args=(g,), daemon=True)
             self.running_apis[api_name].start()
             return "starting api at " + api_data['host'] + ':' + str(api_data['port'])
@@ -250,4 +257,3 @@ class Tools(MainTool, FileHandler):  # FileHandler
             await self.stop_api(key, delete=False)
         self.running_apis = {}
         self.save_file_handler()
-

@@ -30,7 +30,7 @@ class ProxyUtil:
     def __await__(self):
         return self.__initobj().__await__()
 
-    async def __ainit__(self, class_instance: Any, host='0.0.0.0', port=6587, timeout=15,
+    async def __ainit__(self, class_instance: Any, host='0.0.0.0', port=6587, timeout=1.4,
                         app: Optional[App or AppType] = None,
                         remote_functions=None, peer=False, name='daemonApp-client', do_connect=True, unix_socket=False,
                         test_override=False):
@@ -46,7 +46,7 @@ class ProxyUtil:
         self._name = name
         self.unix_socket = unix_socket
         if remote_functions is None:
-            remote_functions = ["run_any", "remove_mod", "save_load", "exit_main", "show_console", "hide_console",
+            remote_functions = ["run_any", "a_run_any", "remove_mod", "save_load", "exit_main", "show_console", "hide_console",
                                 "rrun_runnable",
                                 "get_autocompletion_dict",
                                 "exit_main"]

@@ -1,6 +1,6 @@
 NAME = 'bg'
 
 
-def run(_, __):
+async def run(_, __):
     _.print("Running...")
-    _.daemon_app.connect(_)
+    await _.daemon_app.connect(_)
