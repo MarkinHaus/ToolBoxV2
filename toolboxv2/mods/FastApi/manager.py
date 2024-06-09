@@ -112,7 +112,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         self.print(self.api_config[api_name])
 
-    def start_dev(self, api_name: str, *modules):
+    def start_dev(self, api_name: str, *modules, **kwargs):
         if modules:
             api_name += '_D'
             with BlobFile(f"FastApi/{api_name}/dev", mode='w') as f:

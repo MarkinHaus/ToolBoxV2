@@ -19,7 +19,7 @@ class TestFindHighestZipVersionEntry(unittest.TestCase):
         get_app(name="test-debug")
         result = find_highest_zip_version_entry(name="example")
         # Add assertions to check the result
-        self.assertIsNone(result)
+        self.assertEqual(result == {})
         # Add more specific assertions based on the expected behavior
 
     def test_find_highest_zip_version_entry_with_invalid_filepath(self):

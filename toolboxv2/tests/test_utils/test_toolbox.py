@@ -13,7 +13,7 @@ from inspect import signature
 from types import ModuleType
 from functools import partial, wraps
 from typing import Callable
-from unittest.mock import Mock
+from unittest.mock import Mock, AsyncMock
 
 import requests
 from yaml import safe_load
@@ -115,8 +115,8 @@ class TestToolboxv2(unittest.TestCase):
         self.app.set_runnable(data)
 
         self.assertEqual(len(self.app.runnable.keys()), 1)
-        self.app.daemon_app = Mock()
-        self.app.daemon_app.connect = Mock()
+        self.app.daemon_app = AsyncMock()
+        self.app.daemon_app.connect = AsyncMock()
 
         await self.app.run_runnable("bg")
 
