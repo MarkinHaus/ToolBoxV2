@@ -44,4 +44,4 @@ async def run(app: App, args: AppArgs):
 if __name__ == "__main__":
     import os
     # os.system(f"toolboxv2 --test --debug")
-    os.system(f"toolboxv2 -bgr -p 42869 -n core0 -l -m {NAME}")
+    os.system(f"tb -bgr -p 42869 -n core0 -l -m {NAME}")

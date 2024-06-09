@@ -9,12 +9,11 @@
 Application center *toolbox* for simple functions through to finished applications.
 
 ## Goal
-** The primary task of the *toolbox* is to execute applications,
-integrate them and make them system-independent. The *toolbox* follows a simple cycle
-follows a simple cycle: the user requests the execution of an
-application and, if successful, receives the application data in the defined result format.
-in the defined result format. If necessary, automatic error corrections are
-are carried out within the defined framework to ensure a successful execution.**
+The primary goal of the toolbox is to execute applications, integrate them, and make them system-independent.
+The underlying system, built on a monolithic modular architecture, combines the advantages of both approaches,
+enabling intuitive interaction with the digital world. It connects various components and provides utility functions accessible from anywhere.
+Automatic error corrections are performed within a defined framework if necessary to ensure successful execution.
+This platform promotes creative collaboration and eases access to digital resources.
 
 ## Assembly
 - [INSTALLER](https://simplecore.app/web/core0/Installer.html)

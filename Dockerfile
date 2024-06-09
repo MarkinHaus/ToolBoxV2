@@ -30,7 +30,7 @@ RUN npm install bun
 # RUN npx bun install -y ./toolboxv2/web/
 
 COPY ./setup.py ./setup.py
-COPY ./requirements.txt ./requirements.txt
+COPY requirements_leg.txt ./requirements.txt
 COPY ./README.md ./README.md
 COPY ./setup.cfg ./setup.cfg
 COPY ./MANIFEST.in ./MANIFEST.in
@@ -47,7 +47,7 @@ COPY ./toolboxv2/index.js ./toolboxv2/index.js
 COPY ./toolboxv2/package.json ./toolboxv2/package.json
 COPY ./toolboxv2/tbState.yaml ./toolboxv2/tbState.yaml
 COPY ./toolboxv2/toolbox.yaml ./toolboxv2/toolbox.yaml
-COPY ./toolboxv2/vite.config.js ./toolboxv2/vite.config.js
+COPY ./toolboxv2/mods_sto ./toolboxv2/mods_sto
 
 # Install the local application using pip.
 RUN npx bun install -y ./toolboxv2/web/

@@ -200,27 +200,27 @@ class App(AppType, metaclass=Singleton):
     def set_logger(self, debug=False):
         if "test" in self.prefix and not debug:
             logger, logging_filename = setup_logging(logging.NOTSET, name="toolbox-test", interminal=True,
-                                                     file_level=logging.NOTSET)
+                                                     file_level=logging.NOTSET, app_name=self.id)
             logger_info_str = "in Test Mode"
         elif "live" in self.prefix and not debug:
             logger, logging_filename = setup_logging(logging.DEBUG, name="toolbox-live", interminal=False,
-                                                     file_level=logging.WARNING)
+                                                     file_level=logging.WARNING, app_name=self.id)
             logger_info_str = "in Live Mode"
             # setup_logging(logging.WARNING, name="toolbox-live", is_online=True
             #              , online_level=logging.WARNING).info("Logger initialized")
         elif "debug" in self.prefix or self.prefix.endswith("D"):
             self.prefix = self.prefix.replace("-debug", '').replace("debug", '')
             logger, logging_filename = setup_logging(logging.DEBUG, name="toolbox-debug", interminal=True,
-                                                     file_level=logging.WARNING)
+                                                     file_level=logging.WARNING, app_name=self.id)
             logger_info_str = "in debug Mode"
             self.debug = True
         elif debug:
             logger, logging_filename = setup_logging(logging.DEBUG, name=f"toolbox-{self.prefix}-debug",
                                                      interminal=True,
-                                                     file_level=logging.DEBUG)
+                                                     file_level=logging.DEBUG, app_name=self.id)
             logger_info_str = "in args debug Mode"
         else:
-            logger, logging_filename = setup_logging(logging.ERROR, name=f"toolbox-{self.prefix}")
+            logger, logging_filename = setup_logging(logging.ERROR, name=f"toolbox-{self.prefix}", app_name=self.id)
             logger_info_str = "in Default"
 
         return logger_info_str, logger, logging_filename

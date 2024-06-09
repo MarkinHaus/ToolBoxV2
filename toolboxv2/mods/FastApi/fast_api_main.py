@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketDisconnect
 from fastapi.responses import RedirectResponse
 
 from toolboxv2.tests.a_util import async_test
+from toolboxv2.utils.extras.blobs import BlobFile
 from toolboxv2.utils.security.cryp import DEVICE_KEY, Code
 
 from fastapi import FastAPI, Request, WebSocket, APIRouter
@@ -23,6 +24,24 @@ from toolboxv2 import tbef, AppArgs, ApiResult, Spinner, get_app
 from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
 
 from toolboxv2.utils.system.state_system import get_state_from_app
+from functools import partial, wraps
+
+dev_hr_index = "v0.0.1"
+
+
+def create_partial_function(original_function, partial_function):
+    @wraps(original_function)
+    async def wrapper(*args, **kwargs):
+        # Call the partial function with the same arguments
+        res = await partial_function(*args, **kwargs)
+        if asyncio.iscoroutine(res):
+            res = await res
+        print("RESULT ::::", res)
+        return res
+
+    # Return the wrapper function which mimics the original function's signature
+    return wrapper
+
 
 id_name = ""
 debug = False
@@ -38,6 +57,8 @@ args.sysPrint = True
 tb_app = get_app(from_="init-api-get-tb_app", name=id_name, args=args, sync=True)
 
 manager = tb_app.get_mod("WebSocketManager")
+
+
 # with Spinner("loding mods", symbols="b"):
 #     module_list = tb_app.get_all_mods()
 #     open_modules = tb_app.functions.keys()
@@ -252,8 +273,8 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         # Get the client's IP address
         session = request.cookies.get(self.cookie_key)
         tb_app.logger.debug(f"({request.session} --> {request.url.path})")
-
         if request.url.path == '/validateSession':
+            print("INSSSSO")
             await self.set_body(request)
             body = await request.body()
             print("BODY #####", body)
@@ -267,6 +288,13 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             username = body.get('Username', None)
             session_id = await self.crate_new_session_id(request, jwt_token, username,
                                                          session_id=request.session.get('ID'))
+            return JSONResponse(
+                    status_code=200,
+                    content={"message": "Valid Session", "valid": True}
+                ) if await self.validate_session(session_id) else JSONResponse(
+                status_code=401,
+                content={"message": "Invalid Auth data.", "valid": False}
+                )
         elif not session:
             session_id = await self.crate_new_session_id(request, None, "Unknown")
         elif request.session.get('ID', '') not in self.sessions:
@@ -276,7 +304,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         else:
             session_id: str = request.session.get('ID', '')
         request.session['live_data'] = {}
-        print("testing session")
+        # print("testing session")
         if await self.validate_session(session_id):
             print("valid session")
             request.session['valid'] = True
@@ -302,12 +330,12 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
                     status_code=200,
                     content={"message": "Valid Session", "GRAY_LIST": self.GRAY_LIST, "BLACK_LIST": self.BLACK_LIST}
                 )
-            elif request.url.path == '/validateSession':
+            elif request.url.path == '/IsValiSession':
                 return JSONResponse(
                     status_code=200,
-                    content={"message": "Valid Session started", "valid": True}
+                    content={"message": "Valid Session", "valid": True}
                 )  # .set_cookie(self.cookie_key, value=request.cookies.get('session'))
-        elif request.url.path == '/validateSession':
+        elif request.url.path == '/IsValiSession':
             return JSONResponse(
                 status_code=401,
                 content={"message": "Invalid Auth data.", "valid": False}
@@ -326,11 +354,9 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
                 c = self.sessions[session_id]['c']
                 if c < 20:
                     tb_app.logger.warning(f"SuS Request : IP : {ip} ")
-                    return await call_next(request)
                 elif c == 460:
                     self.GRAY_LIST.append(self.sessions[session_id].get('ip', "unknown"))
                     self.sessions[session_id]['what_user'] = True
-                    return await call_next(request)
                 elif c == 6842:
                     self.GRAY_LIST.append(self.sessions[session_id].get('ip', "unknown"))
                     self.sessions[session_id]['ratelimitWarning'] = True
@@ -344,10 +370,6 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
                         status_code=403,
                         content={"message": "u got BLACK_LISTED"}
                     )
-                else:
-                    return await call_next(request)
-            else:
-                return await call_next(request)
         return await call_next(request)
 
         # if session:
@@ -650,7 +672,8 @@ def test_rate_limiting_middleware():
 
 async def helper(id_name):
     global tb_app
-    tb_app = await a_get_proxy_app(tb_app)
+    is_proxy = False
+    # tb_app = await a_get_proxy_app(tb_app)
 
     if "HotReload" in tb_app.id:
         @app.get("/HotReload")
@@ -670,12 +693,18 @@ async def helper(id_name):
 
     await tb_app.load_all_mods_in_file()
 
+    with BlobFile(f"FastApi/{id_name}/dev", mode='r') as f:
+        modules = f.read_json().get("modules", [])
+    for mods in modules:
+        tb_app.print(f"ADDING :  {mods}")
+        tb_app.watch_mod(mods)
+
     time.sleep(0.5)
 
     d = tb_app.get_mod("DB")
     d.initialize_database()
     # c = d.edit_cli("RR")
-    tb_app.watch_mod("CloudM.AuthManager", path_name="/mods/CloudM/AuthManager.py")
+    # await tb_app.watch_mod("CloudM.AuthManager", path_name="/CloudM/AuthManager.py")
     c = d.initialized()
     print("DB initialized", c)
     if not c.get():
@@ -686,28 +715,36 @@ async def helper(id_name):
 
     app.include_router(app_router)
 
+    from .fast_api_install import router as install_router
+
+    cm = tb_app.get_mod("CloudM")
+    # all_mods = tb_app.get_all_mods()
+    provider = os.environ.get("MOD_PROVIDER", default="http://127.0.0.1:5000/")
+    tb_state = get_state_from_app(tb_app, simple_core_hub_url=provider)
+
+    def get_d(mod_name_="CloudM"):
+        return cm.save_mod_snapshot(mod_name_, provider=provider, tb_state=tb_state)
+
+    install_router.add_api_route('/' + "get", get_d, methods=["GET"], description="get_species_data")
+    app.include_router(install_router)
+
+    async def proxi_helper(*__args, **__kwargs):
+        await tb_app.client.get('sender')({'name': "a_run_any", 'args': __args, 'kwargs': __kwargs})
+        while Spinner("Waiting for result"):
+            try:
+                return tb_app.client.get('receiver_queue').get(timeout=tb_app.timeout)
+            except Exception as _e:
+                print("Error", _e)
+                return HTMLResponse(status_code=408)
+
     for mod_name, functions in tb_app.functions.items():
+        add = False
         router = APIRouter(
             prefix=f"/api/{mod_name}",
             tags=["token", mod_name],
             # dependencies=[Depends(get_token_header)],
             # responses={404: {"description": "Not found"}},
         )
-        # "type": type_,
-        # "level": level,
-        # "restrict_in_virtual_mode": restrict_in_virtual_mode,
-        # "func": func,
-        # "api": api,
-        # "helper": helper,
-        # "version": version,
-        # "initial": initial,
-        # "exit_f": exit_f,
-        # "__module__": func.__module__,
-        # "signature": sig,
-        # "params": params,
-        # "state": (False if len(params) == 0 else params[0] in ['self', 'state']) if state is None else state,
-        # "do_test": test,
-        # "samples": samples,
 
         for function_name, function_data in functions.items():
             if not isinstance(function_data, dict):
@@ -715,6 +752,7 @@ async def helper(id_name):
             api: list = function_data.get('api')
             if api is False:
                 continue
+            add = True
             params: list = function_data.get('params')
             sig: signature = function_data.get('signature')
             state: bool = function_data.get('state')
@@ -726,6 +764,10 @@ async def helper(id_name):
             if error != 0:
                 continue
             try:
+                if tb_func and is_proxy:
+                    tb_func = create_partial_function(tb_func, partial(proxi_helper,
+                                                                       mod_function_name=(mod_name, function_name),
+                                                                       get_results=True))
                 if tb_func:
                     if len(params):
                         router.add_api_route('/' + function_name, tb_func, methods=["POST"],
@@ -733,26 +775,25 @@ async def helper(id_name):
                     else:
                         router.add_api_route('/' + function_name, tb_func, methods=["GET"],
                                              description=function_data.get("helper", ""))
+                    print("Added live", function_name)
+                else:
+                    raise ValueError(f"fuction '{function_name}' not found")
+
             except fastapi.exceptions.FastAPIError as e:
                 raise SyntaxError(f"fuction '{function_name}' prove the signature error {e}")
-
-        app.include_router(router)
+        if add:
+            app.include_router(router)
+    # router2 = APIRouter(
+    #     prefix=f"/ROOT",
+    #     # dependencies=[Depends(get_token_header)],
+    #     # responses={404: {"description": "Not found"}},
+    # )
+    # router2.add_api_route('/', tb_app.a_run_any, methods=["POST"],
+    #                      description="Proxy Endpoint")
+    # app.include_router(router2)
 
     # if "modInstaller" in tb_app.id:
     #    print("ModInstaller Init")
-
-    from .fast_api_install import router as install_router
-
-    cm = tb_app.get_mod("CloudM")
-    all_mods = tb_app.get_all_mods()
-    provider = os.environ.get("MOD_PROVIDER", default="http://127.0.0.1:5000/")
-    tb_state = get_state_from_app(tb_app, simple_core_hub_url=provider)
-
-    def get_d(mod_name_="CloudM"):
-        return cm.save_mod_snapshot(mod_name_, provider=provider, tb_state=tb_state)
-
-    install_router.add_api_route('/' + "get", get_d, methods=["GET"], description="get_species_data")
-    app.include_router(install_router)
 
 
 print("API: ", __name__)
@@ -767,5 +808,3 @@ tb_app.run_a_from_sync(helper, id_name)
 # print("API: ", __name__)
 # if __name__ == 'toolboxv2.api.fast_api_main':
 #     global tb_app
-
-

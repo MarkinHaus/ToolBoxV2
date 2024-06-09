@@ -65,7 +65,7 @@ def fisx_dep(retries=5, env_path=None):
     if env_path is None:
         env_path = Path.home() / ".local/share/virtualenvs/toolboxv2_env"
     env_path = Path(env_path)
-    command = 'toolboxv2 -fg -v'
+    command = 'tb -fg -v'
     for attempt in range(retries):
         print(f"Versuch {attempt + 1} von {retries}...")
         error, exit_code = run_command(str(env_path), command)
@@ -87,7 +87,7 @@ def fisx_dep(retries=5, env_path=None):
 
 
 def inf_test():
-    command = 'toolboxv2 --test'
+    command = 'tb -n test --test'
     errror = True
     while "n" not in input("[Y/n] :").lower() or errror:
         error, exit_code = run_command(sys.executable.replace('\python.exe', ''), command)

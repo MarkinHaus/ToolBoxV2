@@ -259,9 +259,8 @@ class Code:
                 algorithm=hashes.SHA512()
             )
             return True
-        except Exception as e:
-            get_logger().error(f"Error validating signature: {e}")
-            print(e)
+        except:
+            pass
         return False
 
     @staticmethod
@@ -287,9 +286,8 @@ class Code:
                 signature_algorithm=signature_algorithm
             )
             return True
-        except Exception as e:
-            print(e)
-            get_logger().error(f"Error validating signature: {e}")
+        except:
+            pass
         return False
 
     @staticmethod

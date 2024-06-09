@@ -631,6 +631,7 @@ class Tools(MainTool, FileHandler):
         self.tasks[name] = task
 
     async def helper_0_receive(self):
+        self.print(f"GLOBAL receiver running {list(self.tasks.keys())[0]}")
         await asyncio.gather(*self.tasks.values())
 
     async def receive_helper(self, name, identifier="mian"):

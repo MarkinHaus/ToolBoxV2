@@ -9,7 +9,7 @@ loggerNameOfToolboxv2 = 'toolboxV2'
 
 
 def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_online=False, file_level=None,
-                  interminal=False, logs_directory="../logs"):
+                  interminal=False, logs_directory="../logs", app_name="main"):
     global loggerNameOfToolboxv2
 
     if not online_level:
@@ -94,10 +94,10 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
         with open(log_filename, "a"):
             pass
 
-    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(filename)s - %(funcName)s:%(lineno)d - %(message)s'
+    log_format = f"{app_name} %(asctime)s - %(name)s - %(levelname)s - %(filename)s - %(funcName)s:%(lineno)d - %(message)s"
 
     if interminal:
-        logging.basicConfig(level=level, format=f"%(asctime)s %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+        logging.basicConfig(level=level, format=f"{app_name} %(asctime)s %(levelname)s - %(message)s", datefmt="%Y-%m-%d#%H:%M:%S")
     else:
         logging.basicConfig(level=level, filename=log_filename, format=log_format, datefmt="%Y-%m-%d %H:%M:%S")
 

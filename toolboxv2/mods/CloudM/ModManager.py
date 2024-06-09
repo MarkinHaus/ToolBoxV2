@@ -278,10 +278,14 @@ def installer(app: Optional[App], module_name: str, version: str = "-.-.-"):
 
 @export(mod_name=Name, test=False, api=True, state=False)
 def get_latest(module_name: str):
-    module_name = find_highest_zip_version_entry(module_name).get('url').split('mods_sto\\')[-1]
-    if module_name is None:
-        return False
-    return f"/installer/download/mods_sto\\{module_name}"
+    module_name = find_highest_zip_version_entry(module_name)
+    print(module_name)
+    module_name = module_name.get('url', "")
+    print(module_name)
+    module_name = module_name.split('mods_sto\\')[-1]
+    if module_name is None or module_name == "":
+        return "mod not found"
+    return f"/installer/download/mods_sto/{module_name}"
 
 
 #  =================== v2 functions =================

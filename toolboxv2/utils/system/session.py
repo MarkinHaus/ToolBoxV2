@@ -1,3 +1,4 @@
+import asyncio
 import atexit
 import dataclasses
 import os
@@ -18,7 +19,7 @@ from . import all_functions_enums as tbef
 from aiohttp import ClientSession, ClientResponse
 from yarl import URL
 
-from ... import Code
+from ... import Code, Spinner
 from ...tests.a_util import async_test
 
 
@@ -39,13 +40,16 @@ class Session(metaclass=Singleton):
         if base is not None and base.endswith("/api/"):
             base = base.replace("api/", "")
         self.base = base
+        self.base = base.rstrip('/')  # Ensure no trailing slash
 
-        async def helper(): await self.session.close() if self.session is not None else None
+        async def helper():
+            await self.session.close() if self.session is not None else None
 
         atexit.register(async_test(helper))
 
     async def init_log_in_mk_link(self, mak_link, download=True, b_name="chromium", headless=False):
         from playwright.async_api import async_playwright
+        await asyncio.sleep(0.1)
         async with async_playwright() as playwright:
             try:
                 browser = await playwright.chromium.launch(
@@ -53,7 +57,7 @@ class Session(metaclass=Singleton):
             except Exception as e:
                 if download and "Executable doesn't exist at" in str(e):
                     print("starting installation")
-                    os.system(sys.executable+' -m playwright install '+b_name+' --with-deps --force')
+                    os.system(sys.executable + ' -m playwright install ' + b_name + ' --with-deps --force')
                 if not download:
                     return "install a browser"
                 browser = await playwright.chromium.launch(
@@ -66,49 +70,89 @@ class Session(metaclass=Singleton):
             # Navigate to a URL that sets something in localStorage
             if mak_link.startswith(self.base):
                 mak_link = mak_link.replace(self.base, "")
+
             await page.goto(f"{self.base}/{mak_link}")  # Replace with the actual URL that uses localStorage
             # Retrieve data from localStorage
-            time.sleep(3)
+            await asyncio.sleep(1)
+            await page.wait_for_load_state("networkidle", timeout=40 * 60)
             started = await page.evaluate("localStorage.getItem('StartMLogIN')")
             if started is None:
                 get_logger().error("Could not found the startMLogIN flag")
                 await browser.close()
                 return False
-            await page.wait_for_url(url=f"{self.base}/web/dashboard", wait_until="commit", timeout=60 * 2.5 * 1000)
+            print("Step (1/7)")
+            with Spinner("Waiting for Log in", count_down=True, time_in_s=6):
+                await asyncio.sleep(6)
+            print("Step (2/7)")
+            await page.wait_for_load_state("networkidle", timeout=240 * 60)
             claim = await page.evaluate("localStorage.getItem('jwt_claim_device')")
+            print("claim: ", len(claim))
+            print("Step (3/7)")
             if claim is None:
                 get_logger().error("No claim Received")
                 await browser.close()
                 return False
+            print("Step (4/7)")
             with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="w") as blob:
                 blob.clear()
                 blob.write(claim.encode())
-
+            print("Step (5/7)")
             # Do something with the data or perform further actions
 
             # Close browser
             await browser.close()
-
-        return await self.login()
+        print("Step (6/7)")
+        res = await self.login()
+        print("Step (7/7)")
+        return res
 
     async def login(self):
-        self.session = ClientSession()
+        if self.session is None:
+            self.session = ClientSession()
         with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="r") as blob:
             claim = blob.read()
-            # print("Claim:", claim)
         if not claim:
             return False
-        
+
         async with self.session.request("GET", url=f"{self.base}/validateSession", json={'Jwt_claim': claim.decode(),
                                                                                          'Username': self.username}) as response:
-            print(response.status)
             if response.status == 200:
-                json_response = await response.json()
-                print(json_response)
+                print("Successfully Connected 2 TBxN")
                 get_logger().info("LogIn successful")
                 return True
             get_logger().warning("LogIn failed")
             return False
+
+    async def download_file(self, url, dest_folder="mods_sto"):
+        if not self.session:
+            raise Exception("Session not initialized. Please login first.")
+        # Sicherstellen, dass das Zielverzeichnis existiert
+        os.makedirs(dest_folder, exist_ok=True)
+
+        # Analyse der URL, um den Dateinamen zu extrahieren
+        filename = url.split('/')[-1]
+
+        # Bereinigen des Dateinamens von Sonderzeichen
+        valid_chars = '-_.()abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+        filename = ''.join(char for char in filename if char in valid_chars)
+
+        # Konstruieren des vollständigen Dateipfads
+        file_path = os.path.join(dest_folder, filename)
+        if isinstance(url, str):
+            url = URL(self.base + url)
+        async with self.session.get(url) as response:
+            if response.status == 200:
+                with open(file_path, 'wb') as f:
+                    while True:
+                        chunk = await response.content.read(1024)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                print(f'File downloaded: {file_path}')
+                return True
+            else:
+                print(f'Failed to download file: {url}. Status code: {response.status}')
+        return False
 
     async def logout(self) -> bool:
         if self.session:
@@ -120,7 +164,7 @@ class Session(metaclass=Singleton):
 
     async def fetch(self, url: URL or str, method: str = 'GET', data=None) -> ClientResponse:
         if isinstance(url, str):
-            url = URL(url)
+            url = URL(self.base + url)
         if self.session:
             if method.upper() == 'POST':
                 return await self.session.post(url, data=data)

@@ -133,10 +133,12 @@ def downloaded_mod(payload: EventID):
     return "Done uploading"
 
 
-def copy_files(src_dir, dest_dir, exclude_dirs):
+def copy_files(src_dir, dest_dir, exclude_dirs, include=None):
     for root, dirs, files in os.walk(src_dir):
         # Exclude specified directories
         dirs[:] = [d for d in dirs if d not in exclude_dirs]
+
+        dirs[:] = [d for d in dirs if include is None or d in include]
 
         for file in files:
             src_file_path = os.path.join(root, file)
@@ -145,7 +147,7 @@ def copy_files(src_dir, dest_dir, exclude_dirs):
             shutil.copy2(src_file_path, dest_file_path)
 
 
-@export(mod_name=Name, test=False)
+@export(mod_name=Name, test=False, helper="init row web data updates Event")
 def web_get(app):
     if app is None:
         app = get_app(f"{Name}.web_update")
@@ -161,7 +163,7 @@ def web_get(app):
     ev.register_event(dw_event)
 
 
-@export(mod_name=Name, test=False)
+@export(mod_name=Name, test=False, helper="init mods updates Event")
 def mods_get(app):
     if app is None:
         app = get_app(f"{Name}.web_update")
@@ -193,7 +195,28 @@ def build_edv_blob():
                     "toolboxv2\\token.pickle", "toolboxv2\\token-0.pickle", "toolboxv2\\token-1.pickle",
                     "toolboxv2\\token-main.pickle",
                     "node_modules", "src-tauri"]
-    copy_files(src_dir, dest_dir, exclude_dirs)
+    include = [
+        "./setup.py",
+        "requirements_leg.txt",
+        "./README.md",
+        "./setup.cfg",
+        "./MANIFEST.in",
+        "./toolboxv2/mods",
+        "./toolboxv2/runabel",
+        "./toolboxv2/tests",
+        "./toolboxv2/web",
+        "./toolboxv2/utils",
+        "./toolboxv2/__init__.py",
+        "./toolboxv2/__main__.py",
+        "./toolboxv2/favicon.ico",
+        "./toolboxv2/index.html",
+        "./toolboxv2/index.js",
+        "./toolboxv2/package.json",
+        "./toolboxv2/tbState.yaml",
+        "./toolboxv2/toolbox.yaml",
+        "./toolboxv2/mods_sto",
+    ]
+    copy_files(src_dir, dest_dir, exclude_dirs, include)
 
 
 @export(mod_name=Name, test=False)
@@ -222,17 +245,20 @@ def send_web(app):
 def send_mod_all_in_one(app):
     if app is None:
         app = get_app(f"{Name}.web_update")
-    send_mod_build(app)
+    build_mod(app)
     print(send_mod_start_sver_event(app))
     return send_mod_uploade_data(app)
 
 
 @export(mod_name=Name, test=False)
-def send_mod_build(app):
+def build_mod(app, name=None):
     if app is None:
         app = get_app(f"{Name}.web_update")
 
     with Spinner("Preparing Mods"):
+        if name:
+            app.run_any(tbef.CLOUDM.MAKE_INSTALL, module_name=name)
+            return
         for mod_name in app.get_all_mods():
             app.run_any(tbef.CLOUDM.MAKE_INSTALL, module_name=mod_name)
 
@@ -268,6 +294,7 @@ def buildDoLive():
 @export(mod_name=Name, test=False, state=False)
 def runDoLive():
     return os.system("docker run 'livetb'")
+
 
 @export(mod_name=Name, test=False, state=False)
 def doLogs():

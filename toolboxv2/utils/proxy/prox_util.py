@@ -30,9 +30,9 @@ class ProxyUtil:
     def __await__(self):
         return self.__initobj().__await__()
 
-    async def __ainit__(self, class_instance: Any, host='0.0.0.0', port=6587, timeout=1.4,
+    async def __ainit__(self, class_instance: Any, host='0.0.0.0', port=6587, timeout=6,
                         app: Optional[App or AppType] = None,
-                        remote_functions=None, peer=False, name='daemonApp-client', do_connect=True, unix_socket=False,
+                        remote_functions=None, peer=False, name='ProxyApp-client', do_connect=True, unix_socket=False,
                         test_override=False):
         self.class_instance = class_instance
         self.client = None
@@ -49,7 +49,7 @@ class ProxyUtil:
             remote_functions = ["run_any", "a_run_any", "remove_mod", "save_load", "exit_main", "show_console", "hide_console",
                                 "rrun_runnable",
                                 "get_autocompletion_dict",
-                                "exit_main"]
+                                "exit_main", "watch_mod"]
         self.remote_functions = remote_functions
 
         from toolboxv2.mods.SocketManager import SocketType
@@ -131,12 +131,16 @@ class ProxyUtil:
             if self.client is None:
                 await self.reconnect()
             if kwargs.get('spec', '-') == 'app':
+                if asyncio.iscoroutinefunction(app_attr):
+                    return await app_attr(*args, **kwargs)
                 return app_attr(*args, **kwargs)
             try:
                 if name in self.remote_functions:
-                    if name == 'run_any' and not kwargs.get('get_results', False):
+                    if (name == 'run_any' or name == 'a_run_any') and not kwargs.get('get_results', False):
+                        if asyncio.iscoroutinefunction(app_attr):
+                            return await app_attr(*args, **kwargs)
                         return app_attr(*args, **kwargs)
-                    if name == 'run_any' and kwargs.get('get_results', False):
+                    if (name == 'run_any' or name == 'a_run_any') and kwargs.get('get_results', False):
                         if isinstance(args[0], Enum):
                             args = (args[0].__class__.NAME.value, args[0].value), args[1:]
                     self.app.sprint(f"Calling method {name}, {args=}, {kwargs}=")
@@ -151,7 +155,8 @@ class ProxyUtil:
                             return data
                         except:
                             print("No data look later with class_instance.r")
-                            return "No data"
+                            return Result.default_internal_error("No data received from Demon."
+                                                                 " uns class_instance.r to get data later")
             except:
                 if self.client.get('socket') is None:
                     self.client = None

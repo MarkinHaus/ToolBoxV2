@@ -35,8 +35,10 @@ with open(os.getenv('CONFIG_FILE', f'{os.path.abspath(__file__).replace("__init_
     _version = safe_load(config_file)
     __version__ = _version.get('main', {}).get('version', '-.-.-')
 
+ToolBox_over: str = "root"
 __all__ = [
     "App",
+    "ToolBox_over",
     "MainTool",
     "FileHandler",
     "Style",
@@ -54,4 +56,3 @@ __all__ = [
     "Code",
 ]
 
-ToolBox_over: str = "root"

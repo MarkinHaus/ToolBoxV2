@@ -112,23 +112,17 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         self.print(self.api_config[api_name])
 
-    def start_dev(self, api_name: str, *modules, **kwargs):
+    def start_dev(self, api_name: str, *modules):
         if modules:
             api_name += '_D'
-            with BlobFile(f"FastApiManager/{api_name}.specs", 'w') as f:
-                f.write_json({
-                    'modules': modules,
-                })
-            print("Started FastApiManagerDev", api_name)
+            with BlobFile(f"FastApi/{api_name}/dev", mode='w') as f:
+                f.write_json({'modules': modules})
         return self._start_api(api_name, live=False, reload=True, test_override=False, host="0.0.0.0")
 
     def start_live(self, api_name):
         return self._start_api(api_name, live=True, reload=False, test_override=False)
 
     def start_debug(self, api_name, *mod_names):
-        for mods in mod_names:
-            self.app.print(f"ADDING :  {mods}")
-            self.app.watch_mod(mods)
         return self._start_api(api_name, live=False, reload=True, test_override=True, host="127.0.0.1")
 
     def _start_api(self, api_name: str, live=False, reload=False, test_override=False, host="localhost"):
@@ -175,7 +169,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
         g = f"uvicorn toolboxv2.mods.FastApi.fast_api_main:app --host {api_data['host']}" \
             f" --port {api_data['port']} --header data:{self.app.debug}:{api_name}"
         if reload:
-            g += ' --reload --reload-dir ./utils' if reload else ''
+            g += ' --reload --reload-dir ./utils --reload-dir ./mods/FastApi' if reload else ''
 
         print("Running command : " + g)
         # def runner():

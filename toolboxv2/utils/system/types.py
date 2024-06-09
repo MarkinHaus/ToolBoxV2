@@ -414,6 +414,7 @@ class AppType:
     globals: Dict[str, Any] = {"root": dict, }
     locals: Dict[str, Any] = {"user": {'app': "self"}, }
 
+    start_dir: str
     data_dir: str
     config_dir: str
     info_dir: str

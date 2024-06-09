@@ -7,6 +7,7 @@ export default defineConfig({
         proxy: {
             '/api': 'http://127.0.0.1:5000',
             '/validateSession': 'http://127.0.0.1:5000',
+            '/IsValiSession': 'http://127.0.0.1:5000',
             '/web/signup': 'http://127.0.0.1:5000',
             '/web/login': 'http://127.0.0.1:5000',
             '/web/logout': 'http://127.0.0.1:5000',

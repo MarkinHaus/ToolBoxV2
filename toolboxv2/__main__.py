@@ -1,4 +1,5 @@
 """Console script for toolboxv2."""
+import json
 # Import default Pages
 import sys
 import argparse
@@ -11,6 +12,7 @@ from platform import system, node
 from yaml import safe_load
 
 from toolboxv2.runabel import runnable_dict as runnable_dict_func
+from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
 from toolboxv2.utils.system.main_tool import MainTool
 from toolboxv2.utils.extras.Style import Style, Spinner
 from toolboxv2.utils.system.session import Session
@@ -514,13 +516,10 @@ async def main(loop=None):
         tb_app.print = lambda text, *args, **kwargs: None
 
     tb_app.loop = loop
-    with Spinner("Crating State"):
-        st = threading.Thread(target=get_state_from_app, args=(tb_app,
-                                os.environ.get("TOOLBOXV2_REMOTE_BASE", "https://simplecore.app"),
-                                "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/"), daemon=True)
+
     daemon_app = None
     tb_app.print("OK")
-    st.start()
+
     if args.background_application_runner:
         daemon_app = await DaemonApp(tb_app, args.host, args.port if args.port != 5000 else 6587, t=False)
         if not args.debug:
@@ -537,7 +536,7 @@ async def main(loop=None):
                 pid_file = f"{info_folder}bg-{args.name}.pid"
             try:
                 _ = await ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
-                                   args.port if args.port != 5000 else 6587, timeout=6)
+                                   args.port if args.port != 5000 else 6587, timeout=4)
                 await _.verify()
                 if await _.exit_main() != "No data look later":
                     stop(pid_file + '-app.pid', args.name)
@@ -545,12 +544,7 @@ async def main(loop=None):
                 stop(pid_file + '-app.pid', args.name)
     elif args.live_application:
         try:
-            _ = await ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
-                               args.port if args.port != 5000 else 6587)
-            time.sleep(0.2)
-            await _.verify({'key': os.getenv('TB_R_KEY', 'remote@root')} if args.remote else b"verify")
-            time.sleep(0.1)
-            tb_app = override_main_app(_)
+            tb_app = await a_get_proxy_app(tb_app)
             if args.debug:
                 await tb_app.show_console()
         except:
@@ -562,8 +556,10 @@ async def main(loop=None):
     if args.install:
         report = False  # tb_app.run_any("CloudM", "install", module_name=args.install)
         if not report:
+            await asyncio.sleep(0.1)
             if 'n' not in input("Mod not found in local mods_sto install from remote ? (yes,no)"):
-                session = Session(tb_app.get_username(), base=os.getenv("MOD_PROVIDER"))
+                session = Session("root",
+                                  base="http://localhost:5000")  # tb_app.get_username(), base="http://localhost:5000") #os.getenv("MOD_PROVIDER"))
                 if not await session.login():
                     mk = input(f"bitte geben sie ihren magik link ein {session.base}/")
                     if 'web/' not in mk:
@@ -574,13 +570,32 @@ async def main(loop=None):
                         return
                 response = await session.fetch("/api/CloudM/get_latest?module_name=" + args.install, method="GET")
                 json_response = await response.json()
-                print(json_response)
-                print(json_response['data'])
+                response = json.loads(json_response)
 
-                r2 = await session.fetch(json_response['data'], method="GET")
-                json_response = await response.json()
-                print(json_response)
-                print(json_response['data'])
+                do_install = True
+                if response['error'] != "none":
+                    print("Error while fetching mod data")
+                    do_install = False
+
+                if response['result']['data'] == 'mod not found':
+                    print("404 mod not found")
+                    do_install = False
+                if not do_install:
+                    return
+                print(f"mod url is : {session.base + response['result']['data']}")
+                if not await session.download_file(response['result']['data'], tb_app.start_dir + '/mods_sto'):
+                    print("failed to download mod")
+                    print("optional download it ur self and put the zip in the mods_sto folder")
+                    if 'y' not in input("Done ? will start set up from the mods_sto folder").lower():
+                        return
+                os.rename(
+                    tb_app.start_dir + '/mods_sto/' + response['result']['data'].split('/')[-1].replace("$", '').replace(
+                        "&", '').replace("§", ''),
+                    tb_app.start_dir + '/mods_sto/' + response['result']['data'].split('/')[-1])
+                report = tb_app.run_any("CloudM", "install", module_name=args.install)
+                if not report:
+                    print("Set up error")
+                return
 
     if args.lm:
         edit_logs()
@@ -599,6 +614,13 @@ async def main(loop=None):
         _min_info = ""
         if not args.live_application:
             _min_info = await tb_app.load_all_mods_in_file()
+            with Spinner("Crating State"):
+                st = threading.Thread(target=get_state_from_app, args=(tb_app,
+                                                                       os.environ.get("TOOLBOXV2_REMOTE_BASE",
+                                                                                      "https://simplecore.app"),
+                                                                       "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/"),
+                                      daemon=True)
+            st.start()
         if args.save_function_enums_in_file:
             tb_app.save_registry_as_enums("utils\\system", "all_functions_enums.py")
             tb_app.alive = False
@@ -657,8 +679,9 @@ async def main(loop=None):
             call.function_name = command[1]
             call.args = command[2:]
             spec = 'app' if not args.live_application else tb_app.id
-            r = await tb_app.a_run_any((call.module_name, call.function_name), tb_run_with_specification=spec, args_=call.args,
-                               get_results=True)
+            r = await tb_app.a_run_any((call.module_name, call.function_name), tb_run_with_specification=spec,
+                                       args_=call.args,
+                                       get_results=True)
             if asyncio.iscoroutine(r):
                 r = await r
             if isinstance(r, asyncio.Task):
@@ -666,7 +689,8 @@ async def main(loop=None):
 
             print("Running", spec, r)
 
-    if not args.kill and not args.docker and tb_app.alive and not args.background_application and (not args.command or '-m' in sys.argv):
+    if not args.kill and not args.docker and tb_app.alive and not args.background_application and (
+        not args.command or '-m' in sys.argv):
 
         tb_app.save_autocompletion_dict()
         with open(pid_file, "w") as f:
@@ -742,10 +766,7 @@ def setup_tb():
     input("select 1) base 2) mini 3) dev :")
     return None
 
+
 if __name__ == "__main__":
     print("STARTED START FROM CLI")
     sys.exit(main_runner())
-    # init main : ToolBoxV2 -init main -f init.config
-    # Exit
-    # y
-    # ToolBoxV2 -l || ToolBoxV2 -n main -l
