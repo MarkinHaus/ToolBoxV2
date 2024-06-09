@@ -271,7 +271,7 @@ def installer(app: Optional[App], module_name: str, version: str = "-.-.-"):
         return False
     zip_path = f".\\mods_sto\\{module_name}"
     if 'y' in input(f"install zip file {module_name} ?"):
-        unpack_and_move_module(zip_path, module_name)
+        unpack_and_move_module(zip_path)
     # install_dependencies('dependencies.yaml')
     return True
 
