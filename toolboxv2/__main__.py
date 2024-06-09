@@ -558,7 +558,7 @@ async def main(loop=None):
         if not report:
             await asyncio.sleep(0.1)
             if 'n' not in input("Mod not found in local mods_sto install from remote ? (yes,no)"):
-                session = Session(tb_app.get_username(), base="http://localhost:5000") #os.getenv("MOD_PROVIDER"))
+                session = Session(tb_app.get_username(), os.getenv("MOD_PROVIDER"))
                 if not await session.login():
                     mk = input(f"bitte geben sie ihren magik link ein {session.base}/")
                     if 'web/' not in mk:
