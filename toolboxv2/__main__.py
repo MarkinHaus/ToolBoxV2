@@ -554,12 +554,11 @@ async def main(loop=None):
     # tb_app.save_registry_as_enums("utils", "all_functions_enums.py")
 
     if args.install:
-        report = False  # tb_app.run_any("CloudM", "install", module_name=args.install)
+        report = tb_app.run_any("CloudM", "install", module_name=args.install)
         if not report:
             await asyncio.sleep(0.1)
             if 'n' not in input("Mod not found in local mods_sto install from remote ? (yes,no)"):
-                session = Session("root",
-                                  base="http://localhost:5000")  # tb_app.get_username(), base="http://localhost:5000") #os.getenv("MOD_PROVIDER"))
+                session = Session(tb_app.get_username(), base="http://localhost:5000") #os.getenv("MOD_PROVIDER"))
                 if not await session.login():
                     mk = input(f"bitte geben sie ihren magik link ein {session.base}/")
                     if 'web/' not in mk:
