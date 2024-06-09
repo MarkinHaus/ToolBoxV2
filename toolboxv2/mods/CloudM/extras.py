@@ -130,9 +130,64 @@ def create_account(self):
 def init_git(_):
     os.system("git init")
 
+    os.system(" ".join(
+        ['git', 'remote', 'add', 'origin', 'https://github.com/MarkinHaus/ToolBoxV2.git']))
+
+    # Stash any changes
+    print("Stashing changes...")
+    os.system(" ".join(['git', 'stash']))
+
+    # Pull the latest changes
+    print("Pulling the latest changes...")
+    os.system(" ".join(['git', 'pull', 'origin', 'master']))
+
+    # Apply stashed changes
+    print("Applying stashed changes...")
+    os.system(" ".join(['git', 'stash', 'pop']))
+
 
 @no_test
 def update_core(self, backup=False, name=""):
+    import os
+    import subprocess
+
+    def is_git_installed():
+        try:
+            subprocess.run(['git', '--version'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        except FileNotFoundError:
+            return False
+
+    def is_git_repository():
+        return os.path.isdir('.git')
+
+    def is_pip_installed(package_name):
+        try:
+            output = subprocess.check_output(['pip', 'show', package_name]).decode('utf-8')
+            return True
+        except subprocess.CalledProcessError:
+            return False
+
+    def get_package_installation_method(package_name):
+        if is_git_installed():
+            if is_git_repository():
+                return 'git'
+        if is_pip_installed(package_name):
+            return 'pip'
+        return None
+
+    if get_package_installation_method("ToolBoxV2") == 'git':
+        update_core_git(self, backup, name)
+    else:
+        update_core_pip(self)
+
+
+def update_core_pip(self):
+    self.print("Init Update.. via pip")
+    os.system("pip install --upgrade ToolBoxV2")
+
+
+def update_core_git(self, backup=False, name=""):
     self.print("Init Update..")
     if backup:
         os.system("git fetch --all")
