@@ -122,7 +122,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
     def start_live(self, api_name):
         return self._start_api(api_name, live=True, reload=False, test_override=False)
 
-    def start_debug(self, api_name, *mod_names):
+    def start_debug(self, api_name):
         return self._start_api(api_name, live=False, reload=True, test_override=True, host="127.0.0.1")
 
     def _start_api(self, api_name: str, live=False, reload=False, test_override=False, host="localhost"):
