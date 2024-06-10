@@ -12,19 +12,19 @@ from platform import system, node
 from yaml import safe_load
 
 from toolboxv2.runabel import runnable_dict as runnable_dict_func
+from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
 from toolboxv2.utils.system.main_tool import MainTool
 from toolboxv2.utils.extras.Style import Style, Spinner
 from toolboxv2.utils.system.session import Session
-from toolboxv2.utils.system import all_functions_enums as tbef
-# Import public Pages
+
 from toolboxv2.utils.toolbox import App
 
 from toolboxv2.utils import show_console
 from toolboxv2.utils import get_app
 from toolboxv2.utils.daemon import DaemonApp
 from toolboxv2.utils.proxy import ProxyApp
-from toolboxv2.utils.system import override_main_app, get_state_from_app, CallingObject
+from toolboxv2.utils.system import get_state_from_app, CallingObject
 
 DEFAULT_MODI = "cli"
 
@@ -308,8 +308,8 @@ def parse_args():
 
     parser.add_argument("-fg", "--live-application",
                         help="Start an interface as live application not using a background runner",
-                        default=True,
-                        action="store_false")
+                        action="store_true",  # Ändere zu store_true
+                        default=False)
 
     parser.add_argument("--docker", help="start the toolbox in docker (in remote mode is no local docker engin "
                                          "required)", default=False,
@@ -392,7 +392,12 @@ def parse_args():
     parser.add_argument("--sysPrint", action="store_true", default=False,
                         help="activate system prints / verbose output")
 
-    return parser.parse_args()
+    parser.add_argument("--ipy", action="store_true", default=False,
+                        help="activate toolbox in IPython")
+
+    args = parser.parse_args()
+    args.live_application = not args.live_application
+    return args
 
 
 def edit_logs():
@@ -463,16 +468,9 @@ def run_tests(test_path):
         return False
 
 
-async def main(loop=None):
-    """Console script for toolboxv2."""
+def setup_app():
     args = parse_args()
 
-    with open(os.getenv('CONFIG_FILE', f'{os.path.abspath(__file__).replace("__main__.py", "")}toolbox.yaml'),
-              'r') as config_file:
-        _version = safe_load(config_file)
-        __version__ = _version.get('main', {}).get('version', '-.-.-')
-    # print(args)
-    # abspath = os.path.dirname(os.path.abspath(__file__))
     abspath = os.path.dirname(os.path.abspath(__file__))
 
     identification = args.name + '-' + node() + '\\'
@@ -507,11 +505,56 @@ async def main(loop=None):
             return 1
         return 0
 
+    tb_app = get_app(from_="InitialStartUp", name=args.name, args=args, app_con=App)
+    return tb_app, args
+
+
+async def command_runner(tb_app, command):
+    if len(command) < 1:
+        tb_app.print_functions()
+        tb_app.print(
+            "minimum command length is 2 {module_name} {function_name} optional args...")
+        return
+
+    tb_app.print(f"Running command: {' '.join(command)}")
+    call = CallingObject().empty()
+    mod = tb_app.get_mod(command[0], spec='app')
+    if hasattr(mod, "async_initialized") and not mod.async_initialized:
+        await mod
+    call.module_name = command[0]
+
+    if len(command) < 2:
+        tb_app.print_functions(command[0])
+        tb_app.print(
+            "minimum command length is 2 {module_name} {function_name} optional args...")
+        return
+
+    call.function_name = command[1]
+    call.args = command[2:]
+    spec = 'app'  #  if not args.live_application else tb_app.id
+    r = await tb_app.a_run_any((call.module_name, call.function_name), tb_run_with_specification=spec,
+                               args_=call.args,
+                               get_results=True)
+    if asyncio.iscoroutine(r):
+        r = await r
+    if isinstance(r, asyncio.Task):
+        r = await r
+
+    print("Running", spec, r)
+
+
+async def main(tb_app, args, loop=None):
+    """Console script for toolboxv2."""
+
+    with open(os.getenv('CONFIG_FILE', f'{os.path.abspath(__file__).replace("__main__.py", "")}toolbox.yaml'),
+              'r') as config_file:
+        _version = safe_load(config_file)
+        __version__ = _version.get('main', {}).get('version', '-.-.-')
+    abspath = os.path.dirname(os.path.abspath(__file__))
+    info_folder = abspath + '\\.info\\'
+    pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
     app_pid = str(os.getpid())
 
-    pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
-
-    tb_app = get_app(from_="InitialStartUp", name=args.name, args=args, app_con=App)
     if not args.sysPrint and not (args.debug or args.background_application_runner or args.install or args.kill):
         tb_app.print = lambda text, *args, **kwargs: None
 
@@ -557,7 +600,7 @@ async def main(loop=None):
         report = tb_app.run_any("CloudM", "install", module_name=args.install)
         if not report:
             await asyncio.sleep(0.1)
-            if 'n' not in input("Mod not found in local mods_sto install from remote ? (yes,no)"):
+            if 'n' not in input(f"Mod '{args.install}' not found in local mods_sto install from remote ? (yes,no)"):
                 session = Session(tb_app.get_username(), os.getenv("MOD_PROVIDER"))
                 if not await session.login():
                     mk = input(f"bitte geben sie ihren magik link ein {session.base}/")
@@ -588,7 +631,8 @@ async def main(loop=None):
                     if 'y' not in input("Done ? will start set up from the mods_sto folder").lower():
                         return
                 os.rename(
-                    tb_app.start_dir + '/mods_sto/' + response['result']['data'].split('/')[-1].replace("$", '').replace(
+                    tb_app.start_dir + '/mods_sto/' + response['result']['data'].split('/')[-1].replace("$",
+                                                                                                        '').replace(
                         "&", '').replace("§", ''),
                     tb_app.start_dir + '/mods_sto/' + response['result']['data'].split('/')[-1])
                 report = tb_app.run_any("CloudM", "install", module_name=args.install)
@@ -656,37 +700,7 @@ async def main(loop=None):
 
     if args.command and not args.background_application:
         for command in args.command:
-            if len(command) < 1:
-                tb_app.print_functions()
-                tb_app.print(
-                    "minimum command length is 2 {module_name} {function_name} optional args...")
-                continue
-
-            tb_app.print(f"Running command: {' '.join(command)}")
-            call = CallingObject().empty()
-            mod = tb_app.get_mod(command[0], spec='app')
-            if hasattr(mod, "async_initialized") and not mod.async_initialized:
-                await mod
-            call.module_name = command[0]
-
-            if len(command) < 2:
-                tb_app.print_functions(command[0])
-                tb_app.print(
-                    "minimum command length is 2 {module_name} {function_name} optional args...")
-                continue
-
-            call.function_name = command[1]
-            call.args = command[2:]
-            spec = 'app' if not args.live_application else tb_app.id
-            r = await tb_app.a_run_any((call.module_name, call.function_name), tb_run_with_specification=spec,
-                                       args_=call.args,
-                                       get_results=True)
-            if asyncio.iscoroutine(r):
-                r = await r
-            if isinstance(r, asyncio.Task):
-                r = await r
-
-            print("Running", spec, r)
+            await command_runner(tb_app, command)
 
     if not args.kill and not args.docker and tb_app.alive and not args.background_application and (
         not args.command or '-m' in sys.argv):
@@ -755,15 +769,133 @@ async def main(loop=None):
     return 0
 
 
+def install_ipython():
+    os.system('pip install ipython prompt_toolkit')
+
+
+def tb_pre_ipy(app, eo):
+    # print(f"In Data:  \n\t{eo.raw_cell}\n\t{eo.store_history}\n\t{eo.silent}\n\t{eo.shell_futures}\n\t{eo.cell_id}")
+    # app.print(f"{eo.raw_cell=}{eo.raw_cell.split(' ')=}")
+    if eo.raw_cell != 'exit':
+        eo.raw_cell = ''
+    # start information getering
+
+
+def tb_post_ipy(app, rest):
+    # print(f"Out Data:  \n\t{rest.execution_count}\n\t{rest.error_before_exec}\n\t{rest.error_in_exec}
+    # \n\t{rest.info.raw_cell}\n\t{rest.info.store_history}\n\t{rest.info.silent}\n\t{rest.info.shell_futures}
+    # \n\t{rest.info.cell_id}\n\t{rest.result} ")
+    # return information
+    return ""
+
+
+def line_magic_ipy(app, ipython, line):
+    app.print(f"line: {line}, {type(line)}")
+    if line.split(' ')[0] in app.functions:
+        async_test(command_runner)(app, line.split(' '))
+
+
+def configure_ipython(argv):
+    from traitlets.config import Config
+
+    c = Config()
+
+    # Autocompletion with prompt_toolkit
+    c.InteractiveShellCompleter.use_jedi = True
+    c.InteractiveShell.automagic = True
+    # Enable contextual help
+    c.InteractiveShellApp.exec_lines = [
+        'import toolboxv2 as tb',  # Custom project import
+        'from toolboxv2.utils.daemon import DaemonApp',  # Custom project import
+        'from toolboxv2.tests.a_util import async_test',
+        'from threading import Thread',
+        'import sys',
+        'sys.argv = ' + str(argv),
+        'app, args = tb.__main__.setup_app()',
+        'await app.load_all_mods_in_file()',
+        'app.daemon_app = await DaemonApp(app, args.host, args.port if args.port != 5000 else 6587, t=False)',
+        'Thread(target=async_test(app.daemon_app.connect), args=(app, ), daemon=True).start()',
+    ]
+
+    setup_app()
+    c.TerminalInteractiveShell.editor = 'nano'
+
+    c.PrefilterManager.multi_line_specials = True
+
+    c.InteractiveShell.colors = 'LightBG'
+    c.InteractiveShell.confirm_exit = True
+    c.TerminalIPythonApp.display_banner = False
+    c.AliasManager.user_aliases = [
+        ("TB", "tb"),
+        ("@", "!tb -c "),
+    ]
+
+    c.InteractiveShellApp.exec_lines.append("""
+from IPython.core.magic import register_line_magic, register_cell_magic
+def pre_run_code_hook(eo):
+    tb.__main__.tb_pre_ipy(app, eo)
+
+def post_run_code_hook(result):
+    tb.__main__.tb_post_ipy(app, result)
+
+def load_ipython_extension(ipython):
+    @register_line_magic
+    def my_line_magic(line):
+        parts = line.split(' ')
+        f_name = "tb_session" if len(parts) >= 1 else parts[-1]
+        if "save" in parts[0]:
+            ipython.run_line_magic('save', f'-r ./.data/{f_name}.ipy')
+        elif "loadX" in parts[0]:
+            ipython.run_line_magic('store', '-r')
+            ipython.run_line_magic('run', f'./.data/{f_name}.ipy')
+        elif "load" in parts[0]:
+            ipython.run_line_magic('store', '-r')
+            ipython.run_line_magic('load', f'./.data/{f_name}.ipy')
+        elif "inject" in parts[0]:
+            file_path = f'./.data/{f_name}.py'
+            with open(file_path, 'r') as file:
+                lines = file.readlines()
+            # Insert lines after the first line
+            lines[1:1] = [line + '\\n' for line in lines_to_insert]
+            with open(file_path, 'w') as file:
+                file.writelines(lines)
+        elif "open" in parts[0]:
+            file_path = f'./.data/{f_name}.py'
+            ipython.run_line_magic('edit', file_path)
+        else:
+            tb.__main__.line_magic_ipy(app, ipython, line)
+
+    @register_cell_magic
+    def my_cell_magic(line, cell):
+        print(f"Custom cell magic {line} |CELL| {cell}")
+        line = line + '\\n' + cell
+        tb.__main__.line_magic_ipy(app, ipython, line)
+
+    ipython.register_magic_function(my_line_magic, 'line', 'tb')
+    ipython.register_magic_function(my_cell_magic, 'cell', 'tb')
+load_ipython_extension(get_ipython())
+get_ipython().events.register("pre_run_cell", pre_run_code_hook)
+get_ipython().events.register("post_run_cell", post_run_code_hook)""")
+
+    return c
+
+
+def start_ipython_session(argv):
+    from IPython import start_ipython, get_ipython
+    config = configure_ipython(argv)
+
+    shell = start_ipython(argv=None, config=config)
+
+
 def main_runner():
-    loop = asyncio.new_event_loop()
-    loop.run_until_complete(main(loop))
-
-
-def setup_tb():
-    print("Set up ReSimpleToolboxV2")
-    input("select 1) base 2) mini 3) dev :")
-    return None
+    if '--ipy' in sys.argv:
+        argv = sys.argv[1:]
+        sys.argv = sys.argv[:1]
+        start_ipython_session(argv)
+    else:
+        tb_app, args = setup_app()
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(main(tb_app, args, loop=loop))
 
 
 if __name__ == "__main__":

@@ -36,9 +36,7 @@ steps :
 """
 import os
 import shutil
-
 from toolboxv2 import get_app, tbef, Spinner
-from toolboxv2.mods.EventManager.module import EventManagerClass, SourceTypes, Scope, EventID
 
 Name = 'cicd'
 export = get_app("cicd.Export").tb
@@ -104,7 +102,7 @@ def install_dependencies(web_row_path):
     os.chdir("..")
 
 
-def downloaded(payload: EventID):
+def downloaded(payload):
     app = get_app("Event saving new web data")
     print("downloaded", payload)
     # if isinstance(payload.payload, str):
@@ -120,7 +118,7 @@ def downloaded(payload: EventID):
     return "Done installing"
 
 
-def downloaded_mod(payload: EventID):
+def downloaded_mod(payload):
     app = get_app("Event saving new web data")
     print("downloaded", payload)
     # if isinstance(payload.payload, str):
@@ -149,6 +147,7 @@ def copy_files(src_dir, dest_dir, exclude_dirs, include=None):
 
 @export(mod_name=Name, test=False, helper="init row web data updates Event")
 def web_get(app):
+    from toolboxv2.mods.EventManager.module import EventManagerClass, SourceTypes, Scope
     if app is None:
         app = get_app(f"{Name}.web_update")
         # register download event
@@ -165,6 +164,7 @@ def web_get(app):
 
 @export(mod_name=Name, test=False, helper="init mods updates Event")
 def mods_get(app):
+    from toolboxv2.mods.EventManager.module import EventManagerClass, SourceTypes, Scope
     if app is None:
         app = get_app(f"{Name}.web_update")
         # register download event
@@ -221,6 +221,7 @@ def build_edv_blob():
 
 @export(mod_name=Name, test=False)
 def send_web(app):
+    from toolboxv2.mods.EventManager.module import EventManagerClass, EventID
     if app is None:
         app = get_app(f"{Name}.web_update")
 
@@ -265,6 +266,7 @@ def build_mod(app, name=None):
 
 @export(mod_name=Name, test=False)
 def send_mod_start_sver_event(app):
+    from toolboxv2.mods.EventManager.module import EventManagerClass, EventID
     if app is None:
         app = get_app(f"{Name}.web_update")
     ev: EventManagerClass = app.run_any(tbef.EVENTMANAGER.NAME)

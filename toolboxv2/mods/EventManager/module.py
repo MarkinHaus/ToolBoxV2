@@ -9,12 +9,13 @@ from typing import Dict, Tuple, Optional, Any, Callable, Union
 from concurrent.futures import ThreadPoolExecutor
 
 from toolboxv2 import get_app, Result, Spinner, MainTool, get_logger
-from toolboxv2.mods.SocketManager import get_local_ip
+
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.brodcast.client import start_client
 from toolboxv2.utils.brodcast.server import make_known
 from toolboxv2.utils.daemon import DaemonUtil
 from toolboxv2.utils.proxy import ProxyUtil
+from toolboxv2.utils.system.session import get_local_ip
 
 Name = "EventManager"
 version = "0.0.1"

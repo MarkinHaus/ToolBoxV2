@@ -11,7 +11,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
     def __init__(self, app=None):
         self.version = "0.0.2"
-        self.name = "quickNote"
+        self.name = "quickNote2"
         self.logs = app.logger if app else None
         self.color = "GREEN"
         self.keys = {

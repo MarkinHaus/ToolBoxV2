@@ -9,5 +9,5 @@ except ImportError as e:
     quickNote_ACTIVE = e
 
 get_logger().info(f"quickNote STATE : {quickNote_ACTIVE}")
-Name = "quickNote"
+Name = "quickNote2"
 # private = True

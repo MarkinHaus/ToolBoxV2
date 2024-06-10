@@ -3,7 +3,7 @@ from .quickNote import Tools
 from .types import *
 from ..CloudM import User
 
-Name = 'quickNote'
+Name = 'quickNote2'
 export = get_app(f"{Name}.Export").tb
 default_export = export(mod_name=Name)
 test_only = export(mod_name=Name, test_only=True, state=False)

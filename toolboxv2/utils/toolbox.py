@@ -580,9 +580,9 @@ class App(AppType, metaclass=Singleton):
 
         tasks: set[Task] = set()
 
-        if 'isaa' in module_list:
-            threading.Thread(target=self.save_load, args=("isaa", 'app'), daemon=True).start()
-            module_list.remove('isaa')
+        # if 'isaa' in module_list:
+        #     threading.Thread(target=self.save_load, args=("isaa", 'app'), daemon=True).start()
+        #     module_list.remove('isaa')
 
         _ = {tasks.add(asyncio.create_task(asyncio.to_thread(self.save_load, mod, 'app'))) for mod in module_list}
         for t in asyncio.as_completed(tasks):
@@ -771,18 +771,22 @@ class App(AppType, metaclass=Singleton):
         except SystemExit:
             print("If u ar testing this is fine else ...")
 
-        import threading
+        if hasattr(self, 'daemon_app'):
+            import threading
 
-        for thread in threading.enumerate()[::-1]:
-            if thread.name == "MainThread":
-                continue
-            try:
-                with Spinner(f"closing Thread {thread.name:^50}|", symbols="s", count_down=True,
-                             time_in_s=0.751 if not self.debug else 0.6):
-                    thread.join(timeout=0.751 if not self.debug else 0.6)
-            except TimeoutError as e:
-                self.logger.error(f"Timeout error on exit {thread.name} {str(e)}")
-                print(str(e), f"Timeout {thread.name}")
+            for thread in threading.enumerate()[::-1]:
+                if thread.name == "MainThread":
+                    continue
+                try:
+                    with Spinner(f"closing Thread {thread.name:^50}|", symbols="s", count_down=True,
+                                 time_in_s=0.751 if not self.debug else 0.6):
+                        thread.join(timeout=0.751 if not self.debug else 0.6)
+                except TimeoutError as e:
+                    self.logger.error(f"Timeout error on exit {thread.name} {str(e)}")
+                    print(str(e), f"Timeout {thread.name}")
+                except KeyboardInterrupt:
+                    print("Unsave Exit")
+                    break
         if hasattr(self, 'loop'):
             with Spinner(f"closing Event loop:", symbols="+"):
                 self.loop.stop()
