@@ -805,6 +805,7 @@ def configure_ipython(argv):
     c.InteractiveShell.automagic = True
     # Enable contextual help
     c.InteractiveShellApp.exec_lines = [
+        'import os',  # Custom project import
         'import toolboxv2 as tb',  # Custom project import
         'from toolboxv2.utils.daemon import DaemonApp',  # Custom project import
         'from toolboxv2.tests.a_util import async_test',
@@ -829,7 +830,6 @@ def configure_ipython(argv):
         ("TB", "tb"),
         ("@", "!tb -c "),
     ]
-
     c.InteractiveShellApp.exec_lines.append("""
 from IPython.core.magic import register_line_magic, register_cell_magic
 def pre_run_code_hook(eo):
@@ -842,26 +842,28 @@ def load_ipython_extension(ipython):
     @register_line_magic
     def my_line_magic(line):
         parts = line.split(' ')
-        f_name = "tb_session" if len(parts) >= 1 else parts[-1]
+        f_name = "tb_session" if len(parts) <= 1 else parts[-1]
         if "save" in parts[0]:
-            ipython.run_line_magic('save', f'-r ./.data/{f_name}.ipy')
+            do_inj = not os.path.exists(f'-r {app.data_dir}/{f_name}.ipy')
+            ipython.run_line_magic('save', f'-r {app.data_dir}/{f_name}.ipy')
+            if do_inj:
+                file_path = f'{app.data_dir}/{f_name}.ipy'
+                with open(file_path, 'r') as file:
+                    lines = file.readlines()
+                # Insert lines after the first line
+                lines[1:1] = [line + '\\n' for line in ["import toolboxv2 as tb", "app, args = tb.__main__.setup_app()"]]
+                with open(file_path, 'w') as file:
+                    file.writelines(lines)
         elif "loadX" in parts[0]:
             ipython.run_line_magic('store', '-r')
-            ipython.run_line_magic('run', f'./.data/{f_name}.ipy')
+            ipython.run_line_magic('run', f'{app.data_dir}/{f_name}.ipy')
         elif "load" in parts[0]:
             ipython.run_line_magic('store', '-r')
-            ipython.run_line_magic('load', f'./.data/{f_name}.ipy')
-        elif "inject" in parts[0]:
-            file_path = f'./.data/{f_name}.py'
-            with open(file_path, 'r') as file:
-                lines = file.readlines()
-            # Insert lines after the first line
-            lines[1:1] = [line + '\\n' for line in lines_to_insert]
-            with open(file_path, 'w') as file:
-                file.writelines(lines)
+            ipython.run_line_magic('load', f'{app.data_dir}/{f_name}.ipy')
         elif "open" in parts[0]:
-            file_path = f'./.data/{f_name}.py'
-            ipython.run_line_magic('edit', file_path)
+            file_path = f'{app.data_dir}/{f_name}.ipy'
+            l = "notebook" if not 'lab' in parts else 'labs'
+            os.system(f"jupyter {l} {file_path}")
         else:
             tb.__main__.line_magic_ipy(app, ipython, line)
 
