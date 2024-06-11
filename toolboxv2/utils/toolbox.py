@@ -1184,10 +1184,13 @@ class App(AppType, metaclass=Singleton):
 
     def print(self, text, *args, **kwargs):
         # self.logger.info(f"Output : {text}")
-        print(Style.CYAN(f"System${self.id}:"), end=" ")
+        if self.sprint(None):
+            print(Style.CYAN(f"System${self.id}:"), end=" ")
         print(text, *args, **kwargs)
 
     def sprint(self, text, *args, **kwargs):
+        if text is None:
+            return True
         # self.logger.info(f"Output : {text}")
         print(Style.CYAN(f"System${self.id}:"), end=" ")
         if isinstance(text, str) and kwargs == {} and text:

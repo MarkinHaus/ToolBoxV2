@@ -468,7 +468,7 @@ def run_tests(test_path):
         return False
 
 
-def setup_app():
+async def setup_app():
     args = parse_args()
 
     abspath = os.path.dirname(os.path.abspath(__file__))
@@ -505,7 +505,64 @@ def setup_app():
             return 1
         return 0
 
+    abspath = os.path.dirname(os.path.abspath(__file__))
+    info_folder = abspath + '\\.info\\'
+    pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
+    app_pid = str(os.getpid())
+
     tb_app = get_app(from_="InitialStartUp", name=args.name, args=args, app_con=App)
+
+    if not args.sysPrint and not (args.debug or args.background_application_runner or args.install or args.kill):
+        tb_app.sprint = lambda text, *_args, **kwargs: False
+
+    tb_app.loop = asyncio.get_running_loop()
+
+    if args.load_all_mod_in_files:
+        _min_info = await tb_app.load_all_mods_in_file()
+        with Spinner("Crating State"):
+            st = threading.Thread(target=get_state_from_app, args=(tb_app,
+                                                                   os.environ.get("TOOLBOXV2_REMOTE_BASE",
+                                                                                  "https://simplecore.app"),
+                                                                   "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/"),
+                                  daemon=True)
+        st.start()
+        tb_app.print_functions()
+        if _min_info:
+            print(_min_info)
+
+    tb_app.print("OK")
+
+    if args.background_application_runner:
+        daemon_app = await DaemonApp(tb_app, args.host, args.port if args.port != 5000 else 6587, t=False)
+        if not args.debug:
+            show_console(False)
+        tb_app.daemon_app = daemon_app
+        args.live_application = False
+    elif args.background_application:
+        if not args.kill:
+            start(args.name, sys.argv)
+        else:
+            if '-m ' not in sys.argv:
+                pid_file = f"{info_folder}bg-{args.name}.pid"
+            try:
+                _ = await ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
+                                   args.port if args.port != 5000 else 6587, timeout=4)
+                await _.verify()
+                if await _.exit_main() != "No data look later":
+                    stop(pid_file, args.name)
+            except Exception:
+                stop(pid_file, args.name)
+    elif args.live_application:
+        try:
+            tb_app = await a_get_proxy_app(tb_app)
+            if args.debug:
+                await tb_app.show_console()
+        except:
+            print("Auto starting Starting Local if u know ther is no bg instance use -fg to run in the frond ground")
+
+    with open(pid_file, "w") as f:
+        f.write(app_pid)
+
     return tb_app, args
 
 
@@ -543,102 +600,68 @@ async def command_runner(tb_app, command):
     print("Running", spec, r)
 
 
-async def main(tb_app, args, loop=None):
+async def mod_installer(tb_app, module_name):
+    report = tb_app.run_any("CloudM", "install", module_name=module_name)
+    if not report:
+        await asyncio.sleep(0.1)
+        if 'n' not in input(f"Mod '{module_name}' not found in local mods_sto install from remote ? (yes,no)"):
+            session = Session(tb_app.get_username(), os.getenv("MOD_PROVIDER"))
+            if not await session.login():
+                mk = input(f"bitte geben sie ihren magik link ein {session.base}/")
+                if 'web/' not in mk:
+                    print("Link is not in Valid format")
+                    return
+                if not await session.init_log_in_mk_link(mk):
+                    print("Link is not in Valid")
+                    return
+            response = await session.fetch("/api/CloudM/get_latest?module_name=" + module_name, method="GET")
+            json_response = await response.json()
+            response = json.loads(json_response)
+
+            do_install = True
+            if response['error'] != "none":
+                print("Error while fetching mod data")
+                do_install = False
+
+            if response['result']['data'] == 'mod not found':
+                print("404 mod not found")
+                do_install = False
+            if not do_install:
+                return
+            print(f"mod url is : {session.base + response['result']['data']}")
+            if not await session.download_file(response['result']['data'], tb_app.start_dir + '/mods_sto'):
+                print("failed to download mod")
+                print("optional download it ur self and put the zip in the mods_sto folder")
+                if 'y' not in input("Done ? will start set up from the mods_sto folder").lower():
+                    return
+            os.rename(
+                tb_app.start_dir + '/mods_sto/' + response['result']['data'].split('/')[-1].replace("$",
+                                                                                                    '').replace(
+                    "&", '').replace("§", ''),
+                tb_app.start_dir + '/mods_sto/' + response['result']['data'].split('/')[-1])
+            report = tb_app.run_any("CloudM", "install", module_name=module_name)
+            if not report:
+                print("Set up error")
+            return
+
+
+async def main(tb_app, args):
     """Console script for toolboxv2."""
 
     with open(os.getenv('CONFIG_FILE', f'{os.path.abspath(__file__).replace("__main__.py", "")}toolbox.yaml'),
               'r') as config_file:
         _version = safe_load(config_file)
         __version__ = _version.get('main', {}).get('version', '-.-.-')
+
     abspath = os.path.dirname(os.path.abspath(__file__))
     info_folder = abspath + '\\.info\\'
     pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
-    app_pid = str(os.getpid())
-
-    if not args.sysPrint and not (args.debug or args.background_application_runner or args.install or args.kill):
-        tb_app.print = lambda text, *args, **kwargs: None
-
-    tb_app.loop = loop
-
-    daemon_app = None
-    tb_app.print("OK")
-
-    if args.background_application_runner:
-        daemon_app = await DaemonApp(tb_app, args.host, args.port if args.port != 5000 else 6587, t=False)
-        if not args.debug:
-            show_console(False)
-        tb_app.daemon_app = daemon_app
-        with open(pid_file + '-app.pid', 'w') as f:
-            f.write(app_pid)
-        args.live_application = False
-    elif args.background_application:
-        if not args.kill:
-            start(args.name, sys.argv)
-        else:
-            if '-m ' not in sys.argv:
-                pid_file = f"{info_folder}bg-{args.name}.pid"
-            try:
-                _ = await ProxyApp(tb_app, args.host if args.host != "0.0.0.0" else "localhost",
-                                   args.port if args.port != 5000 else 6587, timeout=4)
-                await _.verify()
-                if await _.exit_main() != "No data look later":
-                    stop(pid_file + '-app.pid', args.name)
-            except Exception:
-                stop(pid_file + '-app.pid', args.name)
-    elif args.live_application:
-        try:
-            tb_app = await a_get_proxy_app(tb_app)
-            if args.debug:
-                await tb_app.show_console()
-        except:
-            print("Auto starting Starting Local if u know ther is no bg instance use -fg to run in the frond ground")
 
     # tb_app.load_all_mods_in_file()
     # tb_app.save_registry_as_enums("utils", "all_functions_enums.py")
 
     if args.install:
-        report = tb_app.run_any("CloudM", "install", module_name=args.install)
-        if not report:
-            await asyncio.sleep(0.1)
-            if 'n' not in input(f"Mod '{args.install}' not found in local mods_sto install from remote ? (yes,no)"):
-                session = Session(tb_app.get_username(), os.getenv("MOD_PROVIDER"))
-                if not await session.login():
-                    mk = input(f"bitte geben sie ihren magik link ein {session.base}/")
-                    if 'web/' not in mk:
-                        print("Link is not in Valid format")
-                        return
-                    if not await session.init_log_in_mk_link(mk):
-                        print("Link is not in Valid")
-                        return
-                response = await session.fetch("/api/CloudM/get_latest?module_name=" + args.install, method="GET")
-                json_response = await response.json()
-                response = json.loads(json_response)
-
-                do_install = True
-                if response['error'] != "none":
-                    print("Error while fetching mod data")
-                    do_install = False
-
-                if response['result']['data'] == 'mod not found':
-                    print("404 mod not found")
-                    do_install = False
-                if not do_install:
-                    return
-                print(f"mod url is : {session.base + response['result']['data']}")
-                if not await session.download_file(response['result']['data'], tb_app.start_dir + '/mods_sto'):
-                    print("failed to download mod")
-                    print("optional download it ur self and put the zip in the mods_sto folder")
-                    if 'y' not in input("Done ? will start set up from the mods_sto folder").lower():
-                        return
-                os.rename(
-                    tb_app.start_dir + '/mods_sto/' + response['result']['data'].split('/')[-1].replace("$",
-                                                                                                        '').replace(
-                        "&", '').replace("§", ''),
-                    tb_app.start_dir + '/mods_sto/' + response['result']['data'].split('/')[-1])
-                report = tb_app.run_any("CloudM", "install", module_name=args.install)
-                if not report:
-                    print("Set up error")
-                return
+        await mod_installer(tb_app, args.install)
 
     if args.lm:
         edit_logs()
@@ -706,10 +729,8 @@ async def main(tb_app, args, loop=None):
         not args.command or '-m' in sys.argv):
 
         tb_app.save_autocompletion_dict()
-        with open(pid_file, "w") as f:
-            f.write(app_pid)
-        if args.background_application_runner and args.modi == 'bg':
-            await daemon_app.online
+        if args.background_application_runner and args.modi == 'bg' and hasattr(tb_app, 'daemon_app'):
+            await tb_app.daemon_app.online
         if not args.live_application:
             runnable_dict = runnable_dict_func()
             tb_app.set_runnable(runnable_dict)
@@ -804,21 +825,8 @@ def configure_ipython(argv):
     c.InteractiveShellCompleter.use_jedi = True
     c.InteractiveShell.automagic = True
     # Enable contextual help
-    c.InteractiveShellApp.exec_lines = [
-        'import os',  # Custom project import
-        'import toolboxv2 as tb',  # Custom project import
-        'from toolboxv2.utils.daemon import DaemonApp',  # Custom project import
-        'from toolboxv2.tests.a_util import async_test',
-        'from threading import Thread',
-        'import sys',
-        'sys.argv = ' + str(argv),
-        'app, args = tb.__main__.setup_app()',
-        'await app.load_all_mods_in_file()',
-        'app.daemon_app = await DaemonApp(app, args.host, args.port if args.port != 5000 else 6587, t=False)',
-        'Thread(target=async_test(app.daemon_app.connect), args=(app, ), daemon=True).start()',
-    ]
+    c.InteractiveShellApp.exec_lines = []
 
-    setup_app()
     c.TerminalInteractiveShell.editor = 'nano'
 
     c.PrefilterManager.multi_line_specials = True
@@ -830,13 +838,26 @@ def configure_ipython(argv):
         ("TB", "tb"),
         ("@", "!tb -c "),
     ]
-    c.InteractiveShellApp.exec_lines.append("""
+    c.InteractiveShellApp.exec_lines.append("""import os
+import sys
+import toolboxv2 as tb
+from toolboxv2.tests.a_util import async_test
+from threading import Thread
+
 from IPython.core.magic import register_line_magic, register_cell_magic
+sys.argv = """+str(argv)+"""
+app, args = await tb.__main__.setup_app()
+if hasattr(app, "daemon_app"):
+    Thread(target=async_test(app.daemon_app.connect), args=(app,), daemon=True).start()
+
+
 def pre_run_code_hook(eo):
     tb.__main__.tb_pre_ipy(app, eo)
 
+
 def post_run_code_hook(result):
     tb.__main__.tb_post_ipy(app, result)
+
 
 def load_ipython_extension(ipython):
     @register_line_magic
@@ -851,7 +872,8 @@ def load_ipython_extension(ipython):
                 with open(file_path, 'r') as file:
                     lines = file.readlines()
                 # Insert lines after the first line
-                lines[1:1] = [line + '\\n' for line in ["import toolboxv2 as tb", "app, args = tb.__main__.setup_app()"]]
+                lines[1:1] = [line + '\\n' for line in
+                              ["import toolboxv2 as tb", "app, args = tb.__main__.setup_app()"]]
                 with open(file_path, 'w') as file:
                     file.writelines(lines)
         elif "loadX" in parts[0]:
@@ -875,9 +897,13 @@ def load_ipython_extension(ipython):
 
     ipython.register_magic_function(my_line_magic, 'line', 'tb')
     ipython.register_magic_function(my_cell_magic, 'cell', 'tb')
+
+
 load_ipython_extension(get_ipython())
 get_ipython().events.register("pre_run_cell", pre_run_code_hook)
-get_ipython().events.register("post_run_cell", post_run_code_hook)""")
+get_ipython().events.register("post_run_cell", post_run_code_hook)
+
+""")
 
     return c
 
@@ -890,6 +916,7 @@ def start_ipython_session(argv):
 
 
 def main_runner():
+    sys.excepthook = sys.__excepthook__
     if '--ipy' in sys.argv:
         argv = sys.argv[1:]
         sys.argv = sys.argv[:1]
