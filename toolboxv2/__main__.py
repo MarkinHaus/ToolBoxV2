@@ -645,9 +645,9 @@ async def mod_installer(tb_app, module_name):
             return
 
 
-async def main(tb_app, args):
+async def main():
     """Console script for toolboxv2."""
-
+    tb_app, args = await setup_app()
     with open(os.getenv('CONFIG_FILE', f'{os.path.abspath(__file__).replace("__main__.py", "")}toolbox.yaml'),
               'r') as config_file:
         _version = safe_load(config_file)
@@ -922,9 +922,8 @@ def main_runner():
         sys.argv = sys.argv[:1]
         start_ipython_session(argv)
     else:
-        tb_app, args = setup_app()
         loop = asyncio.new_event_loop()
-        loop.run_until_complete(main(tb_app, args, loop=loop))
+        loop.run_until_complete(main())
 
 
 if __name__ == "__main__":
