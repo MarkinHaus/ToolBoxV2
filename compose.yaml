@@ -73,31 +73,6 @@ services:
                 condition: any
         restart: always
 
-    liveIM:
-        image: ${LOCAL_DOCKER_IMAGE}
-        command: tb -bgr -c FastApi edit-api main 0.0.0.0 5000 -c FastApi start main -m idle
-        volumes:
-          - ./toolboxv2/.data:/app/toolboxv2/.data
-          - ./toolboxv2/data:/app/toolboxv2/data
-          - ./toolboxv2/.config:/app/toolboxv2/.config
-          - ./toolboxv2/.info:/app/toolboxv2/.info
-        deploy:
-          update_config:
-            parallelism: 1
-            delay: 10s
-            order: start-first
-            failure_action: rollback
-          restart_policy:
-            condition: any
-        env_file:
-            - .env
-        environment:
-          - ENVIRONMENT=production
-        ports:
-            - 5000:5000
-            - 6587:6587
-        restart: always
-
       # Testumgebung
     test:
         build:

@@ -568,6 +568,7 @@ class App(AppType, metaclass=Singleton):
         return Result.default_internal_error(info="info's in logs.")
 
     async def load_all_mods_in_file(self, working_dir="mods"):
+        print(f"LOADING ALL MODS FROM FOLDER : {working_dir}")
         t0 = time.perf_counter()
         # Get the list of all modules
         module_list = self.get_all_mods(working_dir)

@@ -30,3 +30,4 @@ tqdm==4.66.4
 watchfiles==0.22.0
 webauthn==2.1.0
 yarl==1.9.4
+IPython

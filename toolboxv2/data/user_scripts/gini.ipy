@@ -1,0 +1,13 @@
+# coding: utf-8
+Name = "shell gini Isaa"
+@app.tb()
+def gini(app, *inp):
+    inp = ' '.join(inp)
+    shell = app.run_any(("isaa", "mini_task"), mini_task="Return and find a valid shell command based on the users request: "+ inp+f"\nonly return valid Shell command nothing else!!!do not include any exra cahracter :", max_tokens=24)
+    shell = shell.replace('$', '').replace('"', '').replace("'", '').replace('`', '').replace('´', '').split('\n')[-1].strip()
+    if 'n' not in input(f"Runn '{shell}' ? [Y/n]"):
+        return os.system(shell)
+    return shell
+
+
+app.run_any(("__main__", "gini"), args=("wie viel spciher habe ich auf meine pc?",))

@@ -396,7 +396,7 @@ def parse_args():
                         help="activate toolbox in IPython")
 
     args = parser.parse_args()
-    args.live_application = not args.live_application
+    # args.live_application = not args.live_application
     return args
 
 
@@ -531,7 +531,6 @@ async def setup_app():
             print(_min_info)
 
     tb_app.print("OK")
-
     if args.background_application_runner:
         daemon_app = await DaemonApp(tb_app, args.host, args.port if args.port != 5000 else 6587, t=False)
         if not args.debug:
@@ -657,7 +656,6 @@ async def main():
     info_folder = abspath + '\\.info\\'
     pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
 
-    # tb_app.load_all_mods_in_file()
     # tb_app.save_registry_as_enums("utils", "all_functions_enums.py")
 
     if args.install:
@@ -677,25 +675,11 @@ async def main():
         exit(0)
 
     if args.load_all_mod_in_files or args.save_function_enums_in_file or args.get_version or args.profiler or args.background_application_runner or args.test:
-        _min_info = ""
-        if not args.live_application:
-            _min_info = await tb_app.load_all_mods_in_file()
-            with Spinner("Crating State"):
-                st = threading.Thread(target=get_state_from_app, args=(tb_app,
-                                                                       os.environ.get("TOOLBOXV2_REMOTE_BASE",
-                                                                                      "https://simplecore.app"),
-                                                                       "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/"),
-                                      daemon=True)
-            st.start()
         if args.save_function_enums_in_file:
             tb_app.save_registry_as_enums("utils\\system", "all_functions_enums.py")
             tb_app.alive = False
             await tb_app.a_exit()
             return 0
-        if args.debug:
-            tb_app.print_functions()
-        if _min_info:
-            print(_min_info)
         if args.get_version:
             print(
                 f"\n{' Version ':-^45}\n\n{Style.Bold(Style.CYAN(Style.ITALIC('RE'))) + Style.ITALIC('Simple') + 'ToolBox':<35}:{__version__:^10}\n")
@@ -843,6 +827,7 @@ import sys
 import toolboxv2 as tb
 from toolboxv2.tests.a_util import async_test
 from threading import Thread
+# from toolboxv2.utils.system.ipy_completer import get_completer
 
 from IPython.core.magic import register_line_magic, register_cell_magic
 sys.argv = """+str(argv)+"""
@@ -863,29 +848,37 @@ def load_ipython_extension(ipython):
     @register_line_magic
     def my_line_magic(line):
         parts = line.split(' ')
-        f_name = "tb_session" if len(parts) <= 1 else parts[-1]
+        f_name = "ipy_sessions/"+("tb_session" if len(parts) <= 1 else parts[-1])
+
+        os.makedirs(f'{app.data_dir}/ipy_sessions/',exist_ok=True)
         if "save" in parts[0]:
-            do_inj = not os.path.exists(f'-r {app.data_dir}/{f_name}.ipy')
-            ipython.run_line_magic('save', f'-r {app.data_dir}/{f_name}.ipy')
+            do_inj = not os.path.exists(f'{app.data_dir}/{f_name}.ipy')
             if do_inj:
+                ipython.run_line_magic('save', f'{app.data_dir}/{f_name}.ipy')
+            else:
+                ipython.run_line_magic('save', f'-r {app.data_dir}/{f_name}.ipy')
+        if "inject" in parts[0]:
                 file_path = f'{app.data_dir}/{f_name}.ipy'
                 with open(file_path, 'r') as file:
                     lines = file.readlines()
                 # Insert lines after the first line
                 lines[1:1] = [line + '\\n' for line in
-                              ["import toolboxv2 as tb", "app, args = tb.__main__.setup_app()"]]
+                              ["import toolboxv2 as tb", "app, args = await tb.__main__.setup_app()"]]
                 with open(file_path, 'w') as file:
                     file.writelines(lines)
         elif "loadX" in parts[0]:
-            ipython.run_line_magic('store', '-r')
+            # ipython.run_line_magic('store', '-r')
             ipython.run_line_magic('run', f'{app.data_dir}/{f_name}.ipy')
         elif "load" in parts[0]:
-            ipython.run_line_magic('store', '-r')
+            # ipython.run_line_magic('store', '-r')
             ipython.run_line_magic('load', f'{app.data_dir}/{f_name}.ipy')
         elif "open" in parts[0]:
             file_path = f'{app.data_dir}/{f_name}.ipy'
-            l = "notebook" if not 'lab' in parts else 'labs'
-            os.system(f"jupyter {l} {file_path}")
+            if os.path.exists(f'{app.data_dir}/{f_name}.ipy'):
+                l = "notebook" if not 'lab' in parts else 'labs'
+                os.system(f"jupyter {l} {file_path}")
+            else:
+                print("Pleas save first")
         else:
             tb.__main__.line_magic_ipy(app, ipython, line)
 
@@ -895,16 +888,23 @@ def load_ipython_extension(ipython):
         line = line + '\\n' + cell
         tb.__main__.line_magic_ipy(app, ipython, line)
 
+    def apt_completers(self, event):
+        return ['save', 'loadX', 'load', 'open', 'inject']
+
+    ipython.set_hook('complete_command', apt_completers, re_key = '%tb')
+
     ipython.register_magic_function(my_line_magic, 'line', 'tb')
     ipython.register_magic_function(my_cell_magic, 'cell', 'tb')
 
 
 load_ipython_extension(get_ipython())
+
+# get_ipython().set_custom_completer(get_completer())
 get_ipython().events.register("pre_run_cell", pre_run_code_hook)
 get_ipython().events.register("post_run_cell", post_run_code_hook)
 
 """)
-
+    ()
     return c
 
 
