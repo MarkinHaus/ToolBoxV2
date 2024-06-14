@@ -50,7 +50,7 @@ services:
     live:
         build:
             context: .
-        command: tb -bgr -c FastApi edit-api main 0.0.0.0 5000 -c FastApi start main -m idle -l
+        command: tb -c FastApi edit-api main 0.0.0.0 5000 -c DB edit_cli RR -c FastApi start main -m idle
         volumes:
             - ./toolboxv2/.data:/app/toolboxv2/.data
             - ./toolboxv2/data:/app/toolboxv2/data

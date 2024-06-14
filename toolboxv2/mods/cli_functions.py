@@ -3,7 +3,6 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass, field
-from threading import Thread
 
 from toolboxv2.utils.system.types import CallingObject, ApiResult
 
@@ -250,6 +249,9 @@ class UserInputObject:
 
 @default_export
 def get_character():
+
+    if not READCHAR:
+        raise ImportError("missing read character package")
     get_input = True
 
     offset_x = 0

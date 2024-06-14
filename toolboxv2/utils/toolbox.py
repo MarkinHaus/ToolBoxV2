@@ -295,6 +295,8 @@ class App(AppType, metaclass=Singleton):
         return self.inplace_load_instance(mod_name, loc=loc, **kwargs)
 
     def helper_install_pip_module(self, module_name):
+        if 'main' in self.id:
+            return
         self.print(f"Installing {module_name} GREEDY")
         os.system(f"{sys.executable} -m pip install {module_name}")
 

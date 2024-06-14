@@ -20,28 +20,30 @@ def save_db_to_blob(app):
         f.write(db_data.get())
     app.print(f"Data Saved volumen : {len(db_data.get())}")
 
+
 async def run(app: App, args: AppArgs):
     import schedule
     app.print("Starting core 0")
 
     # app.run_any(tbef.SCHEDULERMANAGER.INIT)
     await app.a_run_any(tbef.SCHEDULERMANAGER.ADD,
-                job_data={
-                    "job_id": "system#Backup#Database",
-                    "second": 0,
-                    "func": None,
-                    "job": schedule.every(2).days.at("04:00").do(save_db_to_blob, app),
-                    "time_passer": None,
-                    "object_name": "save_db_to_blob",
-                    "receive_job": False,
-                    "save": True,
-                    "max_live": False,
-                    "args": (app,)
-                })
+                        job_data={
+                            "job_id": "system#Backup#Database",
+                            "second": 0,
+                            "func": None,
+                            "job": schedule.every(2).days.at("04:00").do(save_db_to_blob, app),
+                            "time_passer": None,
+                            "object_name": "save_db_to_blob",
+                            "receive_job": False,
+                            "save": True,
+                            "max_live": False,
+                            "args": (app,)
+                        })
     await app.a_idle()
 
 
 if __name__ == "__main__":
     import os
+
     # os.system(f"toolboxv2 --test --debug")
     os.system(f"tb -bgr -p 42869 -n core0 -l -m {NAME}")

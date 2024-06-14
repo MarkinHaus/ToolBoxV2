@@ -248,7 +248,6 @@ class Tools(MainTool, FileHandler):
             url = self.url
             if self.url is None:
                 url = os.getenv("DB_CONNECTION_URI")
-
             if url is None:
                 raise ValueError("Could not find DB connection URI in environment variable DB_CONNECTION_URI")
             evaluation = self.data_base.initialize(url)

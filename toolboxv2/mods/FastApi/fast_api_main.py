@@ -684,22 +684,16 @@ async def helper(id_name):
                 return "OK"
             return "Not found"
 
-    if id_name == tb_app.id:
-        print("🟢 START")
-
     with open(f"./.data/api_pid_{id_name}", "w") as f:
         f.write(str(os.getpid()))
         f.close()
-
     await tb_app.load_all_mods_in_file()
-
-    with BlobFile(f"FastApi/{id_name}/dev", mode='r') as f:
-        modules = f.read_json().get("modules", [])
-    for mods in modules:
-        tb_app.print(f"ADDING :  {mods}")
-        tb_app.watch_mod(mods)
-
-    time.sleep(0.5)
+    if id_name.endswith("_D"):
+        with BlobFile(f"FastApi/{id_name}/dev", mode='r') as f:
+            modules = f.read_json().get("modules", [])
+        for mods in modules:
+            tb_app.print(f"ADDING :  {mods}")
+            tb_app.watch_mod(mods)
 
     d = tb_app.get_mod("DB")
     d.initialize_database()
@@ -710,7 +704,6 @@ async def helper(id_name):
     if not c.get():
         exit()
     tb_app.get_mod("WebSocketManager")
-
     from .fast_app import router as app_router
 
     app.include_router(app_router)
@@ -721,7 +714,6 @@ async def helper(id_name):
     # all_mods = tb_app.get_all_mods()
     provider = os.environ.get("MOD_PROVIDER", default="http://127.0.0.1:5000/")
     tb_state = get_state_from_app(tb_app, simple_core_hub_url=provider)
-
     def get_d(mod_name_="CloudM"):
         return cm.save_mod_snapshot(mod_name_, provider=provider, tb_state=tb_state)
 
@@ -775,7 +767,7 @@ async def helper(id_name):
                     else:
                         router.add_api_route('/' + function_name, tb_func, methods=["GET"],
                                              description=function_data.get("helper", ""))
-                    print("Added live", function_name)
+                    # print("Added live", function_name)
                 else:
                     raise ValueError(f"fuction '{function_name}' not found")
 
@@ -783,6 +775,8 @@ async def helper(id_name):
                 raise SyntaxError(f"fuction '{function_name}' prove the signature error {e}")
         if add:
             app.include_router(router)
+    if id_name in tb_app.id:
+        print("🟢 START")
     # router2 = APIRouter(
     #     prefix=f"/ROOT",
     #     # dependencies=[Depends(get_token_header)],
