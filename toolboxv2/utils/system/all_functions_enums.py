@@ -7,24 +7,6 @@ from dataclasses import dataclass
 
 
 @dataclass
-class SOCKETMANAGER(Enum):
-    NAME = 'SocketManager'
-    CREATE_SOCKET: str = 'create_socket'  # Input: (['self', 'name', 'host', 'port', 'type_id', 'max_connections', 'endpoint_port', 'return_full_object', 'keepalive_interval', 'test_override', 'package_size', 'start_keep_alive', 'unix_file', 'do_async']), Output: <class 'toolboxv2.utils.system.types.Result'>
-    RUN_AS_IP_ECHO_SERVER_A: str = 'run_as_ip_echo_server_a'  # Input: (['self', 'name', 'host', 'port', 'max_connections', 'test_override']), Output: <class 'inspect._empty'>
-    RUN_AS_SINGLE_COMMUNICATION_SERVER: str = 'run_as_single_communication_server'  # Input: (['self', 'name', 'host', 'port', 'test_override']), Output: <class 'inspect._empty'>
-    SEND_FILE_TO_SEVER: str = 'send_file_to_sever'  # Input: (['self', 'filepath', 'host', 'port']), Output: <class 'inspect._empty'>
-    RECEIVE_AND_DECOMPRESS_FILE_AS_SERVER: str = 'receive_and_decompress_file_as_server'  # Input: (['self', 'save_path', 'listening_port']), Output: <class 'inspect._empty'>
-    SEND_FILE_TO_PEER: str = 'send_file_to_peer'  # Input: (['self', 'filepath', 'host', 'port']), Output: <class 'inspect._empty'>
-    RECEIVE_AND_DECOMPRESS_FILE: str = 'receive_and_decompress_file'  # Input: (['self', 'save_path', 'listening_port', 'sender_ip']), Output: <class 'inspect._empty'>
-
-
-@dataclass
-class EVENTMANAGER(Enum):
-    NAME = 'EventManager'
-    STARTWEBEVENTS: str = 'startWebEvents'  # Input: (['self']), Output: <class 'inspect._empty'>
-
-
-@dataclass
 class CICD(Enum):
     NAME = 'cicd'
     WEB_GET: str = 'web_get'  # Input: (['app']), Output: <class 'inspect._empty'>
@@ -38,16 +20,6 @@ class CICD(Enum):
     BUILDDOLIVE: str = 'buildDoLive'  # Input: ([]), Output: <class 'inspect._empty'>
     RUNDOLIVE: str = 'runDoLive'  # Input: ([]), Output: <class 'inspect._empty'>
     DOLOGS: str = 'doLogs'  # Input: ([]), Output: <class 'inspect._empty'>
-
-
-@dataclass
-class PROCESSMANAGER(Enum):
-    NAME = 'ProcessManager'
-    STARTDBUG: str = 'startDbug'  # Input: (['p1_command', 'p2_command']), Output: <class 'inspect._empty'>
-    STARTDEV: str = 'startDev'  # Input: (['p1_command', 'p2_command']), Output: <class 'inspect._empty'>
-    START: str = 'start'  # Input: (['p1_command', 'p2_command']), Output: <class 'inspect._empty'>
-    START_CLIENT: str = 'start_client'  # Input: (['p0_command', 'p1_command', 'p2_command']), Output: <class 'inspect._empty'>
-    CUSTOM: str = 'custom'  # Input: (['commands', 'monitor']), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
 
@@ -65,6 +37,18 @@ class MINIMALHTML(Enum):
 
 
 @dataclass
+class PROCESSMANAGER(Enum):
+    NAME = 'ProcessManager'
+    STARTDBUG: str = 'startDbug'  # Input: (['p1_command', 'p2_command']), Output: <class 'inspect._empty'>
+    STARTDEV: str = 'startDev'  # Input: (['p1_command', 'p2_command']), Output: <class 'inspect._empty'>
+    START: str = 'start'  # Input: (['p1_command', 'p2_command']), Output: <class 'inspect._empty'>
+    START_CLIENT: str = 'start_client'  # Input: (['p0_command', 'p1_command', 'p2_command']), Output: <class 'inspect._empty'>
+    CUSTOM: str = 'custom'  # Input: (['commands', 'monitor']), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+
+
+@dataclass
 class WELCOME(Enum):
     NAME = 'welcome'
     VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
@@ -72,6 +56,17 @@ class WELCOME(Enum):
     ON_START: str = 'on_start'  # Input: (), Output: None
     ANIMATION1: str = 'Animation1'  # Input: ([]), Output: <class 'inspect._empty'>
     ANIMATION: str = 'Animation'  # Input: ([]), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+
+
+@dataclass
+class DAYTREE_DAYTREEWIDGET(Enum):
+    NAME = 'DayTree.DayTreeWidget'
+    GET_WIDGET: str = 'get_widget'  # Input: (['request']), Output: <class 'inspect._empty'>
+    GET_EVENTS: str = 'get_events'  # Input: (['request']), Output: <class 'inspect._empty'>
+    SAVE_EVENTS: str = 'save_events'  # Input: (['request']), Output: <class 'inspect._empty'>
+    NL2_EVENT: str = 'nl2_event'  # Input: (['request']), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
 
@@ -86,6 +81,48 @@ class EMAIL_WAITING_LIST(Enum):
     CRATE_MAGIC_LICK_DEVICE_EMAIL: str = 'crate_magic_lick_device_email'  # Input: (['user_email', 'user_name', 'link_id', 'nl']), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+
+
+@dataclass
+class EVENTMANAGER(Enum):
+    NAME = 'EventManager'
+    STARTWEBEVENTS: str = 'startWebEvents'  # Input: (['self']), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+
+
+@dataclass
+class SCHEDULERMANAGER(Enum):
+    NAME = 'SchedulerManager'
+    VERSION: str = 'Version'  # Input: (['self']), Output: <class 'inspect._empty'>
+    INIT: str = 'init'  # Input: (['self']), Output: <class 'inspect._empty'>
+    ON_START: str = 'on_start'  # Input: (), Output: None
+    CLOS_MANAGER: str = 'clos_manager'  # Input: (['self']), Output: <class 'inspect._empty'>
+    ON_EXIT: str = 'on_exit'  # Input: (), Output: None
+    INSTANCE: str = 'instance'  # Input: (['self']), Output: <class 'inspect._empty'>
+    START: str = 'start'  # Input: (['self']), Output: <class 'inspect._empty'>
+    STOP: str = 'stop'  # Input: (['self']), Output: <class 'inspect._empty'>
+    CANCEL: str = 'cancel'  # Input: (['self', 'job_id']), Output: <class 'inspect._empty'>
+    DEALT: str = 'dealt'  # Input: (['self', 'job_id']), Output: <class 'inspect._empty'>
+    ADD: str = 'add'  # Input: (['self', 'job_data']), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+
+
+@dataclass
+class SOCKETMANAGER(Enum):
+    NAME = 'SocketManager'
+    CREATE_SOCKET: str = 'create_socket'  # Input: (['self', 'name', 'host', 'port', 'type_id', 'max_connections', 'endpoint_port', 'return_full_object', 'keepalive_interval', 'test_override', 'package_size', 'start_keep_alive', 'unix_file', 'do_async']), Output: <class 'toolboxv2.utils.system.types.Result'>
+    RUN_AS_IP_ECHO_SERVER_A: str = 'run_as_ip_echo_server_a'  # Input: (['self', 'name', 'host', 'port', 'max_connections', 'test_override']), Output: <class 'inspect._empty'>
+    RUN_AS_SINGLE_COMMUNICATION_SERVER: str = 'run_as_single_communication_server'  # Input: (['self', 'name', 'host', 'port', 'test_override']), Output: <class 'inspect._empty'>
+    SEND_FILE_TO_SEVER: str = 'send_file_to_sever'  # Input: (['self', 'filepath', 'host', 'port']), Output: <class 'inspect._empty'>
+    RECEIVE_AND_DECOMPRESS_FILE_AS_SERVER: str = 'receive_and_decompress_file_as_server'  # Input: (['self', 'save_path', 'listening_port']), Output: <class 'inspect._empty'>
+    SEND_FILE_TO_PEER: str = 'send_file_to_peer'  # Input: (['self', 'filepath', 'host', 'port']), Output: <class 'inspect._empty'>
+    RECEIVE_AND_DECOMPRESS_FILE: str = 'receive_and_decompress_file'  # Input: (['self', 'save_path', 'listening_port', 'sender_ip']), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+    TBSOCKETCONTROLLER: str = 'tbSocketController'  # Input: (['name', 'host', 'port', 'test_override']), Output: <class 'inspect._empty'>
+    VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
 
 
 @dataclass
@@ -107,24 +144,6 @@ class CLOUDM(Enum):
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
     VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
-
-
-@dataclass
-class SCHEDULERMANAGER(Enum):
-    NAME = 'SchedulerManager'
-    VERSION: str = 'Version'  # Input: (['self']), Output: <class 'inspect._empty'>
-    INIT: str = 'init'  # Input: (['self']), Output: <class 'inspect._empty'>
-    ON_START: str = 'on_start'  # Input: (), Output: None
-    CLOS_MANAGER: str = 'clos_manager'  # Input: (['self']), Output: <class 'inspect._empty'>
-    ON_EXIT: str = 'on_exit'  # Input: (), Output: None
-    INSTANCE: str = 'instance'  # Input: (['self']), Output: <class 'inspect._empty'>
-    START: str = 'start'  # Input: (['self']), Output: <class 'inspect._empty'>
-    STOP: str = 'stop'  # Input: (['self']), Output: <class 'inspect._empty'>
-    CANCEL: str = 'cancel'  # Input: (['self', 'job_id']), Output: <class 'inspect._empty'>
-    DEALT: str = 'dealt'  # Input: (['self', 'job_id']), Output: <class 'inspect._empty'>
-    ADD: str = 'add'  # Input: (['self', 'job_data']), Output: <class 'inspect._empty'>
-    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
-    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
 
 
 @dataclass
@@ -292,11 +311,10 @@ class TESTWIDGET(Enum):
 
 
 @dataclass
-class WIDGETSPROVIDER_BOARDWIDGET(Enum):
-    NAME = 'WidgetsProvider.BoardWidget'
-    GET_WIDGET: str = 'get_widget'  # Input: (['request']), Output: <class 'inspect._empty'>
-    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
-    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+class QUICKNOTE_QNWIDGET(Enum):
+    NAME = 'quickNote.QnWidget'
+    SAVE: str = 'save'  # Input: (['app', 'request', 'wid']), Output: <class 'inspect._empty'>
+    GET_WIDGET: str = 'get_widget'  # Input: (['app', 'request', 'Wid']), Output: <class 'inspect._empty'>
 
 
 @dataclass
@@ -310,3 +328,46 @@ class QUICKNOTE(Enum):
     VIEW: str = 'VIEW'  # Input: (['show', 'data']), Output: <class 'inspect._empty'>
     FIND: str = 'Find'  # Input: (['show', 'data']), Output: <class 'inspect._empty'>
     INIT: str = 'init'  # Input: (['username', 'sign', 'jwt']), Output: <class 'inspect._empty'>
+
+
+@dataclass
+class WIDGETSPROVIDER_BOARDWIDGET(Enum):
+    NAME = 'WidgetsProvider.BoardWidget'
+    GET_WIDGET: str = 'get_widget'  # Input: (['request']), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+
+
+@dataclass
+class AUDIO(Enum):
+    NAME = 'audio'
+    TRANSCRIPT: str = 'transcript'  # Input: (['model', 'rate', 'chunk_duration', 'amplitude_min', 'microphone_index']), Output: <class 'inspect._empty'>
+    WAKE_WORD: str = 'wake_word'  # Input: (['word', 'variants', 'microphone_index', 'amplitude_min', 'model', 'do_exit', 'do_stop', 'ques']), Output: <class 'inspect._empty'>
+    TRANSCRIPT_STREAM: str = 'transcript_stream'  # Input: ([]), Output: <class 'inspect._empty'>
+    VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
+    ON_STARTUP: str = 'on_startup'  # Input: (['self']), Output: <class 'inspect._empty'>
+    ON_START: str = 'on_start'  # Input: (), Output: None
+    INIT_SPEECH: str = 'init_speech'  # Input: (['self', 'app']), Output: <class 'inspect._empty'>
+    ON_CLOSE: str = 'on_close'  # Input: (['self']), Output: <class 'inspect._empty'>
+    ON_EXIT: str = 'on_exit'  # Input: (), Output: None
+    SPEECH: str = 'speech'  # Input: (['self', 'text', 'voice_index', 'use_cache', 'provider', 'config']), Output: <class 'inspect._empty'>
+    SPEECH_STREAM: str = 'speech_stream'  # Input: (['self', 'text', 'voice_index', 'use_cache', 'provider', 'config']), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+
+
+@dataclass
+class ISAA(Enum):
+    NAME = 'isaa'
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+    VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
+    ADD_TASK: str = 'add_task'  # Input: (['name', 'task']), Output: <class 'inspect._empty'>
+    SAVE_TASK: str = 'save_task'  # Input: (['name']), Output: <class 'inspect._empty'>
+    LOAD_TASK: str = 'load_task'  # Input: (['name']), Output: <class 'inspect._empty'>
+    GET_TASK: str = 'get_task'  # Input: (['name']), Output: <class 'inspect._empty'>
+    LIST_TASK: str = 'list_task'  # Input: ([]), Output: <class 'inspect._empty'>
+    SAVE_TO_MEM: str = 'save_to_mem'  # Input: ([]), Output: <class 'inspect._empty'>
+    MINI_TASK: str = 'mini_task'  # Input: (['mini_task', 'mode', 'fetch_memory', 'all_mem', 'max_tokens']), Output: <class 'inspect._empty'>
+    RGET_MODE: str = 'rget_mode'  # Input: (['mode']), Output: <class 'inspect._empty'>
+    SET_LOCAL_FILES_TOOLS: str = 'set_local_files_tools'  # Input: (['local_files_tools']), Output: <class 'inspect._empty'>
