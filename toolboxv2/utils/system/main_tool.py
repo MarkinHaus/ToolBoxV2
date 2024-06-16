@@ -106,8 +106,8 @@ class MainTool:
         """"Returns the version"""
         return self.version
 
-    def get_user(self, username: str) -> Result:
-        return self.app.run_any(CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username, get_results=True)
+    async def get_user(self, username: str) -> Result:
+        return await self.app.a_run_any(CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username, get_results=True)
 
     async def __initobj(self):
         """Crutch used for __await__ after spawning"""

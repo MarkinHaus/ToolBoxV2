@@ -66,7 +66,7 @@ export function setupMutationObserver() {
     mutationObserver.observe(document.body, { childList: true, subtree: true });
 }
 
-document.addEventListener('DOMContentLoaded', ()=>{
+setTimeout(()=>{
     const initMDBtn = document.getElementById('initMDBtn');
     if (initMDBtn){
         initMDBtn.addEventListener('click', ()=> {
@@ -81,5 +81,5 @@ document.addEventListener('DOMContentLoaded', ()=>{
             console.log("AutoMarkdown: [started]")
         }, 2)//4500)
     }
-})
+}, 1500)
 

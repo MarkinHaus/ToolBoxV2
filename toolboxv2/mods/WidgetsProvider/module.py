@@ -37,12 +37,12 @@ def get_all_widget_mods(app: App):
 
 
 @export(mod_name=Name, version=version)
-def get_user_from_request(app, request):
+async def get_user_from_request(app, request):
     if request is None:
         return User()
     name = request.session.get('live_data', {}).get('user_name', "Cud be ur name")
     if name != "Cud be ur name":
-        user = app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=app.config_fh.decode_code(name))
+        user = await app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=app.config_fh.decode_code(name))
     else:
         user = User()
     return user

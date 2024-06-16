@@ -50,7 +50,9 @@ COPY ./toolboxv2/toolbox.yaml ./toolboxv2/toolbox.yaml
 COPY ./toolboxv2/mods_sto ./toolboxv2/mods_sto
 
 # Install the local application using pip.
-RUN npx bun install -y ./toolboxv2/web/
+RUN cd ./toolboxv2/web/
+RUN npx bun install
+RUN cd ./../..
 RUN pip install -e .
 # Expose the port that the application listens on.
 

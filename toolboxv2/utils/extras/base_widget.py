@@ -18,10 +18,10 @@ class BaseWidget:
         self.openWidgetsIDs = {}
         self.onReload = []
 
-    def register(self, app, fuction, version=None):
+    def register(self, app, fuction, version=None, name="get_widget", level=1, **kwargs):
         if version is None:
             version = app.version
-        app.tb(mod_name=self.name, version=version, request_as_kwarg=True, level=1, api=True, name="get_widget")(
+        app.tb(mod_name=self.name, version=version, request_as_kwarg=True, level=level, api=True, name=name, **kwargs)(
             fuction)
 
     def modify_iterator(self, iterator, replace):

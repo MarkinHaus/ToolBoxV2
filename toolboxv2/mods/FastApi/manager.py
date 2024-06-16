@@ -165,6 +165,10 @@ class Tools(MainTool, FileHandler):  # FileHandler
 
         api_data = self.api_config[api_name]
 
+        if not os.path.exists(self.app.start_dir+"/web/node_modules"):
+            self.print(f"Creating node module folder in {self.app.start_dir+'/web/node_modules'}")
+            os.system("npm install --prefix ./web ./web")
+
         self.print(api_data)
         g = f"uvicorn toolboxv2.mods.FastApi.fast_api_main:app --host {api_data['host']}" \
             f" --port {api_data['port']} --header data:{self.app.debug}:{api_name}"

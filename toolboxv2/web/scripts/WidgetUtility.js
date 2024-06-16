@@ -14,8 +14,9 @@ class WidgetUtility {
     // Erstellt ein neues Widget und fügt es dem DOM hinzu
 
     async fetchTemplate(identifier, titel = '') {
+        const extra = titel? '&Wid=': ''
         try {
-            const template = await window.TBf.httpPostUrl("WidgetsProvider", "open_widget", "name=" + identifier + titel,
+            const template = await window.TBf.httpPostUrl("WidgetsProvider", "open_widget", "name=" + identifier + extra +titel,
                 (e) => {
                     console.log(e)
                     return `<h2> Error ` + identifier + ` ` + titel + `</h2>`
@@ -24,7 +25,6 @@ class WidgetUtility {
                     return result.get()
                 }, true
             )
-            console.log("template:", template)
             return template
         } catch (error) {
             console.error('Error fetching template:', error);
@@ -43,7 +43,6 @@ class WidgetUtility {
                 return JSON.parse(result.get().slice(2, result.get().length-1))
             }, true
         )
-
     }
 
     async addBoard(name) {

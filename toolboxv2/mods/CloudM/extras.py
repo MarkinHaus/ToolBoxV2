@@ -259,7 +259,7 @@ async def register_initial_root_user(app: App, email=None):
     if rport.is_error():
         return rport
     await asyncio.sleep(1)
-    user = await app.run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username="root")
+    user = await app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username="root")
     print("User:")
     print(user)
     user = user.get()

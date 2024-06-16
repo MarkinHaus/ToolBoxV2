@@ -252,7 +252,7 @@ function updateDome(dome, add_script=true, linkExtra=null){
         }
         js.src = src;
         if (js.src!==script.src){
-            console.log("[TEST SRC]",js.src,script.src )
+            console.log("[TEST SRC]",js.src,"|",script.src )
         }
         // console.log("[TEST SRC]",js.src===script.src )
         // console.log(js, src !== state.TBv.base+'/index.js')
@@ -260,6 +260,9 @@ function updateDome(dome, add_script=true, linkExtra=null){
             console.log("Adding ", script.src);
             dome.appendChild(js);
             scriptSto.push(js.src);
+        }else{
+            //console.log("Src ", js.src, "not addet")
+            //console.log(!scriptSto.includes(js.src) , !document.querySelector('script[src="'+js.src+'"]') , src.slice(0, state.TBv.base.length+'/index.js'.length) !== state.TBv.base+'/index.js' , !script.src.endsWith("/@vite/client" ) , !script.src.includes("scripts/scripts.js"))
         }
     });
     }
@@ -342,12 +345,13 @@ function renderer({content="", extend = false, id = "main", Dome = DOME, add_scr
         }
         helper.id = id
         helper.classList.add("Mcontent")
+        updateDome(helper, add_script)
         if (insert){
             Dome.insertBefore(helper, Dome.firstChild);
         }else{
             Dome.appendChild(helper)
         }
-        updateDome(helper, add_script)
+
 
     }else {
         console.error("No Dome found", Dome, DOME)

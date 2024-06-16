@@ -191,29 +191,14 @@
         setAction(0, async () => {
                 const content = document.getElementById("inputField").value
                 if (content) {
-                    let extras = ""
                     let w_name = content.substring(0, content.length)
-                    if (content.includes(':')){
+                    if (content.includes(':')) {
                         w_name = content.substring(0, content.indexOf(":"))
                     }
-                    if (content.startsWith("quickNote.QnWidget:")){
-                        extras = "&Wid=" + content.substring(content.indexOf(":")+1, content.length);
-                    }
-                    await httpPostUrl("WidgetsProvider", "open_widget", "name=" + w_name + extras,
-                        (e) => {
-                            console.log(e)
-                            window.overlayUtility.createOverlay({
-                                content: `<h1>Error  ` + e.toString() + name + `</h1>`,
-                                closeOnOutsideClick: true,
-                            })
-                        }, (result) => {
-                            console.log("Susses",result)
-                            window.widgetUtility.createWidget({
-                                titel: content.substring(content.indexOf(":")+1, content.length), template: result.get()
-                            })
-
-                        }, true
-                    )
+                    await window.widgetUtility.createWidget({
+                        titel : content.substring(content.indexOf(":") + 1, content.length),
+                        identifier : w_name,
+                    })
                 } else {
                     window.overlayUtility.createOverlay({
                         content: `<p>No Text entered</p>`,

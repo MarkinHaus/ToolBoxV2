@@ -404,8 +404,8 @@ class MainToolType:
     def webInstall(self, user_instance, construct_render) -> str:
         """"Returns a web installer for the given user instance and construct render template"""
 
-    def get_user(self, username: str) -> Result:
-        return self.app.run_any(CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username, get_results=True)
+    async def get_user(self, username: str) -> Result:
+        return self.app.a_run_any(CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username, get_results=True)
 
 
 class AppType:

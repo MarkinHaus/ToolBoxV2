@@ -73,12 +73,12 @@ export class Result {
     }
 }
 
-export function wrapInResult(data, from_string=false) {
+export function wrapInResult(data) {
     let result = new Result(["local", "!", "no-data-parsed"], "httpPostData Error No date Returned", new ToolBoxResult(ToolBoxInterfaces.native, "Es wurden keine darten vom server zurück gegeben", {}), new ToolBoxInfo(-986, "NO data"));
 
     function valid_val(v) {
         //console.log("V::",v)
-        return  v !== undefined && v !== null
+        return  v !== undefined && v !== null && typeof v !== "string";
     }
 
     let data_to = ""
@@ -87,23 +87,21 @@ export function wrapInResult(data, from_string=false) {
     let exec_code = -989
     let help_text = ""
 
-    if (!from_string) {
-        if (valid_val(data)) {
-            const error = data.error
-            const origen = data.origin
-            console.log("[origin]:", origen)
-            if (valid_val(data.result)) {
-                data_to = data.result.data_to;
-                data_info = data.result.data_info;
-                r_data = data.result.data;
-            }
-            if (valid_val(data.info)) {
-                exec_code = data.info.exec_code;
-                help_text = data.info.help_text;
-            }
-            result = new Result(origen, error, new ToolBoxResult(data_to, data_info, r_data), new ToolBoxInfo(exec_code, help_text));
-
+    if (valid_val(data)) {
+        const error = data.error
+        const origen = data.origin
+        console.log("[origin]:", origen)
+        if (valid_val(data.result)) {
+            data_to = data.result.data_to;
+            data_info = data.result.data_info;
+            r_data = data.result.data;
         }
+        if (valid_val(data.info)) {
+            exec_code = data.info.exec_code;
+            help_text = data.info.help_text;
+        }
+        result = new Result(origen, error, new ToolBoxResult(data_to, data_info, r_data), new ToolBoxInfo(exec_code, help_text));
+
     } else {
         try {
             data = JSON.parse(data)
@@ -155,7 +153,7 @@ export function httpPostUrl(module_name, function_name, params, errorCallback, s
                 data = await parseResponse(data)
             // console.log("httpPostUrl: ",data, typeof data)
                 if (from_string){data = data.toString()}
-                const result = wrapInResult(data, typeof data === "string" || from_string)
+                const result = wrapInResult(data)
                 result.log()
                 if (result.error !== ToolBoxError.none) {
                     // Handle error case
@@ -184,7 +182,7 @@ export function httpPostData(module_name, function_name, data, errorCallback, su
             setTimeout(async ()=>{
                 data = await parseResponse(data)
                 // console.log("httpPostData: ",data, typeof data)
-                const result = wrapInResult(data, typeof data === "string")
+                const result = wrapInResult(data)
                 result.log()
                 if (result.error !== ToolBoxError.none) {
                     // Handle error case
