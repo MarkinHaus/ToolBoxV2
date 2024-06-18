@@ -80,7 +80,7 @@ def create_and_pack_module(path, module_name='', version='-.-.-', additional_dir
     if not os.path.exists(module_path):
         module_path += '.py'
 
-    temp_dir = tempfile.mkdtemp(dir=os.path.join(".\\mods_sto\\", "temp"))
+    temp_dir = tempfile.mkdtemp(dir=os.path.join(".\\mods_sto", "temp"))
     zip_file_name = f"RST${module_name}&{__version__}§{version}.zip"
     zip_path = f".\\mods_sto\\{zip_file_name}"
 
@@ -194,7 +194,7 @@ def unpack_and_move_module(zip_path, base_path='.\\mods', module_name=''):
 
     os.makedirs(".\\mods_sto\\temp\\", exist_ok=True)
     # Temporäres Verzeichnis für das Entpacken erstellen
-    temp_dir = tempfile.mkdtemp(dir=os.path.join(".\\mods_sto\\", "temp"))
+    temp_dir = tempfile.mkdtemp(dir=os.path.join(".\\mods_sto", "temp"))
 
     # ZIP-Datei entpacken
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
@@ -272,8 +272,8 @@ def installer(app: Optional[App], module_name: str, _version: str = "-.-.-", upd
         if not update and _version == version_:
             return "module already installed found"
 
-    module_name = find_highest_zip_version_entry(module_name).get('url').split('mods_sto\\')[-1]
-    if module_name is None:
+    module_name = find_highest_zip_version_entry(module_name).get('url', '').split('mods_sto\\')[-1]
+    if module_name is None or len(module_name) == 0:
         return False
     zip_path = f".\\mods_sto\\{module_name}"
     if 'y' in input(f"install zip file {module_name} ?"):
