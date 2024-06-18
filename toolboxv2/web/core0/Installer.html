@@ -1,13 +1,3 @@
-<!DOCTYPE html>
-<html lang="de">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <link rel="icon" sizes="192X192" href="/web/webapp/icon-192.png">
-    <link rel="apple-touch-icon" sizes="192X192" href="/web/webapp/icon-192.png">
-    <link rel="icon" sizes="512X512" href="/web/webapp/icon-512.png">
-    <link rel="apple-touch-icon" sizes="512X512" href="/web/webapp/icon-512.png">
 
     <script src="/web/scripts/infos.js" defer></script>
     <script src="/index.js" defer type="module"></script>
@@ -19,14 +9,8 @@
         rel="stylesheet"
         href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
     />
-    <script src="installer.js" defer></script>
+    <script src="/web/core0/installer.js" defer></script>
     <style>
-        body {
-            line-height: 1.6;
-            padding: 5px;
-            text-align: center;
-            align-items: center;
-        }
 
         #installer-container, #manual-install-link {
             margin-top: 5px;
@@ -77,16 +61,7 @@
             background-color: #45a049;
         }
     </style>
-</head>
-
-<body>
-<div class="main-page" style="padding-top: 5vh;padding-bottom: 2vh;background-color: transparent; /* Hintergrund transparent machen */
-    background: rgba(var(--text-color), 0.8); /* Hintergrundfarbe auf Weiß setzen */
-    background-image: radial-gradient(var(--text-color) 2px, transparent 0); /* Hintergrundbild mit größeren schwarzen Punkten erstellen */
-    background-size: 40px 40px; /* Größe des Hintergrundbilds anpassen */
-    background-position: -20px -20px; /* Position des Hintergrundbilds anpassen */
-    ">
-    <div class="wrapper fade-class">
+<div class="wrapper fade-class">
 <h2>Install engine + interface</h2>
 <h3>#Supported-OS: Windows, Linux, Mac, iOS, Android</h3>
 <select id="os-selection">
@@ -102,7 +77,6 @@
     <div id="auto-download-options"></div>
 </div>
 </div>
-</div>
 <footer style="position: relative;padding-top: 50%;">
     <h3><a href="/web/core0/index.html">Home</a></h3>
     <h4>Weitere Informationen</h4>
@@ -111,8 +85,3 @@
         <p>Unterstützen Sie uns auf <a href="https://www.buymeacoffee.com/markinhaus" target="_blank">BuyMeACoffee</a> oder <a href="https://www.patreon.com/de-DE" target="_blank">Patreon</a>.</p>
     </h5>
 </footer>
-
-</body>
-
-
-</html>

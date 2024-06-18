@@ -1,4 +1,8 @@
 <script src="/index.js" type="module"></script>
+
+<!-- fullcalendar bundle -->
+<script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js'></script>
+
 <div class="inv-main" id="main" style="width: 90vw;text-align: center">
     <input  autocomplete="off" type="text"
            style="
@@ -115,48 +119,32 @@
             });
         }
 
-
-        if (all_widget.length === 0){
-            window.TBf.httpPostUrl("WidgetsProvider", "get_all_widget_mods", "",
-                (e)=>{e.log()},
-                (s)=> { return s.get()}).then((d) =>{
-                if(d) {
-                    all_widget = d
-                    window.TBf.autocomplete(document.getElementById("bgBoardInput"), d)
-                }else{
-                    window.TBf.autocomplete(document.getElementById("bgBoardInput"), ["404"])
-                }
-            }, true)
-        }else{
-            window.TBf.autocomplete(document.getElementById("bgBoardInput"), all_widget)
-        }
-
         updateDropdown();
 
     }
 
     async function bgBoardHelper(bgBoardName) {
         if (!bgBoardName){
-            bgBoardName = document.getElementById("bgBoardInput").value
-        }
-        if (!bgBoardName){
             return "invalid bgBoardName"
         }
-        if (all_widget.length === 0){
-            await window.TBf.httpPostData("WidgetsProvider", "get_all_widget_mods", {},
-                (e)=>{e.log()},
-                (s)=> { s.log();all_widget = s.get()? s.get():all_widget }, true)
-        }
-        if (all_widget.includes(bgBoardName)){
-
-            const url = "/api/WidgetsProvider/open_widget?name="+bgBoardName;
-            window.TBf.router(url, true, bgBoardName, document.body)
-            addItem(bgBoardName)
-        }else{
-            window.TBf.getM("addBalloon")("MainContent", 0, ["Error adding Board '"+ bgBoardName+"'", "valid ar :"+ all_widget], [])
-            return
-        }
-        console.log("all_widget:", all_widget)
+        //console.log(all_widget)
+        //if (all_widget.length === 0){
+        //    const all_widget_ = await window.TBf.httpPostData("WidgetsProvider", "get_all_widget_mods", {},
+        //        (e)=>{e.log();return all_widget},
+        //        (s)=> { s.log();return s.get()? s.get():all_widget }, true)
+        //    if (all_widget_){
+        //        all_widget = all_widget_
+        //    }
+        //}
+        //if (all_widget.includes(bgBoardName)){
+        const url = "/api/WidgetsProvider/open_widget?name="+bgBoardName;
+        window.TBf.router(url, true, bgBoardName, document.body)
+        addItem(bgBoardName)
+        //}else{
+        //    window.TBf.getM("addBalloon")("MainContent", 0, ["Error adding Board '"+ bgBoardName+"'", "valid ar :"+ all_widget], [])
+        //    return
+        //}
+        //console.log("all_widget:", all_widget)
 
     }
     // Beispiel für eine Aktion
@@ -217,16 +205,18 @@
                     console.log("Suche wird ausgeführt")}], ])
         );
         setAction(2, () => {
+            const content = document.getElementById("inputField").value
             window.overlayUtility.createOverlay({
-                content: `<p>Add BG page widgets</p> <div id="settings-container">
-        <input type="text" id="bgBoardInput"  style="width: 100%" placeholder="name" autocomplete="off">
+                content: content? `<p>Add `+content+` in BG </p>
+    </div>`: `<p>Remove BG Elements </p>
+ <div id="settings-container">
     </div>`,
                 closeOnOutsideClick: true,
                 onClose: null,
                 afterCrate: initPageWidgets,
-                buttons: [
-                    {text: "Open", action: async () =>await bgBoardHelper()},
-                ]
+                buttons: content? [
+                     {text: "Open", action: async () =>await bgBoardHelper(content)},
+                ]: []
             })
         });
 

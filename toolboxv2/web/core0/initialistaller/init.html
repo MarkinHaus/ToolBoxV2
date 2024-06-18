@@ -1,10 +1,5 @@
-<!DOCTYPE html>
-<html lang="en" data-theme="dark">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>System Setup</title>
-    <link rel="stylesheet" href="../../assets/styles.css">
+<div>
+    <script src="/index.js" defer type="module"></script>
     <link rel="stylesheet" href="/web/assets/styles.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.3.1/styles/default.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.3.1/highlight.min.js"></script>
@@ -12,16 +7,6 @@
     <script src="/web/scripts/infos.js" defer></script>
 
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            position: relative;
-        }
 
         .container {
             border-radius: 10px;
@@ -68,8 +53,8 @@
 
         #backArrow {
             position: absolute;
-            top: 1%;
-            left: 30px;
+            top: 0.5vh;
+            left: 49vw;
             cursor: pointer;
             scale: 2.4;
         }
@@ -106,14 +91,8 @@
         rel="stylesheet"
         href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
     />
-</head>
-<body style="    background-color: transparent; /* Hintergrund transparent machen */
-    background: rgba(var(--text-color), 0.8); /* Hintergrundfarbe auf Weiß setzen */
-    background-image: radial-gradient(var(--text-color) 2px, transparent 0); /* Hintergrundbild mit größeren schwarzen Punkten erstellen */
-    background-size: 40px 40px; /* Größe des Hintergrundbilds anpassen */
-    background-position: -20px -20px; /* Position des Hintergrundbilds anpassen */
-    ">
-
+    <br/>
+    <br/>
 <div id="backArrow">&larr;</div>
 
 <div class="container" id="setupContent0">
@@ -219,7 +198,7 @@
 
 </div>
 
-<script>
+<script unSave="true">
 
     const MaxContent = 8
     let AcContent = 0
@@ -612,6 +591,4 @@
     }
 
 </script>
-
-</body>
-</html>
+</div>

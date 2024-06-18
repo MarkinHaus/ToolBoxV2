@@ -1,6 +1,6 @@
 dependencies:
-- os
-- typing
 - ''
+- typing
+- os
 - uuid
 - fastapi

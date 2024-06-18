@@ -216,7 +216,7 @@ function updateDome(dome, add_script=true, linkExtra=null){
     }
 
     dome.querySelectorAll("a").forEach(function(link) {
-
+        console.log("Links: ",link.href.toString(), state.TBv.base, link.href.toString().startsWith(state.TBv.base))
         if (link.href.toString().startsWith(state.TBv.base)) {
             let route = "/" + new URL(link.href).pathname.split('/').slice(1).join('/');
             // console.log("REGISTERED:", route)

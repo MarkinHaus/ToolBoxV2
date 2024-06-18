@@ -1,4 +1,4 @@
-document.addEventListener('DOMContentLoaded', function() {
+setTimeout(()=> {
     var osSelection = document.getElementById('os-selection');
     var userAgent = navigator.userAgent;
     var platform = navigator.platform;
@@ -66,4 +66,4 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     autoDisplay()
-});
+}, 200);

@@ -1,11 +1,11 @@
 dependencies:
-- os
 - ''
-- typing
-- dataclasses
-- enum
 - dotenv
-- abc
 - time
 - redis
+- dataclasses
+- typing
+- os
+- abc
+- enum
 - json

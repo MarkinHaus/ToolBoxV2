@@ -31,7 +31,6 @@ class Tools(MainTool, FileHandler):
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                           name=self.name, logs=self.logger, color=self.color, on_exit=self.on_exit)
 
-        self.seves = {}
         self.groups = {}
         self.file_chas = {}
 
@@ -70,6 +69,8 @@ class Tools(MainTool, FileHandler):
         if command not in self.groups:
             self.groups[command] = {}
             self.print(f"New Group addet name {command}:{list(self.groups.keys())}")
+        else:
+            self.groups[command] = {}
 
     def add_collection_to_group_wrapper(self, command):
         if command is None:

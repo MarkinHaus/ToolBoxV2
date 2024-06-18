@@ -40,12 +40,14 @@ function addBalloon(element_id, flag, content, options) { // element_id flag:0 S
         });
 
         const optionsElement = balloon.querySelector('.speech-balloon-options');
-        options.forEach(option => {
-            const button = document.createElement('button');
-            button.textContent = option[0];
-            button.addEventListener('click', ()=>{option[1]();closeBalloon(false)});
-            optionsElement.appendChild(button);
-        });
+        if (options){
+            options.forEach(option => {
+                const button = document.createElement('button');
+                button.textContent = option[0];
+                button.addEventListener('click', ()=>{option[1]();closeBalloon(false)});
+                optionsElement.appendChild(button);
+            });
+        }
 
         const progressBar = balloon.querySelector('.speech-balloon-progress-bar');
         progressBar.addEventListener('animationend', closeBalloon);

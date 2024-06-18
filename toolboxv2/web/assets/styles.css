@@ -514,8 +514,7 @@ input[type="checkbox"] {
 
 #MainContent{
     width: 100vw;
-    min-height: fit-content;
-    max-height: 100vh;
+    height: 100vh;
 }
 
 /* Scrollbar styles */
