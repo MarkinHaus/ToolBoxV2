@@ -246,7 +246,7 @@ pyyaml~=6.0
 itsdangerous~=2.1.2
 reedsolo~=1.7.0
 litellm~=1.23.16
-aiohttp~=3.8.4
+aiohttp~=3.8.5
 schedule~=1.2.0
 Pillow~=9.5.0
 SpeechRecognition

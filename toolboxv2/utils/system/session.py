@@ -17,7 +17,6 @@ from .getting_and_closing_app import get_app, get_logger
 from . import all_functions_enums as tbef
 
 from aiohttp import ClientSession, ClientResponse
-from yarl import URL
 
 from ... import Code, Spinner
 from ...tests.a_util import async_test
@@ -139,7 +138,7 @@ class Session(metaclass=Singleton):
         # Konstruieren des vollständigen Dateipfads
         file_path = os.path.join(dest_folder, filename)
         if isinstance(url, str):
-            url = URL(self.base + url)
+            url = self.base + url
         async with self.session.get(url) as response:
             if response.status == 200:
                 with open(file_path, 'wb') as f:
@@ -162,9 +161,9 @@ class Session(metaclass=Singleton):
                 return response.status == 200
         return False
 
-    async def fetch(self, url: URL or str, method: str = 'GET', data=None) -> ClientResponse:
+    async def fetch(self, url: str, method: str = 'GET', data=None) -> ClientResponse:
         if isinstance(url, str):
-            url = URL(self.base + url)
+            url = self.base + url
         if self.session:
             if method.upper() == 'POST':
                 return await self.session.post(url, data=data)

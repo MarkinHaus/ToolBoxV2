@@ -159,7 +159,7 @@ def update_core(self, backup=False, name=""):
             return False
 
     def is_git_repository():
-        return os.path.isdir('.git')
+        return os.path.isdir('.git') or os.path.isdir('./../.git')
 
     def is_pip_installed(package_name):
         try:
@@ -187,7 +187,7 @@ def update_core_pip(self):
     os.system("pip install --upgrade ToolBoxV2")
 
 
-def update_core_git(self, backup=False, name=""):
+def update_core_git(self, backup=False, name="base"):
     self.print("Init Update..")
     if backup:
         os.system("git fetch --all")
@@ -208,9 +208,9 @@ def update_core_git(self, backup=False, name=""):
         print("their was an error updating...\n\n")
         print(Style.RED(f"Error-code: os.system -> {out}"))
         print(
-            "if you changes local files type $ cloudM update_core save {name}")
+            f"if you changes local files type $ cloudM update_core save {name}")
         print(
-            "your changes will be saved to a branch named : backup-master-{app.id}-{self.version}-{name}"
+            f"your changes will be saved to a branch named : backup-master-{self.app.id}-{self.version}-{name}"
         )
         print(
             "you can apply yur changes after the update with:\ngit stash\ngit stash pop"

@@ -1,11 +1,11 @@
 dependencies:
-- threading
 - ''
-- time
 - dataclasses
 - queue
+- enum
+- uuid
+- threading
+- concurrent
 - typing
 - os
-- uuid
-- enum
-- concurrent
+- time

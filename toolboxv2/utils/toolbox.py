@@ -158,11 +158,6 @@ class App(AppType, metaclass=Singleton):
 
         self.print(f"Infos:\n  {'Name':<8} -> {node()}\n  {'ID':<8} -> {self.id}\n  {'Version':<8} -> {self.version}\n")
 
-        if args.update:
-            os.system("git pull")
-            # self.save_load("CloudM")
-            # self.run_any("CloudM", "update_core")
-
         self.logger.info(
             Style.GREEN(
                 f"Finish init up in {time.perf_counter() - t0:.2f}s"

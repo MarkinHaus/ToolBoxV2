@@ -230,7 +230,10 @@ def make_installer(app: Optional[App], module_name: str, base=".\\mods"):
         return "module not found"
 
     app.save_load(module_name)
-    version_ = app.get_mod(module_name).version
+    mod = app.get_mod(module_name)
+    version_ = version
+    if mod is not None:
+        version_ = mod.version
 
     zip_path = create_and_pack_module(f"{base}\\{module_name}", module_name, version_)
 
@@ -257,13 +260,16 @@ def uninstaller(app: Optional[App], module_name: str):
 
 
 @export(mod_name=Name, name="install", test=False)
-def installer(app: Optional[App], module_name: str, version: str = "-.-.-"):
+def installer(app: Optional[App], module_name: str, _version: str = "-.-.-", update=False):
     if app is None:
         app = get_app(f"{Name}.installer")
 
     if module_name in app.get_all_mods():
-        version_ = app.get_mod(module_name).version
-        if version == version_:
+        version_ = version
+        mod = app.get_mod(module_name)
+        if mod is not None:
+            version_ = mod.version
+        if not update and _version == version_:
             return "module already installed found"
 
     module_name = find_highest_zip_version_entry(module_name).get('url').split('mods_sto\\')[-1]

@@ -530,6 +530,16 @@ async def setup_app():
         if _min_info:
             print(_min_info)
 
+    if args.update:
+        if args.update == "main":
+            await tb_app.save_load("CloudM")
+            tb_app.run_any("CloudM", "update_core")
+        else:
+            tb_app.run_any("CloudM", "install", module_name=args.update, update=True, get_results=True).print()
+        # os.system("git pull")
+        # self.save_load("CloudM")
+        # self.run_any("CloudM", "update_core")
+
     tb_app.print("OK")
     if args.background_application_runner:
         daemon_app = await DaemonApp(tb_app, args.host, args.port if args.port != 5000 else 6587, t=False)

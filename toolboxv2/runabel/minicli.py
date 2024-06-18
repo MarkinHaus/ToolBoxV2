@@ -3,8 +3,12 @@ import datetime
 import inspect
 import os
 import threading
-
-import psutil
+try:
+    import psutil
+    IS_PSUTIL = True
+except ImportError:
+    psutil = None
+    IS_PSUTIL = False
 from prompt_toolkit import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.shortcuts import set_title
@@ -240,13 +244,16 @@ async def run(app: App, args):
     print("", end="" + "start ->>\r")
     while running:
         # Get CPU usage
-        cpu_usage = psutil.cpu_percent(interval=1)
+        if IS_PSUTIL:
+            cpu_usage = psutil.cpu_percent(interval=1)
 
-        # Get memory usage
-        memory_usage = psutil.virtual_memory().percent
+            # Get memory usage
+            memory_usage = psutil.virtual_memory().percent
 
-        # Get disk usage
-        disk_usage = psutil.disk_usage('/').percent
+            # Get disk usage
+            disk_usage = psutil.disk_usage('/').percent
+        else:
+            cpu_usage = memory_usage = disk_usage = -1
 
         def get_rprompt():
             current_time: str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")

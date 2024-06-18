@@ -30,7 +30,7 @@ RUN npm install bun
 # RUN npx bun install -y ./toolboxv2/web/
 
 COPY ./setup.py ./setup.py
-COPY requirements_leg.txt ./requirements.txt
+COPY ./requirements.txt ./requirements.txt
 COPY ./README.md ./README.md
 COPY ./setup.cfg ./setup.cfg
 COPY ./MANIFEST.in ./MANIFEST.in
