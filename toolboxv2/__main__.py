@@ -563,7 +563,9 @@ async def setup_app():
                 stop(pid_file, args.name)
     elif args.live_application:
         try:
-            tb_app = await a_get_proxy_app(tb_app)
+            tb_app = await a_get_proxy_app(tb_app, host=args.host if args.host != "0.0.0.0" else "localhost",
+                                           port=args.port if args.port != 5000 else 6587,
+                                           key=os.getenv("TB_R_KEY", "user@phfrase"))
             if args.debug:
                 await tb_app.show_console()
         except:

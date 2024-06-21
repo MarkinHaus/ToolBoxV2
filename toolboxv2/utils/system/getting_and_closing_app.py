@@ -50,11 +50,11 @@ def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None, sync=
     return app
 
 
-async def a_get_proxy_app(app, host="localhost", port=6587, key="remote@root"):
+async def a_get_proxy_app(app, host="localhost", port=6587, key="remote@root", timeout=12):
     from toolboxv2.utils.proxy.proxy_app import ProxyApp
     from os import getenv
     app.print("INIT PROXY APP")
-    _ = await ProxyApp(app, host, port)
+    _ = await ProxyApp(app, host, port, timeout=timeout)
     time.sleep(0.2)
     _.print("PROXY APP START VERIFY")
     await _.verify({'key': getenv('TB_R_KEY', key)})
