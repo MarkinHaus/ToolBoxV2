@@ -215,6 +215,10 @@ def update_core_git(self, backup=False, name="base"):
         print(
             "you can apply yur changes after the update with:\ngit stash\ngit stash pop"
         )
+        if 'n' not in input("do git commands ? [Y/n]").lower():
+            os.system("git stash")
+            os.system("git pull")
+            os.system("git stash pop")
 
     if out == -1:
         os.system("git fetch --all")
@@ -222,7 +226,7 @@ def update_core_git(self, backup=False, name="base"):
 
     if "update" not in com:
         print("Restarting...")
-        os.system(com)
+        os.system(com + ' -c welcome version update')
     exit(0)
 
 
