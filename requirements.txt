@@ -12,7 +12,7 @@ schedule==1.2.2
 tqdm==4.66.4
 watchfiles==0.22.0
 ipython == 8.25.0
-# itsdangerous==2.2.0
+itsdangerous==2.2.0
 fastapi==0.111.0
 starlette==0.37.2
 webauthn==2.1.0

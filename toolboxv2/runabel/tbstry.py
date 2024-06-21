@@ -2,12 +2,11 @@ import os
 import threading
 import time
 
-from PIL import Image
-
 from toolboxv2 import App, show_console, get_app, Spinner
 
 
 def create_image():
+    from PIL import Image
     # Generate an image and draw a pattern
     image = Image.open('./web/webapp/icon-512.png')
     return image

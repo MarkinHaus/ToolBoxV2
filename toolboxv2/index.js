@@ -8,7 +8,7 @@ const rpIdUrl_f = ()=> {
     if (window.location.href.match("localhost")) {
         return "http://localhost:" + window.location.port
     } else {
-        return "https//simplecore.app"
+        return "https://simplecore.app"
     }
 }
 
