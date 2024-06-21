@@ -502,8 +502,8 @@ async def setup_app():
         print(f"Testing in {test_path}")
         if not run_tests(test_path):
             print("Error in tests")
-            return 1
-        return 0
+            exit(1)
+        exit(0)
 
     abspath = os.path.dirname(os.path.abspath(__file__))
     info_folder = abspath + '\\.info\\'

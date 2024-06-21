@@ -436,7 +436,7 @@ def protect_level_test(request):
     if not (modul_name in tb_app.functions.keys() and fuction_name in tb_app.functions.get(modul_name, {}).keys()):
         request.session['live_data']['RUN'] = False
         tb_app.logger.warning(
-            f"Path is not for level testing {request.url.path} module {modul_name} and module fuction {fuction_name} dos not exist")
+            f"Path is not for level testing {request.url.path} Function {modul_name}.{fuction_name} dos not exist")
         return True  # path is not for level testing
 
     fod, error = tb_app.get_function((modul_name, fuction_name), metadata=True, specification=user_spec)

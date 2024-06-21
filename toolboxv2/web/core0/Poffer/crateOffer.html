@@ -269,7 +269,7 @@
     })
     document.getElementById("CustomDataSubmit").addEventListener("click", ()=> {
         console.log("DONE", offerData)
-        fetch("/api/PersonalOffer/crate/", {
+        fetch("/api/PersonalOffer/create/", {
             method: "POST",
             body: offerData
         })

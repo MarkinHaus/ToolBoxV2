@@ -57,7 +57,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
                 self.restart_api,
         }
         FileHandler.__init__(
-            self, "api-m.data", app.id if app else __name__, self.keys, {
+            self, "apis.config", app.id if app else __name__, self.keys, {
                 "Apis": {
                     'main': {
                         "Name": 'main',
