@@ -226,7 +226,7 @@ def update_core_git(self, backup=False, name="base"):
 
     if "update" not in com:
         print("Restarting...")
-        os.system(com + ' -c welcome version update')
+        os.system(com.replace('-u main ', '') + ' -c welcome version update')
     exit(0)
 
 
