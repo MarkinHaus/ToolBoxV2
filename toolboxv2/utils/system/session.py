@@ -85,7 +85,9 @@ class Session(metaclass=Singleton):
             print("Step (2/7)")
             await page.wait_for_load_state("networkidle", timeout=240 * 60)
             claim = await page.evaluate("localStorage.getItem('jwt_claim_device')")
-            print("claim: ", len(claim))
+            t_max = time.time() + 20
+            while claim is None and t_max > time.time():
+                claim = await page.evaluate("localStorage.getItem('jwt_claim_device')")
             print("Step (3/7)")
             if claim is None:
                 get_logger().error("No claim Received")
