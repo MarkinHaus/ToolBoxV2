@@ -260,7 +260,7 @@ def uninstaller(app: Optional[App], module_name: str):
 
 
 @export(mod_name=Name, name="install", test=False)
-def installer(self, app: Optional[App], module_name: str, _version: str = "-.-.-", update=False):
+def installer(app: Optional[App], module_name: str, _version: str = "-.-.-", update=False):
     if app is None:
         app = get_app(f"{Name}.installer")
 
@@ -271,8 +271,6 @@ def installer(self, app: Optional[App], module_name: str, _version: str = "-.-.-
             version_ = mod.version
         if not update and _version == version_:
             return "module already installed found"
-
-    print("MOD Data :",self.save_mod_snapshot(module_name))
 
     module_name = find_highest_zip_version_entry(module_name, filepath=f'{app.start_dir}/tbState.yaml').get('url', '').split('mods_sto\\')[-1]
     if module_name is None or len(module_name) == 0:

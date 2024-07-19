@@ -5,7 +5,7 @@ import time
 import uuid
 from dataclasses import dataclass, field, asdict
 from enum import Enum
-from typing import Dict, Tuple, Optional, Any, Callable, Union
+from typing import Dict, Tuple, Optional, Any, Callable, Union, Set
 from concurrent.futures import ThreadPoolExecutor
 
 from toolboxv2 import get_app, Result, Spinner, MainTool, get_logger
@@ -190,7 +190,7 @@ class ProxyRout(ProxyUtil):
 
 
 class EventManagerClass:
-    events: set[Event] = set()
+    events: Set[Event] = set()
     source_id: str
     _name: str
     _identification: str

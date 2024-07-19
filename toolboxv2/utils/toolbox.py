@@ -467,6 +467,10 @@ class App(AppType, metaclass=Singleton):
 
         function_data = self.functions[modular_id][function_id]
 
+        if isinstance(function_data, list):
+            print(f"functions {function_id} : {function_data}")
+            function_data = self.functions[modular_id][function_data[-1]]
+
         function = function_data.get("func")
         params = function_data.get("params")
 
@@ -1022,7 +1026,7 @@ class App(AppType, metaclass=Singleton):
                 f"Function {modular_name}.{function_name}"
                 f" executed wit an error {str(e)}, {type(e)}")
             self.debug_rains(e)
-
+            self.print(f"! Function ERROR: in {modular_name}.{function_name} ")
         else:
             self.print_ok()
 

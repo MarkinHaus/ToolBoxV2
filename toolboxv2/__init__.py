@@ -26,6 +26,9 @@ try:
     from toolboxv2.mods import *
 except ImportError as e:
     MODS_ERROR = e
+except Exception as e:
+    print(f"WARNING ERROR IN LIBRARY MODULE´S details : {e}")
+    MODS_ERROR = e
 
 __author__ = """Markin Hausmanns"""
 __email__ = 'Markinhausmanns@gmail.com'

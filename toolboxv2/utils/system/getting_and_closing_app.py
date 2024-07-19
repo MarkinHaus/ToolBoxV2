@@ -1,6 +1,6 @@
 import asyncio
 import atexit
-import time
+import time, os
 from typing import List, Optional
 
 from .tb_logger import get_logger
@@ -82,6 +82,7 @@ async def a_save_closing_app():
         return
 
     app = registered_apps[0]
+    os.chdir(app.start_dir)
     if not app.alive:
         await app.a_exit()
         app.print(Style.Bold(Style.ITALIC("- end -")))

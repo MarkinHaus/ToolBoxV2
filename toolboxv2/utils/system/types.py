@@ -47,6 +47,10 @@ class AppArgs:
     def default(self):
         return self
 
+    def set(self, name, value):
+        setattr(self, name, value)
+        return self
+
 
 class ApiOb:
     token = ""
