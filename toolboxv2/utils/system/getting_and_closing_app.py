@@ -82,10 +82,8 @@ async def a_save_closing_app():
         return
 
     app = registered_apps[0]
-    try:
+    if app.start_dir != "test":
         os.chdir(app.start_dir)
-    except AttributeError:
-        pass
     if not app.alive:
         await app.a_exit()
         app.print(Style.Bold(Style.ITALIC("- end -")))

@@ -48,7 +48,7 @@ class TestTbState(unittest.TestCase):
         mock_app = MagicMock()
         mock_app.start_dir = "/root"
         mock_app.version = "1.0"
-        mock_app.get_all_mods.return_value = {"mod1": MagicMock(version="1.0"), "mod2": MagicMock(version="2.0")}
+        # mock_app.get_all_mods.return_value = {"mod1": MagicMock(version="1.0"), "mod2": MagicMock(version="2.0")}
 
         state = get_state_from_app(mock_app)
 
