@@ -84,6 +84,7 @@ class TestSaveClosingApp(unittest.TestCase):
 
         # Set up a registered app
         app_mock = get_app()
+        app_mock.start_dir = "test"
         app_mock.print = Mock()
 
         # Call the function
@@ -105,6 +106,8 @@ class TestSaveClosingApp(unittest.TestCase):
         # Mock the event loop
         # Set up a registered app
         app_mock = get_app()
+
+        app_mock.start_dir = "test"
         app_mock.print = Mock()
 
         save_closing_app()
