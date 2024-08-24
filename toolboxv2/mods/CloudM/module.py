@@ -149,7 +149,7 @@ class Tools(MainTool, FileHandler):
             mod_data = tb_state.installable.get(mod_name)
 
         if mod_data is None:
-            self.print(f"Valid ar : {list(tb_state.mods.keys())}")
+            self.print(f"Valid ar : {list(tb_state.installable.keys())}")
             return list(tb_state.installable.keys())
 
         if not os.path.exists("./installer"):

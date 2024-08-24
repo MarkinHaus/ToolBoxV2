@@ -66,17 +66,18 @@ the [giswqs/pypackage](https://github.com/giswqs/pypackage) project template.
  - diffuser system setup
 
 ## Timeline
- - Soket | 24.06
- - PersonalOffers | 25.06
- - gini (local, beter scripts in ipy) | 26.06
- - auto git commit | 27.06
- - Kalender | 28.06
- - live note | 30.06
- - edge storage wit blobs | 02.07
- - diffuser | 08.07
- - edge compute | 12.07
- - isaa remote / gini remote | 15.07
- - live diffuser | 16.07
- - ttt online | **.07
- - swap bots | **.08
- - ReklamBots | **.09
+ - Soket P2P wit server0
+ - PersonalOffers crate | distribute | Ontime use | Data collection
+ - gini (local, beter scripts in ipy)
+ - auto git commit
+ - Kalender
+ - live note
+ - edge storage wit blobs
+ - diffuser
+ - edge compute
+ - isaa remote / gini remote
+ - live diffuser
+ - ttt online
+ - swap bots
+ - ReklamBots
+ link shortener

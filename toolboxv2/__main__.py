@@ -307,12 +307,12 @@ def parse_args():
                         action="store_true")
 
     parser.add_argument("-fg", "--live-application",
-                        help="Start an interface as live application not using a background runner",
+                        help="Start an Proxy interface optional using -p -w",
                         action="store_true",  # Ändere zu store_true
                         default=False)
 
-    parser.add_argument("--docker", help="start the toolbox in docker (in remote mode is no local docker engin "
-                                         "required)", default=False,
+    parser.add_argument("--docker", help="start the toolbox in docker Enables 4 modi [test,live,live0,dev]\n\trun as "
+                                         "$ tb --docker -m [modi] optional -p -w\n\tvalid with -fg", default=False,
                         action="store_true")
     parser.add_argument("--build", help="build docker image from local source", default=False,
                         action="store_true")
@@ -807,10 +807,11 @@ def tb_post_ipy(app, rest):
 
 
 def line_magic_ipy(app, ipython, line):
-    app.print(f"line: {line}, {type(line)}")
-    if line.split(' ')[0] in app.functions:
+    app.mod_online(line.split(' ')[0].strip(), True)
+    if line.split(' ')[0].strip() in app.functions:
         async_test(command_runner)(app, line.split(' '))
-
+    else:
+        app.print_functions()
 
 def configure_ipython(argv):
     from traitlets.config import Config

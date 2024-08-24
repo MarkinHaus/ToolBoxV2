@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 from toolboxv2 import get_app, App, __version__
 from toolboxv2.utils.system.api import find_highest_zip_version_entry
+from toolboxv2.utils.system.session import Session
 from toolboxv2.utils.system.types import ToolBoxInterfaces
 
 Name = 'CloudM'
@@ -237,8 +238,9 @@ def make_installer(app: Optional[App], module_name: str, base=".\\mods"):
 
     zip_path = create_and_pack_module(f"{base}\\{module_name}", module_name, version_)
 
-    # if 'y' in input("uploade zip file ?"):
-    #     pass
+    if 'y' in input("uploade zip file ?"):
+        app.session.upload_file(zip_path, '/installer/upload-file')
+
     return zip_path
 
 

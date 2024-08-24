@@ -269,7 +269,7 @@ body.dark-mode {
 */
 .dark-mode-toggle {
     position: absolute;
-    right: 15px;
+    right: 25px;
     top: 0;
     scale: 1.4;
     margin-bottom: 5px;
@@ -510,11 +510,6 @@ input[type="checkbox"] {
     overflow-y: auto;
     overflow-x: clip;
     border-radius: 4px;
-}
-
-#MainContent{
-    width: 100vw;
-    height: 100vh;
 }
 
 /* Scrollbar styles */

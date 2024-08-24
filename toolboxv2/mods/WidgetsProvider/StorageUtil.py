@@ -24,6 +24,8 @@ def get_all_sto_names(app, user_name="", user_id=""):
     if res.is_error():
         return res
     print('result:::::::::::::::::::', type(res.get()))
+    if isinstance(res.get(), bytes):
+        res.result.data = res.get().decode()
     if isinstance(res.get(), str):
         res.result.data = [__.strip() for __ in res.get().replace('[', '').replace(']', '').replace("'", '').split(',')]
     return res

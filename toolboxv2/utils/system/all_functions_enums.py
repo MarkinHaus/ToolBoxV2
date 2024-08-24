@@ -37,30 +37,6 @@ class MINIMALHTML(Enum):
 
 
 @dataclass
-class PROCESSMANAGER(Enum):
-    NAME = 'ProcessManager'
-    STARTDBUG: str = 'startDbug'  # Input: (['p1_command', 'p2_command']), Output: <class 'inspect._empty'>
-    STARTDEV: str = 'startDev'  # Input: (['p1_command', 'p2_command']), Output: <class 'inspect._empty'>
-    START: str = 'start'  # Input: (['p1_command', 'p2_command']), Output: <class 'inspect._empty'>
-    START_CLIENT: str = 'start_client'  # Input: (['p0_command', 'p1_command', 'p2_command']), Output: <class 'inspect._empty'>
-    CUSTOM: str = 'custom'  # Input: (['commands', 'monitor']), Output: <class 'inspect._empty'>
-    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
-    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
-
-
-@dataclass
-class WELCOME(Enum):
-    NAME = 'welcome'
-    VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
-    PRINTT: str = 'printT'  # Input: ([]), Output: <class 'inspect._empty'>
-    ON_START: str = 'on_start'  # Input: (), Output: None
-    ANIMATION1: str = 'Animation1'  # Input: ([]), Output: <class 'inspect._empty'>
-    ANIMATION: str = 'Animation'  # Input: ([]), Output: <class 'inspect._empty'>
-    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
-    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
-
-
-@dataclass
 class DAYTREE_DAYTREEWIDGET(Enum):
     NAME = 'DayTree.DayTreeWidget'
     GET_WIDGET: str = 'get_widget'  # Input: (['request']), Output: <class 'inspect._empty'>
@@ -72,39 +48,13 @@ class DAYTREE_DAYTREEWIDGET(Enum):
 
 
 @dataclass
-class EMAIL_WAITING_LIST(Enum):
-    NAME = 'email_waiting_list'
-    ADD: str = 'add'  # Input: (['app', 'email']), Output: <class 'toolboxv2.utils.system.types.ApiResult'>
-    SEND_EMAIL_TO_ALL: str = 'send_email_to_all'  # Input: ([]), Output: <class 'inspect._empty'>
-    SEND_EMAIL: str = 'send_email'  # Input: (['data']), Output: <class 'inspect._empty'>
-    CRATE_SING_IN_EMAIL: str = 'crate_sing_in_email'  # Input: (['user_email', 'user_name']), Output: <class 'inspect._empty'>
-    CRATE_MAGIC_LICK_DEVICE_EMAIL: str = 'crate_magic_lick_device_email'  # Input: (['user_email', 'user_name', 'link_id', 'nl']), Output: <class 'inspect._empty'>
-    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
-    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
-
-
-@dataclass
-class EVENTMANAGER(Enum):
-    NAME = 'EventManager'
-    STARTWEBEVENTS: str = 'startWebEvents'  # Input: (['self']), Output: <class 'inspect._empty'>
-    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
-    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
-
-
-@dataclass
-class SCHEDULERMANAGER(Enum):
-    NAME = 'SchedulerManager'
-    VERSION: str = 'Version'  # Input: (['self']), Output: <class 'inspect._empty'>
-    INIT: str = 'init'  # Input: (['self']), Output: <class 'inspect._empty'>
-    ON_START: str = 'on_start'  # Input: (), Output: None
-    CLOS_MANAGER: str = 'clos_manager'  # Input: (['self']), Output: <class 'inspect._empty'>
-    ON_EXIT: str = 'on_exit'  # Input: (), Output: None
-    INSTANCE: str = 'instance'  # Input: (['self']), Output: <class 'inspect._empty'>
-    START: str = 'start'  # Input: (['self']), Output: <class 'inspect._empty'>
-    STOP: str = 'stop'  # Input: (['self']), Output: <class 'inspect._empty'>
-    CANCEL: str = 'cancel'  # Input: (['self', 'job_id']), Output: <class 'inspect._empty'>
-    DEALT: str = 'dealt'  # Input: (['self', 'job_id']), Output: <class 'inspect._empty'>
-    ADD: str = 'add'  # Input: (['self', 'job_data']), Output: <class 'inspect._empty'>
+class PROCESSMANAGER(Enum):
+    NAME = 'ProcessManager'
+    STARTDBUG: str = 'startDbug'  # Input: (['p1_command', 'p2_command']), Output: <class 'inspect._empty'>
+    STARTDEV: str = 'startDev'  # Input: (['p1_command', 'p2_command']), Output: <class 'inspect._empty'>
+    START: str = 'start'  # Input: (['p1_command', 'p2_command']), Output: <class 'inspect._empty'>
+    START_CLIENT: str = 'start_client'  # Input: (['p0_command', 'p1_command', 'p2_command']), Output: <class 'inspect._empty'>
+    CUSTOM: str = 'custom'  # Input: (['commands', 'monitor']), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
 
@@ -126,12 +76,44 @@ class SOCKETMANAGER(Enum):
 
 
 @dataclass
+class WELCOME(Enum):
+    NAME = 'welcome'
+    VERSION: str = 'Version'  # Input: (['_']), Output: <class 'inspect._empty'>
+    PRINTT: str = 'printT'  # Input: ([]), Output: <class 'inspect._empty'>
+    ON_START: str = 'on_start'  # Input: (), Output: None
+    ANIMATION1: str = 'Animation1'  # Input: ([]), Output: <class 'inspect._empty'>
+    ANIMATION: str = 'Animation'  # Input: ([]), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+
+
+@dataclass
+class EVENTMANAGER(Enum):
+    NAME = 'EventManager'
+    STARTWEBEVENTS: str = 'startWebEvents'  # Input: (['self']), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+
+
+@dataclass
+class EMAIL_WAITING_LIST(Enum):
+    NAME = 'email_waiting_list'
+    ADD: str = 'add'  # Input: (['app', 'email']), Output: <class 'toolboxv2.utils.system.types.ApiResult'>
+    SEND_EMAIL_TO_ALL: str = 'send_email_to_all'  # Input: ([]), Output: <class 'inspect._empty'>
+    SEND_EMAIL: str = 'send_email'  # Input: (['data']), Output: <class 'inspect._empty'>
+    CRATE_SING_IN_EMAIL: str = 'crate_sing_in_email'  # Input: (['user_email', 'user_name']), Output: <class 'inspect._empty'>
+    CRATE_MAGIC_LICK_DEVICE_EMAIL: str = 'crate_magic_lick_device_email'  # Input: (['user_email', 'user_name', 'link_id', 'nl']), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+
+
+@dataclass
 class CLOUDM(Enum):
     NAME = 'CloudM'
     LIST_MODULES: str = 'list_modules'  # Input: (['app']), Output: <class 'inspect._empty'>
     MAKE_INSTALL: str = 'make_install'  # Input: (['app', 'module_name', 'base']), Output: <class 'inspect._empty'>
     UNINSTALL: str = 'uninstall'  # Input: (['app', 'module_name']), Output: <class 'inspect._empty'>
-    INSTALL: str = 'install'  # Input: (['app', 'module_name', 'version']), Output: <class 'inspect._empty'>
+    INSTALL: str = 'install'  # Input: (['app', 'module_name', '_version', 'update']), Output: <class 'inspect._empty'>
     GET_LATEST: str = 'get_latest'  # Input: (['module_name']), Output: <class 'inspect._empty'>
     NEW_MODULE: str = 'new_module'  # Input: (['self', 'mod_name', 'options']), Output: <class 'inspect._empty'>
     CREATE_ACCOUNT: str = 'create_account'  # Input: (['self']), Output: <class 'inspect._empty'>
@@ -144,6 +126,24 @@ class CLOUDM(Enum):
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
     VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
+
+
+@dataclass
+class SCHEDULERMANAGER(Enum):
+    NAME = 'SchedulerManager'
+    VERSION: str = 'Version'  # Input: (['self']), Output: <class 'inspect._empty'>
+    INIT: str = 'init'  # Input: (['self']), Output: <class 'inspect._empty'>
+    ON_START: str = 'on_start'  # Input: (), Output: None
+    CLOS_MANAGER: str = 'clos_manager'  # Input: (['self']), Output: <class 'inspect._empty'>
+    ON_EXIT: str = 'on_exit'  # Input: (), Output: None
+    INSTANCE: str = 'instance'  # Input: (['self']), Output: <class 'inspect._empty'>
+    START: str = 'start'  # Input: (['self']), Output: <class 'inspect._empty'>
+    STOP: str = 'stop'  # Input: (['self']), Output: <class 'inspect._empty'>
+    CANCEL: str = 'cancel'  # Input: (['self', 'job_id']), Output: <class 'inspect._empty'>
+    DEALT: str = 'dealt'  # Input: (['self', 'job_id']), Output: <class 'inspect._empty'>
+    ADD: str = 'add'  # Input: (['self', 'job_data']), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
 
 
 @dataclass
@@ -197,6 +197,17 @@ class DASHPROVIDER(Enum):
 
 
 @dataclass
+class PERSONALOFFER(Enum):
+    NAME = 'PersonalOffer'
+    CREATE: str = 'create'  # Input: (['request']), Output: <class 'inspect._empty'>
+    CHECK_KEY: str = 'check_key'  # Input: (['app', 'request']), Output: <class 'inspect._empty'>
+    USER_CALLBACK: str = 'user_callback'  # Input: (['request']), Output: <class 'inspect._empty'>
+    GET: str = 'get'  # Input: ([]), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+
+
+@dataclass
 class WEBSOCKETMANAGER(Enum):
     NAME = 'WebSocketManager'
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
@@ -209,20 +220,6 @@ class WEBSOCKETMANAGER(Enum):
     GET: str = 'get'  # Input: (['name']), Output: <class 'inspect._empty'>
     SRQW: str = 'srqw'  # Input: (['url', 'websocket_id']), Output: <class 'inspect._empty'>
     CONSTRUCT_RENDER: str = 'construct_render'  # Input: (['content', 'element_id', 'externals', 'placeholder_content', 'from_file', 'to_str']), Output: <class 'inspect._empty'>
-
-
-@dataclass
-class CLI_FUNCTIONS(Enum):
-    NAME = 'cli_functions'
-    VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
-    GET_CHARACTER: str = 'get_character'  # Input: ([]), Output: <class 'inspect._empty'>
-    GET_GENERATOR: str = 'get_generator'  # Input: ([]), Output: <class 'inspect._empty'>
-    UPDATE_AUTOCOMPLETION_MODS: str = 'update_autocompletion_mods'  # Input: (['app', 'autocompletion_dict']), Output: <class 'inspect._empty'>
-    UPDATE_AUTOCOMPLETION_LIST_OR_KEY: str = 'update_autocompletion_list_or_key'  # Input: (['list_or_key', 'autocompletion_dict', 'raise_e', 'do_lower']), Output: <class 'inspect._empty'>
-    USER_INPUT: str = 'user_input'  # Input: (['app', 'completer_dict', 'get_rprompt', 'bottom_toolbar', 'active_modul', 'password', 'bindings', 'message', 'fh']), Output: <class 'toolboxv2.utils.system.types.CallingObject'>
-    CO_EVALUATE: str = 'co_evaluate'  # Input: (['app', 'obj', 'build_in_commands', 'threaded', 'helper', 'return_parm']), Output: <class 'inspect._empty'>
-    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
-    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
 
 
 @dataclass
@@ -246,6 +243,20 @@ class CLOUDM_AUTHMANAGER(Enum):
     JWT_GET_CLAIM: str = 'jwt_get_claim'  # Input: (['app', 'username', 'signature', 'web']), Output: <class 'toolboxv2.utils.system.types.ApiResult'>
     JWT_CLAIM_LOCAL_DECRYPT: str = 'jwt_claim_local_decrypt'  # Input: (['app', 'username', 'crypt_sing_jwt_claim', 'aud']), Output: <class 'toolboxv2.utils.system.types.Result'>
     JWT_CHECK_CLAIM_SERVER_SIDE: str = 'jwt_check_claim_server_side'  # Input: (['app', 'username', 'jwt_claim']), Output: <class 'toolboxv2.utils.system.types.ApiResult'>
+
+
+@dataclass
+class TALK(Enum):
+    NAME = 'talk'
+    START: str = 'start'  # Input: (['app']), Output: <class 'inspect._empty'>
+    ON_START: str = 'on_start'  # Input: (), Output: None
+    TALK_WEBSOCKET_ECHO: str = 'talk_websocket_echo'  # Input: (['websocket']), Output: <class 'inspect._empty'>
+    TALK_WEBSOCKET_TRANSLATE: str = 'talk_websocket_translate'  # Input: (['websocket', 'lang']), Output: <class 'inspect._empty'>
+    TALK_WEBSOCKET_CONTEXT: str = 'talk_websocket_context'  # Input: (['websocket']), Output: <class 'inspect._empty'>
+    TALK_WEBSOCKET: str = 'talk_websocket'  # Input: (['websocket']), Output: <class 'inspect._empty'>
+    MAIN_WEB_TALK_ENTRY: str = 'main_web_talk_entry'  # Input: (['app', 'request', 'modi']), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
 
 
 @dataclass
@@ -314,17 +325,20 @@ class TESTWIDGET(Enum):
 class QUICKNOTE_QNWIDGET(Enum):
     NAME = 'quickNote.QnWidget'
     SAVE: str = 'save'  # Input: (['app', 'request', 'wid']), Output: <class 'inspect._empty'>
+    SAVE_NOTE: str = 'save_note'  # Input: (['app', 'request']), Output: <class 'inspect._empty'>
+    REMOVE_NOTE: str = 'remove_note'  # Input: (['app', 'request', 'note_name']), Output: <class 'inspect._empty'>
     GET_WIDGET: str = 'get_widget'  # Input: (['app', 'request', 'Wid']), Output: <class 'inspect._empty'>
 
 
 @dataclass
 class QUICKNOTE(Enum):
     NAME = 'quickNote'
+    MAIN_WEB_QICK_NOTE_ENTRY: str = 'main_web_qick_note_entry'  # Input: (['app', 'request']), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
     VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
     ADD: str = 'ADD'  # Input: (['note']), Output: <class 'inspect._empty'>
-    REMOVE: str = 'REMOVE'  # Input: (['note']), Output: <class 'inspect._empty'>
+    REMOVE: str = 'REMOVE'  # Input: (['note_id']), Output: <class 'inspect._empty'>
     VIEW: str = 'VIEW'  # Input: (['show', 'data']), Output: <class 'inspect._empty'>
     FIND: str = 'Find'  # Input: (['show', 'data']), Output: <class 'inspect._empty'>
     INIT: str = 'init'  # Input: (['username', 'sign', 'jwt']), Output: <class 'inspect._empty'>
@@ -339,18 +353,33 @@ class WIDGETSPROVIDER_BOARDWIDGET(Enum):
 
 
 @dataclass
+class CLI_FUNCTIONS(Enum):
+    NAME = 'cli_functions'
+    VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
+    GET_CHARACTER: str = 'get_character'  # Input: ([]), Output: <class 'inspect._empty'>
+    GET_GENERATOR: str = 'get_generator'  # Input: ([]), Output: <class 'inspect._empty'>
+    UPDATE_AUTOCOMPLETION_MODS: str = 'update_autocompletion_mods'  # Input: (['app', 'autocompletion_dict']), Output: <class 'inspect._empty'>
+    UPDATE_AUTOCOMPLETION_LIST_OR_KEY: str = 'update_autocompletion_list_or_key'  # Input: (['list_or_key', 'autocompletion_dict', 'raise_e', 'do_lower']), Output: <class 'inspect._empty'>
+    USER_INPUT: str = 'user_input'  # Input: (['app', 'completer_dict', 'get_rprompt', 'bottom_toolbar', 'active_modul', 'password', 'bindings', 'message', 'fh']), Output: <class 'toolboxv2.utils.system.types.CallingObject'>
+    CO_EVALUATE: str = 'co_evaluate'  # Input: (['app', 'obj', 'build_in_commands', 'threaded', 'helper', 'return_parm']), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+
+
+@dataclass
 class AUDIO(Enum):
     NAME = 'audio'
     TRANSCRIPT: str = 'transcript'  # Input: (['model', 'rate', 'chunk_duration', 'amplitude_min', 'microphone_index']), Output: <class 'inspect._empty'>
     WAKE_WORD: str = 'wake_word'  # Input: (['word', 'variants', 'microphone_index', 'amplitude_min', 'model', 'do_exit', 'do_stop', 'ques']), Output: <class 'inspect._empty'>
     TRANSCRIPT_STREAM: str = 'transcript_stream'  # Input: ([]), Output: <class 'inspect._empty'>
+    STT_GENERATE: str = 'stt_generate'  # Input: (['a', 'k']), Output: <class 'inspect._empty'>
     VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
     ON_STARTUP: str = 'on_startup'  # Input: (['self']), Output: <class 'inspect._empty'>
     ON_START: str = 'on_start'  # Input: (), Output: None
     INIT_SPEECH: str = 'init_speech'  # Input: (['self', 'app']), Output: <class 'inspect._empty'>
     ON_CLOSE: str = 'on_close'  # Input: (['self']), Output: <class 'inspect._empty'>
     ON_EXIT: str = 'on_exit'  # Input: (), Output: None
-    SPEECH: str = 'speech'  # Input: (['self', 'text', 'voice_index', 'use_cache', 'provider', 'config']), Output: <class 'inspect._empty'>
+    SPEECH: str = 'speech'  # Input: (['self', 'text', 'voice_index', 'use_cache', 'provider', 'config', 'save']), Output: <class 'inspect._empty'>
     SPEECH_STREAM: str = 'speech_stream'  # Input: (['self', 'text', 'voice_index', 'use_cache', 'provider', 'config']), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
@@ -369,5 +398,7 @@ class ISAA(Enum):
     LIST_TASK: str = 'list_task'  # Input: ([]), Output: <class 'inspect._empty'>
     SAVE_TO_MEM: str = 'save_to_mem'  # Input: ([]), Output: <class 'inspect._empty'>
     MINI_TASK: str = 'mini_task'  # Input: (['mini_task', 'mode', 'fetch_memory', 'all_mem', 'max_tokens']), Output: <class 'inspect._empty'>
+    GET_AGENT_CLASS: str = 'get_agent_class'  # Input: (['agent_name']), Output: <class 'toolboxv2.mods.isaa.Agents.Agent'>
+    RUN_AGENT: str = 'run_agent'  # Input: (['name', 'text', 'max_iterations', 'running_mode', 'persist', 'persist_x', 'fetch_memory', 'persist_mem', 'persist_mem_x', 'task_from', 'all_mem', 'kwargs']), Output: <class 'inspect._empty'>
     RGET_MODE: str = 'rget_mode'  # Input: (['mode']), Output: <class 'inspect._empty'>
     SET_LOCAL_FILES_TOOLS: str = 'set_local_files_tools'  # Input: (['local_files_tools']), Output: <class 'inspect._empty'>

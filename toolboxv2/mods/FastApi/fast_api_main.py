@@ -10,6 +10,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse, FileResponse
 from starlette.websockets import WebSocketDisconnect
 from fastapi.responses import RedirectResponse
+from tqdm import tqdm
 
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.extras.blobs import BlobFile
@@ -289,12 +290,12 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             session_id = await self.crate_new_session_id(request, jwt_token, username,
                                                          session_id=request.session.get('ID'))
             return JSONResponse(
-                    status_code=200,
-                    content={"message": "Valid Session", "valid": True}
-                ) if await self.validate_session(session_id) else JSONResponse(
+                status_code=200,
+                content={"message": "Valid Session", "valid": True}
+            ) if await self.validate_session(session_id) else JSONResponse(
                 status_code=401,
                 content={"message": "Invalid Auth data.", "valid": False}
-                )
+            )
         elif not session:
             session_id = await self.crate_new_session_id(request, None, "Unknown")
         elif request.session.get('ID', '') not in self.sessions:
@@ -509,6 +510,8 @@ async def protector(request: Request, call_next):
 
 
 async def user_runner(request, call_next):
+    if not request:
+        return HTMLResponse(status_code=501, content="No request")
     run_fuction = request.session.get("live_data", {}).get('RUN', False)
     if not run_fuction:
         response = await call_next(request)
@@ -537,8 +540,8 @@ async def user_runner(request, call_next):
     request.session['live_data']['RUN'] = False
     request.session['live_data']['GET_R'] = False
 
-    if not request:
-        return HTMLResponse(status_code=501, content="No response")
+    if result is None:
+        return HTMLResponse(status_code=200, content=result)
 
     if not isinstance(result, Request) and not isinstance(result, ApiResult) and isinstance(result, str):
         return HTMLResponse(status_code=200, content=result)
@@ -700,24 +703,31 @@ async def helper(id_name):
     # c = d.edit_cli("RR")
     # await tb_app.watch_mod("CloudM.AuthManager", path_name="/CloudM/AuthManager.py")
     c = d.initialized()
-    print("DB initialized", c)
+    tb_app.sprint("DB initialized")
+    c.print()
     if not c.get():
         exit()
     tb_app.get_mod("WebSocketManager")
     from .fast_app import router as app_router
 
+    tb_app.sprint("Adding app router")
     app.include_router(app_router)
 
     from .fast_api_install import router as install_router
-
-    cm = tb_app.get_mod("CloudM")
+    tb_app.sprint("loading CloudM")
+    tb_app.get_mod("CloudM")
     # all_mods = tb_app.get_all_mods()
     provider = os.environ.get("MOD_PROVIDER", default="http://127.0.0.1:5000/")
-    tb_state = get_state_from_app(tb_app, simple_core_hub_url=provider)
+
+    tb_state = [None]
+
     def get_d(mod_name_="CloudM"):
-        return cm.save_mod_snapshot(mod_name_, provider=provider, tb_state=tb_state)
+        if tb_state[0] is None:
+            tb_state[0] = get_state_from_app(tb_app, simple_core_hub_url=provider)
+        return tb_app.get_mod("CloudM").save_mod_snapshot(mod_name_, provider=provider, tb_state=tb_state[0])
 
     install_router.add_api_route('/' + "get", get_d, methods=["GET"], description="get_species_data")
+    tb_app.sprint("include Installer")
     app.include_router(install_router)
 
     async def proxi_helper(*__args, **__kwargs):
@@ -726,10 +736,12 @@ async def helper(id_name):
             try:
                 return tb_app.client.get('receiver_queue').get(timeout=tb_app.timeout)
             except Exception as _e:
-                print("Error", _e)
+                tb_app.sprint("Error", _e)
                 return HTMLResponse(status_code=408)
 
+    tb_app.sprint("Start Processioning Functions")
     for mod_name, functions in tb_app.functions.items():
+        tb_app.print(f"Processing : {mod_name} \t\t", end='\r')
         add = False
         router = APIRouter(
             prefix=f"/api/{mod_name}",
@@ -737,7 +749,6 @@ async def helper(id_name):
             # dependencies=[Depends(get_token_header)],
             # responses={404: {"description": "Not found"}},
         )
-
         for function_name, function_data in functions.items():
             if not isinstance(function_data, dict):
                 continue
@@ -755,10 +766,26 @@ async def helper(id_name):
 
             if error != 0:
                 continue
+            tb_app.print(f"working on fuction {function_name}" , end='\r')
+            if 'main' in function_name and 'web' in function_name:
+                tb_app.sprint(f"creating Rout {mod_name} -> {function_name}")
+                r = APIRouter(
+                    prefix=f"/{mod_name}",
+                )
+                r.add_api_route('' if function_data.get('level') < 1 else '/', tb_func, methods=["GET"], description=function_data.get("helper", ""))
+                app.include_router(r)
+                continue
+
+            if 'websocket' in function_name:
+                tb_app.sprint(f"adding websocket Rout {mod_name} -> {function_name}")
+                router.add_api_websocket_route('/' + function_name, tb_func)
+                continue
+
             try:
                 if tb_func and is_proxy:
                     tb_func = create_partial_function(tb_func, partial(proxi_helper,
-                                                                       mod_function_name=(mod_name, function_name),
+                                                                       mod_function_name=(
+                                                                       mod_name, function_name),
                                                                        get_results=True))
                 if tb_func:
                     if len(params):
@@ -777,17 +804,6 @@ async def helper(id_name):
             app.include_router(router)
     if id_name in tb_app.id:
         print("🟢 START")
-    # router2 = APIRouter(
-    #     prefix=f"/ROOT",
-    #     # dependencies=[Depends(get_token_header)],
-    #     # responses={404: {"description": "Not found"}},
-    # )
-    # router2.add_api_route('/', tb_app.a_run_any, methods=["POST"],
-    #                      description="Proxy Endpoint")
-    # app.include_router(router2)
-
-    # if "modInstaller" in tb_app.id:
-    #    print("ModInstaller Init")
 
 
 print("API: ", __name__)

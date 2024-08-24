@@ -4,7 +4,11 @@ from enum import Enum
 from typing import Any, Optional
 
 from ..extras.Style import Spinner
-from ..system.all_functions_enums import SOCKETMANAGER
+try:
+    from ..system.all_functions_enums import SOCKETMANAGER
+except ImportError:
+    SOCKETMANAGER = lambda: None
+    SOCKETMANAGER.CREATE_SOCKET = ("SOCKETMANAGER", "CREATE_SOCKET".lower())
 from ..system.types import ApiResult, AppType, Result
 from ..toolbox import App
 from ... import get_app

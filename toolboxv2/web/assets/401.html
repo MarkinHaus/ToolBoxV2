@@ -3,13 +3,34 @@
     <div class="main-content">
         <!-- Your main content -->
         <h1>401 Pleas Log in or Sign up</h1>
-        <a href="/web/login">Log In</a>
+        <div id="qli_div"><p>Quick Log in.</p>
+        <input type="text" id="textBox" placeholder="Enter User name" onkeypress="handleEnterLogin(event)" style="text-align:center">
+        <hr/></div><div id="rest_div">
+        <p>Not register on this device</p>
+        <a href="/web/login">Register Device</a>
         <hr/>
         <a href="/web/signup">Sign up</a>
         <hr/>
         <a href="/web/mainTemplate.html">Back To Start</a>
-        <hr/>
+        <hr/></div>
         <a href="/web/core0/index.html">Back To Landing Page</a>
     </div>
+
+    <script unSave="true">
+        if (window.history.state) {
+         if (!window.history.state.url.endsWith("401.html")) {
+            document.getElementById('rest_div').classList.add('none');
+            function errorLogin(e) { console.log(e);alert("Error while Quick Log in no claim found for : '"+ document.getElementById('textBox').value +"'")}
+            function susLogin(s) {console.log(s);window.TBf.router(window.location.href)}
+            function handleEnterLogin(event) {
+                if (event.key === 'Enter') {
+                    const username = document.getElementById('textBox').value;
+                    window.TBf.AuthHttpPostData(username,errorLogin,susLogin)
+                }
+            }
+        }else{
+            document.getElementById('qli_div').classList.add('none');
+        }}
+    </script>
 </div>
 

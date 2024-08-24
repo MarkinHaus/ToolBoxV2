@@ -7,7 +7,7 @@ from toolboxv2 import App, AppArgs, tbef
 NAME = 'daemon'
 
 
-def run(app: App, args: AppArgs, programmabel_interface=False, as_server=True):
+async def run(app: App, args: AppArgs, programmabel_interface=False, as_server=True):
     """
     The daemon runner is responsible for running a lightweight toolbox instance in the background
     The name of the daemon instance is also the communication bridge.
@@ -43,7 +43,7 @@ def run(app: App, args: AppArgs, programmabel_interface=False, as_server=True):
 
     status = 'unknown'
 
-    client = app.run_any('SocketManager', 'create_socket',
+    client = await app.a_run_any('SocketManager', 'create_socket',
                          name="daemon",
                          host="localhost" if args.host == '0.0.0.0' else args.host,
                          port=62436 if args.port == 8000 else args.port,
@@ -110,7 +110,7 @@ def run(app: App, args: AppArgs, programmabel_interface=False, as_server=True):
         if user_input == "exit":
             user_input = '{"exit": True}'
             alive = False
-        sender(eval(user_input))
+        await sender(eval(user_input))
 
         if receiver_queue.not_empty:
             print(receiver_queue.get())

@@ -359,7 +359,7 @@ def save_mod_snapshot(app, mod_name, provider=None, tb_state: TbState or None = 
         mod_data = tb_state.mods.get(mod_name + ".py")
 
     if mod_data is None:
-        app.print(f"Valid ar : {list(tb_state.mods.keys())}")
+        app.print(f"Valid ar : {list(tb_state.installable.keys())}")
         return list(tb_state.installable.keys())
 
     if not os.path.exists("./installer"):

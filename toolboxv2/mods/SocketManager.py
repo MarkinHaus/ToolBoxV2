@@ -578,10 +578,10 @@ class Tools(MainTool, FileHandler):
             elif self.sockets[name]["do_async"]:
                 chunk = await r_socket_.read(self.sockets[name]["package_size"])
             elif self.sockets[name]["type_id"] == SocketType.client.name:
-                chunk, _ = await asyncio.to_thread(r_socket_.recvfrom, self.sockets[name]["package_size"])
+                chunk = r_socket_.recv(self.sockets[name]["package_size"])
             else:
                 try:
-                    chunk = await asyncio.to_thread(r_socket_.recv, self.sockets[name]["package_size"])
+                    chunk = r_socket_.recv(self.sockets[name]["package_size"])
                 except Exception as e:
                     return Result.custom_error(data=str(e), data_info="Connection down and closed")
         except ConnectionResetError and ConnectionAbortedError as e:
@@ -904,11 +904,11 @@ class Tools(MainTool, FileHandler):
                 return peer_result
 
             sock, r_socket = peer_result.get()
+            self.sockets[name]["client_sockets_dict"][host + str(port)] = r_socket
+            await to_receive(r_socket, "main")
         else:
             self.print(f"Invalid SocketType {type_id}:{name}")
             raise ValueError(f"Invalid SocketType {type_id}:{name}")
-
-        # manually starting server/(client:peer)receive if needed
 
         if type_id == SocketType.peer.name:
 

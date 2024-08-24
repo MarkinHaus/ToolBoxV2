@@ -6,7 +6,12 @@ from toolboxv2.utils.extras import Style
 from .types import Result, ToolBoxInterfaces, ToolBoxError, ToolBoxInfo, ToolBoxResult
 from .getting_and_closing_app import get_app
 from .tb_logger import get_logger
-from .all_functions_enums import CLOUDM_AUTHMANAGER
+
+try:
+    from .all_functions_enums import CLOUDM_AUTHMANAGER
+except ImportError:
+    CLOUDM_AUTHMANAGER = lambda: None
+    CLOUDM_AUTHMANAGER.GET_USER_BY_NAME = ("CLOUDM_AUTHMANAGER", "GET_USER_BY_NAME".lower())
 
 
 class MainTool:

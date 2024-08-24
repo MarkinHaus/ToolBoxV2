@@ -166,9 +166,12 @@ class App(AppType, metaclass=Singleton):
 
         self.args_sto = args
 
+        from .system.session import Session
+        self.session: Session = Session(self.get_username())
+
     def get_username(self, get_input=False):
         user_name = self.config_fh.get_file_handler("ac_user:::")
-        if user_name is None and user_name != "None":
+        if get_input and user_name is None and user_name != "None":
             user_name = input("Input your username\nbe sure to make no typos: ")
             self.config_fh.add_to_save_file_handler("ac_user:::", user_name)
         return user_name
@@ -1101,6 +1104,31 @@ class App(AppType, metaclass=Singleton):
 
         return formatted_result
 
+    async def run_http(self, mod_function_name: Enum or str or tuple, function_name=None,
+                       args_=None,
+                       kwargs_=None,method="GET",
+                       *args, **kwargs):
+        if kwargs_ is not None and not kwargs:
+            kwargs = kwargs_
+        if args_ is not None and not args:
+            args = args_
+
+        modular_name = mod_function_name
+        function_name = function_name
+
+        if isinstance(mod_function_name, str) and isinstance(function_name, str):
+            mod_function_name = (mod_function_name, function_name)
+
+        if isinstance(mod_function_name, tuple):
+            modular_name, function_name = mod_function_name
+        elif isinstance(mod_function_name, list):
+            modular_name, function_name = mod_function_name[0], mod_function_name[1]
+        elif isinstance(mod_function_name, Enum):
+            modular_name, function_name = mod_function_name.__class__.NAME.value, mod_function_name.value
+
+        r = await self.session.fetch(f"/api/{modular_name}/{function_name}{'?'+args_ if args_ is not None else ''}",
+                                     data=kwargs, method=method)
+        return r.json()
     def run_local(self, *args, **kwargs):
         return self.run_any(*args, **kwargs)
 
@@ -1566,8 +1594,11 @@ class App(AppType, metaclass=Singleton):
             enum_classes.append(enum_class)
 
         # Enums in die Datei schreiben
+        data = "\n\n\n".join(enum_classes)
+        if len(data) < 12:
+            raise ValueError("Invalid Enums Loosing content pleas delete it ur self in the (utils/system/all_functions_enums.py) or add mor new stuff :}")
         with open(filepath, 'w') as file:
-            file.write("\n\n\n".join(enum_classes))
+            file.write(data)
 
         print(Style.Bold(Style.BLUE(f"Enums gespeichert in {filepath}")))
 

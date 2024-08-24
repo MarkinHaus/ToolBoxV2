@@ -217,7 +217,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
                 session = Session(self.app.get_username())
                 if not await session.login():
                     print(f"Couldn't login with username : {self.app.get_username()}'")
-                response = await session.fetch(f"http://{host}:{port}/api/exit/{api_pid}", method="POST")
+                response = await session.fetch(f"/api/exit/{api_pid}", method="POST")
                 print(response)
             except Exception as e:
                 self.print("API Not Responding")

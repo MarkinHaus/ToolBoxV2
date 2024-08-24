@@ -8,7 +8,7 @@ class TestSession(unittest.TestCase):
     async def test_helper_session_invalid(self):
         s = Session('root')
 
-        t = await s.init_log_in_mk_link("/", False)
+        t = await s.init_log_in_mk_link("/")
         print(t)
         t1 = await s.login()
         print(t1)

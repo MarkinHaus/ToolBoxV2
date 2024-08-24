@@ -127,8 +127,8 @@ class DaemonUtil:
         valid_clients = {}
         while self.alive:
             if receiver_queue.not_empty:
-                data = receiver_queue.get()
                 await asyncio.sleep(0.1)
+                data = receiver_queue.get()
                 # print('received', data)
                 if not data:
                     continue

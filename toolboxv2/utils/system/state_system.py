@@ -19,6 +19,7 @@ import hashlib
 from typing import Dict
 
 import yaml
+from tqdm import tqdm
 
 from .getting_and_closing_app import get_app
 
@@ -127,59 +128,69 @@ def get_state_from_app(app, simple_core_hub_url="https://SimpleCoreHub.com/Mods/
     if simple_core_hub_url[-1] != '/':
         simple_core_hub_url += '/'
 
-    simple_core_hub_url += 'api/'
+    if 'api' not in simple_core_hub_url:
+        simple_core_hub_url += 'api/'
 
     if github_url[-1] != '/':
         github_url += '/'
 
     state: TbState = process_files(app.start_dir)
 
-    # and unit information
-    # current time being units ar installed and managed via GitHub
-    version = app.version
-    for file_name, file_data in state.utils.items():
-        file_data.provider = "git"
-        file_data.version = version
-        file_data.url = github_url + "utils/" + file_name
+    with tqdm(total=6, unit='chunk', desc='Building State data') as pbar:
+        # and unit information
+        # current time being units ar installed and managed via GitHub
+        version = app.version
+        pbar.write("working on utils files")
+        for file_name, file_data in state.utils.items():
+            file_data.provider = "git"
+            file_data.version = version
+            file_data.url = github_url + "utils/" + file_name
+        pbar.update()
+        pbar.write("working on api files")
+        for file_name, file_data in state.api.items():
+            file_data.provider = "git"
+            file_data.version = version
+            file_data.url = github_url + "api/" + file_name
+        pbar.update()
+        pbar.write("working on app files")
+        for file_name, file_data in state.app.items():
+            file_data.provider = "git"
+            file_data.version = version
+            file_data.url = github_url + "app/" + file_name
 
-    for file_name, file_data in state.api.items():
-        file_data.provider = "git"
-        file_data.version = version
-        file_data.url = github_url + "api/" + file_name
+        # and mods information
+        # current time being mods ar installed and managed via SimpleCoreHub.com
+        all_mods = app.get_all_mods()
+        pbar.update()
+        pbar.write("working on mods files")
+        for file_name, file_data in state.mods.items():
+            file_data.provider = "SimpleCore"
 
-    for file_name, file_data in state.app.items():
-        file_data.provider = "git"
-        file_data.version = version
-        file_data.url = github_url + "app/" + file_name
+            module_name = file_name.replace(".py", "")
+            if module_name in all_mods:
+                try:
+                    file_data.version = app.get_mod(module_name).version if file_name != "__init__.py" else version
+                except Exception:
+                    file_data.version = "dependency"
+            else:
+                file_data.version = "legacy"
 
-    # and mods information
-    # current time being mods ar installed and managed via SimpleCoreHub.com
-    all_mods = app.get_all_mods()
-    for file_name, file_data in state.mods.items():
-        file_data.provider = "SimpleCore"
-
-        module_name = file_name.replace(".py", "")
-        if module_name in all_mods:
+            file_data.url = simple_core_hub_url + "mods/" + file_name
+        pbar.update()
+        pbar.write("working on installable files")
+        for file_name, file_data in state.installable.items():
+            file_data.provider = "SimpleCore"
             try:
-                file_data.version = app.get_mod(module_name).version if file_name != "__init__.py" else version
+                file_data.version = file_name.replace(".py", "").replace(".zip", "").split("&")[-1].split("§")
             except Exception:
                 file_data.version = "dependency"
-        else:
-            file_data.version = "legacy"
 
-        file_data.url = simple_core_hub_url + "mods/" + file_name
-
-    for file_name, file_data in state.installable.items():
-        file_data.provider = "SimpleCore"
-        try:
-            file_data.version = file_name.replace(".py", "").replace(".zip", "").split("&")[-1].split("§")
-        except Exception:
-            file_data.version = "dependency"
-
-        file_data.url = simple_core_hub_url + "installer/download/mods_sto\\" + file_name
-
-    with open("tbState.yaml", "w") as config_file:
-        yaml.dump(asdict(state), config_file)
+            file_data.url = simple_core_hub_url + "installer/download/mods_sto\\" + file_name
+        pbar.update()
+        pbar.write("Saving State Data")
+        with open("tbState.yaml", "w") as config_file:
+            yaml.dump(asdict(state), config_file)
+        pbar.update()
     return state
 
 

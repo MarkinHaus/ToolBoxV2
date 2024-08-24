@@ -666,6 +666,11 @@ class AppType:
         proxi attr
         """
 
+    async def run_http(self, mod_function_name: Enum or str or tuple, function_name=None,method="GET",
+                       args_=None,
+                kwargs_=None,
+                *args, **kwargs):
+            """run a function remote via http / https"""
     def run_any(self, mod_function_name: Enum or str or tuple, backwords_compability_variabel_string_holder=None,
                 get_results=False, tb_run_function_with_state=True, tb_run_with_specification='app', args_=None,
                 kwargs_=None,

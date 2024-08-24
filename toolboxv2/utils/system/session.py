@@ -5,20 +5,18 @@ import os
 import sys
 import time
 import socket
+from requests import Response
 from typing import Optional
 
 import requests
-from requests import Response
 
 from ..extras.blobs import BlobFile
 from ..singelton_class import Singleton
-from ..toolbox import App
 from .getting_and_closing_app import get_app, get_logger
-from . import all_functions_enums as tbef
 
-from aiohttp import ClientSession, ClientResponse
+from aiohttp import ClientSession, ClientResponse, FormData
 
-from ... import Code, Spinner
+from ... import Code
 from ...tests.a_util import async_test
 
 
@@ -46,63 +44,55 @@ class Session(metaclass=Singleton):
 
         atexit.register(async_test(helper))
 
-    async def init_log_in_mk_link(self, mak_link, download=True, b_name="chromium", headless=False):
-        from playwright.async_api import async_playwright
+    async def init_log_in_mk_link(self, mak_link):
+        from urllib.parse import urlparse, parse_qs
         await asyncio.sleep(0.1)
-        async with async_playwright() as playwright:
-            try:
-                browser = await playwright.chromium.launch(
-                    headless=headless)  # Set headless=False if you want to see the browser UI
-            except Exception as e:
-                if download and "Executable doesn't exist at" in str(e):
-                    print("starting installation")
-                    os.system(sys.executable + ' -m playwright install ' + b_name + ' --with-deps --force')
-                if not download:
-                    return "install a browser"
-                browser = await playwright.chromium.launch(
-                    headless=headless)
-            context = await browser.new_context()
 
-            # Open a new page
-            page = await context.new_page()
+        print("Step (1/7)")
+        pub_key, prv_key = Code.generate_asymmetric_keys()
+        parsed_url = urlparse(mak_link)
+        params = parse_qs(parsed_url.query)
+        invitation = params.get('key', [None])[0]
 
-            # Navigate to a URL that sets something in localStorage
-            if mak_link.startswith(self.base):
-                mak_link = mak_link.replace(self.base, "")
+        if not invitation:
+            print('Invalid LoginKey')
+            return False
 
-            await page.goto(f"{self.base}/{mak_link}")  # Replace with the actual URL that uses localStorage
-            # Retrieve data from localStorage
-            await asyncio.sleep(1)
-            await page.wait_for_load_state("networkidle", timeout=40 * 60)
-            started = await page.evaluate("localStorage.getItem('StartMLogIN')")
-            if started is None:
-                get_logger().error("Could not found the startMLogIN flag")
-                await browser.close()
-                return False
-            print("Step (1/7)")
-            with Spinner("Waiting for Log in", count_down=True, time_in_s=6):
-                await asyncio.sleep(6)
-            print("Step (2/7)")
-            await page.wait_for_load_state("networkidle", timeout=240 * 60)
-            claim = await page.evaluate("localStorage.getItem('jwt_claim_device')")
-            t_max = time.time() + 20
-            while claim is None and t_max > time.time():
-                claim = await page.evaluate("localStorage.getItem('jwt_claim_device')")
-            print("Step (3/7)")
-            if claim is None:
-                get_logger().error("No claim Received")
-                await browser.close()
-                return False
-            print("Step (4/7)")
-            with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="w") as blob:
-                blob.clear()
-                blob.write(claim.encode())
-            print("Step (5/7)")
-            # Do something with the data or perform further actions
+        print("Step (2/7)")
+        res = await get_app("Session.InitLogin").run_http("CloudM.AuthManager", "add_user_device", method="POST",
+                                                          name=self.username, pub_key=pub_key, invitation=invitation,
+                                                          web_data=False, as_base64=False)
+        await asyncio.sleep(0.1)
+        print("res = ", res)
 
-            # Close browser
-            await browser.close()
+        print("Step (3/7)")
+        challenge = await get_app("Session.InitLogin").run_http('CloudM.AuthManager', 'get_to_sing_data', method="POST",
+                                                                args_='username=' + self.username + '&personal_key=False')
+
+        if isinstance(challenge, dict):
+            challenge = challenge.get("challenge")
+
+        print("challenge:", str(challenge)[:20])
+        await asyncio.sleep(0.1)
+        print("Step (4/7)")
+        claim_data = await get_app("Session.InitLogin").run_http('CloudM.AuthManager', 'validate_device',
+                                                                 username=self.username,
+                                                                 signature=Code.create_signature(challenge, prv_key),
+                                                                 method="POST")
+
+        if isinstance(claim_data, dict):
+            claim = claim_data.get("key")
+        else:
+            claim = claim_data
+        print("claim:", claim)
+        await asyncio.sleep(0.1)
+        print("Step (5/7)")
+        with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="w") as blob:
+            blob.clear()
+            blob.write(claim.encode())
         print("Step (6/7)")
+        await asyncio.sleep(0.1)
+        # Do something with the data or perform further actions
         res = await self.login()
         print("Step (7/7)")
         return res
@@ -112,9 +102,12 @@ class Session(metaclass=Singleton):
             self.session = ClientSession()
         with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="r") as blob:
             claim = blob.read()
+            if claim == b'Error decoding':
+                blob.clear()
+                claim = b''
         if not claim:
             return False
-
+        print("Claim :",claim)
         async with self.session.request("GET", url=f"{self.base}/validateSession", json={'Jwt_claim': claim.decode(),
                                                                                          'Username': self.username}) as response:
             if response.status == 200:
@@ -163,7 +156,7 @@ class Session(metaclass=Singleton):
                 return response.status == 200
         return False
 
-    async def fetch(self, url: str, method: str = 'GET', data=None) -> ClientResponse:
+    async def fetch(self, url: str, method: str = 'GET', data=None) -> ClientResponse | Response:
         if isinstance(url, str):
             url = self.base + url
         if self.session:
@@ -172,7 +165,41 @@ class Session(metaclass=Singleton):
             else:
                 return await self.session.get(url)
         else:
-            raise Exception("Session not initialized. Please login first.")
+
+            print(f"Could not find session using request on {url}")
+            if method.upper() == 'POST':
+                return requests.request(method, url, json=data)
+            return requests.request(method, url, data=data)
+            # raise Exception("Session not initialized. Please login first.")
+
+    async def upload_file(self, file_path: str, upload_url: str):
+        # Prüfe, ob die Datei existiert
+        if not os.path.isfile(file_path):
+            raise FileNotFoundError(f"Datei {file_path} nicht gefunden.")
+
+        # Initialisiere die Session, falls sie nicht bereits gestartet ist
+        if self.session is None:
+            self.session = ClientSession()
+
+        # Bereite die Datei für den Upload vor
+        form = FormData()
+        form.add_field('file',
+                       open(file_path, 'rb'),
+                       filename=os.path.basename(file_path),
+                       content_type='application/octet-stream')
+
+        # Erstelle die vollständige URL
+        full_url = self.base + upload_url
+
+        # Sende die Datei
+        async with self.session.post(full_url, data=form) as response:
+            # Prüfe, ob der Upload erfolgreich war
+            if response.status == 200:
+                print(f"Datei {file_path} erfolgreich hochgeladen.")
+                return await response.json()
+            else:
+                print(f"Fehler beim Hochladen der Datei {file_path}. Status: {response.status}")
+                return None
 
     def exit(self):
         with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="w") as blob:
