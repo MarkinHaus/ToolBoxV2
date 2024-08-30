@@ -97,6 +97,10 @@ async def run(app: App, _: AppArgs):
         app.print("Service P2P Online")
         await app.run_runnable("cli")
         return
+    else:
+        source_id = "app.core0-simplecore.app"
+        if _ := input(f"source ID: default {source_id} :"):
+            source_id = _
 
     user_name = app.get_username(True)
 
@@ -106,16 +110,10 @@ async def run(app: App, _: AppArgs):
 
     await ev.connect_to_remote()
     await asyncio.sleep(1.57)
-    # app.print(f"1 time user name is {one_time_user_name[:6]}")
-
-    peer_host, peer_port = "", -1
-    source_id = "app.core0-simplecore.app"
-    if _ := input(f"source ID: default {source_id} :"):
-        source_id = _
 
     res = await ev.trigger_event(EventID.crate(f"{source_id}:S0", "get-connection-point",
                                                payload={'key': ev.identification, 'user_name': user_name}))
-    print(res)
+    print(res, type(res.get()))
     if not res.is_error():
         if isinstance(res.get(), str):
             self_host, self_port = eval(res.get())
