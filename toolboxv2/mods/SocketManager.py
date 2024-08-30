@@ -432,7 +432,7 @@ class Tools(MainTool, FileHandler):
                     break
         if connection_key is None:
             raise ValueError(f"No Unknown Connection : {connection} known {self.sockets[name]['client_sockets_dict']}")
-        self.print(f"{name} registered with {connection_key} as {identifier}")
+        self.print(f"{name} registered with {identifier}")
         self.sockets[name]["client_sockets_identifier"][identifier] = connection_key
 
     def register_new_connection_helper(self, name, client_socket, endpoint):

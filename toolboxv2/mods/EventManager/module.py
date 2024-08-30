@@ -339,7 +339,9 @@ class EventManagerClass:
         try:
             pr = await ProxyRout.toProxy(rout=self.crate_rout(source_id, addr=addr), name=source_id)
             await asyncio.sleep(0.1)
-            await pr.client.get('sender')({"id": self._identification, "continue": False})
+            await pr.client.get('sender')({"id": self._identification,
+                                           "continue": False,
+                                           "key": os.getenv('TB_R_KEY', 'root@remote')})
             await asyncio.sleep(0.1)
             self.add_c_route(source_id, pr)
             return True
