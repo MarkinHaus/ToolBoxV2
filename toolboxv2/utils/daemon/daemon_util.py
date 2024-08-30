@@ -136,7 +136,6 @@ class DaemonUtil:
         while self.alive:
 
             if not receiver_queue.empty():
-                await asyncio.sleep(0.1)
                 data = receiver_queue.get()
                 print('received', data)
                 if not data:
@@ -247,6 +246,7 @@ class DaemonUtil:
                     if identifier != "unknown":
                         running_dict["receive"][str(identifier)] = False
                         await self.runner_co(self.on_client_exit,  identifier)
+            await asyncio.sleep(0.1)
         running_dict["server_receiver"] = False
         for x in running_dict["receive"].keys():
             running_dict["receive"][x] = False

@@ -85,9 +85,9 @@ async def run(app: App, _: AppArgs):
 
     if "core0" in app.id:
 
-        if ev.identification != "P0|S0":
-            ev.identification = "P0|S0"
-            await ev.identity_post_setter()
+        # if ev.identification != "P0|S0":
+        #     ev.identification = "P0|S0"
+        #     await ev.identity_post_setter()
         service_event = ev.make_event_from_fuction(get_connection_point,
                                                    "get-connection-point",
                                                    source_types=SourceTypes.AP,
