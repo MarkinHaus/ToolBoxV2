@@ -202,7 +202,7 @@ class EventManagerClass:
 
     routes_client: Dict[str, ProxyRout] = {}
     routers_servers: Dict[str, DaemonRout] = {}
-    routers_servers_tasks: List[asyncio.coroutines] = []
+    routers_servers_tasks: List[Any] = []
     routers_servers_tasks_running_flag: bool = False
 
     receiver_que: queue.Queue

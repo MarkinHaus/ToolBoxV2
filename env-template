@@ -1,6 +1,9 @@
 
-TOOLBOXV2_BASE=("localhost", 6587)
-TOOLBOXV2_REMOTE_BASE=("https://simplecore.app", 6587)
+TOOLBOXV2_BASE="localhost"
+TOOLBOXV2_BASE_PORT=6587
+TOOLBOXV2_REMOTE_BASE="https://simplecore.app"
+TOOLBOXV2_REMOTE_BASE_PORT=6587
+TOOLBOXV2_REMOTE_IP="139.162.136.35"
 
 MOD_PROVIDER="https://simplecore.app/api"
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True

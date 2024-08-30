@@ -104,7 +104,7 @@ async def run(app: App, _: AppArgs):
 
     await ev.identity_post_setter()
 
-    await ev.connect_to_remote(host="localhost")
+    await ev.connect_to_remote()
     await asyncio.sleep(1.57)
     # app.print(f"1 time user name is {one_time_user_name[:6]}")
 
