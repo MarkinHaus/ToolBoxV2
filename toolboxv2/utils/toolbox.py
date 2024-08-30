@@ -411,7 +411,8 @@ class App(AppType, metaclass=Singleton):
                 if not hasattr(tools_class, 'tools'):
                     tools_class.tools = {"Version": tools_class.get_version, 'name': tools_class.name}
                 for function_name in list(tools_class.tools.keys()):
-                    if function_name != "all" and function_name != "name":
+                    t_function_name = function_name.lower()
+                    if t_function_name != "all" and t_function_name != "name":
                         self.tb(function_name, mod_name=modular_id)(tools_class.tools.get(function_name))
                 self.functions[modular_id][f"{spec}_instance_type"] += "/BC"
             except Exception as e:

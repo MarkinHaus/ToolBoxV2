@@ -13,7 +13,7 @@ from pydantic import BaseModel, field_validator
 from webauthn.helpers.exceptions import InvalidAuthenticationResponse, InvalidRegistrationResponse
 from webauthn.helpers.structs import AuthenticationCredential, RegistrationCredential
 
-from toolboxv2 import get_app, App, Result, tbef, ToolBox_over, get_logger
+from toolboxv2 import get_app, App, Result, TBEF, ToolBox_over, get_logger
 from toolboxv2.mods.DB.types import DatabaseModes
 from toolboxv2.utils.security.cryp import Code
 from toolboxv2.utils.system.types import ToolBoxInterfaces, ApiResult
@@ -58,7 +58,7 @@ class CustomRegistrationCredential(RegistrationCredential):
 # app Helper functions interaction with the db
 
 async def db_helper_test_exist(app: App, username: str):
-    c = await app.a_run_any(tbef.DB.IF_EXIST, query=f"USER::{username}::*", get_results=True)
+    c = await app.a_run_any(TBEF.DB.IF_EXIST, query=f"USER::{username}::*", get_results=True)
     if c.is_error(): raise RuntimeError(f"DB - error {c.print(show=False)}")
     b = c.get() > 0
     get_logger().info(f"TEST IF USER EXIST : {username} {b}")
@@ -66,11 +66,11 @@ async def db_helper_test_exist(app: App, username: str):
 
 
 async def db_delete_invitation(app: App, invitation: str):
-    return await app.a_run_any(tbef.DB.DELETE, query=f"invitation::{invitation}", get_results=True)
+    return await app.a_run_any(TBEF.DB.DELETE, query=f"invitation::{invitation}", get_results=True)
 
 
 def db_valid_invitation(app: App, invitation: str):
-    inv_key = app.run_any(tbef.DB.GET, query=f"invitation::{invitation}", get_results=False)
+    inv_key = app.run_any(TBEF.DB.GET, query=f"invitation::{invitation}", get_results=False)
     if inv_key is None:
         return False
     inv_key = inv_key[0]
@@ -82,24 +82,24 @@ def db_valid_invitation(app: App, invitation: str):
 def db_crate_invitation(app: App):
     invitation = Code.generate_symmetric_key()
     inv_key = Code.encrypt_symmetric(invitation, invitation)
-    res = app.run_any(tbef.DB.SET, query=f"invitation::{invitation}", data=inv_key, get_results=True)
+    res = app.run_any(TBEF.DB.SET, query=f"invitation::{invitation}", data=inv_key, get_results=True)
     return invitation
 
 
 def db_helper_save_user(app: App, user_data: dict) -> Result:
     # db_helper_delete_user(app, user_data['name'], user_data['uid'], matching=True)
-    return app.run_any(tbef.DB.SET, query=f"USER::{user_data['name']}::{user_data['uid']}",
+    return app.run_any(TBEF.DB.SET, query=f"USER::{user_data['name']}::{user_data['uid']}",
                        data=user_data,
                        get_results=True)
 
 
 def db_helper_get_user(app: App, username: str, uid: str = '*'):
-    return app.run_any(tbef.DB.GET, query=f"USER::{username}::{uid}",
+    return app.run_any(TBEF.DB.GET, query=f"USER::{username}::{uid}",
                        get_results=True)
 
 
 def db_helper_delete_user(app: App, username: str, uid: str, matching=False):
-    return app.run_any(tbef.DB.DELETE, query=f"USER::{username}::{uid}", matching=matching,
+    return app.run_any(TBEF.DB.DELETE, query=f"USER::{username}::{uid}", matching=matching,
                        get_results=True)
 
 
@@ -322,7 +322,7 @@ async def get_magic_link_email(app: App, username):
 
     invitation = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
     nl = len(user.name)
-    email_data_result = app.run_any(tbef.EMAIL_WAITING_LIST.CRATE_MAGIC_LICK_DEVICE_EMAIL,
+    email_data_result = app.run_any(TBEF.EMAIL_WAITING_LIST.CRATE_MAGIC_LICK_DEVICE_EMAIL,
                                     user_email=user.email,
                                     user_name=user.name,
                                     link_id=invitation, nl=nl, get_results=True)
@@ -332,7 +332,7 @@ async def get_magic_link_email(app: App, username):
 
     email_data = email_data_result.get()
 
-    return app.run_any(tbef.EMAIL_WAITING_LIST.SEND_EMAIL, data=email_data, get_results=True)
+    return app.run_any(TBEF.EMAIL_WAITING_LIST.SEND_EMAIL, data=email_data, get_results=True)
 
     # if not invitation.endswith(user.challenge[12:]):
 
@@ -785,7 +785,7 @@ async def jwt_check_claim_server_side(app: App, username: str, jwt_claim: str) -
 @export(mod_name=Name, test_only=True, initial=True, state=False)
 def prep_test():
     app = get_app(f"{Name}.prep_test")
-    app.run_any(tbef.DB.EDIT_PROGRAMMABLE, mode=DatabaseModes.LC)
+    app.run_any(TBEF.DB.EDIT_PROGRAMMABLE, mode=DatabaseModes.LC)
 
 
 def get_test_app_gen(app=None):

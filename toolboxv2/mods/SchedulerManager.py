@@ -432,12 +432,12 @@ def test_scheduler():
     # with open('example_file.dill', 'wb') as f:
     #     dill.dump(example_dill, f)
 
-    # or  from toolboxv2 import get_app, tbef ;
+    # or  from toolboxv2 import get_app, TBEF ;
     app = get_app(name='debug')
     shm = app.save_load(Name)
     shm.init_sm()
 
-    assert not shm.register_instance(  # or app.run_any(tbef.SCHEDULER_MANAGER.ADD,
+    assert not shm.register_instance(  # or app.run_any(TBEF.SCHEDULER_MANAGER.ADD,
         job_data={
             "job_id": "job-example_basic",
             "second": 20,

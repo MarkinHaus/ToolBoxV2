@@ -36,7 +36,7 @@ steps :
 """
 import os
 import shutil
-from toolboxv2 import get_app, tbef, Spinner
+from toolboxv2 import get_app, TBEF, Spinner
 
 Name = 'cicd'
 export = get_app("cicd.Export").tb
@@ -110,7 +110,7 @@ def downloaded(payload):
     #    payload.payload = json.loads(payload.payload)
     if 'DESKTOP-CI57V1L' not in payload.get_path()[-1]:
         return "Invalid payload"
-    app.run_any(tbef.SOCKETMANAGER.RECEIVE_AND_DECOMPRESS_FILE_AS_SERVER, save_path="./web",
+    app.run_any(TBEF.SOCKETMANAGER.RECEIVE_AND_DECOMPRESS_FILE_AS_SERVER, save_path="./web",
                 listening_port=payload.payload['port'])
     print("Don installing modules")
     with Spinner("installing web dependencies"):
@@ -126,7 +126,7 @@ def downloaded_mod(payload):
     #    payload.payload = json.loads(payload.payload)
     if 'DESKTOP-CI57V1L' not in payload.get_path()[-1]:
         return "Invalid payload"
-    app.run_any(tbef.SOCKETMANAGER.RECEIVE_AND_DECOMPRESS_FILE_AS_SERVER, save_path=payload.payload['filename'],
+    app.run_any(TBEF.SOCKETMANAGER.RECEIVE_AND_DECOMPRESS_FILE_AS_SERVER, save_path=payload.payload['filename'],
                 listening_port=payload.payload['port'])
     return "Done uploading"
 
@@ -151,7 +151,7 @@ def web_get(app):
     if app is None:
         app = get_app(f"{Name}.web_update")
         # register download event
-    ev: EventManagerClass = app.run_any(tbef.EVENTMANAGER.NAME)
+    ev: EventManagerClass = app.run_any(TBEF.EVENTMANAGER.NAME)
     if ev.identification != "P0|S0":
         ev.identification = "P0|S0"
     dw_event = ev.make_event_from_fuction(downloaded,
@@ -168,7 +168,7 @@ def mods_get(app):
     if app is None:
         app = get_app(f"{Name}.web_update")
         # register download event
-    ev: EventManagerClass = app.run_any(tbef.EVENTMANAGER.NAME)
+    ev: EventManagerClass = app.run_any(TBEF.EVENTMANAGER.NAME)
     if ev.identification != "P0|S0":
         ev.identification = "P0|S0"
     mods_event = ev.make_event_from_fuction(downloaded_mod,
@@ -225,7 +225,7 @@ def send_web(app):
     if app is None:
         app = get_app(f"{Name}.web_update")
 
-    ev: EventManagerClass = app.run_any(tbef.EVENTMANAGER.NAME)
+    ev: EventManagerClass = app.run_any(TBEF.EVENTMANAGER.NAME)
     if ev.identification not in "PN":
         ev.identification = "PN-" + ev.identification
     ev.connect_to_remote()  # add_client_route("P0", ('139.162.136.35', 6568))
@@ -239,7 +239,7 @@ def send_web(app):
     dest_dir = "./web_row"
     exclude_dirs = [".idea", "node_modules"]
     copy_files(src_dir, dest_dir, exclude_dirs)
-    app.run_any(tbef.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath='./web_row', host='139.162.136.35', port=6560)
+    app.run_any(TBEF.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath='./web_row', host='139.162.136.35', port=6560)
 
 
 @export(mod_name=Name, test=False)
@@ -258,10 +258,10 @@ def build_mod(app, name=None):
 
     with Spinner("Preparing Mods"):
         if name:
-            app.run_any(tbef.CLOUDM.MAKE_INSTALL, module_name=name)
+            app.run_any(TBEF.CLOUDM.MAKE_INSTALL, module_name=name)
             return
         for mod_name in app.get_all_mods():
-            app.run_any(tbef.CLOUDM.MAKE_INSTALL, module_name=mod_name)
+            app.run_any(TBEF.CLOUDM.MAKE_INSTALL, module_name=mod_name)
 
 
 @export(mod_name=Name, test=False)
@@ -269,7 +269,7 @@ def send_mod_start_sver_event(app):
     from toolboxv2.mods.EventManager.module import EventManagerClass, EventID
     if app is None:
         app = get_app(f"{Name}.web_update")
-    ev: EventManagerClass = app.run_any(tbef.EVENTMANAGER.NAME)
+    ev: EventManagerClass = app.run_any(TBEF.EVENTMANAGER.NAME)
     if ev.identification != "PN":
         ev.identification = "PN"
     ev.connect_to_remote()
@@ -284,7 +284,7 @@ def send_mod_start_sver_event(app):
 def send_mod_uploade_data(app):
     if app is None:
         app = get_app(f"{Name}.web_update")
-    res = app.run_any(tbef.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath="./mods_sto", host='139.162.136.35', port=6561)
+    res = app.run_any(TBEF.SOCKETMANAGER.SEND_FILE_TO_SEVER, filepath="./mods_sto", host='139.162.136.35', port=6561)
     return res
 
 

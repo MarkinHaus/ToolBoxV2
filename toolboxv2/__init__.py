@@ -17,7 +17,7 @@ from .utils.system.getting_and_closing_app import get_app
 from .utils.system.types import Result
 from .utils.system.types import ApiResult
 from .utils.security.cryp import Code
-from .utils.system import all_functions_enums as tbef
+from .utils.system import all_functions_enums as TBEF
 from .runabel import runnable_dict
 
 try:
@@ -54,7 +54,7 @@ __all__ = [
     "mods",
     "utils",
     "get_app",
-    "tbef",
+    "TBEF",
     "Result",
     "Code",
 ]

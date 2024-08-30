@@ -1,4 +1,4 @@
-from toolboxv2 import get_app, App, Result, tbef
+from toolboxv2 import get_app, App, Result, TBEF
 from toolboxv2.utils.system.types import ToolBoxInterfaces
 from fastapi import Request
 
@@ -24,7 +24,7 @@ def get_controller(app: App = None, request: Request or None = None):
 
     print(request.session['live_data'].get('spec') == spec)
 
-    # app.run_any(tbef.MINIMALHTML.GENERATE_HTML)
+    # app.run_any(TBEF.MINIMALHTML.GENERATE_HTML)
 
     return """<div>
     <p>Neue Steuerungselemente geladen!</p>
@@ -38,7 +38,7 @@ def getsMSG(app: App = None):
     if app is None:
         app = get_app(from_=f"{Name}.getTextWidget")
     # Sendeng system MSG message
-    systemMSG_content = app.run_any(tbef.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="./web/systemMSG/text.html",
+    systemMSG_content = app.run_any(TBEF.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="./web/systemMSG/text.html",
                                     element_id="SpeechBallonControls",
                                     externals=["/web/systemMSG/speech_balloon.js"],
                                     from_file=True, to_str=False)
@@ -52,7 +52,7 @@ def getsInsightsWidget(app: App = None):
     if app is None:
         app = get_app(from_=f"{Name}.getTextWidget")
     # Sendeng system MSG message
-    insights_content = app.run_any(tbef.WEBSOCKETMANAGER.CONSTRUCT_RENDER,
+    insights_content = app.run_any(TBEF.WEBSOCKETMANAGER.CONSTRUCT_RENDER,
                                    content="./web/1/insightsWidget/insights.html",
                                    element_id="widgetInsights",
                                    externals=[],
@@ -66,7 +66,7 @@ def getTextWidget(app: App = None):
     if app is None:
         app = get_app(from_=f"{Name}.getTextWidget")
     # Sendeng system MSG message
-    widgetText_content = app.run_any(tbef.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="./web/1/textWidet/text.html",
+    widgetText_content = app.run_any(TBEF.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="./web/1/textWidet/text.html",
                                      element_id="widgetText",
                                      externals=["/web/1/textWidet/testWiget.js"],
                                      from_file=True, to_str=False)
@@ -79,7 +79,7 @@ def getPathWidget(app: App = None):
     if app is None:
         app = get_app(from_=f"{Name}.getTextWidget")
     # Sendeng system MSG message
-    widgetPath_content = app.run_any(tbef.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="./web/1/PathWidet/text.html",
+    widgetPath_content = app.run_any(TBEF.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="./web/1/PathWidet/text.html",
                                      element_id="widgetPath",
                                      externals=["/web/1/PathWidet/pathWiget.js"],
                                      from_file=True, to_str=False)
@@ -93,7 +93,7 @@ def getWidgetNave(app: App = None):
     if app is None:
         app = get_app(from_=f"{Name}.getTextWidget")
     # Sendeng system MSG message
-    widgetNav_content = app.run_any(tbef.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="./web/1/WigetNav/navDrow.html",
+    widgetNav_content = app.run_any(TBEF.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="./web/1/WigetNav/navDrow.html",
                                     element_id="controls",
                                     externals=["/web/1/WigetNav/navDrow.js"],
                                     from_file=True, to_str=False)
@@ -106,7 +106,7 @@ def getDrag(app: App = None):
     if app is None:
         app = get_app(from_=f"{Name}.getTextWidget")
     # Sendeng system MSG message
-    drag_content = app.run_any(tbef.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="./web/Drag/drag.html",
+    drag_content = app.run_any(TBEF.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="./web/Drag/drag.html",
                                element_id="DragControls",
                                externals=["/web/Drag/drag.js"],
                                from_file=True, to_str=False)
@@ -118,7 +118,7 @@ def getControls(app: App = None):
     if app is None:
         app = get_app(from_=f"{Name}.getTextWidget")
     # Sendeng system MSG message
-    controller_content = app.run_any(tbef.WEBSOCKETMANAGER.CONSTRUCT_RENDER,
+    controller_content = app.run_any(TBEF.WEBSOCKETMANAGER.CONSTRUCT_RENDER,
                                      content="""<li class="dropdown-item" id="ControlsWidget">Controls</li>""",
                                      element_id="editorWidget",
                                      externals=["/web/1/Controler/controller.js"], to_str=False)
@@ -131,7 +131,7 @@ def serviceWorker(app: App = None):
     if app is None:
         app = get_app(from_=f"{Name}.getTextWidget")
     # Sendeng system MSG message
-    sw_content = app.run_any(tbef.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="",
+    sw_content = app.run_any(TBEF.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="",
                              element_id="control1",
                              externals=["/index.js", "/web/sw.js"], to_str=False)
     return sw_content

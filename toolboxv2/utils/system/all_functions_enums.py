@@ -7,6 +7,30 @@ from dataclasses import dataclass
 
 
 @dataclass
+class PROCESSMANAGER(Enum):
+    NAME = 'ProcessManager'
+    STARTDBUG: str = 'startDbug'  # Input: (['p1_command', 'p2_command']), Output: <class 'inspect._empty'>
+    STARTDEV: str = 'startDev'  # Input: (['p1_command', 'p2_command']), Output: <class 'inspect._empty'>
+    START: str = 'start'  # Input: (['p1_command', 'p2_command']), Output: <class 'inspect._empty'>
+    START_CLIENT: str = 'start_client'  # Input: (['p0_command', 'p1_command', 'p2_command']), Output: <class 'inspect._empty'>
+    CUSTOM: str = 'custom'  # Input: (['commands', 'monitor']), Output: <class 'inspect._empty'>
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+
+
+@dataclass
+class MINIMALHTML(Enum):
+    NAME = 'MinimalHtml'
+    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
+    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
+    VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
+    ADD_GROUP: str = 'add_group'  # Input: (['command']), Output: <class 'inspect._empty'>
+    ADD_COLLECTION_TO_GROUP: str = 'add_collection_to_group'  # Input: (['group_name', 'collection']), Output: <class 'inspect._empty'>
+    GENERATE_HTML: str = 'generate_html'  # Input: (['group_name', 'collection_name']), Output: <class 'inspect._empty'>
+    FUSE_TO_STRING: str = 'fuse_to_string'  # Input: (['html_elements', 'join_chat']), Output: <class 'inspect._empty'>
+
+
+@dataclass
 class CICD(Enum):
     NAME = 'cicd'
     WEB_GET: str = 'web_get'  # Input: (['app']), Output: <class 'inspect._empty'>
@@ -25,18 +49,6 @@ class CICD(Enum):
 
 
 @dataclass
-class MINIMALHTML(Enum):
-    NAME = 'MinimalHtml'
-    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
-    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
-    VERSION: str = 'Version'  # Input: ([]), Output: <class 'inspect._empty'>
-    ADD_GROUP: str = 'add_group'  # Input: (['command']), Output: <class 'inspect._empty'>
-    ADD_COLLECTION_TO_GROUP: str = 'add_collection_to_group'  # Input: (['group_name', 'collection']), Output: <class 'inspect._empty'>
-    GENERATE_HTML: str = 'generate_html'  # Input: (['group_name', 'collection_name']), Output: <class 'inspect._empty'>
-    FUSE_TO_STRING: str = 'fuse_to_string'  # Input: (['html_elements', 'join_chat']), Output: <class 'inspect._empty'>
-
-
-@dataclass
 class DAYTREE_DAYTREEWIDGET(Enum):
     NAME = 'DayTree.DayTreeWidget'
     GET_WIDGET: str = 'get_widget'  # Input: (['request']), Output: <class 'inspect._empty'>
@@ -48,13 +60,13 @@ class DAYTREE_DAYTREEWIDGET(Enum):
 
 
 @dataclass
-class PROCESSMANAGER(Enum):
-    NAME = 'ProcessManager'
-    STARTDBUG: str = 'startDbug'  # Input: (['p1_command', 'p2_command']), Output: <class 'inspect._empty'>
-    STARTDEV: str = 'startDev'  # Input: (['p1_command', 'p2_command']), Output: <class 'inspect._empty'>
-    START: str = 'start'  # Input: (['p1_command', 'p2_command']), Output: <class 'inspect._empty'>
-    START_CLIENT: str = 'start_client'  # Input: (['p0_command', 'p1_command', 'p2_command']), Output: <class 'inspect._empty'>
-    CUSTOM: str = 'custom'  # Input: (['commands', 'monitor']), Output: <class 'inspect._empty'>
+class WELCOME(Enum):
+    NAME = 'welcome'
+    VERSION: str = 'Version'  # Input: (['_']), Output: <class 'inspect._empty'>
+    PRINTT: str = 'printT'  # Input: ([]), Output: <class 'inspect._empty'>
+    ON_START: str = 'on_start'  # Input: (), Output: None
+    ANIMATION1: str = 'Animation1'  # Input: ([]), Output: <class 'inspect._empty'>
+    ANIMATION: str = 'Animation'  # Input: ([]), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
 
@@ -76,13 +88,13 @@ class SOCKETMANAGER(Enum):
 
 
 @dataclass
-class WELCOME(Enum):
-    NAME = 'welcome'
-    VERSION: str = 'Version'  # Input: (['_']), Output: <class 'inspect._empty'>
-    PRINTT: str = 'printT'  # Input: ([]), Output: <class 'inspect._empty'>
-    ON_START: str = 'on_start'  # Input: (), Output: None
-    ANIMATION1: str = 'Animation1'  # Input: ([]), Output: <class 'inspect._empty'>
-    ANIMATION: str = 'Animation'  # Input: ([]), Output: <class 'inspect._empty'>
+class EMAIL_WAITING_LIST(Enum):
+    NAME = 'email_waiting_list'
+    ADD: str = 'add'  # Input: (['app', 'email']), Output: <class 'toolboxv2.utils.system.types.ApiResult'>
+    SEND_EMAIL_TO_ALL: str = 'send_email_to_all'  # Input: ([]), Output: <class 'inspect._empty'>
+    SEND_EMAIL: str = 'send_email'  # Input: (['data']), Output: <class 'inspect._empty'>
+    CRATE_SING_IN_EMAIL: str = 'crate_sing_in_email'  # Input: (['user_email', 'user_name']), Output: <class 'inspect._empty'>
+    CRATE_MAGIC_LICK_DEVICE_EMAIL: str = 'crate_magic_lick_device_email'  # Input: (['user_email', 'user_name', 'link_id', 'nl']), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
 
@@ -91,18 +103,6 @@ class WELCOME(Enum):
 class EVENTMANAGER(Enum):
     NAME = 'EventManager'
     STARTWEBEVENTS: str = 'startWebEvents'  # Input: (['self']), Output: <class 'inspect._empty'>
-    APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
-    APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
-
-
-@dataclass
-class EMAIL_WAITING_LIST(Enum):
-    NAME = 'email_waiting_list'
-    ADD: str = 'add'  # Input: (['app', 'email']), Output: <class 'toolboxv2.utils.system.types.ApiResult'>
-    SEND_EMAIL_TO_ALL: str = 'send_email_to_all'  # Input: ([]), Output: <class 'inspect._empty'>
-    SEND_EMAIL: str = 'send_email'  # Input: (['data']), Output: <class 'inspect._empty'>
-    CRATE_SING_IN_EMAIL: str = 'crate_sing_in_email'  # Input: (['user_email', 'user_name']), Output: <class 'inspect._empty'>
-    CRATE_MAGIC_LICK_DEVICE_EMAIL: str = 'crate_magic_lick_device_email'  # Input: (['user_email', 'user_name', 'link_id', 'nl']), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
 
@@ -253,7 +253,7 @@ class TALK(Enum):
     TALK_WEBSOCKET_ECHO: str = 'talk_websocket_echo'  # Input: (['websocket']), Output: <class 'inspect._empty'>
     TALK_WEBSOCKET_TRANSLATE: str = 'talk_websocket_translate'  # Input: (['websocket', 'lang']), Output: <class 'inspect._empty'>
     TALK_WEBSOCKET_CONTEXT: str = 'talk_websocket_context'  # Input: (['websocket']), Output: <class 'inspect._empty'>
-    TALK_WEBSOCKET: str = 'talk_websocket'  # Input: (['websocket']), Output: <class 'inspect._empty'>
+    TALK_WEBSOCKET: str = 'talk_websocket'  # Input: (['websocket', 'context', 'all_c', 'v_name', 'v_index', 'provider', 'f']), Output: <class 'inspect._empty'>
     MAIN_WEB_TALK_ENTRY: str = 'main_web_talk_entry'  # Input: (['app', 'request', 'modi']), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
@@ -379,8 +379,8 @@ class AUDIO(Enum):
     INIT_SPEECH: str = 'init_speech'  # Input: (['self', 'app']), Output: <class 'inspect._empty'>
     ON_CLOSE: str = 'on_close'  # Input: (['self']), Output: <class 'inspect._empty'>
     ON_EXIT: str = 'on_exit'  # Input: (), Output: None
-    SPEECH: str = 'speech'  # Input: (['self', 'text', 'voice_index', 'use_cache', 'provider', 'config', 'save']), Output: <class 'inspect._empty'>
-    SPEECH_STREAM: str = 'speech_stream'  # Input: (['self', 'text', 'voice_index', 'use_cache', 'provider', 'config']), Output: <class 'inspect._empty'>
+    SPEECH: str = 'speech'  # Input: (['self', 'text', 'voice_index', 'use_cache', 'provider', 'config', 'save', 'local']), Output: <class 'inspect._empty'>
+    SPEECH_STREAM: str = 'speech_stream'  # Input: (['self', 'text', 'voice_index', 'use_cache', 'provider', 'config', 'local']), Output: <class 'inspect._empty'>
     APP_INSTANCE: str = 'app_instance'  # Input: (), Output: None
     APP_INSTANCE_TYPE: str = 'app_instance_type'  # Input: (), Output: None
 

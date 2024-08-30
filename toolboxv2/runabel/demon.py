@@ -2,7 +2,7 @@ import json
 import time
 from threading import Thread
 
-from toolboxv2 import App, AppArgs, tbef
+from toolboxv2 import App, AppArgs, TBEF
 
 NAME = 'daemon'
 
@@ -87,7 +87,7 @@ async def run(app: App, args: AppArgs, programmabel_interface=False, as_server=T
 
         t_1 = Thread(target=helper)
         t_1.start()
-        gc = app.run_any(tbef.CLI_FUNCTIONS.GET_CHARACTER)
+        gc = app.run_any(TBEF.CLI_FUNCTIONS.GET_CHARACTER)
         for data in gc:
             if data.word == "EXIT":
                 server_controler["stop_server"]()
@@ -112,7 +112,7 @@ async def run(app: App, args: AppArgs, programmabel_interface=False, as_server=T
             alive = False
         await sender(eval(user_input))
 
-        if receiver_queue.not_empty:
+        if not receiver_queue.empty():
             print(receiver_queue.get())
 
     # {

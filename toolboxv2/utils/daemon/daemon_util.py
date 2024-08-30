@@ -79,15 +79,15 @@ class DaemonUtil:
         if not app.mod_online("SocketManager"):
             await app.load_mod("SocketManager")
         server_result = await app.a_run_any(SOCKETMANAGER.CREATE_SOCKET,
-                                                                         get_results=True,
-                                                                         name=self._name,
-                                                                         host=self.host,
-                                                                         port=self.port,
-                                                                         type_id=connection_type,
-                                                                         max_connections=-1,
-                                                                         return_full_object=True,
-                                                                         test_override=self.test_override,
-                                                                         unix_file=self.unix_socket)
+                                            get_results=True,
+                                            name=self._name,
+                                            host=self.host,
+                                            port=self.port,
+                                            type_id=connection_type,
+                                            max_connections=-1,
+                                            return_full_object=True,
+                                            test_override=self.test_override,
+                                            unix_file=self.unix_socket)
         if server_result.is_error():
             raise Exception(f"Server error: {server_result.print(False)}")
         if not server_result.is_data():
@@ -114,6 +114,12 @@ class DaemonUtil:
         await sender(data, identifier)
         return "Data Transmitted"
 
+    @staticmethod
+    async def runner_co(fuction, *args, **kwargs):
+        if asyncio.iscoroutinefunction(fuction):
+            return await fuction(*args, **kwargs)
+        return fuction(*args, **kwargs)
+
     async def connect(self, app):
         result = await self.server.aget()
         if not isinstance(result, dict) or result.get('connection_error') != 0:
@@ -125,11 +131,14 @@ class DaemonUtil:
         sender = self.server.get('sender')
         known_clients = {}
         valid_clients = {}
+        app.print(f"Starting a Demon {self.alive}")
+
         while self.alive:
-            if receiver_queue.not_empty:
+
+            if not receiver_queue.empty():
                 await asyncio.sleep(0.1)
                 data = receiver_queue.get()
-                # print('received', data)
+                print('received', data)
                 if not data:
                     continue
                 if 'identifier' not in data:
@@ -142,7 +151,8 @@ class DaemonUtil:
                         get_logger().info(f"New connection: {address}")
                         known_clients[str(address)] = client
                         await client_to_receiver_thread(client, str(address))
-                        self._on_register(identifier, address)
+
+                        await self.runner_co(self._on_register, identifier, address)
 
                     print("Receiver queue", identifier, identifier in known_clients, identifier in valid_clients)
                     # validation
@@ -150,21 +160,21 @@ class DaemonUtil:
                         get_logger().info(identifier)
                         if identifier.startswith("('127.0.0.1'"):
                             valid_clients[identifier] = known_clients[identifier]
-                            self._on_register(identifier, data)
+                            await self.runner_co(self._on_register, identifier, data)
                         elif data.get("claim", False):
                             do = app.run_any(("CloudM.UserInstances", "validate_ws_id"),
                                              ws_id=data.get("claim"))[0]
                             get_logger().info(do)
                             if do:
                                 valid_clients[identifier] = known_clients[identifier]
-                                self._on_register(identifier, data)
+                                await self.runner_co(self._on_register, identifier, data)
                         elif data.get("key", False) == os.getenv("TB_R_KEY"):
                             do = app.run_any(("CloudM.UserInstances", "validate_ws_id"),
                                              ws_id=data.get("claim"))[0]
                             get_logger().info(do)
                             if do:
                                 valid_clients[identifier] = known_clients[identifier]
-                                self._on_register(identifier, data)
+                                await self.runner_co(self._on_register, identifier, data)
                         else:
                             get_logger().warning(f"Validating Failed: {identifier}")
                             # sender({'Validating Failed': -1}, eval(identifier))
@@ -236,12 +246,13 @@ class DaemonUtil:
                     get_logger().warning(Style.RED(f"An error occurred on {identifier} {str(e)}"))
                     if identifier != "unknown":
                         running_dict["receive"][str(identifier)] = False
-                        self.on_client_exit(identifier)
+                        await self.runner_co(self.on_client_exit,  identifier)
         running_dict["server_receiver"] = False
         for x in running_dict["receive"].keys():
             running_dict["receive"][x] = False
         running_dict["keep_alive_var"] = False
-        self.on_server_exit()
+        await self.runner_co(self.on_server_exit)
+        app.print("Closing a Demon")
         return Result.ok()
 
     async def a_exit(self):

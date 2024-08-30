@@ -38,7 +38,6 @@ DEVICE_KEY = get_or_create_device_key
 
 
 class Code:
-    application_key = None
 
     @staticmethod
     def DK():

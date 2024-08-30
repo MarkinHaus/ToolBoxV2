@@ -133,6 +133,7 @@ def get_local_ip():
 class Tools(MainTool, FileHandler):
 
     def __init__(self, app=None):
+        self.max_concurrent_tasks = 254
         self.tasks = {}
         self.running = False
         self.version = version
@@ -154,6 +155,10 @@ class Tools(MainTool, FileHandler):
         self.sockets = {}
         self.loop = asyncio.new_event_loop()
 
+        self.stuf = True
+        if app.args_sto.sysPrint or app.args_sto.debug:
+            self.stuf = False
+
     async def on_start(self):
         self.logger.info(f"Starting SocketManager")
         self.print(f"{Name} is Starting")
@@ -166,11 +171,11 @@ class Tools(MainTool, FileHandler):
         for socket_name, socket_data in self.sockets.items():
             if not socket_data.get("alive"):
                 continue
-            self.print(f"consing Socket : {socket_name}")
+            self.print(f"Closing Socket : {socket_name}")
             try:
                 await socket_data.get("close")()
             except:
-                self.print(f"consing Socket : {socket_name}")
+                self.print(f"Error on exit Socket : {socket_name}")
             self.sockets[socket_name] = None
         self.sockets = {}
         return "OK"
@@ -187,7 +192,7 @@ class Tools(MainTool, FileHandler):
 
     async def set_print_public_ip(self):
 
-        if self.local_ip is None:
+        if self.public_ip is None:
             self.public_ip = get_public_ip()
             self.print(f"Network IP : {self.public_ip}")
 
@@ -446,7 +451,8 @@ class Tools(MainTool, FileHandler):
 
     def register_new_connection(self, name, client_socket, endpoint):
         if name not in self.sockets:
-            self.logger.error(f"Socket manager Invalid Name : {name} valid ar : {self.sockets.keys()} additional infos : {endpoint}")
+            self.logger.error(
+                f"Socket manager Invalid Name : {name} valid ar : {self.sockets.keys()} additional infos : {endpoint}")
         self.sockets[name]["receiver_queue"].put({'data': (client_socket, endpoint), 'identifier': "new_con"})
         self.register_new_connection_helper(name, client_socket, endpoint)
 
@@ -591,7 +597,7 @@ class Tools(MainTool, FileHandler):
                 if self.sockets[name]["do_async"]:
                     await self.a_exit_socket(name)
                 else:
-                    self.exit_socket(name)
+                    await self.a_exit_socket(name)
             return Result.custom_error(data=str(e), data_info="Connection down and closed")
         if not chunk:
             return Result.default_internal_error("No data available pleas exit")
@@ -626,38 +632,50 @@ class Tools(MainTool, FileHandler):
             self.print(f"Received unknown data type: {data_type}")
         return None
 
-    def helper_1_receive(self, name, identifier="main"):
-        task = self.loop.create_task(self.receive(name, identifier))
-        self.tasks[name] = task
+    async def receive_helper(self, name, identifier="main"):
 
-    async def helper_0_receive(self):
-        self.print(f"GLOBAL receiver running {list(self.tasks.keys())[0]}")
-        await asyncio.gather(*self.tasks.values())
-
-    async def receive_helper(self, name, identifier="mian"):
+        if "thread_receiver_" + identifier not in self.sockets[name]["running_dict"]:
+            self.sockets[name]["running_dict"]["thread_receiver_" + identifier] = None
 
         self.sockets[name]["running_dict"]["receive"][identifier] = asyncio.Event()
 
-        self.helper_1_receive(name, identifier)
+        # Wenn noch kein Thread läuft, starte einen neuen
+        if self.sockets[name]["running_dict"]["thread_receiver_" + identifier] is None:
+            # def thread_worker():
+            #     asyncio.set_event_loop(self.loop)
+            #     self.loop.run_until_complete(self.task_manager(name))
 
-        if self.sockets[name]["running_dict"]["thread_receiver_"] and self.loop.is_running():
+            thread = threading.Thread(target=async_test(self.receive), args=(name, identifier,), daemon=True)
+            self.sockets[name]["running_dict"]["thread_receiver_" + identifier] = thread
+            thread.start()
+
+    async def receive_helper1(self, name, identifier="mian"):
+
+        self.sockets[name]["running_dict"]["receive"][identifier] = asyncio.Event()
+
+        if self.sockets[name]["running_dict"]["thread_receiver_"]:
+            self.sockets[name]["running_dict"]["thread_receiver_que"].put((name, identifier))
             return
 
-        def helper_():
-            if self.loop.is_running():
-                return
-            self.loop.run_until_complete(self.helper_0_receive())
+        self.sockets[name]["running_dict"]["thread_receiver_que"] = queue.Queue()
+
+        def thread_worker(client_queue):
+            while True:
+                (name_, identifier_) = client_queue.get()
+                if name_ is None or identifier_ is None:
+                    break
+                asyncio.run(self.receive(name_, identifier_))
 
         t = threading.Thread(
-            target=helper_, daemon=True
+            target=thread_worker, daemon=True, args=(self.sockets[name]["running_dict"]["thread_receiver_que"],)
         )
 
         await asyncio.sleep(1)
 
-        t.start()
-
         self.sockets[name]["running_dict"]["thread_receiver"] = t
         self.sockets[name]["running_dict"]["thread_receiver_"] = True
+
+        t.start()
 
     async def receive(self, name, identifier="main"):
         print(f"Received Started for {name} {identifier}")
@@ -679,7 +697,6 @@ class Tools(MainTool, FileHandler):
         else:
             r_socket_ = receiver
         self.print(f"Receiver running for {name} to {identifier}")
-        self.sockets[name]["running_dict"]["receive"][identifier] = asyncio.Event()
         while (not self.sockets[name]["running_dict"]["receive"][identifier].is_set()) and self.sockets[name]["alive"]:
             # t0 = time.perf_counter()
             chunk_result = await self.chunk_receive(name, r_socket_, identifier=identifier)
@@ -807,7 +824,10 @@ class Tools(MainTool, FileHandler):
                 print("Client $$", client, identifier)
                 return
             self.register_identifier(name, client, identifier)
-            await self.receive_helper(name, identifier)
+            await asyncio.sleep(0.2)
+            task = await self.receive_helper(name, identifier)
+            await asyncio.sleep(0.2)
+            return task
 
         self.sockets[name] = {
             'alive': True,
@@ -829,7 +849,11 @@ class Tools(MainTool, FileHandler):
                 "server_receiver_": None,
                 "thread_receiver": None,
                 "thread_receiver_": False,
+                "task_queue": asyncio.Queue(),
                 "receive": {
+
+                },
+                "tasks": {
 
                 },
                 "keep_alive_var": asyncio.Event()
@@ -885,20 +909,9 @@ class Tools(MainTool, FileHandler):
         elif type_id == SocketType.peer.name:
             # create peer
 
-            if endpoint_port is None and port is None:
-                port = 62435
-
-            if port is None:
-                port = endpoint_port - 1
-
-            if endpoint_port is None:
-                endpoint_port = port + 1
-
-            if endpoint_port == port:
-                endpoint_port += 1
-
             if do_async:
                 raise NotImplementedError("peer is not supported yet in async")
+
             peer_result = self.create_peer(name, port, endpoint_port, host)
             if peer_result.is_error():
                 return peer_result
@@ -989,7 +1002,7 @@ class Tools(MainTool, FileHandler):
         max_connections_ = 0
         while self.running:
 
-            if receiver_queue.not_empty:
+            if not receiver_queue.empty():
                 client_socket, connection = receiver_queue.get()
                 max_connections_ += 1
                 ip, port = connection
@@ -1080,7 +1093,7 @@ class Tools(MainTool, FileHandler):
             status_queue.put("Server stopping")
 
         def get_status():
-            while status_queue.not_empty:
+            while not status_queue.empty():
                 yield status_queue.get()
 
         return {"stop_server": stop_server, "get_status": get_status}

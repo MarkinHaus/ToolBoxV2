@@ -13,7 +13,7 @@ from prompt_toolkit import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.shortcuts import set_title
 
-from toolboxv2 import App, Result, tbef
+from toolboxv2 import App, Result, TBEF
 from toolboxv2.mods.cli_functions import parse_command_output, parse_linux_command_output, replace_bracketed_content
 from toolboxv2.utils import show_console
 from toolboxv2.utils.extras.Style import cls, Spinner, Style
@@ -157,7 +157,7 @@ async def run(app: App, args):
                 helper_exequtor[0] = None
                 sender({'exit': True})
             sender(kwargs)
-            while receiver_que.not_empty:
+            while not receiver_que.empty():
                 print(receiver_que.get())
 
         helper_exequtor[0] = remote_exex_helper
@@ -205,7 +205,7 @@ async def run(app: App, args):
     # set up Autocompletion
 
     autocompletion_dict = {}
-    autocompletion_dict = app.run_any(tbef.CLI_FUNCTIONS.UPDATE_AUTOCOMPLETION_LIST_OR_KEY, list_or_key=bic,
+    autocompletion_dict = app.run_any(TBEF.CLI_FUNCTIONS.UPDATE_AUTOCOMPLETION_LIST_OR_KEY, list_or_key=bic,
                                       autocompletion_dict=autocompletion_dict)
 
     autocompletion_dict_ = app.get_autocompletion_dict()
@@ -261,7 +261,7 @@ async def run(app: App, args):
                 f'<b> App Infos: '
                 f'{app.id} \nCPU: {cpu_usage}% Memory: {memory_usage}% Disk :{disk_usage}%\nTime: {current_time}</b>')
 
-        call = app.run_any(tbef.CLI_FUNCTIONS.USER_INPUT, completer_dict=autocompletion_dict,
+        call = app.run_any(TBEF.CLI_FUNCTIONS.USER_INPUT, completer_dict=autocompletion_dict,
                            get_rprompt=get_rprompt, bottom_toolbar=bottom_toolbar, active_modul=active_modular, fh=fh)
 
         if asyncio.iscoroutine(call):
@@ -272,7 +272,7 @@ async def run(app: App, args):
         if call is None:
             continue
         if call.module_name == "openM":
-            autocompletion_dict = app.run_any(tbef.CLI_FUNCTIONS.UPDATE_AUTOCOMPLETION_MODS,
+            autocompletion_dict = app.run_any(TBEF.CLI_FUNCTIONS.UPDATE_AUTOCOMPLETION_MODS,
                                               autocompletion_dict=autocompletion_dict)
         elif call.module_name.split('.')[0] in all_modes or call.module_name in bic.keys():
             if call.function_name.strip() == '' and call.module_name not in bic.keys():
@@ -280,7 +280,7 @@ async def run(app: App, args):
             else:
                 if call.args is not None:
                     call.args = replace_bracketed_content(' '.join(call.args), app.locals['user'], inlist=True)
-                running_instance = await app.a_run_any(tbef.CLI_FUNCTIONS.CO_EVALUATE,
+                running_instance = await app.a_run_any(TBEF.CLI_FUNCTIONS.CO_EVALUATE,
                                                      obj=call,
                                                      build_in_commands=bic,
                                                      threaded=threaded[0],

@@ -10,7 +10,7 @@ from .security.cryp import Code
 from .system.file_handler import FileHandler
 from .system.tb_logger import setup_logging, get_logger
 from .system.main_tool import MainTool
-from .system import all_functions_enums as tbef
+from .system import all_functions_enums as TBEF
 from .system.types import Result, AppArgs, ApiResult
 from .system.getting_and_closing_app import get_app
 
@@ -30,7 +30,7 @@ __all__ = [
     "setup_logging",
     "get_logger",
     "get_app",
-    "tbef",
+    "TBEF",
     "Result",
     "ApiResult",
     "Code",

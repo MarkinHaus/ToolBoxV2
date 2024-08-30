@@ -223,7 +223,7 @@ def unpack_and_move_module(zip_path, base_path='.\\mods', module_name=''):
 
 
 @export(mod_name=Name, name="make_install", test=False)
-def make_installer(app: Optional[App], module_name: str, base=".\\mods"):
+async def make_installer(app: Optional[App], module_name: str, base=".\\mods"):
     if app is None:
         app = get_app(f"{Name}.installer")
 
@@ -239,7 +239,7 @@ def make_installer(app: Optional[App], module_name: str, base=".\\mods"):
     zip_path = create_and_pack_module(f"{base}\\{module_name}", module_name, version_)
 
     if 'y' in input("uploade zip file ?"):
-        app.session.upload_file(zip_path, '/installer/upload-file')
+        await app.session.upload_file(zip_path, '/installer/upload-file')
 
     return zip_path
 
@@ -339,7 +339,7 @@ def bundle_dependencies(start_directory, output_file="dependencies.yaml", return
     if return_dependencies:
         return list(dependencies)
     # Schreiben der Abhängigkeiten in YAML-Datei
-    with open(output_file, 'w') as f:
+    with open(output_file, 'a') as f:
         yaml.dump({"dependencies": list(dependencies)}, f)
 
 

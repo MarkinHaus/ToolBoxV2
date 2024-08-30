@@ -4,7 +4,7 @@ from datetime import datetime
 
 from fastapi import Request
 
-from toolboxv2 import get_app, App, Result, tbef
+from toolboxv2 import get_app, App, Result, TBEF
 from ..types import User
 from toolboxv2.mods.CloudM.AuthManager import db_helper_delete_user, db_helper_save_user
 from toolboxv2.mods.SocketManager import get_local_ip
@@ -18,7 +18,7 @@ spec = ''
 
 def load_root_widget(app, uid):
     root = f"/api/{Name}"
-    all_users = app.run_any(tbef.DB.GET, query="USER::*")
+    all_users = app.run_any(TBEF.DB.GET, query="USER::*")
     print("[all_users]:", all_users)
     if not all_users:
         all_users = [b"{'name': 'root', 'uid': uid}"]
@@ -33,8 +33,8 @@ def load_root_widget(app, uid):
                                'root': root
                            }
                            } for user_ in all_users]}
-    app.run_any(tbef.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=all_user)
-    all_users_config = app.run_any(tbef.MINIMALHTML.GENERATE_HTML, group_name=Name,
+    app.run_any(TBEF.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=all_user)
+    all_users_config = app.run_any(TBEF.MINIMALHTML.GENERATE_HTML, group_name=Name,
                                    collection_name=f"system_users-root")
 
     root_sys = {'name': "RootSys",
@@ -42,7 +42,7 @@ def load_root_widget(app, uid):
                     {'name': 'infos_root',
                      'file_path': f'./mods/CloudM/UI/assets/system_root.html',
                      'kwargs': {
-                         'UserController': app.run_any(tbef.MINIMALHTML.FUSE_TO_STRING, html_elements=all_users_config),
+                         'UserController': app.run_any(TBEF.MINIMALHTML.FUSE_TO_STRING, html_elements=all_users_config),
                      }
                      },
                 ]}
@@ -59,8 +59,8 @@ def load_root_widget(app, uid):
                        },
                   ]}
 
-    app.run_any(tbef.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=root_sys)
-    app.run_any(tbef.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=root_infos)
+    app.run_any(TBEF.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=root_sys)
+    app.run_any(TBEF.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=root_infos)
 
 
 def reload_widget_main(app, user, WidgetID):
@@ -78,7 +78,7 @@ def reload_widget_main(app, user, WidgetID):
                    },
               ]}
 
-    app.run_any(tbef.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=widget)
+    app.run_any(TBEF.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=widget)
 
 
 def reload_widget_info(app, user, WidgetID):
@@ -95,8 +95,8 @@ def reload_widget_info(app, user, WidgetID):
                               'index': user.user_pass_pub_devices.index(d)
                           }
                           } for d in user.user_pass_pub_devices]}
-    app.run_any(tbef.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=devices)
-    html_devices = app.run_any(tbef.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name=f"Devices-{user.uid}")
+    app.run_any(TBEF.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=devices)
+    html_devices = app.run_any(TBEF.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name=f"Devices-{user.uid}")
 
     infos = {'name': f"infosTab-{user.uid}",
              'group': [
@@ -109,19 +109,19 @@ def reload_widget_info(app, user, WidgetID):
                       'addUserPersona': '',
                       'root': root,
                       'WidgetID': WidgetID,
-                      "devices": app.run_any(tbef.MINIMALHTML.FUSE_TO_STRING, html_elements=html_devices),
+                      "devices": app.run_any(TBEF.MINIMALHTML.FUSE_TO_STRING, html_elements=html_devices),
                       'rootInfo':
-                          app.run_any(tbef.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name="RootInfos")[
+                          app.run_any(TBEF.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name="RootInfos")[
                               0]['html_element'] if user.name == 'root' else ''
                   }
                   }, ]}
 
-    app.run_any(tbef.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=infos)
+    app.run_any(TBEF.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=infos)
 
 
 def reload_widget_mods(app, user, WidgetID):
     root = f"/api/{Name}"
-    user_instance = app.run_any(tbef.CLOUDM_USERINSTANCES.GET_USER_INSTANCE, uid=user.uid)
+    user_instance = app.run_any(TBEF.CLOUDM_USERINSTANCES.GET_USER_INSTANCE, uid=user.uid)
 
     mods_a = {'name': f"mods-{user.uid}",
               'group': [{'name': f'mod-{mod_name}',
@@ -133,8 +133,8 @@ def reload_widget_mods(app, user, WidgetID):
                              'root': root
                          }
                          } for mod_name in user_instance.get('save', {}).get('mods', [])]}
-    app.run_any(tbef.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=mods_a)
-    html_mods = app.run_any(tbef.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name=f"mods-{user.uid}")
+    app.run_any(TBEF.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=mods_a)
+    html_mods = app.run_any(TBEF.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name=f"mods-{user.uid}")
 
     mods_b = {'name': f"mods_app-{user.uid}",
               'group': [{'name': f'mod-{mod_name}',
@@ -147,20 +147,20 @@ def reload_widget_mods(app, user, WidgetID):
                              'root': root
                          }
                          } for mod_name in app.get_all_mods()]}
-    app.run_any(tbef.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=mods_b)
-    html_mods_a = app.run_any(tbef.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name=f"mods_app-{user.uid}")
+    app.run_any(TBEF.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=mods_b)
+    html_mods_a = app.run_any(TBEF.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name=f"mods_app-{user.uid}")
 
     mods_ = {'name': f"modTab-{user.uid}",
              'group': [
                  {'name': 'mods',
                   'file_path': f'./mods/CloudM/UI/assets/mods.html',
                   'kwargs': {
-                      "modsList": app.run_any(tbef.MINIMALHTML.FUSE_TO_STRING, html_elements=html_mods),
-                      "AvalabelModsList": app.run_any(tbef.MINIMALHTML.FUSE_TO_STRING, html_elements=html_mods_a),
+                      "modsList": app.run_any(TBEF.MINIMALHTML.FUSE_TO_STRING, html_elements=html_mods),
+                      "AvalabelModsList": app.run_any(TBEF.MINIMALHTML.FUSE_TO_STRING, html_elements=html_mods_a),
                   }
                   },
              ]}
-    app.run_any(tbef.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=mods_)
+    app.run_any(TBEF.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=mods_)
 
 
 def reload_widget_system(app, user, WidgetID):
@@ -175,19 +175,19 @@ def reload_widget_system(app, user, WidgetID):
                           'kwargs': {
                               'root': root,
                               'WidgetID': WidgetID,
-                              'rootSys': app.run_any(tbef.MINIMALHTML.GENERATE_HTML, group_name=Name,
+                              'rootSys': app.run_any(TBEF.MINIMALHTML.GENERATE_HTML, group_name=Name,
                                                      collection_name="RootSys")[0][
                                   'html_element'] if user.name == 'root' else ''
                           }
                           },
                      ]}
 
-    app.run_any(tbef.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=system_person)
+    app.run_any(TBEF.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=system_person)
 
 
 async def load_widget(app, display_name="Cud be ur name", WidgetID=str(uuid.uuid4())[:4]):
     if display_name != "Cud be ur name":
-        user = await app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=display_name, get_results=True)
+        user = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=display_name, get_results=True)
         if user.is_error():
             user = User()
         else:
@@ -195,21 +195,21 @@ async def load_widget(app, display_name="Cud be ur name", WidgetID=str(uuid.uuid
     else:
         user = User()
 
-    app.run_any(tbef.MINIMALHTML.ADD_GROUP, command=Name)
+    app.run_any(TBEF.MINIMALHTML.ADD_GROUP, command=Name)
 
     reload_widget_main(app, user, WidgetID)
     reload_widget_info(app, user, WidgetID)
     reload_widget_system(app, user, WidgetID)
     reload_widget_mods(app, user, WidgetID)
 
-    html_widget = app.run_any(tbef.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name=f"MainWidget-{user.uid}")
+    html_widget = app.run_any(TBEF.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name=f"MainWidget-{user.uid}")
     return html_widget[0]['html_element']
 
 
 async def get_user_from_request(app, request):
     name = request.session.get('live_data', {}).get('user_name', "Cud be ur name")
     if name != "Cud be ur name":
-        user = await app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=app.config_fh.decode_code(name))
+        user = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=app.config_fh.decode_code(name))
     else:
         user = User()
     return user
@@ -238,7 +238,7 @@ async def danger(app, request: Request or None = None):
         return f"<h2>Invalid User</h2>"
     WidgetID = str(uuid.uuid4())[:4]
     reload_widget_system(app, user, WidgetID)
-    html_widget = app.run_any(tbef.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name=f"sysTab-{user.uid}")
+    html_widget = app.run_any(TBEF.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name=f"sysTab-{user.uid}")
     return html_widget[0]['html_element']
 
 
@@ -251,7 +251,7 @@ async def stop(app, request: Request or None = None):
     user = await get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
-    app.run_any(tbef.CLOUDM_USERINSTANCES.CLOSE_USER_INSTANCE, uid=user.uid)
+    app.run_any(TBEF.CLOUDM_USERINSTANCES.CLOSE_USER_INSTANCE, uid=user.uid)
     if user.name == 'root':
         await app.a_exit()
         exit()
@@ -265,7 +265,7 @@ async def reset(app, request: Request or None = None):
     user = await get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
-    app.run_any(tbef.CLOUDM_USERINSTANCES.DELETE_USER_INSTANCE, uid=user.uid)
+    app.run_any(TBEF.CLOUDM_USERINSTANCES.DELETE_USER_INSTANCE, uid=user.uid)
     db_helper_delete_user(app, user.name, user.uid, matching=True)
     return f"<h2>account gelöscht {user.name=}</h2>"
 
@@ -277,7 +277,7 @@ async def link(app, request: Request or None = None):
     user = await get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
-    return f"<h2>{app.run_any(tbef.CLOUDM.CREATE_MAGIC_LOG_IN, username=user.name)}</h2>"
+    return f"<h2>{app.run_any(TBEF.CLOUDM.CREATE_MAGIC_LOG_IN, username=user.name)}</h2>"
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
@@ -290,7 +290,7 @@ async def info(app, request: Request or None = None):
 
     WidgetID = str(uuid.uuid4())[:4]
     reload_widget_info(app, user, WidgetID)
-    html_widget = app.run_any(tbef.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name=f"infosTab-{user.uid}")
+    html_widget = app.run_any(TBEF.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name=f"infosTab-{user.uid}")
     return html_widget[0]['html_element']
 
 
@@ -301,8 +301,8 @@ async def deleteUser(app, user: str, request: Request or None = None):
     user_ob = await get_user_from_request(app, request=request)
     if user_ob.name != 'root':
         return f"<h2>Invalid User</h2>"
-    user_ed = await app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user)
-    app.run_any(tbef.CLOUDM_USERINSTANCES.DELETE_USER_INSTANCE, uid=user_ed.uid)
+    user_ed = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user)
+    app.run_any(TBEF.CLOUDM_USERINSTANCES.DELETE_USER_INSTANCE, uid=user_ed.uid)
     db_helper_delete_user(app, user_ed.name, user_ed.uid, matching=True)
     return f"<h2>account gelöscht {user_ed.name=}</h2>"
 
@@ -314,14 +314,14 @@ async def sendMagicLink(app, user: str, request: Request or None = None):
     user_ob = await get_user_from_request(app, request=request)
     if user_ob.name != 'root':
         return f"<h2>Invalid User</h2>"
-    link = app.run_any(tbef.CLOUDM.CREATE_MAGIC_LOG_IN, username=user)
-    user_ed = await app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user)
-    msg = app.run_any(tbef.EMAIL_WAITING_LIST.CRATE_MAGIC_LICK_DEVICE_EMAIL,
+    link = app.run_any(TBEF.CLOUDM.CREATE_MAGIC_LOG_IN, username=user)
+    user_ed = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user)
+    msg = app.run_any(TBEF.EMAIL_WAITING_LIST.CRATE_MAGIC_LICK_DEVICE_EMAIL,
                       user_email=user_ed.email,
                       user_name=user_ed.name,
                       link_id=link, nl=''
                       )
-    app.run_any(tbef.EMAIL_WAITING_LIST.SEND_EMAIL, data=msg)
+    app.run_any(TBEF.EMAIL_WAITING_LIST.SEND_EMAIL, data=msg)
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
@@ -332,7 +332,7 @@ async def setUserLevel(app, user: str, data: dict, request: Request or None = No
     if user_ob.name != 'root':
         return f"<h2>Invalid User</h2>"
     userLevel = data.get('userLevel', 0)
-    user_ed = await app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user)
+    user_ed = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user)
     if isinstance(userLevel, str):
         userLevel = int(userLevel)
     user_ed.level = userLevel
@@ -350,7 +350,7 @@ async def mods(app, request: Request or None = None):
 
     WidgetID = str(uuid.uuid4())[:4]
     reload_widget_mods(app, user, WidgetID)
-    html_widget = app.run_any(tbef.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name=f"modTab-{user.uid}")
+    html_widget = app.run_any(TBEF.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name=f"modTab-{user.uid}")
     return html_widget[0]['html_element']
 
 
@@ -361,11 +361,11 @@ async def addMod(app, modId: str, request: Request or None = None):
     user = await get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
-    user_instance = app.run_any(tbef.CLOUDM_USERINSTANCES.GET_USER_INSTANCE, uid=user.uid)
+    user_instance = app.run_any(TBEF.CLOUDM_USERINSTANCES.GET_USER_INSTANCE, uid=user.uid)
     if modId in user_instance["save"]["mods"]:
         return f"<h2>{modId} is already active</h2>"
     user_instance["save"]["mods"].append(modId)
-    user_instance = app.run_any(tbef.CLOUDM_USERINSTANCES.SAVE_USER_INSTANCES, instance=user_instance)
+    user_instance = app.run_any(TBEF.CLOUDM_USERINSTANCES.SAVE_USER_INSTANCES, instance=user_instance)
     return f"<h2>{modId} Added</h2>"
 
 
@@ -376,11 +376,11 @@ async def remove(app, modId: str, request: Request or None = None):
     user = await get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
-    user_instance = app.run_any(tbef.CLOUDM_USERINSTANCES.GET_USER_INSTANCE, uid=user.uid)
+    user_instance = app.run_any(TBEF.CLOUDM_USERINSTANCES.GET_USER_INSTANCE, uid=user.uid)
     if modId not in user_instance["save"]["mods"]:
         return f"<h2>{modId} is already active</h2>"
     user_instance["save"]["mods"].remove(modId)
-    user_instance = app.run_any(tbef.CLOUDM_USERINSTANCES.SAVE_USER_INSTANCES, instance=user_instance)
+    user_instance = app.run_any(TBEF.CLOUDM_USERINSTANCES.SAVE_USER_INSTANCES, instance=user_instance)
     return f"<h2>{modId} Remove</h2>"
 
 

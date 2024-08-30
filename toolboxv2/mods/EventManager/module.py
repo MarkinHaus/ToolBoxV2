@@ -1,3 +1,4 @@
+import asyncio
 import os
 import queue
 import threading
@@ -5,7 +6,7 @@ import time
 import uuid
 from dataclasses import dataclass, field, asdict
 from enum import Enum
-from typing import Dict, Tuple, Optional, Any, Callable, Union, Set
+from typing import Dict, Tuple, Optional, Any, Callable, Union, Set, List
 from concurrent.futures import ThreadPoolExecutor
 
 from toolboxv2 import get_app, Result, Spinner, MainTool, get_logger
@@ -40,8 +41,11 @@ class ExecIn(Enum):
 class SourceTypes(Enum):
     F: str = "Fuction"
     R: str = "RunAny"
-    S: str = "String"
     P: str = "Fuction withe payload"
+    AF: str = "async Fuction"
+    AR: str = "async RunAny"
+    AP: str = "async Fuction withe payload"
+    S: str = "String"
     # D: str = "File"
     # E: str = "Event"
 
@@ -166,10 +170,11 @@ class Rout:
 
 
 class DaemonRout(DaemonUtil):
-    def __init__(self, rout: Rout, t=True, name="daemonRoute", on_r=None, on_c=None, unix_socket=False):
+    def __init__(self, rout: Rout, t=False, name="daemonRoute", on_r=None, on_c=None, unix_socket=False):
         host, port = rout.to_host, rout.to_port
         super().__init__(class_instance=rout, host=host, port=port, t=t, app=get_app(from_=f"{Name}.Rout.Daemon"),
-                         peer=False, name=name, on_register=on_r, on_client_exit=on_c, unix_socket=unix_socket)
+                         peer=False, name=name, on_register=on_r,
+                         on_client_exit=on_c, unix_socket=unix_socket)
 
 
 class ProxyRout(ProxyUtil):
@@ -197,6 +202,8 @@ class EventManagerClass:
 
     routes_client: Dict[str, ProxyRout] = {}
     routers_servers: Dict[str, DaemonRout] = {}
+    routers_servers_tasks: List[asyncio.coroutine] = []
+    routers_servers_tasks_running_flag: bool = False
 
     receiver_que: queue.Queue
     response_que: queue.Queue
@@ -222,6 +229,10 @@ class EventManagerClass:
                 print(f"Event returned {data.payload}")
                 self.response_que.put(data)
             elif isinstance(data,
+                            dict) and 'error' in data and 'origin' in data and 'result' in data and 'info' in data:
+
+                self.response_que.put(Result.result_from_dict(**data).print())
+            elif isinstance(data,
                             dict) and 'source' in data and 'path' in data and 'ID' in data and 'identifier' in data:
                 del data['identifier']
                 ev_id = EventID(**data)
@@ -230,7 +241,7 @@ class EventManagerClass:
                 print("Event:", str(data.event_id), data.name)
                 add_ev.append(data)
             elif isinstance(data, Result):
-                data.print()
+                self.response_que.put(data.print())
             else:
                 print(f"Unknown Data {data}")
 
@@ -261,7 +272,7 @@ class EventManagerClass:
             routing_function=self.routing_function_router,
         )
 
-    def __init__(self, source_id, _identification="Pn"):
+    def __init__(self, source_id, _identification="PN"):
         self.bo = False
         self.running = False
         self.source_id = source_id
@@ -281,15 +292,23 @@ class EventManagerClass:
         self.stop()
         self._identification = _identification
         self._name = self._identification + '-' + str(uuid.uuid4()).split('-')[1]
-        if _identification == "P0":
-            self.add_server_route(_identification, ('0.0.0.0', 6568))
-        if _identification == "P0|S0":
-            self.add_server_route(_identification, ('0.0.0.0', 6567))
-        self.start()
-        self.reconnect("ALL")
 
-    def open_connection_server(self, port):
-        self.add_server_route(self._identification, ('0.0.0.0', port))
+    async def identity_post_setter(self):
+
+        do_reconnect = len(list(self.routers_servers.keys())) > 0
+        if self._identification == "P0":
+            await self.add_server_route(self._identification, ('0.0.0.0', 6568))
+        if self._identification == "P0|S0":
+            await self.add_server_route(self._identification, ('0.0.0.0', 6567))
+
+        await asyncio.sleep(0.1)
+        self.start()
+        await asyncio.sleep(0.1)
+        if do_reconnect:
+            self.reconnect("ALL")
+
+    async def open_connection_server(self, port):
+        await self.add_server_route(self._identification, ('0.0.0.0', port))
 
     def start(self):
         self.running = True
@@ -319,9 +338,9 @@ class EventManagerClass:
             return False
         try:
             pr = await ProxyRout.toProxy(rout=self.crate_rout(source_id, addr=addr), name=source_id)
-            time.sleep(0.25)
-            pr.client.get('sender')({"id": self._identification, "continue": False})
-            time.sleep(0.25)
+            await asyncio.sleep(0.1)
+            await pr.client.get('sender')({"id": self._identification, "continue": False})
+            await asyncio.sleep(0.1)
             self.add_c_route(source_id, pr)
             return True
         except Exception as e:
@@ -344,7 +363,7 @@ class EventManagerClass:
         mini_proxy.r = "No data"
         self.routes_client[name] = mini_proxy
 
-    def on_register(self, id_, data):
+    async def on_register(self, id_, data):
         try:
             print("on_register", id_, "##", data)
             if "unknown" not in self.routes:
@@ -356,7 +375,7 @@ class EventManagerClass:
                 c_host, c_pot = id_
                 print(f"Registering: new client {id_data} : {c_host, c_pot} | {data}")
                 if id_data not in self.routes_client.keys():
-                    self.add_mini_client(id_data, (c_host, c_pot))
+                    await self.add_mini_client(id_data, (c_host, c_pot))
                     self.routes[str((c_host, c_pot))] = id_data
 
             # print("self.routes:", self.routes)
@@ -384,8 +403,26 @@ class EventManagerClass:
             self.routers_servers[source_id] = await DaemonRout(rout=self.crate_rout(source_id, addr=addr),
                                                                name=source_id,
                                                                on_r=self.on_register)
+            self.routers_servers_tasks.append(self.routers_servers[source_id].online)
         except Exception as e:
             print(f"Sever already Online : {e}")
+
+        if not self.routers_servers_tasks_running_flag:
+            self.routers_servers_tasks_running_flag = True
+            threading.Thread(target=self.server_route_runner, daemon=True).start()
+
+    def server_route_runner(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        # Sammle alle Ergebnisse zusammen
+        results = loop.run_until_complete(asyncio.gather(*self.routers_servers_tasks))
+
+        for result in results:
+            print(result)
+
+        loop.close()
+        self.routers_servers_tasks_running_flag = False
 
     async def add_js_route(self, source_id="js:web"):
         await self.add_server_route(source_id, ("./web/scripts/tb_socket.sock", 0))
@@ -446,11 +483,11 @@ class EventManagerClass:
     def start_brodcast_router_local_network(self):
         self.bo = True
 
-        print("Starting brodcast router 0")
+        # print("Starting brodcast router 0")
         router = start_client(get_local_ip())
-        print("Starting brodcast router 1")
+        # print("Starting brodcast router 1")
         # next(router)
-        print("Starting brodcast router")
+        # print("Starting brodcast router")
         while self.running:
             source_id, connection = next(router)
             print(f"Infos :{source_id}, connection :{connection}")
@@ -503,7 +540,7 @@ class EventManagerClass:
             S -> evaluate string
         scope
             instance -> _trigger_local
-            local -> if you ar proxy app run the event through get_app(str(event_id)).run_any(tbef.EventManager._trigger_local, args=args, kwargs=kwargs, get_result=True)
+            local -> if you ar proxy app run the event through get_app(str(event_id)).run_any(TBEF.EventManager._trigger_local, args=args, kwargs=kwargs, get_result=True)
             local_network -> use proxy0 app to communicate withe Daemon0 then local
             global_network ->
         exec_in
@@ -528,9 +565,9 @@ class EventManagerClass:
         #    return "Event running In Thread"
         # else:
 
-        return self.runner(event, event_id)
+        return await self.runner(event, event_id)
 
-    def runner(self, event, event_id):
+    async def runner(self, event, event_id):
 
         if event.source_types.name is SourceTypes.P.name:
             return event.source(*event.args, payload=event_id, **event.kwargs_)
@@ -541,6 +578,17 @@ class EventManagerClass:
         if event.source_types.name is SourceTypes.R.name:
             return get_app(str(event_id)).run_any(mod_function_name=event.source, get_results=True, args_=event.args,
                                                   kwargs_=event.kwargs_)
+
+        if event.source_types.name is SourceTypes.AP.name:
+            return await event.source(*event.args, payload=event_id, **event.kwargs_)
+
+        if event.source_types.name is SourceTypes.AF.name:
+            return await event.source(*event.args, **event.kwargs_)
+
+        if event.source_types.name is SourceTypes.AR.name:
+            return await get_app(str(event_id)).run_any(mod_function_name=event.source, get_results=True,
+                                                        args_=event.args,
+                                                        kwargs_=event.kwargs_)
 
         if event.source_types.name is SourceTypes.S.name:
             return eval(event.source, __locals={'app': get_app(str(event_id)), 'event': event, 'eventManagerC': self})
@@ -581,7 +629,7 @@ class EventManagerClass:
             S -> evaluate string
         scope
             instance -> _trigger_local
-            local -> if you ar proxy app run the event through get_app(str(event_id)).run_any(tbef.EventManager._trigger_local, args=args, kwargs=kwargs, get_result=True)
+            local -> if you ar proxy app run the event through get_app(str(event_id)).run_any(TBEF.EventManager._trigger_local, args=args, kwargs=kwargs, get_result=True)
             local_network -> use proxy0 app to communicate withe Daemon0 then local
             global_network ->
         exec_in
@@ -589,13 +637,13 @@ class EventManagerClass:
         threaded
 
                        """
-        print(f"event-id Ptah : {event_id.get_path()}")
-        print(f"testing trigger_event for {event_id.get_source()} {event_id.get_source()[-1] == self.source_id} ")
+        # print(f"event-id Ptah : {event_id.get_path()}")
+        # print(f"testing trigger_event for {event_id.get_source()} {event_id.get_source()[-1] == self.source_id} ")
         if event_id.get_source()[-1] == self.source_id:
             payload = await self._trigger_local(event_id)
             event_id.set_payload(payload)
             if len(event_id.path) > 1:
-                event_id.source = ':'.join([e.split('-')[0] for e in event_id.get_path() if e != "E"])
+                event_id.source = ':'.join([e.split(':')[0] for e in event_id.get_path() if e != "E"])
                 res = await self.route_event_id(event_id)
                 if isinstance(res, Result):
                     res.print()
@@ -606,7 +654,7 @@ class EventManagerClass:
 
     async def route_event_id(self, event_id: EventID):
 
-        print(f"testing route_event_id for {event_id.get_source()[-1]}")
+        # print(f"testing route_event_id for {event_id.get_source()[-1]}")
         if event_id.get_source()[-1] == '*':  # self.identification == "P0" and
             responses = []
             event_id.source = ':'.join(event_id.get_source()[:-1])
@@ -619,11 +667,11 @@ class EventManagerClass:
                 responses.append(ret)
             return responses
         route = self.routes_client.get(event_id.get_source()[-1])
-        print("route:", route)
+        # print("route:", route)
         if route is None:
             route = self.routes_client.get(event_id.get_path()[-1])
         if route is None:
-            return event_id.add_path(f"404#{self.identification}")
+            return event_id.add_path(("" if len(event_id.get_source()) == 1 else "404#")+self.identification)
         # time.sleep(0.25)
         event_id.source = ':'.join(event_id.get_source()[:-1])
         event_id.add_path(f"{self._name}({self.source_id})")
@@ -681,13 +729,13 @@ class Tools(MainTool, EventManagerClass):
         self.keys = {"mode": "db~mode~~:"}
         self.encoding = 'utf-8'
         self.tools = {
-            "Name": Name,
+            "name": Name,
             "Version": self.get_version,
             "startEventManager": self.startEventManager,
             "closeEventManager": self.closeEventManager,
             "getEventManagerC": self.get_manager,
         }
-        _identification = "Pn"
+        _identification = "PN"
         EventManagerClass.__init__(self, f"{self.spec}.{self.app.id}", _identification=_identification)
         MainTool.__init__(self,
                           load=self.startEventManager,

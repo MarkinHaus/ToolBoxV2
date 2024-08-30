@@ -507,7 +507,7 @@ input[type="checkbox"] {
     padding-bottom: 20px;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
     min-height: max-content;
-    overflow-y: auto;
+    /*overflow-y: auto;*/
     overflow-x: clip;
     border-radius: 4px;
 }

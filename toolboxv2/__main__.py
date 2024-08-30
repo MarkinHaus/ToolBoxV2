@@ -668,8 +668,6 @@ async def main():
     info_folder = abspath + '\\.info\\'
     pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
 
-    # tb_app.save_registry_as_enums("utils", "all_functions_enums.py")
-
     if args.install:
         await mod_installer(tb_app, args.install)
 

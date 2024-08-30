@@ -192,6 +192,24 @@ class Result:
             origin=self.origin
         )
 
+    @staticmethod
+    def result_from_dict(error: str, result: dict, info: dict, origin: list or None or str):
+        # print(f" error={self.error}, result= {self.result}, info= {self.info}, origin= {self.origin}")
+        return ApiResult(
+            error=error if isinstance(error, Enum) else error,
+            result=ToolBoxResultBM(
+                data_to=result.get('data_to') if isinstance(result.get('data_to'), Enum) else result.get('data_to'),
+                data_info=result.get('data_info', '404'),
+                data=result.get('data'),
+                data_type=result.get('data_type', '404'),
+            ) if result else None,
+            info=ToolBoxInfoBM(
+                exec_code=info.get('exec_code', '404'),  # exec_code umwandel in http resposn codes
+                help_text=info.get('help_text', '404')
+            ) if info else None,
+            origin=origin
+        ).as_result()
+
     @classmethod
     def default(cls, interface=ToolBoxInterfaces.native):
         error = ToolBoxError.none
@@ -263,7 +281,8 @@ class Result:
         return data if data is not None else default
 
     async def aget(self, key=None, default=None):
-        if asyncio.isfuture(self.result.data) or asyncio.iscoroutine(self.result.data) or (isinstance(self.result.data_to, Enum) and self.result.data_to.name == ToolBoxInterfaces.future.name):
+        if asyncio.isfuture(self.result.data) or asyncio.iscoroutine(self.result.data) or (
+            isinstance(self.result.data_to, Enum) and self.result.data_to.name == ToolBoxInterfaces.future.name):
             data = await self.result.data
         else:
             data = self.get(key=None, default=None)
@@ -566,9 +585,8 @@ class AppType:
     def load_mod(self, mod_name: str, mlm='I', **kwargs):
         """proxi attr"""
 
-    @staticmethod
-    async def init_module(modular):
-        return await modular
+    async def init_module(self, modular):
+        return await self.load_mod(modular)
 
     async def load_all_mods_in_file(self, working_dir="mods"):
         """proxi attr"""
@@ -666,11 +684,12 @@ class AppType:
         proxi attr
         """
 
-    async def run_http(self, mod_function_name: Enum or str or tuple, function_name=None,method="GET",
+    async def run_http(self, mod_function_name: Enum or str or tuple, function_name=None, method="GET",
                        args_=None,
-                kwargs_=None,
-                *args, **kwargs):
-            """run a function remote via http / https"""
+                       kwargs_=None,
+                       *args, **kwargs):
+        """run a function remote via http / https"""
+
     def run_any(self, mod_function_name: Enum or str or tuple, backwords_compability_variabel_string_holder=None,
                 get_results=False, tb_run_function_with_state=True, tb_run_with_specification='app', args_=None,
                 kwargs_=None,

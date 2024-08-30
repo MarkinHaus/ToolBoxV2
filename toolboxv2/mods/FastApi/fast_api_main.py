@@ -21,7 +21,7 @@ import sys
 import time
 from fastapi.middleware.cors import CORSMiddleware
 
-from toolboxv2 import tbef, AppArgs, ApiResult, Spinner, get_app
+from toolboxv2 import TBEF, AppArgs, ApiResult, Spinner, get_app
 from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
 
 from toolboxv2.utils.system.state_system import get_state_from_app
@@ -196,7 +196,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
 
     async def verify_session_id(self, session_id, username, jwt_claim):
 
-        if not await tb_app.a_run_any(tbef.CLOUDM_AUTHMANAGER.JWT_CHECK_CLAIM_SERVER_SIDE,
+        if not await tb_app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.JWT_CHECK_CLAIM_SERVER_SIDE,
                                       username=username,
                                       jwt_claim=jwt_claim):
             # del self.sessions[session_id]
@@ -205,7 +205,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             tb_app.logger.debug(f"Session Handler V invalid jwt from : {username}")
             return '#0'
 
-        user_result = await tb_app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME,
+        user_result = await tb_app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME,
                                              username=username,
                                              get_results=True)
 
@@ -218,7 +218,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
 
         user = user_result.get()
 
-        user_instance = await tb_app.a_run_any(tbef.CLOUDM_USERINSTANCES.GET_USER_INSTANCE, uid=user.uid, hydrate=False,
+        user_instance = await tb_app.a_run_any(TBEF.CLOUDM_USERINSTANCES.GET_USER_INSTANCE, uid=user.uid, hydrate=False,
                                                get_results=True)
 
         if user_instance.is_error():
@@ -311,11 +311,11 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             request.session['valid'] = True
             request.session['live_data'] = self.sessions[session_id]['live_data']
             if request.url.path == '/web/logoutS':
-                uid = tb_app.run_any(tbef.CLOUDM_USERINSTANCES.GET_INSTANCE_SI_ID,
+                uid = tb_app.run_any(TBEF.CLOUDM_USERINSTANCES.GET_INSTANCE_SI_ID,
                                      si_id=self.sessions[session_id]['live_data']['SiID']).get('save', {}).get('uid')
                 if uid is not None:
                     print("start closing istance :t", uid)
-                    tb_app.run_any(tbef.CLOUDM_USERINSTANCES.CLOSE_USER_INSTANCE, uid=uid)
+                    tb_app.run_any(TBEF.CLOUDM_USERINSTANCES.CLOSE_USER_INSTANCE, uid=uid)
                     del self.sessions[session_id]
                     print("Return redirect :t", uid)
                     return RedirectResponse(

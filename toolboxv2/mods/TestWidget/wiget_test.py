@@ -2,7 +2,7 @@ import os
 import uuid
 from typing import List, Dict, Optional
 
-from toolboxv2 import get_app, App, Result, tbef, get_logger, Code
+from toolboxv2 import get_app, App, Result, TBEF, get_logger, Code
 from toolboxv2.utils.system.types import ToolBoxInterfaces
 from fastapi import Request
 
@@ -19,7 +19,7 @@ counter = {}
 
 def load_widget(app, display_name="Cud be ur name", cv=0, WidgetID=str(uuid.uuid4())[:4]):
     # vars : $providerurl $WidgetID $root $$username
-    app.run_any(tbef.MINIMALHTML.ADD_GROUP, command=Name)
+    app.run_any(TBEF.MINIMALHTML.ADD_GROUP, command=Name)
     # Usage
     # Sample data
     # /web/1/init0/titel.html -> <h1>test $test-name</h1>
@@ -36,8 +36,8 @@ def load_widget(app, display_name="Cud be ur name", cv=0, WidgetID=str(uuid.uuid
                    }
                    },
               ]}
-    app.run_any(tbef.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=widget)
-    html_widget = app.run_any(tbef.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name="MainWidget")
+    app.run_any(TBEF.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=widget)
+    html_widget = app.run_any(TBEF.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name="MainWidget")
     return html_widget[0]['html_element']
 
 
@@ -141,7 +141,7 @@ def get_widget_r(app: App = None, request: Request or None = None):
 
     if request is None:
         return Result.default_internal_error("No request specified")
-    widget_renderer = app.run_any(tbef.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="<p> online</p>",
+    widget_renderer = app.run_any(TBEF.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="<p> online</p>",
                                   element_id="widgetTest",
                                   externals=[f"/web/0/logic.js"],
                                   from_file=False, to_str=False)

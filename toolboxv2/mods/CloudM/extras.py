@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from urllib.parse import quote
 
-from toolboxv2 import Style, Result, tbef, App
+from toolboxv2 import Style, Result, TBEF, App
 from toolboxv2 import get_app, Code
 from .AuthManager import get_invitation
 from ...utils.extras.qr import print_qrcode_to_console
@@ -232,7 +232,7 @@ def update_core_git(self, backup=False, name="base"):
 
 @no_test
 async def create_magic_log_in(app: App, username: str):
-    user = await app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username)
+    user = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username)
     if not isinstance(user, User):
         return Result.default_internal_error("Invalid user or db connection", data="Add -c DB edit_cli [RR, LR, LD, RD]")
     key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
@@ -253,7 +253,7 @@ async def register_initial_root_user(app: App, email=None):
     if email is None:
         email = input("enter ure Email:")
     invitation = get_invitation(app=app).get()
-    ret = app.run_any(tbef.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
+    ret = app.run_any(TBEF.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
                       username="root",
                       email=email,
                       invitation=invitation, get_results=True)
@@ -263,7 +263,7 @@ async def register_initial_root_user(app: App, email=None):
     if rport.is_error():
         return rport
     await asyncio.sleep(1)
-    user = await app.a_run_any(tbef.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username="root")
+    user = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username="root")
     print("User:")
     print(user)
     user = user.get()
