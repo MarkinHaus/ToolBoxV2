@@ -28,10 +28,10 @@ def download_files(urls, directory, desc, print_func, filename=None):
         if filename is None:
             filename = os.path.basename(url)
         print_func(f"Download {filename}")
-        print_func(f"{url} -> {directory}\\{filename}")
+        print_func(f"{url} -> {directory}/{filename}")
         os.makedirs(directory, exist_ok=True)
-        urllib.request.urlretrieve(url, f"{directory}\\{filename}")
-    return f"{directory}\\{filename}"
+        urllib.request.urlretrieve(url, f"{directory}/{filename}")
+    return f"{directory}/{filename}"
 
 
 def handle_requirements(requirements_url, module_name, print_func):
@@ -73,7 +73,7 @@ def create_and_pack_module(path, module_name='', version='-.-.-', additional_dir
     if yaml_data is None:
         yaml_data = {}
 
-    os.makedirs(".\\mods_sto\\temp\\", exist_ok=True)
+    os.makedirs("./mods_sto/temp/", exist_ok=True)
 
     base_path = os.path.dirname(path)
     module_path = os.path.join(base_path, module_name)
@@ -81,9 +81,9 @@ def create_and_pack_module(path, module_name='', version='-.-.-', additional_dir
     if not os.path.exists(module_path):
         module_path += '.py'
 
-    temp_dir = tempfile.mkdtemp(dir=os.path.join(".\\mods_sto", "temp"))
+    temp_dir = tempfile.mkdtemp(dir=os.path.join("./mods_sto", "temp"))
     zip_file_name = f"RST${module_name}&{__version__}§{version}.zip"
-    zip_path = f".\\mods_sto\\{zip_file_name}"
+    zip_path = f"./mods_sto/{zip_file_name}"
 
     print(f"\n{base_path=}\n{module_path=}\n{temp_dir=}\n{zip_path=}")
 
@@ -152,11 +152,11 @@ def uninstall_module(path, module_name='', version='-.-.-', additional_dirs=None
     if yaml_data is None:
         yaml_data = {}
 
-    os.makedirs(".\\mods_sto\\temp\\", exist_ok=True)
+    os.makedirs("./mods_sto/temp/", exist_ok=True)
 
     base_path = os.path.dirname(path)
     module_path = os.path.join(base_path, module_name)
-    zip_path = f".\\mods_sto\\RST${module_name}&{__version__}§{version}.zip"
+    zip_path = f"./mods_sto/RST${module_name}&{__version__}§{version}.zip"
 
     # Modulverzeichnis erstellen, falls es nicht existiert
     if not os.path.exists(module_path):
@@ -178,7 +178,7 @@ def uninstall_module(path, module_name='', version='-.-.-', additional_dirs=None
     shutil.rmtree(zip_path)
 
 
-def unpack_and_move_module(zip_path, base_path='.\\mods', module_name=''):
+def unpack_and_move_module(zip_path, base_path='./mods', module_name=''):
     """
     Entpackt eine ZIP-Datei und verschiebt die Inhalte an die richtige Stelle.
 
@@ -193,9 +193,9 @@ def unpack_and_move_module(zip_path, base_path='.\\mods', module_name=''):
 
     module_path = os.path.join(base_path, module_name)
 
-    os.makedirs(".\\mods_sto\\temp\\", exist_ok=True)
+    os.makedirs("./mods_sto/temp/", exist_ok=True)
     # Temporäres Verzeichnis für das Entpacken erstellen
-    temp_dir = tempfile.mkdtemp(dir=os.path.join(".\\mods_sto", "temp"))
+    temp_dir = tempfile.mkdtemp(dir=os.path.join("./mods_sto", "temp"))
 
     # ZIP-Datei entpacken
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
@@ -210,7 +210,7 @@ def unpack_and_move_module(zip_path, base_path='.\\mods', module_name=''):
     # Inhalte aus dem temporären Verzeichnis in das Zielverzeichnis verschieben
     for item in os.listdir(temp_dir):
         s = os.path.join(temp_dir, item)
-        d = os.path.join(".\\", item)
+        d = os.path.join("./", item)
         if os.path.isdir(s):
             shutil.move(s, d)
         else:
@@ -223,7 +223,7 @@ def unpack_and_move_module(zip_path, base_path='.\\mods', module_name=''):
 
 
 @export(mod_name=Name, name="make_install", test=False)
-async def make_installer(app: Optional[App], module_name: str, base=".\\mods"):
+async def make_installer(app: Optional[App], module_name: str, base="./mods"):
     if app is None:
         app = get_app(f"{Name}.installer")
 
@@ -236,7 +236,7 @@ async def make_installer(app: Optional[App], module_name: str, base=".\\mods"):
     if mod is not None:
         version_ = mod.version
 
-    zip_path = create_and_pack_module(f"{base}\\{module_name}", module_name, version_)
+    zip_path = create_and_pack_module(f"{base}/{module_name}", module_name, version_)
 
     if 'y' in input("uploade zip file ?"):
         await app.session.upload_file(zip_path, '/installer/upload-file')
@@ -256,7 +256,7 @@ def uninstaller(app: Optional[App], module_name: str):
 
     if 'y' in input("uploade zip file ?"):
         pass
-    don = uninstall_module(f".\\mods\\{module_name}", module_name, version_)
+    don = uninstall_module(f"./mods/{module_name}", module_name, version_)
 
     return don
 
@@ -274,10 +274,10 @@ def installer(app: Optional[App], module_name: str, _version: str = "-.-.-", upd
         if not update and _version == version_:
             return "module already installed found"
 
-    module_name = find_highest_zip_version_entry(module_name, filepath=f'{app.start_dir}/tbState.yaml').get('url', '').split('mods_sto\\')[-1]
+    module_name = find_highest_zip_version_entry(module_name, filepath=f'{app.start_dir}/tbState.yaml').get('url', '').split('mods_sto/')[-1]
     if module_name is None or len(module_name) == 0:
         return False
-    zip_path = f"{app.start_dir}\\mods_sto\\{module_name}"
+    zip_path = f"{app.start_dir}/mods_sto/{module_name}"
     if 'y' in input(f"install zip file {module_name} ?"):
         unpack_and_move_module(zip_path, f"{app.start_dir}/mods")
     # install_dependencies('dependencies.yaml')
@@ -290,7 +290,7 @@ def get_latest(module_name: str):
     print(module_name)
     module_name = module_name.get('url', "")
     print(module_name)
-    module_name = module_name.split('mods_sto\\')[-1]
+    module_name = module_name.split('mods_sto/')[-1]
     if module_name is None or module_name == "":
         return "mod not found"
     return f"/installer/download/mods_sto/{module_name}"
@@ -371,9 +371,9 @@ if __name__ == "__main__":
         print(f"Building module {module_}")
         make_installer(app, module_)
         time.sleep(0.1)
-    # zip_path = create_and_pack_module(".\\mods\\audio", "audio", "0.0.5")
+    # zip_path = create_and_pack_module("./mods/audio", "audio", "0.0.5")
     # print(zip_path)
-    # unpack_and_move_module(".\\mods_sto\\RST$audio&0.1.9§0.0.5.zip")
+    # unpack_and_move_module("./mods_sto/RST$audio&0.1.9§0.0.5.zip")
 # # Beispielverwendung TODO
 # archive_path = '/pfad/zum/archiv'
 # temp_path = '/pfad/zum/temp'
