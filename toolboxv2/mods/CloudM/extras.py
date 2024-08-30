@@ -224,9 +224,10 @@ def update_core_git(self, backup=False, name="base"):
         os.system("git fetch --all")
         os.system("git reset --hard origin/master")
 
-    if "update" not in com:
-        print("Restarting...")
-        os.system(com.replace('-u main ', ''))
+    if "-u main" in com:
+        c = com.replace('-u main ', '')
+        print("Restarting... with : " + c)
+        os.system(c)
     exit(0)
 
 

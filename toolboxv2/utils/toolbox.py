@@ -66,8 +66,12 @@ class App(AppType, metaclass=Singleton):
                 prefix_file.write(prefix)
 
         self.prefix = prefix
-        self.id = prefix + '-' + node()
 
+        node_ = node()
+
+        if 'localhost' in node_ and (host := os.getenv('HOSTNAME', 'localhost')) != 'localhost':
+            node_ = node_.replace('localhost', host)
+        self.id = prefix + '-' + node_
         self.globals = {
             "root": {**globals()},
         }
@@ -1107,7 +1111,7 @@ class App(AppType, metaclass=Singleton):
 
     async def run_http(self, mod_function_name: Enum or str or tuple, function_name=None,
                        args_=None,
-                       kwargs_=None,method="GET",
+                       kwargs_=None, method="GET",
                        *args, **kwargs):
         if kwargs_ is not None and not kwargs:
             kwargs = kwargs_
@@ -1127,9 +1131,10 @@ class App(AppType, metaclass=Singleton):
         elif isinstance(mod_function_name, Enum):
             modular_name, function_name = mod_function_name.__class__.NAME.value, mod_function_name.value
 
-        r = await self.session.fetch(f"/api/{modular_name}/{function_name}{'?'+args_ if args_ is not None else ''}",
+        r = await self.session.fetch(f"/api/{modular_name}/{function_name}{'?' + args_ if args_ is not None else ''}",
                                      data=kwargs, method=method)
         return r.json()
+
     def run_local(self, *args, **kwargs):
         return self.run_any(*args, **kwargs)
 
@@ -1597,7 +1602,8 @@ class App(AppType, metaclass=Singleton):
         # Enums in die Datei schreiben
         data = "\n\n\n".join(enum_classes)
         if len(data) < 12:
-            raise ValueError("Invalid Enums Loosing content pleas delete it ur self in the (utils/system/all_functions_enums.py) or add mor new stuff :}")
+            raise ValueError(
+                "Invalid Enums Loosing content pleas delete it ur self in the (utils/system/all_functions_enums.py) or add mor new stuff :}")
         with open(filepath, 'w') as file:
             file.write(data)
 
