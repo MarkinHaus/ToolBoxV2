@@ -641,6 +641,7 @@ class EventManagerClass:
                        """
         # print(f"event-id Ptah : {event_id.get_path()}")
         # print(f"testing trigger_event for {event_id.get_source()} {event_id.get_source()[-1] == self.source_id} ")
+        print(str(event_id))
         if event_id.get_source()[-1] == self.source_id:
             payload = await self._trigger_local(event_id)
             event_id.set_payload(payload)
@@ -674,7 +675,7 @@ class EventManagerClass:
             route = self.routes_client.get(event_id.get_path()[-1])
         if route is None:
             return event_id.add_path(("" if len(event_id.get_source()) == 1 else "404#")+self.identification)
-        # time.sleep(0.25)
+        time.sleep(0.25)
         event_id.source = ':'.join(event_id.get_source()[:-1])
         event_id.add_path(f"{self._name}({self.source_id})")
         return await route.put_data(asdict(event_id))
@@ -684,7 +685,7 @@ class EventManagerClass:
         t0 = time.time()
 
         while self.running:
-            time.sleep(0.25)  # um z verhindern das, dass netzwerk weiter als 4 notes tief geht
+            time.sleep(0.25)
             if not self.receiver_que.empty():
                 event_id = self.receiver_que.get()
                 print("Receiver Event", str(event_id))

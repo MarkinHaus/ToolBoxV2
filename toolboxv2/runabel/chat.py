@@ -109,7 +109,9 @@ async def run(app: App, _: AppArgs):
     # app.print(f"1 time user name is {one_time_user_name[:6]}")
 
     peer_host, peer_port = "", -1
-    source_id = "app.core0-DESKTOP-CI57V1L"
+    source_id = "app.core0-simplecore.app"
+    if _ := input(f"source ID: default {source_id} :"):
+        source_id = _
 
     res = await ev.trigger_event(EventID.crate(f"{source_id}:S0", "get-connection-point",
                                                payload={'key': ev.identification, 'user_name': user_name}))
