@@ -168,12 +168,8 @@ class DaemonUtil:
                                 valid_clients[identifier] = known_clients[identifier]
                                 await self.runner_co(self._on_register, identifier, data)
                         elif data.get("key", False) == os.getenv("TB_R_KEY"):
-                            do = app.run_any(("CloudM.UserInstances", "validate_ws_id"),
-                                             ws_id=data.get("claim"))[0]
-                            get_logger().info(do)
-                            if do:
-                                valid_clients[identifier] = known_clients[identifier]
-                                await self.runner_co(self._on_register, identifier, data)
+                            valid_clients[identifier] = known_clients[identifier]
+                            await self.runner_co(self._on_register, identifier, data)
                         else:
                             get_logger().warning(f"Validating Failed: {identifier}")
                             # sender({'Validating Failed': -1}, eval(identifier))
