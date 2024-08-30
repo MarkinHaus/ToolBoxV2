@@ -110,6 +110,18 @@ async def run(app: App, _: AppArgs):
 
     peer_host, peer_port = "", -1
     source_id = "app.core0-DESKTOP-CI57V1L"
+
+    res = await ev.trigger_event(EventID.crate(f"{source_id}:S0", "get-connection-point",
+                                               payload={'key': ev.identification, 'user_name': user_name}))
+    print(res)
+    if not res.is_error():
+        if isinstance(res.get(), str):
+            self_host, self_port = eval(res.get())
+        else:
+            self_host, self_port = res.get()
+    else:
+        return res
+
     app.print(f"ur {user_name} ontime_key is : {ev.identification}")
     input("Wait till both ar online")
 
@@ -123,16 +135,6 @@ async def run(app: App, _: AppArgs):
             peer_host, peer_port = eval(res.get())
         else:
             peer_host, peer_port = res.get()
-    else:
-        return res
-    res = await ev.trigger_event(EventID.crate(f"{source_id}:S0", "get-connection-point",
-                                               payload={'key': ev.identification, 'user_name': user_name}))
-    print(res)
-    if not res.is_error():
-        if isinstance(res.get(), str):
-            self_host, self_port = eval(res.get())
-        else:
-            self_host, self_port = res.get()
     else:
         return res
 
