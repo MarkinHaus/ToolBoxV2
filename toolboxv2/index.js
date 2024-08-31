@@ -674,17 +674,15 @@ function linksInit(){
     linksButton.style.transition = "transform 0.5s ease";
     let linksContent =  `<div class="links-form" >
             <ul>
-
-                <li><a href="/web">Start</a></li>
-                <li><a href="/web/signup">Sign Up</a></li>
-                <li><a href="/web/login">Login</a></li>
+                <li><a href="/">Home</a></li>
                 <li><a href="/web/dashboard">Dashboard</a></li>
-   <hr style="margin: -0.25vh 0"/>
+                <hr style="margin: -0.25vh 0"/>
+                <li><a href="/web/login">Login</a></li>
+                <li><a href="/web/signup">Sign Up</a></li>
+                <li><a href="/web/core0/Poffer/PublicDashboard.html">Offer</a></li>
+                <hr style="margin: -0.25vh 0"/>
                 <li><a href="/web/assets/terms.html">Terms and Conditions</a></li>
                 <li><a href="/web/assets/terms.html">Contact</a></li>
-                <li><a href="/">Home</a></li>
- <hrs tyle="margin: -0.25vh 0"/>
- <li><a href="/web/core0/Poffer/PublicDashboard.html">Offer</a></li>
             </ul>
         </div>`
 

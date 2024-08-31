@@ -66,12 +66,10 @@ the [giswqs/pypackage](https://github.com/giswqs/pypackage) project template.
  - diffuser system setup
 
 ## Timeline
- - Soket P2P wit server0
+ - Soket P2P wit server0 75%
  - PersonalOffers crate | distribute | Ontime use | Data collection
- - gini (local, beter scripts in ipy)
- - auto git commit
  - Kalender
- - live note
+ - live note 89%
  - edge storage wit blobs
  - diffuser
  - edge compute

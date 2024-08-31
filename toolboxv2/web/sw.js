@@ -18,11 +18,11 @@ var cacheFirstFiles_ = [
 "/web/assets/terms.html",
 "/web/assets/404.html",
 "/web/assets/401.html",
-"/web/assets/styles.css",
+"/web/assets/styles.css?v=1.0",
 "/web/webapp/manifest.json",
 "/web/webapp/icon-192.png",
 "/web/webapp/icon-512.png",
-"/web/webapp/styles.css",
+"/web/webapp/styles.css?v=1.0",
 "/web/Drag/drag.css",
 "/web/Drag/drag.html",
 "/web/Drag/drag.js",
@@ -40,7 +40,7 @@ function download_for_app(cacheFirstFiles){
 //"./index.html",
 //"./manifest.json",
 //"./index.js",
-//"./styles.css",
+//"./styles.css?v=1.0",
 //"./sw.js"
 //];
 

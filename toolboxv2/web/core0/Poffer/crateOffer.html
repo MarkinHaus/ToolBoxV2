@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>System Setup</title>
-    <link rel="stylesheet" href="../../assets/styles.css">
-    <link rel="stylesheet" href="/web/assets/styles.css">
+    <link rel="stylesheet" href="../../assets/styles.css?v=1.0">
+    <link rel="stylesheet" href="/web/assets/styles.css?v=1.0">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.3.1/styles/default.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.3.1/highlight.min.js"></script>
 
@@ -141,13 +141,6 @@
     />
 </head>
 <body>
-<input name="terms" type="checkbox" role="switch" id="theme-toggle" onchange="{
-    const html = document.documentElement;
-    const currentTheme = html.getAttribute('data-theme');
-    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-    html.setAttribute('data-theme', newTheme);
-    document.getElementById('theme-toggle').placeholder = currentTheme === 'dark' ? 'Dark Mode' : 'Light Mode';
-}"/>
 <div id="backArrow">&larr;</div>
 
 <div class="container" id="setupContent0">

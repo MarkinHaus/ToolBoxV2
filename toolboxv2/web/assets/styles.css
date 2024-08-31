@@ -269,7 +269,7 @@ body.dark-mode {
 */
 .dark-mode-toggle {
     position: absolute;
-    right: 25px;
+    right: 0;
     top: 0;
     scale: 1.4;
     margin-bottom: 5px;
