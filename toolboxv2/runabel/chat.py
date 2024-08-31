@@ -45,16 +45,13 @@ async def init(app: App, pbar):
 
 async def get_connection_point(payload):
     app = get_app("Event get_connection_point")
-    # if isinstance(payload.payload, str):
-    print("payload.payload", payload.payload)
-    #    payload.payload = json.loads(payload.payload)
     payload_key = payload.payload['key']
     ev: EventManagerClass = app.get_mod("EventManager").get_manager()
-    for rute_data, rute_id in ev.routes.items():
-        print(rute_id, rute_data, '"as jetzt', rute_id == payload_key)
-        if payload_key == rute_id:#app.config_fh.one_way_hash(payload_user_name, rute_id, "P2P-E2E"):
-            return rute_data
-    return "Invalid payload"
+    try:
+        rute_data = list(ev.routes.keys())[list(ev.routes.values()).index(payload_key)]
+        return rute_data
+    except ValueError:
+        return "Invalid payload"
 
 
 def debug_receiver(q, prefix):
@@ -108,11 +105,11 @@ async def run(app: App, _: AppArgs):
 
     await ev.identity_post_setter()
 
-    await ev.connect_to_remote()
+    await ev.connect_to_remote(host="localhost")
     await asyncio.sleep(1.57)
 
     res = await ev.trigger_event(EventID.crate(f"{source_id}:S0", "get-connection-point",
-                                               payload={'key': ev.identification, 'user_name': user_name}))
+                                               payload={'key': ev.identification}))
     print(res, type(res.get()))
     if not res.is_error():
         if isinstance(res.get(), str):
@@ -127,8 +124,7 @@ async def run(app: App, _: AppArgs):
 
     p_user_name = input("Username of Partner: ")
     res = await ev.trigger_event(EventID.crate(f"{source_id}:S0", "get-connection-point",
-                                               payload={'key': input("onetime_key of Partner: "),
-                                                        'user_name': p_user_name}))
+                                               payload={'key': input("onetime_key of Partner: ")}))
     print(res)
     if not res.is_error():
         if isinstance(res.get(), str):

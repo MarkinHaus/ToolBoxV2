@@ -1,7 +1,11 @@
+import asyncio
 import base64
+import queue
 import random
 import os
 import hashlib
+from functools import wraps
+from typing import Callable, Dict
 
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import serialization
@@ -340,3 +344,71 @@ class Code:
             format=serialization.PublicFormat.SubjectPublicKeyInfo
         )
         return pem.decode()
+
+
+class E2EEncryption:
+    def __init__(self, r_send=None, r_recv=None):
+        self.code = Code()
+        self.device_key = self.code.DK()
+        self.session_key = None
+        self.remote_public_key = None
+        r_send = lambda *args, **kwargs: None if r_send is None else r_send
+        r_recv: queue.Queue = queue.Queue() if r_recv is None else r_recv
+        self.row_function = [r_send, r_recv]
+
+    async def _exchange_keys(self):
+        public_key, private_key = self.code.generate_asymmetric_keys()
+        # Here you would implement the actual key exchange protocol
+        # For example, send your public key and receive the remote public key
+        # This is a placeholder and should be replaced with actual implementation
+        self.row_function[0](public_key)
+        try:
+            self.remote_public_key = self.row_function[1].get(timeout=15)
+        except queue.Empty:
+            print("exchange_keys Failure")
+            return
+        self.remote_public_key = "REMOTE_PUBLIC_KEY_PLACEHOLDER"
+        self.session_key = self.code.generate_symmetric_key()
+        encrypted_session_key = self.code.encrypt_asymmetric(self.session_key, self.remote_public_key)
+        # Send encrypted_session_key to the remote party
+        # Again, this is a placeholder and should be replaced with actual sending logic
+
+    def encrypt_wrapper(self, func: Callable) -> Callable:
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            if not self.session_key:
+                await self._exchange_keys()
+
+            data = args[0] if args else kwargs.get('data')
+            encrypted_data = self.code.encrypt_symmetric(data, self.session_key)
+
+            if asyncio.iscoroutinefunction(func):
+                return await func(encrypted_data, *args[1:], **kwargs)
+            else:
+                return func(encrypted_data, *args[1:], **kwargs)
+
+        return wrapper
+
+    def decrypt_wrapper(self, func: Callable) -> Callable:
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            if not self.session_key:
+                await self._exchange_keys()
+
+            if asyncio.iscoroutinefunction(func):
+                encrypted_data = await func(*args, **kwargs)
+            else:
+                encrypted_data = func(*args, **kwargs)
+
+            decrypted_data = self.code.decrypt_symmetric(encrypted_data, self.session_key)
+            return decrypted_data
+
+        return wrapper
+
+    @staticmethod
+    def create_encrypted_channel(send_func: Callable, receive_func: Callable) -> Dict[str, Callable]:
+        e2e = E2EEncryption()
+        return {
+            'send': e2e.encrypt_wrapper(send_func),
+            'receive': e2e.decrypt_wrapper(receive_func)
+        }

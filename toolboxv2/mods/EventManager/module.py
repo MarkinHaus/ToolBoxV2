@@ -367,7 +367,6 @@ class EventManagerClass:
 
     async def on_register(self, id_, data):
         try:
-            print("on_register", id_, "##", data)
             if "unknown" not in self.routes:
                 self.routes["unknown"] = {}
 
@@ -375,7 +374,7 @@ class EventManagerClass:
                 id_data = data.get('id')
                 id_ = eval(id_)
                 c_host, c_pot = id_
-                print(f"Registering: new client {id_data} : {c_host, c_pot} | {data}")
+                print(f"Registering: new client {id_data} : {c_host, c_pot}")
                 if id_data not in self.routes_client.keys():
                     await self.add_mini_client(id_data, (c_host, c_pot))
                     self.routes[str((c_host, c_pot))] = id_data

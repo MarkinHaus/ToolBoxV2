@@ -1,7 +1,16 @@
 from datetime import datetime
 
-from toolboxv2 import App, AppArgs, TBEF, ToolBox_over
+from toolboxv2 import App, AppArgs, TBEF, ToolBox_over, TBEF, get_app, Result
 from toolboxv2.utils.extras.blobs import BlobFile
+
+try:
+    from toolboxv2.mods.EventManager.module import EventManagerClass, SourceTypes, Scope, EventID
+    Online = True
+except ImportError as e:
+    SocketType = None
+    EventManagerClass, SourceTypes, Scope = None, None, None
+    Online = False
+    print(f"Chat runner is missing modules Pleas install {e}")
 
 NAME = 'core0'
 
@@ -19,6 +28,17 @@ def save_db_to_blob(app):
     with BlobFile(f"DB#Backup/{ToolBox_over}/{stamp}/data.row", 'w') as f:
         f.write(db_data.get())
     app.print(f"Data Saved volumen : {len(db_data.get())}")
+
+
+async def get_connection_point(payload):
+    app = get_app("Event get_connection_point")
+    payload_key = payload.payload['key']
+    ev: EventManagerClass = app.get_mod("EventManager").get_manager()
+    try:
+        rute_data = list(ev.routes.keys())[list(ev.routes.values()).index(payload_key)]
+        return rute_data
+    except ValueError:
+        return "Invalid payload"
 
 
 async def run(app: App, args: AppArgs):
@@ -39,7 +59,15 @@ async def run(app: App, args: AppArgs):
                             "max_live": False,
                             "args": (app,)
                         })
-    await app.a_idle()
+    ev: EventManagerClass = app.get_mod("EventManager").get_manager()
+    service_event = ev.make_event_from_fuction(get_connection_point,
+                                               "get-connection-point",
+                                               source_types=SourceTypes.AP,
+                                               scope=Scope.global_network,
+                                               threaded=True)
+    await ev.register_event(service_event)
+    app.print("Service P2P Online")
+    await app.run_runnable("cli")
 
 
 if __name__ == "__main__":

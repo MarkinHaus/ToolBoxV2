@@ -22,6 +22,8 @@ class DaemonUtil:
         Standard constructor used for arguments pass
         Do not override. Use __ainit__ instead
         """
+        self.server = None
+        self.alive = False
         self.__storedargs = args, kwargs
         self.async_initialized = False
 
@@ -131,13 +133,12 @@ class DaemonUtil:
         sender = self.server.get('sender')
         known_clients = {}
         valid_clients = {}
-        app.print(f"Starting a Demon {self.alive}")
+        app.print(f"Starting Demon {self._name}")
 
         while self.alive:
 
             if not receiver_queue.empty():
                 data = receiver_queue.get()
-                print('received', data)
                 if not data:
                     continue
                 if 'identifier' not in data:
@@ -153,7 +154,7 @@ class DaemonUtil:
 
                         await self.runner_co(self._on_register, identifier, address)
 
-                    print("Receiver queue", identifier, identifier in known_clients, identifier in valid_clients)
+                    # print("Receiver queue", identifier, identifier in known_clients, identifier in valid_clients)
                     # validation
                     if identifier in known_clients:
                         get_logger().info(identifier)
@@ -236,6 +237,8 @@ class DaemonUtil:
                                 await sender({"data": str(e)}, identifier)
 
                         await _helper_runner()
+                    else:
+                        print("Unknown connection data:", data)
 
                 except Exception as e:
                     get_logger().warning(Style.RED(f"An error occurred on {identifier} {str(e)}"))
@@ -248,7 +251,7 @@ class DaemonUtil:
             running_dict["receive"][x] = False
         running_dict["keep_alive_var"] = False
         await self.runner_co(self.on_server_exit)
-        app.print("Closing a Demon")
+        app.print(f"Closing Demon {self._name}")
         return Result.ok()
 
     async def a_exit(self):
