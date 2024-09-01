@@ -52,7 +52,8 @@ class Session(metaclass=Singleton):
         await asyncio.sleep(0.1)
 
         if self.username is None or self.username == "":
-            self.username = input("Enter username: ")
+            print("Please enter a username")
+            return False
 
         print("Step (1/7)")
         pub_key, prv_key = Code.generate_asymmetric_keys()
