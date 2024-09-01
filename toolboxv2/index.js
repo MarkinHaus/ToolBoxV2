@@ -540,6 +540,15 @@ async function handleHtmxAfterRequest(event) {
 
     try {
         // Versuchen Sie, die Antwort als JSON zu parsen
+        if (json.toString().startsWith('<')){
+            if (event.detail && event.detail.target) {
+                // console.log("event.detail.target", event.detail.target)
+                let target = event.detail.target
+                target.innerHTML = json;
+                updateDome(target)
+                return "successCallback(result);"
+            }
+        }
         const result = wrapInResult(json, true)
         result.log()
 
@@ -555,6 +564,7 @@ async function handleHtmxAfterRequest(event) {
                 // console.log("event.detail.target", event.detail.target)
                 let target = event.detail.target
                 target.innerHTML = result.get();
+                updateDome(target)
             }
             return "successCallback(result);"
         }else if (result.origin.at(2) === 'REMOTE') {

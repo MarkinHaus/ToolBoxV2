@@ -277,7 +277,8 @@ async def link(app, request: Request or None = None):
     user = await get_user_from_request(app, request=request)
     if not user:
         return f"<h2>Invalid User</h2>"
-    return f"<h2>{app.run_any(TBEF.CLOUDM.CREATE_MAGIC_LOG_IN, username=user.name)}</h2>"
+    link_ = await app.a_run_any(TBEF.CLOUDM.CREATE_MAGIC_LOG_IN, username=user.name)
+    return f"<h2>{link_}</h2>"
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
@@ -314,7 +315,7 @@ async def sendMagicLink(app, user: str, request: Request or None = None):
     user_ob = await get_user_from_request(app, request=request)
     if user_ob.name != 'root':
         return f"<h2>Invalid User</h2>"
-    link = app.run_any(TBEF.CLOUDM.CREATE_MAGIC_LOG_IN, username=user)
+    link = await app.a_run_any(TBEF.CLOUDM.CREATE_MAGIC_LOG_IN, username=user)
     user_ed = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user)
     msg = app.run_any(TBEF.EMAIL_WAITING_LIST.CRATE_MAGIC_LICK_DEVICE_EMAIL,
                       user_email=user_ed.email,
