@@ -274,7 +274,7 @@ def installer(app: Optional[App], module_name: str, _version: str = "-.-.-", upd
         if not update and _version == version_:
             return "module already installed found"
 
-    module_name = find_highest_zip_version_entry(module_name, filepath=f'{app.start_dir}/tbState.yaml').get('url', '').split('mods_sto/')[-1]
+    module_name = find_highest_zip_version_entry(module_name, filepath=f'{app.start_dir}/tbState.yaml').get('url', '').split('mods_sto')[-1]
     if module_name is None or len(module_name) == 0:
         return False
     zip_path = f"{app.start_dir}/mods_sto/{module_name}"
