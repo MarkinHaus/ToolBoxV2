@@ -136,7 +136,7 @@ def get_state_from_app(app, simple_core_hub_url="https://SimpleCoreHub.com/Mods/
 
     state: TbState = process_files(app.start_dir)
 
-    with tqdm(total=7, unit='chunk', desc='Building State data') as pbar:
+    with tqdm(total=6, unit='chunk', desc='Building State data') as pbar:
         # and unit information
         # current time being units ar installed and managed via GitHub
         version = app.version

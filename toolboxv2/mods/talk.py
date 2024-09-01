@@ -166,18 +166,22 @@ async def upload_audio_isaa(websocket: WebSocket, context="F", all_c="F", v_name
 
     async def worker_transcribe(audio_data):
         WEBM_START_BYTES_FORMAT = 162
-        if workers[0] > 1:
-            text = stt(format_bytes[0][:WEBM_START_BYTES_FORMAT]+audio_data)['text']
-        else:
-            text = stt(audio_data)['text']
-        if text:
-            lock.acquire(True)
-            accumulated_text[0] += text + " "
-            # Send transcription update to client
-            await websocket.send_json({"type": "transcription", "text": text})
+        try:
+            if workers[0] > 1:
+                text = stt(format_bytes[0][:WEBM_START_BYTES_FORMAT]+audio_data)['text']
+            else:
+                text = stt(audio_data)['text']
+            if text:
+                lock.acquire(True)
+                accumulated_text[0] += text + " "
+                # Send transcription update to client
+                await websocket.send_json({"type": "transcription", "text": text})
+                workers[0] -= 1
+                lock.release()
+            print("Done transcribe", workers[0])
+        except Exception as e:
             workers[0] -= 1
-            lock.release()
-        print("Done transcribe", workers[0])
+            app.debug_rains(e)
 
     try:
         while True:
@@ -197,9 +201,10 @@ async def upload_audio_isaa(websocket: WebSocket, context="F", all_c="F", v_name
                 message = json.loads(data.get('text'))
                 if message.get("action") == "process":
                     # Process accumulated text
-                    while workers[0] > 1:
+                    max_itter = 0
+                    while workers[0] > 1 and max_itter < 500000:
                         await asyncio.sleep(0.2)
-                        print("s", workers[0])
+                        max_itter += 1
                     print(accumulated_text[0])
                     response, f_r = await stream_response(app, accumulated_text[0], websocket, provider=provider,
                                                           voice_index=[str(x) for x in

@@ -220,6 +220,7 @@ def unpack_and_move_module(zip_path, base_path='./mods', module_name=''):
     shutil.rmtree(temp_dir)
 
     print(f"Modul {module_name} wurde erfolgreich nach {module_path} entpackt und verschoben.")
+    return module_name
 
 
 @export(mod_name=Name, name="make_install", test=False)
@@ -270,7 +271,10 @@ def installer(app: Optional[App], module_name: str, _version: str = "-.-.-", upd
         version_ = version
         mod = app.get_mod(module_name)
         if mod is not None:
-            version_ = mod.version
+            try:
+                version_ = mod.version
+            except AttributeError:
+                pass
         if not update and _version == version_:
             return "module already installed found"
 
@@ -279,8 +283,9 @@ def installer(app: Optional[App], module_name: str, _version: str = "-.-.-", upd
         return False
     zip_path = f"{app.start_dir}/mods_sto/{module_name}"
     if 'y' in input(f"install zip file {module_name} ?"):
-        unpack_and_move_module(zip_path, f"{app.start_dir}/mods")
-    # install_dependencies('dependencies.yaml')
+        _name = unpack_and_move_module(zip_path, f"{app.start_dir}/mods")
+        if os.path.exists(f"{app.start_dir}/mods/{_name}/tbConfig.yaml"):
+            install_dependencies(f"{app.start_dir}/mods/{_name}/tbConfig.yaml")
     return True
 
 
@@ -351,7 +356,13 @@ def install_dependencies(yaml_file):
         dependencies = dependencies["dependencies"]
 
     # Installation der Abhängigkeiten mit pip
+    print(f"Dependency :", dependencies)
     for dependency in dependencies:
+        if u_ip := input("install skipp exit [I/s/e]"):
+            if u_ip == "s":
+                continue
+            if u_ip == "e":
+                break
         subprocess.call(['pip', 'install', dependency])
 
 

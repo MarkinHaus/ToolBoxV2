@@ -26,25 +26,25 @@ services:
         ports:
             - 5000:5000
             - 6587:6587
-        develop:
-            watch:
-                - action: sync
-                  path: ./toolboxv2/utils
-                  target: /app/toolboxv2/utils
-                - action: sync
-                  path: ./toolboxv2/web
-                  target: /app/toolboxv2/web
-                  ignore:
-                      - node_modules/
-                - action: sync
-                  path: ./toolboxv2/mods
-                  target: /app/toolboxv2/mods
-                - action: rebuild
-                  path: ./toolboxv2/package.json
-                  target: /app/toolboxv2/package.json
-                - action: rebuild
-                  path: ./toolboxv2/runabel
-                  target: /app/toolboxv2/runabel
+        # develop:
+        #     watch:
+        #         - action: sync
+        #           path: ./toolboxv2/utils
+        #           target: /app/toolboxv2/utils
+        #         - action: sync
+        #           path: ./toolboxv2/web
+        #           target: /app/toolboxv2/web
+        #           ignore:
+        #               - node_modules/
+        #         - action: sync
+        #           path: ./toolboxv2/mods
+        #           target: /app/toolboxv2/mods
+        #         - action: rebuild
+        #           path: ./toolboxv2/package.json
+        #           target: /app/toolboxv2/package.json
+        #         - action: rebuild
+        #           path: ./toolboxv2/runabel
+        #           target: /app/toolboxv2/runabel
 
       # Live-Umgebung mit Zero Downtime
     live:
