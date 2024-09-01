@@ -19,6 +19,8 @@ from aiohttp import ClientSession, ClientResponse, FormData
 from ... import Code
 from ...tests.a_util import async_test
 
+from .types import Result
+
 
 # @dataclasses.dataclass
 # class LocalUser:
@@ -32,6 +34,7 @@ class Session(metaclass=Singleton):
     def __init__(self, username, base=None):
         self.username = username
         self.session: Optional[ClientSession] = None
+        self.valid = False
         if base is None:
             base = os.environ.get("TOOLBOXV2_REMOTE_BASE", "https://simplecore.app")
         if base is not None and base.endswith("/api/"):
@@ -48,6 +51,9 @@ class Session(metaclass=Singleton):
         from urllib.parse import urlparse, parse_qs
         await asyncio.sleep(0.1)
 
+        if self.username is None or self.username == "":
+            self.username = input("Enter username: ")
+
         print("Step (1/7)")
         pub_key, prv_key = Code.generate_asymmetric_keys()
         parsed_url = urlparse(mak_link)
@@ -62,29 +68,32 @@ class Session(metaclass=Singleton):
         res = await get_app("Session.InitLogin").run_http("CloudM.AuthManager", "add_user_device", method="POST",
                                                           name=self.username, pub_key=pub_key, invitation=invitation,
                                                           web_data=False, as_base64=False)
+        res = Result.result_from_dict(**res).print()
+        if res.is_error():
+            return res
         await asyncio.sleep(0.1)
-        print("res = ", res)
 
         print("Step (3/7)")
         challenge = await get_app("Session.InitLogin").run_http('CloudM.AuthManager', 'get_to_sing_data', method="POST",
                                                                 args_='username=' + self.username + '&personal_key=False')
 
-        if isinstance(challenge, dict):
-            challenge = challenge.get("challenge")
+        challenge = Result.result_from_dict(**challenge).print()
+        if challenge.is_error():
+            return challenge
 
-        print("challenge:", str(challenge)[:20])
         await asyncio.sleep(0.1)
         print("Step (4/7)")
         claim_data = await get_app("Session.InitLogin").run_http('CloudM.AuthManager', 'validate_device',
                                                                  username=self.username,
-                                                                 signature=Code.create_signature(challenge, prv_key),
+                                                                 signature=Code.create_signature(challenge.get("challenge"), prv_key, salt_length=32),
                                                                  method="POST")
+        claim_data = Result.result_from_dict(**claim_data).print()
 
-        if isinstance(claim_data, dict):
-            claim = claim_data.get("key")
-        else:
-            claim = claim_data
+        claim = claim_data.get("key")
+
         print("claim:", claim)
+        if claim is None:
+            return claim_data
         await asyncio.sleep(0.1)
         print("Step (5/7)")
         with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="w") as blob:
@@ -113,6 +122,7 @@ class Session(metaclass=Singleton):
             if response.status == 200:
                 print("Successfully Connected 2 TBxN")
                 get_logger().info("LogIn successful")
+                self.valid = True
                 return True
             get_logger().warning("LogIn failed")
             return False
@@ -161,11 +171,10 @@ class Session(metaclass=Singleton):
             url = self.base + url
         if self.session:
             if method.upper() == 'POST':
-                return await self.session.post(url, data=data)
+                return await self.session.post(url, json=data)
             else:
                 return await self.session.get(url)
         else:
-
             print(f"Could not find session using request on {url}")
             if method.upper() == 'POST':
                 return requests.request(method, url, json=data)

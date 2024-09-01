@@ -1,11 +1,14 @@
+module_name: DB
+version: 0.0.2
+zip: "RST$DB&v0.1.18\xA70.0.2.zip"
 dependencies:
 - ''
-- abc
-- os
 - time
-- enum
 - redis
-- json
 - dataclasses
+- enum
+- json
+- os
 - dotenv
 - typing
+- abc

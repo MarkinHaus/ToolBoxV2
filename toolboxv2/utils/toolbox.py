@@ -1131,9 +1131,10 @@ class App(AppType, metaclass=Singleton):
         elif isinstance(mod_function_name, Enum):
             modular_name, function_name = mod_function_name.__class__.NAME.value, mod_function_name.value
 
+
         r = await self.session.fetch(f"/api/{modular_name}/{function_name}{'?' + args_ if args_ is not None else ''}",
                                      data=kwargs, method=method)
-        return r.json()
+        return await r.json()
 
     def run_local(self, *args, **kwargs):
         return self.run_any(*args, **kwargs)

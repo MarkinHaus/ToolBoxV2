@@ -1,6 +1,9 @@
+module_name: WidgetsProvider
+version: 0.0.1
+zip: "RST$WidgetsProvider&v0.1.18\xA70.0.1.zip"
 dependencies:
 - ''
-- os
-- fastapi
 - asyncio
+- os
 - typing
+- fastapi
