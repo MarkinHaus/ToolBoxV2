@@ -162,7 +162,7 @@ class FileHandler(Code):
 
         return self
 
-    def get_file_handler(self, obj: str) -> str or None:
+    def get_file_handler(self, obj: str, default=None) -> str or None:
         logger = get_logger()
         if obj not in self.file_handler_load.keys():
             if obj in self.file_handler_key_mapper:
@@ -203,7 +203,7 @@ class FileHandler(Code):
             return r
 
         logger.info(f"no data found")
-        return None
+        return default
 
     def set_defaults_keys_file_handler(self, keys: dict, defaults: dict):
         list_keys = iter(list(keys.keys()))

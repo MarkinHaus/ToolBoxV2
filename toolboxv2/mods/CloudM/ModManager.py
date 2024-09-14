@@ -358,7 +358,7 @@ def install_dependencies(yaml_file):
     # Installation der Abhängigkeiten mit pip
     print(f"Dependency :", dependencies)
     for dependency in dependencies:
-        if u_ip := input("install skipp exit [I/s/e]"):
+        if u_ip := input(f"{dependency} | install skipp exit [I/s/e]"):
             if u_ip == "s":
                 continue
             if u_ip == "e":

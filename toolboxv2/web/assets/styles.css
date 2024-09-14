@@ -353,8 +353,8 @@ nav ul li a:hover {
 /* Links */
 .NavMain {
     position: absolute;
-    top: 2vh;
-    left: 2vw;
+    top: 0;
+    left: 0;
     z-index: 99;
 }
 
@@ -464,6 +464,11 @@ button:hover {
 
 #darkModeToggle {
     display: none;
+
+}
+
+#toggleLabel{
+    padding: 0;
 }
 
 

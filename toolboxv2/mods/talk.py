@@ -31,7 +31,9 @@ def start(app=None):
         app = get_app("Starting Talk interface")
     if not app.mod_online("audio"):
         app.print(f"TalK is starting AUDIO")
-        app.load_mod("audio").on_start()
+        audio_mod = app.load_mod("audio")
+        if audio_mod:
+            audio_mod.on_start()
 
     app.load_mod("isaa").init_isaa(build=False)
     talk_generate = app.run_any(TBEF.AUDIO.STT_GENERATE,
@@ -58,6 +60,8 @@ def start(app=None):
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True,
         name="talk_websocket_echo", row=True)
 async def upload_audio(websocket: WebSocket):
+    if websocket is None:
+        return
     await websocket.accept()
 
     try:
@@ -96,7 +100,7 @@ async def stream_response(app, input_text, websocket: WebSocket,
             await websocket.send_bytes(audio_data)
             await asyncio.sleep(0.25)
 
-    agent = app.run_any(TBEF.ISAA.GET_AGENT_CLASS, agent_name='think')
+    agent = app.run_any(TBEF.ISAA.GET_AGENT_CLASS, agent_name='self')
     agent.stream = True
 
     from toolboxv2.mods.isaa.AgentFramwork import ConversationMode
@@ -121,6 +125,8 @@ async def stream_response(app, input_text, websocket: WebSocket,
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True,
         name="talk_websocket_context", row=True)
 async def upload_audio_isaa_context(websocket: WebSocket):
+    if websocket is None:
+        return
     await websocket.accept()
     app = get_app("Talk Transcribe Audio")
     try:
@@ -149,6 +155,8 @@ async def upload_audio_isaa_context(websocket: WebSocket):
         name="talk_websocket", row=True)
 async def upload_audio_isaa(websocket: WebSocket, context="F", all_c="F", v_name="ryan", v_index="0", provider='piper',
                             f="F"):
+    if websocket is None:
+        return
     await websocket.accept()
     app = get_app("Talk Transcribe Audio")
     stt = app.run_any(TBEF.AUDIO.STT_GENERATE,
@@ -249,6 +257,8 @@ async def upload_audio_isaa(websocket: WebSocket, context="F", all_c="F", v_name
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True,
         name="main_web_talk_entry", row=True)
 async def main_web_talk_entry(app: App = None, request: Request or None = None, modi=None):
+    if request is None:
+        return
     spec_ = get_spec(request).get()
     user = await get_user_from_request(app, request)
     if user.name == "":

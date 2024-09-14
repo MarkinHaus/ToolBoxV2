@@ -2,10 +2,10 @@ import importlib.util
 import os
 import time
 
+from ..utils.extras.gist_control import GistLoader
 
-# Erstelle ein leeres Wörterbuch
 
-def runnable_dict(s='.py'):
+def runnable_dict(s='.py', remote=False):
     runnable_dict_ = {}
 
     # Erhalte den Pfad zum aktuellen Verzeichnis
@@ -16,8 +16,7 @@ def runnable_dict(s='.py'):
         # Überprüfe, ob die Datei eine Python-Datei ist
         if file_name == "__init__.py":
             pass
-        elif file_name.endswith('.py') and s in file_name:
-            # Entferne die Erweiterung ".py" aus dem Dateinamen
+        elif not remote and file_name.endswith('.py') and s in file_name:
             name = os.path.splitext(file_name)[0]
             # print("Ent", name)
             # Lade das Modul
@@ -33,5 +32,28 @@ def runnable_dict(s='.py'):
             if hasattr(module, 'run') and callable(module.run) and hasattr(module, 'NAME'):
                 # print("Collecing :", module.NAME)
                 runnable_dict_[module.NAME] = module.run
+        elif remote and s in file_name and file_name.endswith('.gist'):
+            # print("Loading from Gist :", file_name)
+            name_f = os.path.splitext(file_name)[0]
+            name = name_f.split('.')[0]
+            # publisher = name_f.split('.')[1]
+            url = name_f.split('.')[-1]
+            # print("Ent", name)
+            # Lade das Modul
+            print(f"Gist Name: {name}, URL: {url}")
+            module = GistLoader(f"{name}/{url}").load_module(name)
+            #try:
+            #    module = GistLoader(f"{name}/{url}")
+            #except Exception as e:
+            #    print(f"Error loading module {name} from github {url}")
+            #    print(e)
+            #    continue
+
+            # Füge das Modul der Dictionary hinzu
+            print(f"{hasattr(module, 'run')} and {callable(module.run)} and {hasattr(module, 'NAME')}")
+            if hasattr(module, 'run') and callable(module.run) and hasattr(module, 'NAME'):
+                # print("Collecing :", module.NAME)
+                runnable_dict_[module.NAME] = module.run
+
     print(f"Getting all runnable took {time.perf_counter() - to:.2f} for {len(runnable_dict_.keys())} elements")
     return runnable_dict_

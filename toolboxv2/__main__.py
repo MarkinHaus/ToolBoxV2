@@ -726,7 +726,9 @@ async def main():
         if args.background_application_runner and args.modi == 'bg' and hasattr(tb_app, 'daemon_app'):
             await tb_app.daemon_app.online
         if not args.live_application:
-            runnable_dict = runnable_dict_func()
+            runnable_dict = runnable_dict_func(remote=False)
+            if args.modi not in runnable_dict.keys():
+                runnable_dict = {**runnable_dict, **runnable_dict_func(s=args.modi, remote=True)}
             tb_app.set_runnable(runnable_dict)
             if args.modi in runnable_dict.keys():
                 pass

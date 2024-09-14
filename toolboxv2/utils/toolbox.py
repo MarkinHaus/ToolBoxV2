@@ -178,6 +178,8 @@ class App(AppType, metaclass=Singleton):
         if get_input and user_name is None and user_name != "None":
             user_name = input("Input your username\nbe sure to make no typos: ")
             self.config_fh.add_to_save_file_handler("ac_user:::", user_name)
+        if user_name is None:
+            user_name = ''
         return user_name
 
     def reset_username(self):

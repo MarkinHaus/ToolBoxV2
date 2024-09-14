@@ -22,6 +22,7 @@ import yaml
 from tqdm import tqdm
 
 from .getting_and_closing_app import get_app
+from ..extras.Style import Spinner
 
 
 @dataclass
@@ -134,7 +135,8 @@ def get_state_from_app(app, simple_core_hub_url="https://SimpleCoreHub.com/Mods/
     if github_url[-1] != '/':
         github_url += '/'
 
-    state: TbState = process_files(app.start_dir)
+    with Spinner("Scanning files"):
+        state: TbState = process_files(app.start_dir)
 
     with tqdm(total=6, unit='chunk', desc='Building State data') as pbar:
         # and unit information

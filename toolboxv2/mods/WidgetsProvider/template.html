@@ -1,32 +1,18 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Title</title>
-</head>
-<body>
-<title>Board Manager</title>
-<style>
-  /* Stil für die Benutzeroberfläche */
-  .board {
-    border: 2px solid #ccc;
-    padding: 10px;
-    margin: 10px;
-    display: none;
-  }
-</style>
-<h2 id="inEdit">In Edit: <span id="currentEditBoard">Main</span></h2>
-<table id="boardTable">
-  <thead>
-    <tr>
-      <th>Name</th>
-      <th>Open/Close</th>
-      <th>Set Edit</th>
-      <th>Delete</th>
-    </tr>
-  </thead>
-  <tbody id="boardTableBody">
-    <!-- Hier werden die Zeilen der Tabelle dynamisch eingefügt -->
-  </tbody>
-</table>
-<button onclick="window.TBf.getM('boards').createNewBoard(document.getElementById('newBordName').value)">Create New Board</button><input id="newBordName"></input>
+ <!-- money -left .html -->
+ <! DOCTYPE html>
+ <html>
+ <head>
+     <title>M oney Left </title>
+ </head>
+ <body>
+ <h1> Money Left for {{ day }}, {{ week }} and {{ month }}</h1>
+ <p>C urrency : EUR </p> <p> Current Money : {{ current _money }} EUR </p>
+ <p> Expected Money : {{ expected _money }} EUR </p>
+ <p> Current Expenses : {{ current _exp enses }} EUR </p>
+ <p> Expected Expenses : {{ expected _exp enses }} EUR </p>
+ <h2> Categories :</h2>
+ <ul> {% for category in categories %}
+     <li>{{ category.name }} ( {{ category.amount }} EUR )</li> {% end for %} </ul>
+ </body>
+ </html>
+
