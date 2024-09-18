@@ -5,11 +5,18 @@ import time
 from ..utils.extras.gist_control import GistLoader
 
 
-def runnable_dict(s='.py', remote=False):
-    runnable_dict_ = {}
+def runnable_dict(s='.py', remote=False, dir_path=None, runnable_dict_=None):
+
+    if runnable_dict_ is None:
+        runnable_dict_ = {}
 
     # Erhalte den Pfad zum aktuellen Verzeichnis
-    dir_path = os.path.dirname(os.path.realpath(__file__))
+    if dir_path is None:
+        for ex_path in os.getenv("EXTERNAL_PATH_RUNNABELS", '').split(','):
+            if not ex_path or len(ex_path) == 0:
+                continue
+            runnable_dict(s,remote,ex_path,runnable_dict_)
+        dir_path = os.path.dirname(os.path.realpath(__file__))
     to = time.perf_counter()
     # Iteriere über alle Dateien im Verzeichnis
     for file_name in os.listdir(dir_path):
