@@ -13,6 +13,7 @@ from yaml import safe_load
 
 from toolboxv2.runabel import runnable_dict as runnable_dict_func
 from toolboxv2.tests.a_util import async_test
+from toolboxv2.utils.system.conda_runner import conda_runner_main
 from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
 from toolboxv2.utils.system.main_tool import MainTool
 from toolboxv2.utils.extras.Style import Style, Spinner
@@ -941,4 +942,7 @@ def main_runner():
 
 if __name__ == "__main__":
     print("STARTED START FROM CLI")
+    if sys.argv[1] == "conda":
+        sys.argv[1:] = sys.argv[2:]
+        sys.exit(conda_runner_main())
     sys.exit(main_runner())

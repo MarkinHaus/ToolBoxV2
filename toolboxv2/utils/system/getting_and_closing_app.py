@@ -107,7 +107,8 @@ async def a_save_closing_app():
            app.loop.close()
         else:
             await app.loop.shutdown_asyncgens()
-            await app.loop.shutdown_default_executor()
+            if hasattr(app.loop, "shutdown_default_executor"):
+                await app.loop.shutdown_default_executor()
             if not app.loop.is_closed():
                 pass
                 # print("Loop still running")

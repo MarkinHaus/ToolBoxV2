@@ -5,7 +5,6 @@ import os
 import sys
 import threading
 import time
-import types
 from asyncio import Task
 from enum import Enum
 from platform import node, system
@@ -14,7 +13,6 @@ from inspect import signature
 from types import ModuleType
 from functools import partial, wraps
 
-import requests
 from yaml import safe_load
 
 from .singelton_class import Singleton
@@ -113,7 +111,6 @@ class App(AppType, metaclass=Singleton):
         if args.init and args.init is not None:
             if self.start_dir not in sys.path:
                 sys.path.append(self.start_dir)
-            _initialize_toolBox(args.init, args.init_file, self.id)
 
         with open(os.getenv('CONFIG_FILE', f'{dir_name}/toolbox.yaml'), 'r') as config_file:
             _version = safe_load(config_file)
@@ -1612,8 +1609,3 @@ class App(AppType, metaclass=Singleton):
 
         print(Style.Bold(Style.BLUE(f"Enums gespeichert in {filepath}")))
 
-
-def _initialize_toolBox(init_type, init_from, name):
-    logger = get_logger()
-    # legacy
-    logger.info("Done!")

@@ -108,6 +108,9 @@ ENV/
 # ToolBox Mods_dev
 #/toolboxv2/mods_dev
 
+# Client Secret
+/toolboxv2/client_secret.json
+
 # ToolBox Data
 /toolboxv2/.data
 *.data
@@ -119,3 +122,4 @@ ENV/
 
 /toolboxv2/web/node_modules/
 /toolboxv2/mods_sto
+.aider*

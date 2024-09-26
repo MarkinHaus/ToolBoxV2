@@ -167,7 +167,7 @@ class Session(metaclass=Singleton):
                 return response.status == 200
         return False
 
-    async def fetch(self, url: str, method: str = 'GET', data=None) -> ClientResponse | Response:
+    async def fetch(self, url: str, method: str = 'GET', data=None) -> ClientResponse or Response:
         if isinstance(url, str):
             url = self.base + url
         if self.session:
