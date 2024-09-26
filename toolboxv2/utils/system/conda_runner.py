@@ -4,13 +4,20 @@ import sys
 import json
 from typing import List, Tuple, Optional
 import argparse
+from tqdm import tqdm
 
 
 def run_command(command: str, live: bool = True) -> Tuple[bool, Optional[str]]:
     print(f"Running command: {command}")
+
     if live:
-        return os.system(command) == 0, None
+        # Using subprocess.Popen to stream stdout and stderr live
+        process = subprocess.Popen(command, shell=True, stdout=sys.stdout, stderr=sys.stderr, text=True)
+        process.communicate()  # Wait for the process to complete
+        return process.returncode == 0, None
+
     try:
+        # If not live, capture output and return it
         result = subprocess.run(command, shell=True, check=True, text=True, capture_output=True)
         return True, result.stdout
     except subprocess.CalledProcessError as e:
@@ -29,11 +36,11 @@ def run_script_in_conda_env(script_path: str, conda_env: str, script_args: List[
                             python: bool = True, no_conda: bool = False) -> Tuple[bool, Optional[str]]:
     print(f"Running from {os.path.abspath(os.curdir)}")
     if python:
-        command = f"conda run -n {conda_env} python {script_path} {' '.join(script_args)}"
+        command = f"conda run -v --no-capture-output -n {conda_env} python {script_path} {' '.join(script_args)}"
     else:
-        command = f"conda run -n {conda_env} {script_path} {' '.join(script_args)}"
+        command = f"conda run -v --no-capture-output -n {conda_env} {script_path} {' '.join(script_args)}"
     if no_conda:
-        command = command.replace(f'conda run -n {conda_env} ', '')
+        command = command.replace(f'conda run -v --no-capture-output -n {conda_env} ', '')
     return run_command(command, live)
 
 
@@ -89,7 +96,7 @@ def add_dependency(env_name: str, dependency: str, save: bool = False) -> bool:
 
 
 def update_dependency_registry(env_name: str, dependency: str):
-    registry_file = f"{env_name}_dependency_registry.json"
+    registry_file = f"{env_name}_registry.json"
     try:
         with open(registry_file, 'r') as f:
             registry = json.load(f)
@@ -103,17 +110,24 @@ def update_dependency_registry(env_name: str, dependency: str):
         json.dump(registry, f, indent=2)
 
 
+
+
+
 def update_dependencies(env_name: str) -> bool:
-    registry_file = f"{env_name}_dependency_registry.json"
+    registry_file = f"{env_name}_registry.json"
     try:
         with open(registry_file, 'r') as f:
             registry = json.load(f)
     except FileNotFoundError:
         print(f"No dependency registry found for environment {env_name}")
         return False
+    for key in tqdm(registry):
+        command = f"conda update -n {env_name} {key.get('name')} -y"
+        o = run_command(command)
+        print(o)
+        if not o[0]:
+            pass # remove from registry
 
-    command = f"conda update -n {env_name} {' '.join(registry)} -y"
-    return run_command(command)[0]
 
 
 def create_env_registry(env_name: str) -> bool:

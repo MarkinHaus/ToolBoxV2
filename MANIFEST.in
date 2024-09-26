@@ -4,6 +4,7 @@ include requirements.txt
 include toolboxv2/toolbox.yaml
 include toolboxv2/web
 include toolboxv2/data/widgets.exe
+exclude toolboxv2/client_secret.json
 recursive-exclude * __pycache__
 recursive-exclude * *.py[co]
 recursive-exclude * node_modules

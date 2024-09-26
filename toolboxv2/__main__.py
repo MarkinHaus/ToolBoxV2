@@ -162,7 +162,7 @@ After=network.target
 User={user}
 Group={group}
 WorkingDirectory={working_dir}
-ExecStart=toolboxv2 -bgr -m {runner}
+ExecStart=tb -bgr -m {runner}
 Restart=always
 RestartSec=5
 
@@ -227,10 +227,9 @@ def setup_service_windows():
             os.remove(path + '/tb_start.bat')
         with open(path + '/tb_start.bat', "a") as f:
             f.write(
-                f"""{sys.executable} -m toolboxv2 -bg -m {runner}"""
+                f"""{sys.executable} -m tb -bg -m {runner}"""
             )
         print(f"Init Service in {path}")
-        print(f"run toolboxv2 -bg to start the service")
     elif mode == "3":
         get_app().show_console()
     elif mode == "4":
@@ -931,7 +930,13 @@ def start_ipython_session(argv):
 
 def main_runner():
     sys.excepthook = sys.__excepthook__
-    if '--ipy' in sys.argv:
+    if sys.argv[1] == "conda":
+        sys.argv[1:] = sys.argv[2:]
+        sys.exit(conda_runner_main())
+    elif len(sys.argv) >= 6 and sys.argv[5] == "conda":
+        sys.argv[4:] = sys.argv[5:]
+        sys.exit(conda_runner_main())
+    elif '--ipy' in sys.argv:
         argv = sys.argv[1:]
         sys.argv = sys.argv[:1]
         start_ipython_session(argv)
