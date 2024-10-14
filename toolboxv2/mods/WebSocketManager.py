@@ -57,6 +57,7 @@ class Tools(MainTool, FileHandler):
             "name": "WebSocketManager",
             "Version": self.show_version,
             "connect": self.connect,
+            "get_pools_manager": self.get_pools_manager,
             "disconnect": self.disconnect,
             "send_message": self.send_message,
             "list": self.list_instances,
@@ -69,6 +70,7 @@ class Tools(MainTool, FileHandler):
 
         }
         self.server_actions = {}
+        self._get_pools_manager = None
         FileHandler.__init__(self, "WebSocketManager.config", app.id if app else __name__, keys=self.keys, defaults={})
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                           name=self.name, logs=self.logger, color=self.color, on_exit=self.on_exit)
@@ -501,3 +503,138 @@ class Tools(MainTool, FileHandler):
         if to_str:
             return json.dumps(render_data)
         return render_data
+
+    def get_pools_manager(self):
+        if self._get_pools_manager is None:
+            self._get_pools_manager = WebSocketPoolManager()
+        return self._get_pools_manager
+
+import asyncio
+import json
+import logging
+from typing import Dict, List, Callable, Any
+
+
+class WebSocketPoolManager:
+    def __init__(self):
+        self.pools: Dict[str, Dict[str, Any]] = {}
+        self.logger = logging.getLogger(__name__)
+
+    async def create_pool(self, pool_id: str) -> None:
+        """Create a new WebSocket pool."""
+        if pool_id not in self.pools:
+            self.pools[pool_id] = {
+                'connections': {},
+                'actions': {},
+                'global_actions': {}
+            }
+            self.logger.info(f"Created new pool: {pool_id}")
+        else:
+            self.logger.warning(f"Pool {pool_id} already exists")
+
+    async def add_connection(self, pool_id: str, connection_id: str, websocket) -> None:
+        """Add a WebSocket connection to a pool."""
+        if pool_id not in self.pools:
+            await self.create_pool(pool_id)
+
+        self.pools[pool_id]['connections'][connection_id] = websocket
+        self.logger.info(f"Added connection {connection_id} to pool {pool_id}")
+
+    async def remove_connection(self, pool_id: str, connection_id: str) -> None:
+        """Remove a WebSocket connection from a pool."""
+        if pool_id in self.pools and connection_id in self.pools[pool_id]['connections']:
+            del self.pools[pool_id]['connections'][connection_id]
+            self.logger.info(f"Removed connection {connection_id} from pool {pool_id}")
+        else:
+            self.logger.warning(f"Connection {connection_id} not found in pool {pool_id}")
+
+    def register_action(self, pool_id: str, action_name: str, handler: Callable,
+                        connection_ids: List[str] = None) -> None:
+        """Register an action for specific connections or the entire pool."""
+        if pool_id not in self.pools:
+            self.logger.error(f"Pool {pool_id} does not exist")
+            return
+
+        if connection_ids is None:
+            self.pools[pool_id]['global_actions'][action_name] = handler
+            self.logger.info(f"Registered global action {action_name} for pool {pool_id}")
+        else:
+            for conn_id in connection_ids:
+                if conn_id not in self.pools[pool_id]['actions']:
+                    self.pools[pool_id]['actions'][conn_id] = {}
+                self.pools[pool_id]['actions'][conn_id][action_name] = handler
+            self.logger.info(f"Registered action {action_name} for connections {connection_ids} in pool {pool_id}")
+
+    async def handle_message(self, pool_id: str, connection_id: str, message: str) -> None:
+        """Handle incoming messages and route them to the appropriate action handler."""
+        if pool_id not in self.pools or connection_id not in self.pools[pool_id]['connections']:
+            self.logger.error(f"Invalid pool_id or connection_id: {pool_id}, {connection_id}")
+            return
+
+        try:
+            data = json.loads(message)
+            action = data.get('action')
+
+            if action:
+                if action in self.pools[pool_id]['global_actions']:
+                    await self.pools[pool_id]['global_actions'][action](pool_id, connection_id, data)
+                elif connection_id in self.pools[pool_id]['actions'] and action in self.pools[pool_id]['actions'][
+                    connection_id]:
+                    await self.pools[pool_id]['actions'][connection_id][action](pool_id, connection_id, data)
+                else:
+                    self.logger.warning(f"No handler found for action {action} in pool {pool_id}")
+            else:
+                self.logger.warning(f"No action specified in message from {connection_id} in pool {pool_id}")
+        except json.JSONDecodeError:
+            self.logger.error(f"Invalid JSON received from {connection_id} in pool {pool_id}")
+
+    async def broadcast(self, pool_id: str, message: str, exclude_connection_id: str = None) -> None:
+        """Broadcast a message to all connections in a pool, optionally excluding one connection."""
+        if pool_id not in self.pools:
+            self.logger.error(f"Pool {pool_id} does not exist")
+            return
+
+        for conn_id, websocket in self.pools[pool_id]['connections'].items():
+            if conn_id != exclude_connection_id:
+                try:
+                    await websocket.send_text(message)
+                except Exception as e:
+                    self.logger.error(f"Error sending message to {conn_id} in pool {pool_id}: {str(e)}")
+
+    async def send_to_connection(self, pool_id: str, connection_id: str, message: str) -> None:
+        """Send a message to a specific connection in a pool."""
+        if pool_id in self.pools and connection_id in self.pools[pool_id]['connections']:
+            try:
+                await self.pools[pool_id]['connections'][connection_id].send_text(message)
+            except Exception as e:
+                self.logger.error(f"Error sending message to {connection_id} in pool {pool_id}: {str(e)}")
+        else:
+            self.logger.error(f"Connection {connection_id} not found in pool {pool_id}")
+
+    def get_pool_connections(self, pool_id: str) -> List[str]:
+        """Get a list of all connection IDs in a pool."""
+        if pool_id in self.pools:
+            return list(self.pools[pool_id]['connections'].keys())
+        else:
+            self.logger.error(f"Pool {pool_id} does not exist")
+            return []
+
+    def get_all_pools(self) -> List[str]:
+        """Get a list of all pool IDs."""
+        return list(self.pools.keys())
+
+    async def close_pool(self, pool_id: str) -> None:
+        """Close all connections in a pool and remove the pool."""
+        if pool_id in self.pools:
+            for websocket in self.pools[pool_id]['connections'].values():
+                await websocket.close()
+            del self.pools[pool_id]
+            self.logger.info(f"Closed and removed pool {pool_id}")
+        else:
+            self.logger.warning(f"Pool {pool_id} does not exist")
+
+    async def close_all_pools(self) -> None:
+        """Close all connections in all pools and remove all pools."""
+        for pool_id in list(self.pools.keys()):
+            await self.close_pool(pool_id)
+        self.logger.info("Closed all pools")

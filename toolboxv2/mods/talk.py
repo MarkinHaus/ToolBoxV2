@@ -6,6 +6,7 @@ import tempfile
 import threading
 import wave
 
+from litellm import max_tokens
 from starlette.responses import HTMLResponse
 
 from toolboxv2 import get_app, App, TBEF, Spinner
@@ -37,7 +38,8 @@ def start(app=None):
     if not app.mod_online("audio"):
         print("Talk Offline install isaa")
         return
-    app.load_mod("isaa").init_isaa(build=False)
+    app.load_mod("isaa").init_isaa(build=False, v_name="Talk")
+    app.get_mod("isaa").agent_memory.ai_content = True
     talk_generate = app.run_any(TBEF.AUDIO.STT_GENERATE,
                                 model="openai/whisper-small",
                                 row=True, device=1)
@@ -79,8 +81,9 @@ async def upload_audio(websocket: WebSocket):
 
 async def stream_response(app, input_text, websocket: WebSocket,
                           provider='piper', voice_index=0, fetch_memory=False, all_meme=False, model_name='ryan',
-                          f=False):
+                          f=False, chat_session=None):
     llm_text = [""]
+    llm_text_ = [""]
 
     async def stream_text(text):
         llm_text[0] += text
@@ -95,6 +98,35 @@ async def stream_response(app, input_text, websocket: WebSocket,
                                             config={'play_local': False, 'model_name': model_name},
                                             local=False,
                                             save=False)
+            llm_text_[0] += llm_text[0]
+            chat_session.add_message({'content': llm_text[0], 'role': 'assistant'})
+            llm_text[0] = ""
+            if not audio_data:
+                return
+            # await websocket.send_json(audio_data)
+            await websocket.send_bytes(audio_data)
+            await asyncio.sleep(0.25)
+
+    async def stream_text_t(text):
+        llm_text[0] += text
+        if text:
+            if llm_text[0] == "":
+                return
+
+            llm_text[0] = app.get_mod('isaa').mini_task_completion(f"Summarys thes System Processing step for the "
+                                                                   f"user in one sentence : {llm_text[0]}",
+                                                                   max_tokens=85) + '... continues.'
+
+            await websocket.send_json({"type": "response", "text": llm_text[0]})
+            await asyncio.sleep(0.25)
+            audio_data: bytes = app.run_any(TBEF.AUDIO.SPEECH, text=llm_text[0], voice_index=voice_index,
+                                            use_cache=False,
+                                            provider=provider,
+                                            config={'play_local': False, 'model_name': 'kathleen'},
+                                            local=False,
+                                            save=False)
+            llm_text_[0] += llm_text[0]
+            chat_session.add_message({'content': llm_text[0], 'role': 'system'})
             llm_text[0] = ""
             if not audio_data:
                 return
@@ -104,22 +136,36 @@ async def stream_response(app, input_text, websocket: WebSocket,
 
     agent = app.run_any(TBEF.ISAA.GET_AGENT_CLASS, agent_name='self')
     agent.stream = True
+    agent_t = app.run_any(TBEF.ISAA.GET_AGENT_CLASS, agent_name='TaskCompletion')
 
+    agent_t.post_callback = stream_text_t
     from toolboxv2.mods.isaa.AgentFramwork import ConversationMode
+    from toolboxv2.mods.isaa.userRequestAnalyszer import intelligent_isaa_dispatcher, ChatSession
+
+    if chat_session is None:
+        chat_session = ChatSession(app.get_mod('isaa').get_context_memory())
+
     agent.mode = app.get_mod('isaa').controller.rget(ConversationMode)
     agent.stream_function = stream_text
 
-    with Spinner(message="Fetching llm_message...", symbols='+'):
-        llm_message = agent.get_llm_message(input_text, persist=True, fetch_memory=fetch_memory,
-                                            isaa=app.get_mod("isaa"),
-                                            task_from="user", all_meme=all_meme)
-    print(llm_message)
-    out = await agent.a_run_model(llm_message=llm_message, persist_local=True, persist_mem=fetch_memory)
-    f_out = ''
-    if f and agent.if_for_fuction_use(out):
-        f_out = agent.execute_fuction(persist=True, persist_mem=fetch_memory)
-        await stream_text(f_out)
-    print("Success", out, f_out)
+    await app.get_mod('isaa').agent_memory.process_data(input_text)
+    metat_data, out = intelligent_isaa_dispatcher(app.get_mod('isaa'), input_text, chat_session, None)
+    f_out = out
+    chat_session.add_message({'content': input_text, 'role': 'user'})
+
+    if metat_data['complexity_rating'] > 6:
+        with Spinner(message="Fetching llm_message...", symbols='+'):
+            llm_message = agent.get_llm_message(input_text, persist=True, fetch_memory=fetch_memory,
+                                                isaa=app.get_mod("isaa"),
+                                                task_from="user", all_meme=all_meme)
+
+        out = await agent.a_run_model(llm_message=llm_message, persist_local=True,
+                                      persist_mem=fetch_memory)
+        f_out = ''
+        if f and agent.if_for_fuction_use(out):
+            f_out = agent.execute_fuction(persist=True, persist_mem=fetch_memory)
+            await stream_text(f_out)
+    await app.get_mod('isaa').agent_memory.process_data(llm_text_[0])
     return out, f_out
 
 
@@ -152,7 +198,6 @@ async def upload_audio_isaa_context(websocket: WebSocket):
     await websocket.close()
 
 
-
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True,
         name="talk_websocket", row=True)
 async def upload_audio_isaa(websocket: WebSocket, context="F", all_c="F", v_name="ryan", v_index="0", provider='piper',
@@ -169,16 +214,32 @@ async def upload_audio_isaa(websocket: WebSocket, context="F", all_c="F", v_name
         await websocket.close()
         return
 
+    chat_session = [None]
     accumulated_text = [""]
     workers = [0]
     format_bytes = [b""]
     lock = threading.Lock()
+    WEBM_START_BYTES_FORMAT = [162]
 
     async def worker_transcribe(audio_data):
-        WEBM_START_BYTES_FORMAT = 162
+        WEBM_START_BYTES_FORMAT_ = WEBM_START_BYTES_FORMAT[0]
         try:
-            if workers[0] > 1:
-                text = stt(format_bytes[0][:WEBM_START_BYTES_FORMAT]+audio_data)['text']
+            text = ""
+            if accumulated_text[0] != "":
+                try:
+                    text = stt(format_bytes[0][:WEBM_START_BYTES_FORMAT_] + audio_data)['text']
+                except Exception as e:
+                    print(f"MAGIC-Number {WEBM_START_BYTES_FORMAT_} is not valid")
+
+                    for i in range(WEBM_START_BYTES_FORMAT_ - 130, WEBM_START_BYTES_FORMAT_ + 130):
+                        print(f"Try new M-Number {i}")
+                        try:
+                            text = stt(format_bytes[0][:i] + audio_data)['text']
+                            WEBM_START_BYTES_FORMAT[0] = i
+                            print(f"NEW Magic-Number:", i)
+                            break
+                        except Exception as e:
+                            pass
             else:
                 text = stt(audio_data)['text']
             if text:
@@ -193,46 +254,48 @@ async def upload_audio_isaa(websocket: WebSocket, context="F", all_c="F", v_name
             workers[0] -= 1
             app.debug_rains(e)
 
-    try:
-        while True:
-            data = await websocket.receive()
-            if 'bytes' in data.keys():
-                print("received audio data ", workers[0])
-                # Perform real-time transcription
-                if workers[0] == 0:
-                    if lock.locked():
-                        lock.release()
-                    format_bytes[0] = data['bytes']
-                workers[0] += 1
-                threading.Thread(target=async_test(worker_transcribe), args=(data['bytes'],), daemon=True).start()
+    # try:
+    while True:
+        data = await websocket.receive()
+        if 'bytes' in data.keys():
+            print("received audio data ", workers[0])
+            # Perform real-time transcription
+            if format_bytes[0] == b'':
+                if lock.locked():
+                    lock.release()
+                format_bytes[0] = data['bytes']
+            workers[0] += 1
+            threading.Thread(target=async_test(worker_transcribe), args=(data['bytes'],), daemon=True).start()
 
-            elif 'text' in data.keys():
-                print("s", workers[0])
-                message = json.loads(data.get('text'))
-                if message.get("action") == "process":
-                    # Process accumulated text
-                    max_itter = 0
-                    while workers[0] > 1 and max_itter < 500000:
-                        await asyncio.sleep(0.2)
-                        max_itter += 1
-                    print(accumulated_text[0])
-                    response, f_r = await stream_response(app, accumulated_text[0], websocket, provider=provider,
-                                                          voice_index=[str(x) for x in
-                                                                       range(len(v_index) - 1,
-                                                                             10 * len(v_index))].index(
-                                                              v_index),
-                                                          fetch_memory=context == "T",
-                                                          all_meme=all_c == "T", model_name=v_name, f=f == "T")
-                    # Send processed response to client
-                    accumulated_text = [""]  # Reset accumulated text
-                    workers[0] = 0
+        elif 'text' in data.keys():
+            print("s", workers[0])
+            message = json.loads(data.get('text'))
+            if message.get("action") == "process":
+                # Process accumulated text
+                max_itter = 0
+                while workers[0] > 1 and max_itter < 500000:
+                    await asyncio.sleep(0.2)
+                    max_itter += 1
+                print(accumulated_text[0])
+                response, f_r = await stream_response(app, accumulated_text[0], websocket, provider=provider,
+                                                      voice_index=[str(x) for x in
+                                                                   range(len(v_index) - 1,
+                                                                         10 * len(v_index))].index(
+                                                          v_index),
+                                                      fetch_memory=context == "T",
+                                                      all_meme=all_c == "T", model_name=v_name, f=f == "T",
+                                                      chat_session=chat_session[0])
+                # Send processed response to client
+                accumulated_text = [""]  # Reset accumulated text
+                workers[0] = 0
+                format_bytes[0] = b''
 
-    except Exception as e:
-        app.logger.error(f"Error in Talk receiving audio data: {str(e)}")
-        await websocket.send_json({"type": "error", "message": str(e)})
-
-    finally:
-        await websocket.close()
+   #''' except IndentationError as e:
+   #     app.logger.error(f"Error in Talk receiving audio data: {str(e)}")
+    #    await websocket.send_json({"type": "error", "message": str(e)})
+#
+   # finally:
+   #     await websocket.close()'''
 
     # try:
     #     while True:

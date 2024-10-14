@@ -41,6 +41,7 @@ class AppArgs:
     hot_reload = False
     live_application = True
     sysPrint = False
+    kwargs = {}
 
     def default(self):
         return self

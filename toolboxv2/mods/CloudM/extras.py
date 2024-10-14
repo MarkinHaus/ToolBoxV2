@@ -2,6 +2,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 from urllib.parse import quote
 
 from toolboxv2 import Style, Result, TBEF, App
@@ -308,6 +309,20 @@ def clear_db(self, do_root=False):
 def show_version(self):
     self.print(f"Version: {self.version} {self.api_version}")
     return self.version
+
+
+@export(mod_name=Name, version=version, initial=True, state=False)
+async def _login(app: Optional[App] = None):
+    if app is None:
+        app = get_app("CloudM.login")
+    await app.session.login()
+
+
+@export(mod_name=Name, version=version, state=False)
+async def login(m_link: str, app: Optional[App] = None):
+    if app is None:
+        app = get_app("CloudM.login")
+    return await app.session.init_log_in_mk_link(m_link)
 
 
 #@test_only

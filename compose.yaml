@@ -13,7 +13,7 @@ services:
     dev:
         build:
           context: .
-        command: tb -c FastApi edit-api main_D 0.0.0.0 5000 -c DB edit_cli RR -c FastApi startDev main ${DEV_MODULES} -m idle -n debug
+        command: npm run devD --prefix ./toolboxv2
         volumes:
           - ./toolboxv2/.data:/app/toolboxv2/.data
           - ./toolboxv2/data:/app/toolboxv2/data
@@ -50,7 +50,7 @@ services:
     live:
         build:
             context: .
-        command: tb -c FastApi edit-api main 0.0.0.0 5000 -c DB edit_cli RR -c FastApi start main -m idle
+        command: npm run liveD --prefix ./toolboxv2
         volumes:
             - ./toolboxv2/.data:/app/toolboxv2/.data
             - ./toolboxv2/data:/app/toolboxv2/data
@@ -85,6 +85,7 @@ services:
             - .env
         environment:
           - ENVIRONMENT=test
+
 
 # The commented out section below is an example of how to define a PostgreSQL
 # database that your application can use. `depends_on` tells Docker Compose to

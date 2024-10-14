@@ -263,6 +263,17 @@ def uninstaller(app: Optional[App], module_name: str):
 
 
 @export(mod_name=Name, name="install", test=False)
+async def upload(app: Optional[App], module_name: str):
+    if app is None:
+        app = get_app(f"{Name}.installer")
+
+    zip_path = find_highest_zip_version_entry(module_name, filepath=f'{app.start_dir}/tbState.yaml').get('url', '').split('mods_sto')[-1]
+
+    if upload or 'y' in input(f"uploade zip file {zip_path} ?"):
+        await app.session.upload_file(zip_path, '/installer/upload-file')
+
+
+@export(mod_name=Name, name="install", test=False)
 def installer(app: Optional[App], module_name: str, _version: str = "-.-.-", update=False):
     if app is None:
         app = get_app(f"{Name}.installer")

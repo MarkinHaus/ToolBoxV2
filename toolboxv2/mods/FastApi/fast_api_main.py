@@ -57,7 +57,7 @@ args.debug = debug
 args.sysPrint = True
 tb_app = get_app(from_="init-api-get-tb_app", name=id_name, args=args, sync=True)
 
-manager = tb_app.get_mod("WebSocketManager")
+manager = tb_app.get_mod("WebSocketManager").get_pools_manager()
 
 
 # with Spinner("loding mods", symbols="b"):
@@ -385,6 +385,9 @@ origins = [
     "http://127.0.0.1:8000",
     "http://0.0.0.0:8000",
     "http://localhost:8000",
+    "http://127.0.0.1:3000",
+    "http://0.0.0.0:3000",
+    "http://localhost:3000",
     "http://127.0.0.1",
     "http://0.0.0.0",
     "http://localhost",
@@ -597,7 +600,7 @@ async def index():
 #     exit(0)
 
 
-@app.websocket("/ws/{ws_id}")
+"""@app.websocket("/ws/{ws_id}")
 async def websocket_endpoint(websocket: WebSocket, ws_id: str):
     websocket_id = ws_id
     print(f'websocket: {websocket_id}')
@@ -626,7 +629,36 @@ async def websocket_endpoint(websocket: WebSocket, ws_id: str):
         print("websocket_endpoint - Exception: ", e)
     finally:
         await manager.disconnect(websocket, websocket_id)
+"""
 
+
+@app.websocket("/ws/{pool_id}/{ws_id}")
+async def websocket_endpoint(websocket: WebSocket, pool_id: str, ws_id: str):
+    connection_id = ws_id
+    tb_app.logger.info(f'New WebSocket connection: pool_id={pool_id}, connection_id={connection_id}')
+
+    await websocket.accept()
+    await manager.add_connection(pool_id, connection_id, websocket)
+
+    try:
+        while True:
+            try:
+                data = await websocket.receive_text()
+                tb_app.logger.debug(f"Received data from {connection_id} in pool {pool_id}: {data}")
+
+                await manager.handle_message(pool_id, connection_id, data)
+
+            except WebSocketDisconnect:
+                tb_app.logger.info(f"WebSocket disconnected: pool_id={pool_id}, connection_id={connection_id}")
+                break
+
+            except Exception as e:
+                tb_app.logger.error(f"Error in websocket_endpoint: {str(e)}")
+                await websocket.send_text(json.dumps({"error": "An unexpected error occurred"}))
+
+    finally:
+        await manager.remove_connection(pool_id, connection_id)
+        tb_app.logger.info(f"Connection closed and removed: pool_id={pool_id}, connection_id={connection_id}")
 
 @app.on_event("startup")
 async def startup_event():
@@ -769,11 +801,7 @@ async def helper(id_name):
             tb_app.print(f"working on fuction {function_name}" , end='\r')
             if 'main' in function_name and 'web' in function_name:
                 tb_app.sprint(f"creating Rout {mod_name} -> {function_name}")
-                r = APIRouter(
-                    prefix=f"/{mod_name}",
-                )
-                r.add_api_route('' if function_data.get('level') < 1 else '/', tb_func, methods=["GET"], description=function_data.get("helper", ""))
-                app.include_router(r)
+                router.add_api_route('/' + mod_name, tb_func, methods=["GET"], description=function_data.get("helper", ""))
                 continue
 
             if 'websocket' in function_name:

@@ -117,7 +117,6 @@ class Session(metaclass=Singleton):
                 claim = b''
         if not claim:
             return False
-        print("Claim :",claim)
         async with self.session.request("GET", url=f"{self.base}/validateSession", json={'Jwt_claim': claim.decode(),
                                                                                          'Username': self.username}) as response:
             if response.status == 200:

@@ -256,7 +256,7 @@ function updateDome(dome, add_script=true, linkExtra=null){
         }
         // console.log("[TEST SRC]",js.src===script.src )
         // console.log(js, src !== state.TBv.base+'/index.js')
-        if (!scriptSto.includes(js.src) && !document.querySelector('script[src="'+js.src+'"]') && src.slice(0, state.TBv.base.length+'/index.js'.length) !== state.TBv.base+'/index.js' && !script.src.endsWith("/@vite/client" )&& !script.src.includes("scripts/scripts.js")){
+        if (!scriptSto.includes(js.src) && !document.querySelector('script[src="'+js.src+'"]') && src.slice(0, state.TBv.base.length+'/index.js'.length) !== state.TBv.base+'/index.js' && !script.src.endsWith("/@vite/client" )&& !script.src.includes("scripts/scripts.js")&& !script.src.includes("main.js")){
             console.log("Adding ", script.src);
             dome.appendChild(js);
             scriptSto.push(js.src);
@@ -409,7 +409,6 @@ function router(url, extend = false, id = "main", Dome = DOME) {
     }
 
     let uri= url
-
     let is_d = false
 
     if (!init_d && uri.endsWith("/web/dashboard") && DOME){
@@ -421,18 +420,78 @@ function router(url, extend = false, id = "main", Dome = DOME) {
         uri = "/web/dashboards/user_dashboard.html"
     }
 
-    // try{
-    //     uri = new URL(url)
-    // }catch (e){
-//
-    //     uri = new URL(window.location.origin + url)
-    // }
+    async function fetchFromLocal(uri) {
+        const localUrl = `${window.location.origin}${uri}`;
+        try {
+            const response = await fetch(localUrl);
+            if (response.ok) {
+                return await response.text(); // File found locally
+            } else {
+                console.log(`Local file not found: ${localUrl}, status: ${response.status}`);
+                return null;
+            }
+        } catch (error) {
+            console.log(`Error fetching from local: ${error}`);
+            return null;
+        }
+    }
 
-    console.log("[uri]:", uri.toString())
+    // Function to fetch the file from the backend API running on port 5000
+    async function fetchFromBackend(uri) {
+        const backendUrl = `http://localhost:5000${uri}`;
+        try {
+            const response = await fetch(backendUrl);
+            if (response.ok) {
+                return await response.text(); // Fetched from backend
+            } else {
+                console.log(`Backend file not found: ${backendUrl}, status: ${response.status}`);
+                return null;
+            }
+        } catch (error) {
+            console.log(`Error fetching from backend: ${error}`);
+            return null;
+        }
+    }
+
+    async function fetchFromRBackend(uri) {
+        const backendUrl = `https://simplecore.app/${uri}`;
+        try {
+            const response = await fetch(backendUrl);
+            if (response.ok) {
+                return await response.text(); // Fetched from backend
+            } else {
+                console.log(`Backend file not found: ${backendUrl}, status: ${response.status}`);
+                return null;
+            }
+        } catch (error) {
+            console.log(`Error fetching from backend: ${error}`);
+            return null;
+        }
+    }
+
+
+    console.log("[uri]:", uri.toString(), window.location.origin)
 
     let content = null
+    const isProduction = window.location.origin.includes('3001')
     setTimeout(async ()=>{
-        content = await loadHtmlFile(uri)
+
+        if (!isProduction){
+            content = await fetchFromLocal(uri);
+        }
+
+        // If the file wasn't found locally, fetch it from the backend API
+        if (!content) {
+            content = await fetchFromBackend(uri);
+        }
+
+        if (!content) {
+            content = await loadHtmlFile(uri);
+        }
+
+        if (!content) {
+            content = await fetchFromRBackend(uri);
+        }
 
         console.log("[content]:", content.toString().length)
 
@@ -456,9 +515,25 @@ function router(url, extend = false, id = "main", Dome = DOME) {
 
     const preUrl = window.history.state?window.history.state.url:undefined
 
-    if (!extend){
-        window.history.pushState({ url: url, preUrl, TB: state.TBv, TBc: state.TBc }, "", url);
+    if (!extend && !window.__TAURI__){
+        window.history.pushState({ url: cleanUrl(url), preUrl, TB: state.TBv, TBc: state.TBc }, "", cleanUrl(url));
     }
+}
+
+function cleanUrl(url) {
+    // Use a regular expression to match all occurrences of 'http://' or 'https://'
+    const regex = /(https?:\/\/)/g;
+
+    // Split the URL by the regex and filter out empty strings
+    const parts = url.split(regex).filter(part => part !== '');
+
+    // If there are multiple parts, keep only the last one
+    if (parts.length > 1) {
+        return `${parts[parts.length - 1]}`;
+    }
+
+    // If there's only one part, return it
+    return url;
 }
 
 export async function loadHtmlFile(url) {
@@ -473,6 +548,59 @@ export async function loadHtmlFile(url) {
         return error
     }
 }
+
+export async function loadHtmlFile_(url) {
+    const localUrl = `${window.location.origin}/${url}`; // Local server
+    const localBackendUrl = `http://localhost:5000/${url}`; // Local backend at different port
+    const localFolderPath = url; // Local folder (copied assets)
+    const remoteUrl = `${process.env.TOOLBOXV2_REMOTE_BASE}/${url}`; // Remote backend
+
+    // Try to fetch from local URL
+    try {
+        const localResponse = await fetch(localUrl);
+        if (localResponse.ok) {
+            return await localResponse.text();
+        }
+        console.log(`Local fetch failed: ${localResponse.status}`);
+    } catch (error) {
+        console.log("Error fetching from local URL:", error);
+    }
+
+    // Try to fetch from local backend running on a different port
+    try {
+        const backendResponse = await fetch(localBackendUrl);
+        if (backendResponse.ok) {
+            return await backendResponse.text();
+        }
+        console.log(`Local backend fetch failed: ${backendResponse.status}`);
+    } catch (error) {
+        console.log("Error fetching from local backend:", error);
+    }
+
+    // Try to fetch from local folder (copied assets)
+    try {
+        const localFileResponse = await fetch(localFolderPath);
+        if (localFileResponse.ok) {
+            return await localFileResponse.text();
+        }
+        console.log(`Local file fetch failed: ${localFileResponse.status}`);
+    } catch (error) {
+        console.log("Error fetching from local folder:", error);
+    }
+
+    // Fallback to remote backend
+    try {
+        const remoteResponse = await fetch(remoteUrl);
+        if (remoteResponse.ok) {
+            return await remoteResponse.text();
+        }
+        return `HTTP error! status: ${remoteResponse.status}`;
+    } catch (error) {
+        console.error("Could not load the HTML file from remote backend:", error);
+        return error;
+    }
+}
+
 
 // State
 

@@ -20,6 +20,27 @@ def stram_print(text):
         max_typing_speed=max_typing_speed, auto_new_line=False)
 
 
+def print_prompt(msg_data):
+    if isinstance(msg_data, dict):
+        messages = msg_data.get('massages', [])
+    else:
+        messages = msg_data
+    if len(messages) == 0:
+        print(Style.YELLOW("NO PROMPT to print"))
+        return
+    print(Style.GREEN2("PROMPT START "))
+    for message in messages:
+        caller = Style.WHITE(message.get('role', 'NONE').upper()) if message.get('role',
+                                                                                 'NONE') == 'user' else 'NONE'
+        caller = Style.CYAN(message.get('role', 'NONE').upper()) if message.get('role',
+                                                                                'NONE') == 'system' else caller
+        caller = Style.VIOLET2(message.get('role', 'NONE').upper()) if message.get('role',
+                                                                                   'NONE') == 'assistant' else caller
+        print(f"\n{caller}\n{Style.GREY(str(message.get('content', '--#--')))}\n")
+    print(Style.GREEN("PROMPT END -- "))
+
+
+
 def cls():
     if system() == "Windows":
         os.system("cls")

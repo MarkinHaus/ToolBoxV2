@@ -6,7 +6,7 @@ import uuid
 from zipfile import ZipFile
 
 import yaml
-from fastapi import APIRouter, UploadFile, WebSocket
+from fastapi import APIRouter, UploadFile, WebSocket, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 
 from toolboxv2 import get_logger, App, get_app
@@ -395,21 +395,34 @@ def save_mod_snapshot(app, mod_name, provider=None, tb_state: TbState or None = 
 @router.post("/upload-file/")
 async def create_upload_file(file: UploadFile):
     tb_app: App = get_app()
+
     if tb_app.debug:
-        try:
-            if file.filename.startswith("RST$") and file.filename.endswith(".zip"):
-                with open("./mods_sto/" + file.filename, 'wb') as f:
+        # Ensure the target directory exists
+        target_dir = "./mods_sto/"
+        os.makedirs(target_dir, exist_ok=True)
+
+        # Check if the file has a valid name
+        if file.filename.startswith("RST$") and file.filename.endswith(".zip"):
+            try:
+                file_path = os.path.join(target_dir, file.filename)
+
+                # Save the file in chunks to avoid memory overload
+                with open(file_path, 'wb') as f:
                     while contents := file.file.read(1024 * 1024):
                         f.write(contents)
-            else:
-                return {"res": f"Invalid filename {file.filename}"}
-        except Exception:
-            return {"res": "There was an error uploading the file"}
-        finally:
-            file.file.close()
-        return {"res": f"Successfully uploaded {file.filename}"}
 
-    return {"res": "not avalable"}
+                return {"res": f"Successfully uploaded {file.filename}"}
+
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"There was an error uploading the file: {str(e)}")
+
+            finally:
+                file.file.close()
+
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid filename: {file.filename}")
+
+    return {"res": "Upload feature not available in production mode."}
 
 
 @router.get("/download/{path:path}")

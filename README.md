@@ -79,5 +79,5 @@ the [giswqs/pypackage](https://github.com/giswqs/pypackage) project template.
  - swap bots
  - ReklamBots
  - Chat|Voice -P2P E2N- cli
- link shortener
+ - link shortener
 

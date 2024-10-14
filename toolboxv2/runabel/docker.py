@@ -14,8 +14,6 @@ def run(app, args: AppArgs):
         comm = 'docker compose up test' + ford_build
     if args.modi == 'live':
         comm = 'docker compose up live' + ford_build
-    if args.modi == 'live0':
-        comm = 'docker compose up live0'
     if args.modi == 'dev':
         comm = 'docker compose up dev --watch' + ford_build
     app.print(f"Running command : {comm}")

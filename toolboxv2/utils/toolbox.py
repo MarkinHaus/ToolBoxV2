@@ -247,12 +247,14 @@ class App(AppType, metaclass=Singleton):
         self.runnable = r
 
     async def run_runnable(self, name, **kwargs):
+        from ..runabel import runnable_dict as runnable_dict_func
+        if name not in self.runnable.keys():
+            self.runnable = {**self.runnable, **runnable_dict_func(s=name, remote=True)}
         if name in self.runnable.keys():
             if inspect.iscoroutinefunction(self.runnable[name]):
                 return await self.runnable[name](get_app(from_="runner"), self.args_sto, **kwargs)
             else:
                 return self.runnable[name](get_app(from_="runner"), self.args_sto, **kwargs)
-        self.print("Runnable Not Available")
 
     def _coppy_mod(self, content, new_mod_dir, mod_name, file_type='py'):
 

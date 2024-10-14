@@ -1,5 +1,6 @@
 """Console script for toolboxv2."""
 import json
+import pprint
 # Import default Pages
 import sys
 import argparse
@@ -9,6 +10,7 @@ import asyncio
 from functools import wraps
 from platform import system, node
 
+from sqlalchemy.testing.suite.test_reflection import metadata
 from yaml import safe_load
 
 from toolboxv2.runabel import runnable_dict as runnable_dict_func
@@ -275,6 +277,8 @@ def setup_service_linux():
 def parse_args():
     parser = argparse.ArgumentParser(description="Welcome to the ToolBox cli")
 
+    parser.add_argument("conda", help="run conda commands for mor infos run tb conda -h", default=False, action='store_true')
+
     parser.add_argument("-init",
                         help="ToolBoxV2 init (name) -> default : -n name = main", type=str or None, default=None)
 
@@ -311,7 +315,7 @@ def parse_args():
                         action="store_true",  # Ändere zu store_true
                         default=False)
 
-    parser.add_argument("--docker", help="start the toolbox in docker Enables 4 modi [test,live,live0,dev]\n\trun as "
+    parser.add_argument("--docker", help="start the toolbox in docker Enables 4 modi [test,live,dev]\n\trun as "
                                          "$ tb --docker -m [modi] optional -p -w\n\tvalid with -fg", default=False,
                         action="store_true")
     parser.add_argument("--build", help="build docker image from local source", default=False,
@@ -395,10 +399,33 @@ def parse_args():
     parser.add_argument("--ipy", action="store_true", default=False,
                         help="activate toolbox in IPython")
 
+    parser.add_argument('--kwargs', nargs='*', default=[], type=str, action='append',
+                        help='Key-value pairs to pass as kwargs, format: key=value')
+
+
     args = parser.parse_args()
+
+    # Wandelt die Liste in ein dict um
+    if args.kwargs:
+        kwargs = args.kwargs.copy()
+        args.kwargs = []
+        for k in kwargs:
+            args.kwargs.append(parse_kwargs(k))
+    if not args.kwargs or len(args.kwargs) == 0:
+        args.kwargs = [{}]
     # args.live_application = not args.live_application
     return args
 
+
+def parse_kwargs(pairs):
+    kwargs = {}
+    for pair in pairs:
+        if '=' in pair:
+            key, value = pair.split('=', 1)
+            kwargs[key] = value
+        else:
+            raise argparse.ArgumentTypeError(f"Invalid format for --kwargs argument: {pair}. Expected format is key=value.")
+    return kwargs
 
 def edit_logs():
     name = input(f"Name of logger \ndefault {loggerNameOfToolboxv2}\n:")
@@ -577,12 +604,12 @@ async def setup_app():
     return tb_app, args
 
 
-async def command_runner(tb_app, command):
+async def command_runner(tb_app, command, **kwargs):
     if len(command) < 1:
         tb_app.print_functions()
         tb_app.print(
-            "minimum command length is 2 {module_name} {function_name} optional args...")
-        return
+            "minimum command length is 2 {module_name} {function_name} optional args... Com^C to exit")
+        return await tb_app.idle()
 
     tb_app.print(f"Running command: {' '.join(command)}")
     call = CallingObject().empty()
@@ -599,6 +626,13 @@ async def command_runner(tb_app, command):
 
     call.function_name = command[1]
     call.args = command[2:]
+    call.kwargs = kwargs
+
+    if 'help' in call.kwargs and call.kwargs.get('help', False) or 'h' in call.kwargs and call.kwargs.get('h',False):
+        data = tb_app.get_function((call.module_name, call.function_name), metadata=True)
+        pprint.pprint(data)
+        return data
+
     spec = 'app'  #  if not args.live_application else tb_app.id
     r = await tb_app.a_run_any((call.module_name, call.function_name), tb_run_with_specification=spec,
                                args_=call.args,
@@ -715,38 +749,24 @@ async def main():
         await tb_app.a_exit()
         return 0
 
-    if args.command and not args.background_application:
-        for command in args.command:
-            await command_runner(tb_app, command)
-
-    if not args.kill and not args.docker and tb_app.alive and not args.background_application and (
-        not args.command or '-m' in sys.argv):
+    if not args.kill and not args.docker and tb_app.alive and not args.background_application and '-m' in sys.argv:
 
         tb_app.save_autocompletion_dict()
         if args.background_application_runner and args.modi == 'bg' and hasattr(tb_app, 'daemon_app'):
             await tb_app.daemon_app.online
-        if not args.live_application:
-            runnable_dict = runnable_dict_func(remote=False)
-            if args.modi not in runnable_dict.keys():
-                runnable_dict = {**runnable_dict, **runnable_dict_func(s=args.modi, remote=True)}
-            tb_app.set_runnable(runnable_dict)
-            if args.modi in runnable_dict.keys():
-                pass
-            else:
-                raise ValueError(
-                    f"Modi : [{args.modi}] not found on device installed modi : {list(runnable_dict.keys())}")
-            # open(f"./config/{args.modi}.pid", "w").write(app_pid)
-            await tb_app.run_runnable(args.modi)
-        elif 'cli' in args.modi:
-            runnable_dict = runnable_dict_func('cli')
-            tb_app.set_runnable(runnable_dict)
-            await tb_app.run_runnable(args.modi)
-        elif args.remote:
-            await tb_app.rrun_runnable(args.modi)
-        else:
-            runnable_dict = runnable_dict_func(args.modi[:2])
-            tb_app.set_runnable(runnable_dict)
-            await tb_app.run_runnable(args.modi)
+
+        if args.remote:
+            await tb_app.rrun_runnable(args.modi, **args.kwargs[0])
+
+        runnable_dict = runnable_dict_func(remote=False)
+        if args.modi not in runnable_dict.keys():
+            runnable_dict = {**runnable_dict, **runnable_dict_func(s=args.modi, remote=True)}
+        tb_app.set_runnable(runnable_dict)
+        if args.modi not in runnable_dict.keys():
+            raise ValueError(
+                f"Modi : [{args.modi}] not found on device installed modi : {list(runnable_dict.keys())}")
+        # open(f"./config/{args.modi}.pid", "w").write(app_pid)
+        await tb_app.run_runnable(args.modi, **args.kwargs[0])
 
     elif args.docker:
 
@@ -769,6 +789,10 @@ async def main():
                 os.system(f"taskkill /pid {app_pid} /F")
             else:
                 os.system(f"kill -9 {app_pid}")
+
+    if args.command and not args.background_application:
+        for command in args.command:
+            await command_runner(tb_app, command, **args.kwargs[args.command.index(command) if args.command.index(command) < len(args.kwargs)-1 else 0])
 
     if args.live_application and args.debug:
         hide = tb_app.hide_console()
@@ -930,7 +954,7 @@ def start_ipython_session(argv):
 
 def main_runner():
     sys.excepthook = sys.__excepthook__
-    if sys.argv[1] == "conda":
+    if len(sys.argv) >= 2 and sys.argv[1] == "conda":
         sys.argv[1:] = sys.argv[2:]
         sys.exit(conda_runner_main())
     elif len(sys.argv) >= 6 and sys.argv[5] == "conda":
@@ -947,7 +971,4 @@ def main_runner():
 
 if __name__ == "__main__":
     print("STARTED START FROM CLI")
-    if sys.argv[1] == "conda":
-        sys.argv[1:] = sys.argv[2:]
-        sys.exit(conda_runner_main())
     sys.exit(main_runner())
