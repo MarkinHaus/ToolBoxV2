@@ -10,8 +10,7 @@ from toolboxv2.utils.extras.blobs import BlobStorage, BlobFile
 class TestBlobStorage(unittest.TestCase):
 
     def setUp(self):
-        self.mock_storage_directory = Path(".data/tmp/test_blob_storage").absolute()
-        self.blob_storage = BlobStorage(storage_directory=str(self.mock_storage_directory))
+        self.blob_storage = BlobStorage(storage_directory=None)
 
     @patch('os.path.exists')
     @patch('pickle.dump')
@@ -22,8 +21,7 @@ class TestBlobStorage(unittest.TestCase):
         mock_path_exists.return_value = False
 
         self.blob_storage._save_blob(blob_id, blob_data)
-
-        mock_open.assert_called_once_with(str(self.mock_storage_directory / blob_id), 'wb')
+        mock_open.assert_called_once_with(self.blob_storage._get_blob_filename(blob_id), 'wb')
         mock_pickle_dump.assert_called_once_with(blob_data, mock_open())
 
     @patch('os.path.exists')
@@ -36,7 +34,7 @@ class TestBlobStorage(unittest.TestCase):
 
         result = self.blob_storage._load_blob(blob_id)
 
-        mock_open.assert_called_once_with(str(self.mock_storage_directory / blob_id), 'rb')
+        mock_open.assert_called_once_with(self.blob_storage._get_blob_filename(blob_id), 'rb')
         self.assertEqual(result, {"data": b"test data"})
 
 
