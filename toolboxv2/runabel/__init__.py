@@ -25,7 +25,7 @@ def runnable_dict(s='.py', remote=False, dir_path=None, runnable_dict_=None):
                 pass
             elif not remote and file_name.endswith('.py') and s in file_name:
                 name = os.path.splitext(file_name)[0]
-                print("Loading :", name)
+                # print("Loading :", name)
                 # Lade das Modul
                 spec = importlib.util.spec_from_file_location(name, os.path.join(dir_path, file_name))
                 module = importlib.util.module_from_spec(spec)

@@ -395,7 +395,7 @@ def user_input(app: App,
     sm = app.get_mod("SchedulerManager")
 
     def bottom_toolbar():
-        str1 = get_service_status(app.info_dir.replace(app.id, '')) + f"\nLocal-User: {app.get_username()} ,Global-User: {app.session.username} ,base : {app.session.base}\n"
+        str1 = get_service_status(app.info_dir.replace(app.id, '')) + f"Local-User: {app.get_username()} ,Global-User: {app.session.username} ,base : {app.session.base}\n"
         str2 = sm.get_tasks_table() if sm else None
 
         # Generate the bottom toolbar content
