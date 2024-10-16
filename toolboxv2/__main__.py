@@ -116,7 +116,7 @@ import os
 import subprocess
 
 
-def start(pidname, args):
+def start(pidname, args, filename):
     caller = args[0]
     args = args[1:]
     args = ["-bgr" if arg == "-bg" else arg for arg in args]
@@ -133,7 +133,8 @@ def start(pidname, args):
     else:  # sys.executable, "-m",
         p = subprocess.Popen(args, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE)
-    pdi = p.pid
+    pid = p.pid
+    open(filename, "w").write(str(pid))
     get_app().sprint(f"Service {pidname} started")
 
 
@@ -537,6 +538,9 @@ async def setup_app():
     pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
     app_pid = str(os.getpid())
 
+    with open(pid_file, "w") as f:
+        f.write(app_pid)
+
     tb_app = get_app(from_="InitialStartUp", name=args.name, args=args, app_con=App)
 
     if not args.sysPrint and not (args.debug or args.background_application_runner or args.install or args.kill):
@@ -576,7 +580,7 @@ async def setup_app():
         args.live_application = False
     elif args.background_application:
         if not args.kill:
-            start(args.name, sys.argv)
+            start(args.name, sys.argv, filename=f"{info_folder}bg-{args.name}.pid")
         else:
             if '-m ' not in sys.argv:
                 pid_file = f"{info_folder}bg-{args.name}.pid"
@@ -598,8 +602,6 @@ async def setup_app():
         except:
             print("Auto starting Starting Local if u know ther is no bg instance use -fg to run in the frond ground")
 
-    with open(pid_file, "w") as f:
-        f.write(app_pid)
 
     return tb_app, args
 

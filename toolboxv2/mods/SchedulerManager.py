@@ -1,6 +1,7 @@
 import json
 import os
 import pickle
+from collections import deque
 from typing import Callable, Optional
 
 try:
@@ -12,7 +13,7 @@ import schedule
 import threading
 import time
 from datetime import datetime, timedelta
-from toolboxv2 import get_app, App, Result, MainTool, FileHandler
+from toolboxv2 import get_app, App, Result, MainTool, FileHandler, Style
 
 Name = 'SchedulerManager'
 export = get_app(Name).tb
@@ -28,6 +29,8 @@ class SchedulerManagerClass:
         self.jobs = {}
         self.thread = None
         self.running = False
+        self.last_successful_jobs = deque(maxlen=3)  # Stores last 3 successful job names
+        self.job_errors = {}  # Stores job names as keys and error messages as values
 
     def _run(self):
         while self.running:
@@ -44,6 +47,24 @@ class SchedulerManagerClass:
         self.running = False
         if self.thread is not None:
             self.thread.join()
+
+    def job_wrapper(self, job_name: str, job_function: callable):
+        """
+        Wrap a job function to track success and errors.
+        """
+        def wrapped_job(*args, **kwargs):
+            try:
+                job_function(*args, **kwargs)
+                # If the job ran successfully, store it in the success queue
+                self.last_successful_jobs.append(job_name)
+                if job_name in self.job_errors:
+                    del self.job_errors[job_name]  # Remove error record if job succeeded after failing
+            except Exception as e:
+                # Capture any exceptions and store them
+                self.job_errors[job_name] = str(e)
+
+        return wrapped_job
+
 
     def register_job(self,
                      job_id: str,
@@ -125,7 +146,7 @@ class SchedulerManagerClass:
                                           job_id=job_id)
 
         job = self._get_final_job(job=job,
-                                  func=func,
+                                  func=self.job_wrapper(job_id, job_func),
                                   time_passer=time_passer,
                                   job_func=job_func,
                                   args=args,
@@ -204,7 +225,7 @@ class SchedulerManagerClass:
             return Result.default_internal_error(f"No Final job found for register")
         return Result.ok(job)
 
-    def _save_job(self, job_id, job, save, func, serializer=serializer_default, args=None, **kwargs):
+    def _save_job(self, job_id, job, save, args=None, **kwargs):
         if job is not None:
             self.jobs[job_id] = {'id': job_id, 'job': job, 'save': save, 'func': job_id, 'args': args,
                                  'kwargs': kwargs}
@@ -247,6 +268,49 @@ class SchedulerManagerClass:
                 func = deserializer.loads(job_info['func'])
                 self.register_job(job_info['id'], func=func, **job_info)
 
+    def get_tasks_table(self):
+        if not self.jobs:
+            return "No tasks registered."
+
+        # Calculate the maximum width for each column
+        id_width = max(len("Task ID"), max(len(job_id) for job_id in self.jobs.keys()))
+        next_run_width = len("Next Execution")
+        interval_width = len("Interval")
+
+        # Create the header
+        header = f"| {'Task ID':<{id_width}} | {'Next Execution':<{next_run_width}} | {'Interval':<{interval_width}} |"
+        separator = f"|{'-' * (id_width + 2)}|{'-' * (next_run_width + 2)}|{'-' * (interval_width + 2)}|"
+
+        # Create the table rows
+        rows = []
+        for job_id, job_info in self.jobs.items():
+            job = job_info['job']
+            next_run = job.next_run.strftime("%Y-%m-%d %H:%M:%S") if job.next_run else "N/A"
+            interval = self._get_interval_str(job)
+            row = f"| {job_id:<{id_width}} | {next_run:<{next_run_width}} | {interval:<{interval_width}} |"
+            rows.append(row)
+
+        # Combine all parts of the table
+        table = "\n".join([header, separator] + rows)
+        return table
+
+    def _get_interval_str(self, job):
+        if job.interval == 0:
+            return "Once"
+
+        units = [
+            (86400, "day"),
+            (3600, "hour"),
+            (60, "minute"),
+            (1, "second")
+        ]
+
+        for seconds, unit in units:
+            if job.interval % seconds == 0:
+                count = job.interval // seconds
+                return f"Every {count} {unit}{'s' if count > 1 else ''}"
+
+        return f"Every {job.interval} seconds"
 
 class Tools(MainTool, SchedulerManagerClass):
     version = version
@@ -258,13 +322,14 @@ class Tools(MainTool, SchedulerManagerClass):
         self.keys = {"mode": "db~mode~~:"}
         self.encoding = 'utf-8'
         self.tools = {'name': Name}
-        SchedulerManagerClass.__init__(self)
         MainTool.__init__(self,
                           load=self.init_sm,
                           v=self.version,
                           name=self.name,
                           color=self.color,
                           on_exit=self.on_exit)
+
+        SchedulerManagerClass.__init__(self)
 
     @export(
         mod_name=Name,

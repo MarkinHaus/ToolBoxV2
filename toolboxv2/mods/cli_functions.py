@@ -4,6 +4,8 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 
+from toolboxv2.mods.CloudM.mini import get_service_status
+from toolboxv2.utils.system.session import get_public_ip
 from toolboxv2.utils.system.types import CallingObject, ApiResult
 
 try:
@@ -350,9 +352,29 @@ def update_autocompletion_list_or_key(list_or_key: iter or None = None, autocomp
 
     return autocompletion_dict
 
+def bottom_toolbar_helper(str1, str2=None):
+    # Format str1 as HTML with different background colors for each line if needed.
+
+    # Format str2 as a table if it is provided.
+    if str2:
+        formatted_str2 = '<b><style bg="ansigreen">Task Table:</style></b>' + str2 + '\n'
+
+    else:
+        formatted_str2 = ""
+
+    # Hotkey tips at the bottom
+    hotkey_tips = (
+        '<b><style bg="ansired">Hotkeys:</style></b> '
+        '<b><style bg="ansiblue">Shift + S:</style></b> Helper Info '
+        '<b><style bg="ansiblue">Control + Space:</style></b> Autocompletion Tips '
+        '<b><style bg="ansiblue">Shift + Up:</style></b> Run in Shell'
+    )
+
+    # Combine all parts
+    return HTML(str1 + formatted_str2 + hotkey_tips)
 
 @export(mod_name=Name, test=False)
-def user_input(app,
+def user_input(app: App,
                completer_dict=None,
                get_rprompt=None,
                bottom_toolbar=None,
@@ -370,13 +392,14 @@ def user_input(app,
         app = get_app("cli_functions.user_input")
     if get_rprompt is None:
         get_rprompt = lambda: ""
-    if bottom_toolbar is None:
-        def bottom_toolbar_helper():
-            return HTML(f'Hotkeys shift:s control:c  <b><style bg="ansired">s+left</style></b> helper info '
-                        f'<b><style bg="ansired">c+space</style></b> Autocompletion tips '
-                        f'<b><style bg="ansired">s+up</style></b> run in shell')
+    sm = app.get_mod("SchedulerManager")
 
-        bottom_toolbar = bottom_toolbar_helper
+    def bottom_toolbar():
+        str1 = get_service_status(app.info_dir.replace(app.id, '')) + f"\nLocal-User: {app.get_username()} ,Global-User: {app.session.username} ,base : {app.session.base}\n"
+        str2 = sm.get_tasks_table() if sm else None
+
+        # Generate the bottom toolbar content
+        return bottom_toolbar_helper(str1, str2)
 
     if bindings is None:
         bindings = KeyBindings()
