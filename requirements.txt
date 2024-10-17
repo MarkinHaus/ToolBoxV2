@@ -10,13 +10,7 @@ PyYAML==6.0.1
 reedsolo==1.7.0
 schedule==1.2.2
 tqdm==4.66.4
-watchfiles==0.22.0
-ipython 
+ipython
 itsdangerous==2.2.0
-fastapi==0.111.0
-starlette==0.37.2
-webauthn==2.1.0
-redis==5.0.6
 qrcode==7.4.2
 Requests==2.32.3
-Faker==25.0.1

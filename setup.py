@@ -12,7 +12,7 @@ with open('README.md') as readme_file:
 #
 # with open(getenv('CONFIG_FILE', '/toolboxv2/toolbox.yaml'), 'r') as config_file:
 #    _version = config_file.read().split('version')[-1].split('\n')[0].split(':')[-1].strip()
-version = "v0.1.19"  # _version  # _version.get('main', {}).get('version', '-.-.-')
+version = "v0.1.20"  # _version  # _version.get('main', {}).get('version', '-.-.-')
 
 here = path.abspath(path.dirname(__file__))
 
@@ -22,6 +22,17 @@ with io.open(path.join(here, "requirements.txt"), encoding="utf-8") as f:
 
 install_requires = [x.strip() for x in all_reqs if "git+" not in x]
 dependency_links = [x.strip().replace("git+", "") for x in all_reqs if "git+" not in x]
+
+
+with io.open(path.join(here, "requirements_dev.txt"), encoding="utf-8") as f:
+    all_reqs = f.read().split("\n")
+
+install_requires_dev = [x.strip() for x in all_reqs if "git+" not in x]
+
+with io.open(path.join(here, "requirements_isaa.txt"), encoding="utf-8") as f:
+    all_reqs = f.read().split("\n")
+
+install_requires_isaa = [x.strip() for x in all_reqs if "git+" not in x]
 
 requirements = []
 
@@ -51,6 +62,11 @@ setup(
     },
     install_requires=install_requires,
     dependency_links=dependency_links,
+    extras_require={
+        "dev": install_requires_dev,
+        "live": install_requires_dev[:8],
+        "isaa": install_requires_isaa,
+    },
     license="Apache Software License 2.0",
     long_description=readme,
     long_description_content_type='text/markdown',
