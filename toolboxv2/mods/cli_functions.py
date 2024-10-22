@@ -43,7 +43,7 @@ version = '0.0.1'
 
 def parse_linux_command_output():
     # Führe den Linux-Befehl aus und erhalte die Ausgabe
-    result = subprocess.run(["bash", "-c", "compgen -A function -abck"], capture_output=True, text=True)
+    result = subprocess.run(["bash", "-c", "compgen -A function -abck"], capture_output=True, text=True, encoding='cp850')
     output = result.stdout
 
     # Trennen der Daten in Zeilen
@@ -57,7 +57,7 @@ def parse_linux_command_output():
 
 def parse_command_output():
     # Führe den PowerShell-Befehl aus und erhalte die Ausgabe
-    result = subprocess.run(["powershell", "-Command", "Get-Command *"], capture_output=True, text=True)
+    result = subprocess.run(["powershell", "-Command", "Get-Command *"], capture_output=True, text=True, encoding='cp850')
     output = result.stdout
 
     # Trennen der Daten in Zeilen

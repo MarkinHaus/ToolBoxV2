@@ -432,7 +432,7 @@ def protect_level_test(request):
 
     if len(request.url.path.split('/')) < 4:
         tb_app.logger.info(f'not protected url {request.url.path}')
-        return user_level >= 0
+        return user_level >= -1
 
     modul_name = request.url.path.split('/')[2]
     fuction_name = request.url.path.split('/')[3]
@@ -484,7 +484,7 @@ def protect_url_split_helper(url_split):
     elif url_split[1] == "api" and url_split[2] in [
         'CloudM.AuthManager',
         'email_waiting_list'
-    ]:
+    ]+tb_app.api_allowed_mods_list:
         return False
 
     return True
@@ -548,6 +548,9 @@ async def user_runner(request, call_next):
 
     if not isinstance(result, Request) and not isinstance(result, ApiResult) and isinstance(result, str):
         return HTMLResponse(status_code=200, content=result)
+
+    if not isinstance(result, Request) and not isinstance(result, ApiResult):
+        return result
 
     if result.info.exec_code == 100:
         response = await call_next(request)

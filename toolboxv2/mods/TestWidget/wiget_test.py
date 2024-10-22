@@ -109,7 +109,7 @@ def sync(request: Request or None = None, counter=0, id="MainWidget"):
 
 # get_wgiet
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="get_widget")
-def get_widget(app: App = None, request: Request or None = None):
+def get_widget(app: App = None, request: Request or None = None, **kwargs):
     if app is None:
         app = get_app(from_=f"{Name}.get_widget")
 
@@ -130,7 +130,7 @@ def get_widget(app: App = None, request: Request or None = None):
         cv = get_counter_value(sid)
 
     widget = load_widget(app, username, cv)
-
+    print("Test widget get widget ", widget)
     return widget
 
 

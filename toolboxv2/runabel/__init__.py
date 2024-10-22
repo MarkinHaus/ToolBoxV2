@@ -48,14 +48,14 @@ def runnable_dict(s='.py', remote=False, dir_path=None, runnable_dict_=None):
                 # print("Ent", name)
                 # Lade das Modul
                 print(f"Gist Name: {name}, URL: {url}")
-                try:
-                    module = GistLoader(f"{name}/{url}").load_module(name)
+                #try:
+                module = GistLoader(f"{name}/{url}").load_module(name)
                 #try:
                 #    module = GistLoader(f"{name}/{url}")
-                except Exception as e:
-                    print(f"Error loading module {name} from github {url}")
-                    print(e)
-                    continue
+                #except Exception as e:
+                #    print(f"Error loading module {name} from github {url}")
+                #    print(e)
+                #    continue
 
                 # Füge das Modul der Dictionary hinzu
                 print(f"{hasattr(module, 'run')} and {callable(module.run)} and {hasattr(module, 'NAME')}")

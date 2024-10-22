@@ -396,33 +396,33 @@ def save_mod_snapshot(app, mod_name, provider=None, tb_state: TbState or None = 
 async def create_upload_file(file: UploadFile):
     tb_app: App = get_app()
 
-    if tb_app.debug:
-        # Ensure the target directory exists
-        target_dir = "./mods_sto/"
-        os.makedirs(target_dir, exist_ok=True)
+    # if tb_app.debug:
+    # Ensure the target directory exists
+    target_dir = "./mods_sto/"
+    os.makedirs(target_dir, exist_ok=True)
 
-        # Check if the file has a valid name
-        if file.filename.startswith("RST$") and file.filename.endswith(".zip"):
-            try:
-                file_path = os.path.join(target_dir, file.filename)
+    # Check if the file has a valid name
+    if file.filename.startswith("RST$") and file.filename.endswith(".zip"):
+        try:
+            file_path = os.path.join(target_dir, file.filename)
 
-                # Save the file in chunks to avoid memory overload
-                with open(file_path, 'wb') as f:
-                    while contents := file.file.read(1024 * 1024):
-                        f.write(contents)
+            # Save the file in chunks to avoid memory overload
+            with open(file_path, 'wb') as f:
+                while contents := file.file.read(1024 * 1024):
+                    f.write(contents)
 
-                return {"res": f"Successfully uploaded {file.filename}"}
+            return {"res": f"Successfully uploaded {file.filename}"}
 
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"There was an error uploading the file: {str(e)}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"There was an error uploading the file: {str(e)}")
 
-            finally:
-                file.file.close()
+        finally:
+            file.file.close()
 
-        else:
-            raise HTTPException(status_code=400, detail=f"Invalid filename: {file.filename}")
+    else:
+        raise HTTPException(status_code=400, detail=f"Invalid filename: {file.filename}")
 
-    return {"res": "Upload feature not available in production mode."}
+    # return {"res": "Upload feature not available in production mode."}
 
 
 @router.get("/download/{path:path}")

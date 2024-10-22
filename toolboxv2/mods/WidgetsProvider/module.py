@@ -57,8 +57,9 @@ async def open_widget(app: App, request, name: str, **kwargs):
     if name not in all_widgets:
         return "invalid widget name " +str(name)+" Valid ar :" + str(all_widgets)
     w = await app.a_run_any((name, "get_widget"), request=request, **kwargs)
+    print("""WWWW""", w)
     if isinstance(w, asyncio.Task):
         w = await w
         w = w.as_result().get()
-    app.print(f"opened widget {name}")
+    app.print(f"opened widget {name} {w}")
     return w

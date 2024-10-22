@@ -159,7 +159,7 @@ class BoardWidget(MainTool, BaseWidget):
     def on_exit(self):
         pass
 
-    async def get_widget(self, request):
+    async def get_widget(self, request, **kwargs):
         w_id = self.get_s_id(request)
         if w_id.is_error():
             return w_id

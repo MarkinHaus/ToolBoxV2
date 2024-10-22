@@ -88,35 +88,35 @@ def process_files(directory: str) -> TbState:
     api = {}
     app = {}
     scann_dirs = ["utils", "mods", "runnable", "api", "app", "mods_sto"]
-    for root, dirs, files in os.walk(directory):
-        if root not in scann_dirs:
-            continue
-        for file_name in files:
-            if file_name.endswith(".zip") and 'mods_sto' in root:
-                file_path = os.path.join(root, file_name)
-                shasum = calculate_shasum(file_path)
+    for s_dir in scann_dirs:
+        for root, dirs, files in os.walk(directory+'/'+s_dir):
+            for file_name in files:
+                if file_name.endswith(".zip") and 'mods_sto' in root:
+                    file_path = os.path.join(root, file_name)
+                    shasum = calculate_shasum(file_path)
 
-                element = DefaultFilesFormatElement()
-                element.shasum = shasum
-                installable[file_name] = element
+                    element = DefaultFilesFormatElement()
+                    element.shasum = shasum
+                    installable[file_name] = element
 
-            if file_name.endswith(".py"):
-                file_path = os.path.join(root, file_name)
-                shasum = calculate_shasum(file_path)
+                if file_name.endswith(".py"):
+                    file_path = os.path.join(root, file_name)
+                    shasum = calculate_shasum(file_path)
 
-                element = DefaultFilesFormatElement()
-                element.shasum = shasum
+                    element = DefaultFilesFormatElement()
+                    element.shasum = shasum
 
-                if 'utils' in root:
-                    utils[file_name] = element
-                elif 'mods' in root:
-                    mods[file_name] = element
-                elif 'runnable' in root:
-                    runnable[file_name] = element
-                elif 'api' in root:
-                    api[file_name] = element
-                elif 'app' in root:
-                    app[file_name] = element
+                    if 'utils' in root:
+                        utils[file_name] = element
+                    elif 'mods' in root:
+                        mods[file_name] = element
+                    elif 'runnable' in root:
+                        runnable[file_name] = element
+                    elif 'api' in root:
+                        api[file_name] = element
+                    elif 'app' in root:
+                        app[file_name] = element
+
     return TbState(
         utils=utils,
         mods=mods,

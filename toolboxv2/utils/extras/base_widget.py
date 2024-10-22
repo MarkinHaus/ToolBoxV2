@@ -42,6 +42,7 @@ async def get_user_from_request(app, request):
         user = User()
     return user
 
+
 class BaseWidget:
     def __init__(self, name: str):
         self.name = name
@@ -170,7 +171,7 @@ class BaseWidget:
     async def oa_reload(self, request):
         [_(request) if not asyncio.iscoroutinefunction(_) else await _(request) for _ in self.onReload]
 
-    async def get_widget(self, request):
+    async def get_widget(self, request, **kwargs):
         raise NotImplementedError
 
     def hash_wrapper(self, _id, _salt=''):

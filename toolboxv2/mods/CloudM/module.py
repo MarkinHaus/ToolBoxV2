@@ -108,10 +108,10 @@ class Tools(MainTool, FileHandler):
         self.logger.info(
             f"Time to initialize Tools {self.name} {time.perf_counter() - t0}")
 
-    def load_open_file(self):
+    async def load_open_file(self):
         self.logger.info("Starting cloudM")
         self.load_file_handler()
-        # self.get_version()
+        await self.app.session.login()
 
     def s_version(self):
         return self.version

@@ -311,17 +311,12 @@ def show_version(self):
     return self.version
 
 
-@export(mod_name=Name, version=version, initial=True, state=False)
-async def _login(app: Optional[App] = None):
-    if app is None:
-        app = get_app("CloudM.login")
-    await app.session.login()
-
-
 @export(mod_name=Name, version=version, state=False)
 async def login(m_link: str, app: Optional[App] = None):
     if app is None:
         app = get_app("CloudM.login")
+    if await app.session.login():
+        return
     return await app.session.init_log_in_mk_link(m_link)
 
 

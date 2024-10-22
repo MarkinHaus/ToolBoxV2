@@ -134,13 +134,14 @@ def start(pidname, args, filename):
         p = subprocess.Popen(args, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE)
     pid = p.pid
-    open(filename, "w").write(str(pid))
+    with open(filename, "w", encoding="utf8") as f:
+        f.write(str(pid))
     get_app().sprint(f"Service {pidname} started")
 
 
 def stop(pidfile, pidname):
     try:
-        with open(pidfile, "r") as f:
+        with open(pidfile, "r", encoding="utf8") as f:
             procID = f.readline().strip()
     except IOError:
         print("Process file does not exist")
@@ -172,7 +173,7 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 """
-    with open("tb.service", "w") as f:
+    with open("tb.service", "w", encoding="utf8") as f:
         f.write(service_content)
 
 
@@ -228,7 +229,7 @@ def setup_service_windows():
             runner = runner_
         if os.path.exists(path + '/tb_start.bat'):
             os.remove(path + '/tb_start.bat')
-        with open(path + '/tb_start.bat', "a") as f:
+        with open(path + '/tb_start.bat', "a", encoding="utf8") as f:
             f.write(
                 f"""{sys.executable} -m tb -bg -m {runner}"""
             )
@@ -485,7 +486,7 @@ def run_tests(test_path):
 
     # Führe den Befehl mit subprocess aus
     try:
-        result = subprocess.run(command, check=True)
+        result = subprocess.run(command, check=True, encoding='cp850')
         # Überprüfe den Rückgabewert des Prozesses und gib entsprechend True oder False zurück
         return result.returncode == 0
     except subprocess.CalledProcessError as e:
@@ -538,7 +539,7 @@ async def setup_app():
     pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
     app_pid = str(os.getpid())
 
-    with open(pid_file, "w") as f:
+    with open(pid_file, "w", encoding="utf8") as f:
         f.write(app_pid)
 
     tb_app = get_app(from_="InitialStartUp", name=args.name, args=args, app_con=App)
@@ -696,7 +697,7 @@ async def main():
     """Console script for toolboxv2."""
     tb_app, args = await setup_app()
     with open(os.getenv('CONFIG_FILE', f'{os.path.abspath(__file__).replace("__main__.py", "")}toolbox.yaml'),
-              'r') as config_file:
+              'r', encoding="utf8") as config_file:
         _version = safe_load(config_file)
         __version__ = _version.get('main', {}).get('version', '-.-.-')
 
@@ -784,7 +785,7 @@ async def main():
         if not os.path.exists(pid_file):
             print("You must first run the mode")
         else:
-            with open(pid_file, "r") as f:
+            with open(pid_file, "r", encoding="utf8") as f:
                 app_pid = f.read()
             print(f"Exit app {app_pid}")
             if system() == "Windows":

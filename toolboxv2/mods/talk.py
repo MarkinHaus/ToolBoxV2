@@ -290,35 +290,6 @@ async def upload_audio_isaa(websocket: WebSocket, context="F", all_c="F", v_name
                 workers[0] = 0
                 format_bytes[0] = b''
 
-   #''' except IndentationError as e:
-   #     app.logger.error(f"Error in Talk receiving audio data: {str(e)}")
-    #    await websocket.send_json({"type": "error", "message": str(e)})
-#
-   # finally:
-   #     await websocket.close()'''
-
-    # try:
-    #     while True:
-    #         # Empfangen des Audio-Blobs vom Client
-    #         try:
-    #             audio_data: bytes = await websocket.receive_bytes()
-    #             text = stt(audio_data)['text']
-    #             await stream_response(app, text, websocket, provider=provider,
-    #                               voice_index=[str(x) for x in range(len(v_index) - 1, 10 * len(v_index))].index(
-    #                                   v_index),
-    #                               fetch_memory=context == "T",
-    #                               all_meme=all_c == "T", model_name=v_name, f=f == "T")
-    #         except Exception as e:
-    #             app.logger.error(f"Error in Talk reciving audio data: {str(e)}")
-    #             # text = "Something went wrong. I couldn understand your message!"
-
-
-#
-# except Exception as e:
-#     print(f"Fehler beim Empfangen der Audiodaten: {e}")
-# await websocket.close()
-
-
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True,
         name="main_web_talk_entry", row=True)
 async def main_web_talk_entry(app: App = None, request: Request or None = None, modi=None):

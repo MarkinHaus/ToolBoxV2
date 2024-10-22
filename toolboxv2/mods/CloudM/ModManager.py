@@ -9,12 +9,13 @@ import zipfile
 from typing import Optional
 
 import yaml
+from google.auth.aio.transport import Response
 from tqdm import tqdm
 
 from toolboxv2 import get_app, App, __version__
 from toolboxv2.utils.system.api import find_highest_zip_version_entry
 from toolboxv2.utils.system.session import Session
-from toolboxv2.utils.system.types import ToolBoxInterfaces
+from toolboxv2.utils.system.types import ToolBoxInterfaces, Result
 
 Name = 'CloudM'
 export = get_app(f"{Name}.Export").tb
@@ -240,9 +241,13 @@ async def make_installer(app: Optional[App], module_name: str, base="./mods", up
     zip_path = create_and_pack_module(f"{base}/{module_name}", module_name, version_)
 
     if upload or 'y' in input("uploade zip file ?"):
-        await app.session.upload_file(zip_path, '/installer/upload-file')
-
-    return zip_path
+        res = await app.session.upload_file(zip_path, '/installer/upload-file/')
+        print(res)
+        if isinstance(res, dict):
+            if res.get('res', '').startswith('Successfully uploaded'):
+                return Result.ok(res)
+            return Result.default_user_error(res)
+    return Result.ok(zip_path)
 
 
 @export(mod_name=Name, name="uninstall", test=False)
@@ -270,10 +275,9 @@ async def upload(app: Optional[App], module_name: str):
     zip_path = find_highest_zip_version_entry(module_name, filepath=f'{app.start_dir}/tbState.yaml').get('url', '').split('mods_sto')[-1]
 
     if upload or 'y' in input(f"uploade zip file {zip_path} ?"):
-        await app.session.upload_file(zip_path, '/installer/upload-file')
+        await app.session.upload_file(zip_path, '/installer/upload-file/')
 
 
-@export(mod_name=Name, name="install", test=False)
 def installer(app: Optional[App], module_name: str, _version: str = "-.-.-", update=False):
     if app is None:
         app = get_app(f"{Name}.installer")
@@ -316,7 +320,7 @@ def get_latest(module_name: str):
 
 def run_command(command, cwd=None):
     """Führt einen Befehl aus und gibt den Output zurück."""
-    result = subprocess.run(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+    result = subprocess.run(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True, encoding='cp850')
     return result.stdout
 
 

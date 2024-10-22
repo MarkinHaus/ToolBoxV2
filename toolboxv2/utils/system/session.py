@@ -1,20 +1,17 @@
 import asyncio
 import atexit
-import dataclasses
 import os
-import sys
-import time
 import socket
+
 from requests import Response
 from typing import Optional
 
 import requests
-
 from ..extras.blobs import BlobFile
 from ..singelton_class import Singleton
 from .getting_and_closing_app import get_app, get_logger
 
-from aiohttp import ClientSession, ClientResponse, FormData
+from aiohttp import ClientSession, ClientResponse, MultipartWriter
 
 from ... import Code
 from ...tests.a_util import async_test
@@ -57,6 +54,7 @@ class Session(metaclass=Singleton):
 
         print("Step (1/7)")
         pub_key, prv_key = Code.generate_asymmetric_keys()
+        Code.save_keys_to_files(pub_key, prv_key, get_app().info_dir.replace(get_app().id, ''))
         parsed_url = urlparse(mak_link)
         params = parse_qs(parsed_url.query)
         invitation = params.get('key', [None])[0]
@@ -73,7 +71,18 @@ class Session(metaclass=Singleton):
         if res.is_error():
             return res
         await asyncio.sleep(0.1)
+        return await self.auth_with_prv_key()
 
+    @staticmethod
+    def get_prv_key():
+        pub_key, prv_key = Code.load_keys_from_files(get_app().info_dir.replace(get_app().id, ''))
+        return prv_key
+
+    def if_key(self):
+        return len(self.get_prv_key()) > 0
+
+    async def auth_with_prv_key(self):
+        prv_key = self.get_prv_key()
         print("Step (3/7)")
         challenge = await get_app("Session.InitLogin").run_http('CloudM.AuthManager', 'get_to_sing_data', method="POST",
                                                                 args_='username=' + self.username + '&personal_key=False')
@@ -86,7 +95,9 @@ class Session(metaclass=Singleton):
         print("Step (4/7)")
         claim_data = await get_app("Session.InitLogin").run_http('CloudM.AuthManager', 'validate_device',
                                                                  username=self.username,
-                                                                 signature=Code.create_signature(challenge.get("challenge"), prv_key, salt_length=32),
+                                                                 signature=Code.create_signature(
+                                                                     challenge.get("challenge"), prv_key,
+                                                                     salt_length=32),
                                                                  method="POST")
         claim_data = Result.result_from_dict(**claim_data).print()
 
@@ -116,6 +127,7 @@ class Session(metaclass=Singleton):
                 blob.clear()
                 claim = b''
         if not claim:
+            print("Could not find a claim")
             return False
         async with self.session.request("GET", url=f"{self.base}/validateSession", json={'Jwt_claim': claim.decode(),
                                                                                          'Username': self.username}) as response:
@@ -124,6 +136,8 @@ class Session(metaclass=Singleton):
                 get_logger().info("LogIn successful")
                 self.valid = True
                 return True
+            if response.status == 401 and self.if_key():
+                return await self.auth_with_prv_key()
             get_logger().warning("LogIn failed")
             return False
 
@@ -189,26 +203,28 @@ class Session(metaclass=Singleton):
         # Initialisiere die Session, falls sie nicht bereits gestartet ist
         if self.session is None:
             self.session = ClientSession()
+        upload_url = self.base + upload_url
+        # headers = {'accept': '*/*',
+        #            'Content-Type': 'multipart/form-data'}
+        # file_dict = {"file": open(file_path, "rb")}
+        # response = await self.session.post(upload_url, headers=headers, data=file_dict)
+        with open(file_path, 'rb') as f:
+            file_data = f.read()
 
-        # Bereite die Datei für den Upload vor
-        form = FormData()
-        form.add_field('file',
-                       open(file_path, 'rb'),
-                       filename=os.path.basename(file_path),
-                       content_type='application/octet-stream')
+        with MultipartWriter('form-data') as mpwriter:
+            part = mpwriter.append(file_data)
+            part.set_content_disposition('form-data', name='file', filename=os.path.basename(file_path))
 
-        # Erstelle die vollständige URL
-        full_url = self.base + upload_url
+            async with self.session.post(upload_url, data=mpwriter) as response:
 
-        # Sende die Datei
-        async with self.session.post(full_url, data=form) as response:
-            # Prüfe, ob der Upload erfolgreich war
-            if response.status == 200:
-                print(f"Datei {file_path} erfolgreich hochgeladen.")
-                return await response.json()
-            else:
-                print(f"Fehler beim Hochladen der Datei {file_path}. Status: {response.status}")
-                return None
+                # Prüfe, ob der Upload erfolgreich war
+                if response.status == 200:
+                    print(f"Datei {file_path} erfolgreich hochgeladen.")
+                    return await response.json()
+                else:
+                    print(f"Fehler beim Hochladen der Datei {file_path}. Status: {response.status}")
+                    print(await response.text())
+                    return None
 
     def exit(self):
         with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="w") as blob:

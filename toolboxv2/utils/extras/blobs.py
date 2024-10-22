@@ -15,6 +15,7 @@ from ... import get_app, Singleton
 class BlobStorage(metaclass=Singleton):
 
     def __init__(self, storage_directory=None, Fehlerkorrekturbytes=10):
+        self.blob_ids_file_map = {}
         if storage_directory is None:
             storage_directory = get_app(from_="BlobStorage").data_dir
         self.storage_directory = storage_directory
@@ -133,13 +134,14 @@ class BlobStorage(metaclass=Singleton):
         return str(hash(os.urandom(32)))
 
     def _get_blob_filename(self, blob_id):
-        return os.path.join(self.storage_directory, blob_id)
+        return os.path.join(self.storage_directory, blob_id+'.blob')
 
     def _get_all_blob_ids(self):
         filenames = []
         for root, dirs, files in os.walk(self.storage_directory):
             for file in files:
-                filenames.append(file)
+                if file.endswith('.blob'):
+                    filenames.append(file.replace('.blob', ''))
         return filenames
 
     def _save_blob(self, blob_id, blob_data):
@@ -149,6 +151,7 @@ class BlobStorage(metaclass=Singleton):
 
     def _load_blob(self, blob_id):
         blob_file = self._get_blob_filename(blob_id)
+        self.blob_ids_file_map[blob_id] = blob_file
         if not os.path.exists(blob_file):
             return self.create_blob(pickle.dumps({}), blob_id)
         with open(blob_file, 'rb') as f:
@@ -161,6 +164,8 @@ class BlobStorage(metaclass=Singleton):
 
 class BlobFile(io.IOBase):
     def __init__(self, filename: str, mode='r', storage=None, key=None):
+        if not isinstance(filename, str):
+            filename = str(filename)
         if filename.startswith('/') or filename.startswith('\\'):
             filename = filename[1:]
         self.filename = filename

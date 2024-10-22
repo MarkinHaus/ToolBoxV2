@@ -18,7 +18,7 @@ def run_command(command: str, live: bool = True) -> Tuple[bool, Optional[str]]:
 
     try:
         # If not live, capture output and return it
-        result = subprocess.run(command, shell=True, check=True, text=True, capture_output=True)
+        result = subprocess.run(command, shell=True, check=True, text=True, capture_output=True, encoding='cp850')
         return True, result.stdout
     except subprocess.CalledProcessError as e:
         print(f"Error executing command: {e}", file=sys.stderr)

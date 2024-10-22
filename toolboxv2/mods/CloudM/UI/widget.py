@@ -386,7 +386,7 @@ async def remove(app, modId: str, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="get_widget")
-async def get_widget(app: App = None, request: Request or None = None):
+async def get_widget(app: App = None, request: Request or None = None, **kwargs):
     if app is None:
         app = get_app(from_=f"{Name}.get_widget")
 

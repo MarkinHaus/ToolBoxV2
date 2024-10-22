@@ -1,7 +1,8 @@
 import os
 import re
 import subprocess
-
+import time
+from typing import List, Dict
 
 # Define the directory where PID files are stored
 PID_DIRECTORY = "./pids"
@@ -23,41 +24,122 @@ def get_service_pids(info_dir):
             with open(os.path.join(info_dir, pid_file), 'r') as file:
                 pid = file.read().strip()
                 # Store the PID using a formatted key
-                services[f"{service_name} - {services_type}"] = pid
+                services[f"{service_name} - {services_type}"] = int(pid)
     return services
 
 
-def check_process_status(pid):
-        """Checks the status of a process using the PID."""
-    #try:
-        # Cross-platform command to check if a process is running
-        if os.name == 'nt':  # Windows
-            command = f'tasklist /FI "PID eq {pid}"'
-            result = subprocess.run(command, capture_output=True, text=True, shell=True)
-            output = result.stdout
-            if output is None:
-                return YELLOW_CIRCLE
-            elif pid in output:
-                return GREEN_CIRCLE
-            else:
-                return RED_CIRCLE
-        else:  # Unix/Linux/Mac
-            command = f'ps -p {pid} -o comm='
-            result = subprocess.run(command, capture_output=True, text=True, shell=True)
-            output = result.stdout.strip()
-            print(output)
-            return GREEN_CIRCLE if output else RED_CIRCLE
-    #except Exception as e:
-    #    return f"error: {e}"
+def check_multiple_processes(pids: List[int]) -> Dict[int, str]:
+    """
+    Checks the status of multiple processes in a single system call.
+    Returns a dictionary mapping PIDs to their status (GREEN_CIRCLE, RED_CIRCLE, or YELLOW_CIRCLE).
+    """
+    if not pids:
+        return {}
+
+    pid_status = {}
+
+    if os.name == 'nt':  # Windows
+        try:
+            # Windows tasklist requires separate /FI for each filter
+            command = f'tasklist'
+
+            # Add encoding handling for Windows
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                shell=True,
+                encoding='cp850'  # Use cp850 for Windows console output
+            )
+            # Create a set of running PIDs from the output
+            running_pids = set()
+            for line in result.stdout.lower().split('\n'):
+                for pid in pids:
+                    if str(pid) in line:
+                        running_pids.add(pid)
+            # Assign status based on whether PID was found in output
+            for pid in pids:
+                if pid in running_pids:
+                    pid_status[pid] = GREEN_CIRCLE
+                else:
+                    pid_status[pid] = RED_CIRCLE
+
+        except subprocess.SubprocessError as e:
+            print(f"SubprocessError: {e}")  # For debugging
+            # Mark all as YELLOW_CIRCLE if there's an error running the command
+            for pid in pids:
+                pid_status[pid] = YELLOW_CIRCLE
+        except UnicodeDecodeError as e:
+            print(f"UnicodeDecodeError: {e}")  # For debugging
+            # Try alternate encoding if cp850 fails
+            try:
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    shell=True,
+                    encoding='utf-8'
+                )
+                running_pids = set()
+                for line in result.stdout.lower().split('\n'):
+                    for pid in pids:
+                        if str(pid) in line:
+                            running_pids.add(pid)
+
+                for pid in pids:
+                    pid_status[pid] = GREEN_CIRCLE if pid in running_pids else RED_CIRCLE
+            except Exception as e:
+                print(f"Failed with alternate encoding: {e}")  # For debugging
+                for pid in pids:
+                    pid_status[pid] = YELLOW_CIRCLE
+
+    else:  # Unix/Linux/Mac
+        try:
+            pids_str = ','.join(str(pid) for pid in pids)
+            command = f'ps -p {pids_str} -o pid='
+
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                shell=True,
+                encoding='utf-8'
+            )
+            running_pids = set(int(pid) for pid in result.stdout.strip().split())
+
+            for pid in pids:
+                pid_status[pid] = GREEN_CIRCLE if pid in running_pids else RED_CIRCLE
+
+        except subprocess.SubprocessError as e:
+            print(f"SubprocessError: {e}")  # For debugging
+            for pid in pids:
+                pid_status[pid] = YELLOW_CIRCLE
+
+    return pid_status
 
 
-def get_service_status(dir):
+services_data_sto = [{}]
+services_data_sto_last_update_time = [0]
+
+
+def get_service_status(dir: str) -> str:
     """Displays the status of all services."""
-    services = get_service_pids(dir)
-    res_s = "Service(s) :" + ("\n" if len(services.keys()) > 1 else '')
+    if time.time()-services_data_sto_last_update_time[0] > 30:
+        services = get_service_pids(dir)
+        services_data_sto[0] = services
+        services_data_sto_last_update_time[0] = time.time()
+    else:
+        services = services_data_sto[0]
+    if not services:
+        return "No services found"
+
+    # Get status for all PIDs in a single call
+    pid_statuses = check_multiple_processes(list(services.values()))
+
+    # Build the status string
+    res_s = "Service(s):" + ("\n" if len(services) > 1 else ' ')
     for service_name, pid in services.items():
-        status = check_process_status(pid)
-        res_s += f" - {service_name}: PID {pid} - Status: {status}\n"
-        if status == YELLOW_CIRCLE and os.path.exists(dir+'/'+'-'.join(service_name.replace(' ','').split('-')[::-1])+'.pid'):
-            os.remove(dir+'/'+'-'.join(service_name.replace(' ','').split('-')[::-1])+'.pid')
-    return res_s
+        status = pid_statuses.get(pid, YELLOW_CIRCLE)
+        res_s += f"{status} {service_name} (PID: {pid})\n"
+
+    return res_s.rstrip()

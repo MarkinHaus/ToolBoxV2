@@ -444,6 +444,8 @@ class AppType:
     logger: logging
     logging_filename: str
 
+    api_allowed_mods_list: List[str] = []
+
     version: str
     loop: asyncio.AbstractEventLoop
 

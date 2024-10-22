@@ -185,6 +185,75 @@ class Code:
         return pem_public_key, pem_private_key
 
     @staticmethod
+    def save_keys_to_files(public_key: str, private_key: str, directory: str = "keys") -> None:
+        """
+        Speichert die generierten Schlüssel in separate Dateien.
+        Der private Schlüssel wird mit dem Device Key verschlüsselt.
+
+        Args:
+            public_key (str): Der öffentliche Schlüssel im PEM-Format
+            private_key (str): Der private Schlüssel im PEM-Format
+            directory (str): Das Verzeichnis, in dem die Schlüssel gespeichert werden sollen
+        """
+        # Erstelle das Verzeichnis, falls es nicht existiert
+        os.makedirs(directory, exist_ok=True)
+
+        # Hole den Device Key
+        device_key = DEVICE_KEY()
+
+        # Verschlüssele den privaten Schlüssel mit dem Device Key
+        encrypted_private_key = Code.encrypt_symmetric(private_key, device_key)
+
+        # Speichere den öffentlichen Schlüssel
+        public_key_path = os.path.join(directory, "public_key.pem")
+        with open(public_key_path, "w") as f:
+            f.write(public_key)
+
+        # Speichere den verschlüsselten privaten Schlüssel
+        private_key_path = os.path.join(directory, "private_key.pem")
+        with open(private_key_path, "w") as f:
+            f.write(encrypted_private_key)
+
+        print("Saved keys in ", public_key_path)
+
+    @staticmethod
+    def load_keys_from_files(directory: str = "keys") -> (str, str):
+        """
+        Lädt die Schlüssel aus den Dateien.
+        Der private Schlüssel wird mit dem Device Key entschlüsselt.
+
+        Args:
+            directory (str): Das Verzeichnis, aus dem die Schlüssel geladen werden sollen
+
+        Returns:
+            (str, str): Ein Tupel aus öffentlichem und privatem Schlüssel
+
+        Raises:
+            FileNotFoundError: Wenn die Schlüsseldateien nicht gefunden werden können
+        """
+        # Pfade zu den Schlüsseldateien
+        public_key_path = os.path.join(directory, "public_key.pem")
+        private_key_path = os.path.join(directory, "private_key.pem")
+
+        # Prüfe ob die Dateien existieren
+        if not os.path.exists(public_key_path) or not os.path.exists(private_key_path):
+            return "", ""
+
+        # Hole den Device Key
+        device_key = DEVICE_KEY()
+
+        # Lade den öffentlichen Schlüssel
+        with open(public_key_path, "r") as f:
+            public_key = f.read()
+
+        # Lade und entschlüssele den privaten Schlüssel
+        with open(private_key_path, "r") as f:
+            encrypted_private_key = f.read()
+            private_key = Code.decrypt_symmetric(encrypted_private_key, device_key)
+
+        return public_key, private_key
+
+    @staticmethod
     def encrypt_asymmetric(text: str, public_key_str: str) -> str:
         """
         Verschlüsselt einen Text mit einem gegebenen öffentlichen Schlüssel.
