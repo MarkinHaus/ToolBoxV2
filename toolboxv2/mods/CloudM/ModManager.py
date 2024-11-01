@@ -9,7 +9,6 @@ import zipfile
 from typing import Optional
 
 import yaml
-from google.auth.aio.transport import Response
 from tqdm import tqdm
 
 from toolboxv2 import get_app, App, __version__
