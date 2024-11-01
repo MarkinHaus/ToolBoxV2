@@ -150,6 +150,8 @@ class BaseWidget:
     @staticmethod
     async def get_user_from_request(app, request):
         from toolboxv2.mods.CloudM import User
+        if request is None:
+            return User()
         name = request.session.get('live_data', {}).get('user_name', "Cud be ur name")
         if name != "Cud be ur name":
             user = await app.a_run_any(CLOUDM_AUTHMANAGER.GET_USER_BY_NAME,
