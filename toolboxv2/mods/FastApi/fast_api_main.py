@@ -3,6 +3,7 @@ import json
 import os
 from datetime import datetime, timedelta
 from inspect import signature
+from typing import List
 
 import fastapi
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -794,6 +795,7 @@ async def helper(id_name):
             params: list = function_data.get('params')
             sig: signature = function_data.get('signature')
             state: bool = function_data.get('state')
+            api_methods: List[str] = function_data.get('api_methods', ["AUTO"])
 
             tb_func, error = tb_app.get_function((mod_name, function_name), state=state, specification="app")
 
@@ -819,6 +821,9 @@ async def helper(id_name):
                                                                        mod_name, function_name),
                                                                        get_results=True))
                 if tb_func:
+                    if api_methods != "AUTO":
+                        router.add_api_route('/' + function_name, tb_func, methods=api_methods,
+                                            description=function_data.get("helper", ""))
                     if len(params):
                         router.add_api_route('/' + function_name, tb_func, methods=["POST"],
                                              description=function_data.get("helper", ""))

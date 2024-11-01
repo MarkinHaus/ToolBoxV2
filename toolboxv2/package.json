@@ -10,7 +10,7 @@
     "dev": "tb -c FastApi startDev main && cross-env NODE_OPTIONS=--max-old-space-size=8384 webpack serve --mode development --open",
     "devD": "tb -c FastApi edit-api main_D 0.0.0.0 5000 -c DB edit_cli RR -c FastApi startDev main ${DEV_MODULES} -n debug && cross-env NODE_OPTIONS=--max-old-space-size=8384 webpack serve --mode development",
     "live": "tb -c FastApi start main && cross-env NODE_OPTIONS=--max-old-space-size=8384 webpack serve --mode production",
-    "liveD": "tb -c FastApi edit-api main 0.0.0.0 5000 -c DB edit_cli RR -c FastApi start main && cross-env NODE_OPTIONS=--max-old-space-size=8384 webpack serve --mode production"
+    "liveD": "tb -c FastApi edit-api main 0.0.0.0 5000 -c DB edit_cli RR -c FastApi start main && webpack serve --mode production"
   },
   "dependencies": {
     "@babel/core": "^7.25.7",
@@ -22,18 +22,13 @@
     "css-minimizer-webpack-plugin": "^7.0.0",
     "html-webpack-plugin": "^5.6.0",
     "mini-css-extract-plugin": "^2.9.1",
-    "serve": "^14.2.3",
     "style-loader": "^4.0.0",
-    "tauri": "^0.9.1",
     "terser-webpack-plugin": "^5.3.10",
     "webpack": "^5.95.0",
     "webpack-cli": "^5.1.4",
     "webpack-dev-server": "^5.1.0"
   },
   "devDependencies": {
-    "@tauri-apps/api": "^1.5.3",
-    "@tauri-apps/cli": "^1.5.11",
-    "@types/bun": "latest",
     "compression-webpack-plugin": "^11.1.0",
     "cross-env": "^7.0.3",
     "html-loader": "^5.1.0"

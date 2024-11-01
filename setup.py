@@ -33,6 +33,7 @@ with io.open(path.join(here, "requirements_isaa.txt"), encoding="utf-8") as f:
     all_reqs = f.read().split("\n")
 
 install_requires_isaa = [x.strip() for x in all_reqs if "git+" not in x]
+install_requires_isaa.extend(install_requires_dev[:8])
 
 requirements = []
 

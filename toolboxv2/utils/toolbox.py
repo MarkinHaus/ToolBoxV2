@@ -1292,6 +1292,7 @@ class App(AppType, metaclass=Singleton):
                           state=None,
                           pre_compute=None,
                           post_compute=None,
+                          api_methods=None,
                           memory_cache=False,
                           file_cache=False,
                           request_as_kwarg=False,
@@ -1449,6 +1450,7 @@ class App(AppType, metaclass=Singleton):
                 "version": version,
                 "initial": initial,
                 "exit_f": exit_f,
+                "api_methods": api_methods if api_methods is not None else ["AUTO"],
                 "__module__": func.__module__,
                 "signature": sig,
                 "params": params,
@@ -1498,6 +1500,7 @@ class App(AppType, metaclass=Singleton):
            interface: ToolBoxInterfaces or None or str = None,
            pre_compute=None,
            post_compute=None,
+           api_methods=None,
            ):
         """
     A decorator for registering and configuring functions within a module.
@@ -1527,6 +1530,7 @@ class App(AppType, metaclass=Singleton):
         interface (str, optional): The interface type for the function.
         pre_compute (callable, optional): A function to be called before the main function.
         post_compute (callable, optional): A function to be called after the main function.
+        api_methods (list[str], optional): default ["AUTO"] (GET if not params, POST if params) , GET, POST, PUT or DELETE.
 
     Returns:
         function: The decorated function with additional processing and registration capabilities.
@@ -1554,6 +1558,7 @@ class App(AppType, metaclass=Singleton):
                                       file_cache=file_cache,
                                       request_as_kwarg=request_as_kwarg,
                                       row=row,
+                                      api_methods=api_methods,
                                       memory_cache_max_size=memory_cache_max_size,
                                       memory_cache_ttl=memory_cache_ttl)
 

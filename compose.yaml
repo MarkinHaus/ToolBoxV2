@@ -63,6 +63,8 @@ services:
         ports:
             - 5000:5000
             - 6587:6587
+            - 8080:8080
+            - 8000:8000
         deploy:
             update_config:
                 parallelism: 1

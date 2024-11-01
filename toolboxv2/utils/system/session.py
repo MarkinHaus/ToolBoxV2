@@ -52,7 +52,6 @@ class Session(metaclass=Singleton):
             print("Please enter a username")
             return False
 
-        print("Step (1/7)")
         pub_key, prv_key = Code.generate_asymmetric_keys()
         Code.save_keys_to_files(pub_key, prv_key, get_app().info_dir.replace(get_app().id, ''))
         parsed_url = urlparse(mak_link)
@@ -63,11 +62,10 @@ class Session(metaclass=Singleton):
             print('Invalid LoginKey')
             return False
 
-        print("Step (2/7)")
         res = await get_app("Session.InitLogin").run_http("CloudM.AuthManager", "add_user_device", method="POST",
                                                           name=self.username, pub_key=pub_key, invitation=invitation,
                                                           web_data=False, as_base64=False)
-        res = Result.result_from_dict(**res).print()
+        res = Result.result_from_dict(**res)
         if res.is_error():
             return res
         await asyncio.sleep(0.1)
@@ -83,23 +81,21 @@ class Session(metaclass=Singleton):
 
     async def auth_with_prv_key(self):
         prv_key = self.get_prv_key()
-        print("Step (3/7)")
         challenge = await get_app("Session.InitLogin").run_http('CloudM.AuthManager', 'get_to_sing_data', method="POST",
                                                                 args_='username=' + self.username + '&personal_key=False')
 
-        challenge = Result.result_from_dict(**challenge).print()
+        challenge = Result.result_from_dict(**challenge)
         if challenge.is_error():
             return challenge
 
         await asyncio.sleep(0.1)
-        print("Step (4/7)")
         claim_data = await get_app("Session.InitLogin").run_http('CloudM.AuthManager', 'validate_device',
                                                                  username=self.username,
                                                                  signature=Code.create_signature(
                                                                      challenge.get("challenge"), prv_key,
                                                                      salt_length=32),
                                                                  method="POST")
-        claim_data = Result.result_from_dict(**claim_data).print()
+        claim_data = Result.result_from_dict(**claim_data)
 
         claim = claim_data.get("key")
 
@@ -107,15 +103,12 @@ class Session(metaclass=Singleton):
         if claim is None:
             return claim_data
         await asyncio.sleep(0.1)
-        print("Step (5/7)")
         with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="w") as blob:
             blob.clear()
             blob.write(claim.encode())
-        print("Step (6/7)")
         await asyncio.sleep(0.1)
         # Do something with the data or perform further actions
         res = await self.login()
-        print("Step (7/7)")
         return res
 
     async def login(self):

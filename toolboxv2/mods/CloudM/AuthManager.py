@@ -322,7 +322,7 @@ async def get_magic_link_email(app: App, username):
 
     invitation = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
     nl = len(user.name)
-    email_data_result = app.run_any(TBEF.EMAIL_WAITING_LIST.CRATE_MAGIC_LICK_DEVICE_EMAIL,
+    email_data_result = await app.a_run_any(TBEF.EMAIL_WAITING_LIST.CRATE_MAGIC_LICK_DEVICE_EMAIL,
                                     user_email=user.email,
                                     user_name=user.name,
                                     link_id=invitation, nl=nl, get_results=True)
@@ -332,7 +332,7 @@ async def get_magic_link_email(app: App, username):
 
     email_data = email_data_result.get()
 
-    return app.run_any(TBEF.EMAIL_WAITING_LIST.SEND_EMAIL, data=email_data, get_results=True)
+    return await app.a_run_any(TBEF.EMAIL_WAITING_LIST.SEND_EMAIL, data=email_data, get_results=True)
 
     # if not invitation.endswith(user.challenge[12:]):
 

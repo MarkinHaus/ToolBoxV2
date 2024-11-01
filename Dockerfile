@@ -19,7 +19,6 @@ WORKDIR /app
 RUN apt-get update
 RUN apt-get install libasound-dev libportaudio2 libportaudiocpp0 portaudio19-dev -y
 RUN apt-get install gcc npm git -y
-RUN npm install bun
 # Create a non-privileged user that the app will run under.
 
 # Copy the source code into the container.
@@ -47,23 +46,34 @@ COPY ./toolboxv2/index.js ./toolboxv2/index.js
 COPY ./toolboxv2/package.json ./toolboxv2/package.json
 COPY ./toolboxv2/tbState.yaml ./toolboxv2/tbState.yaml
 COPY ./toolboxv2/toolbox.yaml ./toolboxv2/toolbox.yaml
-COPY ./toolboxv2/mods_sto ./toolboxv2/mods_sto
+# COPY ./toolboxv2/mods_sto ./toolboxv2/mods_sto
+COPY ./requirements_dev.txt ./requirements_dev.txt
+COPY ./requirements_isaa.txt ./requirements_isaa.txt
 
 # Install the local application using pip.
-RUN cd ./toolboxv2/web/
-RUN npx bun install
-RUN cd ./../..
-RUN pip install -e .
+
+# RUN npm install --prefix ./toolboxv2
+RUN npm install --prefix ./toolboxv2/web/
+RUN npm install --save-dev webpack-merge --prefix ./toolboxv2/web
+
+RUN pip install -e .[dev]
 # Expose the port that the application listens on.
 
 EXPOSE 5000/tcp
 EXPOSE 5000/udp
+
+EXPOSE 8000/tcp
+EXPOSE 8000/udp
+
+EXPOSE 8080/tcp
+EXPOSE 8080/udp
 
 EXPOSE 6587/tcp
 EXPOSE 6587/udp
 
 EXPOSE 17334/tcp
 EXPOSE 17334/udp
+
 
 # Run the application.
 CMD tb -fg -c FastApi start main -p 5000 -w 0.0.0.0 -m idle

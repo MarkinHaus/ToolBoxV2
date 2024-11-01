@@ -51,6 +51,7 @@ async def ws_send(data, websocket=None):
     time.sleep(0.001)
     await websocket.send_text(data)
 
+
 @router.websocket("/generate_download_zip")
 async def generate_download_zip(websocket: WebSocket):
     await websocket.accept()
@@ -421,8 +422,6 @@ async def create_upload_file(file: UploadFile):
 
     else:
         raise HTTPException(status_code=400, detail=f"Invalid filename: {file.filename}")
-
-    # return {"res": "Upload feature not available in production mode."}
 
 
 @router.get("/download/{path:path}")

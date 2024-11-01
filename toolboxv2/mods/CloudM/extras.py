@@ -255,7 +255,7 @@ async def register_initial_root_user(app: App, email=None):
     if email is None:
         email = input("enter ure Email:")
     invitation = get_invitation(app=app).get()
-    ret = app.run_any(TBEF.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
+    ret = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
                       username="root",
                       email=email,
                       invitation=invitation, get_results=True)

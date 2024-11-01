@@ -40,45 +40,6 @@ class Tools(MainTool, FileHandler):
             "all": [
                 ["Version", "Shows current Version"],
                 ["api_Version", "Shows current Version"],
-                [
-                    "NEW", "crate a boilerplate file to make a new mod",
-                    "add is case sensitive", "flags -fh for FileHandler",
-                    "-func for functional bas Tools els class based"
-                ],
-                [
-                    "download", "download a mod from MarkinHaus server",
-                    "add is case sensitive"
-                ],
-                [
-                    "#update-core", "update ToolBox from (git) MarkinHaus server ",
-                    "add is case sensitive"
-                ],
-                [
-                    "upload", "upload a mod to MarkinHaus server",
-                    "add is case sensitive"
-                ],
-                ["first-web-connection", "set up a web connection to MarkinHaus"],
-                ["create-account", "create a new account"],
-                ["login", "login with Username & password"],
-                ["api_create_user", "create a new user - api instance"],
-                ["api_validate_jwt", "validate a  user - api instance"],
-                ["validate_jwt", "validate a user"],
-                ["api_log_in_user", "log_in user - api instance"],
-                ["api_log_out_user", "log_out user - api instance"],
-                ["api_email_waiting_list", "email_waiting_list user - api instance"],
-                ["download_api_files", "download mods"],
-                ["get-init-config", "get-init-config mods"],
-                ["mod-installer", "installing mods via json url"],
-                ["mod-remover", "remover mods via json url"],
-                [
-                    "wsGetI", "remover mods via json url", math.inf, 'get_instance_si_id'
-                ],
-                ["validate_ws_id", "remover mods via json url", math.inf],
-                ["system_init", "Init system", math.inf, 'prep_system_initial'],
-                ["close_user_instance", "close_user_instance", math.inf],
-                ["get_user_instance", "get_user_instance only programmatic", math.inf],
-                ["set_user_level", "set_user_level only programmatic", math.inf],
-                ["make_installable", "crate pack for toolbox"],
             ],
             "name": "cloudM",
             "Version": self.get_version,
