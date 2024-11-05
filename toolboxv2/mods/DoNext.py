@@ -73,6 +73,7 @@ template = """<script src="/index.js" type="module" defer></script><div><!DOCTYP
             font-size: 0.9em;
             margin-left: 6px;
             max-width: 100px;
+            color: #000000;
         }
 
         .badge.priority-1 { background: #ff4d4f; color: white; }
@@ -150,6 +151,8 @@ template = """<script src="/index.js" type="module" defer></script><div><!DOCTYP
             width: 90%;
             max-width: 500px;
             margin: 50px auto;
+            height: 90%;
+            overflow-y: auto;
         }
 
         .input-group {
@@ -170,6 +173,8 @@ template = """<script src="/index.js" type="module" defer></script><div><!DOCTYP
             border: 1px solid #d9d9d9;
             border-radius: 8px;
             font-size: 1em;
+            background-color:  #e3e8ef;
+            color: #000000;
         }
 
         .history-section {
@@ -527,7 +532,6 @@ function renderSubActions(parentId, data) {
             </div>
             <div class="button-group">
                 <button class="btn btn-primary" onclick="startAction('${action.id}')">Start</button>
-                <button class="btn btn-secondary" onclick="openNewTaskModal('${action.id}')">Add Sub-action</button>
                 <button class="btn btn-remove" onclick="removeAction('${action.id}')">Remove</button>
             </div>
         </div>
@@ -561,7 +565,10 @@ function removeAction(actionId) {
     fetch(API_BASE+`/remove-action?actionId=${actionId}`, {
         method: 'POST'
     })
-    .then(response => console.log(response.json()))
+    .then(response => {
+    console.log(response.json());
+    refreshActionHierarchy();
+    })
 }
 function startAction(actionId) {
     fetch(API_BASE+`/current-action?actionId=${actionId}`, {
@@ -711,7 +718,6 @@ class Action(BaseModel):
         for field in ["fixed_time", "created_at", "last_completed", "next_due"]:
             if isinstance(data.get(field), datetime):
                 data[field] = data[field].isoformat()
-        print(data)
         return data
 
     @classmethod
@@ -736,7 +742,6 @@ class HistoryEntry(BaseModel):
         for field in ["timestamp"]:
             if isinstance(data.get(field), datetime):
                 data[field] = data[field].isoformat()
-        print(data)
         return data
 
     @classmethod
@@ -946,7 +951,7 @@ async def api_new_action(app, request):
 
     user_manager = await get_manager(app, request)
 
-    user_manager.new_action(**body)
+    user_manager.new_action(body)
 
     return JSONResponse({'status': 'success'})
 
