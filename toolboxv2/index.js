@@ -118,28 +118,8 @@ if (document.getElementById("MainContent")){
         helper_dome = document.body
     }
 
-    // document.body.innerHTML = '';
-
-    router("/index.html", false, "root", helper_dome)
-
-    // updateDome(helper_dome)
-
-    window.history.pushState({ url: stoUrl, TB: state.TBv, TBc: state.TBc }, "", stoUrl);
-    console.log("saved:", stoUrl)
-    // window.location.href = "/"
-     //setTimeout(()=>{
-    // const bodyClone = document.body.cloneNode(true);
-
-
-    // renderer(document.body.innerHTML, true, "main", helper_dome, false)
-
-    setTimeout(()=>{
-        if (firstDiv){
-            renderer({content:helper_dome.innerHTML, insert:true, Dome:document.body})
-        }
-        // document.body.innerHTML = helper_dome.innerHTML;
-         DOME = document.getElementById("MainContent")
-         console.log("c DOME:", DOME)
+    function helper_init() {
+        console.log("c DOME:", DOME)
         if (firstDiv){
             DOME.appendChild(firstDiv)
         }
@@ -158,16 +138,31 @@ if (document.getElementById("MainContent")){
          }
 
         linksInit()
-        // renderer({extend:true, helper:bodyClone})
-    }, 350)
-    // router("/index.html", false, "root", document.body)
-    // setTimeout(()=>{
-    //     DOME = document.getElementById("MainContent")
-    //     console.log("c DOME:", DOME)
-    //     initDome()
-    //     if (stoUrl && stoUrl !== "/index.html" && stoUrl !== "index.html" && stoUrl !== ""){stoUrl="/web/core0/index.html"}
-    //     router(stoUrl)
-    // }, 50)
+
+        window.history.pushState({ url: stoUrl, TB: state.TBv, TBc: state.TBc }, "", stoUrl);
+        console.log("saved:", stoUrl)}
+
+    router("/index.html", false, "root", helper_dome, ()=>{ setTimeout(()=>{
+          if (firstDiv){
+           renderer({content:helper_dome.innerHTML, insert:true, Dome:document.body})
+         }
+        // document.body.innerHTML = helper_dome.innerHTML;
+         DOME = document.getElementById("MainContent")
+
+         if (!DOME) {
+            function delay(time) {
+                return new Promise(resolve => setTimeout(resolve, time));
+            }
+
+            delay(4000).then(() => helper_init());
+         }else{
+            helper_init()
+         }
+
+    }, 250)})
+
+    // setTimeout(, 350)
+
 
 }
 try{
@@ -389,7 +384,7 @@ function dashboard_init() {
 }
 
 // Router
-function router(url, extend = false, id = "main", Dome = DOME) {
+function router(url, extend = false, id = "main", Dome = DOME, callback=null) {
 
     // console.log("[url]:", url.toString())
     if (url.startsWith(state.TBv.base)) {
@@ -511,12 +506,16 @@ function router(url, extend = false, id = "main", Dome = DOME) {
 
         }
 
-    }, 1)
+    }, 0)
 
     const preUrl = window.history.state?window.history.state.url:undefined
 
     if (!extend && !window.__TAURI__){
         window.history.pushState({ url: cleanUrl(url), preUrl, TB: state.TBv, TBc: state.TBc }, "", cleanUrl(url));
+    }
+
+    if (callback){
+        callback();
     }
 }
 
@@ -809,6 +808,9 @@ window.TBf.initVar("linkToggle", [false])
 function linksInit(){
 
     const linksButton = document.querySelector('#links');
+    if (!linksButton){
+        return;
+    }
     linksButton.style.transition = "transform 0.5s ease";
     let linksContent =  `<div class="links-form" >
             <ul>

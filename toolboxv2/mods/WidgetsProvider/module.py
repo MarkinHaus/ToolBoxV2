@@ -1,4 +1,7 @@
 import asyncio
+
+from starlette.responses import JSONResponse
+
 from toolboxv2 import get_app, App, Result, TBEF, Code
 
 from ..CloudM import User
@@ -20,7 +23,7 @@ def get_s_id(request):
     return Result.ok(sID)
 
 
-@export(mod_name=Name, version=version)
+@export(mod_name=Name, version=version, row=True)
 def get_all_widget_mods(app: App):
     global all_widgets
     if len(all_widgets) != 0:
@@ -33,7 +36,7 @@ def get_all_widget_mods(app: App):
             continue
         valid_widgets.append(widget_mod)
     all_widgets = valid_widgets
-    return all_widgets
+    return JSONResponse(all_widgets)
 
 
 @export(mod_name=Name, version=version)

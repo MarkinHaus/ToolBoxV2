@@ -29,7 +29,7 @@ class DoNextWidget(MainTool, BaseWidget):
         self.register(self.app, self.get_widget, self.version)
         self.register(self.app, self.fetch_tasks, self.version, name="tasks", api_methods=["GET"], row=True)
         self.register(self.app, self.save_task, self.version, name="save_task", api_methods=["POST"])
-        self.register(self.app, self.save_task_history, self.version, name="save_history", api_methods=["POST"])
+        self.register(self.app, self.save_task_history, self.version, name="history", api_methods=["POST"])
         self.register(self.app, self.get_task_history, self.version, name="task_history", api_methods=["GET"], row=True)
 
     async def get_blob_storage(self, request):
@@ -50,7 +50,6 @@ class DoNextWidget(MainTool, BaseWidget):
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Task Manager V2</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/date-fns/2.30.0/date-fns.min.js"></script>
     <style>
         * {
             box-sizing: border-box;
