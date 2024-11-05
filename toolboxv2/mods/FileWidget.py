@@ -572,6 +572,9 @@ class FileWidget(MainTool, BaseWidget):
 
     async def handle_upload(self, request: Request):
 
+        if request is None:
+            return None
+
         body = await request.body()
         storage = await self.get_blob_storage(request)
 
