@@ -5,13 +5,17 @@ import asyncio
 import time
 import unittest
 
-from rich.traceback import install
+try:
+    from rich.traceback import install
+    install(show_locals=True)
+except ImportError:
+    pass
 
 from toolboxv2 import MainTool, FileHandler, Style, get_app
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.security.cryp import Code
 
-install(show_locals=True)
+
 
 
 class TestToolboxv2Mods(unittest.TestCase):

@@ -3,7 +3,11 @@ import atexit
 import os
 import socket
 
-from fastapi import Response
+try:
+    from fastapi import Response
+except ImportError:
+    class Response:
+        pass
 from typing import Optional
 
 import requests
