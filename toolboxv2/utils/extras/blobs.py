@@ -19,6 +19,7 @@ class BlobStorage(metaclass=Singleton):
         if storage_directory is None:
             storage_directory = get_app(from_="BlobStorage").data_dir
         self.storage_directory = storage_directory
+        os.makedirs(storage_directory, exist_ok=True)
         self.rs = reedsolo.RSCodec(Fehlerkorrekturbytes)  # Reed-Solomon-Code mit 10 Fehlerkorrekturbytes
 
     def update_self_link(self, blob_id):

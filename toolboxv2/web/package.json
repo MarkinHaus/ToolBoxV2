@@ -6,7 +6,7 @@
   "dependencies": {
     "@picocss/pico": "^2.0.6",
     "highlight.js": "^11.8.0",
-    "htmx.org": "^1.9.10",
+    "htmx.org": "^2.0.0",
     "marked": "^5.1.0",
     "marked-highlight": "^2.0.1",
     "re_simple_toolboxv2": "file:..",

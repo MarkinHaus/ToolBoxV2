@@ -300,7 +300,7 @@ async def main_web_talk_entry(app: App = None, request: Request or None = None, 
     if user.name == "":
         return HTMLResponse(content="<p>Invalid User Pleas Log In <a href='/'>Home</a></p>")
 
-    return HTMLResponse(content='''<script src="/index.js" type="module" defer></script><div>
+    return HTMLResponse(content='''<div>
     <style>
         #container {
             display: flex;

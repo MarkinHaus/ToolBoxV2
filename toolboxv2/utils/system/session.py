@@ -3,7 +3,7 @@ import atexit
 import os
 import socket
 
-from requests import Response
+from fastapi import Response
 from typing import Optional
 
 import requests
@@ -23,6 +23,26 @@ from .types import Result
 # class LocalUser:
 #    name:str
 #    uid:str
+
+class RequestSession(Response):
+
+    def __init__(self, session, body, json, row):
+        super().__init__()
+        self.session = session
+        self._body = body
+        self._json = json
+        self.row = row
+
+    def body(self):
+        if isinstance(self._body, bytes):
+            return self._body
+        return self._body()
+
+    def json(self):
+        if isinstance(self._json, dict):
+            return self._json
+        return self._json()
+
 
 class Session(metaclass=Singleton):
 

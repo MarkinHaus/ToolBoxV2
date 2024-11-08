@@ -9,8 +9,7 @@ import {
     TetrahedronGeometry,
     Mesh
 
-} from '/web/node_modules/three/src/Three.js';
-
+} from "/web/node_modules/three/src/Three.js";
 
 // Create a WebGLRenderer
 export const renderer = new WebGLRenderer({ antialias: true });

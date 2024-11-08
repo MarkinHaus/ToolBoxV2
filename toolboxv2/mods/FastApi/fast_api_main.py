@@ -3,21 +3,23 @@ import json
 import os
 from datetime import datetime, timedelta
 from inspect import signature
+from pathlib import Path
 from typing import List
 
 import fastapi
+from numpy.core.defchararray import endswith
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse, FileResponse
+from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse, FileResponse, Response
 from starlette.websockets import WebSocketDisconnect
 from fastapi.responses import RedirectResponse
-from tqdm import tqdm
 
 from toolboxv2.tests.a_util import async_test
+from toolboxv2.utils.system.session import RequestSession
 from toolboxv2.utils.extras.blobs import BlobFile
 from toolboxv2.utils.security.cryp import DEVICE_KEY, Code
 
-from fastapi import FastAPI, Request, WebSocket, APIRouter
+from fastapi import FastAPI, Request, WebSocket, APIRouter, HTTPException, Depends
 import sys
 import time
 from fastapi.middleware.cors import CORSMiddleware
@@ -59,6 +61,8 @@ args.sysPrint = True
 tb_app = get_app(from_="init-api-get-tb_app", name=id_name, args=args, sync=True)
 
 manager = tb_app.get_mod("WebSocketManager").get_pools_manager()
+
+pattern = ['.png', '.jpg', '.jpeg', '.js', '.css', '.ico', '.gif', '.svg', '.wasm']
 
 
 # with Spinner("loding mods", symbols="b"):
@@ -485,7 +489,7 @@ def protect_url_split_helper(url_split):
     elif url_split[1] == "api" and url_split[2] in [
         'CloudM.AuthManager',
         'email_waiting_list'
-    ]+tb_app.api_allowed_mods_list:
+    ] + tb_app.api_allowed_mods_list:
         return False
 
     return True
@@ -513,6 +517,15 @@ async def protector(request: Request, call_next):
         return response
 
 
+def request_to_request_session(request):
+    return RequestSession(
+        session=request.session,
+        body=lambda: async_test(request.body),
+        json=lambda: async_test(request.json),
+        row=request,
+    )
+
+
 async def user_runner(request, call_next):
     if not request:
         return HTMLResponse(status_code=501, content="No request")
@@ -534,7 +547,7 @@ async def user_runner(request, call_next):
     query_params = dict(request.query_params)
 
     if request.session['live_data'].get('GET_R', False):
-        query_params['request'] = request
+        query_params['request'] = request_to_request_session(request)
 
     result = await tb_app.a_run_function((modul_name, fuction_name),
                                          tb_run_with_specification=request.session['live_data'].get('spec', 'app'),
@@ -544,14 +557,18 @@ async def user_runner(request, call_next):
     request.session['live_data']['RUN'] = False
     request.session['live_data']['GET_R'] = False
 
+    print(f"RESULT is ========== type {type(result)}")
+
     if result is None:
         return HTMLResponse(status_code=200, content=result)
 
-    if not isinstance(result, Request) and not isinstance(result, ApiResult) and isinstance(result, str):
+    if isinstance(result, str):
         return HTMLResponse(status_code=200, content=result)
 
     if not isinstance(result, Request) and not isinstance(result, ApiResult):
-        return result
+        if isinstance(result, Response):
+            return result
+        return JSONResponse(result)
 
     if result.info.exec_code == 100:
         response = await call_next(request)
@@ -574,27 +591,27 @@ async def user_runner(request, call_next):
 
 @app.get("/")
 async def index():
-    return RedirectResponse(url="/web/core0/index.html")
+    return RedirectResponse(url="/web/")
 
 
 @app.get("/index.js")
 async def index0():
-    return RedirectResponse(url="/web/index.js")
+    return serve_app_func("main.js")
 
 
 @app.get("/index.html")
 async def indexHtml():
-    return RedirectResponse(url="/web/index.html")
+    return serve_app_func("")
 
 
 @app.get("/tauri")
 async def index():
-    return RedirectResponse(url="/web/assets/widgetControllerLogin.html")
+    return serve_app_func("/web/assets/widgetControllerLogin.html")
 
 
 @app.get("/favicon.ico")
 async def index():
-    return RedirectResponse(url="/web/favicon.ico")
+    return serve_app_func('/web/favicon.ico')
     # return "Willkommen bei Simple V0 powered by ToolBoxV2-0.0.3"
 
 
@@ -635,6 +652,12 @@ async def websocket_endpoint(websocket: WebSocket, ws_id: str):
         await manager.disconnect(websocket, websocket_id)
 """
 
+level = 2  # Setzen Sie den Level-Wert, um verschiedene Routen zu aktivieren oder zu deaktivieren
+
+def check_access_level(required_level: int):
+    if level < required_level:
+        raise HTTPException(status_code=403, detail="Access forbidden")
+    return True
 
 @app.websocket("/ws/{pool_id}/{ws_id}")
 async def websocket_endpoint(websocket: WebSocket, pool_id: str, ws_id: str):
@@ -663,6 +686,58 @@ async def websocket_endpoint(websocket: WebSocket, pool_id: str, ws_id: str):
     finally:
         await manager.remove_connection(pool_id, connection_id)
         tb_app.logger.info(f"Connection closed and removed: pool_id={pool_id}, connection_id={connection_id}")
+
+
+@app.get("/web/login")
+async def login_page(access_allowed: bool = Depends(lambda: check_access_level(0))):
+    return serve_app_func('web/assets/login.html')
+
+
+@app.get("/web/logout")
+async def login_page(access_allowed: bool = Depends(lambda: check_access_level(0))):
+    return serve_app_func('web/assets/logout.html')
+
+
+@app.get("/web/signup")
+async def signup_page(access_allowed: bool = Depends(lambda: check_access_level(2))):
+    return serve_app_func('web/assets/signup.html')
+
+
+@app.get("/web/dashboard")
+async def quicknote(access_allowed: bool = Depends(lambda: check_access_level(2))):
+    return serve_app_func('web/dashboards/dashboard.html')  # 'dashboards/dashboard_builder.html')
+
+
+@app.get("/{path:path}")
+async def serve_files(path: str, request: Request, access_allowed: bool = Depends(lambda: check_access_level(0))):
+    return serve_app_func(path)
+
+
+def serve_app_func(path: str, prefix: str = os.getcwd() + "/dist/"):
+    # Default to 'index.html' if no specific path is given
+    if not path or '.' not in path:  # No file extension, assume SPA route
+        path = "index.html"
+
+    # Full path to the requested file
+    request_file_path = Path(prefix) / path
+
+    # MIME types dictionary
+    mime_types = {
+        '.js': 'application/javascript',
+        '.html': 'text/html',
+        '.css': 'text/css',
+    }
+
+    # Determine MIME type based on file extension, default to 'text/html'
+    content_type = mime_types.get(request_file_path.suffix, 'text/html')
+
+    # Serve the requested file if it exists, otherwise fallback to index.html for SPA
+    if request_file_path.exists():
+        return FileResponse(request_file_path, media_type=content_type)
+
+    # Fallback to a 404 page if the file does not exist
+    return FileResponse(os.path.join(os.getcwd(), "dist", "web/assets/404.html"), media_type="text/html")
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -744,10 +819,6 @@ async def helper(id_name):
     if not c.get():
         exit()
     tb_app.get_mod("WebSocketManager")
-    from .fast_app import router as app_router
-
-    tb_app.sprint("Adding app router")
-    app.include_router(app_router)
 
     from .fast_api_install import router as install_router
     tb_app.sprint("loading CloudM")
@@ -798,15 +869,17 @@ async def helper(id_name):
             api_methods: List[str] = function_data.get('api_methods', ["AUTO"])
 
             tb_func, error = tb_app.get_function((mod_name, function_name), state=state, specification="app")
-
+            if not hasattr(tb_func, "__name__"):
+                tb_func.__name__ = function_name
             tb_app.logger.debug(f"Loading fuction {function_name} , exec : {error}")
 
             if error != 0:
                 continue
-            tb_app.print(f"working on fuction {function_name}" , end='\r')
+            tb_app.print(f"working on fuction {function_name}", end='\r')
             if 'main' in function_name and 'web' in function_name:
                 tb_app.sprint(f"creating Rout {mod_name} -> {function_name}")
-                router.add_api_route('/' + mod_name, tb_func, methods=["GET"], description=function_data.get("helper", ""))
+                router.add_api_route('/' + mod_name, tb_func, methods=["GET"],
+                                     description=function_data.get("helper", ""))
                 continue
 
             if 'websocket' in function_name:
@@ -818,12 +891,12 @@ async def helper(id_name):
                 if tb_func and is_proxy:
                     tb_func = create_partial_function(tb_func, partial(proxi_helper,
                                                                        mod_function_name=(
-                                                                       mod_name, function_name),
+                                                                           mod_name, function_name),
                                                                        get_results=True))
                 if tb_func:
                     if api_methods != "AUTO":
                         router.add_api_route('/' + function_name, tb_func, methods=api_methods,
-                                            description=function_data.get("helper", ""))
+                                             description=function_data.get("helper", ""))
                     if len(params):
                         router.add_api_route('/' + function_name, tb_func, methods=["POST"],
                                              description=function_data.get("helper", ""))

@@ -56,5 +56,6 @@ __all__ = [
     "get_app",
     "TBEF",
     "Result",
+    "ApiResult",
     "Code",
 ]

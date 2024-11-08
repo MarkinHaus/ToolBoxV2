@@ -787,6 +787,7 @@ class AppType:
            interface: ToolBoxInterfaces or None or str = None,
            pre_compute=None,
            post_compute=None,
+           api_methods=None,
            ):
         """
     A decorator for registering and configuring functions within a module.
@@ -816,6 +817,7 @@ class AppType:
         interface (str, optional): The interface type for the function.
         pre_compute (callable, optional): A function to be called before the main function.
         post_compute (callable, optional): A function to be called after the main function.
+        api_methods (list[str], optional): default ["AUTO"] (GET if not params, POST if params) , GET, POST, PUT or DELETE.
 
     Returns:
         function: The decorated function with additional processing and registration capabilities.

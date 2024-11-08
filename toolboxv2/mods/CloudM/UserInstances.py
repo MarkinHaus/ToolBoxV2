@@ -123,7 +123,7 @@ def get_instance_si_id(si_id):
 
 @e
 def get_user_instance(uid: str,
-                      hydrate: bool = True):  # TODO: async
+                      hydrate: bool = True):
     # Test if an instance exist locally -> instance = set of data a dict
     if uid is None:
         return

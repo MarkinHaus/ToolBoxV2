@@ -10,7 +10,9 @@
     "dev": "tb -c FastApi startDev main && cross-env NODE_OPTIONS=--max-old-space-size=8384 webpack serve --mode development --open",
     "devD": "tb -c FastApi edit-api main_D 0.0.0.0 5000 -c DB edit_cli RR -c FastApi startDev main ${DEV_MODULES} -n debug && cross-env NODE_OPTIONS=--max-old-space-size=8384 webpack serve --mode development",
     "live": "tb -c FastApi start main && cross-env NODE_OPTIONS=--max-old-space-size=8384 webpack serve --mode production",
-    "liveD": "tb -c FastApi edit-api main 0.0.0.0 5000 -c DB edit_cli RR -c FastApi start main && webpack serve --mode production"
+    "liveD": "tb -c FastApi edit-api main 0.0.0.0 5000 -c DB edit_cli RR -c FastApi start main && webpack serve --mode production",
+    "build": "cross-env NODE_ENV=production webpack --mode production",
+    "watch": "cross-env NODE_ENV=development webpack --mode development --watch"
   },
   "dependencies": {
     "@babel/core": "^7.25.7",

@@ -1,23 +1,16 @@
-from fastapi.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse
-from toolboxv2 import MainTool, get_app, App, Code
-from toolboxv2.utils.extras import BaseWidget
+from toolboxv2 import get_app, Code, Result
+from toolboxv2.utils.extras.base_widget import get_user_from_request
 from toolboxv2.utils.extras.blobs import BlobStorage, BlobFile
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
-import json
-from dataclasses import dataclass
-from pathlib import Path
-
-from toolboxv2.utils.system import CLOUDM_AUTHMANAGER
 
 Name = "DoNext"
 version = "0.0.1"
 export = get_app(f"{Name}.Export").tb
 
-template = """<script src="/index.js" type="module" defer></script><div><!DOCTYPE html>
+template = """<script defer="defer" src="/index.js" type=module></script><div><!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -714,7 +707,7 @@ class Action(BaseModel):
 
     def dict(self, *args, **kwargs):
         # Convert datetime objects to strings for serialization
-        data = super().dict(*args, **kwargs)
+        data = super().model_dump(*args, **kwargs)
         for field in ["fixed_time", "created_at", "last_completed", "next_due"]:
             if isinstance(data.get(field), datetime):
                 data[field] = data[field].isoformat()
@@ -738,7 +731,7 @@ class HistoryEntry(BaseModel):
 
     def dict(self, *args, **kwargs):
         # Convert datetime objects to strings for serialization
-        data = super().dict(*args, **kwargs)
+        data = super().model_dump(*args, **kwargs)
         for field in ["timestamp"]:
             if isinstance(data.get(field), datetime):
                 data[field] = data[field].isoformat()
@@ -859,15 +852,13 @@ class ActionManager:
             # If there's a current action, only suggest its sub-actions
             return [
                        action.dict() for action in self.actions
-                       if action.parent_id == self.current_action.id
-                          and action.status == ActionStatus.NOT_STARTED
+                       if action.parent_id == self.current_action.id and action.status == ActionStatus.NOT_STARTED
                    ][:2]
 
         # Otherwise, suggest actions based on priority and due date
         available_actions = [
             action for action in self.actions
-            if action.status == ActionStatus.NOT_STARTED
-               and not action.parent_id  # Only top-level actions
+            if action.status == ActionStatus.NOT_STARTED and not action.parent_id  # Only top-level actions
         ]
 
         # Sort by priority and due date
@@ -899,21 +890,6 @@ class ActionManager:
         return result
 
 
-async def get_user_from_request(app, request):
-    from toolboxv2.mods.CloudM import User
-    if app is None:
-        return None
-    if request is None:
-        return User()
-    name = request.session.get('live_data', {}).get('user_name', "Cud be ur name")
-    if name != "Cud be ur name":
-        user = await app.a_run_any(CLOUDM_AUTHMANAGER.GET_USER_BY_NAME,
-                                   username=app.config_fh.decode_code(name))
-    else:
-        user = User()
-    return user
-
-
 def get_storage(app, user):
     if user is None or app is None:
         return None
@@ -939,7 +915,7 @@ async def get_manager(app, request):
         return Managers[key]
 
 
-@export(mod_name=Name, name="new-action", api=True, row=True, request_as_kwarg=True)
+@export(mod_name=Name, name="new-action", api=True, row=True, request_as_kwarg=True, api_methods=['POST'])
 async def api_new_action(app, request):
     if request is None:
         return None
@@ -947,13 +923,13 @@ async def api_new_action(app, request):
     if app is None:
         app = get_app()
 
-    body = await request.json()
+    body = request.json()
 
     user_manager = await get_manager(app, request)
 
     user_manager.new_action(body)
 
-    return JSONResponse({'status': 'success'})
+    return {'status': 'success'}
 
 
 @export(mod_name=Name, name="current-action", api=True, row=True, request_as_kwarg=True)
@@ -969,9 +945,9 @@ async def set_current_action(app, request, actionId='0'):
     try:
         action = user_manager.set_current_action(actionId)
     except ValueError as e:
-        return JSONResponse({'status': 'error', 'message': e}, status_code=501)
+        return Result.default_user_error(str(e), 501).to_api_result()
 
-    return JSONResponse(action)
+    return action
 
 
 @export(mod_name=Name, name="remove-action", api=True, row=True, request_as_kwarg=True)
@@ -987,9 +963,9 @@ async def remove_action(app, request, actionId='0'):
     try:
         user_manager.remove_action(actionId)
     except ValueError as e:
-        return JSONResponse({'status': 'error', 'message': e}, status_code=501)
+        return Result.default_user_error(str(e), 501).to_api_result()
 
-    return JSONResponse({'status': 'success'})
+    return {'status': 'success'}
 
 
 @export(mod_name=Name, name="get-current-action", api=True, row=True, request_as_kwarg=True)
@@ -1001,7 +977,7 @@ async def get_current_action(app, request):
         app = get_app()
 
     user_manager = await get_manager(app, request)
-    return JSONResponse(user_manager.get_current_action())
+    return user_manager.get_current_action()
 
 
 @export(mod_name=Name, name="suggestions", api=True, row=True, request_as_kwarg=True)
@@ -1013,7 +989,7 @@ async def get_suggestions(app, request):
         app = get_app()
 
     user_manager = await get_manager(app, request)
-    return JSONResponse(user_manager.get_suggestions())
+    return user_manager.get_suggestions()
 
 
 @export(mod_name=Name, name="history", api=True, row=True, request_as_kwarg=True)
@@ -1025,7 +1001,7 @@ async def get_history(app, request):
         app = get_app()
 
     user_manager = await get_manager(app, request)
-    return JSONResponse(user_manager.get_history())
+    return user_manager.get_history()
 
 
 @export(mod_name=Name, name="all-actions", api=True, row=True, request_as_kwarg=True)
@@ -1037,10 +1013,10 @@ async def get_all_actions(app, request):
         app = get_app()
 
     user_manager = await get_manager(app, request)
-    return JSONResponse(user_manager.get_all_actions())
+    return user_manager.get_all_actions()
 
 
-@export(mod_name=Name, name="complete-current", api=True, row=True, request_as_kwarg=True)
+@export(mod_name=Name, name="complete-current", api=True, row=True, request_as_kwarg=True, api_methods=['POST'])
 async def complete_current_action(app, request):
     if request is None:
         return None
@@ -1052,15 +1028,15 @@ async def complete_current_action(app, request):
     try:
         user_manager.complete_current_action()
     except ValueError as e:
-        return JSONResponse({'status': 'error', 'message': e})
+        return {'status': 'error', 'message': e}
 
-    return JSONResponse({'status': 'success'})
+    return {'status': 'success'}
 
 
-@get_app().tb(mod_name=Name, version=version, request_as_kwarg=False, level=0, api=True,
+@get_app().tb(mod_name=Name, version=version, level=0, api=True,
               name="main_web_DoNext_entry", row=True, state=False)
-def entry(request: Request or None = None):
-    return HTMLResponse(content=template)
+def DoNext():
+    return template
 
 
 # Example usage

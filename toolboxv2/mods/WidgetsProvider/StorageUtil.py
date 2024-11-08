@@ -4,6 +4,7 @@ from typing import List, Optional
 from toolboxv2 import get_app, App, Result, TBEF
 from fastapi import Request
 from ..CloudM import User
+from ...utils.system.session import RequestSession
 
 Name = 'WidgetsProvider'
 export = get_app("WidgetsProvider.Export").tb
@@ -167,7 +168,7 @@ async def get_sto_by_name(app: App = None, sto_name: Optional[str] = None, reque
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="set_sto")
-async def set_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: Request or None = None):
+async def set_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: RequestSession or None = None):
     if sto_name is None or len(sto_name) <= 1:
         return Result.default_user_error(info="No name specified")
     if app is None:
@@ -179,7 +180,10 @@ async def set_sto_by_name(app: App = None, sto_name: Optional[str] = None, reque
         return user_result
 
     user: User = user_result.get()
-    data = await request.body()
+    if isinstance(request.body, bytes):
+        data = request.body
+    else:
+        data = request.body()
     sto_data_result = set_sto(app, sto_name=sto_name, user_name=user.name, user_id=user.uid, data=data)
     if sto_data_result.is_error() or not sto_data_result.is_data():
         return sto_data_result

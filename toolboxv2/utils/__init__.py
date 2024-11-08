@@ -17,6 +17,7 @@ from .system.getting_and_closing_app import get_app
 from .extras.Style import Style, remove_styles, Spinner
 from .extras.show_and_hide_console import show_console
 
+
 __all__ = [
     "App",
     "Singleton",

@@ -57,8 +57,8 @@ class CustomRegistrationCredential(RegistrationCredential):
 
 # app Helper functions interaction with the db
 
-async def db_helper_test_exist(app: App, username: str):
-    c = await app.a_run_any(TBEF.DB.IF_EXIST, query=f"USER::{username}::*", get_results=True)
+def db_helper_test_exist(app: App, username: str):
+    c = app.run_any(TBEF.DB.IF_EXIST, query=f"USER::{username}::*", get_results=True)
     if c.is_error(): raise RuntimeError(f"DB - error {c.print(show=False)}")
     b = c.get() > 0
     get_logger().info(f"TEST IF USER EXIST : {username} {b}")
@@ -179,19 +179,19 @@ async def on_start(app: App) -> Result:
 
 
 @export(mod_name=Name, state=True, test=False, interface=ToolBoxInterfaces.future)
-async def get_user_by_name(app: App, username: str, uid: str = '*') -> Result:
+def get_user_by_name(app: App, username: str, uid: str = '*') -> Result:
 
     if app is None:
         app = get_app(Name + '.get_user_by_name')
 
-    if not await db_helper_test_exist(app, username):
+    if not db_helper_test_exist(app, username):
         return Result.default_user_error(info=f"get_user_by_name failed username '{username}' not registered")
 
     user_data = db_helper_get_user(app, username, uid)
     if isinstance(user_data, str) or user_data.is_error():
         return Result.default_internal_error(info="get_user_by_name failed no User data found is_error")
 
-    user_data = await user_data.aget()
+    user_data = user_data.get()
 
     if isinstance(user_data, bytes):
         return Result.ok(data=User(**eval(user_data.decode())))
@@ -267,7 +267,7 @@ async def create_user(app: App, data: CreateUserObject = None, username: str = '
     if app is None:
         app = get_app(Name + '.crate_user')
 
-    if await db_helper_test_exist(app, username):
+    if db_helper_test_exist(app, username):
         return Result.default_user_error(info=f"Username '{username}' already taken",
                                          interface=ToolBoxInterfaces.remote)
 
@@ -311,10 +311,10 @@ async def get_magic_link_email(app: App, username):
     if app is None:
         app = get_app(Name + '.get_magic_link_email')
 
-    if not await db_helper_test_exist(app, username):
+    if not db_helper_test_exist(app, username):
         return Result.default_user_error(info=f"Username '{username}' not known", interface=ToolBoxInterfaces.remote)
 
-    user_r: Result = await get_user_by_name(app, username=username)
+    user_r: Result = get_user_by_name(app, username=username)
     user: User = user_r.get()
 
     if user.challenge == '':
@@ -350,7 +350,7 @@ async def add_user_device(app: App, data: AddUserDeviceObject = None, username: 
     if app is None:
         app = get_app(Name + '.add_user_device')
 
-    if not await db_helper_test_exist(app, username):
+    if not db_helper_test_exist(app, username):
         return Result.default_user_error(info=f"Username '{username}' not known", interface=ToolBoxInterfaces.remote)
 
     if not invitation.startswith("01#"):  # not db_valid_invitation(app, invitation):
@@ -371,7 +371,7 @@ async def add_user_device(app: App, data: AddUserDeviceObject = None, username: 
     if test_bub_key == "Invalid":
         return Result.default_user_error(info="Invalid public key parsed", interface=ToolBoxInterfaces.remote)
 
-    user_r: Result = await get_user_by_name(app, username=username)
+    user_r: Result = get_user_by_name(app, username=username)
     user: User = user_r.get()
 
     if invitation != Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email"):
@@ -406,10 +406,10 @@ class PersonalData(BaseModel):
 
 @export(mod_name=Name, api=True, test=False)
 async def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
-    if not await db_helper_test_exist(app, data.username):
+    if not db_helper_test_exist(app, data.username):
         return Result.default_user_error(info=f"Username '{data.username}' not known")
 
-    user_result = await get_user_by_name(app, data.username, from_base64(data.userId).decode())
+    user_result = get_user_by_name(app, data.username, from_base64(data.userId).decode())
 
     if user_result.is_error() and not user_result.is_data():
         return Result.default_internal_error(info="No user found", data=user_result)
@@ -484,7 +484,7 @@ async def crate_local_account(app: App, username: str, email: str = '', invitati
     if app is None:
         app = get_app(Name + '.crate_local_account')
     user_pri = app.config_fh.get_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8])
-    if user_pri is not None and await db_helper_test_exist(app=app, username=username):
+    if user_pri is not None and db_helper_test_exist(app=app, username=username):
         return Result.default_user_error(info="User already registered on this device")
     pub, pri = Code.generate_asymmetric_keys()
     app.config_fh.add_to_save_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8], pri)
@@ -532,7 +532,7 @@ async def get_to_sing_data(app: App, username, personal_key=False):
     if app is None:
         app = get_app(from_=Name + '.get_to_sing_data')
 
-    user_result = await get_user_by_name(app, username)
+    user_result = get_user_by_name(app, username)
     if user_result.is_error() and not user_result.is_data():
         return Result.default_user_error(info=f"User {username} is not a valid user")
     user: User = user_result.get()
@@ -572,7 +572,7 @@ async def validate_persona(app: App, data: VpUSER) -> ApiResult:
     if app is None:
         app = get_app(".validate_persona")
 
-    user_result = await get_user_by_name(app, data.username)
+    user_result = get_user_by_name(app, data.username)
 
     if user_result.is_error() or not user_result.is_data():
         return Result.default_user_error(info=f"Invalid username : {data.username}")
@@ -616,7 +616,7 @@ async def validate_device(app: App, data: VdUSER) -> ApiResult:
     if app is None:
         app = get_app(".validate_device")
 
-    user_result = await get_user_by_name(app, data.username)
+    user_result = get_user_by_name(app, data.username)
 
     if user_result.is_error() or not user_result.is_data():
         return Result.default_user_error(info=f"Invalid username : {data.username}")
@@ -663,7 +663,7 @@ async def authenticate_user_get_sync_key(app: App, username: str, signature: str
     if app is None:
         app = get_app(Name + '.authenticate_user_get_sync_key')
 
-    user_r: Result = await get_user_by_name(app, username=username)
+    user_r: Result = get_user_by_name(app, username=username)
     user: User = user_r.get()
 
     if user is None:
@@ -766,7 +766,7 @@ async def jwt_claim_local_decrypt(app: App, username: str, crypt_sing_jwt_claim:
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.remote, api=True, test=False)
 async def jwt_check_claim_server_side(app: App, username: str, jwt_claim: str) -> ApiResult:
-    res = await get_user_by_name(app, username)
+    res = get_user_by_name(app, username)
     if res.info.exec_code != 0:
         return Result.custom_error(data=res)
     user: User = res.get()

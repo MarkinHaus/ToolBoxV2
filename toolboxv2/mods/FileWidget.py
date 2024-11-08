@@ -19,6 +19,8 @@ from typing import Optional
 import re
 from dataclasses import dataclass
 
+from toolboxv2.utils.system.session import RequestSession
+
 
 @dataclass
 class ChunkInfo:
@@ -570,12 +572,12 @@ class FileWidget(MainTool, BaseWidget):
         </script>
         """
 
-    async def handle_upload(self, request: Request):
+    async def handle_upload(self, request: RequestSession):
 
         if request is None:
             return None
 
-        body = await request.body()
+        body = request.body()
         storage = await self.get_blob_storage(request)
 
         parser = MultipartParser(body)

@@ -2,7 +2,9 @@ import {rendererPipeline} from "/web/scripts/WorkerSocketRenderer.js";
 import {AuthHttpPostData, httpPostData, httpPostUrl, ToolBoxError, wrapInResult} from "/web/scripts/httpSender.js";
 import {addRenderer, EndBgInteract, Set_animation_xyz,Set_zoom, StartBgInteract, toggleDarkMode} from "/web/scripts/scripts.js";
 import {autocomplete} from "/web/scripts/util.js";
-import "/web/node_modules/htmx.org/dist/htmx.js";
+import htmx from "./web/node_modules/htmx.org/dist/htmx.esm.js";
+window.htmx = htmx;
+/*import "/main.js";*/
 
 const rpIdUrl_f = ()=> {
     if (window.location.href.match("localhost")) {
@@ -393,15 +395,15 @@ function router(url, extend = false, id = "main", Dome = DOME, callback=null) {
 
     url = url.startsWith("/") ? url : "/" + url
 
-    if (url === "/" || url === "") {
+    if (url === "/" || url === "" || url === "/web" || url === "/web/") {
         url = "/web/core0/index.html"
-    }
+    }/*
     if (url === "/web" || url === "/web/") {
         url = "/web/mainContent.html"
     }
     if (url === "/index.html" && Dome === DOME){
         url = "/web/mainContent.html"
-    }
+    }*/
 
     let uri= url
     let is_d = false
@@ -488,7 +490,7 @@ function router(url, extend = false, id = "main", Dome = DOME, callback=null) {
             content = await fetchFromRBackend(uri);
         }
 
-        console.log("[content]:", content.toString().length)
+        console.log("[content]:", content.toString().length, content)
 
         if (content.toString().startsWith("HTTP error!") && content.toString().includes("404")){
             router("/web/assets/404.html", extend, id, DOME)
