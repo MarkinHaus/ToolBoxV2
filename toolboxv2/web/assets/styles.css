@@ -13,7 +13,7 @@
     --dark-background-color: #181823;
     --dark-text-color: #E9F8F9;
 
-    --dark-nav-link-color: #181823;
+    --dark-nav-link-color: darkblue;
     --dark-nav-link-hover-color: #C0EEF2;
     --dark-toggle-bg-color: #181823;
 
@@ -55,8 +55,9 @@
     --background-color: #f8f9fa;
     --text-color: #000;
 
-    --nav-link-color: #888;
     --nav-link-hover-color: #fff;
+
+    --nav-link-color: var(--dark-nav-link-color);
 
 
     --toggle-bg-color: var(--background-color);
@@ -121,6 +122,15 @@ h5 {
     font-size: 1rem; /* 16px */
 }
 
+a, u {
+  text-decoration: none;
+  color: var(--nav-link-color);
+}
+
+a:hover , u:hover  {
+    color: var(--nav-link-hover-color);
+}
+
 
 #overlay {
     position: fixed;
@@ -162,6 +172,9 @@ body.dark-mode {
     --primary-inverse: var(--dark-text-color);
 
     --secondary-color: var(--dark-secondary-color);
+
+
+    --nav-link-color: lightblue;
 }
 
 /* Dark mode styles

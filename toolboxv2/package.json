@@ -4,9 +4,10 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "tauri": "npm run tauri dev  --prefix ./simple-core",
-    "tauriB": "npm run tauri build  --prefix ./simple-core",
-    "tauriIA": "npm run tauri android dev  --prefix ./simple-core",
+    "tauri": "npm run tauri dev --prefix ./simple-core",
+    "tauriB": "npm run tauri build --prefix ./simple-core",
+    "tauri-mobil": "npm run tauri android dev --prefix ./simple-core",
+    "tauri-mobilB": "npm run tauri android build --prefix ./simple-core",
     "dev": "tb -c FastApi startDev main && cross-env NODE_OPTIONS=--max-old-space-size=8384 webpack serve --mode development --open",
     "devD": "tb -c FastApi edit-api main_D 0.0.0.0 5000 -c DB edit_cli RR -c FastApi startDev main ${DEV_MODULES} -n debug && cross-env NODE_OPTIONS=--max-old-space-size=8384 webpack serve --mode development",
     "live": "tb -c FastApi start main && cross-env NODE_OPTIONS=--max-old-space-size=8384 webpack serve --mode production",
