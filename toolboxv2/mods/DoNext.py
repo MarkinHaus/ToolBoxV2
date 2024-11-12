@@ -1,3 +1,5 @@
+from starlette.responses import HTMLResponse
+
 from toolboxv2 import get_app, Code, Result
 from toolboxv2.utils.extras.base_widget import get_user_from_request
 from toolboxv2.utils.extras.blobs import BlobStorage, BlobFile
@@ -1036,7 +1038,7 @@ async def complete_current_action(app, request):
 @get_app().tb(mod_name=Name, version=version, level=0, api=True,
               name="main_web_DoNext_entry", row=True, state=False)
 def DoNext():
-    return template
+    return HTMLResponse(content=template)
 
 
 # Example usage

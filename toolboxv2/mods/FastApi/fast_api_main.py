@@ -708,11 +708,6 @@ async def quicknote(access_allowed: bool = Depends(lambda: check_access_level(2)
     return serve_app_func('web/dashboards/dashboard.html')  # 'dashboards/dashboard_builder.html')
 
 
-@app.get("/{path:path}")
-async def serve_files(path: str, request: Request, access_allowed: bool = Depends(lambda: check_access_level(0))):
-    return serve_app_func(path)
-
-
 def serve_app_func(path: str, prefix: str = os.getcwd() + "/dist/"):
     # Default to 'index.html' if no specific path is given
     if not path or '.' not in path:  # No file extension, assume SPA route
@@ -911,6 +906,8 @@ async def helper(id_name):
                 raise SyntaxError(f"fuction '{function_name}' prove the signature error {e}")
         if add:
             app.include_router(router)
+
+    app.add_api_route("/{path:path}", serve_files)
     if id_name in tb_app.id:
         print("🟢 START")
 
@@ -923,6 +920,12 @@ app.add_middleware(SessionMiddleware,
                    https_only='live' in tb_app.id,
                    secret_key=Code.one_way_hash(DEVICE_KEY(), tb_app.id))
 tb_app.run_a_from_sync(helper, id_name)
+
+
+async def serve_files(path: str, request: Request, access_allowed: bool = Depends(lambda: check_access_level(0))):
+    return serve_app_func(path)
+
+
 
 # print("API: ", __name__)
 # if __name__ == 'toolboxv2.api.fast_api_main':

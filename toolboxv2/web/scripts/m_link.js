@@ -12,7 +12,7 @@ import
     from
     "/web/scripts/cryp.js";
 
-if(window.history.state && window.history.state.TB) {
+setTimeout(()=> {if(window.history.state && window.history.state.TB) {
     let privateKey_base64 = null
     let username
     // Save the key in a variable
@@ -46,7 +46,7 @@ if(window.history.state && window.history.state.TB) {
     function getKeyFromURL() {
         // Create a URL object based on the current window location
         const url = new URL(window.location.href);
-
+        console.log("URL:", url)
         // Use URLSearchParams to get the 'key' query parameter
         const key = url.searchParams.get('key');
         const nl = url.searchParams.get('nl');
@@ -172,4 +172,8 @@ if(window.history.state && window.history.state.TB) {
     } else {
         console.log("Invalid no addEventListener")
     }
+}else{
+    console.log("OFLINE")
 }
+}, 2500
+)

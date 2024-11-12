@@ -120,29 +120,6 @@ if (document.getElementById("MainContent")){
         helper_dome = document.body
     }
 
-    function helper_init() {
-        console.log("c DOME:", DOME)
-        if (firstDiv){
-            DOME.appendChild(firstDiv)
-        }
-         updateDome(DOME)
-         initDome()
-         addRenderer()
-         const s = document.getElementsByClassName('loaderCenter')
-         if (s){if(s[0]){s[0].classList.add("none")}}
-
-         const baseElement = document.createElement("base");
-         baseElement.href = state.TBv.base + '/'
-         document.head.appendChild(baseElement);
-
-         if(!init_d && stoUrl.includes("/web/dashboard")){
-             router("/web/dashboard")
-         }
-
-        linksInit()
-
-        window.history.pushState({ url: stoUrl, TB: state.TBv, TBc: state.TBc }, "", stoUrl);
-        console.log("saved:", stoUrl)}
 
     router("/index.html", false, "root", helper_dome, ()=>{ setTimeout(()=>{
           if (firstDiv){
@@ -150,6 +127,33 @@ if (document.getElementById("MainContent")){
          }
         // document.body.innerHTML = helper_dome.innerHTML;
          DOME = document.getElementById("MainContent")
+        function helper_init() {
+            window.TBf.initVar('c', 0)
+            if (!DOME && window.TBf.getVar('c') < 3){
+                window.location = stoUrl
+                window.TBf.setVar(window.TBf.getVar('c')+1)
+            }
+            if (firstDiv){
+                DOME.appendChild(firstDiv)
+            }
+            updateDome(DOME)
+            initDome()
+            addRenderer()
+            const s = document.getElementsByClassName('loaderCenter')
+            if (s){if(s[0]){s[0].classList.add("none")}}
+
+            const baseElement = document.createElement("base");
+            baseElement.href = state.TBv.base + '/'
+            document.head.appendChild(baseElement);
+
+            if(!init_d && stoUrl.includes("/web/dashboard")){
+                router("/web/dashboard")
+            }
+
+            linksInit()
+
+            window.history.pushState({ url: stoUrl, TB: state.TBv, TBc: state.TBc }, "", stoUrl);
+            console.log("saved:", stoUrl)}
 
          if (!DOME) {
             function delay(time) {

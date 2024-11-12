@@ -28,17 +28,233 @@
 
 <script unSave="true">
 
+    class GridDashboard {
+        constructor() {
+            this.gridState = JSON.parse(localStorage.getItem('gridState')) || {
+                cells: [],
+                layout: {
+                    columns: 3,
+                    spacing: 10
+                },
+                isEditMode: true
+            };
+
+            this.init();
+        }
+
+        init() {
+            // Initialize grid container
+            const mainContainer = document.getElementById('main');
+            this.gridContainer = document.createElement('div');
+            this.gridContainer.className = 'grid-dashboard';
+            this.gridContainer.style.cssText = `
+            display: grid;
+            grid-template-columns: repeat(${this.gridState.layout.columns}, 1fr);
+            gap: ${this.gridState.layout.spacing}px;
+            padding: 20px;
+            width: 100%;
+            min-height: 200px;
+        `;
+            mainContainer.appendChild(this.gridContainer);
+
+            // Restore saved cells
+            this.restoreCells();
+            this.setupEventListeners();
+        }
+
+        async addCell(uri = '') {
+            const cell = document.createElement('div');
+            cell.className = 'grid-cell';
+            cell.id = `cell-${Date.now()}`;
+            cell.uri = uri;
+            cell.setAttribute('draggable', 'true');
+
+            // Basic cell styling
+            cell.style.cssText = `
+            background: var(--background-color, #ffffff);
+            border: 1px solid var(--border-color, #e0e0e0);
+            border-radius: 8px;
+            min-height: 100px;
+            position: relative;
+            overflow: hidden;
+        `;
+
+            // Add controls
+            const controls = document.createElement('div');
+            controls.className = 'cell-controls';
+            controls.innerHTML = `
+            <button class="fullscreen-btn"><span class="material-symbols-outlined">fullscreen</span></button>
+            <button class="close-btn"><span class="material-symbols-outlined">close</span></button>
+        `;
+            cell.appendChild(controls);
+
+            // Add content container
+            const contentContainer = document.createElement('div');
+            contentContainer.className = 'cell-content';
+            cell.appendChild(contentContainer);
+
+            // Load content if URI provided
+            if (uri) {
+                try {
+                    const content = await window.TBf.loadHtmlFile(uri);
+                    await window.TBf.renderer({
+                        content,
+                        id: cell.id,
+                        Dome: contentContainer,
+                        insert: true
+                    });
+                } catch (error) {
+                    console.error('Error loading content:', error);
+                    contentContainer.innerHTML = 'Error loading content';
+                }
+            }
+
+            this.gridContainer.appendChild(cell);
+            this.setupCellEventListeners(cell);
+            this.saveState();
+
+            return cell;
+        }
+
+        setupCellEventListeners(cell) {
+            const fullscreenBtn = cell.querySelector('.fullscreen-btn');
+            const closeBtn = cell.querySelector('.close-btn');
+
+            // Fullscreen toggle
+            fullscreenBtn.addEventListener('click', () => {
+                if (!cell.classList.contains('fullscreen')) {
+                    cell.classList.add('fullscreen');
+                    cell.style.cssText = `
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100vw;
+                    height: 100vh;
+                    z-index: 1000;
+                    background: var(--background-color, #ffffff);
+                `;
+                } else {
+                    cell.classList.remove('fullscreen');
+                    cell.style.cssText = this.getDefaultCellStyle();
+                }
+            });
+
+            // Close button
+            closeBtn.addEventListener('click', () => {
+                cell.remove();
+                this.saveState();
+            });
+
+            // Drag and drop
+            cell.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('text/plain', cell.id);
+                cell.classList.add('dragging');
+            });
+
+            cell.addEventListener('dragend', () => {
+                cell.classList.remove('dragging');
+            });
+        }
+
+        setupEventListeners() {
+            this.gridContainer.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                const draggingCell = document.querySelector('.dragging');
+                if (draggingCell) {
+                    const afterElement = this.getDragAfterElement(e.clientY);
+                    if (afterElement) {
+                        this.gridContainer.insertBefore(draggingCell, afterElement);
+                    } else {
+                        this.gridContainer.appendChild(draggingCell);
+                    }
+                }
+            });
+
+            // Integrate with action-button-2
+            const addButton = document.getElementById('action-button-2');
+            if (addButton) {
+                const originalAction = addButton.onclick;
+                addButton.onclick = async () => {
+                    const inputField = document.getElementById('inputField');
+                    if (inputField && inputField.value) {
+                        const uri = `/api/${inputField.value}/${inputField.value}`;
+                        await this.addCell(uri);
+                    }
+                    if (originalAction) originalAction();
+                };
+            }
+        }
+
+        getDragAfterElement(y) {
+            const cells = [...this.gridContainer.querySelectorAll('.grid-cell:not(.dragging)')];
+            return cells.reduce((closest, cell) => {
+                const box = cell.getBoundingClientRect();
+                const offset = y - box.top - box.height / 2;
+                if (offset < 0 && offset > closest.offset) {
+                    return { offset, element: cell };
+                }
+                return closest;
+            }, { offset: Number.NEGATIVE_INFINITY }).element;
+        }
+
+        saveState() {
+            const cells = [...this.gridContainer.querySelectorAll('.grid-cell')].map(cell => ({
+                id: cell.id,
+                uri: cell.uri,
+                position: Array.from(this.gridContainer.children).indexOf(cell)
+            }));
+
+            this.gridState.cells = cells;
+            localStorage.setItem('gridState', JSON.stringify(this.gridState));
+
+            // Optional server sync
+            if (window.TBf.httpPostUrl) {
+                //    window.TBf.httpPostUrl('GridState', 'save', JSON.stringify(this.gridState));
+            }
+        }
+
+        restoreCells() {
+            this.gridState.cells.forEach(cellData => {
+                const cell = this.addCell(cellData.uri);
+                cell.id = cellData.id;
+            });
+        }
+
+        getDefaultCellStyle() {
+            return `
+            background: var(--background-color, #ffffff);
+            border: 1px solid var(--border-color, #e0e0e0);
+            border-radius: 8px;
+            min-height: 100px;
+            position: relative;
+            overflow: hidden;
+        `;
+        }
+
+        toggleEditMode() {
+            this.gridState.isEditMode = !window.TBf.GridDashboard.gridState.isEditMode;
+            const cells = this.gridContainer.querySelectorAll('.grid-cell');
+            cells.forEach(cell => {
+                cell.setAttribute('draggable', this.gridState.isEditMode);
+                const controls = cell.querySelector('.cell-controls');
+                controls.style.display = this.gridState.isEditMode ? 'flex' : 'none';
+            });
+            this.saveState();
+        }
+    }
+
     if (document.getElementById("MainContent") && !window.userDonline){
         window.userDonline = true
-    setTimeout(()=> {
+
+
+
+        window.TBf.GridDashboard = new GridDashboard()
+
+        setTimeout(()=> {
         const animator = window.TBf.animator
         animator("Y1-19991", "Y1+641", 0.1, 16)
     },420)
         setTimeout(()=>{
-        const httpPostUrl = window.TBf.httpPostUrl
-
-    let dropdownOptions = null
-    let all_widget = []
 
     function setIcon(buttonIndex, iconName) {
         const buttons = document.querySelectorAll('.icon-button .material-icons');
@@ -64,89 +280,6 @@
         }
     }
 
-
-    // Funktion zum Hinzufügen neuer Einträge (Beispiel)
-    function addItem(item) {
-        let items = JSON.parse(localStorage.getItem('OpenPages')) || ["main"];
-        if (!items.includes(item)) {
-            items.push(item);
-            localStorage.setItem('OpenPages', JSON.stringify(items));
-        }
-    }
-
-    function removeItem(item) {
-        let items = JSON.parse(localStorage.getItem('OpenPages')) || ["main"];
-        function removeItemOnce(arr, value) {
-            var index = arr.indexOf(value);
-            if (index > -1) {
-                arr.splice(index, 1);
-            }
-            return arr;
-        }
-        if (items.includes(item)) {
-            removeItemOnce(items, item);
-            localStorage.setItem('OpenPages', JSON.stringify(items));
-        }
-    }
-
-    function initPageWidgets() {
-
-        // Initialisiere die Liste, falls noch nicht im Local Storage vorhanden
-        let items = JSON.parse(localStorage.getItem('OpenPages')) || ["main"];
-        items.forEach(async function(item) {
-
-            if(!document.getElementById(item)){
-                console.log("Adding :"+item)
-                await bgBoardHelper(item)
-            }
-
-        })
-        // Funktion zum Aktualisieren des Dropdowns
-        function updateDropdown() {
-            items.forEach(function(item) {
-                const close = document.createElement('button');
-                close.innerText = "Close "+item
-
-                close.addEventListener('click', ()=>{
-                    console.log("closing ", item)
-                    removeItem(item)
-                    const it = document.getElementById(items)
-                    if (it){it.remove()}else{
-                        console.log("Error removing")}
-                    close.remove()
-                })
-                window.overlayUtility.contentElement.appendChild(close)
-            });
-        }
-
-        updateDropdown();
-
-    }
-
-    async function bgBoardHelper(bgBoardName) {
-        if (!bgBoardName){
-            return "invalid bgBoardName"
-        }
-        //console.log(all_widget)
-        //if (all_widget.length === 0){
-        //    const all_widget_ = await window.TBf.httpPostData("WidgetsProvider", "get_all_widget_mods", {},
-        //        (e)=>{e.log();return all_widget},
-        //        (s)=> { s.log();return s.get()? s.get():all_widget }, true)
-        //    if (all_widget_){
-        //        all_widget = all_widget_
-        //    }
-        //}
-        //if (all_widget.includes(bgBoardName)){
-        const url = "/api/WidgetsProvider/open_widget?name="+bgBoardName;
-        window.TBf.router(url, true, bgBoardName, document.body)
-        addItem(bgBoardName)
-        //}else{
-        //    window.TBf.getM("addBalloon")("MainContent", 0, ["Error adding Board '"+ bgBoardName+"'", "valid ar :"+ all_widget], [])
-        //    return
-        //}
-        //console.log("all_widget:", all_widget)
-
-    }
     // Beispiel für eine Aktion
     function buttonAction(index) {
         console.log(`Button ${index} clicked`);
@@ -155,6 +288,7 @@
     window.TBf.httpPostUrl("WidgetsProvider", "get_all_widget_mods", "",
         (e)=>{e.log()},
         (s)=> { return s.get()}).then((d) =>{
+        console.log("get_all_widget_mods:", d, window.TBf.autocomplete)
         if(d) {
             window.TBf.autocomplete(document.getElementById("inputField"), d)
         }else{
@@ -174,7 +308,7 @@
 
         setTooltip(0, 'In widget öffnen'); // Setzt den Tooltip des ersten Buttons auf 'Suchen'
         setTooltip(1, 'web Suchen durchführen'); // Setzt den Tooltip des ersten Buttons auf 'Suchen'
-        setTooltip(2, 'Bg Widget öffnen'); // Setzt den Tooltip des ersten Buttons auf 'Suchen'
+        setTooltip(2, 'Bg App öffnen'); // Setzt den Tooltip des ersten Buttons auf 'Suchen'
 
         setAction(0, async () => {
                 const content = document.getElementById("inputField").value
@@ -208,15 +342,12 @@
             const content = document.getElementById("inputField").value
             window.overlayUtility.createOverlay({
                 content: content? `<p>Add `+content+` in BG </p>
-    </div>`: `<p>Remove BG Elements </p>
- <div id="settings-container">
-    </div>`,
+    </div>`: `<p>Drag and Drop BG Elements </p>`,
                 closeOnOutsideClick: true,
                 onClose: null,
-                afterCrate: initPageWidgets,
                 buttons: content? [
-                     {text: "Open", action: async () =>await bgBoardHelper(content)},
-                ]: []
+                     {text: "Open", action: async () =>await window.TBf.GridDashboard.addCell('/api/'+content+'/'+content)},
+                ]: [{text: "Toggle Edit", action: window.TBf.GridDashboard.toggleEditMode}]
             })
         });
 
@@ -239,6 +370,7 @@
 
         window.widgetUtility.get_storage()
     }, 1800)
+
 
     }
 
