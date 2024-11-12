@@ -395,7 +395,6 @@ def save_mod_snapshot(app, mod_name, provider=None, tb_state: TbState or None = 
 
 @router.post("/upload-file/")
 async def create_upload_file(file: UploadFile):
-    tb_app: App = get_app()
 
     # if tb_app.debug:
     # Ensure the target directory exists
@@ -411,7 +410,7 @@ async def create_upload_file(file: UploadFile):
             with open(file_path, 'wb') as f:
                 while contents := file.file.read(1024 * 1024):
                     f.write(contents)
-
+            get_app().mod_sto_manager.add_file_version(file.filename)
             return {"res": f"Successfully uploaded {file.filename}"}
 
         except Exception as e:
@@ -427,9 +426,6 @@ async def create_upload_file(file: UploadFile):
 @router.get("/download/{path:path}")
 def download_file(path: str):
     file_name = path
-
-    print(f"{file_name=}!!!!!!", file_name.startswith(".") or file_name.startswith(
-        '%20') or not file_name or '/.' in file_name or ".." in file_name)
     if file_name.startswith(".") or file_name.startswith(
         '%20') or not file_name or '/.' in file_name or ".." in file_name:
         return JSONResponse(content={"message": f"directory not public ."}, status_code=100)
@@ -461,6 +457,9 @@ def download_file(path: str):
                 file_path = "/".join(TB_DIR.split("/")[:-1]) + "/" + file_name
             else:
                 file_path = "\\".join(TB_DIR.split("\\")[:-1]) + "\\" + file_name
+
+        if directory == "mods_sto":
+            file_path = get_app().mod_sto_manager.extract_version(file_name, get_app().version)
 
         if os.path.exists(file_path):
             get_logger().info(f"Downloading from {file_path}")

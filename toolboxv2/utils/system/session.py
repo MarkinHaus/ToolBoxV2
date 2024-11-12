@@ -232,7 +232,7 @@ class Session(metaclass=Singleton):
             part = mpwriter.append(file_data)
             part.set_content_disposition('form-data', name='file', filename=os.path.basename(file_path))
 
-            async with self.session.post(upload_url, data=mpwriter) as response:
+            async with self.session.post(upload_url, data=mpwriter, timeout=20000) as response:
 
                 # Prüfe, ob der Upload erfolgreich war
                 if response.status == 200:
