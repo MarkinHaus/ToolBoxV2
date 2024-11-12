@@ -102,13 +102,18 @@ def bottle_up(tb_app, user='root', main_route=None, threaded=False, **kwargs):
                         continue
 
                     # Get function and check for errors
-                    tb_func, error = self.tb_app.get_function(
-                        (mod_name, func_name),
-                        state=func_data.get('state', False),
-                        specification="app"
-                    )
+                    # tb_func, error = self.tb_app.get_function(
+                    #     (mod_name, func_name),
+                    #     state=func_data.get('state', False),
+                    #     specification="app"
+                    # )
 
-                    if error != 0 or not tb_func:
+                    # if error != 0 or not tb_func:
+                    #     continue
+
+                    tb_func = func_data.get("func")
+
+                    if tb_func is None:
                         continue
 
                     request_as_kwarg = func_data.get('request_as_kwarg', False)
@@ -117,9 +122,9 @@ def bottle_up(tb_app, user='root', main_route=None, threaded=False, **kwargs):
                     if 'main' in func_name and 'web' in func_name:
 
                         if request_as_kwarg:
-                            tb_func_ = lambda **kw: helper_str+tb_func(**kw)
+                            tb_func_ = lambda **kw: open(os.path.join(self.tb_app.start_dir, 'dist', 'helper.html'), 'r').read()+tb_func(**kw)
                         else:
-                            tb_func_ = lambda: helper_str + tb_func()
+                            tb_func_ = lambda: open(os.path.join(self.tb_app.start_dir, 'dist', 'helper.html'), 'r').read() + tb_func()
                         self.route(f'/{mod_name}', method='GET')(tb_func_)
                         print("adding root:", f'/{mod_name}')
                         if mod_name == main_rout:

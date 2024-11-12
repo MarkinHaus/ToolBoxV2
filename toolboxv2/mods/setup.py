@@ -1,8 +1,8 @@
 """
 Main task of this Mod :
-0) from 0 device to base TB
-1) from 0 device to devEnv
-2) from devEnv0 to core0 HMR 0 downtime updates
+0) from 0 device to base TB (user)
+1) from 0 device to devEnv (dev)
+2) from devEnv0 to core0 HMR 0 downtime updates (admin)
 steps :
     0) :
      * shell - setup python and env

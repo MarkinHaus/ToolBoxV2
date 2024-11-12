@@ -18,6 +18,7 @@ from yaml import safe_load
 from .singelton_class import Singleton
 
 from .system.cache import FileCache, MemoryCache
+from .system.mods_sto_git_manager import GitZipManager
 from .system.tb_logger import get_logger, setup_logging
 from .system.types import AppArgs, ToolBoxInterfaces, ApiResult, Result, AppType, MainToolType
 from .system.getting_and_closing_app import get_app
@@ -38,13 +39,19 @@ class App(AppType, metaclass=Singleton):
         t0 = time.perf_counter()
         abspath = os.path.abspath(__file__)
         self.system_flag = system()  # Linux: Linux Mac: Darwin Windows: Windows
+
+        self.appdata = os.getenv('APPDATA') if os.name == 'nt' else os.getenv('XDG_CONFIG_HOME') or os.path.expanduser(
+                '~/.config') if os.name == 'posix' else None
+
         if self.system_flag == "Darwin" or self.system_flag == "Linux":
             dir_name = os.path.dirname(abspath).replace("/utils", "")
         else:
             dir_name = os.path.dirname(abspath).replace("\\utils", "")
-        os.chdir(dir_name)
 
-        self.start_dir = dir_name
+        os.chdir(dir_name)
+        self.start_dir = str(dir_name)
+
+        self.mod_sto_manager = GitZipManager(self.start_dir+'/mods_sto')
 
         lapp = dir_name + '\\.data\\'
 
@@ -80,7 +87,6 @@ class App(AppType, metaclass=Singleton):
         identification = self.id
 
         if "test" in prefix:
-
             if self.system_flag == "Darwin" or self.system_flag == "Linux":
                 start_dir = self.start_dir.replace("ToolBoxV2/toolboxv2", "toolboxv2")
             else:

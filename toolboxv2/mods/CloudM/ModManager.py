@@ -13,7 +13,6 @@ from tqdm import tqdm
 
 from toolboxv2 import get_app, App, __version__
 from toolboxv2.utils.system.api import find_highest_zip_version_entry
-from toolboxv2.utils.system.session import Session
 from toolboxv2.utils.system.types import ToolBoxInterfaces, Result
 
 Name = 'CloudM'
@@ -238,7 +237,6 @@ async def make_installer(app: Optional[App], module_name: str, base="./mods", up
         version_ = mod.version
 
     zip_path = create_and_pack_module(f"{base}/{module_name}", module_name, version_)
-
     if upload or 'y' in input("uploade zip file ?"):
         res = await app.session.upload_file(zip_path, '/installer/upload-file/')
         print(res)
@@ -246,6 +244,7 @@ async def make_installer(app: Optional[App], module_name: str, base="./mods", up
             if res.get('res', '').startswith('Successfully uploaded'):
                 return Result.ok(res)
             return Result.default_user_error(res)
+    app.mod_sto_manager.add_file_version(zip_path.replace("./mods_sto/", ""))
     return Result.ok(zip_path)
 
 
@@ -271,7 +270,7 @@ async def upload(app: Optional[App], module_name: str):
     if app is None:
         app = get_app(f"{Name}.installer")
 
-    zip_path = find_highest_zip_version_entry(module_name, filepath=f'{app.start_dir}/tbState.yaml').get('url', '').split('mods_sto')[-1]
+    zip_path = app.mod_sto_manager.extract_version(module_name, __version__)# find_highest_zip_version_entry(module_name, filepath=f'{app.start_dir}/tbState.yaml').get('url', '').split('mods_sto')[-1]
 
     if upload or 'y' in input(f"uploade zip file {zip_path} ?"):
         await app.session.upload_file(zip_path, '/installer/upload-file/')
@@ -292,10 +291,10 @@ def installer(app: Optional[App], module_name: str, _version: str = "-.-.-", upd
         if not update and _version == version_:
             return "module already installed found"
 
-    module_name = find_highest_zip_version_entry(module_name, filepath=f'{app.start_dir}/tbState.yaml').get('url', '').split('mods_sto')[-1]
-    if module_name is None or len(module_name) == 0:
-        return False
-    zip_path = f"{app.start_dir}/mods_sto/{module_name}"
+    zip_path = app.mod_sto_manager.extract_version(module_name, __version__) #  find_highest_zip_version_entry(module_name, filepath=f'{app.start_dir}/tbState.yaml').get('url', '').split('mods_sto')[-1]
+    # if module_name is None or len(module_name) == 0:
+    #     return False
+    # zip_path = f"{app.start_dir}/mods_sto/{module_name}"
     if 'y' in input(f"install zip file {module_name} ?"):
         _name = unpack_and_move_module(zip_path, f"{app.start_dir}/mods")
         if os.path.exists(f"{app.start_dir}/mods/{_name}/tbConfig.yaml"):
@@ -394,7 +393,7 @@ if __name__ == "__main__":
     print(app.get_all_mods())
     for module_ in app.get_all_mods():  # ['dockerEnv', 'email_waiting_list',  'MinimalHtml', 'SchedulerManager', 'SocketManager', 'WebSocketManager', 'welcome']:
         print(f"Building module {module_}")
-        make_installer(app, module_)
+        make_installer(app, module_, upload=False)
         time.sleep(0.1)
     # zip_path = create_and_pack_module("./mods/audio", "audio", "0.0.5")
     # print(zip_path)
