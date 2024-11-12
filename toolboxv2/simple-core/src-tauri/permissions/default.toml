@@ -1,0 +1,12 @@
+[[permission]]
+identifier = "my-identifier"
+description = "This describes the impact and more."
+commands.allow = [
+    "read_file"
+]
+
+[[scope.allow]]
+my-scope = "$HOME/*"
+
+[[scope.deny]]
+my-scope = "$HOME/secret"
