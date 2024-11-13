@@ -24,7 +24,7 @@ import sys
 import time
 from fastapi.middleware.cors import CORSMiddleware
 
-from toolboxv2 import TBEF, AppArgs, ApiResult, Spinner, get_app
+from toolboxv2 import TBEF, AppArgs, ApiResult, Spinner, get_app, Result
 from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
 
 from toolboxv2.utils.system.state_system import get_state_from_app
@@ -565,7 +565,7 @@ async def user_runner(request, call_next):
     if isinstance(result, str):
         return HTMLResponse(status_code=200, content=result)
 
-    if not isinstance(result, Request) and not isinstance(result, ApiResult):
+    if not isinstance(result, Result) and not isinstance(result, ApiResult):
         if isinstance(result, Response):
             return result
         return JSONResponse(result)
