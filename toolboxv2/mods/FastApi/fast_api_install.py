@@ -421,7 +421,7 @@ async def create_upload_file(file: UploadFile):
             file.file.close()
 
     else:
-        raise HTTPException(status_code=400, detail=f"Invalid filename: {f_name}")
+        raise HTTPException(status_code=400, detail=f"Invalid filename: {file.filename}")
 
 
 @router.get("/download/{path:path}")
