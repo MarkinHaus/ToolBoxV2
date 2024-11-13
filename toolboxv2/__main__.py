@@ -10,7 +10,7 @@ import asyncio
 from functools import wraps
 from platform import system, node
 
-from sqlalchemy.testing.suite.test_reflection import metadata
+# from sqlalchemy.testing.suite.test_reflection import metadata
 from yaml import safe_load
 
 from toolboxv2.runabel import runnable_dict as runnable_dict_func
@@ -567,7 +567,7 @@ async def setup_app():
             await tb_app.save_load("CloudM")
             tb_app.run_any("CloudM", "update_core")
         else:
-            tb_app.run_any("CloudM", "install", module_name=args.update, update=True, get_results=True).print()
+            await tb_app.a_run_any("CloudM", "install", module_name=args.update, update=True, get_results=True).print()
         # os.system("git pull")
         # self.save_load("CloudM")
         # self.run_any("CloudM", "update_core")
@@ -649,7 +649,7 @@ async def command_runner(tb_app, command, **kwargs):
 
 
 async def mod_installer(tb_app, module_name):
-    report = tb_app.run_any("CloudM", "install", module_name=module_name)
+    report = await tb_app.a_run_any("CloudM", "install", module_name=module_name)
     if not report:
         await asyncio.sleep(0.1)
         if 'n' not in input(f"Mod '{module_name}' not found in local mods_sto install from remote ? (yes,no)"):
