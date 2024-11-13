@@ -123,3 +123,4 @@ ENV/
 /toolboxv2/web/node_modules/
 /toolboxv2/mods_sto
 .aider*
+/toolboxv2/simple-core/src-tauri/gen/android/keystore.properties

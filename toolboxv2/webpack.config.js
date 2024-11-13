@@ -74,73 +74,73 @@ export default {
     // For index.html
     new HtmlWebpackPlugin({
       template: './web/core0/index.html',
-      filename: '/web/core0/index.html',
+      filename: './web/core0/index.html',
       chunks: ['main']
     }),
     // For index.html
     new HtmlWebpackPlugin({
       template: './web/core0/Installer.html',
-      filename: '/web/core0/Installer.html',
+      filename: './web/core0/Installer.html',
       chunks: ['main']
     }),
     // For MainIdea.html
     new HtmlWebpackPlugin({
       template: './web/core0/MainIdea.html',
-      filename: '/web/core0/MainIdea.html',
+      filename: './web/core0/MainIdea.html',
       chunks: ['main']
     }),
     // For roadmap.html
     new HtmlWebpackPlugin({
       template: './web/core0/roadmap.html',
-      filename: '/web/core0/roadmap.html',
+      filename: './web/core0/roadmap.html',
       chunks: ['main']
     }),
     // For /web/assets/404.html
     new HtmlWebpackPlugin({
       template: './web/assets/404.html',
-      filename: '/web/assets/404.html',
+      filename: './web/assets/404.html',
       chunks: ['main']
     }),
     // For /web/assets/401.html
     new HtmlWebpackPlugin({
       template: './web/assets/401.html',
-      filename: '/web/assets/401.html',
+      filename: './web/assets/401.html',
       chunks: ['main']
     }),
     // For /web/assets/m_log_in.html
     new HtmlWebpackPlugin({
       template: './web/assets/m_log_in.html',
-      filename: '/web/assets/m_log_in.html',
+      filename: './web/assets/m_log_in.html',
       chunks: ['main']
     }),
     // For /web/assets/logout.html
     new HtmlWebpackPlugin({
       template: './web/assets/logout.html',
-      filename: '/web/assets/logout.html',
+      filename: './web/assets/logout.html',
       chunks: ['main']
     }),
     // For /web/assets/login.html
     new HtmlWebpackPlugin({
       template: './web/assets/login.html',
-      filename: '/web/assets/login.html',
+      filename: './web/assets/login.html',
       chunks: ['main']
     }),
     // For /web/assets/signup.html
     new HtmlWebpackPlugin({
       template: './web/assets/signup.html',
-      filename: '/web/assets/signup.html',
+      filename: './web/assets/signup.html',
       chunks: ['main']
     }),
     // For /web/assets/terms.html
     new HtmlWebpackPlugin({
       template: './web/assets/terms.html',
-      filename: '/web/assets/terms.html',
+      filename: './web/assets/terms.html',
       chunks: ['main']
     }),
     // For dashboard
     new HtmlWebpackPlugin({
       template: './web/dashboards/dashboard.html',
-      filename: '/web/dashboards/dashboard.html',
+      filename: './web/dashboards/dashboard.html',
       chunks: ['main']
     }),
     // For helper.js
@@ -152,7 +152,7 @@ export default {
     // For user_dashboard.html
     new HtmlWebpackPlugin({
       template: './web/dashboards/user_dashboard.html',
-      filename: '/web/dashboards/user_dashboard.html',
+      filename: './web/dashboards/user_dashboard.html',
       chunks: ['main']
     }),
     new MiniCssExtractPlugin({
