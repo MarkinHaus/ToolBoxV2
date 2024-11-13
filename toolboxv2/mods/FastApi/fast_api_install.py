@@ -404,14 +404,15 @@ async def create_upload_file(file: UploadFile):
     # Check if the file has a valid name
     if file.filename.startswith("RST%24") and file.filename.endswith(".zip"):
         try:
-            file_path = os.path.join(target_dir, file.filename.replace("%24", "$").replace("%24", "$").replace("%C2%A7", "§"))
+            f_name = file.filename.replace("%24", "$").replace("%24", "$").replace("%C2%A7", "§")
+            file_path = os.path.join(target_dir, f_name)
 
             # Save the file in chunks to avoid memory overload
             with open(file_path, 'wb') as f:
                 while contents := file.file.read(1024 * 1024):
                     f.write(contents)
-            get_app().mod_sto_manager.add_file_version(file.filename)
-            return {"res": f"Successfully uploaded {file.filename}"}
+            get_app().mod_sto_manager.add_file_version(f_name)
+            return {"res": f"Successfully uploaded {f_name}"}
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"There was an error uploading the file: {str(e)}")
@@ -420,7 +421,7 @@ async def create_upload_file(file: UploadFile):
             file.file.close()
 
     else:
-        raise HTTPException(status_code=400, detail=f"Invalid filename: {file.filename}")
+        raise HTTPException(status_code=400, detail=f"Invalid filename: {f_name}")
 
 
 @router.get("/download/{path:path}")
