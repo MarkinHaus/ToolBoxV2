@@ -100,7 +100,13 @@ class Tools(MainTool, FileHandler):
         return self.version
 
     def get_mod_snapshot(self, mod_name):
-        return find_highest_zip_version_entry(mod_name, filepath=f'{self.app.start_dir}/tbState.yaml')
+        if mod_name is None:
+            return None
+        try:
+            return find_highest_zip_version_entry(mod_name, filepath=f'{self.app.start_dir}/tbState.yaml')
+        except FileNotFoundError:
+            get_state_from_app(self.app)
+            return find_highest_zip_version_entry(mod_name, filepath=f'{self.app.start_dir}/tbState.yaml')
 
 
 # Create a hashed password
