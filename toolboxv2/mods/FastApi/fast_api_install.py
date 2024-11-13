@@ -402,9 +402,9 @@ async def create_upload_file(file: UploadFile):
     os.makedirs(target_dir, exist_ok=True)
 
     # Check if the file has a valid name
-    if file.filename.startswith("RST$") and file.filename.endswith(".zip"):
+    if file.filename.startswith("RST%24") and file.filename.endswith(".zip"):
         try:
-            file_path = os.path.join(target_dir, file.filename)
+            file_path = os.path.join(target_dir, file.filename.replace("%24", "$").replace("%24", "$").replace("%C2%A7", "§"))
 
             # Save the file in chunks to avoid memory overload
             with open(file_path, 'wb') as f:
