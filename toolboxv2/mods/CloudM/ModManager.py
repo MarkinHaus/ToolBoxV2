@@ -11,7 +11,7 @@ from typing import Optional
 import yaml
 from tqdm import tqdm
 
-from toolboxv2 import get_app, App, __version__
+from toolboxv2 import get_app, App, __version__, Spinner
 from toolboxv2.utils.system.api import find_highest_zip_version_entry
 from toolboxv2.utils.system.types import ToolBoxInterfaces, Result
 
@@ -124,7 +124,7 @@ def create_and_pack_module(path, module_name='', version='-.-.-', additional_dir
 
     # Modul in eine ZIP-Datei packen
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(temp_dir):
+        for root, dirs, files in tqdm(os.walk(temp_dir), desc="zip"):
             for file in files:
                 file_path = os.path.join(root, file)
                 zipf.write(file_path, os.path.relpath(file_path, temp_dir))
@@ -235,8 +235,8 @@ async def make_installer(app: Optional[App], module_name: str, base="./mods", up
     version_ = version
     if mod is not None:
         version_ = mod.version
-
-    zip_path = create_and_pack_module(f"{base}/{module_name}", module_name, version_)
+    with Spinner("create and pack module"):
+        zip_path = create_and_pack_module(f"{base}/{module_name}", module_name, version_)
     if upload or 'y' in input("uploade zip file ?"):
         res = await app.session.upload_file(zip_path, '/installer/upload-file/')
         print(res)
