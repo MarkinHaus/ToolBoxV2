@@ -9,7 +9,6 @@ from pydantic import BaseModel
 
 from .all_functions_enums import *
 from .file_handler import FileHandler
-from .mods_sto_git_manager import GitZipManager
 from ..extras.Style import Spinner
 
 
@@ -488,7 +487,6 @@ class AppType:
     args_sto: AppArgs
     system_flag = None
     exit_tasks = []
-    mod_sto_manager: Optional[GitZipManager] = None
 
     def __init__(self, prefix: Optional[str] = None, args: Optional[AppArgs] = None):
         self.sto = None

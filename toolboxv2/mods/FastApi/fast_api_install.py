@@ -411,7 +411,6 @@ async def create_upload_file(file: UploadFile):
             with open(file_path, 'wb') as f:
                 while contents := file.file.read(1024 * 1024):
                     f.write(contents)
-            get_app().mod_sto_manager.add_file_version(f_name)
             return {"res": f"Successfully uploaded {f_name}"}
 
         except Exception as e:
@@ -427,15 +426,14 @@ async def create_upload_file(file: UploadFile):
 @router.get("/download/{path:path}")
 def download_file(path: str):
     file_name = path
-    if file_name.startswith(".") or file_name.startswith(
-        '%20') or not file_name or '/.' in file_name or ".." in file_name:
-        return JSONResponse(content={"message": f"directory not public ."}, status_code=100)
+    if file_name.startswith(".") or file_name.startswith('%20') or not file_name or '/.' in file_name or ".." in file_name:
+        return JSONResponse(content={"message": f"directory not public ."}, status_code=403)
     TB_DIR = get_app().start_dir
-    if platform.system() == "Darwin" or platform.system() == "Linux":
+    if "/" in file_name:
         directory = file_name.split("/")
-    else:
+    elif "\\" in file_name:
         directory = file_name.split("\\")
-    if len(directory) == 1:
+    else:
         directory = file_name.split("%5C")
     get_logger().info(f"Request file {file_name}")
 
@@ -444,6 +442,7 @@ def download_file(path: str):
     else:
         file_path = TB_DIR + "\\" + file_name
 
+    print(directory, file_path, file_name)
     if len(directory) > 1:
 
         print(f"{directory=}!!!!!!")
@@ -451,16 +450,13 @@ def download_file(path: str):
 
         if directory not in ["mods_sto", "runnable", "tests", "data", "installer", "builds"] or directory == '/':
             get_logger().warning(f"{file_path} not public")
-            return JSONResponse(content={"message": f"directory not public {directory}"}, status_code=100)
+            return JSONResponse(content={"message": f"directory not public {directory}"}, status_code=403)
 
         if directory == "tests":
             if platform.system() == "Darwin" or platform.system() == "Linux":
                 file_path = "/".join(TB_DIR.split("/")[:-1]) + "/" + file_name
             else:
                 file_path = "\\".join(TB_DIR.split("\\")[:-1]) + "\\" + file_name
-
-        if directory == "mods_sto":
-            file_path = get_app().mod_sto_manager.extract_version(file_name, get_app().version)
 
         if os.path.exists(file_path):
             get_logger().info(f"Downloading from {file_path}")
@@ -469,8 +465,8 @@ def download_file(path: str):
             return JSONResponse(content={"message": f"is directory", "files": os.listdir(file_path)}, status_code=201)
         else:
             get_logger().error(f"{file_path} not found")
-            return JSONResponse(content={"message": "File not found"}, status_code=110)
+            return JSONResponse(content={"message": "File not found"}, status_code=404)
 
     else:
-        return JSONResponse(content={"message": f"directory not public ."}, status_code=100)
+        return JSONResponse(content={"message": f"no listing of all files! use get withe an mod name or CloudM for mods_sto."}, status_code=403)
 

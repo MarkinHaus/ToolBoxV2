@@ -1,3 +1,5 @@
+import asyncio
+import json
 import os
 import shutil
 import subprocess
@@ -7,6 +9,7 @@ import time
 import urllib.request
 import zipfile
 from typing import Optional
+from packaging import version as p_version
 
 import yaml
 from tqdm import tqdm
@@ -84,8 +87,6 @@ def create_and_pack_module(path, module_name='', version='-.-.-', additional_dir
     zip_file_name = f"RST${module_name}&{__version__}§{version}.zip"
     zip_path = f"./mods_sto/{zip_file_name}"
 
-    print(f"\n{base_path=}\n{module_path=}\n{temp_dir=}\n{zip_path=}")
-
     # Modulverzeichnis erstellen, falls es nicht existiert
     if not os.path.exists(module_path):
         return False
@@ -124,7 +125,7 @@ def create_and_pack_module(path, module_name='', version='-.-.-', additional_dir
 
     # Modul in eine ZIP-Datei packen
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in tqdm(os.walk(temp_dir), desc="zip"):
+        for root, dirs, files in os.walk(temp_dir):
             for file in files:
                 file_path = os.path.join(root, file)
                 zipf.write(file_path, os.path.relpath(file_path, temp_dir))
@@ -229,8 +230,8 @@ async def make_installer(app: Optional[App], module_name: str, base="./mods", up
 
     if module_name not in app.get_all_mods():
         return "module not found"
-
-    app.save_load(module_name)
+    with Spinner("test loading module"):
+        app.save_load(module_name)
     mod = app.get_mod(module_name)
     version_ = version
     if mod is not None:
@@ -238,13 +239,13 @@ async def make_installer(app: Optional[App], module_name: str, base="./mods", up
     with Spinner("create and pack module"):
         zip_path = create_and_pack_module(f"{base}/{module_name}", module_name, version_)
     if upload or 'y' in input("uploade zip file ?"):
-        res = await app.session.upload_file(zip_path, '/installer/upload-file/')
+        with Spinner("Uploading file"):
+            res = await app.session.upload_file(zip_path, '/installer/upload-file/')
         print(res)
         if isinstance(res, dict):
             if res.get('res', '').startswith('Successfully uploaded'):
                 return Result.ok(res)
             return Result.default_user_error(res)
-    app.mod_sto_manager.add_file_version(zip_path.replace("./mods_sto/", ""))
     return Result.ok(zip_path)
 
 
@@ -265,49 +266,120 @@ def uninstaller(app: Optional[App], module_name: str):
     return don
 
 
-@export(mod_name=Name, name="install", test=False)
+@export(mod_name=Name, name="upload", test=False)
 async def upload(app: Optional[App], module_name: str):
     if app is None:
         app = get_app(f"{Name}.installer")
 
-    zip_path = app.mod_sto_manager.extract_version(module_name, __version__)# find_highest_zip_version_entry(module_name, filepath=f'{app.start_dir}/tbState.yaml').get('url', '').split('mods_sto')[-1]
+    zip_path = \
+        find_highest_zip_version_entry(module_name, filepath=f'{app.start_dir}/tbState.yaml').get('url', '').split(
+            'mods_sto')[-1]
 
     if upload or 'y' in input(f"uploade zip file {zip_path} ?"):
         await app.session.upload_file(zip_path, '/installer/upload-file/')
 
 
-def installer(app: Optional[App], module_name: str, _version: str = "-.-.-", update=False):
+@export(mod_name=Name, name="install", test=False)
+async def installer(app: Optional[App], module_name: str):
     if app is None:
         app = get_app(f"{Name}.installer")
 
-    if module_name in app.get_all_mods():
-        version_ = version
-        mod = app.get_mod(module_name)
-        if mod is not None:
-            try:
-                version_ = mod.version
-            except AttributeError:
-                pass
-        if not update and _version == version_:
-            return "module already installed found"
+    if not app.session.valid:
+        return None
 
-    zip_path = app.mod_sto_manager.extract_version(module_name, __version__) #  find_highest_zip_version_entry(module_name, filepath=f'{app.start_dir}/tbState.yaml').get('url', '').split('mods_sto')[-1]
-    # if module_name is None or len(module_name) == 0:
-    #     return False
-    # zip_path = f"{app.start_dir}/mods_sto/{module_name}"
-    if 'y' in input(f"install zip file {module_name} ?"):
-        _name = unpack_and_move_module(zip_path, f"{app.start_dir}/mods")
-        if os.path.exists(f"{app.start_dir}/mods/{_name}/tbConfig.yaml"):
-            install_dependencies(f"{app.start_dir}/mods/{_name}/tbConfig.yaml")
+    response = await app.session.fetch("/installer/get?name=" + module_name, method="GET")
+    json_response = await response.json()
+    response = json.loads(json_response)
+
+    do_install = True
+
+    if "provider" not in response.keys() and "url" not in response.keys():
+        print("Error while fetching mod data", response)
+        do_install = False
+
+    if response['provider'] != "SimpleCore":
+        print("Error while fetching mod data")
+        do_install = False
+
+    if module_name not in response['url']:
+        print("404 mod not found")
+        do_install = False
+
+    if not do_install:
+        return
+    mod_url = response['url'].replace(app.session.base, "/")
+    print(f"mod url is : {app.session.base + mod_url}")
+    if not await app.session.download_file(response['result']['data'], app.start_dir + '/mods_sto'):
+        print("failed to download mod")
+        print("optional download it ur self and put the zip in the mods_sto folder")
+        if 'y' not in input("Done ? will start set up from the mods_sto folder").lower():
+            return
+    os.rename(app.start_dir + '/mods_sto/' + mod_url.split('/')[-1].replace("$", '').replace("&", '').replace("§", ''),
+              app.start_dir + '/mods_sto/' + mod_url.split('/')[-1])
+    report = install_from_zip(app, mod_url.split('/')[-1])
+    if not report:
+        print("Set up error")
+    return
+
+
+@export(mod_name=Name, name="update_all", test=False)
+async def update_all_mods(app, ignor_app_version=True):
+    if app is None:
+        app = get_app(f"{Name}.update_all")
+    all_mods = app.get_all_mods()
+
+    async def pipeline(name):
+        mod_info = await app.session.fetch("/install/get?name="+name)
+        json_response = await mod_info.json()
+        mod_version = [__version__, app.get_mod(name).version]
+        remote_mod_version = json.loads(json_response).get("version", [__version__, '0'])
+        if len(remote_mod_version) == 1:
+            remote_mod_version = [remote_mod_version[0], '0']
+
+        local_app_version, local_mod_version = (p_version.parse(mod_version[0]),
+                                                p_version.parse(mod_version[1]))
+        remote_app_version, remote_mod_version = (p_version.parse(remote_mod_version[0]),
+                                                  p_version.parse(remote_mod_version[1]))
+
+        if not ignor_app_version and local_app_version < remote_app_version:
+            app.run_any("CloudM", "update_core")
+            exit(0)
+
+        if local_mod_version < remote_mod_version:
+            await installer(app, name)
+
+    [await pipeline(mod) for mod in all_mods]
+
+
+@export(mod_name=Name, name="build_all", test=False)
+async def update_all_mods(app, base="./mods", upload=True):
+    if app is None:
+        app = get_app(f"{Name}.update_all")
+    all_mods = app.get_all_mods()
+
+    async def pipeline(name):
+        res = await make_installer(app, name, base, upload)
+        return res
+
+    res = [await pipeline(mod) for mod in all_mods]
+    for r in res:
+        print(set(r))
+
+
+def install_from_zip(app, zip_name, no_dep=True, auto_dep=False):
+    zip_path = f"{app.start_dir}/mods_sto/{zip_name}"
+    _name = unpack_and_move_module(zip_path, f"{app.start_dir}/mods")
+    if not no_dep and os.path.exists(f"{app.start_dir}/mods/{_name}/tbConfig.yaml"):
+            install_dependencies(f"{app.start_dir}/mods/{_name}/tbConfig.yaml", auto_dep)
     return True
-
 
 
 #  =================== v2 functions =================
 
 def run_command(command, cwd=None):
     """Führt einen Befehl aus und gibt den Output zurück."""
-    result = subprocess.run(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True, encoding='cp850')
+    result = subprocess.run(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True,
+                            encoding='cp850')
     return result.stdout
 
 
@@ -350,7 +422,7 @@ def bundle_dependencies(start_directory, output_file="dependencies.yaml", return
         yaml.dump({"dependencies": list(dependencies)}, f)
 
 
-def install_dependencies(yaml_file):
+def install_dependencies(yaml_file, do=False):
     with open(yaml_file, 'r') as f:
         dependencies = yaml.safe_load(f)
 
@@ -360,11 +432,12 @@ def install_dependencies(yaml_file):
     # Installation der Abhängigkeiten mit pip
     print(f"Dependency :", dependencies)
     for dependency in dependencies:
-        if u_ip := input(f"{dependency} | install skipp exit [I/s/e]"):
-            if u_ip == "s":
-                continue
-            if u_ip == "e":
-                break
+        if not do:
+            if u_ip := input(f"{dependency} | install skipp exit [I/s/e]"):
+                if u_ip == "s":
+                    continue
+                if u_ip == "e":
+                    break
         subprocess.call(['pip', 'install', dependency])
 
 
@@ -378,11 +451,11 @@ def uninstall_dependencies(yaml_file):
 
 
 if __name__ == "__main__":
-    app = get_app()
-    print(app.get_all_mods())
-    for module_ in app.get_all_mods():  # ['dockerEnv', 'email_waiting_list',  'MinimalHtml', 'SchedulerManager', 'SocketManager', 'WebSocketManager', 'welcome']:
+    app_ = get_app()
+    print(app_.get_all_mods())
+    for module_ in app_.get_all_mods():  # ['dockerEnv', 'email_waiting_list',  'MinimalHtml', 'SchedulerManager', 'SocketManager', 'WebSocketManager', 'welcome']:
         print(f"Building module {module_}")
-        make_installer(app, module_, upload=False)
+        make_installer(app_, module_, upload=False)
         time.sleep(0.1)
     # zip_path = create_and_pack_module("./mods/audio", "audio", "0.0.5")
     # print(zip_path)

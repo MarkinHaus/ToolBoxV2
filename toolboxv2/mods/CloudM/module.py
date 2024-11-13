@@ -11,6 +11,7 @@ import requests
 from toolboxv2 import MainTool, FileHandler, get_app, Style
 from toolboxv2.utils.system.state_system import get_state_from_app, TbState
 from .UserInstances import UserInstances
+from ...utils.system.api import find_highest_zip_version_entry
 
 Name = 'CloudM'
 version = "0.0.2"
@@ -44,6 +45,7 @@ class Tools(MainTool, FileHandler):
             "name": "cloudM",
             "Version": self.get_version,
             "show_version": self.s_version,
+            "get_mod_snapshot": self.get_mod_snapshot,
         }
 
         self.logger.info("init FileHandler cloudM")
@@ -97,50 +99,8 @@ class Tools(MainTool, FileHandler):
             self.logger.error(f"Error retrieving version from {url}")
         return self.version
 
-    def save_mod_snapshot(self, mod_name, provider=None, tb_state: TbState or None = None):
-        if provider is None:
-            provider = self.get_file_handler(self.keys["URL"])
-        if tb_state is None:
-            tb_state: TbState = get_state_from_app(self.app, simple_core_hub_url=provider)
-        mod_data = tb_state.mods.get(mod_name)
-        if mod_data is None:
-            mod_data = tb_state.mods.get(mod_name + ".py")
-
-        if mod_data is None:
-            mod_data = tb_state.installable.get(mod_name)
-
-        if mod_data is None:
-            self.print(f"Valid ar : {list(tb_state.installable.keys())}")
-            return list(tb_state.installable.keys())
-
-        if not os.path.exists("./installer"):
-            os.mkdir("./installer")
-
-        json_data = {"Name": mod_name,
-                     "mods": [mod_data.url],
-                     "runnable": None,
-                     "requirements": None,
-                     "additional-dirs": None,
-                     mod_name: {
-                         "version": mod_data.version,
-                         "shasum": mod_data.shasum,
-                         "provider": mod_data.provider,
-                         "url": mod_data.url
-                     }}
-        installer_path = f"./installer/{mod_name}-installer.json"
-        if os.path.exists(installer_path):
-            with open(installer_path, "r") as installer_file:
-                file_data: dict = json.loads(installer_file.read())
-                if len(file_data.get('mods', [])) > 1:
-                    file_data['mods'].append(mod_data.url)
-                file_data[mod_name] = json_data[mod_name]
-
-                json_data = file_data
-
-        with open(installer_path, "w") as installer_file:
-            json.dump(json_data, installer_file)
-
-        return json_data
+    def get_mod_snapshot(self, mod_name):
+        return find_highest_zip_version_entry(mod_name, filepath=f'{self.app.start_dir}/tbState.yaml')
 
 
 # Create a hashed password

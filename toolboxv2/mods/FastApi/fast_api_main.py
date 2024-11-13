@@ -823,10 +823,10 @@ async def helper(id_name):
 
     tb_state = [None]
 
-    def get_d(mod_name_="CloudM"):
+    def get_d(name="CloudM"):
         if tb_state[0] is None:
             tb_state[0] = get_state_from_app(tb_app, simple_core_hub_url=provider)
-        return tb_app.get_mod("CloudM").save_mod_snapshot(mod_name_, provider=provider, tb_state=tb_state[0])
+        return tb_app.get_mod("CloudM").get_mod_snapshot(name)
 
     install_router.add_api_route('/' + "get", get_d, methods=["GET"], description="get_species_data")
     tb_app.sprint("include Installer")

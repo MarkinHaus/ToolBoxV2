@@ -120,7 +120,7 @@ def check_multiple_processes(pids: List[int]) -> Dict[int, str]:
 
 services_data_sto = [{}]
 services_data_sto_last_update_time = [0]
-
+services_data_display = [""]
 
 def get_service_status(dir: str) -> str:
     """Displays the status of all services."""
@@ -141,5 +141,5 @@ def get_service_status(dir: str) -> str:
     for service_name, pid in services.items():
         status = pid_statuses.get(pid, YELLOW_CIRCLE)
         res_s += f"{status} {service_name} (PID: {pid})\n"
-
+    services_data_display[0] = res_s.strip()
     return res_s.rstrip()

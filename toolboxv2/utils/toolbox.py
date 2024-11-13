@@ -18,7 +18,6 @@ from yaml import safe_load
 from .singelton_class import Singleton
 
 from .system.cache import FileCache, MemoryCache
-from .system.mods_sto_git_manager import GitZipManager
 from .system.tb_logger import get_logger, setup_logging
 from .system.types import AppArgs, ToolBoxInterfaces, ApiResult, Result, AppType, MainToolType
 from .system.getting_and_closing_app import get_app
@@ -50,8 +49,6 @@ class App(AppType, metaclass=Singleton):
 
         os.chdir(dir_name)
         self.start_dir = str(dir_name)
-
-        self.mod_sto_manager = GitZipManager(self.start_dir+'/mods_sto')
 
         lapp = dir_name + '\\.data\\'
 
@@ -99,6 +96,13 @@ class App(AppType, metaclass=Singleton):
             self.config_dir = self.start_dir + '\\.config\\' + identification
             self.info_dir = self.start_dir + '\\.info\\' + identification
 
+        if self.appdata is None:
+            self.appdata = self.data_dir
+        else:
+            self.appdata += "/ToolBoxV2"
+
+        if not os.path.exists(self.appdata):
+            os.makedirs(self.appdata, exist_ok=True)
         if not os.path.exists(self.data_dir):
             os.makedirs(self.data_dir, exist_ok=True)
         if not os.path.exists(self.config_dir):

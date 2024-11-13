@@ -23,9 +23,13 @@ def find_highest_zip_version_entry(name, target_app_version=None, filepath='tbSt
         for key, value in list(data.get('installable', {}).items())[::-1]:
             # Prüfe, ob der Name im Schlüssel enthalten ist
 
-            # print(key)
             if name in key:
-                app_ver, zip_ver = value['version']
+                v = value['version']
+                if len(v) == 1:
+                    app_ver = v[0]
+                    zip_ver = "0.0.0"
+                else:
+                    app_ver, zip_ver = v
                 app_ver = version.parse(app_ver)
                 # Wenn eine Ziel-App-Version angegeben ist, vergleiche sie
                 if target_app_version is None or app_ver == version.parse(target_app_version):
