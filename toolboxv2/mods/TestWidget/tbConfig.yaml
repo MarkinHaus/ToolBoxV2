@@ -1,9 +1,9 @@
 module_name: TestWidget
 version: 0.0.1
-zip: "RST$TestWidget&v0.1.18\xA70.0.1.zip"
+zip: "RST$TestWidget&v0.1.20\xA70.0.1.zip"
 dependencies:
 - ''
+- fastapi
+- typing
 - os
 - uuid
-- typing
-- fastapi

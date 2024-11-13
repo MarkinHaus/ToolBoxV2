@@ -127,13 +127,10 @@ def process_files(directory: str) -> TbState:
     )
 
 
-def get_state_from_app(app, simple_core_hub_url="https://SimpleCoreHub.com/Mods/",
+def get_state_from_app(app, simple_core_hub_url="https://simplecore.app/",
                        github_url="https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/"):
     if simple_core_hub_url[-1] != '/':
         simple_core_hub_url += '/'
-
-    if 'api' not in simple_core_hub_url:
-        simple_core_hub_url += 'api/'
 
     if github_url[-1] != '/':
         github_url += '/'

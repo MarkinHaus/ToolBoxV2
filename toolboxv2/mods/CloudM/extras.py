@@ -225,7 +225,7 @@ def update_core_git(self, backup=False, name="base"):
         os.system("git fetch --all")
         os.system("git reset --hard origin/master")
 
-    if "-u main" in com:
+    if "-u main" in com and len(com.split("-u main")) > 5:
         c = com.replace('-u main ', '')
         print("Restarting... with : " + c)
         os.system(c)
@@ -278,7 +278,6 @@ async def register_initial_root_user(app: App, email=None):
 
     print(url)
     return Result.ok(url)
-
 
 @no_test
 def clear_db(self, do_root=False):

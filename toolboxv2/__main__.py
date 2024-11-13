@@ -279,7 +279,8 @@ def setup_service_linux():
 def parse_args():
     parser = argparse.ArgumentParser(description="Welcome to the ToolBox cli")
 
-    parser.add_argument("conda", help="run conda commands for mor infos run tb conda -h", default=False, action='store_true')
+    parser.add_argument("conda", help="run conda commands for mor infos run tb conda -h", default=False,
+                        action='store_true')
 
     parser.add_argument("-init",
                         help="ToolBoxV2 init (name) -> default : -n name = main", type=str or None, default=None)
@@ -399,11 +400,21 @@ def parse_args():
                         help="activate system prints / verbose output")
 
     parser.add_argument("--ipy", action="store_true", default=False,
-                        help="activate toolbox in IPython")
+                        help="activate toolbox in IPython Commands in IPython tb [ModName] [fuctionName] [args...] | "
+                             "ipy_magic command only work in IPython")
+    parser.add_argument('--ipy_magic_save',  type=str, default="main",
+                        help='save   [filename] -> save session in a fiel')
+    parser.add_argument('--ipy_magic_inject',  type=str, default="main",
+                        help='tb inject [filename] -> inject app and args to an file in the ipy_sessions folder')
+    parser.add_argument('--ipy_magic_loadx',  type=str, default="main",
+                        help='tb loadX  [filename] -> load and run command from session in IPython')
+    parser.add_argument('--ipy_magic_loade',  type=str, default="main",
+                        help='tb load   [filename] -> load session back in IPython')
+    parser.add_argument('--ipy_magic_open',  type=str, default="main",
+                        help='tb open [notebook/lab] [filename] -> open an saved session in jupyter (notebook or Labs) ')
 
     parser.add_argument('--kwargs', nargs='*', default=[], type=str, action='append',
                         help='Key-value pairs to pass as kwargs, format: key=value')
-
 
     args = parser.parse_args()
 
@@ -426,8 +437,10 @@ def parse_kwargs(pairs):
             key, value = pair.split('=', 1)
             kwargs[key] = value
         else:
-            raise argparse.ArgumentTypeError(f"Invalid format for --kwargs argument: {pair}. Expected format is key=value.")
+            raise argparse.ArgumentTypeError(
+                f"Invalid format for --kwargs argument: {pair}. Expected format is key=value.")
     return kwargs
+
 
 def edit_logs():
     name = input(f"Name of logger \ndefault {loggerNameOfToolboxv2}\n:")
@@ -558,7 +571,7 @@ async def setup_app():
                                                                    "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/"),
                                   daemon=True)
         st.start()
-        tb_app.print_functions()
+        # tb_app.print_functions()
         if _min_info:
             print(_min_info)
 
@@ -567,12 +580,9 @@ async def setup_app():
             await tb_app.save_load("CloudM")
             tb_app.run_any("CloudM", "update_core")
         else:
-            await tb_app.a_run_any("CloudM", "install", module_name=args.update, update=True, get_results=True).print()
-        # os.system("git pull")
-        # self.save_load("CloudM")
-        # self.run_any("CloudM", "update_core")
+            res = await tb_app.a_run_any("CloudM", "install", module_name=args.update, get_results=True)
+            res.print()
 
-    tb_app.print("OK")
     if args.background_application_runner:
         daemon_app = await DaemonApp(tb_app, args.host, args.port if args.port != 5000 else 6587, t=False)
         if not args.debug:
@@ -603,7 +613,6 @@ async def setup_app():
         except:
             print("Auto starting Starting Local if u know ther is no bg instance use -fg to run in the frond ground")
 
-
     return tb_app, args
 
 
@@ -631,7 +640,7 @@ async def command_runner(tb_app, command, **kwargs):
     call.args = command[2:]
     call.kwargs = kwargs
 
-    if 'help' in call.kwargs and call.kwargs.get('help', False) or 'h' in call.kwargs and call.kwargs.get('h',False):
+    if 'help' in call.kwargs and call.kwargs.get('help', False) or 'h' in call.kwargs and call.kwargs.get('h', False):
         data = tb_app.get_function((call.module_name, call.function_name), metadata=True)
         pprint.pprint(data)
         return data
@@ -648,51 +657,6 @@ async def command_runner(tb_app, command, **kwargs):
     print("Running", spec, r)
 
 
-async def mod_installer(tb_app, module_name):
-    report = await tb_app.a_run_any("CloudM", "install", module_name=module_name)
-    if not report:
-        await asyncio.sleep(0.1)
-        if 'n' not in input(f"Mod '{module_name}' not found in local mods_sto install from remote ? (yes,no)"):
-            session = Session(tb_app.get_username(), os.getenv("TOOLBOXV2_REMOTE_BASE"))
-            if not await session.login():
-                mk = input(f"bitte geben sie ihren magik link ein {session.base}/")
-                if 'web/' not in mk:
-                    print("Link is not in Valid format")
-                    return
-                if not await session.init_log_in_mk_link(mk):
-                    print("Link is not in Valid")
-                    return
-            response = await session.fetch("/api/CloudM/get_latest?module_name=" + module_name, method="GET")
-            json_response = await response.json()
-            response = json.loads(json_response)
-
-            do_install = True
-            if response['error'] != "none":
-                print("Error while fetching mod data")
-                do_install = False
-
-            if response['result']['data'] == 'mod not found':
-                print("404 mod not found")
-                do_install = False
-            if not do_install:
-                return
-            print(f"mod url is : {session.base + response['result']['data']}")
-            if not await session.download_file(response['result']['data'], tb_app.start_dir + '/mods_sto'):
-                print("failed to download mod")
-                print("optional download it ur self and put the zip in the mods_sto folder")
-                if 'y' not in input("Done ? will start set up from the mods_sto folder").lower():
-                    return
-            os.rename(
-                tb_app.start_dir + '/mods_sto/' + response['result']['data'].split('/')[-1].replace("$",
-                                                                                                    '').replace(
-                    "&", '').replace("§", ''),
-                tb_app.start_dir + '/mods_sto/' + response['result']['data'].split('/')[-1])
-            report = tb_app.run_any("CloudM", "install", module_name=module_name)
-            if not report:
-                print("Set up error")
-            return
-
-
 async def main():
     """Console script for toolboxv2."""
     tb_app, args = await setup_app()
@@ -706,7 +670,10 @@ async def main():
     pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
 
     if args.install:
-        await mod_installer(tb_app, args.install)
+        report = await tb_app.a_run_any("CloudM",
+                                        "install",
+                                        module_name=args.install, get_results=True)
+        report.print()
 
     if args.lm:
         edit_logs()
@@ -795,7 +762,8 @@ async def main():
 
     if args.command and not args.background_application:
         for command in args.command:
-            await command_runner(tb_app, command, **args.kwargs[args.command.index(command) if args.command.index(command) < len(args.kwargs)-1 else 0])
+            await command_runner(tb_app, command, **args.kwargs[
+                args.command.index(command) if args.command.index(command) < len(args.kwargs) - 1 else 0])
 
     if args.live_application and args.debug:
         hide = tb_app.hide_console()
@@ -840,6 +808,7 @@ def line_magic_ipy(app, ipython, line):
     else:
         app.print_functions()
 
+
 def configure_ipython(argv):
     from traitlets.config import Config
 
@@ -870,7 +839,7 @@ from threading import Thread
 # from toolboxv2.utils.system.ipy_completer import get_completer
 
 from IPython.core.magic import register_line_magic, register_cell_magic
-sys.argv = """+str(argv)+"""
+sys.argv = """ + str(argv) + """
 app, args = await tb.__main__.setup_app()
 if hasattr(app, "daemon_app"):
     Thread(target=async_test(app.daemon_app.connect), args=(app,), daemon=True).start()
@@ -890,15 +859,15 @@ def load_ipython_extension(ipython):
         parts = line.split(' ')
         f_name = "ipy_sessions/"+("tb_session" if len(parts) <= 1 else parts[-1])
 
-        os.makedirs(f'{app.data_dir}/ipy_sessions/',exist_ok=True)
+        os.makedirs(f'{app.appdata}/ipy_sessions/',exist_ok=True)
         if "save" in parts[0]:
-            do_inj = not os.path.exists(f'{app.data_dir}/{f_name}.ipy')
+            do_inj = not os.path.exists(f'{app.appdata}/{f_name}.ipy')
             if do_inj:
-                ipython.run_line_magic('save', f'{app.data_dir}/{f_name}.ipy')
+                ipython.run_line_magic('save', f'{app.appdata}/{f_name}.ipy')
             else:
-                ipython.run_line_magic('save', f'-r {app.data_dir}/{f_name}.ipy')
+                ipython.run_line_magic('save', f'-r {app.appdata}/{f_name}.ipy')
         if "inject" in parts[0]:
-                file_path = f'{app.data_dir}/{f_name}.ipy'
+                file_path = f'{app.appdata}/{f_name}.ipy'
                 with open(file_path, 'r') as file:
                     lines = file.readlines()
                 # Insert lines after the first line
@@ -908,13 +877,13 @@ def load_ipython_extension(ipython):
                     file.writelines(lines)
         elif "loadX" in parts[0]:
             # ipython.run_line_magic('store', '-r')
-            ipython.run_line_magic('run', f'{app.data_dir}/{f_name}.ipy')
+            ipython.run_line_magic('run', f'{app.appdata}/{f_name}.ipy')
         elif "load" in parts[0]:
             # ipython.run_line_magic('store', '-r')
-            ipython.run_line_magic('load', f'{app.data_dir}/{f_name}.ipy')
+            ipython.run_line_magic('load', f'{app.appdata}/{f_name}.ipy')
         elif "open" in parts[0]:
-            file_path = f'{app.data_dir}/{f_name}.ipy'
-            if os.path.exists(f'{app.data_dir}/{f_name}.ipy'):
+            file_path = f'{app.appdata}/{f_name}.ipy'
+            if os.path.exists(f'{app.appdata}/{f_name}.ipy'):
                 l = "notebook" if not 'lab' in parts else 'labs'
                 os.system(f"jupyter {l} {file_path}")
             else:

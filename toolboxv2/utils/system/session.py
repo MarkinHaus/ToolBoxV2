@@ -123,7 +123,6 @@ class Session(metaclass=Singleton):
 
         claim = claim_data.get("key")
 
-        print("claim:", claim)
         if claim is None:
             return claim_data
         await asyncio.sleep(0.1)
@@ -242,6 +241,8 @@ class Session(metaclass=Singleton):
                     print(f"Fehler beim Hochladen der Datei {file_path}. Status: {response.status}")
                     print(await response.text())
                     return None
+
+
 
     def exit(self):
         with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="w") as blob:
