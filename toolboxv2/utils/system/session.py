@@ -8,7 +8,7 @@ try:
 except ImportError:
     class Response:
         pass
-from typing import Optional
+from typing import Optional, Callable
 
 import requests
 from ..extras.blobs import BlobFile
@@ -38,14 +38,14 @@ class RequestSession(Response):
         self.row = row
 
     def body(self):
-        if isinstance(self._body, bytes):
-            return self._body
-        return self._body()
+        if isinstance(self._body, Callable):
+            return self._body()
+        return self._body
 
     def json(self):
-        if isinstance(self._json, dict):
-            return self._json
-        return self._json()
+        if isinstance(self._json, Callable):
+            return self._json()
+        return self._json
 
 
 class Session(metaclass=Singleton):

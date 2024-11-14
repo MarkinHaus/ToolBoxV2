@@ -5,8 +5,10 @@ from toolboxv2.utils.extras.base_widget import get_user_from_request
 from toolboxv2.utils.extras.blobs import BlobStorage, BlobFile
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Callable
 from pydantic import BaseModel, Field
+
+from toolboxv2.utils.system.session import RequestSession
 
 Name = "DoNext"
 version = "0.0.1"
@@ -918,7 +920,7 @@ async def get_manager(app, request):
 
 
 @export(mod_name=Name, name="new-action", api=True, row=True, request_as_kwarg=True, api_methods=['POST'])
-async def api_new_action(app, request):
+async def api_new_action(app, request: RequestSession):
     if request is None:
         return None
 
@@ -928,6 +930,8 @@ async def api_new_action(app, request):
     body = request.json()
 
     user_manager = await get_manager(app, request)
+    if isinstance(body, Callable):
+        body = body()
 
     user_manager.new_action(body)
 
