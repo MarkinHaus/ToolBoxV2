@@ -231,7 +231,7 @@ def setup_service_windows():
             os.remove(path + '/tb_start.bat')
         with open(path + '/tb_start.bat', "a", encoding="utf8") as f:
             f.write(
-                f"""{sys.executable} -m tb -bg -m {runner}"""
+                f"""{sys.executable} -m toolboxv2 -bg -m {runner}"""
             )
         print(f"Init Service in {path}")
     elif mode == "3":
@@ -241,7 +241,7 @@ def setup_service_windows():
     elif mode == "0":
         pass
     elif mode == "2":
-        os.remove(path + '/tb_start.bat')
+        os.remove(path + '/tb_start.link')
         print(f"Removed Service from {path}")
     else:
         setup_service_windows()

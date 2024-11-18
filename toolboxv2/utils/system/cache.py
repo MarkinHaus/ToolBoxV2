@@ -5,7 +5,7 @@ from cachetools import TTLCache
 
 class FileCache:
     def __init__(self, folder='./FileCache/', filename='cache.db'):
-        self.filename = folder+filename
+        self.filename = filename
         self.folder = folder
         if not os.path.exists(folder):
             os.makedirs(folder, exist_ok=True)

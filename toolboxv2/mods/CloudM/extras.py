@@ -121,6 +121,7 @@ def create_account(self):
         import webbrowser
         webbrowser.open(url, new=0, autoraise=True)
     except Exception as e:
+        os.system(f"start {url}")
         self.logger.error(Style.YELLOW(str(e)))
         self.print(Style.YELLOW(str(e)))
         return False

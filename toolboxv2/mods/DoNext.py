@@ -927,13 +927,12 @@ async def api_new_action(app, request: RequestSession):
     if app is None:
         app = get_app()
 
-    body = request.json()
-
     user_manager = await get_manager(app, request)
-    if isinstance(body, Callable):
-        body = body()
 
-    user_manager.new_action(body)
+    json = request.json()
+    print("Request:", json)
+
+    user_manager.new_action(json)
 
     return {'status': 'success'}
 
