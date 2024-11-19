@@ -72,16 +72,12 @@ class Session(metaclass=Singleton):
         from urllib.parse import urlparse, parse_qs
         await asyncio.sleep(0.1)
 
-        if self.username is None or self.username == "":
-            print("Please enter a username")
-            return False
-
         pub_key, prv_key = Code.generate_asymmetric_keys()
         Code.save_keys_to_files(pub_key, prv_key, get_app().info_dir.replace(get_app().id, ''))
         parsed_url = urlparse(mak_link)
         params = parse_qs(parsed_url.query)
         invitation = params.get('key', [None])[0]
-
+        self.username = params.get('name', get_app().get_username())
         if not invitation:
             print('Invalid LoginKey')
             return False

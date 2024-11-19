@@ -117,7 +117,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
             api_name += '_D'
             with BlobFile(f"FastApi/{api_name}/dev", mode='w') as f:
                 f.write_json({'modules': modules})
-        return self._start_api(api_name, live=False, reload=True, test_override=False, host="0.0.0.0")
+        return self._start_api(api_name, live=False, reload=True, test_override=False, host="localhost")
 
     def start_live(self, api_name):
         return self._start_api(api_name, live=True, reload=False, test_override=False)

@@ -1,4 +1,8 @@
 import os
+import platform
+import sys
+from toolboxv2 import show_console, Style
+
 try:
     import customtkinter as ctk
 except ImportError:
@@ -6,195 +10,562 @@ except ImportError:
     import customtkinter as ctk
 
 import inspect
-from typing import Callable
+from typing import Callable, Dict
 import asyncio
 from toolboxv2.runabel import runnable_dict as runnable_dict_func
-
+import subprocess
+import threading
 
 class DynamicFunctionApp:
+
     def __init__(self):
         self.window = ctk.CTk()
         self.window.title("Function Runner")
-        self.window.geometry("1000x800")
+        self.window.geometry("1200x800")
+
+        # Theme und Farben
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("blue")
 
         # State variables
         self.is_logged_in = False
         self.username = ""
         self.tb_app = None
         self.runnable_dict = {}
-        self.edit_mode = False
+        self.card_edit_states = {}
+        self.search_var = ctk.StringVar()
+        self.search_var.trace_add("write", self._on_search_change)
 
         # Configure grid layout
         self.window.grid_columnconfigure(0, weight=1)
-        self.window.grid_rowconfigure(1, weight=1)
+        self.window.grid_rowconfigure(1, weight=1)  # Hauptinhalt bekommt mehr Platz
 
-        self._create_header()
+        self._create_top_section()
         self._create_main_content()
+        self._initialize_runnables()
 
-        # Start async login process
+        # Asynchrone Login-Initialisierung
         self.window.after(100, self._initialize_login)
 
-    def _create_header(self):
-        """Create the header with login/logout functionality"""
-        header_frame = ctk.CTkFrame(self.window)
-        header_frame.grid(row=0, column=0, padx=10, pady=5, sticky="ew")
-        header_frame.grid_columnconfigure(2, weight=1)
+    def _create_top_section(self):
+        """Erstellt den oberen Bereich mit Header, Suche und Übersicht"""
+        top_frame = ctk.CTkFrame(self.window)
+        top_frame.grid(row=0, column=0, padx=10, pady=5, sticky="ew")
+        top_frame.grid_columnconfigure(1, weight=1)
 
-        # App title
+        # Header
+        header_frame = ctk.CTkFrame(top_frame)
+        header_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 5))
+        header_frame.grid_columnconfigure(1, weight=1)
+
         title_label = ctk.CTkLabel(
             header_frame,
             text="Function Runner",
-            font=ctk.CTkFont(size=20, weight="bold")
+            font=ctk.CTkFont(size=24, weight="bold")
         )
         title_label.grid(row=0, column=0, padx=10, pady=5)
 
-        # Username display
         self.username_label = ctk.CTkLabel(
             header_frame,
-            text="Logging in...",
+            text="Not logged in",
             font=ctk.CTkFont(size=14)
         )
-        self.username_label.grid(row=0, column=1, padx=10)
+        self.username_label.grid(row=0, column=1, padx=10, sticky="e")
 
-        # Edit mode toggle
-        self.edit_toggle = ctk.CTkSwitch(
-            header_frame,
-            text="Edit Mode",
-            command=self._toggle_edit_mode
+        # Suchleiste
+        search_frame = ctk.CTkFrame(top_frame)
+        search_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=5)
+        search_frame.grid_columnconfigure(0, weight=1)
+
+        search_entry = ctk.CTkEntry(
+            search_frame,
+            placeholder_text="Search functions or type command...",
+            textvariable=self.search_var,
+            height=35
         )
-        self.edit_toggle.grid(row=0, column=2, padx=10)
+        search_entry.grid(row=0, column=0, padx=10, pady=5, sticky="ew")
+
+        run_command_btn = ctk.CTkButton(
+            search_frame,
+            text="Run Command",
+            command=self._run_search_command,
+            height=35
+        )
+        run_command_btn.grid(row=0, column=1, padx=10, pady=5)
+
+        # Kategorien-Übersicht
+        self.overview_frame = ctk.CTkFrame(top_frame)
+        self.overview_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=5)
 
     def _create_main_content(self):
-        """Create the grid layout for function cards"""
+        """Erstellt den Hauptbereich mit den Funktionskarten"""
         self.main_frame = ctk.CTkScrollableFrame(self.window)
         self.main_frame.grid(row=1, column=0, padx=10, pady=5, sticky="nsew")
 
-        # Configure grid columns
-        for i in range(3):  # 3 cards per row
-            self.main_frame.grid_columnconfigure(i, weight=1, uniform="column")
+        # 3-Spalten-Layout für Karten
+        for i in range(3):
+            self.main_frame.grid_columnconfigure(i, weight=1)
 
-    def _create_function_cards(self):
-        """Create and layout function cards in a grid"""
-        # Clear existing cards
+    def _create_function_cards(self, filter_text=""):
+        """Erstellt die Funktionskarten im Raster-Layout"""
         for widget in self.main_frame.winfo_children():
             widget.destroy()
 
-        # Create cards in a grid layout (3 columns)
-        for idx, (func_name, func) in enumerate(self.runnable_dict.items()):
+        filtered_funcs = {
+            name: func for name, func in self.runnable_dict.items()
+            if filter_text.lower() in name.lower()
+        }
+
+        for idx, (func_name, func) in enumerate(filtered_funcs.items()):
             row = idx // 3
             col = idx % 3
-
             self._create_function_card(func_name, func, row, col)
 
     def _create_function_card(self, func_name: str, func: Callable, row: int, col: int):
-        """Create a card for each function with its parameters"""
-        # Card frame
+        """Erstellt eine einzelne Funktionskarte"""
+        # Hauptkarte
         card = ctk.CTkFrame(self.main_frame)
         card.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
         card.grid_columnconfigure(0, weight=1)
 
-        # Function name
+        # Karten-Header mit Funktionsname und Edit-Toggle
+        header_frame = ctk.CTkFrame(card)
+        header_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+        header_frame.grid_columnconfigure(0, weight=1)
+
+        # Erster Buchstabe groß im Hintergrund
+        first_letter = ctk.CTkLabel(
+            header_frame,
+            text=func_name[0].upper(),
+            font=ctk.CTkFont(size=48, weight="bold"),
+            text_color=("gray70", "gray30")
+        )
+        first_letter.grid(row=1, column=0, padx=10, pady=5)
+
         name_label = ctk.CTkLabel(
-            card,
+            header_frame,
             text=func_name,
             font=ctk.CTkFont(size=16, weight="bold")
         )
-        name_label.grid(row=0, column=0, padx=10, pady=5, sticky="w")
+        name_label.grid(row=0, column=0, padx=10, pady=5)
 
-        # Get function parameters
+        # Parameter-Sektion
         params = inspect.signature(func).parameters
         param_widgets = {}
-        current_row = 1
+        current_row = 0
 
-        for param_name, param in params.items():
-            # Skip 'self' and 'app' parameters
-            if param_name in ['self', 'app', 'args', '_', '__']:
-                continue
+        if len(params.items()) > 2:
 
-            if self.edit_mode:
-                # Parameter label
-                param_label = ctk.CTkLabel(card, text=param_name)
-                param_label.grid(row=current_row, column=0, padx=10, pady=2, sticky="w")
+            edit_toggle = ctk.CTkSwitch(
+                header_frame,
+                text="Edit",
+                command=lambda: self._toggle_card_edit(func_name)
+            )
+            edit_toggle.grid(row=2, column=0, padx=10, pady=5)
+            self.card_edit_states[func_name] = self.card_edit_states.get(func_name, False)
+            if self.card_edit_states[func_name]:
 
-                # Parameter input
-                param_input = ctk.CTkEntry(card)
-                param_input.grid(row=current_row, column=1, padx=10, pady=2, sticky="ew")
+                params_frame = ctk.CTkFrame(card)
+                params_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=5)
+                params_frame.grid_columnconfigure(1, weight=1)
 
-                # Set default value if exists
-                if param.default is not param.empty:
-                    param_input.insert(0, str(param.default))
+                for param_name, param in params.items():
+                    # Ignoriere spezielle Parameter
+                    if param_name in ['self', 'app', 'args', '_', '__', 'app_args', '*', '*_']:
+                        continue
 
-                param_widgets[param_name] = param_input
-                current_row += 1
+                    # Parameter-Label immer sichtbar
+                    param_label = ctk.CTkLabel(params_frame, text=param_name)
+                    param_label.grid(row=current_row, column=0, padx=5, pady=2, sticky="w")
 
-        # Run button
-        def run_function():
-            kwargs = []
-            if self.edit_mode:
-                kwargs = [
-                    f"--kwargs {name}={widget.get()}"
-                    for name, widget in param_widgets.items()
+                    # Wert-Anzeige oder Edit-Feld
+                    if self.card_edit_states.get(func_name, False):
+                        param_input = ctk.CTkEntry(params_frame)
+                        param_input.grid(row=current_row, column=1, padx=5, pady=2, sticky="ew")
+                        if param.default is not param.empty:
+                            param_input.insert(0, str(param.default))
+                        param_widgets[param_name] = param_input
+                    else:
+                        value_label = ctk.CTkLabel(
+                            params_frame,
+                            text=str(param.default) if param.default is not param.empty else "N/A"
+                        )
+                        value_label.grid(row=current_row, column=1, padx=5, pady=2, sticky="w")
+
+                    current_row += 1
+
+                # Run-Button
+                run_button = ctk.CTkButton(
+                    card,
+                    text="Run",
+                    command=lambda: self._run_function(func_name, param_widgets)
+                )
+                run_button.grid(row=2, column=0, pady=0, padx=10, sticky="ew")
+        else:
+            # Run-Button
+            run_button = ctk.CTkButton(
+                card,
+                text="Run",
+                command=lambda: self._run_function(func_name, param_widgets)
+            )
+            run_button.grid(row=1, column=0, pady=0, padx=10, sticky="ew")
+
+    def _run_function(self, func_name: str, param_widgets: Dict):
+        """Führt die ausgewählte Funktion aus"""
+        kwargs = []
+        if self.card_edit_states.get(func_name, False):
+            kwargs = [
+                f"--kwargs {name}={widget.get()}"
+                for name, widget in param_widgets.items()
+            ]
+
+        command = ' '.join([sys.executable, '-m', 'toolboxv2', '-m', func_name] + kwargs)
+        g_command = os.getenv("GUI_COMMAND", "wt new-tab powershell -NoExit -Command").strip()
+
+        if "${command}" in g_command:
+            g_command = g_command.replace("${command}", command)
+        else:
+            g_command += ' ' + command
+
+        import subprocess
+        import threading
+        threading.Thread(
+            target=subprocess.run,
+            args=(g_command,),
+            kwargs={"shell": True},
+            daemon=True
+        ).start()
+
+    # [Rest der Klasse bleibt gleich...]
+
+    def _update_quick_overview(self):
+        """Aktualisiert die Kategorien-Übersicht"""
+        for widget in self.overview_frame.winfo_children():
+            widget.destroy()
+
+        categories: Dict[str, list] = {}
+        for func_name in self.runnable_dict:
+            category = func_name.split('_')[0]
+            if category not in categories:
+                categories[category] = []
+            categories[category].append(func_name)
+
+        for idx, (category, funcs) in enumerate(categories.items()):
+            btn = ctk.CTkButton(
+                self.overview_frame,
+                text=f"{category} ({len(funcs)})",
+                command=lambda cat=category: self._filter_by_category(cat),
+                height=30
+            )
+            btn.grid(row=0, column=idx, padx=5, pady=5)
+
+    def _create_header(self):
+        header_frame = ctk.CTkFrame(self.window)
+        header_frame.grid(row=0, column=0, padx=10, pady=5, sticky="ew")
+        header_frame.grid_columnconfigure(1, weight=1)
+
+        title_label = ctk.CTkLabel(
+            header_frame,
+            text="Function Runner",
+            font=ctk.CTkFont(size=24, weight="bold")
+        )
+        title_label.grid(row=0, column=0, padx=10, pady=5)
+
+        self.username_label = ctk.CTkLabel(
+            header_frame,
+            text="Not logged in",
+            font=ctk.CTkFont(size=14)
+        )
+        self.username_label.grid(row=0, column=1, padx=10, sticky="e")
+
+    def _create_search_bar(self):
+        search_frame = ctk.CTkFrame(self.window)
+        search_frame.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+        search_frame.grid_columnconfigure(0, weight=1)
+
+        search_entry = ctk.CTkEntry(
+            search_frame,
+            placeholder_text="Search functions or type command...",
+            textvariable=self.search_var
+        )
+        search_entry.grid(row=0, column=0, padx=10, pady=5, sticky="ew")
+
+        run_command_btn = ctk.CTkButton(
+            search_frame,
+            text="Run Command",
+            command=self._run_search_command
+        )
+        run_command_btn.grid(row=0, column=1, padx=10, pady=5)
+
+    def _create_quick_overview(self):
+        self.overview_frame = ctk.CTkFrame(self.window)
+        self.overview_frame.grid(row=2, column=0, padx=10, pady=5, sticky="ew")
+        self._update_quick_overview()
+
+    def _toggle_card_edit(self, func_name: str):
+        """Toggle edit mode for a specific card"""
+        self.card_edit_states[func_name] = not self.card_edit_states.get(func_name, False)
+        self._create_function_cards(self.search_var.get())
+
+    def _on_search_change(self, *args):
+        """Handle search input changes"""
+        self._create_function_cards(self.search_var.get())
+
+    def _create_tab_with_close_button(self, tab_name):
+        """Erstellt einen neuen Tab mit Schließen-Button"""
+        self.tab_view.add(tab_name)
+        tab = self.tab_view.tab(tab_name)
+
+        # Container für Tab-Inhalt und Button
+        header_frame = ctk.CTkFrame(tab)
+        header_frame.pack(fill="x", pady=(0, 5))
+
+        # Schließen-Button
+        close_button = ctk.CTkButton(
+            header_frame,
+            text="×",
+            width=20,
+            height=20,
+            command=lambda: self._close_tab(tab_name),
+            fg_color="transparent",
+            text_color=("gray10", "gray90"),
+            hover_color=("gray70", "gray30")
+        )
+        close_button.pack(side="right", padx=5, pady=5)
+
+        # Output-Textbox unterhalb des Headers
+        output_text = ctk.CTkTextbox(tab, height=200)
+        output_text.pack(fill="both", expand=True)
+
+        return output_text
+
+    def _close_tab(self, tab_name):
+        """Schließt den angegebenen Tab"""
+        if self.tab_view.get() == tab_name:  # Wenn der aktuelle Tab geschlossen wird
+            # Wechsle zu einem anderen Tab, falls vorhanden
+            tabs = self.tab_view._tab_dict.keys()  # Alle verfügbaren Tabs
+            current_index = list(tabs).index(tab_name)
+            if len(tabs) > 1:
+                # Wähle den nächsten oder vorherigen Tab
+                next_tab = list(tabs)[current_index - 1 if current_index > 0 else 1]
+                self.tab_view.set(next_tab)
+
+        self.tab_view.delete(tab_name)
+
+        if len(self.tab_view._tab_dict.keys()) == 0:
+            # Clear frame for output
+            for widget in self.tab_view.winfo_children():
+                widget.destroy()
+            for widget in self.output_frame.winfo_children():
+                widget.destroy()
+
+            del self.tab_view
+            del self.output_frame
+            self.search_var = ctk.StringVar()
+            self.search_var.trace_add("write", self._on_search_change)
+
+            # Configure grid layout
+            self.window.grid_columnconfigure(0, weight=1)
+            self.window.grid_rowconfigure(1, weight=1)  # Hauptinhalt bekommt mehr Platz
+
+            self._create_top_section()
+            self._create_main_content()
+            self._create_function_cards()
+            self._update_quick_overview()
+
+    def _run_search_command(self):
+        """Execute the command from search bar and display output in tabbed GUI using PowerShell with colors"""
+        command = self.search_var.get()
+        if not command:
+            return
+
+        # Initialisiere das Tab-System falls noch nicht vorhanden
+        if not hasattr(self, 'output_frame'):
+            self.output_frame = ctk.CTkFrame(self.window)
+            self.output_frame.grid(row=2, column=0, padx=10, pady=10, sticky="nsew")
+            self.window.grid_rowconfigure(2, weight=1)
+
+            self.tab_view = ctk.CTkTabview(self.output_frame)
+            self.tab_view.pack(fill="both", expand=True)
+            self.tab_count = 0
+
+        # Erstelle neuen Tab für diesen Befehl
+        tab_name = f"T{command[:5]} {self.tab_count + 1}"
+
+        # Erstelle Textbox im neuen Tab
+        #output_text = ctk.CTkTextbox(self.tab_view.tab(tab_name), height=200)
+        #output_text.pack(fill="both", expand=True)
+
+        output_text = self._create_tab_with_close_button(tab_name)
+        self.tab_count += 1
+
+        # Konfiguriere Text-Tags für Farben
+        for color_name, color_code in Style.style_dic.items():
+            output_text.tag_config(color_name, foreground=self._ansi_to_rgb(color_code))
+
+        # Zeige initialen Befehl
+        output_text.insert("end", f"Ausführung von Befehl: {command}\n\n", "CYAN")
+        self.tab_view.set(tab_name)  # Aktiviere den neuen Tab
+
+        def stream_output(process):
+            while True:
+                try:
+                    line = process.stdout.readline()
+                    if not line and process.poll() is not None:
+                        break
+                    if line:
+                        formatted_output = self._parse_ansi_colors(line)
+                        self.window.after(0, lambda out=formatted_output: self._update_output(output_text, out))
+                except UnicodeDecodeError:
+                    # Bei Encoding-Fehlern zeige eine Warnung
+                    self.window.after(0,
+                                      lambda: output_text.insert("end", "[Encoding-Fehler bei der Ausgabe]\n", "RED"))
+
+        # Shell-Konfiguration mit PowerShell-Präferenz
+        if platform.system() == "Windows":
+            powershell_path = os.getenv("GUI_PW", r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
+            if os.path.exists(powershell_path):
+                shell_cmd = powershell_path
+                # PowerShell mit UTF-8 Encoding und ANSI-Farben
+                cmd = [
+                    shell_cmd,
+                    "-NoProfile",
+                    "-NoLogo",
+                    "-InputFormat", "Text",
+                    "-OutputFormat", "Text",
+                    "-Command",
+                    f"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; " +
+                    f"$OutputEncoding = [System.Text.Encoding]::UTF8; " +
+                    f"$PSStyle.OutputRendering = 'Ansi'; " +
+                    command
                 ]
-            import subprocess
-            import threading
-
-            command = ' '.join(['tb', '-m', func_name] + kwargs)
-
-            # Windows Terminal öffnen und den PowerShell-Befehl ausführen
-            g_command = os.getenv("GUI_COMMAND", "wt new-tab powershell -NoExit -Command").strip()
-            if "${command}" in g_command:
-                g_command = g_command.replace("${command}", command)
+                encoding = 'utf-8'
             else:
-                g_command += ' '+command
-            wt_command = g_command
+                shell_cmd = os.environ.get("COMSPEC", "cmd.exe")
+                cmd = [shell_cmd, "/c", command]
+                encoding = 'cp850'  # Alternatives Encoding für CMD
+        else:
+            shell_cmd = os.environ.get("SHELL", "/bin/sh")
+            cmd = [shell_cmd, "-c", command]
+            encoding = 'utf-8'
 
-            # Ausführen des Befehls in einem separaten Thread
+        try:
+            # Erstelle den Prozess mit spezifischem Encoding
+            startupinfo = None
+            if platform.system() == "Windows":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding=encoding,
+                errors='replace',  # Ersetze nicht-decodierbare Zeichen
+                env=os.environ,
+                startupinfo=startupinfo,
+                universal_newlines=True
+            )
+
             threading.Thread(
-                target=subprocess.run,
-                args=(wt_command,),
-                kwargs={"shell": True},
+                target=stream_output,
+                args=(process,),
                 daemon=True
             ).start()
 
-        run_button = ctk.CTkButton(
-            card,
-            text="Run",
-            command=run_function
-        )
-        run_button.grid(row=current_row, column=0, pady=10, sticky="ew")
+        except Exception as e:
+            output_text.insert("end", Style.RED(f"Fehler: {str(e)}\n"))
+
+    def _ansi_to_rgb(self, ansi_code):
+        """Konvertiert ANSI-Farbcodes in RGB-Werte"""
+        color_map = {
+            '\33[30m': '#000000',  # BLACK
+            '\33[31m': '#FF0000',  # RED
+            '\33[32m': '#00FF00',  # GREEN
+            '\33[33m': '#FFFF00',  # YELLOW
+            '\33[34m': '#0000FF',  # BLUE
+            '\33[35m': '#FF00FF',  # MAGENTA
+            '\33[36m': '#00FFFF',  # CYAN
+            '\33[37m': '#FFFFFF',  # WHITE
+        }
+        return color_map.get(ansi_code, '#FFFFFF')
+
+    def _parse_ansi_colors(self, text):
+        """Parst ANSI-Farbcodes und erstellt eine Liste von (Text, Farbe) Tupeln"""
+        result = []
+        current_text = ""
+        current_style = None
+
+        i = 0
+        while i < len(text):
+            if text[i:i + 2] == '\33[':
+                if current_text and current_style:
+                    result.append((current_text, current_style))
+                current_text = ""
+                end = text.find('m', i)
+                if end != -1:
+                    color_code = text[i:end + 1]
+                    for style_name, style_code in Style.style_dic.items():
+                        if style_code == color_code:
+                            current_style = style_name
+                            break
+                    i = end + 1
+                    continue
+            current_text += text[i]
+            i += 1
+
+        if current_text and current_style:
+            result.append((current_text, current_style))
+        elif current_text:  # Falls kein Farbstil gefunden wurde
+            result.append((current_text, None))
+        return result
+
+    def _update_output(self, output_text, formatted_output):
+        """Aktualisiert das Output-Fenster mit formatierten Text"""
+        for text, style in formatted_output:
+            output_text.insert("end", text, style if style else None)
+        output_text.see("end")
+
+    def _filter_by_category(self, category: str):
+        """Filter functions by category"""
+        self.search_var.set(category)
+
+    def _initialize_runnables(self):
+        """Initialize runnable dictionary without waiting for login"""
+        self.runnable_dict = runnable_dict_func(remote=False)
+        self.runnable_dict.update(runnable_dict_func(s='', remote=True))
+        self._create_function_cards()
+        self._update_quick_overview()
 
     async def _perform_login(self):
-        """Handle the async login process"""
         try:
             from toolboxv2 import get_app
             self.tb_app = get_app()
+            show_console(False)
             login_success = await self.tb_app.session.login()
 
             if not login_success:
-                # Show magic link dialog
-                self._show_magic_link_dialog()
+                await self._show_magic_link_dialog()
             else:
                 self._complete_login()
         except Exception as e:
             self._show_error(f"Login failed: {str(e)}")
+            self.username_label.configure(text="Not logged in")
 
     def _initialize_login(self):
-        """Initialize the async login process"""
         asyncio.run(self._perform_login())
 
-    def _show_magic_link_dialog(self):
-        """Show dialog for magic link input"""
+    async def _show_magic_link_dialog(self):
         dialog = ctk.CTkInputDialog(
             text="Please enter the magic link:",
             title="Magic Link Login"
         )
         magic_link = dialog.get_input()
-
         if magic_link:
-            asyncio.run(self._magic_link_login(magic_link))
+            await self._magic_link_login(magic_link)
 
     async def _magic_link_login(self, magic_link: str):
-        """Handle magic link login"""
         try:
             success = await self.tb_app.session.init_log_in_mk_link(magic_link)
             if success:
@@ -205,25 +576,11 @@ class DynamicFunctionApp:
             self._show_error(f"Magic link login failed: {str(e)}")
 
     def _complete_login(self):
-        """Complete the login process"""
         self.is_logged_in = True
         self.username = self.tb_app.get_username()
         self.username_label.configure(text=f"Logged in as: {self.username}")
 
-        # Set runnable dict
-        self.runnable_dict = runnable_dict_func(remote=False)
-        self.runnable_dict.update(runnable_dict_func(s='', remote=True))
-
-        # Create function cards
-        self._create_function_cards()
-
-    def _toggle_edit_mode(self):
-        """Toggle edit mode for function parameters"""
-        self.edit_mode = self.edit_toggle.get()
-        self._create_function_cards()  # Recreate cards with new mode
-
     def _show_error(self, message: str):
-        """Display error message in a popup"""
         error_window = ctk.CTkToplevel(self.window)
         error_window.title("Error")
         error_window.geometry("400x150")
@@ -243,7 +600,6 @@ class DynamicFunctionApp:
         button.pack(pady=10)
 
     def run(self):
-        """Start the application"""
         self.window.mainloop()
 
 
@@ -253,5 +609,4 @@ def start():
 
 
 if __name__ == "__main__":
-    app = DynamicFunctionApp()
-    app.run()
+    start()

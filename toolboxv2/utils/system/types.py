@@ -42,6 +42,7 @@ class AppArgs:
     live_application = True
     sysPrint = False
     kwargs = {}
+    session = None
 
     def default(self):
         return self

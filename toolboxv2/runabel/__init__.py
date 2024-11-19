@@ -29,11 +29,12 @@ def runnable_dict(s='.py', remote=False, dir_path=None, runnable_dict_=None):
                 # Lade das Modul
                 spec = importlib.util.spec_from_file_location(name, os.path.join(dir_path, file_name))
                 module = importlib.util.module_from_spec(spec)
-                # try:cls
-                spec.loader.exec_module(module)
-                # except Exception as e:
-                #    print("Error loading module ")
-                #    print(e)
+                try:
+                    spec.loader.exec_module(module)
+                except Exception as e:
+                    print("Error loading module ", name)
+                    print(e)
+                    continue
 
                 # Füge das Modul der Dictionary hinzu
                 if hasattr(module, 'run') and callable(module.run) and hasattr(module, 'NAME'):
@@ -48,14 +49,14 @@ def runnable_dict(s='.py', remote=False, dir_path=None, runnable_dict_=None):
                 # print("Ent", name)
                 # Lade das Modul
                 print(f"Gist Name: {name}, URL: {url}")
-                #try:
-                module = GistLoader(f"{name}/{url}").load_module(name)
+                try:
+                    module = GistLoader(f"{name}/{url}").load_module(name)
                 #try:
                 #    module = GistLoader(f"{name}/{url}")
-                #except Exception as e:
-                #    print(f"Error loading module {name} from github {url}")
-                #    print(e)
-                #    continue
+                except Exception as e:
+                    print(f"Error loading module {name} from github {url}")
+                    print(e)
+                    continue
 
                 # Füge das Modul der Dictionary hinzu
                 print(f"{hasattr(module, 'run')} and {callable(module.run)} and {hasattr(module, 'NAME')}")

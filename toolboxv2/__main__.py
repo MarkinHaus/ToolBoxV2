@@ -225,13 +225,17 @@ def setup_service_windows():
 
     if mode == "1":
         runner = "bg"
-        if runner_ := input("enter a runner default bg: ").strip():
+        if runner_ := input("enter a runner default bg/or gui: ").strip():
             runner = runner_
         if os.path.exists(path + '/tb_start.bat'):
             os.remove(path + '/tb_start.bat')
         with open(path + '/tb_start.bat', "a", encoding="utf8") as f:
+            if runner.upper().strip() == "GUI":
+                command = '-c "from toolboxv2.__gui__ import start; start()"'
+            else:
+                command = f"-m toolboxv2 -bg -m {runner}"
             f.write(
-                f"""{sys.executable} -m toolboxv2 -bg -m {runner}"""
+                f"""{sys.executable} {command}"""
             )
         print(f"Init Service in {path}")
     elif mode == "3":
