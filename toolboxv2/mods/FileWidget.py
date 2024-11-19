@@ -577,7 +577,7 @@ class FileWidget(MainTool, BaseWidget):
         if request is None:
             return None
 
-        body = request.body()
+        body = request.body
         storage = await self.get_blob_storage(request)
 
         parser = MultipartParser(body)

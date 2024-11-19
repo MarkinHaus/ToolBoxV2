@@ -16,15 +16,105 @@ from toolboxv2.runabel import runnable_dict as runnable_dict_func
 import subprocess
 import threading
 
+
+class ContextualInputDialog(ctk.CTkToplevel):
+    def __init__(self, master, title, text, default_value='',
+                 validator=None, context_info=None):
+        super().__init__(master)
+        self.title(title)
+        self.geometry("400x250")
+        self.result = None
+
+        # Context Information
+        if context_info:
+            context_label = ctk.CTkLabel(
+                self,
+                text=context_info,
+                wraplength=350,
+                font=ctk.CTkFont(size=12)
+            )
+            context_label.pack(padx=20, pady=(20, 10))
+
+        # Main Input Label
+        label = ctk.CTkLabel(
+            self,
+            text=text,
+            wraplength=350
+        )
+        label.pack(padx=20, pady=(10, 5))
+
+        # Input Entry
+        self.entry = ctk.CTkEntry(
+            self,
+            width=300,
+            height=35
+        )
+        self.entry.insert(0, default_value)
+        self.entry.pack(padx=20, pady=10)
+        self.entry.focus()
+
+        # Validation Indicator
+        self.validation_label = ctk.CTkLabel(
+            self,
+            text="",
+            text_color="red"
+        )
+        self.validation_label.pack(padx=20, pady=(0, 10))
+
+        # Button Frame
+        btn_frame = ctk.CTkFrame(self)
+        btn_frame.pack(pady=10)
+
+        confirm_btn = ctk.CTkButton(
+            btn_frame,
+            text="Confirm",
+            command=self._on_confirm
+        )
+        confirm_btn.pack(side="left", padx=5)
+
+        cancel_btn = ctk.CTkButton(
+            btn_frame,
+            text="Cancel",
+            fg_color="gray",
+            command=self.destroy
+        )
+        cancel_btn.pack(side="left", padx=5)
+
+        self.validator = validator
+
+        # Bind Enter key
+        self.entry.bind("<Return>", lambda e: self._on_confirm())
+        self.entry.bind("<Escape>", lambda e: self.destroy())
+
+    def _on_confirm(self):
+        value = self.entry.get()
+
+        if self.validator:
+            validation_result = self.validator(value)
+            if not validation_result[0]:
+                self.validation_label.configure(text=validation_result[1])
+                return
+
+        self.result = value
+        self.destroy()
+
+    @classmethod
+    def show(cls, master, **kwargs):
+        dialog = cls(master, **kwargs)
+        dialog.wait_window()
+        return dialog.result
+
+
 class DynamicFunctionApp:
 
     def __init__(self):
+        self.run_command_function_holder = False
         self.window = ctk.CTk()
         self.window.title("Function Runner")
         self.window.geometry("1200x800")
 
         # Theme und Farben
-        ctk.set_appearance_mode("dark")
+        ctk.set_appearance_mode("system")
         ctk.set_default_color_theme("blue")
 
         # State variables
@@ -87,15 +177,16 @@ class DynamicFunctionApp:
 
         run_command_btn = ctk.CTkButton(
             search_frame,
-            text="Run Command",
+            text=f"Run Command",
             command=self._run_search_command,
-            height=35
+            height=35,
         )
+
         run_command_btn.grid(row=0, column=1, padx=10, pady=5)
 
         # Kategorien-Übersicht
         self.overview_frame = ctk.CTkFrame(top_frame)
-        self.overview_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=5)
+        self.overview_frame.grid(row=2, column=1, columnspan=2, sticky="ew", pady=5)
 
     def _create_main_content(self):
         """Erstellt den Hauptbereich mit den Funktionskarten"""
@@ -119,12 +210,12 @@ class DynamicFunctionApp:
         for idx, (func_name, func) in enumerate(filtered_funcs.items()):
             row = idx // 3
             col = idx % 3
-            self._create_function_card(func_name, func, row, col)
+            self._create_function_card(func_name, func, row, col, solo=len(filtered_funcs.items()) == 1)
 
-    def _create_function_card(self, func_name: str, func: Callable, row: int, col: int):
+    def _create_function_card(self, func_name: str, func: Callable, row: int, col: int, solo=False):
         """Erstellt eine einzelne Funktionskarte"""
         # Hauptkarte
-        card = ctk.CTkFrame(self.main_frame)
+        card = ctk.CTkFrame(self.main_frame, fg_color=self._get_card_color(func_name, solo))
         card.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
         card.grid_columnconfigure(0, weight=1)
 
@@ -138,7 +229,7 @@ class DynamicFunctionApp:
             header_frame,
             text=func_name[0].upper(),
             font=ctk.CTkFont(size=48, weight="bold"),
-            text_color=("gray70", "gray30")
+            text_color=("lightblue", "darkblue") if solo else ("gray70", "gray30")
         )
         first_letter.grid(row=1, column=0, padx=10, pady=5)
 
@@ -210,6 +301,20 @@ class DynamicFunctionApp:
             )
             run_button.grid(row=1, column=0, pady=0, padx=10, sticky="ew")
 
+    def _get_card_color(self, func_name, solo=False):
+        """Dynamic color based on function characteristics"""
+        category = func_name.split('_')[0]
+        color_map = {
+            'system': ("lightblue", "darkblue"),
+            'network': ("lightgreen", "darkgreen"),
+            'data': ("lightyellow", "orange"),
+            'cli': ("lightyellow", "orange"),
+            # Add more categories
+        }
+        if solo:
+            return ("magenta", "darkmagenta")[ctk.get_appearance_mode() == "Dark"]
+        return ("gray90", "gray20")[ctk.get_appearance_mode() == "Dark"]
+
     def _run_function(self, func_name: str, param_widgets: Dict):
         """Führt die ausgewählte Funktion aus"""
         kwargs = []
@@ -243,21 +348,47 @@ class DynamicFunctionApp:
         for widget in self.overview_frame.winfo_children():
             widget.destroy()
 
-        categories: Dict[str, list] = {}
+        # Create scrollable frame for functions
+        func_scroll_frame = ctk.CTkFrame(
+            self.overview_frame,
+            height=25,
+            width=800
+        )
+        func_scroll_frame.pack(fill="x", padx=10, pady=5)
+
+        # Dynamic function placement
+        max_columns = 36  # Adjust based on screen width
+        current_row = 0
+        current_column = 0
+
+        for category, funcs in self._categorize_functions().items():
+            current_column += 1
+
+            for func_name in funcs:
+                func_btn = ctk.CTkButton(
+                    func_scroll_frame,
+                    text=func_name,
+                    width=50,
+                    command=lambda f=func_name: self._filter_by_function(f)
+                )
+                func_btn.grid(row=current_row, column=current_column, padx=5, pady=2)
+
+                current_column += 1
+                if current_column >= max_columns:
+                    current_row += 1
+                    current_column = 0
+
+    def _categorize_functions(self):
+        """Group functions by category"""
+        categories = {}
         for func_name in self.runnable_dict:
             category = func_name.split('_')[0]
-            if category not in categories:
-                categories[category] = []
-            categories[category].append(func_name)
+            categories.setdefault(category, []).append(func_name)
+        return categories
 
-        for idx, (category, funcs) in enumerate(categories.items()):
-            btn = ctk.CTkButton(
-                self.overview_frame,
-                text=f"{category} ({len(funcs)})",
-                command=lambda cat=category: self._filter_by_category(cat),
-                height=30
-            )
-            btn.grid(row=0, column=idx, padx=5, pady=5)
+    def _filter_by_function(self, func_name):
+        """Filter functions by specific function name"""
+        self.search_var.set(func_name)
 
     def _create_header(self):
         header_frame = ctk.CTkFrame(self.window)
@@ -277,30 +408,6 @@ class DynamicFunctionApp:
             font=ctk.CTkFont(size=14)
         )
         self.username_label.grid(row=0, column=1, padx=10, sticky="e")
-
-    def _create_search_bar(self):
-        search_frame = ctk.CTkFrame(self.window)
-        search_frame.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
-        search_frame.grid_columnconfigure(0, weight=1)
-
-        search_entry = ctk.CTkEntry(
-            search_frame,
-            placeholder_text="Search functions or type command...",
-            textvariable=self.search_var
-        )
-        search_entry.grid(row=0, column=0, padx=10, pady=5, sticky="ew")
-
-        run_command_btn = ctk.CTkButton(
-            search_frame,
-            text="Run Command",
-            command=self._run_search_command
-        )
-        run_command_btn.grid(row=0, column=1, padx=10, pady=5)
-
-    def _create_quick_overview(self):
-        self.overview_frame = ctk.CTkFrame(self.window)
-        self.overview_frame.grid(row=2, column=0, padx=10, pady=5, sticky="ew")
-        self._update_quick_overview()
 
     def _toggle_card_edit(self, func_name: str):
         """Toggle edit mode for a specific card"""
@@ -353,21 +460,19 @@ class DynamicFunctionApp:
         self.tab_view.delete(tab_name)
 
         if len(self.tab_view._tab_dict.keys()) == 0:
-            # Clear frame for output
-            for widget in self.tab_view.winfo_children():
-                widget.destroy()
-            for widget in self.output_frame.winfo_children():
-                widget.destroy()
+            # Entferne Output-Frame und Tab-View komplett
+            if hasattr(self, 'output_frame'):
+                self.output_frame.destroy()
+                del self.output_frame
 
-            del self.tab_view
-            del self.output_frame
-            self.search_var = ctk.StringVar()
-            self.search_var.trace_add("write", self._on_search_change)
+            # Entferne die zweite Zeile (Tab-Bereich) komplett
+            self.window.grid_rowconfigure(2, weight=0)
 
-            # Configure grid layout
+            # Stelle ursprüngliche Grid-Konfiguration wieder her
             self.window.grid_columnconfigure(0, weight=1)
-            self.window.grid_rowconfigure(1, weight=1)  # Hauptinhalt bekommt mehr Platz
+            self.window.grid_rowconfigure(1, weight=1)
 
+            # Rekonstruiere Hauptansicht
             self._create_top_section()
             self._create_main_content()
             self._create_function_cards()
@@ -393,9 +498,6 @@ class DynamicFunctionApp:
         tab_name = f"T{command[:5]} {self.tab_count + 1}"
 
         # Erstelle Textbox im neuen Tab
-        #output_text = ctk.CTkTextbox(self.tab_view.tab(tab_name), height=200)
-        #output_text.pack(fill="both", expand=True)
-
         output_text = self._create_tab_with_close_button(tab_name)
         self.tab_count += 1
 
@@ -435,8 +537,6 @@ class DynamicFunctionApp:
                     "-OutputFormat", "Text",
                     "-Command",
                     f"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; " +
-                    f"$OutputEncoding = [System.Text.Encoding]::UTF8; " +
-                    f"$PSStyle.OutputRendering = 'Ansi'; " +
                     command
                 ]
                 encoding = 'utf-8'
@@ -526,10 +626,6 @@ class DynamicFunctionApp:
         for text, style in formatted_output:
             output_text.insert("end", text, style if style else None)
         output_text.see("end")
-
-    def _filter_by_category(self, category: str):
-        """Filter functions by category"""
-        self.search_var.set(category)
 
     def _initialize_runnables(self):
         """Initialize runnable dictionary without waiting for login"""

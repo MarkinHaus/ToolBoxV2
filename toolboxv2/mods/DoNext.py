@@ -929,7 +929,7 @@ async def api_new_action(app, request: RequestSession):
 
     user_manager = await get_manager(app, request)
 
-    json = request.json()
+    json = await request.json()
     print("Request:", json)
 
     user_manager.new_action(json)

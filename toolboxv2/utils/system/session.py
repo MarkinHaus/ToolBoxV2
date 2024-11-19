@@ -38,9 +38,7 @@ class RequestSession(Response):
         self.row = row
 
     def body(self):
-        if isinstance(self._body, bytes):
-            return self._body
-        return self._body()
+        return self._body
 
     def json(self):
         if isinstance(self._json, dict):

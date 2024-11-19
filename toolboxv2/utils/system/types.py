@@ -500,15 +500,15 @@ class AppType:
         """proxi attr"""
 
     @staticmethod
-    def hide_console(*args, **kwargs):
+    async def hide_console(*args, **kwargs):
         """proxi attr"""
 
     @staticmethod
-    def show_console(*args, **kwargs):
+    async def show_console(*args, **kwargs):
         """proxi attr"""
 
     @staticmethod
-    def disconnect(*args, **kwargs):
+    async def disconnect(*args, **kwargs):
         """proxi attr"""
 
     def set_logger(self, debug=False):

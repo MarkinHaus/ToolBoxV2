@@ -520,8 +520,8 @@ async def protector(request: Request, call_next):
 def request_to_request_session(request):
     return RequestSession(
         session=request.session,
-        body=lambda: async_test(request.body),
-        json=lambda: async_test(request.json),
+        body=request.body,
+        json=request.json,
         row=request,
     )
 

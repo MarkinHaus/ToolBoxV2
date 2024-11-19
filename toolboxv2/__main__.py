@@ -206,7 +206,7 @@ def uninstall_service():
     subprocess.run(["sudo", "systemctl", "daemon-reload"])
 
 
-def setup_service_windows():
+async def setup_service_windows():
     path = "C:/ProgramData/Microsoft/Windows/Start Menu/Programs/Startup"
     print("Select mode:")
     print("1. Init (first-time setup)")
@@ -239,16 +239,16 @@ def setup_service_windows():
             )
         print(f"Init Service in {path}")
     elif mode == "3":
-        get_app().show_console()
+        await get_app().show_console()
     elif mode == "4":
-        get_app().hide_console()
+        await get_app().hide_console()
     elif mode == "0":
         pass
     elif mode == "2":
         os.remove(path + '/tb_start.link')
         print(f"Removed Service from {path}")
     else:
-        setup_service_windows()
+        await setup_service_windows()
 
 
 def setup_service_linux():
@@ -284,6 +284,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Welcome to the ToolBox cli")
 
     parser.add_argument("conda", help="run conda commands for mor infos run tb conda -h", default=False,
+                        action='store_true')
+
+    parser.add_argument("gui", help="start gui no args", default=False,
                         action='store_true')
 
     parser.add_argument("-init",
@@ -688,7 +691,7 @@ async def main():
         if tb_app.system_flag == "Linux":
             setup_service_linux()
         if tb_app.system_flag == "Windows":
-            setup_service_windows()
+            await setup_service_windows()
         await tb_app.a_exit()
         exit(0)
 
@@ -940,6 +943,9 @@ def main_runner():
         argv = sys.argv[1:]
         sys.argv = sys.argv[:1]
         start_ipython_session(argv)
+    elif 'gui' in sys.argv:
+        from toolboxv2.__gui__ import start as start_gui
+        start_gui()
     else:
         loop = asyncio.new_event_loop()
         loop.run_until_complete(main())
