@@ -148,7 +148,6 @@ async def stream_response(app, input_text, websocket: WebSocket,
     agent.mode = app.get_mod('isaa').controller.rget(ConversationMode)
     agent.stream_function = stream_text
 
-    await app.get_mod('isaa').agent_memory.process_data(input_text)
     metat_data, out = intelligent_isaa_dispatcher(app.get_mod('isaa'), input_text, chat_session, None)
     f_out = out
     chat_session.add_message({'content': input_text, 'role': 'user'})
@@ -165,7 +164,7 @@ async def stream_response(app, input_text, websocket: WebSocket,
         if f and agent.if_for_fuction_use(out):
             f_out = agent.execute_fuction(persist=True, persist_mem=fetch_memory)
             await stream_text(f_out)
-    await app.get_mod('isaa').agent_memory.process_data(llm_text_[0])
+    app.get_mod('isaa').agent_memory.process_data(input_text+' '+llm_text_[0])
     return out, f_out
 
 

@@ -487,6 +487,7 @@ class AppType:
     called_exit: Tuple[bool, float]
     args_sto: AppArgs
     system_flag = None
+    appdata = None
     exit_tasks = []
 
     def __init__(self, prefix: Optional[str] = None, args: Optional[AppArgs] = None):

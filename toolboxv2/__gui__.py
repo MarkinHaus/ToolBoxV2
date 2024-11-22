@@ -477,6 +477,7 @@ class DynamicFunctionApp:
             self._create_main_content()
             self._create_function_cards()
             self._update_quick_overview()
+            self._initialize_runnables()
 
     def _run_search_command(self):
         """Execute the command from search bar and display output in tabbed GUI using PowerShell with colors"""
