@@ -38,8 +38,7 @@ def start(app=None):
     if not app.mod_online("audio"):
         print("Talk Offline install isaa")
         return
-    app.load_mod("isaa").init_isaa(build=False, v_name="Talk")
-    app.get_mod("isaa").agent_memory.ai_content = True
+    app.load_mod("isaa").init_isaa(build=False)
     talk_generate = app.run_any(TBEF.AUDIO.STT_GENERATE,
                                 model="openai/whisper-small",
                                 row=True, device=1)
@@ -164,7 +163,6 @@ async def stream_response(app, input_text, websocket: WebSocket,
         if f and agent.if_for_fuction_use(out):
             f_out = agent.execute_fuction(persist=True, persist_mem=fetch_memory)
             await stream_text(f_out)
-    app.get_mod('isaa').agent_memory.process_data(input_text+' '+llm_text_[0])
     return out, f_out
 
 

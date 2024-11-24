@@ -537,7 +537,6 @@ class DynamicFunctionApp:
                     "-InputFormat", "Text",
                     "-OutputFormat", "Text",
                     "-Command",
-                    f"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; " +
                     command
                 ]
                 encoding = 'utf-8'

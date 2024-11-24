@@ -1,3 +1,4 @@
+import ast
 import os
 import json
 import random
@@ -182,7 +183,8 @@ def _load_config(config_path: Optional[str]) -> dict:
 
 def _generate_explanation(snapshot: dict) -> str:
     """Generate detailed explanation of the semantic content."""
-    parts = [f"Language: {snapshot['language'].upper()}", "\nKey Concepts:"]
+    parts = [f"Language: {snapshot['language'].upper()}",
+             "\nKey Concepts:"]
     for concept in sorted(snapshot['concepts'], key=lambda x: x['importance'], reverse=True):
         s = f"- {concept['text']} (importance: {concept['importance']:.2f})"
         if s in parts:
@@ -392,7 +394,6 @@ def _extract_advanced_relations(doc):
                 target=token.head.text,
                 type=token.dep_,
                 strength=token.similarity(token.head) if token.has_vector and token.head.has_vector else 0.0,
-                context_type='syntactic',
                 semantic_distance=abs(token.i - token.head.i) / len(doc)
             )
             relations.append(relation.model_dump(mode='python'))
@@ -420,6 +421,79 @@ def _calculate_semantic_complexity(doc):
     return np.mean(complexity_factors)
 
 
+def _extract_code_concepts(tree: ast.AST) -> List[Dict[str, Any]]:
+    """Extract concepts from Python AST."""
+    concepts = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            concepts.append({
+                'text': node.name,
+                'importance': 1.0,
+                'pos': 'FUNC' if isinstance(node, ast.FunctionDef) else 'CLASS',
+                'has_vector': False
+            })
+        elif isinstance(node, ast.Name):
+            concepts.append({
+                'text': node.id,
+                'importance': 0.5,
+                'pos': 'VAR',
+                'has_vector': False
+            })
+
+    # Deduplicate concepts and adjust importance
+    concept_dict = {}
+    for concept in concepts:
+        if concept['text'] in concept_dict:
+            concept_dict[concept['text']]['importance'] += 0.1
+        else:
+            concept_dict[concept['text']] = concept
+
+    return list(concept_dict.values())
+
+
+def _extract_code_relations(tree: ast.AST) -> List[Dict[str, Any]]:
+    """Extract relations from Python AST."""
+    relations = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            for arg in node.args.args:
+                relations.append({
+                    'source': node.name,
+                    'target': arg.arg,
+                    'type': 'has_parameter',
+                    'strength': 0.8
+                })
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                relations.append({
+                    'source': node.func.id,
+                    'target': 'function_call',
+                    'type': 'is_called',
+                    'strength': 0.7
+                })
+        elif isinstance(node, ast.Assign):
+            if isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Name):
+                relations.append({
+                    'source': node.targets[0].id,
+                    'target': node.value.id,
+                    'type': 'assigned_from',
+                    'strength': 0.6
+                })
+
+    return relations
+
+
+def _calculate_code_complexity(tree: ast.AST) -> float:
+    """Calculate code complexity based on AST structure."""
+    num_nodes = sum(1 for _ in ast.walk(tree))
+    num_functions = sum(1 for node in ast.walk(tree) if isinstance(node, ast.FunctionDef))
+    num_classes = sum(1 for node in ast.walk(tree) if isinstance(node, ast.ClassDef))
+    num_loops = sum(1 for node in ast.walk(tree) if isinstance(node, (ast.For, ast.While)))
+
+    complexity = (num_nodes * 0.01 + num_functions * 0.1 + num_classes * 0.2 + num_loops * 0.3) / 4
+    return min(complexity, 1.0)  # Normalize to [0, 1]
+
+
 def _to_cossena_code(snapshot):
     """
     Convert semantic snapshot to classic Cossena code
@@ -437,16 +511,80 @@ def _to_cossena_code(snapshot):
     return f"{checksum}:{hex_code}"
 
 
-def clean_text(text: str) -> str:
+def clean_text(text: str, remove_nl=True) -> str:
     """Clean and normalize text before processing."""
     # Remove null bytes and normalize whitespace
     text = text.replace('\0', '')
     text = re.sub(r'\s+', ' ', text)
 
     # Remove any control characters
-    text = ''.join(char for char in text if ord(char) >= 32 or char == '\n')
+    if remove_nl:
+        text = ''.join(char for char in text if ord(char) >= 32 or char == '\n')
 
     return text.strip()
+
+
+def validate_snapshot(snapshot: dict) -> bool:
+    """
+    Validate the structure and types of a Cossena snapshot.
+
+    Args:
+        snapshot (dict): The snapshot to validate.
+
+    Returns:
+        bool: True if the snapshot is valid, False otherwise.
+    """
+    # Validate top-level keys
+    required_keys = {'language', 'concepts', 'relations', 'metadata'}
+    if not required_keys.issubset(snapshot.keys()):
+        print(f"Missing Keys {snapshot.keys()} |< {required_keys=}")
+        return False
+
+    # Validate metadata
+    metadata = snapshot['metadata']
+    if not isinstance(metadata, dict):
+        print(f"Invalid metadata type {type(metadata)}")
+        return False
+
+    # Validate concepts
+    concepts = snapshot['concepts']
+    if not isinstance(concepts, list):
+        print(f"Invalid concepts type {type(concepts)}")
+        return False
+    """    for concept in concepts:
+        if not isinstance(concept, dict):
+            return False
+        if not all(key in concept for key in ['text', 'importance', 'pos', 'has_vector']):
+            return False
+        if not isinstance(concept['text'], str):
+            return False
+        if not isinstance(concept['importance'], (int, float)):
+            return False
+        if not isinstance(concept['pos'], str):
+            return False
+        if not isinstance(concept['has_vector'], bool):
+            return False
+"""
+    # Validate relations
+    relations = snapshot['relations']
+    if not isinstance(relations, list):
+        print(f"Invalid relations type {type(relations)}")
+        return False
+    """for relation in relations:
+        if not isinstance(relation, dict):
+            return False
+        if not all(key in relation for key in ['source', 'target', 'type', 'strength']):
+            return False
+        if not isinstance(relation['source'], str):
+            return False
+        if not isinstance(relation['target'], str):
+            return False
+        if not isinstance(relation['type'], str):
+            return False
+        if not isinstance(relation['strength'], (int, float)):
+            return False"""
+    return True
+
 
 class CossenaCore:
     """Production-ready Cossena implementation with multi-language support and proper word vectors."""
@@ -649,10 +787,46 @@ class CossenaCore:
                 'has_vectors': any(c['has_vector'] for c in concepts)
             }
         }
+        if not validate_snapshot(snapshot):
+            raise ValueError(f"Snapshot validation Failed for {snapshot=}")
         return _to_cossena_code(snapshot)
+
         #except RuntimeError as e:
         # #   print("Error coding to cossena :", e)
         #    return ""
+
+    def code_to_cossena(self, code: str) -> str:
+        """
+        Convert Python code to Cossena-style representation.
+
+        Args:
+            code (str): Python code to analyze
+
+        Returns:
+            str: Cossena-style hexadecimal code
+        """
+        try:
+            tree = ast.parse(code)
+            concepts = _extract_code_concepts(tree)
+            relations = _extract_code_relations(tree)
+
+            snapshot = {
+                'language': 'python',
+                'concepts': concepts,
+                'relations': relations,
+                'metadata': {
+                    'version': '1.0',
+                    'semantic_complexity': _calculate_code_complexity(tree),
+                    'has_vectors': False
+                }
+            }
+            if not validate_snapshot(snapshot):
+                raise ValueError(f"Snapshot validation Failed for {snapshot=}")
+            return _to_cossena_code(snapshot)
+        except SyntaxError as e:
+            print(f"Error parsing Python code: {str(e)}")
+            return self.text_to_code(code)
+
 
     def transmutation(self, hex_code: str, mode: str = 'explain') -> str or dict:
         """
@@ -677,6 +851,12 @@ class CossenaCore:
         json_str = zlib.decompress(compressed).decode('utf-8')
         snapshot = json.loads(json_str)
 
+        if not validate_snapshot(snapshot):
+            if len(snapshot.get('concepts', [])) == 0 and mode == 'row':
+                return snapshot
+            if len(snapshot.get('concepts', [])) == 0:
+                return "Empty Cossena No Concepts"
+            raise ValueError(f'Snapshot not valid {snapshot=}')
         # Rebuild graph
         self.graph = nx.DiGraph()
         for concept in snapshot['concepts']:
@@ -710,8 +890,8 @@ class CossenaCore:
     def _generate_llm_representation(self, snapshot: dict) -> str:
         """Generate a compact, structured representation for LLMs using Markdown."""
         output = ["The Cossena code is a compressed and structured representation",
-                  f"# Analysis ({snapshot['language']})",
-                  f"### Complexity: {snapshot['metadata']['semantic_complexity']:.2f}",
+                  f"# Analysis Lang ({snapshot.get('language')})",
+                  f"### Complexity: {snapshot['metadata'].get('semantic_complexity'):.2f}" if snapshot['metadata'].get('semantic_complexity') is not None else '',
                   f"### Density: {nx.density(self.graph):.2f}", "", "## Key Concepts | [Concept] (Importance)"]
 
         # Language and Metadata
@@ -783,6 +963,8 @@ class CossenaCore:
             processed_data = []
             for code in hex_codes_:
                 snapshot = self.transmutation(code, 'row')
+                if not validate_snapshot(snapshot):
+                    continue
                 for concept in snapshot['concepts']:
                     processed_data.append({
                         'code_id': code,
@@ -1141,32 +1323,37 @@ class CossenaPipeline(CossenaCore):
             'analyze': analyze,
         }
 
-    def rebuild_code(self, base_code: Dict or str, extend_code: Dict or str, similarity_threshold=0.5, **kwargs) -> str:
+    def rebuild_code(self, base_code: Dict or str, extend_code: Dict or str, similarity_threshold=0.5, **kwargs) -> Optional[str]:
 
         if base_code is None and extend_code is not None:
             return extend_code
         if extend_code is None and base_code is not None:
             return base_code
         if extend_code is None and base_code is None:
-            raise ValueError("Noe codes Provided")
-            #try:
-            if isinstance(base_code, str):
-                base_code = self.transmutation(base_code, 'row')
-            if isinstance(extend_code, str):
-                extend_code = self.transmutation(extend_code, 'row')
-            # Merge existing and new snapshots
-            if len(extend_code['concepts']) == 0 and len(base_code['concepts']) != 0:
-                return _to_cossena_code(base_code)
-            if len(base_code['concepts']) == 0 and len(extend_code['concepts']) != 0:
-                return _to_cossena_code(extend_code)
-            if len(base_code['concepts']) == 0 and len(extend_code['concepts']) == 0:
-                return _to_cossena_code(base_code)
-            merged_snapshot = self.merge_snapshots(base_code, extend_code, similarity_threshold)
+            return None
 
-            # Generate new Cossena code
-            return _to_cossena_code(merged_snapshot)
-        #except RuntimeError as e:
-        #    print("Error in rebuild_code", e)
+        if isinstance(base_code, str):
+            base_code = self.transmutation(base_code, 'row')
+        if isinstance(extend_code, str):
+            extend_code = self.transmutation(extend_code, 'row')
+
+        if not validate_snapshot(base_code):
+            return extend_code
+        if not validate_snapshot(extend_code):
+            return base_code
+        if not validate_snapshot(base_code) and not validate_snapshot(extend_code):
+            return None
+        # Merge existing and new snapshots
+        if len(extend_code['concepts']) == 0 and len(base_code['concepts']) != 0:
+            return _to_cossena_code(base_code)
+        if len(base_code['concepts']) == 0 and len(extend_code['concepts']) != 0:
+            return _to_cossena_code(extend_code)
+        if len(base_code['concepts']) == 0 and len(extend_code['concepts']) == 0:
+            return _to_cossena_code(base_code)
+        merged_snapshot = self.merge_snapshots(base_code, extend_code, similarity_threshold)
+
+        # Generate new Cossena code
+        return _to_cossena_code(merged_snapshot)
 
     def combine_codes(self, *codes: str, strategy: str = "", threshold: float = .6) -> str:
         combined_concepts = []
@@ -1179,6 +1366,10 @@ class CossenaPipeline(CossenaCore):
                     new_codes.remove(code)
                     continue
                 snapshot = self.transmutation(code, 'row')
+
+                if not validate_snapshot(snapshot):
+                    new_codes.remove(code)
+                    continue
 
                 if strategy == "sigel":
                     if code == new_codes[0]:
@@ -1229,12 +1420,15 @@ class CossenaPipeline(CossenaCore):
         #try:
         if isinstance(snapshot_code, str):
             snapshot_code = self.transmutation(snapshot_code, 'row')
+        if not validate_snapshot(snapshot_code):
+            return None
         snapshot_code['concepts'] = self.remove_similar_content(snapshot_code['concepts'],
                                                                 snapshot_code['concepts'],
                                                                 threshold)
         snapshot_code['relations'] = self.remove_similar_relations(snapshot_code['relations'],
                                                                    snapshot_code['relations'])
-
+        if not validate_snapshot(snapshot_code):
+            return None
         return _to_cossena_code(snapshot_code)
         #except Exception as e:
         #    print("Failed to cleanup snapshot", e)
@@ -1622,7 +1816,7 @@ class CossenaPipeline(CossenaCore):
         """
         merged_concepts = existing_concepts.copy()
 
-        for new_concept in tqdm(new_concepts, desc="merge concept", total=len(new_concepts)):
+        for new_concept in new_concepts:
             # Find most similar existing concept
             similar_concept = self._find_most_similar_concept(
                 new_concept,
@@ -1656,7 +1850,7 @@ class CossenaPipeline(CossenaCore):
         most_similar = None
         highest_similarity = 0
 
-        for existing_concept in tqdm(concept_pool, desc="find similar concept", total=len(concept_pool)):
+        for existing_concept in concept_pool:
             similarity = self.semantic_similarity(
                 target_concept,
                 existing_concept
@@ -1679,10 +1873,17 @@ class CossenaPipeline(CossenaCore):
         """
         # Merge metadata and attributes
         for key, value in new_concept.items():
-            if key not in existing_concept or value is not None:
+            if key not in existing_concept and value is not None:
                 existing_concept[key] = value
             elif value is not None:
-                existing_concept[key] = existing_concept[key] + value
+                if isinstance(value, dict) and isinstance(existing_concept[key], dict):
+                    existing_concept[key] = existing_concept[key].update(value)
+                elif isinstance(value, list) and isinstance(existing_concept[key], list):
+                    existing_concept[key] = existing_concept[key] + value
+                elif isinstance(value, str) and isinstance(existing_concept[key], str) and existing_concept[key].lower() != value.lower():
+                    existing_concept[key] = existing_concept[key] + ' ' + value
+                else:
+                    existing_concept[key] = value
 
     def _merge_relations(self,
                          existing_relations: List[Dict],
@@ -1701,7 +1902,7 @@ class CossenaPipeline(CossenaCore):
         """
         merged_relations = existing_relations.copy()
 
-        for new_relation in tqdm(new_relations, desc="merge relations", total=len(new_relations)):
+        for new_relation in new_relations:
             # Map source and target to existing/merged concept IDs
             mapped_relation = self._map_relation_to_concepts(
                 new_relation,
@@ -1730,7 +1931,7 @@ class CossenaPipeline(CossenaCore):
         """
 
         def find_concept_id(text: str) -> str:
-            for concept in tqdm(merged_concepts, desc="find concept relations", total=len(merged_concepts)):
+            for concept in merged_concepts:
                 if self.is_semantically_similar(
                     {'text': text},
                     concept,
@@ -2083,7 +2284,7 @@ class CossenaVectorStore(CossenaCore):
             storage_name: Target storage name
             code: Cossena code to add
             row: row data optional to add
-            metadata: metadata
+            metadata: metadata Optional[List[Dict] or Dict]
 
         Returns:
             bool: Success status
@@ -2092,9 +2293,18 @@ class CossenaVectorStore(CossenaCore):
             return self.create_storage(storage_name, code, metadata)
 
         if metadata is None:
-            metadata = {}
-        metadata["added_at"] = datetime.now().isoformat()
-        metadata["row_data"] = row
+            metadata = []
+
+        if isinstance(metadata, dict):
+            metadata = [metadata]
+
+        for met in metadata:
+            met["added_at"] = datetime.now().isoformat()
+            met["row_data"] = row
+
+        if len(metadata) == 0:
+            metadata = None
+
         try:
             collection = self.storage_collections[storage_name]
             checksum = code.split(':')[0]
@@ -2103,7 +2313,7 @@ class CossenaVectorStore(CossenaCore):
             collection.add(
                 ids=[checksum],
                 embeddings=[self._get_code_embedding(code)],
-                metadatas=[metadata],
+                metadatas=metadata,
                 documents=[code]
             )
 
@@ -2334,6 +2544,7 @@ def test():
     vector_store = CossenaVectorStore(base_path="./test_vector_stores")
 
     create_sample_code = cossena.text_to_code
+    create_sample_code = cossena.code_to_cossena # imprtet for python code oly in str fromat !!!!
     # Create multiple storages
     storages = ["project_a", "project_b", "project_c"]
     for storage in storages:
@@ -2402,19 +2613,8 @@ class SemanticRelation(BaseModel):
     target: str
     type: str
     strength: float
-    context_type: str = Field(default='syntactic')
     semantic_distance: float = Field(default=0.0)
-    bidirectional_strength: float = Field(default=0.0)
 
 
 if __name__ == '__main__':
-    cc = CossenaCore()
-    print(cc.transmutation(cc.text_to_code("""Resourceful: Isaa is able to efficiently utilize its wide range of capabilities and resources to assist the user.
-   Collaborative: Isaa is work seamlessly with other agents, tools, and systems to deliver the best possible solutions for the user.
-   Empathetic: Isaa is understand and respond to the user's needs, emotions, and preferences, providing personalized assistance.
-   Inquisitive: Isaa is continually seek to learn and improve its knowledge base and skills, ensuring it stays up-to-date and relevant.
-   Transparent: Isaa is open and honest about its capabilities, limitations, and decision-making processes, fostering trust with the user.
-   Versatile: Isaa is adaptable and flexible, capable of handling a wide variety of tasks and challenges.
-   Isaa's primary goal is to be a digital assistant designed to help the user with various tasks and challenges by
-    leveraging its diverse set of capabilities and resources."""), 'llm'))
-    #test()
+    test()
