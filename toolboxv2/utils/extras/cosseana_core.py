@@ -737,6 +737,10 @@ class CossenaCore:
         """Convert input text to hexadecimal Cossena code with improved similarity handling."""
         #try:
 
+        if len(text) > 1000000 - 10:
+            return CossenaPipeline().combine_codes(
+                *[self.text_to_code(text[x:x + (1000000 - 50)]) for x in range(0, len(text), 1000000 - 50)])
+
         doc = self.get_vec(text)
         concepts = []
         relations = []
@@ -1417,6 +1421,8 @@ class CossenaPipeline(CossenaCore):
         return new_code
 
     def cleanup(self, snapshot_code, threshold=0.8):
+        if snapshot_code is None:
+            return None
         #try:
         if isinstance(snapshot_code, str):
             snapshot_code = self.transmutation(snapshot_code, 'row')
@@ -1629,7 +1635,7 @@ class CossenaPipeline(CossenaCore):
         """
         filtered_concepts = []
 
-        for new_concept in new_concepts:
+        for new_concept in tqdm(new_concepts, desc="remove_similar_content", total=len(new_concepts)):
             is_similar = False
 
             for existing_concept in existing_concepts:
@@ -1657,7 +1663,7 @@ class CossenaPipeline(CossenaCore):
             List: New relations with similar relations removed
         """
 
-        for new_relation in new_relations:
+        for new_relation in tqdm(new_relations, desc="remove_similar_relations", total=len(new_relations)):
             if not self._is_duplicate_relation(new_relation, existing_relations):
                 existing_relations.append(new_relation)
 
@@ -1875,15 +1881,6 @@ class CossenaPipeline(CossenaCore):
         for key, value in new_concept.items():
             if key not in existing_concept and value is not None:
                 existing_concept[key] = value
-            elif value is not None:
-                if isinstance(value, dict) and isinstance(existing_concept[key], dict):
-                    existing_concept[key] = existing_concept[key].update(value)
-                elif isinstance(value, list) and isinstance(existing_concept[key], list):
-                    existing_concept[key] = existing_concept[key] + value
-                elif isinstance(value, str) and isinstance(existing_concept[key], str) and existing_concept[key].lower() != value.lower():
-                    existing_concept[key] = existing_concept[key] + ' ' + value
-                else:
-                    existing_concept[key] = value
 
     def _merge_relations(self,
                          existing_relations: List[Dict],
@@ -2021,7 +2018,7 @@ class CossenaVectorStore(CossenaCore):
     with support for multiple separated storages and main code tracking.
     """
 
-    def __init__(self, base_path: str = "./cossena_vector_stores", config_path: Optional[str] = None):
+    def __init__(self, base_path: str = "./cossena_vector_stores", config_path: Optional[str] = None, strategy_level=0):
         """
         Initialize the vector store with a base path for persistence
 
@@ -2031,6 +2028,7 @@ class CossenaVectorStore(CossenaCore):
         super().__init__(config_path)
         self.base_path = Path(base_path)
         self.base_path.mkdir(parents=True, exist_ok=True)
+        self.strategy = ""
 
         # Initialize main client for storage management
         self.main_client = chromadb.PersistentClient(
@@ -2050,6 +2048,10 @@ class CossenaVectorStore(CossenaCore):
             name="main_codes",
             metadata={"description": "Stores main codes for each storage"}
         )
+        self.set_strategy(strategy_level)
+
+    def set_strategy(self, level):
+        self.strategy = "sup" * (level//3) + ["", "sigel", "pairs"][level % 3]
 
     def code_to_llm(self, code: str) -> str:
         ret = self.transmutation(code, "llm")
@@ -2298,23 +2300,27 @@ class CossenaVectorStore(CossenaCore):
         if isinstance(metadata, dict):
             metadata = [metadata]
 
-        for met in metadata:
+        for i, met in enumerate(metadata):
             met["added_at"] = datetime.now().isoformat()
-            met["row_data"] = row
+            met["row_data"] = row if isinstance(row, str) else row[i]
 
         if len(metadata) == 0:
             metadata = None
 
         try:
             collection = self.storage_collections[storage_name]
-            checksum = code.split(':')[0]
+            codes = code
+            if isinstance(code, str):
+                codes = [code]
+
+            checksums = [c.split(':')[0] for c in codes]
 
             # Add the code to the collection
             collection.add(
-                ids=[checksum],
-                embeddings=[self._get_code_embedding(code)],
+                ids=checksums,
+                embeddings=[self._get_code_embedding(code) for code in codes],
                 metadatas=metadata,
-                documents=[code]
+                documents=codes
             )
 
             # Update main code
@@ -2341,7 +2347,9 @@ class CossenaVectorStore(CossenaCore):
 
         try:
             collection = self.storage_collections[storage_name]
-            collection.delete(ids=[checksum])
+            if isinstance(checksum, str):
+                checksum = [checksum]
+            collection.delete(ids=checksum)
 
             # Update main code after deletion
             self._update_storage_main_code(storage_name)
@@ -2368,14 +2376,8 @@ class CossenaVectorStore(CossenaCore):
 
             # Combine all codes using Cossena merge
             pipeline = CossenaPipeline()
-            current_main = results['documents'][0]
 
-            for code in tqdm(results['documents'][1:], desc=f"Updating main code for {storage_name}"):
-                current_main = pipeline.rebuild_code(
-                    current_main,
-                    code,
-                    similarity_threshold=0.6
-                )
+            current_main = pipeline.combine_codes(*results['documents'], strategy=self.strategy)
 
             # Update the main code
             self._update_main_code(storage_name, current_main)

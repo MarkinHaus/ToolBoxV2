@@ -12,7 +12,7 @@ except ImportError:
 import inspect
 from typing import Callable, Dict
 import asyncio
-from toolboxv2.runabel import runnable_dict as runnable_dict_func
+from toolboxv2.flows import flows_dict as flows_dict_func
 import subprocess
 import threading
 
@@ -121,7 +121,7 @@ class DynamicFunctionApp:
         self.is_logged_in = False
         self.username = ""
         self.tb_app = None
-        self.runnable_dict = {}
+        self.flows_dict = {}
         self.card_edit_states = {}
         self.search_var = ctk.StringVar()
         self.search_var.trace_add("write", self._on_search_change)
@@ -132,7 +132,7 @@ class DynamicFunctionApp:
 
         self._create_top_section()
         self._create_main_content()
-        self._initialize_runnables()
+        self._initialize_flowss()
 
         # Asynchrone Login-Initialisierung
         self.window.after(100, self._initialize_login)
@@ -203,7 +203,7 @@ class DynamicFunctionApp:
             widget.destroy()
 
         filtered_funcs = {
-            name: func for name, func in self.runnable_dict.items()
+            name: func for name, func in self.flows_dict.items()
             if filter_text.lower() in name.lower()
         }
 
@@ -381,7 +381,7 @@ class DynamicFunctionApp:
     def _categorize_functions(self):
         """Group functions by category"""
         categories = {}
-        for func_name in self.runnable_dict:
+        for func_name in self.flows_dict:
             category = func_name.split('_')[0]
             categories.setdefault(category, []).append(func_name)
         return categories
@@ -477,7 +477,7 @@ class DynamicFunctionApp:
             self._create_main_content()
             self._create_function_cards()
             self._update_quick_overview()
-            self._initialize_runnables()
+            self._initialize_flowss()
 
     def _run_search_command(self):
         """Execute the command from search bar and display output in tabbed GUI using PowerShell with colors"""
@@ -627,15 +627,15 @@ class DynamicFunctionApp:
             output_text.insert("end", text, style if style else None)
         output_text.see("end")
 
-    def _initialize_runnables(self):
-        """Initialize runnable dictionary without waiting for login"""
-        self.runnable_dict = runnable_dict_func(remote=False)
-        self.runnable_dict.update(runnable_dict_func(s='', remote=True))
+    def _initialize_flowss(self):
+        """Initialize flows dictionary without waiting for login"""
+        self.flows_dict = flows_dict_func(remote=False)
+        self.flows_dict.update(flows_dict_func(s='', remote=True))
         self._create_function_cards()
         self._update_quick_overview()
 
     async def _perform_login(self):
-        try:
+        #try:
             from toolboxv2 import get_app
             self.tb_app = get_app()
             show_console(False)
@@ -645,9 +645,9 @@ class DynamicFunctionApp:
                 await self._show_magic_link_dialog()
             else:
                 self._complete_login()
-        except Exception as e:
-            self._show_error(f"Login failed: {str(e)}")
-            self.username_label.configure(text="Not logged in")
+        #except Exception as e:
+        #    self._show_error(f"Login failed: {str(e)}")
+        #    self.username_label.configure(text="Not logged in")
 
     def _initialize_login(self):
         asyncio.run(self._perform_login())
@@ -662,14 +662,14 @@ class DynamicFunctionApp:
             await self._magic_link_login(magic_link)
 
     async def _magic_link_login(self, magic_link: str):
-        try:
+        #try:
             success = await self.tb_app.session.init_log_in_mk_link(magic_link)
             if success:
                 self._complete_login()
             else:
                 self._show_error("Invalid magic link")
-        except Exception as e:
-            self._show_error(f"Magic link login failed: {str(e)}")
+        #except Exception as e:
+        #    self._show_error(f"Magic link login failed: {str(e)}")
 
     def _complete_login(self):
         self.is_logged_in = True

@@ -526,10 +526,10 @@ class AppType:
     def set_runnable(self, r):
         """proxi attr"""
 
-    def run_runnable(self, name, **kwargs):
+    def run_flows(self, name, **kwargs):
         """proxi attr"""
 
-    def rrun_runnable(self, name, **kwargs):
+    def rrun_flows(self, name, **kwargs):
         """proxi attr"""
 
     def idle(self):
