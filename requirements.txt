@@ -14,7 +14,7 @@ qrcode==7.4.2
 Requests==2.32.3
 Faker==25.0.1
 
-toolboxv2~=0.1.20
+
 setuptools~=75.1.0
 numpy~=1.26.4
 pillow~=11.0.0
