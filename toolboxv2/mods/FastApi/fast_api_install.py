@@ -442,7 +442,6 @@ def download_file(path: str):
     else:
         file_path = TB_DIR + "\\" + file_name
 
-    print(directory, file_path, file_name)
     if len(directory) > 1:
 
         print(f"{directory=}!!!!!!")
