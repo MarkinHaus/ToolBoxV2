@@ -315,6 +315,8 @@ def show_version(self):
 async def login(m_link: str, app: Optional[App] = None):
     if app is None:
         app = get_app("CloudM.login")
+    if app.session.username is None or len(app.session.username) == 0:
+        app.session.username = app.get_username(True)
     if await app.session.login():
         return
     return await app.session.init_log_in_mk_link(m_link)

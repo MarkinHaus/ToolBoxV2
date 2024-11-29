@@ -285,11 +285,12 @@ async def installer(app: Optional[App], module_name: str):
         app = get_app(f"{Name}.installer")
 
     if not app.session.valid:
-        return None
+        if not await app.session.login():
+            return Result.default_user_error("Pleas login, wit CloudM login")
 
     response = await app.session.fetch("/installer/get?name=" + module_name, method="GET")
-    json_response = await response.json()
-    response = json.loads(json_response)
+    response = await response.json()
+    print(response)
 
     do_install = True
 
@@ -309,7 +310,7 @@ async def installer(app: Optional[App], module_name: str):
         return
     mod_url = response['url'].replace(app.session.base, "/")
     print(f"mod url is : {app.session.base + mod_url}")
-    if not await app.session.download_file(response['result']['data'], app.start_dir + '/mods_sto'):
+    if not await app.session.download_file(mod_url, app.start_dir + '/mods_sto'):
         print("failed to download mod")
         print("optional download it ur self and put the zip in the mods_sto folder")
         if 'y' not in input("Done ? will start set up from the mods_sto folder").lower():
@@ -319,7 +320,7 @@ async def installer(app: Optional[App], module_name: str):
     report = install_from_zip(app, mod_url.split('/')[-1])
     if not report:
         print("Set up error")
-    return
+    return report
 
 
 @export(mod_name=Name, name="update_all", test=False)

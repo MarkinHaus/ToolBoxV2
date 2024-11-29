@@ -75,7 +75,7 @@ class Session(metaclass=Singleton):
         parsed_url = urlparse(mak_link)
         params = parse_qs(parsed_url.query)
         invitation = params.get('key', [None])[0]
-        self.username = params.get('name', get_app().get_username())
+        self.username = params.get('name', [get_app().get_username()])[0]
         if not invitation:
             print('Invalid LoginKey')
             return False
@@ -137,8 +137,9 @@ class Session(metaclass=Singleton):
                 blob.clear()
                 claim = b''
         if not claim:
-            print("Could not find a claim")
-            return False
+            res = await self.auth_with_prv_key()
+            print(str(res))
+            return res is True
         async with self.session.request("GET", url=f"{self.base}/validateSession", json={'Jwt_claim': claim.decode(),
                                                                                          'Username': self.username}) as response:
             if response.status == 200:
@@ -148,6 +149,7 @@ class Session(metaclass=Singleton):
                 return True
             if response.status == 401 and self.if_key():
                 return await self.auth_with_prv_key()
+            print(response)
             get_logger().warning("LogIn failed")
             return False
 
