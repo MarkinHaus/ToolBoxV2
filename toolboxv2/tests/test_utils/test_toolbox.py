@@ -21,7 +21,7 @@ from yaml import safe_load
 import logging
 from dotenv import load_dotenv
 
-from toolboxv2 import get_app, Style, runnable_dict
+from toolboxv2 import get_app, Style, flows_dict
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.system import ToolBoxInterfaces
 
@@ -107,7 +107,7 @@ class TestToolboxv2(unittest.TestCase):
         self.assertEqual(res, None)
         self.assertEqual(len(self.app.runnable.keys()), 0)
 
-        data = runnable_dict("bg")
+        data = flows_dict("bg")
 
         self.assertIn("bg", data.keys())
         self.assertIsInstance(data.get("bg"), Callable)

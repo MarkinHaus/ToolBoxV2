@@ -18,7 +18,7 @@ from .utils.system.types import Result
 from .utils.system.types import ApiResult
 from .utils.security.cryp import Code
 from .utils.system import all_functions_enums as TBEF
-from .runabel import runnable_dict
+from .flows import flows_dict
 
 try:
     MODS_ERROR = None
@@ -50,7 +50,7 @@ __all__ = [
     "AppArgs",
     "setup_logging",
     "get_logger",
-    "runnable_dict",
+    "flows_dict",
     "mods",
     "utils",
     "get_app",

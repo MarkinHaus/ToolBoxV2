@@ -13,7 +13,7 @@ from platform import system, node
 # from sqlalchemy.testing.suite.test_reflection import metadata
 from yaml import safe_load
 
-from toolboxv2.runabel import runnable_dict as runnable_dict_func
+from toolboxv2.flows import flows_dict as flows_dict_func
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.system.conda_runner import conda_runner_main
 from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
@@ -735,25 +735,25 @@ async def main():
         if args.remote:
             await tb_app.rrun_runnable(args.modi, **args.kwargs[0])
 
-        runnable_dict = runnable_dict_func(remote=False)
-        if args.modi not in runnable_dict.keys():
-            runnable_dict = {**runnable_dict, **runnable_dict_func(s=args.modi, remote=True)}
-        tb_app.set_runnable(runnable_dict)
-        if args.modi not in runnable_dict.keys():
+        flows_dict = flows_dict_func(remote=False)
+        if args.modi not in flows_dict.keys():
+            flows_dict = {**flows_dict, **flows_dict_func(s=args.modi, remote=True)}
+        tb_app.set_runnable(flows_dict)
+        if args.modi not in flows_dict.keys():
             raise ValueError(
-                f"Modi : [{args.modi}] not found on device installed modi : {list(runnable_dict.keys())}")
+                f"Modi : [{args.modi}] not found on device installed modi : {list(flows_dict.keys())}")
         # open(f"./config/{args.modi}.pid", "w").write(app_pid)
         await tb_app.run_runnable(args.modi, **args.kwargs[0])
 
     elif args.docker:
 
-        runnable_dict = runnable_dict_func('docker')
+        flows_dict = flows_dict_func('docker')
 
-        if 'docker' not in runnable_dict.keys():
+        if 'docker' not in flows_dict.keys():
             print("No docker")
             return 1
 
-        runnable_dict['docker'](tb_app, args)
+        flows_dict['docker'](tb_app, args)
 
     elif args.kill and not args.background_application:
         if not os.path.exists(pid_file):

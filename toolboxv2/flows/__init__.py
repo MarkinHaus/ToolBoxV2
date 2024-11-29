@@ -5,17 +5,17 @@ import time
 from ..utils.extras.gist_control import GistLoader
 from toolboxv2 import Spinner
 
-def runnable_dict(s='.py', remote=False, dir_path=None, runnable_dict_=None):
+def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None):
 
-    if runnable_dict_ is None:
-        runnable_dict_ = {}
+    if flows_dict_ is None:
+        flows_dict_ = {}
     with Spinner("Loading runnable"):
         # Erhalte den Pfad zum aktuellen Verzeichnis
         if dir_path is None:
             for ex_path in os.getenv("EXTERNAL_PATH_RUNNABELS", '').split(','):
                 if not ex_path or len(ex_path) == 0:
                     continue
-                runnable_dict(s,remote,ex_path,runnable_dict_)
+                flows_dict(s,remote,ex_path,flows_dict_)
             dir_path = os.path.dirname(os.path.realpath(__file__))
         to = time.perf_counter()
         # Iteriere über alle Dateien im Verzeichnis
@@ -39,7 +39,7 @@ def runnable_dict(s='.py', remote=False, dir_path=None, runnable_dict_=None):
                 # Füge das Modul der Dictionary hinzu
                 if hasattr(module, 'run') and callable(module.run) and hasattr(module, 'NAME'):
                     # print("Collecing :", module.NAME)
-                    runnable_dict_[module.NAME] = module.run
+                    flows_dict_[module.NAME] = module.run
             elif remote and s in file_name and file_name.endswith('.gist'):
                 # print("Loading from Gist :", file_name)
                 name_f = os.path.splitext(file_name)[0]
@@ -62,7 +62,7 @@ def runnable_dict(s='.py', remote=False, dir_path=None, runnable_dict_=None):
                 print(f"{hasattr(module, 'run')} and {callable(module.run)} and {hasattr(module, 'NAME')}")
                 if hasattr(module, 'run') and callable(module.run) and hasattr(module, 'NAME'):
                     # print("Collecing :", module.NAME)
-                    runnable_dict_[module.NAME] = module.run
+                    flows_dict_[module.NAME] = module.run
 
-        print(f"Getting all runnable took {time.perf_counter() - to:.2f} for {len(runnable_dict_.keys())} elements")
-        return runnable_dict_
+        print(f"Getting all runnable took {time.perf_counter() - to:.2f} for {len(flows_dict_.keys())} elements")
+        return flows_dict_

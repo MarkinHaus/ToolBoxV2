@@ -43,8 +43,8 @@ services:
         #           path: ./toolboxv2/package.json
         #           target: /app/toolboxv2/package.json
         #         - action: rebuild
-        #           path: ./toolboxv2/runabel
-        #           target: /app/toolboxv2/runabel
+        #           path: ./toolboxv2/flows
+        #           target: /app/toolboxv2/flows
 
       # Live-Umgebung mit Zero Downtime
     live:

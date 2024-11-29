@@ -256,10 +256,10 @@ class App(AppType, metaclass=Singleton):
     def set_runnable(self, r):
         self.runnable = r
 
-    async def run_runnable(self, name, **kwargs):
-        from ..runabel import runnable_dict as runnable_dict_func
+    async def run_flows(self, name, **kwargs):
+        from ..flows import flows_dict as flows_dict_func
         if name not in self.runnable.keys():
-            self.runnable = {**self.runnable, **runnable_dict_func(s=name, remote=True)}
+            self.runnable = {**self.runnable, **flows_dict_func(s=name, remote=True)}
         if name in self.runnable.keys():
             if inspect.iscoroutinefunction(self.runnable[name]):
                 return await self.runnable[name](get_app(from_="runner"), self.args_sto, **kwargs)
