@@ -67,7 +67,7 @@ async def run(app: App, args: AppArgs):
                                                threaded=True)
     await ev.register_event(service_event)
     app.print("Service P2P Online")
-    await app.run_runnable("cli")
+    await app.run_flows("cli")
 
 
 if __name__ == "__main__":

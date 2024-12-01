@@ -733,17 +733,17 @@ async def main():
             await tb_app.daemon_app.online
 
         if args.remote:
-            await tb_app.rrun_runnable(args.modi, **args.kwargs[0])
+            await tb_app.rrun_flows(args.modi, **args.kwargs[0])
 
         flows_dict = flows_dict_func(remote=False)
         if args.modi not in flows_dict.keys():
             flows_dict = {**flows_dict, **flows_dict_func(s=args.modi, remote=True)}
-        tb_app.set_runnable(flows_dict)
+        tb_app.set_flows(flows_dict)
         if args.modi not in flows_dict.keys():
             raise ValueError(
                 f"Modi : [{args.modi}] not found on device installed modi : {list(flows_dict.keys())}")
         # open(f"./config/{args.modi}.pid", "w").write(app_pid)
-        await tb_app.run_runnable(args.modi, **args.kwargs[0])
+        await tb_app.run_flows(args.modi, **args.kwargs[0])
 
     elif args.docker:
 

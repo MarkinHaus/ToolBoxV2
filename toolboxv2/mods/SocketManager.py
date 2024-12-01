@@ -615,7 +615,6 @@ class Tools(MainTool, FileHandler):
             self.logger.info(f"{name} -- received JSON -- {msg['identifier']}")
             return msg
         except json.JSONDecodeError and UnicodeDecodeError as e:
-            # print("row_data", row_data)  # TODO: remove print
             self.logger.error(f"JSON decode error: {e}")
 
         return -1

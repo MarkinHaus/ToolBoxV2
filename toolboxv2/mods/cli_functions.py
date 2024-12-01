@@ -528,7 +528,7 @@ def user_input(app: App,
                 completer_dict[call_obj.module_name] if completer_dict[call_obj.module_name] is not None else {}):
                 return call_obj
             kwargs_name = completer_dict[call_obj.module_name][call_obj.function_name].get(
-                'params')  # TODO FIX parsm ist type list
+                'params')
             if kwargs_name is None:
                 return call_obj
             kwargs_name = kwargs_name.remove('app').remove('self')

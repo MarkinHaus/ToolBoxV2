@@ -74,7 +74,7 @@ class TestToolboxv2(unittest.TestCase):
             self.assertFalse(self.app.called_exit[0])
             self.assertTrue(self.app.alive)
 
-            self.assertEqual(self.app.runnable, {})
+            self.assertEqual(self.app.flows, {})
             self.assertEqual(self.app.functions, {})
             self.assertEqual(self.app.modules, {})
 
@@ -101,30 +101,30 @@ class TestToolboxv2(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.app.debug_rains(ValueError)
 
-    async def test_run_runnable(self):
+    async def test_run_flows(self):
 
-        res = await self.app.run_runnable("None")
+        res = await self.app.run_flows("None")
         self.assertEqual(res, None)
-        self.assertEqual(len(self.app.runnable.keys()), 0)
+        self.assertEqual(len(self.app.flows.keys()), 0)
 
         data = flows_dict("bg")
 
         self.assertIn("bg", data.keys())
         self.assertIsInstance(data.get("bg"), Callable)
 
-        self.app.set_runnable(data)
+        self.app.set_flows(data)
 
-        self.assertEqual(len(self.app.runnable.keys()), 1)
+        self.assertEqual(len(self.app.flows.keys()), 1)
         self.app.daemon_app = AsyncMock()
         self.app.daemon_app.connect = AsyncMock()
 
-        await self.app.run_runnable("bg")
+        await self.app.run_flows("bg")
 
         self.app.daemon_app.connect.assert_called_once()
         self.app.daemon_app.connect.assert_called_with(self.app)
 
 
-TestToolboxv2.test_run_runnable = async_test(TestToolboxv2.test_run_runnable)
+TestToolboxv2.test_run_flows = async_test(TestToolboxv2.test_run_flows)
 
 '''
 

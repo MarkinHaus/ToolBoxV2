@@ -9,7 +9,7 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None):
 
     if flows_dict_ is None:
         flows_dict_ = {}
-    with Spinner("Loading runnable"):
+    with Spinner("Loading flows"):
         # Erhalte den Pfad zum aktuellen Verzeichnis
         if dir_path is None:
             for ex_path in os.getenv("EXTERNAL_PATH_RUNNABELS", '').split(','):
@@ -64,5 +64,5 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None):
                     # print("Collecing :", module.NAME)
                     flows_dict_[module.NAME] = module.run
 
-        print(f"Getting all runnable took {time.perf_counter() - to:.2f} for {len(flows_dict_.keys())} elements")
+        print(f"Getting all flows took {time.perf_counter() - to:.2f} for {len(flows_dict_.keys())} elements")
         return flows_dict_

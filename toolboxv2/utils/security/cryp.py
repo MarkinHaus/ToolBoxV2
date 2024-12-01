@@ -126,7 +126,7 @@ class Code:
             return "Error encrypt"
 
     @staticmethod
-    def decrypt_symmetric(encrypted_text: str, key: str, to_str=True) -> str or bytes:
+    def decrypt_symmetric(encrypted_text: str, key: str, to_str=True, mute=False) -> str or bytes:
         """
         Entschlüsselt einen Text mit einem gegebenen symmetrischen Schlüssel.
 
@@ -141,17 +141,19 @@ class Code:
         if isinstance(key, str):
             key = key.encode()
 
-        try:
-            fernet = Fernet(key)
-            text_b = fernet.decrypt(encrypted_text)
-            if not to_str:
-                return text_b
-            return text_b.decode()
-        except Exception as e:
-            get_logger().error(f"Error decrypt_symmetric {e}")
-            if not to_str:
-                return f"Error decoding".encode()
-            return f"Error decoding"
+        #try:
+        fernet = Fernet(key)
+        text_b = fernet.decrypt(encrypted_text)
+        if not to_str:
+            return text_b
+        return text_b.decode()
+        # except Exception as e:
+        #     get_logger().error(f"Error decrypt_symmetric {e}")
+        #     if not mute:
+        #         raise e
+        #     if not to_str:
+        #         return f"Error decoding".encode()
+        #     return f"Error decoding"
 
     @staticmethod
     def generate_asymmetric_keys() -> (str, str):

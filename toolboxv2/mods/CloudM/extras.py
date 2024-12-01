@@ -247,17 +247,17 @@ async def create_magic_log_in(app: App, username: str):
 
 
 @no_test
-async def register_initial_root_user(app: App, email=None):
-    root_key = app.config_fh.get_file_handler("Pk" + Code.one_way_hash("root", "dvp-k")[:8])
+async def register_initial_loot_user(app: App, email=None, user_name="loot"):
+    root_key = app.config_fh.get_file_handler("Pk" + Code.one_way_hash(user_name, "dvp-k")[:8])
 
     if root_key is not None:
-        return Result.default_user_error(info="root user already Registered")
+        return Result.default_user_error(info="loot user already Registered")
 
     if email is None:
         email = input("enter ure Email:")
     invitation = get_invitation(app=app).get()
     ret = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
-                      username="root",
+                      username=user_name,
                       email=email,
                       invitation=invitation, get_results=True)
     # awaiating user cration
@@ -266,7 +266,7 @@ async def register_initial_root_user(app: App, email=None):
     if rport.is_error():
         return rport
     await asyncio.sleep(1)
-    user = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username="root")
+    user = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user_name)
     print("User:")
     print(user)
     user = user.get()
@@ -316,7 +316,9 @@ async def login(m_link: str, app: Optional[App] = None):
     if app is None:
         app = get_app("CloudM.login")
     if app.session.username is None or len(app.session.username) == 0:
-        app.session.username = app.get_username(True)
+        if '&name=' not in m_link:
+            return "Pleas Use a m lik wit name"
+        app.session.username = app.get_username(False, default=m_link.split('&name=')[-1])
     if await app.session.login():
         return
     return await app.session.init_log_in_mk_link(m_link)

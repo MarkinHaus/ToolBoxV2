@@ -124,10 +124,10 @@ async def run(app: App, args):
 
     async def run_(call_: CallingObject) -> Result:
         if not call_.function_name:
-            return (Result.default_user_error(info=f"Avalabel are : {list(app.runnable.keys())}")
+            return (Result.default_user_error(info=f"Avalabel are : {list(app.flows.keys())}")
                     .set_origin("minicli::build-in"))
-        if call_.function_name in app.runnable:
-            await app.run_runnable(call_.function_name)
+        if call_.function_name in app.flows:
+            await app.run_flows(call_.function_name)
             return Result.ok().set_origin("minicli::build-in")
         return Result.default_user_error("404").set_origin("minicli::build-in")
 
@@ -140,7 +140,7 @@ async def run(app: App, args):
             app.args_sto.host = call_.function_name
         if call_.kwargs:
             print("Adding", call_.kwargs)
-        status, sender, receiver_que = app.run_runnable("daemon", as_server=False, programmabel_interface=True)
+        status, sender, receiver_que = app.run_flows("daemon", as_server=False, programmabel_interface=True)
         if status == -1:
             return (Result.default_internal_error(info="Failed to connect, No service available")
                     .set_origin("minicli::build-in"))
@@ -223,7 +223,7 @@ async def run(app: App, args):
     autocompletion_dict["sdm:set_debug_mode"] = {arg: None for arg in ['on', 'off']}
     autocompletion_dict["openM"] = autocompletion_dict["closeM"] = autocompletion_dict["reload"] = \
         {arg: None for arg in all_modes}
-    autocompletion_dict["runM"] = {arg: None for arg in list(app.runnable.keys())}
+    autocompletion_dict["runM"] = {arg: None for arg in list(app.flows.keys())}
 
     active_modular = ""
 

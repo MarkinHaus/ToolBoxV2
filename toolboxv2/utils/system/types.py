@@ -392,7 +392,7 @@ class MainToolType:
     spec: str
 
     version: str
-    tools: dict  # TODO: own type
+    tools: dict  # legacy
     name: str
     logger: logging
     color: str
@@ -475,7 +475,7 @@ class AppType:
 
     config_fh: FileHandler
     _debug: bool
-    runnable: Dict[str, Callable]
+    flows: Dict[str, Callable]
     dev_modi: bool
     functions: Dict[str, Any]
     modules: Dict[str, Any]
@@ -523,7 +523,7 @@ class AppType:
     def debug_rains(self, e):
         """proxi attr"""
 
-    def set_runnable(self, r):
+    def set_flows(self, r):
         """proxi attr"""
 
     def run_flows(self, name, **kwargs):
@@ -886,7 +886,7 @@ class AppType:
     def get_autocompletion_dict(self):
         """proxi attr"""
 
-    def get_username(self, get_input=False):
+    def get_username(self, get_input=False, default="loot"):
         """proxi attr"""
 
     def save_registry_as_enums(self, directory: str, filename: str):

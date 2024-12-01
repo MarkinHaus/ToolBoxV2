@@ -37,7 +37,7 @@ class UserInstances(metaclass=Singleton):
 
 
 @e
-def close_user_instance(uid: str):  # TODO: async
+def close_user_instance(uid: str):
     if uid is None:
         return
     si_id = UserInstances.get_si_id(uid).get()
@@ -64,7 +64,7 @@ def close_user_instance(uid: str):  # TODO: async
 
 
 @e
-def validate_ws_id(ws_id):  # ToDo refactor
+def validate_ws_id(ws_id):
     logger.info(f"validate_ws_id 1 {len(UserInstances().user_instances)}")
     if len(UserInstances().user_instances) == 0:
         data = app.run_any('DB', 'get',
@@ -77,16 +77,18 @@ def validate_ws_id(ws_id):  # ToDo refactor
             except Exception as e_:
                 logger.info(Style.RED(f"Error : {str(e_)}"))
     logger.info(f"validate_ws_id ::{UserInstances().user_instances}::")
-    for key in list(UserInstances().user_instances.keys()):
-        value = UserInstances().user_instances[key]
-        logger.info(f"validate_ws_id ::{value == ws_id}:: {key} {value}")
-        if value == ws_id:
-            return True, key
+    user_kv = \
+        sorted(list(UserInstances().user_instances.items()), key=lambda x: 1 if x[0] == ws_id else 0, reverse=True)[0]
+    print("validate_ws_id", user_kv, ws_id)
+    value = UserInstances().user_instances[user_kv[0]]
+    logger.info(f"validate_ws_id ::{value == ws_id}:: {user_kv[0]} {value}")
+    if value == ws_id:
+        return True, user_kv[0]
     return False, ""
 
 
 @e
-def delete_user_instance(uid: str):  # TODO: async
+def delete_user_instance(uid: str):
     if uid is None:
         return
     si_id = UserInstances.get_si_id(uid).get()

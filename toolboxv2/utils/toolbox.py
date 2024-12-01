@@ -153,7 +153,7 @@ class App(AppType, metaclass=Singleton):
         self.config_fh = FileHandler(self.id + ".config", keys=self.keys, defaults=defaults)
         self.config_fh.load_file_handler()
         self._debug = args.debug
-        self.runnable = {}
+        self.flows = {}
         self.dev_modi = self.config_fh.get_file_handler(self.keys["develop-mode"])
         if self.config_fh.get_file_handler("provider::") is None:
             self.config_fh.add_to_save_file_handler("provider::", "http://localhost:" + str(
@@ -180,17 +180,15 @@ class App(AppType, metaclass=Singleton):
         from .system.session import Session
         self.session: Session = Session(self.get_username())
 
-    def get_username(self, get_input=False):
+    def get_username(self, get_input=False, default="loot"):
         user_name = self.config_fh.get_file_handler("ac_user:::")
-        if get_input and user_name is None and user_name != "None":
+        if get_input and user_name is None:
             user_name = input("Input your username\nbe sure to make no typos: ")
             self.config_fh.add_to_save_file_handler("ac_user:::", user_name)
         if user_name is None:
-            user_name = ''
+            user_name = default
+            self.config_fh.add_to_save_file_handler("ac_user:::", user_name)
         return user_name
-
-    def reset_username(self):
-        self.config_fh.add_to_save_file_handler("ac_user:::", "None")
 
     @staticmethod
     def exit_main(*args, **kwargs):
@@ -253,18 +251,18 @@ class App(AppType, metaclass=Singleton):
         if self.debug:
             raise e
 
-    def set_runnable(self, r):
-        self.runnable = r
+    def set_flows(self, r):
+        self.flows = r
 
     async def run_flows(self, name, **kwargs):
         from ..flows import flows_dict as flows_dict_func
-        if name not in self.runnable.keys():
-            self.runnable = {**self.runnable, **flows_dict_func(s=name, remote=True)}
-        if name in self.runnable.keys():
-            if inspect.iscoroutinefunction(self.runnable[name]):
-                return await self.runnable[name](get_app(from_="runner"), self.args_sto, **kwargs)
+        if name not in self.flows.keys():
+            self.flows = {**self.flows, **flows_dict_func(s=name, remote=True)}
+        if name in self.flows.keys():
+            if inspect.iscoroutinefunction(self.flows[name]):
+                return await self.flows[name](get_app(from_="runner"), self.args_sto, **kwargs)
             else:
-                return self.runnable[name](get_app(from_="runner"), self.args_sto, **kwargs)
+                return self.flows[name](get_app(from_="runner"), self.args_sto, **kwargs)
 
     def _coppy_mod(self, content, new_mod_dir, mod_name, file_type='py'):
 
@@ -318,8 +316,9 @@ class App(AppType, metaclass=Singleton):
         if error_message.startswith("No module named 'toolboxv2.utils"):
             return Result.default_internal_error(f"404 {error_message.split('utils')[1]} not found")
         if error_message.startswith("No module named 'toolboxv2.mods"):
-            # TODO: install from remote optional
-            return Result.default_internal_error(f"404 {error_message.split('mods')[1]} not found")
+            if mod_name.startswith('.'):
+                return
+            return self.run_any(("CloudM", "install"), module_name=mod_name)
         if error_message.startswith("No module named '"):
             pip_requ = error_message.split("'")[1].replace("'", "").strip()
             # if 'y' in input(f"\t\t\tAuto install {pip_requ} Y/n").lower:
@@ -643,6 +642,8 @@ class App(AppType, metaclass=Singleton):
             # if not _mod.endswith(".py"):
             #     return False
             if _mod.startswith("__"):
+                return False
+            if _mod.startswith("."):
                 return False
             if _mod.startswith("test_"):
                 return False
@@ -1580,7 +1581,7 @@ class App(AppType, metaclass=Singleton):
                 if not isinstance(function_data, dict):
                     continue
                 data[function_name] = {arg: None for arg in
-                                       function_data.get("params", [])}  # TODO get default from sig
+                                       function_data.get("params", [])}
                 if len(data[function_name].keys()) == 0:
                     data[function_name] = None
             autocompletion_dict[module_name] = data if len(data.keys()) > 0 else None

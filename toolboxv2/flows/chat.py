@@ -92,7 +92,7 @@ async def run(app: App, _: AppArgs):
                                                    threaded=True)
         await ev.register_event(service_event)
         app.print("Service P2P Online")
-        await app.run_runnable("cli")
+        await app.run_flows("cli")
         return
     else:
         source_id = "app.core0-simplecore.app"

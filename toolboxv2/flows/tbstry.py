@@ -86,5 +86,5 @@ async def run(app, args):
         icon = get_initial_icon(app)
 
     threading.Thread(target=icon.run, daemon=True).start()
-    app.run_runnable()
+    app.run_flows()
     await app.idle()

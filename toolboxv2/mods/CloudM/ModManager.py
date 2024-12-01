@@ -371,7 +371,7 @@ def install_from_zip(app, zip_name, no_dep=True, auto_dep=False):
     zip_path = f"{app.start_dir}/mods_sto/{zip_name}"
     _name = unpack_and_move_module(zip_path, f"{app.start_dir}/mods")
     if not no_dep and os.path.exists(f"{app.start_dir}/mods/{_name}/tbConfig.yaml"):
-            install_dependencies(f"{app.start_dir}/mods/{_name}/tbConfig.yaml", auto_dep)
+        install_dependencies(f"{app.start_dir}/mods/{_name}/tbConfig.yaml", auto_dep)
     return True
 
 
@@ -461,17 +461,4 @@ if __name__ == "__main__":
     # zip_path = create_and_pack_module("./mods/audio", "audio", "0.0.5")
     # print(zip_path)
     # unpack_and_move_module("./mods_sto/RST$audio&0.1.9§0.0.5.zip")
-# # Beispielverwendung TODO
-# archive_path = '/pfad/zum/archiv'
-# temp_path = '/pfad/zum/temp'
-# module_path = '/pfad/zum/modul'
-# module_name = 'MeinModul'
-#
-# # Initialisiere und baue ein neues Modul
-# initialize_module_repository(module_path)
-# build_and_archive_module(module_path, archive_path)
-#
-# # Extrahiere, aktualisiere und rearchiviere ein existierendes Modul
-# temp_module_path = extract_and_prepare_module(archive_path, module_name, temp_path)
-# # Hier würden Sie Änderungen am Modul vornehmen
-# update_and_rearchive_module(temp_module_path, archive_path)
+
