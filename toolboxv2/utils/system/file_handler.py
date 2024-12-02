@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 
@@ -175,7 +176,7 @@ class FileHandler(Code):
 
                 try:
                     if len(objects[1]) > 0:
-                        return eval(objects[1]) if isinstance(objects[1], str) else objects[1]
+                        return ast.literal_eval(objects[1]) if isinstance(objects[1], str) else objects[1]
                     logger.warning(
                         Style.YELLOW(
                             f"No data  {obj}  ; {self.file_handler_filename}"
@@ -193,7 +194,6 @@ class FileHandler(Code):
                         )
                     )
                     return objects[1]
-                    # print(Style.YELLOW(f"Data frc : {obj} ; {objects[1]}"))
                 except NameError:
                     return str(objects[1])
 

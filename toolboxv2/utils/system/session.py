@@ -22,12 +22,6 @@ from ...tests.a_util import async_test
 
 from .types import Result
 
-
-# @dataclasses.dataclass
-# class LocalUser:
-#    name:str
-#    uid:str
-
 class RequestSession(Response):
 
     def __init__(self, session, body, json, row):

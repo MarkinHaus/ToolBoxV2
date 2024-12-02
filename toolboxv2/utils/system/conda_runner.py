@@ -51,6 +51,8 @@ def create_conda_env(env_name: str, v='3.10') -> bool:
 
 def delete_conda_env(env_name: str) -> bool:
     command = f"conda env remove -n {env_name} -y"
+    if os.path.exists(f"{env_name}_registry.json"):
+        os.remove(f"{env_name}_registry.json")
     return run_command(command)[0]
 
 
@@ -122,7 +124,11 @@ def update_dependencies(env_name: str) -> bool:
         print(f"No dependency registry found for environment {env_name}")
         return False
     for key in tqdm(registry):
-        command = f"conda update -n {env_name} {key.get('name')} -y"
+        if isinstance(key, str):
+            name = key
+        else:
+            name = key.get('name')
+        command = f"conda update -n {env_name} {name} -y"
         o = run_command(command)
         print(o)
         if not o[0]:

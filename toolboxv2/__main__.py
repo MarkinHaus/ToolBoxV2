@@ -512,8 +512,8 @@ def run_tests(test_path):
     except subprocess.CalledProcessError as e:
         print(f"Fehler beim Ausführen der Unittests: {e}")
         return False
-    except FileNotFoundError:
-        print("Fehler: Python-Interpreter nicht gefunden. Stellen Sie sicher, dass Python installiert ist.")
+    except Exception as e:
+        print(f"Fehler beim Ausführen der Unittests:{e}")
         return False
 
 

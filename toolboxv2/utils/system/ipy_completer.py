@@ -1,9 +1,9 @@
 from typing import Type, Dict, Any, List
-from IPython.core.completer import Completer
-from IPython.core.completer import Completion
+from IPython.core.completer import IPCompleter, SimpleCompletion, Completer
 import inspect
 import importlib.util
 from dataclasses import is_dataclass
+
 
 def extract_class_info(cls) -> Dict[str, Any]:
     class_info = {}
@@ -14,6 +14,7 @@ def extract_class_info(cls) -> Dict[str, Any]:
         }
     return class_info
 
+
 def create_completions_from_classes(classes: List[type]) -> Dict[str, List[str]]:
     completions = {}
     for cls in classes:
@@ -22,20 +23,27 @@ def create_completions_from_classes(classes: List[type]) -> Dict[str, List[str]]
         completions[class_name] = [name for name in class_info.keys()]
     return completions
 
+
 def nested_dict_autocomplete(classes: List[type]):
     completions = create_completions_from_classes(classes)
+
     # print(completions)
     class ClassAttributeCompleter(Completer):
-        def __init__(self, completions):
-            self.completions = completions
+        def __init__(self, completions_, **kwargs):
+            super().__init__(**kwargs)
+            self.completions = completions_
 
         def complete(self, text, state):
+
+            if isinstance(text, IPCompleter):
+                print(text, dir(text))
+                text = text.matchers
             parts = text.split('.')
             options = self.completions.get(parts[0], [])
             if len(parts) > 1:
                 options = [opt for opt in options if opt.startswith(parts[1])]
             try:
-                return Completion(options[state])
+                return SimpleCompletion(options[state])
             except IndexError:
                 return None
 
@@ -59,8 +67,8 @@ def get_dataclasses_from_file(file_path: str) -> List[Type]:
 
     return dataclasses
 
-def get_completer(st_dir = "."):
 
+def get_completer(st_dir="."):
     # Example usage
-    classes = get_dataclasses_from_file(st_dir+"/utils/system/all_functions_enums.py")
+    classes = get_dataclasses_from_file(st_dir + "/utils/system/all_functions_enums.py")
     return nested_dict_autocomplete(classes).complete
