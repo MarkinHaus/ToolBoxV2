@@ -109,8 +109,11 @@ class TestCondaRunner(unittest.TestCase):
         with open(registry_file, 'r') as f:
             registry = json.load(f)
 
-        self.assertIn('numpy', registry)
-        self.assertIn('pandas', registry)
+        if isinstance(registry[0], dict):
+            registry = [r.get('name') for r in registry]
+        if isinstance(registry[0], str):
+            self.assertIn('numpy', registry)
+            self.assertIn('pandas', registry)
 
     def test_run_script_in_conda_env(self):
         """Test running a script in a conda environment."""

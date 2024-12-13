@@ -202,6 +202,9 @@ class FileHandler(Code):
             logger.info(f"returning Default for {obj}")
             return r
 
+        if default is None:
+            default = self.file_handler_load.get(obj)
+
         logger.info(f"no data found")
         return default
 

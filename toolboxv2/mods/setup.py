@@ -44,6 +44,12 @@ default_export = export(mod_name=Name)
 version = '0.0.3'
 spec = ''
 
+
+@export(mod_name=Name, name='Version', version=version)
+def get_version():
+    return version
+
+
 """
 Architecture :: State transform via Running Scenarios
 

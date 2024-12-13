@@ -1,4 +1,4 @@
-from .manager import Tools
+from .manager import Tools, version
 
 Name = "FastApi"
-version = "0.2.0"
+version = version

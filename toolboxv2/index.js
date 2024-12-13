@@ -14,6 +14,14 @@ const rpIdUrl_f = ()=> {
     }
 }
 
+const rpIdUrl_fs = ()=> {
+    if (window.location.href.match("localhost")) {
+        return "ws://localhost:" + window.location.port
+    } else {
+        return "wss://simplecore.app"
+    }
+}
+
 let init_d = false
 let DOME;
 let isHtmxAfterRequestListenerAdded = false;
@@ -70,9 +78,12 @@ const state = {
         setVar: (v_name, v_value)=>{state.TBc[v_name] = v_value},
         setM: (v_name, v_value)=>{state.TBm[v_name] = v_value},
         getM: (v_name)=>{return state.TBm[v_name]},
+        base: rpIdUrl_f(),
+        ws_base: rpIdUrl_fs(),
     },
     TBv:{
         base: rpIdUrl_f(),
+        ws_base: rpIdUrl_fs(),
         user: null,
         session: null,
     },

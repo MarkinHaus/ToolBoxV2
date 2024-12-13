@@ -21,17 +21,17 @@ class MiniDictDB:
         return [key for key in self.data.keys() if key.startswith(search)]
 
     def initialize(self, location, key):
-        if os.path.exists(location + 'MiniDictDB.json'):
+        if os.path.exists(os.path.join(location, 'MiniDictDB.json')):
             try:
-                self.data = eval(Code.decrypt_symmetric(load_from_json(location + 'MiniDictDB.json').get('data'), key))
+                self.data = eval(Code.decrypt_symmetric(load_from_json(os.path.join(location, 'MiniDictDB.json')).get('data'), key))
             except Exception as er:
                 print(f"Data is corrupted error : {er}")
                 self.data = {}
         else:
-            print(f'Could not initialize MiniDictDB with data from MiniDictDB.json')
+            print(f'Could not initialize MiniDictDB with data from {os.path.join(location, "MiniDictDB.json")}')
             self.data = {}
         self.key = key
-        self.location = location + 'MiniDictDB.json'
+        self.location = os.path.join(location, 'MiniDictDB.json')
         return Result.ok().set_origin("Dict DB")
 
     def get(self, key: str) -> Result:
@@ -109,6 +109,7 @@ class MiniDictDB:
         data = Code().encode_code(str(self.data), self.key)
         try:
             save_to_json({"data": data}, self.location)
+            print("Success data saved to", self.location)
         except PermissionError and FileNotFoundError as f:
             return Result.custom_error(data=f, info=f"Error Exiting local DB instance {f}").set_origin("Dict DB")
 

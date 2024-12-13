@@ -19,7 +19,7 @@ from toolboxv2.utils.proxy import ProxyUtil
 from toolboxv2.utils.system.session import get_local_ip
 
 Name = "EventManager"
-version = "0.0.1"
+version = "0.0.3"
 export = get_app(from_=f"{Name}.EXPORT").tb
 no_test = export(mod_name=Name, test=False, version=version)
 test_only = export(mod_name=Name, test_only=True, version=version, state=True)

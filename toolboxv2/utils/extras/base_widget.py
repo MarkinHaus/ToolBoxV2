@@ -98,7 +98,7 @@ class BaseWidget:
     def group_generator(self, asset_name: str, iterator: iter, template=None, file_path=None, a_kwargs=None):
         groups = []
         work_kwargs = a_kwargs
-        for data in enumerate(iterator):
+        for i, data in enumerate(iterator):
             if isinstance(data, dict):
                 work_kwargs = {**a_kwargs, **data}
             groups.append(self.get_a_group(asset_name, template=template, file_path=file_path, a_kwargs=work_kwargs))

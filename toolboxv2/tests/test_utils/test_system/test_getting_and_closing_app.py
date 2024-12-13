@@ -17,8 +17,8 @@ class TestGetApp(unittest.TestCase):
            [None])  # Patching registered_apps to simulate empty list
     def test_get_app_singleton(self):
         # Test whether get_app returns the same instance when called multiple times
-        app1 = get_app(from_="Test1")
-        app2 = get_app(from_="Test2")
+        app1 = get_app(from_="Test1", name="test")
+        app2 = get_app(from_="Test2", name="test")
 
         self.assertIs(app1, app2)  # Both instances should be the same
 
@@ -27,7 +27,7 @@ class TestGetApp(unittest.TestCase):
            MagicMock())  # Mocking asyncio functions
     def test_get_app_initial_startup(self):
         # Test get_app behavior when called from InitialStartUp
-        app = get_app(from_="InitialStartUp")
+        app = get_app(from_="InitialStartUp", name="test")
         self.assertIsNotNone(app)  # Ensure app instance is created
         self.assertIsInstance(app, AppType)  # Ensure app is of type AppType
         # You can add more assertions as needed
@@ -53,7 +53,7 @@ class TestOverrideMainApp(unittest.TestCase):
         self.assertIs(returned_app, mock_app)
 
         # Check if the registered_apps contains the overridden app instance
-        self.assertIs(get_app(), mock_app)
+        self.assertIs(get_app(name="test"), mock_app)
 
     @patch('toolboxv2.utils.system.getting_and_closing_app.registered_apps',
            [MagicMock(spec=AppType, called_exit=[False, 0])])  # Mocking existing app instance
@@ -83,7 +83,7 @@ class TestSaveClosingApp(unittest.TestCase):
         mock_get_event_loop.return_value = loop_mock
 
         # Set up a registered app
-        app_mock = get_app()
+        app_mock = get_app(name="test")
         app_mock.start_dir = "test"
         app_mock.print = Mock()
 
@@ -105,7 +105,7 @@ class TestSaveClosingApp(unittest.TestCase):
     def test_save_closing_app_with_registered_app(self):
         # Mock the event loop
         # Set up a registered app
-        app_mock = get_app()
+        app_mock = get_app(name="test")
 
         app_mock.start_dir = "test"
         app_mock.print = Mock()

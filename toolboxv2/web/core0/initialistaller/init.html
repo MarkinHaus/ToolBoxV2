@@ -138,8 +138,8 @@
         <label for="installationFolder">installationFolder:</label>
         <input type="text" id="installationFolder" name="installationFolder" value="" placeholder="same as widgets">
 
-        <label for="addRootUser">Add Root User:</label>
-        <input type="checkbox" id="addRootUser" name="addRootUser" value="true">
+        <label for="addLootUser">Add Root User:</label>
+        <input type="checkbox" id="addLootUser" name="addLootUser" value="true">
 
         <label for="stoFolder">Storage Folder:</label>
         <input type="text" id="stoFolder" name="stoFolder" value="./.data" placeholder="Storage Folder">
@@ -206,7 +206,7 @@
     let installation_data = {
         'installationFolder': null,
         'targetVersion': null,
-        'addRootUser': false,
+        'addLootUser': false,
         'stoFolder': './.data',
         'addDB': false,
         'DBtype': 'local',
@@ -291,7 +291,7 @@
         }
 
         if (i===3){
-            let ws = new WebSocket("ws://"+rpIdUrl+":8000/installer/generate_download_zip");
+            let ws = new WebSocket(window.TBf.ws_base+"/installer/generate_download_zip");
             ws.onopen = function(event) {
                 ws.send(JSON.stringify(installation_data));
             };
@@ -331,7 +331,7 @@
         }
         if (i===7){
 
-            if (installation_data['addRootUser']){
+            if (installation_data['addLootUser']){
                 // run command
             }
             if (installation_data['startBgRunnerSetup']){
@@ -400,7 +400,7 @@
         flipContainer("Admin");
         as = 1
         installation_data = { ...installation_data, ...{
-            'addRootUser': true,
+            'addLootUser': true,
             'addDB': true,
             'startBgRunnerSetup': true,
             'connectTO': {
@@ -427,7 +427,7 @@
         as = 2
         installation_data = { ...installation_data, ...{
 
-                'addRootUser': true,
+                'addLootUser': true,
                 'addDB': true,
 
                 'startBgRunnerSetup': true,

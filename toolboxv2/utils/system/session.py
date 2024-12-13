@@ -122,6 +122,10 @@ class Session(metaclass=Singleton):
         res = await self.login()
         return res
 
+    def init(self):
+        if self.session is None:
+            self.session = ClientSession()
+
     async def login(self):
         if self.session is None:
             self.session = ClientSession()

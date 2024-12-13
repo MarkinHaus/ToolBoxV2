@@ -146,7 +146,7 @@ class TestFileHandler(unittest.TestCase):
 
         # Check retrieval of complex value
         retrieved_value = reloaded_handler.get_file_handler('1234567890')
-        self.assertEqual(retrieved_value, '{"key": "value"}')
+        self.assertEqual(retrieved_value, {'key': 'value'})
 
     def test_multiple_file_operations(self):
         # Simulate multiple file operations

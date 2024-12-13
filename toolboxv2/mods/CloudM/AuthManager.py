@@ -19,11 +19,11 @@ from toolboxv2.utils.security.cryp import Code
 from toolboxv2.utils.system.types import ToolBoxInterfaces, ApiResult
 from .types import UserCreator, User
 
+version = "0.0.2"
 Name = 'CloudM.AuthManager'
 export = get_app(f"{Name}.Export").tb
 default_export = export(mod_name=Name, test=False)
 test_only = export(mod_name=Name, test_only=True)
-version = '0.0.1'
 instance_bios = str(uuid.uuid4())
 
 
@@ -59,14 +59,14 @@ class CustomRegistrationCredential(RegistrationCredential):
 
 def db_helper_test_exist(app: App, username: str):
     c = app.run_any(TBEF.DB.IF_EXIST, query=f"USER::{username}::*", get_results=True)
-    if c.is_error(): raise RuntimeError(f"DB - error {c.print(show=False)}")
+    if c.is_error(): return False
     b = c.get() > 0
     get_logger().info(f"TEST IF USER EXIST : {username} {b}")
     return b
 
 
-async def db_delete_invitation(app: App, invitation: str):
-    return await app.a_run_any(TBEF.DB.DELETE, query=f"invitation::{invitation}", get_results=True)
+def db_delete_invitation(app: App, invitation: str):
+    return app.run_any(TBEF.DB.DELETE, query=f"invitation::{invitation}", get_results=True)
 
 
 def db_valid_invitation(app: App, invitation: str):
@@ -169,15 +169,6 @@ def reade_jwt(jwt_key: str) -> dict or str:
 
 # Export functions
 
-
-@export(mod_name=Name, state=True, initial=True, test=False)
-async def on_start(app: App) -> Result:
-    if app is None:
-        app = get_app(Name + '.get_user_by_name')
-    app.print("INIT DB")
-    return app.get_mod("DB").edit_programmable(DatabaseModes.RR)
-
-
 @export(mod_name=Name, state=True, test=False, interface=ToolBoxInterfaces.future)
 def get_user_by_name(app: App, username: str, uid: str = '*') -> Result:
 
@@ -222,12 +213,10 @@ def from_base64(encoded_data: str):
     return base64.b64decode(encoded_data)
 
 
-async def initialize_and_return(app: App, user) -> ApiResult:
+def initialize_and_return(app: App, user) -> ApiResult:
     if isinstance(user, User):
         user = UserCreator(**asdict(user))
     db_helper = db_helper_save_user(app, asdict(user))
-    if asyncio.iscoroutine(db_helper):
-        db_helper = await db_helper
     return db_helper.lazy_return('intern', data={
         "challenge": user.challenge,
         "userId": to_base64(user.uid),
@@ -253,7 +242,7 @@ class AddUserDeviceObject(BaseModel):
 
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True, test=False)
-async def create_user(app: App, data: CreateUserObject = None, username: str = 'test-user',
+def create_user(app: App, data: CreateUserObject = None, username: str = 'test-user',
                       email: str = 'test@user.com',
                       pub_key: str = '',
                       invitation: str = '', web_data=False, as_base64=False) -> ApiResult:
@@ -294,10 +283,10 @@ async def create_user(app: App, data: CreateUserObject = None, username: str = '
                 user_pass_pub_devices=[pub_key],
                 pub_key=pub_key)
 
-    await db_delete_invitation(app, invitation)
+    db_delete_invitation(app, invitation)
 
     if web_data:
-        return await initialize_and_return(app, user)
+        return initialize_and_return(app, user)
 
     result_s = db_helper_save_user(app, asdict(user))
 
@@ -338,7 +327,7 @@ async def get_magic_link_email(app: App, username):
 
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True, test=False)
-async def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 'test-user',
+def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 'test-user',
                           pub_key: str = '',
                           invitation: str = '', web_data=False, as_base64=False) -> ApiResult:
     username = data.name if data is not None else username
@@ -380,10 +369,10 @@ async def add_user_device(app: App, data: AddUserDeviceObject = None, username: 
     user.user_pass_pub_devices.append(pub_key)
     user.pub_key = pub_key
 
-    await db_delete_invitation(app, invitation)
+    db_delete_invitation(app, invitation)
 
     if web_data:
-        return await initialize_and_return(app, user)
+        return initialize_and_return(app, user)
 
     result_s = db_helper_save_user(app, asdict(user))
 
@@ -480,7 +469,7 @@ async def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
 
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.cli, test=False)
-async def crate_local_account(app: App, username: str, email: str = '', invitation: str = '', create=None) -> Result:
+def crate_local_account(app: App, username: str, email: str = '', invitation: str = '', create=None) -> Result:
     if app is None:
         app = get_app(Name + '.crate_local_account')
     user_pri = app.config_fh.get_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8])
@@ -497,7 +486,7 @@ async def crate_local_account(app: App, username: str, email: str = '', invitati
     if create is not None:
         create_user_ = create
 
-    res = await create_user_(username, email, pub, invitation)
+    res = create_user_(username, email, pub, invitation)
 
     if res.info.exec_code != 0:
         return Result.custom_error(data=res, info="user creation failed!", exec_code=res.info.exec_code)
@@ -818,9 +807,9 @@ async def helper_test_user():
     email = "test_mainqmail.com"
     db_helper_delete_user(app, username, "*", matching=True)
     # Benutzer erstellen
-    r = await crate_local_account(app, username, email, get_invitation(app).get())
+    r = crate_local_account(app, username, email, get_invitation(app).get())
     assert not r.is_error(), r.print(show=False)
-    r = await crate_local_account(app, username, email, get_invitation(app).get())
+    r = crate_local_account(app, username, email, get_invitation(app).get())
     assert r.is_error(), r.print(show=False)
     # Aufräumen
     db_helper_delete_user(app, username, "*", matching=True)
@@ -834,7 +823,7 @@ async def helper_test_create_user_and_login():
     test_app, app = helper_gen_test_app().get()
     username = "testUser123" + uuid.uuid4().hex
     email = "test_mainqmail.com"
-    r = await crate_local_account(app, username, email, get_invitation(app).get())
+    r = crate_local_account(app, username, email, get_invitation(app).get())
     r2 = await local_login(app, username)
     assert not r.is_error(), r.print(show=False)
     assert not r2.is_error(), r2.print(show=False)

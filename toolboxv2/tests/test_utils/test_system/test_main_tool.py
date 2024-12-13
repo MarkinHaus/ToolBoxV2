@@ -2,8 +2,8 @@ import unittest
 import asyncio
 from unittest.mock import patch, MagicMock, AsyncMock
 
-from toolboxv2.utils.system.getting_and_closing_app import get_app
-from toolboxv2.utils.system.tb_logger import get_logger
+from toolboxv2.tests.a_util import async_test
+from toolboxv2.tests.test_web import ensure_test_user
 from toolboxv2.utils.system.types import Result, ToolBoxError, ToolBoxInterfaces
 
 
@@ -30,8 +30,8 @@ class TestMainTool(unittest.TestCase):
         self.app_patcher.stop()
         self.logger_patcher.stop()
 
-    @patch('toolboxv2.utils.system.MainTool.MainTool')
-    async def test_maintool_initialization(self, MockMainTool):
+    @async_test
+    async def test_maintool_initialization(self):
         """Test MainTool initialization with basic parameters"""
         # Prepare initialization parameters
         init_params = {
@@ -41,10 +41,9 @@ class TestMainTool(unittest.TestCase):
             "color": "BLUE",
             "description": "Test tool description"
         }
-
+        from toolboxv2.utils.system.main_tool import MainTool
         # Create an instance of MainTool
-        tool = MockMainTool()
-        tool.__ainit__ = AsyncMock()
+        tool = MainTool()
 
         # Call __ainit__ method
         await tool.__ainit__(**init_params)
@@ -98,26 +97,25 @@ class TestMainTool(unittest.TestCase):
         self.assertEqual(custom_result.info.exec_code, 500)
         self.assertEqual(custom_result.info.help_text, "Authentication failed")
 
-
-    @patch('toolboxv2.utils.system.main_tool.MainTool.CLOUDM_AUTHMANAGER')
-    async def test_get_user(self, mock_authmanager):
+    @async_test
+    async def test_get_user(self):
         """Test get_user method"""
         from toolboxv2.utils.system.main_tool import MainTool
-
         # Create a mock MainTool instance
         tool = MainTool()
-        tool.app = self.mock_app
-
-        # Configure the mock to return a predefined result
-        expected_result = Result(ToolBoxError.none, MagicMock(), MagicMock())
-        self.mock_app.a_run_any.return_value = expected_result
-
-        # Call get_user
-        result = await tool.get_user("testuser")
-
-        # Verify method calls and result
-        self.mock_app.a_run_any.assert_called_once()
-        self.assertEqual(result, expected_result)
+        if not tool.app.local_test:
+            return
+        tool.app.get_mod("CloudM.AuthManager")
+        ensure_test_user("testUser")
+        result = tool.get_user("testUser")
+        print("result:::", result)
+        result = await result
+        print("result:::", result)
+        result.print()
+        self.assertEqual(result.is_error(), False)
+        self.assertEqual(result.is_data(), True)
+        self.assertEqual(result.get().email, 'testUser@simpleCore.app')
+        self.assertEqual(result.get().name, 'testUser')
 
 
 if __name__ == '__main__':

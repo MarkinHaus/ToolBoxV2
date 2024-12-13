@@ -31,7 +31,7 @@ class AppArgs:
     remove = None
     update = None
     name = 'main'
-    port = 8000
+    port = 5000
     host = '0.0.0.0'
     load_all_mod_in_files = False
     mods_folder = 'toolboxv2.mods.'
@@ -437,6 +437,7 @@ class AppType:
     globals: Dict[str, Any] = {"root": dict, }
     locals: Dict[str, Any] = {"user": {'app': "self"}, }
 
+    local_test: bool = False
     start_dir: str
     data_dir: str
     config_dir: str
@@ -487,6 +488,7 @@ class AppType:
     called_exit: Tuple[bool, float]
     args_sto: AppArgs
     system_flag = None
+    session = None
     appdata = None
     exit_tasks = []
 

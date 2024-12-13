@@ -28,6 +28,8 @@ from .extras.Style import Style, stram_print, Spinner
 import logging
 from dotenv import load_dotenv
 
+from ..tests.a_util import async_test
+
 load_dotenv()
 
 
@@ -189,6 +191,9 @@ class App(AppType, metaclass=Singleton):
             user_name = default
             self.config_fh.add_to_save_file_handler("ac_user:::", user_name)
         return user_name
+
+    def set_username(self, username):
+        return self.config_fh.add_to_save_file_handler("ac_user:::", username)
 
     @staticmethod
     def exit_main(*args, **kwargs):
@@ -616,6 +621,7 @@ class App(AppType, metaclass=Singleton):
                     print('Opened :', result)
             except Exception as e:
                 self.logger.error(Style.RED(f"An Error occurred while opening all modules error: {str(e)}"))
+                self.debug_rains(e)
         opened = len(self.functions.keys()) - start_len
 
         self.logger.info(f"Opened {opened} modules in {time.perf_counter() - t0:.2f}s")
@@ -626,7 +632,7 @@ class App(AppType, metaclass=Singleton):
 
         pr = "_dev" if self.dev_modi else ""
         if working_dir == "mods" and use_wd:
-            working_dir = f"./mods{pr}"
+            working_dir = f"{self.start_dir}/mods{pr}"
         elif use_wd:
             pass
         else:
@@ -989,7 +995,10 @@ class App(AppType, metaclass=Singleton):
             return self.fuction_runner(function, function_data, args, kwargs)
 
     def run_a_from_sync(self, function, *args):
-        return asyncio.ensure_future(function(*args))
+        try:
+            return asyncio.ensure_future(function(*args))
+        except RuntimeError:
+            return async_test(function)(*args)
 
     def fuction_runner(self, function, function_data: dict, args: list, kwargs: dict):
 
@@ -1143,7 +1152,6 @@ class App(AppType, metaclass=Singleton):
         elif isinstance(mod_function_name, Enum):
             modular_name, function_name = mod_function_name.__class__.NAME.value, mod_function_name.value
 
-
         r = await self.session.fetch(f"/api/{modular_name}/{function_name}{'?' + args_ if args_ is not None else ''}",
                                      data=kwargs, method=method)
         return await r.json()
@@ -1260,9 +1268,9 @@ class App(AppType, metaclass=Singleton):
                     self.print(f"Reloaded {mod_name}.{mod}")
                 except ImportError:
                     self.print(f"Could not load {mod_name}.{mod}")
-        self.inplace_load_instance(mod_name, spec=spec, mfo=reload(self.modules[mod_name]))
+        self.inplace_load_instance(mod_name, spec=spec, mfo=reload(self.modules[mod_name]) if mod_name in self.modules else None)
 
-    def watch_mod(self, mod_name, spec='app', loc="toolboxv2.mods.", use_thread=True, path_name=None):
+    def watch_mod(self, mod_name, spec='app', loc="toolboxv2.mods.", use_thread=True, path_name=None, on_reload=None):
         if path_name is None:
             path_name = mod_name
         is_file = os.path.isfile(self.start_dir + '/mods/' + path_name + '.py')
@@ -1271,8 +1279,11 @@ class App(AppType, metaclass=Singleton):
             paths = f'mods/{path_name}' + ('.py' if is_file else '')
             self.print(f'Watching Path: {paths}')
             for changes in watchfiles.watch(paths):
-                print(changes)
+                if not changes:
+                    continue
                 self.reload_mod(mod_name, spec, is_file, loc)
+                if on_reload:
+                    on_reload()
 
         if not use_thread:
             helper()

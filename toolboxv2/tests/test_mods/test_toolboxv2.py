@@ -2,8 +2,11 @@
 
 """Tests for `toolboxv2` package."""
 import asyncio
+import os
 import time
 import unittest
+
+from cryptography.fernet import InvalidToken
 
 try:
     from rich.traceback import install
@@ -93,8 +96,9 @@ class TestToolboxv2Mods(unittest.TestCase):
         t1 = code.decrypt_symmetric(t0, key0)
         print(f"og:data {t1}")
         self.assertEqual(test_string, t1)
-        t1 = code.decrypt_symmetric(t0, key)
-        self.assertNotEqual(test_string, t1)
+        with self.assertRaises(InvalidToken):
+            t1 = code.decrypt_symmetric(t0, key)
+            self.assertNotEqual(test_string, t1)
 
         pem_public_key1, pem_private_key1 = code.generate_asymmetric_keys()
         pem_public_key2, pem_private_key2 = code.generate_asymmetric_keys()
@@ -136,63 +140,66 @@ class TestToolboxv2Mods(unittest.TestCase):
         self.app.logger.info(Style.WHITE(f"finish testing in {time.perf_counter() - t0}"))
 
     def fh_test(self, test_value):
-        t0 = time.perf_counter()
-        self.app.logger.info(Style.GREYBG(f"Testing value : {test_value} of type : {type(test_value)}"))
-        self.app.logger.info(Style.WHITE("initialized file handler"))
-        fh = FileHandler("test.config", keys={"TestKey": "test~~~~~:"}, defaults={"TestKey": "Default"})
+        with self.subTest(f"fh_test sub {test_value=}"):
+            t0 = time.perf_counter()
+            self.app.logger.info(Style.GREYBG(f"Testing value : {test_value} of type : {type(test_value)}"))
+            self.app.logger.info(Style.WHITE("initialized file handler"))
+            if os.path.exists(os.path.join("test.config".split('.')[1], "mainTool".replace('.', '-'), "test.config")):
+                os.remove(os.path.join("test.config".split('.')[1], "mainTool".replace('.', '-'), "test.config"))
+            fh = FileHandler("test.config", keys={"TestKey": "test~~~~~:"}, defaults={"TestKey": "Default"})
 
-        self.app.logger.info(Style.WHITE("Verify that the object was initialized correctly"))
-        self.assertEqual(fh.file_handler_filename, "test.config")
-        self.assertEqual(fh.file_handler_file_prefix, ".config/mainTool/")
+            self.app.logger.info(Style.WHITE("Verify that the object was initialized correctly"))
+            self.assertEqual(fh.file_handler_filename, "test.config")
+            self.assertEqual(fh.file_handler_file_prefix, ".config/mainTool/")
 
-        # Open the storage file in write mode and verify that it was opened correctly
-        self.app.logger.info(Style.WHITE("testStorage "))
-        self.assertIsNone(fh.file_handler_storage)
-        self.app.logger.info(Style.WHITE("load data from storage"))
-        fh.load_file_handler()
+            # Open the storage file in write mode and verify that it was opened correctly
+            self.app.logger.info(Style.WHITE("testStorage "))
+            self.assertIsNone(fh.file_handler_storage)
+            self.app.logger.info(Style.WHITE("load data from storage"))
+            fh.load_file_handler()
 
-        self.assertIsNone(fh.file_handler_storage)
-        self.app.logger.info(Style.WHITE("getting default value for file handler storage"))
-        value = fh.get_file_handler("TestKey")
-        value2 = fh.get_file_handler("test~~~~~:")
+            self.assertIsNone(fh.file_handler_storage)
+            self.app.logger.info(Style.WHITE("getting default value for file handler storage"))
+            value = fh.get_file_handler("TestKey")
+            value2 = fh.get_file_handler("test~~~~~:")
 
-        self.assertEqual(value, "Default")
-        self.assertEqual(value, value2)
-        self.app.logger.info(Style.WHITE("update value and testing update function"))
-        t = fh.add_to_save_file_handler("test~~~~~:", str(test_value))
-        f = fh.add_to_save_file_handler("test~~~~:", str(test_value))
+            self.assertEqual(value, "Default")
+            self.assertEqual(value, value2)
+            self.app.logger.info(Style.WHITE("update value and testing update function"))
+            t = fh.add_to_save_file_handler("test~~~~~:", str(test_value))
+            f = fh.add_to_save_file_handler("test~~~~:", str(test_value))
 
-        value = fh.get_file_handler("TestKey")
+            value = fh.get_file_handler("TestKey")
 
-        self.assertTrue(t)
-        self.assertFalse(f)
-        self.assertEqual(value, test_value)
-        self.app.logger.info(Style.WHITE("value updated successfully"))
+            self.assertTrue(t)
+            self.assertFalse(f)
+            self.assertEqual(value, test_value)
+            self.app.logger.info(Style.WHITE("value updated successfully"))
 
-        fh.save_file_handler()
+            fh.save_file_handler()
 
-        del fh
+            del fh
 
-        self.app.logger.info(Style.WHITE("test if updated value saved in file"))
-        fh2 = FileHandler("test.config", keys={"TestKey": "test~~~~~:"}, defaults={"TestKey": "Default"})
-        # Verify that the object was initialized correctly
-        self.assertEqual(fh2.file_handler_filename, "test.config")
-        self.assertEqual(fh2.file_handler_file_prefix, ".config/mainTool/")
+            self.app.logger.info(Style.WHITE("test if updated value saved in file"))
+            fh2 = FileHandler("test.config", keys={"TestKey": "test~~~~~:"}, defaults={"TestKey": "Default"})
+            # Verify that the object was initialized correctly
+            self.assertEqual(fh2.file_handler_filename, "test.config")
+            self.assertEqual(fh2.file_handler_file_prefix, ".config/mainTool/")
 
-        # Open the storage file in write mode and verify that it was opened correctly
-        self.assertIsNone(fh2.file_handler_storage)
+            # Open the storage file in write mode and verify that it was opened correctly
+            self.assertIsNone(fh2.file_handler_storage)
 
-        fh2.load_file_handler()
+            fh2.load_file_handler()
 
-        self.assertIsNone(fh2.file_handler_storage)
+            self.assertIsNone(fh2.file_handler_storage)
 
-        value = fh2.get_file_handler("TestKey")
+            value = fh2.get_file_handler("TestKey")
 
-        self.assertEqual(value, test_value)
-        self.app.logger.info(Style.WHITE("success"))
-        self.app.logger.info(f"don testing FileHandler in {time.perf_counter() - t0}")
-        self.app.logger.info(Style.WHITE("cleaning up"))
-        fh2.delete_file()
+            self.assertEqual(value, test_value)
+            self.app.logger.info(Style.WHITE("success"))
+            self.app.logger.info(f"don testing FileHandler in {time.perf_counter() - t0}")
+            self.app.logger.info(Style.WHITE("cleaning up"))
+            fh2.delete_file()
 
     async def test_main_tool(self):
         main_tool = await MainTool(v="1.0.0", tool={}, name="TestTool", logs=[], color="RED", on_exit=None, load=None)

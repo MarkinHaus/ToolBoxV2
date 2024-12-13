@@ -12,7 +12,7 @@ from ...utils.extras.qr import print_qrcode_to_console
 from .types import User
 
 Name = 'CloudM'
-version = "0.0.2"
+version = '0.0.3'
 export = get_app(f"{Name}.EXPORT").tb
 no_test = export(mod_name=Name, test=False, version=version)
 test_only = export(mod_name=Name, test=True, version=version, test_only=True)
@@ -234,14 +234,14 @@ def update_core_git(self, backup=False, name="base"):
 
 
 @no_test
-async def create_magic_log_in(app: App, username: str):
-    user = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username)
+def create_magic_log_in(app: App, username: str):
+    user = app.run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username)
     if not isinstance(user, User):
         return Result.default_internal_error("Invalid user or db connection", data="Add -c DB edit_cli [RR, LR, LD, RD]")
     key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
     base_url = app.config_fh.get_file_handler("provider::") + (
         f':5000' if app.args_sto.host == 'localhost' else "")
-    url = f"{base_url}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}".replace(":5000/", ":8080/")
+    url = f"{base_url}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
     print_qrcode_to_console(url)
     return url
 
@@ -319,6 +319,7 @@ async def login(m_link: str, app: Optional[App] = None):
         if '&name=' not in m_link:
             return "Pleas Use a m lik wit name"
         app.session.username = app.get_username(False, default=m_link.split('&name=')[-1])
+    app.set_username(m_link.split('&name=')[-1])
     if await app.session.login():
         return
     return await app.session.init_log_in_mk_link(m_link)

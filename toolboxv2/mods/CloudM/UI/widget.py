@@ -65,7 +65,6 @@ def load_root_widget(app, uid):
 
 def reload_widget_main(app, user, WidgetID):
     root = f"/api/{Name}"
-
     widget = {'name': f"MainWidget-{user.uid}",
               'group': [
                   {'name': 'main',
@@ -74,6 +73,7 @@ def reload_widget_main(app, user, WidgetID):
                        'username': user.name,
                        'root': root,
                        'WidgetID': WidgetID,
+                       'Content': user.name,
                    }
                    },
               ]}

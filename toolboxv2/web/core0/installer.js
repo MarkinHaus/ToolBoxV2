@@ -1,3 +1,4 @@
+// Python Lib unix und not unix | exe, apk
 setTimeout(()=> {
     var osSelection = document.getElementById('os-selection');
     var userAgent = navigator.userAgent;
@@ -9,16 +10,20 @@ setTimeout(()=> {
     function displayInstallLink(os) {
         var baseUrl = "/web/core0/initialistaller/init.html";
         var devApp = "/installer/data/widgets_dev8000.exe";
+        var apkApp = "/installer/data/simple.apk";
+        var exeApp = "/installer/data/simple.exe";
         var linkText = "Installer für " + os;
-        if (os.includes("Desktop (Rust)")){
-            if (osInfo.textContent.startsWith("Windows ")) {
-                return '<p><a href="' + devApp + '" target="_blank">' + linkText + '</a></p>';
-            }else{
-                return '<p>Currently, not suportet / build it ur self withe cargo from the native folder <a href="https://github.com/MarkinHaus/ToolBoxV2" target="_blank">Source</a></p>';
-            }
-        }
         if (os.includes("Web")){
-            return '<a onclick="registerServiceWorker()"> Add to Device </a>'
+            return '<a onclick="registerServiceWorker()"> Add ' + linkText + 'to Device</a>'
+        }
+        if (os.includes("exe")){
+             return '<p><a href="' + exeApp + '" target="_blank">' + linkText + '</a></p>';
+        }
+        if (os.includes("apk")){
+             return '<p><a href="' + apkApp + '" target="_blank">' + linkText + '</a></p>';
+        }
+        if (os.includes("dmg") || os.includes("iOS")){
+             return '<p>Currently, not suportet / build it ur self withe cargo from the native folder <a href="https://github.com/MarkinHaus/ToolBoxV2" target="_blank">Source</a></p>';
         }
         return '<p><a href="' + baseUrl + '">' + linkText + '</a></p>';
     }
@@ -27,17 +32,23 @@ setTimeout(()=> {
     osSelection.addEventListener('change', function() {
         var selectedOS = osSelection.value;
         switch (selectedOS) {
-            case 'Desktop_cli':
-                autoDownloadOptions.innerHTML = displayInstallLink('Desktop CLI (Python)');
+            case 'Python Runtime':
+                autoDownloadOptions.innerHTML = displayInstallLink('CLI (Python)');
                 break;
-            case 'Desktop_web':
-                autoDownloadOptions.innerHTML = displayInstallLink('Desktop (Web-App)');
+            case 'exe':
+                autoDownloadOptions.innerHTML = displayInstallLink('Desktop (exe)');
                 break;
-            case 'Mobile_web':
-                autoDownloadOptions.innerHTML = displayInstallLink('Mobile (Web-App)');
+            case 'dmg':
+                autoDownloadOptions.innerHTML = displayInstallLink('Desktop (dmg)');
                 break;
-            case 'Desktop_rust':
-                autoDownloadOptions.innerHTML = displayInstallLink('Desktop (Rust)');
+            case 'apk':
+                autoDownloadOptions.innerHTML = displayInstallLink('Mobile (apk)');
+                break;
+            case 'iOS-IPA':
+                autoDownloadOptions.innerHTML = displayInstallLink('Mobile (iOS-App)');
+                break;
+            case 'Web':
+                autoDownloadOptions.innerHTML = displayInstallLink('(Web-App)');
                 break;
             default:
                 autoDisplay();
@@ -56,14 +67,15 @@ setTimeout(()=> {
             autoDownloadOptions.innerHTML = displayInstallLink('Linux');
         } else if (/iPhone|iPad|iPod/.test(userAgent)) {
             osInfo.textContent = 'iOS erkannt nur Web';
-            autoDownloadOptions.innerHTML = '<p>In Entwicklung</p>';
+            autoDownloadOptions.innerHTML = '<p>give 500$ and i start</p>';
         } else if (/Android/.test(userAgent)) {
             osInfo.textContent = 'Android erkannt';
-            autoDownloadOptions.innerHTML = '<p>Auf der Roadmap</p>';
+            autoDownloadOptions.innerHTML = displayInstallLink('Android');
         } else {
             osInfo.textContent = 'Betriebssystem nicht erkannt';
             autoDownloadOptions.innerHTML = '<p>Bitte wählen Sie Ihr Betriebssystem manuell aus.</p>';
         }
+        window.TBf.processRow(autoDownloadOptions)
     }
     autoDisplay()
 }, 200);

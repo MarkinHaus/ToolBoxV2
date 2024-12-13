@@ -13,13 +13,13 @@ from toolboxv2.utils.extras.qr import print_qrcode_to_console
 from toolboxv2.utils.system.session import Session, get_local_ip, get_public_ip
 
 Name = "FastApi"
-
+version = "0.2.1"
 
 class Tools(MainTool, FileHandler):  # FileHandler
 
     def __init__(self, app=None):
         self.running_apis = {}
-        self.version = "0.2.0"
+        self.version = version
         self.name = "FastApi"
         self.logger: logging.Logger = app.logger if app else None
         self.color = "WHITE"
@@ -123,7 +123,7 @@ class Tools(MainTool, FileHandler):  # FileHandler
         return self._start_api(api_name, live=True, reload=False, test_override=False)
 
     def start_debug(self, api_name):
-        return self._start_api(api_name, live=False, reload=True, test_override=True, host="127.0.0.1")
+        return self._start_api(api_name, live=False, reload=False, test_override=True, host="localhost")
 
     def _start_api(self, api_name: str, live=False, reload=False, test_override=False, host="localhost"):
         if 'test' in self.app.id and not test_override:
@@ -212,11 +212,9 @@ class Tools(MainTool, FileHandler):  # FileHandler
         with open(f"./.data/api_pid_{api_name}", "r") as f:
             api_pid = f.read()
             try:
-                requests.get(f"http://{host}:{port}/api/exit/{api_pid}")
-                session = Session(self.app.get_username())
-                if not await session.login():
+                if not await self.app.session.login():
                     print(f"Couldn't login with username : {self.app.get_username()}'")
-                response = await session.fetch(f"/api/exit/{api_pid}", method="POST")
+                response = await self.app.session.fetch(f"/api/exit/{api_pid}", method="POST")
                 print(response)
             except Exception as e:
                 self.print("API Not Responding")

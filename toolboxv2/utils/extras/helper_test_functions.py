@@ -1,7 +1,5 @@
+import random
 from typing import Any, List
-from faker import Faker
-
-fake = Faker()
 
 
 def generate_test_cases(sig) -> List[dict]:
@@ -14,11 +12,13 @@ def generate_test_cases(sig) -> List[dict]:
     # Edge Cases
     edge_kwargs = {param.name: generate_edge_value(param.annotation) for param in params if
                    param.name not in ['self', 'app', 'state']}
-    test_cases.append(edge_kwargs)
+    if any(edge_kwargs.values()):
+        test_cases.append(edge_kwargs)
     # Normal Cases
     normal_kwargs = {param.name: generate_normal_value(param.annotation) for param in params if
                      param.name not in ['self', 'app', 'state']}
-    test_cases.append(normal_kwargs)
+    if any(normal_kwargs.values()):
+        test_cases.append(normal_kwargs)
     # Default Values Cases
     default_kwargs = {param.name: param.default if param.default is not param.empty else None for param in params if
                       param.name not in ['self', 'app', 'state']}
@@ -39,7 +39,7 @@ def generate_edge_value(param_type: Any) -> Any:
     if param_type in [int, float]:
         return -999  # Beispiel für negative Zahlen
     elif param_type == str:
-        return fake.word() * 100  # Lange zufällige Strings
+        return "test " * 100  # Lange zufällige Strings
     # Fügen Sie hier weitere Bedingungen für andere Datentypen hinzu
     return None
 
@@ -49,9 +49,9 @@ def generate_normal_value(param_type: Any) -> Any:
     Generiert normale Werte basierend auf dem Parametertyp.
     """
     if param_type in [int, float]:
-        return fake.random_int(min=0, max=100)  # Zufällige normale Zahlen
+        return random.randint(0, 100)  # Zufällige normale Zahlen
     elif param_type == str:
-        return fake.word()  # Zufälliges Wort
+        return "test" # Zufälliges Wort
     # Fügen Sie hier weitere Bedingungen für andere Datentypen hinzu
     return None
 

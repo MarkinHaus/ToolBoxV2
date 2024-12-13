@@ -8,7 +8,7 @@ from toolboxv2.utils.system.types import Result
 app = get_app("UserInstances")
 logger = app.logger
 Name = "CloudM.UserInstances"
-version = "0.0.1"
+version = "0.0.2"
 export = app.tb
 e = export(mod_name=Name, api=False)
 in_mem_chash_150 = export(mod_name=Name, memory_cache=True, memory_cache_max_size=150, version=version)

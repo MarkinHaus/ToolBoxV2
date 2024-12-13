@@ -630,7 +630,7 @@ async def command_runner(tb_app, command, **kwargs):
             "minimum command length is 2 {module_name} {function_name} optional args... Com^C to exit")
         return await tb_app.idle()
 
-    tb_app.print(f"Running command: {' '.join(command)}")
+    tb_app.print(f"Running command: {' '.join(command)} {kwargs}")
     call = CallingObject().empty()
     mod = tb_app.get_mod(command[0], spec='app')
     if hasattr(mod, "async_initialized") and not mod.async_initialized:

@@ -63,7 +63,7 @@ async def generate_download_zip(websocket: WebSocket):
     {
         'installationFolder': './',
         'targetVersion': null,
-        'addRootUser': false,
+        'addLootUser': false,
         'stoFolder': './.data',
         'addDB': false,
         'DBtype': 'local',

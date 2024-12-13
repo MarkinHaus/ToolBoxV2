@@ -8,12 +8,12 @@
     "tauriB": "npm run tauri build --prefix ./simple-core",
     "tauri-mobil": "npm run tauri android dev --prefix ./simple-core",
     "tauri-mobilB": "npm run tauri android build --prefix ./simple-core",
-    "dev": "tb -c FastApi startDev main_dev_debug && cross-env NODE_OPTIONS=development webpack --mode development --watch",
+    "dev": "tb -c FastApi startDev main_dev_debug && webpack --mode development --watch",
     "devD": "tb -c FastApi edit-api main_debug_D 0.0.0.0 5000 -c DB edit_cli RR -c FastApi startDev main_debug_D ${DEV_MODULES} -n debug -c",
     "live": "tb -c FastApi start main",
     "liveD": "tb -c FastApi edit-api main 0.0.0.0 5000 -c DB edit_cli RR -c FastApi start main -c",
-    "build": "cross-env NODE_ENV=production webpack --mode production",
-    "watch": "cross-env NODE_ENV=development webpack --mode development --watch"
+    "build": "webpack --mode production",
+    "watch": "webpack --mode development --watch"
   },
   "dependencies": {
     "@babel/core": "^7.25.7",
@@ -33,7 +33,6 @@
   },
   "devDependencies": {
     "compression-webpack-plugin": "^11.1.0",
-    "cross-env": "^7.0.3",
     "html-loader": "^5.1.0"
   }
 }

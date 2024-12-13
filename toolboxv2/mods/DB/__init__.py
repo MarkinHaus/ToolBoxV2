@@ -5,5 +5,7 @@ from .tb_adapter import Tools as DB
 
 Name = "DB"
 Tools = Tools
+
+version = Tools.version
 # private = True
 

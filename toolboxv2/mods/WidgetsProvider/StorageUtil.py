@@ -1,9 +1,11 @@
+import json
 import os
 from typing import List, Optional
 
 from toolboxv2 import get_app, App, Result, TBEF
 from fastapi import Request
 from ..CloudM import User
+from ...utils.extras.base_widget import get_user_from_request
 from ...utils.system.session import RequestSession
 
 Name = 'WidgetsProvider'
@@ -24,7 +26,6 @@ def get_all_sto_names(app, user_name="", user_id=""):
     res = app.run_any(TBEF.DB.GET, query=query, get_results=True)
     if res.is_error():
         return res
-    print('result:::::::::::::::::::', type(res.get()))
     if isinstance(res.get(), bytes):
         res.result.data = res.get().decode()
     if isinstance(res.get(), str):
@@ -69,15 +70,16 @@ def get_sto(app, sto_name: str = "", user_name: str = "", user_id: str = "") -> 
     query = f'{get_db_query(user_name=user_name, user_id=user_id)}::STO::{sto_name}'
     res = app.run_any(TBEF.DB.GET, query=query, get_results=True)
     if not res.is_data():
+        res.result.data = []
         return res
     if isinstance(res.result.data, str):
-        res.result.data = eval(res.result.data)
+        res.result.data = json.loads(res.result.data)
     return res
 
 
 def set_sto(app, sto_name: str = "", user_name: str = "", user_id: str = "", data=None) -> Result:
     query = f'{get_db_query(user_name=user_name, user_id=user_id)}::STO::{sto_name}'
-    return app.run_any(TBEF.DB.SET, query=query, data=data, get_results=True)
+    return app.run_any(TBEF.DB.SET, query=query, data=json.dumps(data), get_results=True)
 
 
 def add_sto(app, sto_name: str = "", user_name: str = "", user_id: str = "") -> Result:
@@ -113,18 +115,6 @@ def get_version():
 ##### chair widget
 
 ##### Auto Register all widgets
-
-async def get_user_from_request(app, request):
-    if app is None:
-        app = get_app(from_=f"{Name}.controller")
-    if request is None:
-        return Result.default_internal_error("No request specified")
-    if request.session['live_data'].get('user_name', "") == "":
-        return Result.default_internal_error("Invalid User")
-    username_c = request.session['live_data'].get('user_name')
-    username = app.config_fh.decode_code(username_c)
-    user: User = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username)
-    return Result.ok(user)
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="get_names")
@@ -162,9 +152,7 @@ async def get_sto_by_name(app: App = None, sto_name: Optional[str] = None, reque
     user: User = user_result.get()
 
     sto_data_result = get_sto(app, sto_name=sto_name, user_name=user.name, user_id=user.uid)
-    if sto_data_result.is_error() or not sto_data_result.is_data():
-        return sto_data_result
-    return sto_data_result
+    return sto_data_result.to_api_result()
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="set_sto")
@@ -242,7 +230,6 @@ async def save_user_sto(app, request, name: str = "Main"):
     with BlobFile(f"users/{Code.one_way_hash(name, 'userWidgetSto', user.uid)}/{name}/bords", 'w') as f:
         f.clear()
         f.write(b)
-
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True)
 async def get_user_sto(app, request, name: str = "Main"):

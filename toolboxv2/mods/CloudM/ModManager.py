@@ -15,14 +15,15 @@ import yaml
 from tqdm import tqdm
 
 from toolboxv2 import get_app, App, __version__, Spinner
+from toolboxv2.utils.extras.reqbuilder import generate_requirements
 from toolboxv2.utils.system.api import find_highest_zip_version_entry
 from toolboxv2.utils.system.types import ToolBoxInterfaces, Result
 
 Name = 'CloudM'
 export = get_app(f"{Name}.Export").tb
-version = '0.0.1'
+version = "0.0.3"
 default_export = export(mod_name=Name, version=version, interface=ToolBoxInterfaces.native, test=False)
-
+mv = None
 
 def download_files(urls, directory, desc, print_func, filename=None):
     """ Hilfsfunktion zum Herunterladen von Dateien. """
@@ -77,9 +78,8 @@ def create_and_pack_module(path, module_name='', version='-.-.-', additional_dir
 
     os.makedirs("./mods_sto/temp/", exist_ok=True)
 
-    base_path = os.path.dirname(path)
-    module_path = os.path.join(base_path, module_name)
-
+    module_path = os.path.join(path, module_name)
+    print("module_pathmodule_pathmodule_path", module_path)
     if not os.path.exists(module_path):
         module_path += '.py'
 
@@ -95,9 +95,11 @@ def create_and_pack_module(path, module_name='', version='-.-.-', additional_dir
         # tbConfig.yaml erstellen
         config_path = os.path.join(module_path, "tbConfig.yaml")
         with open(config_path, 'w') as config_file:
-            yaml.dump({"version": version, "module_name": module_name, "zip": zip_file_name, **yaml_data}, config_file)
+            yaml.dump({"version": version, "module_name": module_name,
+                       "dependencies_file": f"./mods/{module_name}/requirements.txt",
+                       "zip": zip_file_name, **yaml_data}, config_file)
 
-        bundle_dependencies(module_path, config_path)
+        generate_requirements(module_path, os.path.join(module_path, "requirements.txt"))
     # Datei oder Ordner in das Modulverzeichnis kopieren
     if os.path.isdir(module_path):
         shutil.copytree(module_path, os.path.join(temp_dir, os.path.basename(module_path)), dirs_exist_ok=True)
@@ -105,8 +107,9 @@ def create_and_pack_module(path, module_name='', version='-.-.-', additional_dir
         shutil.copy2(module_path, temp_dir)
         config_path = os.path.join(temp_dir, f"{module_name}.yaml")
         with open(config_path, 'w') as config_file:
-            yaml.dump({"version": version, "module_name": module_name, **yaml_data}, config_file)
-        bundle_dependencies(temp_dir, config_path)
+            yaml.dump({"version": version, "dependencies_file": f"./mods/{module_name}/requirements.txt",
+                       "module_name": module_name, **yaml_data}, config_file)
+        generate_requirements(temp_dir, os.path.join(temp_dir, "requirements.txt"))
     # Zusätzliche Verzeichnisse hinzufügen
     for dir_name, dir_paths in additional_dirs.items():
         if isinstance(dir_paths, str):
@@ -197,27 +200,34 @@ def unpack_and_move_module(zip_path, base_path='./mods', module_name=''):
     # Temporäres Verzeichnis für das Entpacken erstellen
     temp_dir = tempfile.mkdtemp(dir=os.path.join("./mods_sto", "temp"))
 
-    # ZIP-Datei entpacken
-    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-        zip_ref.extractall(temp_dir)
+    with Spinner(f"ZipFile extractall {zip_path[-15:]} to {temp_dir[-15:]}"):
+        # ZIP-Datei entpacken
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(temp_dir)
 
     # Sicherstellen, dass das Zielverzeichnis existiert
     if os.path.isdir(module_name):
         os.makedirs(module_path, exist_ok=True)
 
-    shutil.move(os.path.join(temp_dir, module_name), module_path)
+    with Spinner(f"move src data {temp_dir[-15:]} to {module_path[-15:]}"):
+        shutil.move(os.path.join(temp_dir, module_name), module_path)
 
-    # Inhalte aus dem temporären Verzeichnis in das Zielverzeichnis verschieben
-    for item in os.listdir(temp_dir):
-        s = os.path.join(temp_dir, item)
-        d = os.path.join("./", item)
-        if os.path.isdir(s):
-            shutil.move(s, d)
-        else:
-            shutil.copy2(s, d)
+    with Spinner(f"move additional data {temp_dir[-15:]} to {module_path[-15:]}"):
+        # Inhalte aus dem temporären Verzeichnis in das Zielverzeichnis verschieben
+        for item in os.listdir(temp_dir):
+            s = os.path.join(temp_dir, item)
+            d = os.path.join("./", item)
 
-    # Temporäres Verzeichnis löschen
-    shutil.rmtree(temp_dir)
+            if os.path.isdir(s):
+                with Spinner(f"move dir data {s[-15:]} to {d[-15:]}"):
+                    shutil.move(s, d)
+            else:
+                with Spinner(f"move file data {s[-15:]} to {d[-15:]}"):
+                    shutil.copy2(s, d)
+
+    with Spinner(f"Cleanup"):
+        # Temporäres Verzeichnis löschen
+        shutil.rmtree(temp_dir)
 
     print(f"Modul {module_name} wurde erfolgreich nach {module_path} entpackt und verschoben.")
     return module_name
@@ -237,7 +247,7 @@ async def make_installer(app: Optional[App], module_name: str, base="./mods", up
     if mod is not None:
         version_ = mod.version
     with Spinner("create and pack module"):
-        zip_path = create_and_pack_module(f"{base}/{module_name}", module_name, version_)
+        zip_path = create_and_pack_module(base, module_name, version_)
     if upload or 'y' in input("uploade zip file ?"):
         with Spinner("Uploading file"):
             res = await app.session.upload_file(zip_path, '/installer/upload-file/')
@@ -280,46 +290,83 @@ async def upload(app: Optional[App], module_name: str):
 
 
 @export(mod_name=Name, name="install", test=False)
-async def installer(app: Optional[App], module_name: str):
+async def installer(app: Optional[App], module_name: str, build_state=True):
+    from toolboxv2.utils.system.state_system import get_state_from_app
     if app is None:
         app = get_app(f"{Name}.installer")
 
+    fetch_remote = True
+    do_install = True
     if not app.session.valid:
         if not await app.session.login():
-            return Result.default_user_error("Pleas login, wit CloudM login")
+            fetch_remote = False
+            build_state = False
+    if fetch_remote:
+        response = await app.session.fetch("/installer/get?name=" + module_name, method="GET")
+        response = await response.json()
 
-    response = await app.session.fetch("/installer/get?name=" + module_name, method="GET")
-    response = await response.json()
-    print(response)
+        if "provider" not in response.keys() and "url" not in response.keys():
+            print("Error while fetching mod data", response)
+            do_install = False
 
-    do_install = True
+        if response['provider'] != "SimpleCore":
+            print("Error while fetching mod data")
+            do_install = False
 
-    if "provider" not in response.keys() and "url" not in response.keys():
-        print("Error while fetching mod data", response)
-        do_install = False
+        if module_name not in response['url']:
+            print("404 mod not found")
+            do_install = False
 
-    if response['provider'] != "SimpleCore":
-        print("Error while fetching mod data")
-        do_install = False
-
-    if module_name not in response['url']:
-        print("404 mod not found")
-        do_install = False
-
-    if not do_install:
-        return
-    mod_url = response['url'].replace(app.session.base, "/")
-    print(f"mod url is : {app.session.base + mod_url}")
-    if not await app.session.download_file(mod_url, app.start_dir + '/mods_sto'):
-        print("failed to download mod")
-        print("optional download it ur self and put the zip in the mods_sto folder")
-        if 'y' not in input("Done ? will start set up from the mods_sto folder").lower():
-            return
-    os.rename(app.start_dir + '/mods_sto/' + mod_url.split('/')[-1].replace("$", '').replace("&", '').replace("§", ''),
-              app.start_dir + '/mods_sto/' + mod_url.split('/')[-1])
-    report = install_from_zip(app, mod_url.split('/')[-1])
+    from packaging import version as pv
+    if not os.path.exists(os.path.join(app.start_dir, 'tbState.yaml')):
+        get_state_from_app(app)
+    lpm = find_highest_zip_version_entry(module_name, filepath=os.path.join(app.start_dir,'tbState.yaml'))
+    if len(lpm.keys()) == 0 and not do_install:
+        return Result.default_user_error(f"404 mod {module_name} not found")
+    if len(lpm.keys()) == 0 and not fetch_remote:
+        return Result.default_user_error("Pleas login, wit CloudM login")
+    lv = lpm.get('version', app.version)
+    if fetch_remote:
+        rv = response["version"]
+    else:
+        rv = ['0.0.0', '0.0.0']
+    if isinstance(lv, list) and isinstance(rv, list) and len(rv) == len(lv) and len(lv) >= 2:
+        lv_ = lv[1]
+        rv_ = rv[1]
+        if pv.parse(lv_) != pv.parse(rv_):
+            lv = lv[1]
+            rv = rv[1]
+    if isinstance(lv, list):
+        lv = lv[0]
+    if isinstance(rv, list):
+        rv = rv[0]
+    local_pack_version = pv.parse(lv)
+    remote_pack_version = pv.parse(rv)
+    app.print(f"Mod version is {local_pack_version=} and {remote_pack_version=}") \
+        if len(lpm.keys()) > 0 else (
+        app.print(f"Mod version is  {remote_pack_version=}"))
+    if remote_pack_version >= local_pack_version:
+        mod_url = response['url'].replace(app.session.base, "/")
+        print(f"mod url is : {app.session.base + mod_url}")
+        if not await app.session.download_file(mod_url, app.start_dir + '/mods_sto'):
+            print("failed to download mod")
+            print("optional download it ur self and put the zip in the mods_sto folder")
+            if 'y' not in input("Done ? will start set up from the mods_sto folder").lower():
+                return
+        try:
+            os.rename(app.start_dir + '/mods_sto/' + mod_url.split('/')[-1].replace("$", '').replace("&", '').replace("§", ''),
+                      app.start_dir + '/mods_sto/' + mod_url.split('/')[-1])
+        except FileExistsError:
+            pass
+    else:
+        mod_url = lpm['url'].replace(app.session.base, "/")
+    with Spinner("Installing from zip"):
+        report = install_from_zip(app, mod_url.split('/')[-1])
     if not report:
         print("Set up error")
+        return report
+    if build_state:
+        get_state_from_app(app)
     return report
 
 
@@ -353,25 +400,27 @@ async def update_all_mods(app, ignor_app_version=True):
 
 
 @export(mod_name=Name, name="build_all", test=False)
-async def update_all_mods(app, base="./mods", upload=True):
+async def update_all_mods(app, base="mods", upload=True):
     if app is None:
         app = get_app(f"{Name}.update_all")
     all_mods = app.get_all_mods()
 
     async def pipeline(name):
-        res = await make_installer(app, name, base, upload)
+        res = await make_installer(app, name, os.path.join('.', base), upload)
         return res
 
     res = [await pipeline(mod) for mod in all_mods]
     for r in res:
-        print(set(r))
+        print(r)
 
 
 def install_from_zip(app, zip_name, no_dep=True, auto_dep=False):
     zip_path = f"{app.start_dir}/mods_sto/{zip_name}"
-    _name = unpack_and_move_module(zip_path, f"{app.start_dir}/mods")
+    with Spinner(f"unpack_and_move_module {zip_path[-30:]}"):
+        _name = unpack_and_move_module(zip_path, f"{app.start_dir}/mods")
     if not no_dep and os.path.exists(f"{app.start_dir}/mods/{_name}/tbConfig.yaml"):
-        install_dependencies(f"{app.start_dir}/mods/{_name}/tbConfig.yaml", auto_dep)
+        with Spinner(f"install_dependencies {_name}"):
+            install_dependencies(f"{app.start_dir}/mods/{_name}/tbConfig.yaml", auto_dep)
     return True
 
 
@@ -384,62 +433,17 @@ def run_command(command, cwd=None):
     return result.stdout
 
 
-def test_bundle_dependencies():
-    _ = get_app("test_bundle_dependencies", "test")
-    print("Testing bundle", _.id)
-    dep = bundle_dependencies(r"C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\SchedulerManager.py",
-                              return_dependencies=True)
-    print(dep)
-
-
-def bundle_dependencies(start_directory, output_file="dependencies.yaml", return_dependencies=False):
-    dependencies = set()
-
-    # Durchlaufen des Startverzeichnisses und Identifizieren von Abhängigkeiten
-    # Hier ist ein vereinfachtes Beispiel, das externe Importe identifiziert
-    # und zu den Abhängigkeiten hinzufügt
-    def _(root_, file_):
-        with open(os.path.join(root_, file_), 'r') as f:
-            lines = f.readlines()
-            for line in lines:
-                if line.startswith('import') or line.startswith('from'):
-                    parts = line.split()
-                    if len(parts) > 1 and parts[0] in ['import', 'from']:
-                        dependencies.add(parts[1].split('.')[0])
-
-    if start_directory.endswith('.py'):
-        _("", start_directory)
-    else:
-        for root, dirs, files in os.walk(start_directory):
-            for file in files:
-                if file.endswith('.py'):
-                    _(root, file)
-    if "toolboxv2" in dependencies:
-        dependencies.remove("toolboxv2")
-    if return_dependencies:
-        return list(dependencies)
-    # Schreiben der Abhängigkeiten in YAML-Datei
-    with open(output_file, 'a') as f:
-        yaml.dump({"dependencies": list(dependencies)}, f)
-
 
 def install_dependencies(yaml_file, do=False):
     with open(yaml_file, 'r') as f:
         dependencies = yaml.safe_load(f)
 
-    if "dependencies" in dependencies:
-        dependencies = dependencies["dependencies"]
+    if "dependencies_file" in dependencies:
+        dependencies_file = dependencies["dependencies_file"]
 
-    # Installation der Abhängigkeiten mit pip
-    print(f"Dependency :", dependencies)
-    for dependency in dependencies:
-        if not do:
-            if u_ip := input(f"{dependency} | install skipp exit [I/s/e]"):
-                if u_ip == "s":
-                    continue
-                if u_ip == "e":
-                    break
-        subprocess.call(['pip', 'install', dependency])
+        # Installation der Abhängigkeiten mit pip
+        print(f"Dependency :", dependencies_file)
+        subprocess.call(['pip', 'install', '-r', dependencies_file])
 
 
 def uninstall_dependencies(yaml_file):

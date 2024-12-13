@@ -1,9 +1,4 @@
+dependencies_file: ./mods/TestWidget/requirements.txt
 module_name: TestWidget
 version: 0.0.1
 zip: "RST$TestWidget&v0.1.20\xA70.0.1.zip"
-dependencies:
-- ''
-- fastapi
-- typing
-- os
-- uuid

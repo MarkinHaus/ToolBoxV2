@@ -17,7 +17,7 @@ class TestFileCache(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_set_and_get(self):
-        cache = FileCache(filename='test_cache.db')
+        cache = FileCache(folder=self.temp_dir.name, filename='test_cache.db')
         cache.set('key', 'value')
         self.assertEqual(cache.get('key'), 'value')
         cache.cleanup()

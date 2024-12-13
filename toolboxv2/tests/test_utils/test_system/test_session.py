@@ -65,12 +65,13 @@ class TestSession(unittest.TestCase):
     async def test_download_file_without_session(self):
         """Test file download without an active session"""
         session = Session('test_user')
+        session.session = None
 
         # Try to download file without initializing session
         with self.assertRaises(Exception) as context:
             await session.download_file('http://example.com/test.txt')
 
-        self.assertTrue('Session not initialized' in str(context.exception))
+        self.assertIn('Session not initialized', str(context.exception))
 
     async def test_logout(self):
         """Test logout functionality"""

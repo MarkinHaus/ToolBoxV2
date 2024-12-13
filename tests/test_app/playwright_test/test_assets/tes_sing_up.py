@@ -28,7 +28,7 @@ def test_run_sing_up(playwright: Playwright) -> None:
 
     time.sleep(300)
     page.get_by_role("button", name="Only Device").click()
-    result = get_app().run_any(TBEF.DB.DELETE, query=f"USER::{user_name}::*", matching=True,
+    result = get_app(name="test").run_any(TBEF.DB.DELETE, query=f"USER::{user_name}::*", matching=True,
                                get_results=True).print()
     assert not result.is_error(), f"User Creation was not successfully {result.print(show=False)}"
     context.close()

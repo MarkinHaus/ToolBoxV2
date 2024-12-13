@@ -25,7 +25,6 @@ def find_highest_zip_version_entry(name, target_app_version=None, filepath='tbSt
 
             if name in key:
                 v = value['version']
-                print(v)
                 if len(v) == 1:
                     app_ver = v[0].split('v')[-1]
                     zip_ver = "0.0.0"

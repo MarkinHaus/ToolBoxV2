@@ -35,14 +35,11 @@ class TestDPIntegration(unittest.TestCase):
         await daemon.a_exit()
 
     async def test_helper(self):
-
-        app = get_app("")
-
+        if not get_app(name="test").local_test:
+            return
+        app = get_app(name="test")
         socketManager = await app.load_mod("SocketManager")
 
-        # guard
-
-        return
 
         # await app.init_module(socketManager)
 

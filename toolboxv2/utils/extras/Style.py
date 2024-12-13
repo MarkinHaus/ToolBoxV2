@@ -427,38 +427,119 @@ def extract_python_code(text):
     return python_code_blocks
 
 
+import sys
+import time
+import itertools
+import threading
+import os
+
+
+class SpinnerManager:
+    """
+    Manages multiple spinners to ensure tqdm-like line rendering
+    """
+    _instance = None
+
+    def __new__(cls):
+        if not cls._instance:
+            cls._instance = super().__new__(cls)
+            cls._instance._init_manager()
+        return cls._instance
+
+    def _init_manager(self):
+        """Initialize spinner management resources"""
+        self._spinners = []
+        self._lock = threading.Lock()
+        self._render_thread = None
+        self._should_run = False
+
+    def register_spinner(self, spinner):
+        """Register a new spinner"""
+        with self._lock:
+            # First spinner defines the rendering line
+            if not self._spinners:
+                spinner._is_primary = True
+
+            self._spinners.append(spinner)
+
+            # Start rendering if not already running
+            if not self._should_run:
+                self._should_run = True
+                self._render_thread = threading.Thread(
+                    target=self._render_loop,
+                    daemon=True
+                )
+                self._render_thread.start()
+
+    def unregister_spinner(self, spinner):
+        """Unregister a completed spinner"""
+        with self._lock:
+            if spinner in self._spinners:
+                self._spinners.remove(spinner)
+
+    def _render_loop(self):
+        """Continuous rendering loop for all active spinners"""
+        while self._should_run:
+            if not self._spinners:
+                self._should_run = False
+                break
+
+            with self._lock:
+                # Find primary spinner (first registered)
+                primary_spinner = next((s for s in self._spinners if s._is_primary), None)
+
+                if primary_spinner and primary_spinner.running:
+                    # Render in the same line
+                    render_line = primary_spinner._generate_render_line()
+
+                    # Append additional spinner info if multiple exist
+                    if len(self._spinners) > 1:
+                        secondary_info = " | ".join(
+                            s._generate_secondary_info()
+                            for s in self._spinners
+                            if s is not primary_spinner and s.running
+                        )
+                        render_line += f" [{secondary_info}]"
+
+                    # Clear line and write
+                    sys.stdout.write("\r" + render_line + "\033[K")
+                    sys.stdout.flush()
+
+            time.sleep(0.1)  # Render interval
+
+
 class Spinner:
-    """A simple spinner class"""
+    """
+    Enhanced Spinner with tqdm-like line rendering
+    """
+    SYMBOL_SETS = {
+        "c": ["◐", "◓", "◑", "◒"],
+        "b": ["▁", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃"],
+        "d": ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"],
+        "w": ["🌍", "🌎", "🌏"],
+        "s": ["🌀   ", " 🌀  ", "  🌀 ", "   🌀", "  🌀 ", " 🌀  "],
+        "+": ["+", "x"],
+        "t": ["✶", "✸", "✹", "✺", "✹", "✷"]
+    }
 
-    def __init__(self, message: str = "Loading...", delay: float = 0.1, symbols=None, count_down=False,
-                 time_in_s=0) -> None:
-        """Initialize the spinner class
-        Args:
-            message (str): The message to display.
-            delay (float): The delay between each spinner update.
-        """
-
+    def __init__(
+        self,
+        message: str = "Loading...",
+        delay: float = 0.1,
+        symbols=None,
+        count_down: bool = False,
+        time_in_s: float = 0
+    ):
+        """Initialize spinner with flexible configuration"""
+        # Resolve symbol set
         if isinstance(symbols, str):
-            if symbols == "c":
-                symbols = ["◐", "◓", "◑", "◒"]
-            elif symbols == "b":
-                symbols = ["▁", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃"]
-            elif symbols == "d":
-                symbols = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
-            elif symbols == "w":
-                symbols = ["🌍", "🌎", "🌏"]
-            elif symbols == "s":
-                symbols = ["🌀   ", " 🌀  ", "  🌀 ", "   🌀", "  🌀 ", " 🌀  "]
-            elif symbols == "+":
-                symbols = ["+", "x"]
-            elif symbols == "t":
-                symbols = ["✶", "✸", "✹", "✺", "✹", "✷"]
-            else:
-                symbols = None
+            symbols = self.SYMBOL_SETS.get(symbols, None)
 
+        # Default symbols if not provided
         if symbols is None:
             symbols = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
+        # Test mode symbol set
         if 'unittest' in sys.argv[0]:
             symbols = ['#', '=', '-']
 
@@ -470,32 +551,45 @@ class Spinner:
         self.max_t = time_in_s
         self.contd = count_down
 
-    def __enter__(self) -> None:
+        # Rendering management
+        self._is_primary = False
+        self._start_time = 0
+
+        # Central manager
+        self.manager = SpinnerManager()
+
+    def _generate_render_line(self):
+        """Generate the primary render line"""
+        # Calculate time
+        current_time = time.time()
+        if self.contd:
+            remaining = max(0, self.max_t - (current_time - self._start_time))
+            time_display = f"{remaining:.2f}"
+        else:
+            time_display = f"{current_time - self._start_time:.2f}"
+
+        # Generate spinner symbol
+        symbol = next(self.spinner)
+
+        return f"{symbol} {self.message} | {time_display}"
+
+    def _generate_secondary_info(self):
+        """Generate secondary spinner info for additional spinners"""
+        return f"{self.message}"
+
+    def __enter__(self):
         """Start the spinner"""
         self.running = True
-        self.spinner_thread = threading.Thread(target=self.spin, daemon=True)
-        self.spinner_thread.start()
+        self._start_time = time.time()
+        self.manager.register_spinner(self)
+        return self
 
-    def __exit__(self, exc_type, exc_value, exc_traceback) -> None:
+    def __exit__(self, exc_type, exc_value, exc_traceback):
         """Stop the spinner"""
         self.running = False
-        if self.spinner_thread is not None:
-            self.spinner_thread.join()
-        sys.stdout.write(f"\r{' ' * len(self.message)}\r")
-        sys.stdout.flush()
+        self.manager.unregister_spinner(self)
 
-    def spin(self) -> None:
-        """Spin the spinner"""
-        t0 = time.time()
-        while self.running:
-            if self.contd:
-                _ = self.max_t - (time.time() - t0)
-                extra = f"{_:.2f}"
-                if _ < 0:
-                    self.contd = False
-                    t0 = time.time()
-            else:
-                extra = f"{time.time() - t0:.2f}"
-            sys.stdout.write(f"\r{next(self.spinner)} {self.message} | {extra} ")
+        # Clear the spinner's line if it was the primary spinner
+        if self._is_primary:
+            sys.stdout.write("\r\033[K")
             sys.stdout.flush()
-            time.sleep(self.delay)

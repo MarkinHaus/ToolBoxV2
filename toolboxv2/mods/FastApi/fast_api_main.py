@@ -793,9 +793,12 @@ async def helper(id_name):
                 return "OK"
             return "Not found"
 
-    with open(f"./.data/api_pid_{id_name}", "w") as f:
-        f.write(str(os.getpid()))
-        f.close()
+    try:
+        with open(f"./.data/api_pid_{id_name}", "w") as f:
+            f.write(str(os.getpid()))
+            f.close()
+    except FileNotFoundError:
+        pass
     await tb_app.load_all_mods_in_file()
     if id_name.endswith("_D"):
         with BlobFile(f"FastApi/{id_name}/dev", mode='r') as f:

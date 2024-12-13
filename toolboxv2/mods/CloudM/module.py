@@ -13,14 +13,17 @@ from toolboxv2.utils.system.state_system import get_state_from_app, TbState
 from .UserInstances import UserInstances
 from ...utils.system.api import find_highest_zip_version_entry
 
+from .ModManager import mv
+
 Name = 'CloudM'
-version = "0.0.2"
+version = "0.0.3"
 export = get_app(f"{Name}.EXPORT").tb
 no_test = export(mod_name=Name, test=False, version=version)
 to_api = export(mod_name=Name, api=True, version=version)
 
 
 class Tools(MainTool, FileHandler):
+    version = version
 
     def __init__(self, app=None):
         t0 = time.perf_counter()

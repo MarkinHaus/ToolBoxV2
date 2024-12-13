@@ -5,4 +5,4 @@
 ### ModuleNotFoundError: No module named '_cffi_backend' fix -> pip -vvv install --upgrade --force-reinstall cffi
 
 
-## extraes : langchain-experimental PyAudio Pebble transformers litellm  gpt4all SpeechRecognition chromadb pydub duckduckgo-search langchain-groq beautifulsoup4 langchain-huggingface langchain  langchain-chroma langchain-ollama
+## extraes : langchain-experimental astor PyAudio Pebble transformers litellm nltk gpt4all SpeechRecognition chromadb pydub duckduckgo-search langchain-groq beautifulsoup4 langchain-huggingface langchain  langchain-chroma langchain-ollama tiktoken

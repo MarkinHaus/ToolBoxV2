@@ -1,15 +1,4 @@
+dependencies_file: ./mods/EventManager/requirements.txt
 module_name: EventManager
-version: 0.0.1
-zip: "RST$EventManager&v0.1.20\xA70.0.1.zip"
-dependencies:
-- enum
-- ''
-- concurrent
-- dataclasses
-- time
-- os
-- queue
-- typing
-- uuid
-- asyncio
-- threading
+version: 0.0.3
+zip: "RST$EventManager&v0.1.20\xA70.0.3.zip"

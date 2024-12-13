@@ -8,7 +8,7 @@ import spacy
 import hashlib
 
 import torch
-from sklearn.metrics.pairwise import cosine_similarity
+
 from itertools import combinations
 from pydantic import BaseModel, Field
 from copy import deepcopy
@@ -27,7 +27,6 @@ from toolboxv2.utils.system import FileCache
 
 import chromadb
 from chromadb.config import Settings
-import numpy as np
 from typing import Dict, List, Optional, Tuple, Union, Any, Mapping
 from datetime import datetime
 from pathlib import Path
@@ -361,27 +360,6 @@ def _extract_micro_concepts(doc):
     return micro_concepts
 
 
-def _extract_semantic_concepts(doc):
-    """
-    Extract semantically rich, contextually significant concepts
-    """
-    semantic_concepts = []
-    for ent in doc.ents:
-        semantic_concept = SemanticConcept(
-            text=ent.text,
-            importance=1.0,  # Named entities are typically significant
-            pos=ent.root.pos_,
-            has_vector=ent.root.has_vector,
-            semantic_type=['semantic', 'contextual', ent.label_],
-            linguistic_features={
-                'entity_type': ent.label_,
-                'root_dependency': ent.root.dep_
-            }
-        )
-        semantic_concepts.append(semantic_concept.model_dump(mode='python'))
-    return semantic_concepts
-
-
 def _extract_advanced_relations(doc):
     """
     Extract complex semantic relations with advanced attributes
@@ -398,14 +376,6 @@ def _extract_advanced_relations(doc):
             )
             relations.append(relation.model_dump(mode='python'))
     return relations
-
-
-def _calculate_semantic_similarity(text1, text2):
-    """
-    Calculate semantic similarity between two texts
-    """
-    # Placeholder for advanced similarity calculation
-    return len(set(text1.split()) & set(text2.split())) / len(set(text1.split()) | set(text2.split()))
 
 
 def _calculate_semantic_complexity(doc):
@@ -511,19 +481,6 @@ def _to_cossena_code(snapshot):
     return f"{checksum}:{hex_code}"
 
 
-def clean_text(text: str, remove_nl=True) -> str:
-    """Clean and normalize text before processing."""
-    # Remove null bytes and normalize whitespace
-    text = text.replace('\0', '')
-    text = re.sub(r'\s+', ' ', text)
-
-    # Remove any control characters
-    if remove_nl:
-        text = ''.join(char for char in text if ord(char) >= 32 or char == '\n')
-
-    return text.strip()
-
-
 def validate_snapshot(snapshot: dict) -> bool:
     """
     Validate the structure and types of a Cossena snapshot.
@@ -624,7 +581,9 @@ class CossenaCore:
         except Exception as e:
             raise RuntimeError(f"Failed to load model: {str(e)}")
 
-    def mean_pooling(self, model_output: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+    @staticmethod
+    @lru_cache(124)
+    def mean_pooling(model_output: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         """
         Perform mean pooling on token embeddings.
         """
@@ -633,36 +592,28 @@ class CossenaCore:
         return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
 
     @lru_cache(512)
+    def _cached_embedding(self, text: str) -> np.ndarray:
+        # Perform text processing and return the embedding vector.
+        encoded_input = self.tokenizer(
+            text,
+            padding=True,
+            truncation=True,
+            max_length=512,
+            return_tensors='pt'
+        ).to(self.device)
+
+        with torch.no_grad():
+            model_output = self.model(**encoded_input)
+
+        sentence_embeddings = self.mean_pooling(model_output, encoded_input['attention_mask'])
+        sentence_embeddings = torch.nn.functional.normalize(sentence_embeddings, p=2, dim=1)
+        return sentence_embeddings.cpu().numpy()[0]
+
     def get_embedding(self, text: str) -> Optional[np.ndarray]:
-        """
-        Get embedding vector for input text.
-
-        Args:
-            text: Input text to embed
-
-        Returns:
-            numpy.ndarray or None: Embedding vector if successful
-        """
         try:
-            # Tokenize with truncation and padding
-            encoded_input = self.tokenizer(
-                text,
-                padding=True,
-                truncation=True,
-                max_length=512,
-                return_tensors='pt'
-            ).to(self.device)
-            # Compute token embeddings
-            with torch.no_grad():
-                model_output = self.model(**encoded_input)
-            # Perform pooling
-            sentence_embeddings = self.mean_pooling(model_output, encoded_input['attention_mask'])
-            # Normalize embeddings
-            sentence_embeddings = torch.nn.functional.normalize(sentence_embeddings, p=2, dim=1)
-            # Convert to numpy array
-            return sentence_embeddings.cpu().numpy()[0]
-
+            return self._cached_embedding(text)
         except Exception as e:
+            print(text, type(text))
             print(f"Error generating embedding: {str(e)}")
             return None
 
@@ -831,7 +782,6 @@ class CossenaCore:
             print(f"Error parsing Python code: {str(e)}")
             return self.text_to_code(code)
 
-
     def transmutation(self, hex_code: str, mode: str = 'explain') -> str or dict:
         """
             Convert hex code back to semantic representation and perform requested transmutation.
@@ -985,6 +935,7 @@ class CossenaCore:
             return G
 
         def compute_pairwise_similarities(G):
+            from sklearn.metrics.pairwise import cosine_similarity
             for u, v in combinations(G.nodes(), 2):
                 similarity = cosine_similarity(G.nodes[u]['vector'].reshape(1, -1),
                                                G.nodes[v]['vector'].reshape(1, -1))[0][0]
@@ -1142,160 +1093,6 @@ def format_semantic_analysis(analysis_results: Dict) -> str:
                           formatted_metadata)
 
     return formatted_analysis
-
-
-def _update_relations(combined: Dict, new: Dict) -> None:
-    """
-    Update relations after concept merging.
-    """
-    # Build mapping of merged concepts
-    concept_mapping = {
-        c['text']: c['metadata'].get('merged_from', [])
-        for c in combined['concepts']
-        if 'metadata' in c and 'merged_from' in c['metadata']
-    }
-
-    # Update relations
-    for relation in new['relations']:
-        source = relation['source']
-        target = relation['target']
-
-        # Find merged concepts
-        source_merged = next(
-            (k for k, v in concept_mapping.items()
-             if source in v or source == k),
-            source
-        )
-        target_merged = next(
-            (k for k, v in concept_mapping.items()
-             if target in v or target == k),
-            target
-        )
-
-        # Add updated relation
-        if source_merged != target_merged:
-            combined['relations'].append({
-                'source': source_merged,
-                'target': target_merged,
-                'type': relation['type'],
-                'strength': relation['strength']
-            })
-
-
-def _merge_concept_pair(existing: Dict, new: Dict) -> None:
-    """
-    Merge two concepts, combining their properties intelligently.
-    """
-    # Average importance scores
-    existing['importance'] = (
-                                 existing['importance'] + new['importance']
-                             ) / 2
-
-    # Combine metadata
-    if 'metadata' not in existing:
-        existing['metadata'] = {}
-
-    existing['metadata']['merged_from'] = list(set(existing['metadata'].get(
-        'merged_from', []
-    ) + [new['text']]))
-
-    # Update vector if available
-    if 'vector' in existing and 'vector' in new:
-        existing['vector'] = (
-                                 np.array(existing['vector']) +
-                                 np.array(new['vector'])
-                             ) / 2
-
-
-def _merge_temporal_versions(old: Dict, new: Dict) -> Dict:
-    """
-    Merge two temporal versions of a concept.
-    """
-    merged = old.copy()
-
-    # Update temporal metadata
-    merged['temporal_metadata'] = {
-        'added': new['temporal_metadata']['added'],
-        'version': new['temporal_metadata']['version'],
-        'previous_versions': merged['temporal_metadata'].get(
-            'previous_versions', []
-        ) + [{
-            'added': old['temporal_metadata']['added'],
-            'version': old['temporal_metadata']['version']
-        }]
-    }
-
-    # Merge other properties
-    merged['importance'] = max(
-        old['importance'],
-        new['importance']
-    )
-
-    return merged
-
-
-def _finalize_combination(combined: Dict) -> str:
-    """
-    Finalize the combined snapshot and convert to hex code.
-    """
-    # Add combination metadata
-    combined['metadata'].update({
-        'combination_timestamp': datetime.now().isoformat(),
-        'total_concepts': len(combined['concepts']),
-        'total_relations': len(combined['relations']),
-    })
-
-    # Convert to hex code
-    return _to_cossena_code(combined)
-
-
-def _resolve_temporal_conflicts(combined: Dict) -> None:
-    """
-    Resolve conflicts between concept versions.
-    """
-    # Group concepts by their base text
-    concept_versions = defaultdict(list)
-    for concept in combined['concepts']:
-        base_text = concept['text']
-        concept_versions[base_text].append(concept)
-
-    # Resolve conflicts for each concept
-    resolved_concepts = []
-    for base_text, versions in concept_versions.items():
-        if len(versions) > 1:
-            # Sort by version number
-            versions.sort(
-                key=lambda x: x['temporal_metadata']['version']
-            )
-
-            # Merge sequential versions
-            resolved = versions[0]
-            for next_version in versions[1:]:
-                resolved = _merge_temporal_versions(
-                    resolved, next_version
-                )
-
-            resolved_concepts.append(resolved)
-        else:
-            resolved_concepts.append(versions[0])
-
-    combined['concepts'] = resolved_concepts
-
-
-def _temporal_merge(combined: Dict, new: Dict) -> None:
-    """
-    Merge concepts with temporal awareness and versioning.
-    """
-    timestamp = datetime.now().isoformat()
-
-    for concept in new['concepts']:
-        concept['temporal_metadata'] = {
-            'added': timestamp,
-            'version': float(combined['metadata']['version']) + 1
-        }
-        combined['concepts'].append(concept)
-
-    _resolve_temporal_conflicts(combined)
 
 
 def normalize_text(text: str) -> str:

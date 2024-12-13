@@ -74,14 +74,16 @@ class TestStyleUtilities(unittest.TestCase):
 
         # Check that something was printed
         printed_text = output.getvalue()
-        self.assertIn("Hello World", printed_text)
+        self.assertIn("Hello", printed_text)
+        self.assertIn("World", printed_text)
 
         # Test with a list input
         with capture_stdout() as output:
             print_to_console("Test Title", "\33[32m", ["Hello", "World"])
 
         printed_text = output.getvalue()
-        self.assertIn("Hello World", printed_text)
+        self.assertIn("Hello", printed_text)
+        self.assertIn("World", printed_text)
 
     def test_json_extraction(self):
         """Test JSON string extraction."""

@@ -91,7 +91,7 @@ async def a_save_closing_app():
 
     if not app.called_exit[0] and time.time() - app.called_exit[1] < 8:
         await app.a_exit()
-        app.print(Style.Bold(Style.ITALIC("- Killing a kid is not ok -")))
+        app.print(Style.Bold(Style.ITALIC("- Error? -")))
         return
 
     if not app.called_exit[0]:

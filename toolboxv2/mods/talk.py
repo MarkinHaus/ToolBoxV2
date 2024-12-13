@@ -10,7 +10,6 @@ from litellm import max_tokens
 from starlette.responses import HTMLResponse
 
 from toolboxv2 import get_app, App, TBEF, Spinner
-from toolboxv2.mods.CloudM.AuthManager import on_start
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.extras.base_widget import get_spec, get_user_from_request
 from functools import partial
