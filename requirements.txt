@@ -19,3 +19,4 @@ tqdm
 transformers
 watchfiles
 PyJWT
+webauthn
