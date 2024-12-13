@@ -143,13 +143,10 @@ async def get_sto_by_name(app: App = None, sto_name: Optional[str] = None, reque
         return Result.default_user_error(info="No name specified")
     if app is None:
         app = get_app(from_=f"{Name}.controller")
+    if request is None:
+        return
 
-    user_result = await get_user_from_request(app, request)
-
-    if user_result.is_error() or not user_result.is_data():
-        return user_result
-
-    user: User = user_result.get()
+    user: User = await get_user_from_request(app, request)
 
     sto_data_result = get_sto(app, sto_name=sto_name, user_name=user.name, user_id=user.uid)
     return sto_data_result.to_api_result()

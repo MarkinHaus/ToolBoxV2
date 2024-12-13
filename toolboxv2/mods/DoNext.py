@@ -726,6 +726,10 @@ class Action(BaseModel):
         return cls(**data)
 
 
+class Actions(BaseModel):
+    actions: List[Action]
+
+
 class HistoryEntry(BaseModel):
     action_id: str
     action_title: str
@@ -786,6 +790,10 @@ class ActionManager:
         self.actions.append(action)
         self._save_data()
         return action
+
+    def add_actions(self, actions):
+        self.actions.extend(actions)
+        self._save_data()
 
     def get_current_action(self) -> Optional[Dict]:
         if self.current_action is None:
