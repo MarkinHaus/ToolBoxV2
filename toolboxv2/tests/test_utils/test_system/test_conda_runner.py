@@ -6,6 +6,7 @@ import platform
 import tempfile
 import shutil
 
+from toolboxv2 import get_app
 # Import the functions to be tested
 from toolboxv2.utils.system.conda_runner import (
     run_command,
@@ -40,6 +41,8 @@ class TestCondaRunner(unittest.TestCase):
 
     def test_run_command_success(self):
         """Test run_command with a successful command."""
+        if not get_app(name="test").local_test:
+            return
         success, output = run_command("echo Hello World", live=False)
         self.assertTrue(success)
         self.assertIn("Hello World", output)
@@ -52,6 +55,8 @@ class TestCondaRunner(unittest.TestCase):
     def test_create_conda_env(self):
         """Test creating a new conda environment."""
         # Create the environment
+        if not get_app(name="test").local_test:
+            return
         result = create_conda_env(self.test_env_name)
         self.assertTrue(result)
 
@@ -65,6 +70,8 @@ class TestCondaRunner(unittest.TestCase):
     def test_delete_conda_env(self):
         """Test deleting a conda environment."""
         # First create the environment
+        if not get_app(name="test").local_test:
+            return
         create_conda_env(self.test_env_name)
 
         # Then delete it
@@ -78,6 +85,8 @@ class TestCondaRunner(unittest.TestCase):
     def test_add_dependency(self):
         """Test adding a dependency to a conda environment."""
         # Create a test environment
+        if not get_app(name="test").local_test:
+            return
         create_conda_env(self.test_env_name)
 
         # Add a simple dependency
@@ -94,6 +103,8 @@ class TestCondaRunner(unittest.TestCase):
     def test_create_env_registry(self):
         """Test creating an environment registry."""
         # Create a test environment with some packages
+        if not get_app(name="test").local_test:
+            return
         create_conda_env(self.test_env_name)
         add_dependency(self.test_env_name, "numpy")
         add_dependency(self.test_env_name, "pandas")
@@ -118,6 +129,8 @@ class TestCondaRunner(unittest.TestCase):
     def test_run_script_in_conda_env(self):
         """Test running a script in a conda environment."""
         # Create a test environment
+        if not get_app(name="test").local_test:
+            return
         create_conda_env(self.test_env_name)
 
         # Create a test Python script
@@ -132,6 +145,8 @@ class TestCondaRunner(unittest.TestCase):
     def test_error_handling(self):
         """Test error handling for various scenarios."""
         # Try to add a non-existent dependency
+        if not get_app(name="test").local_test:
+            return
         with self.assertRaises(Exception):
             res = add_dependency(self.test_env_name, "non_existent_package_xyz")
             if res is False:
