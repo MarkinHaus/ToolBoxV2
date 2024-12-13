@@ -763,7 +763,7 @@ class ActionManager:
 
     def _load_data(self):
         try:
-            with BlobFile(f"DoNext/tasks/{self.user_id}", "r", self.storage) as f:
+            with BlobFile(f"DoNext/tasks", "r", self.storage) as f:
                 data = f.read_json()
                 self.actions = [Action.from_dict(**action) for action in data.get("tasks", [])]
                 if data.get("current") is not None:
@@ -774,7 +774,7 @@ class ActionManager:
             self.history = []
 
     def _save_data(self):
-        with BlobFile(f"DoNext/tasks/{self.user_id}", "w", self.storage) as f:
+        with BlobFile(f"DoNext/tasks", "w", self.storage) as f:
             f.write_json({
                 "tasks": [action.dict() for action in self.actions],
                 "history": [entry.dict() for entry in self.history],
@@ -919,7 +919,8 @@ async def get_manager(app, request):
     if app is None:
         app = get_app()
     user = await get_user_from_request(app, request)
-    if key := Code.one_way_hash(user.name, Name) in Managers:
+    key = Code.one_way_hash(user.name, Name)
+    if key in Managers:
         return Managers[key]
     else:
         Managers[key] = ActionManager(key, get_storage(app, user))
