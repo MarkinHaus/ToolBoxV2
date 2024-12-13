@@ -591,7 +591,7 @@ class CossenaCore:
         input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
         return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
 
-    @lru_cache(512)
+    # @lru_cache(512)
     def _cached_embedding(self, text: str) -> np.ndarray:
         # Perform text processing and return the embedding vector.
         encoded_input = self.tokenizer(
