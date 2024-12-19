@@ -13,6 +13,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse, FileResponse, Response
 from starlette.websockets import WebSocketDisconnect
 from fastapi.responses import RedirectResponse
+from watchfiles import awatch
 
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.system.session import RequestSession
@@ -429,8 +430,9 @@ async def session_protector(request: Request, call_next):
 
 
 def protect_level_test(request):
+
     if 'live_data' not in request.session.keys():
-        return True
+        return None
 
     user_level = request.session['live_data'].get('level', -1)
     user_spec = request.session['live_data'].get('spec', 'app')
@@ -441,30 +443,28 @@ def protect_level_test(request):
 
     modul_name = request.url.path.split('/')[2]
     fuction_name = request.url.path.split('/')[3]
-
+    print(tb_app.functions.get(modul_name, {}).keys())
     if not (modul_name in tb_app.functions.keys() and fuction_name in tb_app.functions.get(modul_name, {}).keys()):
         request.session['live_data']['RUN'] = False
         tb_app.logger.warning(
             f"Path is not for level testing {request.url.path} Function {modul_name}.{fuction_name} dos not exist")
-        return True  # path is not for level testing
+        return None  # path is not for level testing
 
     fod, error = tb_app.get_function((modul_name, fuction_name), metadata=True, specification=user_spec)
 
     if error:
         tb_app.logger.error(f"Error getting function for user {(modul_name, fuction_name)}{request.session}")
-        return False
+        return None
 
     fuction_data, fuction = fod
 
-    fuction_level = fuction_data.get('level', -1)
-
+    fuction_level = fuction_data.get('level', 0)
+    print(f"{user_level=} >= {fuction_level=}")
     request.session['live_data']['GET_R'] = fuction_data.get('request_as_kwarg', False)
 
-    if user_level >= fuction_level:
-        request.session['live_data']['RUN'] = True
-        return True
+    request.session['live_data']['RUN'] = user_level >= fuction_level
+    return request.session['live_data']['RUN']
 
-    return False
 
 
 def protect_url_split_helper(url_split):
@@ -498,23 +498,23 @@ def protect_url_split_helper(url_split):
 @app.middleware("http")
 async def protector(request: Request, call_next):
     needs_protection = protect_url_split_helper(request.url.path.split('/'))
-    if needs_protection and not request.session.get('valid'):
-        # do level test
-        return FileResponse("./web/assets/401.html", media_type="text/html", status_code=401)
+    if not needs_protection:
+        return await user_runner(request, call_next)
 
-    elif needs_protection and not protect_level_test(request):
+    plt =  protect_level_test(request)
+    if plt is None:
+
+        if not request.session.get('valid'):
+            # do level test
+            return FileResponse("./web/assets/401.html", media_type="text/html", status_code=401)
+
+    elif plt is False:
         return JSONResponse(
             status_code=403,
             content={"message": "Protected resource invalid_level  <a href='/web'>Back To Start</a>"}
         )
-    # elif needs_protection and :
-    #     return JSONResponse(
-    #         status_code=403,
-    #         content={"message": "Protected resource"}
-    #     )
-    else:
-        response = await user_runner(request, call_next)
-        return response
+
+    return await user_runner(request, call_next)
 
 
 def request_to_request_session(request):
@@ -876,7 +876,7 @@ async def helper(id_name):
             tb_app.print(f"working on fuction {function_name}", end='\r')
             if 'main' in function_name and 'web' in function_name:
                 tb_app.sprint(f"creating Rout {mod_name} -> {function_name}")
-                router.add_api_route('/' + mod_name, tb_func, methods=["GET"],
+                app.add_api_route('/' + mod_name, tb_func, methods=["GET"],
                                      description=function_data.get("helper", ""))
                 continue
 

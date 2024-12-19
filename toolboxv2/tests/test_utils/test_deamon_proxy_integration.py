@@ -38,7 +38,7 @@ class TestDPIntegration(unittest.TestCase):
         if not get_app(name="test").local_test:
             return
         app = get_app(name="test")
-        socketManager = await app.load_mod("SocketManager")
+        socketManager = await app.get_mod("SocketManager")
 
 
         # await app.init_module(socketManager)

@@ -58,7 +58,8 @@ class AsyncWebTestFramework:
         }
 
         self.browser = await browser_launchers.get(self.browser_type, self.playwright.chromium.launch)(
-            headless=self.headless, timeout=200
+            headless=self.headless,
+            timeout=200
         )
 
     async def create_context(self,

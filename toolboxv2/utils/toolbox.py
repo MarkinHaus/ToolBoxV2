@@ -417,6 +417,7 @@ class App(AppType, metaclass=Singleton):
                     except Exception as e:
                         self.logger.debug(Style.YELLOW(
                             Style.Bold(f"modular:{modular_id}.{f} on_start error {i}/{len(on_start)} -> {e}")))
+                        self.debug_rains(e)
                     finally:
                         i += 1
 
@@ -1226,7 +1227,7 @@ class App(AppType, metaclass=Singleton):
             mod = self.save_load(name, spec=spec)
             if mod is False or (isinstance(mod, Result) and mod.is_error()):
                 self.logger.warning(f"Could not find {name} in {list(self.functions.keys())}")
-                raise ValueError(f"Could not find {name} in {list(self.functions.keys())} pleas install the module")
+                raise ValueError(f"Could not find {name} in {list(self.functions.keys())} pleas install the module, or its posibly broken use --debug for infos")
         # private = self.functions[name].get(f"{spec}_private")
         # if private is not None:
         #     if private and spec != 'app':

@@ -236,7 +236,7 @@ class Tools(MainTool, FileHandler):
             raise RuntimeError("DB Autoresize Error " + a.print(show=False))
 
         self.app.logger.info(f"Running DB in mode : {self.mode.value}")
-        self.print(f"Running DB in mode : {self.mode.value}")
+        self.print(f"Running DB.{self.spec} in mode : {self.mode.value}")
 
     def _autoresize(self):
 

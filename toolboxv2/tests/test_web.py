@@ -135,12 +135,12 @@ async def test_run_in_valid_session_tests(headless=True):
 test_run_in_valid_session_tests = async_test(test_run_in_valid_session_tests)
 
 
-def run_in_valid_session_tests(in_valid_session_tests, headless=True, evaluation=True):
+async def run_in_valid_session_tests(in_valid_session_tests, headless=True, evaluation=True):
     # setup
     ensure_web_server_online()
-    with WebTestFramework(headless=headless) as tf:
-        tf.create_context(
+    async with AsyncWebTestFramework(headless=headless) as tf:
+        await tf.create_context(
             viewport={'width': 1280, 'height': 720},
             user_agent="Mozilla/5.0 (Custom Test Agent)"
         )
-        return tf.run_tests(*in_valid_session_tests, evaluation=evaluation)
+        return await tf.run_tests(*in_valid_session_tests, evaluation=evaluation)

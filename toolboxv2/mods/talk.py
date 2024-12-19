@@ -37,7 +37,7 @@ def start(app=None):
     if not app.mod_online("audio"):
         print("Talk Offline install isaa")
         return
-    app.load_mod("isaa").init_isaa(build=False)
+    app.get_mod("isaa").init_isaa(build=False)
     talk_generate = app.run_any(TBEF.AUDIO.STT_GENERATE,
                                 model="openai/whisper-small",
                                 row=True, device=1)

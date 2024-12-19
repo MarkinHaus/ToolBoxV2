@@ -326,13 +326,14 @@ async def sendMagicLink(app, user: str, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-async def setUserLevel(app, user: str, data: dict, request: Request or None = None):
+async def setUserLevel(app, user: str, request: Request or None = None):
     if request is None:
         return Result.default_internal_error("No request specified")
     user_ob = await get_user_from_request(app, request=request)
     if user_ob.name != 'root':
         return f"<h2>Invalid User</h2>"
-    userLevel = data.get('userLevel', 0)
+    userLevel = await request.json()
+    userLevel = userLevel.get('userLevel', 0)
     user_ed = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user)
     if isinstance(userLevel, str):
         userLevel = int(userLevel)
