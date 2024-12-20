@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from inspect import signature
 from pathlib import Path
@@ -26,6 +27,7 @@ import time
 from fastapi.middleware.cors import CORSMiddleware
 
 from toolboxv2 import TBEF, AppArgs, ApiResult, Spinner, get_app, Result
+# from toolboxv2.__main__ import setup_app
 from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
 
 from toolboxv2.utils.system.state_system import get_state_from_app
@@ -517,11 +519,18 @@ async def protector(request: Request, call_next):
     return await user_runner(request, call_next)
 
 
-def request_to_request_session(request):
+async def request_to_request_session(request):
+    jk = request.json()
+    if asyncio.iscoroutine(jk):
+        try:
+            jk = await jk
+        except Exception:
+            pass
+    js = lambda :jk
     return RequestSession(
         session=request.session,
         body=request.body,
-        json=request.json,
+        json=js,
         row=request,
     )
 
@@ -547,12 +556,29 @@ async def user_runner(request, call_next):
     query_params = dict(request.query_params)
 
     if request.session['live_data'].get('GET_R', False):
-        query_params['request'] = request_to_request_session(request)
+        query_params['request'] = await request_to_request_session(request)
 
-    result = await tb_app.a_run_function((modul_name, fuction_name),
+    async def execute_in_threadpool(coroutine, *args):
+        loop = asyncio.get_running_loop()
+        with ThreadPoolExecutor() as executor:
+            return await loop.run_in_executor(executor, lambda: asyncio.run(coroutine(*args)))
+
+    # Wrappe die asynchrone Funktion in einem separaten Thread
+    async def task():
+        return await tb_app.a_run_function((modul_name, fuction_name),
                                          tb_run_with_specification=request.session['live_data'].get('spec', 'app'),
                                          args_=path_params.values(),
                                          kwargs_=query_params)
+
+    # Starte die Aufgabe in einem separaten Thread
+    future = asyncio.create_task(execute_in_threadpool(task))
+    result = None
+    # Nicht blockierendes Warten
+    while tb_app.alive:
+        if future.done():
+            result = future.result()
+            break
+        await asyncio.sleep(0.1)  # Ermöglicht anderen FastAPI-Requests, weiter zu laufen
 
     request.session['live_data']['RUN'] = False
     request.session['live_data']['GET_R'] = False

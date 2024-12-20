@@ -25,6 +25,49 @@ version = "0.0.3"
 default_export = export(mod_name=Name, version=version, interface=ToolBoxInterfaces.native, test=False)
 mv = None
 
+from packaging.version import Version
+
+def increment_version(version_str: str, max_value: int = 99) -> str:
+    """
+    Inkrementiert eine Versionsnummer im Format "vX.Y.Z".
+
+    Args:
+        version_str (str): Die aktuelle Versionsnummer, z. B. "v0.0.1".
+        max_value (int): Die maximale Zahl pro Stelle (default: 99).
+
+    Returns:
+        str: Die inkrementierte Versionsnummer.
+    """
+    if not version_str.startswith("v"):
+        raise ValueError("Die Versionsnummer muss mit 'v' beginnen, z. B. 'v0.0.1'.")
+
+    # Entferne das führende 'v' und parse die Versionsnummer
+    version_core = version_str[1:]
+    try:
+        version = Version(version_core)
+    except ValueError as e:
+        raise ValueError(f"Ungültige Versionsnummer: {version_core}") from e
+
+    # Extrahiere die Versionsteile und konvertiere sie zu einer Liste
+    parts = list(version.release)
+
+    # Inkrementiere die letzte Stelle
+    for i in range(len(parts) - 1, -1, -1):
+        if parts[i] < max_value:
+            parts[i] += 1
+            break
+        else:
+            parts[i] = 0
+            # Schleife fährt fort, um die nächsthöhere Stelle zu inkrementieren
+    else:
+        # Wenn alle Stellen auf "max_value" sind, füge eine neue Stelle hinzu
+        parts.insert(0, 1)
+
+    # Baue die neue Version
+    new_version = "v" + ".".join(map(str, parts))
+    return new_version
+
+
 def download_files(urls, directory, desc, print_func, filename=None):
     """ Hilfsfunktion zum Herunterladen von Dateien. """
     for url in tqdm(urls, desc=desc):

@@ -332,7 +332,7 @@ async def setUserLevel(app, user: str, request: Request or None = None):
     user_ob = await get_user_from_request(app, request=request)
     if user_ob.name != 'root':
         return f"<h2>Invalid User</h2>"
-    userLevel = await request.json()
+    userLevel = request.json()
     userLevel = userLevel.get('userLevel', 0)
     user_ed = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user)
     if isinstance(userLevel, str):
