@@ -1,7 +1,11 @@
 import time
 from typing import Optional
 
-import redis
+try:
+    import redis
+except ImportError:
+    redis = lambda: None
+    redis.Redis = None
 
 from toolboxv2 import Result, get_logger
 from .types import AuthenticationTypes
@@ -19,7 +23,7 @@ class MiniRedis:
             self.rcon: redis.Redis = redis.from_url(uri)
             return Result.ok(data=True).set_origin("Reddis DB")
         except Exception as e:
-            return Result.default_internal_error(data=e).set_origin("Reddis DB")
+            return Result.default_internal_error(data=e, info="install redis using pip").set_origin("Reddis DB")
 
     def get(self, key: str) -> Result:
         data = []

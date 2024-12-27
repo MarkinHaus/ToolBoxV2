@@ -1,13 +1,19 @@
-from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page, Playwright
-
 import asyncio
 import logging
 import os
 import time
 import json
 from typing import List, Dict, Any, Optional
-from playwright.async_api import async_playwright, Browser as ABrowser, BrowserContext as ABrowserContext, \
-    Page as APage, Playwright as APlaywright
+
+try:
+    from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page, Playwright
+    from playwright.async_api import async_playwright, Browser as ABrowser, BrowserContext as ABrowserContext, \
+        Page as APage, Playwright as APlaywright
+except ImportError:
+    os.system("pip install playwright")
+    from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page, Playwright
+    from playwright.async_api import async_playwright, Browser as ABrowser, BrowserContext as ABrowserContext, \
+        Page as APage, Playwright as APlaywright
 
 
 class AsyncWebTestFramework:
@@ -256,7 +262,7 @@ class WebTestFramework:
         # Ensure state directory exists
         os.makedirs(state_dir, exist_ok=True)
 
-        self.playwright = None
+        self.playwright:Optional[Playwright] = None
         self.browser:Optional[Browser] = None
         self.context:Optional[BrowserContext] = None
         self.page:Optional[Page]  = None
