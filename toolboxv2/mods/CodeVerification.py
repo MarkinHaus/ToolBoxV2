@@ -9,8 +9,8 @@ from starlette.responses import HTMLResponse
 Name = 'CodeVerification'
 version = '0.0.1'
 export = get_app(f"{Name}.Export").tb
-closed_api_export = export(mod_name=Name, version=version, level=1)
-open_api_export = export(mod_name=Name, version=version, level=0, api=True)
+closed_api_export = export(mod_name=Name, version=version, level=1, test=False)
+open_api_export = export(mod_name=Name, version=version, level=0, api=True, test=False)
 
 
 @dataclass
