@@ -1,7 +1,7 @@
 import numpy as np
 from collections import defaultdict
 
-from .zero import IntelligenceRing, Concept
+from .one import IntelligenceRing, Concept
 from typing import List
 
 from sklearn.cluster import DBSCAN
@@ -64,11 +64,12 @@ class TopologyOptimizer:
 
 
 class RingRestructurer:
-    def __init__(self, ring: IntelligenceRing):
+    def __init__(self, ring: IntelligenceRing, max_val=10):
         self.ring = ring
+        self.max_val = max_val
 
     def restructure(self):
-        concepts = list(self.ring.concept_graph.concepts.values())
+        concepts = list(self.ring.concept_graph.concepts.values())[:self.max_val]
         vectors = np.array([c.vector for c in concepts])
 
         # Cluster concepts

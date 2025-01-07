@@ -1,13 +1,18 @@
 import json
 import os
-from typing import List, Dict
-from dataclasses import dataclass
 import threading
 import time
 
+from litellm import max_tokens
+
 from toolboxv2.utils.Irings.network import NetworkManager
+from toolboxv2.utils.Irings.reasoning_system import ReasoningSystem
 from toolboxv2.utils.Irings.tk_live import NetworkVisualizer
-from toolboxv2.utils.Irings.zero import IntelligenceRing
+from toolboxv2.utils.Irings.one import IntelligenceRing
+
+from dataclasses import dataclass
+
+from typing import List, Dict, Optional
 
 
 @dataclass
@@ -24,47 +29,47 @@ class CognitiveNetwork:
         user_llm,  # Interface LLM for user interaction
         agent_llm,  # Internal agent LLM
         initial_ring_content: str,
+        name: str = "main",
         num_empty_rings: int = 32,
-        inference_time: float = 0.5,  # Time in seconds for inner inference
+        inference_time: float = 60 * 60 * 2,
         auto_save: bool = True,
         network_file="network.hex",
-        display = False,
-
+        display=False,
+        think_llm=None,
+        rs_config=None,
     ):
+        self._processing_thread = None
+        self.name = name
         self.user_llm = user_llm
+        self.think_llm = think_llm if think_llm is not None else user_llm
         self.agent_llm = agent_llm
         self.inference_time = inference_time
 
         # Initialize network
-        preset_ring = IntelligenceRing("initial-ring")
-        preset_ring.concept_graph.add_concept(
-            name="Workflow",
-            vector=preset_ring.input_processor.process_text(initial_ring_content),
-            ttl=-1,  # Immortal concept
-            metadata={"text": initial_ring_content, "importance": "high"}
-        )
+        preset_ring = IntelligenceRing("initial-ring-" + name)
+        if len(preset_ring.concept_graph.concepts.keys()) == 0:
+            preset_ring.process(initial_ring_content, name="Workflow-" + self.name, metadata={"importance": "high"})
         self.auto_save = auto_save
         self.network_file = network_file
         if auto_save and network_file is not None and os.path.exists(network_file):
             self.network = NetworkManager.load_from_file(network_file)
         else:
             self.network = NetworkManager(
-                    num_empty_rings=num_empty_rings,
-                    preset_rings=[preset_ring]
-                )
+                num_empty_rings=num_empty_rings,
+                preset_rings=[preset_ring],
+                name=self.name,
+            )
 
+        self._v = None
         if display:
             v = NetworkVisualizer(self.network)
+            self._v = v
             self.og_processor = self.network.process_input
 
             def process_with_visualization(text):
                 """Process input text and update visualization"""
                 self.network.resume()
-                results = self.og_processor(text)
-                for ring_id in results[::-1]:
-                    v.mark_active(ring_id)
-                    time.sleep(0.25)
-
+                results = self.og_processor(text, v)
                 self.network.freeze()
                 return results
 
@@ -72,10 +77,10 @@ class CognitiveNetwork:
 
         # Initialize agent state with improved structure
         self.agent_state = AgentState(
-            current_focus="initial-ring",
+            current_focus="initial-ring-" + self.name,
             last_action={
                 "type": "initialization",
-                "target_ring": "initial-ring",
+                "target_ring": "initial-ring-" + self.name,
                 "timestamp": time.time(),
                 "details": "System initialized"
             },
@@ -90,77 +95,209 @@ class CognitiveNetwork:
 
         self.lock = threading.Lock()
         self.network.freeze()
+        self.network.resume()
+
+        self.rs_config = rs_config or {
+            "confidence_threshold": 0.5,
+            "retrieval_threshold": 0.8,
+            "max_notes": 4,
+            "max_depth": 4,
+            "max_branches_per_node": 4,
+            "max_retrievals_per_branch": 4
+        }
+        self.rs: Optional[ReasoningSystem] = None
+
+    def print_inner_state(self):
+        print(json.dumps(self.agent_state.inner_state, indent=2))
+
+    def print_last_monolog(self):
+        print(json.dumps(self.agent_state.inner_state.get("monologue", [{}])[-1], indent=2))
+
+    def init_reasoning_system(self):
+
+        # Initialize the reasoning system
+        self.rs = ReasoningSystem(
+            llm=self.think_llm,
+            retriever=lambda text: '\n\n'.join(
+                [x['text'] for x ,s in self.network.get_references(text, concept_elem="metadata", all_=True) if 'text' in x.keys()]),
+            vector_encoder=self.network.rings[self.agent_state.current_focus].input_processor.process_text,
+            similarity_engine=self.network.rings[self.agent_state.current_focus].input_processor.compute_similarity,
+            vector_dimension=self.network.rings[self.agent_state.current_focus].input_processor.vector_size,
+            **self.rs_config
+
+        )
+
+    def internal_update(self):
+
+        sto_llm = self.agent_llm
+        self.agent_llm = self.think_llm
+
+        self._v.mark_active(self.agent_state.current_focus) if self._v is not None else None
+        if not self.agent_state.inner_state["monologue"]:
+            context = self._inner_monologue("I Think Therefor I am?")
+        elif time.time() - self.agent_state.inner_state["monologue"][-1].get("timestamp",
+                                                                             time.time()) > self.inference_time:
+            context = self._inner_monologue(self.agent_state.inner_state["monologue"][-1].get("thought"))
+        else:
+            context = self.agent_state.inner_state["monologue"][-1].get("thought")
+
+        results = self.network.process_input(context)
+
+        for ring_id in results[::-1]:
+            self._v.mark_active(ring_id) if self._v is not None else None
+            time.sleep(0.25) if self._v is not None else None
+
+        self._v.mark_active(self.agent_state.current_focus) if self._v is not None else None
+
+        self.agent_llm = sto_llm
 
     def _inner_monologue(self, context: str) -> str:
         """Generate inner thoughts based on current context"""
+        cfr = ""
+        if c := self.network.rings[self.agent_state.current_focus].retrieval_system.find_similar(self.network.rings[self.agent_state.current_focus].input_processor.process_text(context)):
+            cfr = self.network.rings[self.agent_state.current_focus].get_concept_by_id(c[0])
         monologue_prompt = f"""
-        Current Context: {context}
-        Current Focus Ring: {self.agent_state.current_focus}
+        Current Context: {context[:100000]}
+        Current Focus Ring: {cfr}
         Last Action: {self.agent_state.last_action['details']}
-        Active Concepts: {[x['metadata']['text'] if 'text' in x['metadata'] else x['name'] for x in  self._get_active_concepts()]}
+        Active Concepts: {[x['metadata']['text'] if 'text' in x['metadata'] else x['name'] for x in self._get_active_concepts()]}
 
         Generate inner reasoning about the current situation and next steps.
         """
 
-        thought = self.agent_llm.process(monologue_prompt, max_tokens=220)
+        if self.rs is None:
+            self.init_reasoning_system()
+
+        thought, last_reasoning_logs = self.rs.generate(monologue_prompt, True)
+
         thought = str(thought)
         self.agent_state.inner_state["monologue"].append({
+            "type": "inner_monologue",
             "timestamp": time.time(),
-            "thought": thought
+            "thought": thought,
+            "last_reasoning_logs": last_reasoning_logs,
         })
+
+        self.agent_state.inner_state["last_inference"] = time.time()
         return thought
+
+    def vFlare(self, prompt, return_reasoning: bool = False):
+        if self.rs is None:
+            self.init_reasoning_system()
+        return self.rs.generate(prompt, return_reasoning=return_reasoning)
 
     def _get_active_concepts(self) -> List[Dict]:
         """Get currently active concepts from focused ring"""
         ring = self.network.rings[self.agent_state.current_focus]
         return [
-            {
-                "name": concept.name,
-                "metadata": concept.metadata,
-                "stage": concept.stage
-            }
-            for concept in ring.concept_graph.concepts.values()
-            if concept.stage > 0
-        ][:25]
+                   {
+                       "name": concept.name,
+                       "metadata": concept.metadata,
+                       "stage": concept.stage
+                   }
+                   for concept in ring.concept_graph.concepts.values()
+                   if concept.stage > 0
+               ][:25]
 
-    def process_user_input(self, user_input: str) -> str:
-        """Process user input through the interface LLM"""
-        # Allow for inner inference time
-        current_time = time.time()
-        if current_time - self.agent_state.inner_state["last_inference"] >= self.inference_time:
-            thought = self._inner_monologue(user_input)
-            self.agent_state.inner_state["thought_chain"].append(thought)
-            self.agent_state.inner_state["last_inference"] = current_time
+    def process_user_input(self, user_input: str, callback=None) -> str:
+        """
+        Process user input with immediate response and background processing
 
-        if len(user_input) > 200000:
-            self.network.process_input(user_input)
-        # Get interface LLM's interpretation
+        Args:
+            user_input: The input text from user
+            callback: Optional function to handle the final processed result
+        """
+        ac = '\n\n'.join([x.get('metadata', {}).get('text')
+                          for x in self._get_active_concepts()][:self.network.max_new])
+        # Get immediate interface response
         interface_response = self.user_llm.process(
-            f"User input: {user_input[:100000]}\nLast thought: {self.agent_state.inner_state['thought_chain'][-1] if self.agent_state.inner_state['thought_chain'] else 'None'}\nProvide clear instruction for agent.",
-            max_tokens=200
+            f"User input: {user_input[:100000]}\nProvide immediate clear response."
+            f"active_concepts: \n{ac}"
+            f"Agen Inner thought: {self.agent_state.inner_state['thought_chain'][-1] if self.agent_state.inner_state['thought_chain'] else 'None'}\n"
+            f"Provide an immediate, clear, and concise response to the user based on the available context."
+            ,
+            max_tokens=None
         )
 
-        interface_response = str(interface_response)
+        if callback is None:
+            callback = lambda x: print("Callback AGENT response:", x)
 
-        # Process through network
-        with self.lock:
-            res = self._process_agent_action(interface_response)
+        # Create background processing thread
+        def background_processor():
+            with self.lock:
+                current_time = time.time()
 
-        # Get relevant ring information
+                # Check if processing is already running
+                if hasattr(self, '_processing_thread') and self._processing_thread.is_alive():
+                    self._guided_thoughts(user_input)
+                else:
+                    if current_time - self.agent_state.inner_state["last_inference"] <= self.inference_time:
+                        thought = self._inner_monologue(user_input)
+                        self.agent_state.inner_state["thought_chain"].append(thought)
+                        self.agent_state.inner_state["last_inference"] = current_time
+                        self.internal_update()
 
-        # Generate user-facing response
-        final_response = self.agent_llm.process(
-            f"Agent result: {res}\n"
-            # f"Network Info: {self.network.get_references(user_input, top_k=2, concept_elem='metadata')}\n"
-            f"active_concepts: {self._get_active_concepts()}"
-            f"Inner thought: {self.agent_state.inner_state['thought_chain'][-1] if self.agent_state.inner_state['thought_chain'] else 'None'}\n"
-            f"Generate user-friendly response. based on the user query and provided data: {user_input[:100000]}\n",
-            max_tokens=250
-        )
-        final_response = str(final_response)
-        if self.auto_save:
-            self.network.save_to_file(self.network_file)
-        return final_response
+                if len(user_input) > 200000:
+                    self.network.process_input(user_input)
+
+                # Process through network
+                res = self._process_agent_action(interface_response)
+
+                # Get active concepts
+                ac = '\n\n'.join([x.get('metadata', {}).get('text')
+                                  for x in self._get_active_concepts()][:self.network.max_new])
+
+                # Generate detailed response
+                final_response = self.user_llm.process(
+                    f"Agent result: {res}\n"
+                    f"active_concepts: \n{ac}"
+                    f"Agent Inner thought: {self.agent_state.inner_state['thought_chain'][-1] if self.agent_state.inner_state['thought_chain'] else 'None'}\n"
+                    f"User Input: {user_input[:100000]}\n"
+                    f"Analyze the context and user input, then generate a well - reasoned, detailed response that addresses the user's needs. Consider the active concepts and previous inner thoughts to provide a comprehensive solution.",
+                    max_tokens=None
+                )
+
+                if self.auto_save:
+                    self.network.save_to_file(self.network_file)
+
+                # Call callback with final response if provided
+                if callback:
+                    callback(str(final_response))
+
+        # Start background processing thread
+        self._processing_thread = threading.Thread(target=background_processor)
+        self._processing_thread.start()
+
+        return str(interface_response)
+
+    def _guided_thoughts(self, context: str):
+        """
+        Generate guided thoughts based on current context and previous processing
+        """
+        if not self.agent_state.inner_state["thought_chain"]:
+            return
+
+        last_thought = self.agent_state.inner_state["thought_chain"][-1]
+
+        guided_prompt = f"""
+        Previous thought: {last_thought}
+        New context: {context}
+        Current focus: {self.agent_state.current_focus}
+
+        Generate refined thought considering previous context and new input.
+        """
+
+        if self.rs is None:
+            self.init_reasoning_system()
+
+        thought, last_reasoning_logs = self.rs.generate(guided_prompt, True)
+        self.agent_state.inner_state["monologue"].append({
+            "type": "guided_thoughts",
+            "timestamp": time.time(),
+            "thought": thought,
+            "last_reasoning_logs": last_reasoning_logs,
+        })
+        self.agent_state.inner_state["last_inference"] = time.time()
 
     def _get_ring_info(self) -> Dict:
         """Get detailed information about current ring state"""
@@ -178,67 +315,37 @@ class CognitiveNetwork:
 
         # Get agent's action decision
         action_prompt = f"""
-        Current focus: {self.agent_state.current_focus}
+        Current focus: {self.network.rings[self.agent_state.current_focus].get_concept_by_id(self.network.rings[self.agent_state.current_focus].retrieval_system.find_similar(self.network.rings[self.agent_state.current_focus].input_processor.process_text(thought))[0])}
         Last action: {self.agent_state.last_action['details']}
         Inner thought: {thought}
-        Active concepts: {[x['metadata']['text'] if 'text' in x['metadata'] else x['name'] for x in  self._get_active_concepts()]}
+        Active concepts: {[x['metadata']['text'] if 'text' in x['metadata'] else x['name'] for x in self._get_active_concepts()]}
         Instruction: {instruction}
 
-        Decide next action:
-        1. Process in current ring
-        2. Switch focus to another ring
-        3. Activate reset ring
-        4. Update connections
+        Perform next actions if necessary based on the current state of the system:
         """
 
-        action = self.agent_llm.process(action_prompt, max_tokens=50)
+        action = self.agent_llm.process(action_prompt, max_tokens=1500)
         action = str(action)
-        # Handle reset ring activation
-        if "reset" in action.lower():
-            return self._activate_reset_ring()
-
         # Process action through network
-        result = self.network.process_input(instruction)
+        result = self.network.process_input(instruction + action)
 
         # Update agent state with structured action info
         self._update_agent_state(action, result)
-        if len(result) == 0:
-            return ''
-        fall_back_ring = list(self.network.rings.values())[-1]
-        simmilad_data = self.network.rings.get(result[0], fall_back_ring).retrieval_system.find_similar(
-            self.network.rings.get(result[0], fall_back_ring).input_processor.process_text(thought))
-        if len(simmilad_data) == 0:
-            return ''
-        data = self.network.rings.get(result[0], fall_back_ring).get_concept_by_id(simmilad_data[0][0]).metadata
-        if 'text' in data:
-            return data['text']
-        return str(data)
+        if len(self.network.metrics.latest_concepts) == 0:
+            return action
+        code = self.network.metrics.latest_concepts[-1]
+        concept = self.network.get_concept_from_code(code)
+        i = -2
+        while concept is None:
+            if abs(i) >= len(self.network.metrics.latest_concepts):
+                return action
+            code = self.network.metrics.latest_concepts[i]
+            concept = self.network.get_concept_from_code(code)
+            i -= 1
 
-    def _activate_reset_ring(self) -> str:
-        """Handle reset ring activation"""
-        self.network.process_input("activate_reset")
+        return concept.metadata.get('text', action)
 
-        # Reset agent state with structured information
-        self.agent_state = AgentState(
-            current_focus="initial-ring",
-            last_action={
-                "type": "reset",
-                "target_ring": "initial-ring",
-                "timestamp": time.time(),
-                "details": "Reset protocol executed"
-            },
-            connection_strengths={},
-            inner_state={
-                "monologue": [],
-                "last_inference": time.time(),
-                "thought_chain": [],
-                "attention_focus": None
-            }
-        )
-
-        return "Reset protocol executed"
-
-    def _update_agent_state(self, action: str, result: str):
+    def _update_agent_state(self, action: str, result: list):
         """Update agent's internal state"""
         self.agent_state.last_action = {
             "type": "action",
@@ -258,6 +365,9 @@ class CognitiveNetwork:
                 self.agent_state.connection_strengths[ring_id] += 0.1
             else:
                 self.agent_state.connection_strengths[ring_id] *= 0.95
+        self.agent_state.current_focus = list(self.agent_state.connection_strengths.keys())[
+            list(self.agent_state.connection_strengths.values())
+            .index(max(self.agent_state.connection_strengths.values()))]
 
     def get_agent_status(self) -> Dict:
         """Get current status of the agent"""
@@ -353,7 +463,6 @@ class AgentLLM:
             return f"Error processing input: {str(e)}"
 
 
-
 # Example usage
 
 def t_llm():
@@ -394,11 +503,7 @@ def main():
 
     # Initial content for the base ring
     initial_content = """
-    Base cognitive framework:
-    1. Process user input
-    2. Evaluate context
-    3. Select appropriate action
-    4. Generate response
+    Think deep and oly for ur self
     """
 
     # Create cognitive network
@@ -406,10 +511,19 @@ def main():
         user_llm=user_interface_llm,
         agent_llm=agent_llm,
         initial_ring_content=initial_content,
-        inference_time=0.6,
-        num_empty_rings=1,
+        inference_time=5,
+        num_empty_rings=4,
         auto_save=False,
+        name="test1",
+        display=True,
     )
+
+    t = time.process_time()
+    cognitive_net.internal_update()
+    print("time.process_time() - t:", time.process_time() - t)
+
+
+    cognitive_net.print_last_monolog()
 
     # Example interaction
     user_inputs = [
@@ -419,21 +533,30 @@ def main():
         "Let's try a different topic"
     ]
     response = cognitive_net.process_user_input("Hi main Name Ist Markin!")
+
+    cognitive_net.print_last_monolog()
     print(response)
 
     for user_input in user_inputs:
         print(f"\nUser: {user_input}")
         response = cognitive_net.process_user_input(user_input)
+        cognitive_net.print_last_monolog()
         print(f"System: {response}")
         # Print agent status after each interaction
         cognitive_net.network.show.display_state('metrics')
-        cognitive_net.get_agent_status()
 
+    cognitive_net.print_inner_state()
+    input("WAIT for")
+    cognitive_net.print_inner_state()
+
+    while user_input := input():
+        response = cognitive_net.process_user_input(user_input)
+        cognitive_net.print_last_monolog()
+        print(f"System: {response}")
     input()
 
 
 if __name__ == "__main__":
-
     #network = NetworkManager.load_from_file("network.hex")
     #v = NetworkVisualizer(network)
     #input("DONE?")

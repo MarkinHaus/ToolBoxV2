@@ -11,12 +11,18 @@ class FileCache:
             os.makedirs(folder, exist_ok=True)
 
     def get(self, key):
-        with shelve.open(self.filename) as db:
-            return db.get(key)
+        try:
+            with shelve.open(self.filename) as db:
+                return db.get(key.replace('\x00', ''))
+        except Exception as e:
+            return None
 
     def set(self, key, value):
-        with shelve.open(self.filename, writeback=True) as db:
-            db[key] = value
+        try:
+            with shelve.open(self.filename, writeback=True) as db:
+                db[key.replace('\x00', '')] = value
+        except Exception as e:
+            return None
 
     def cleanup(self):
         # Check if the folder exists and is empty

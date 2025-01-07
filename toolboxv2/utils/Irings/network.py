@@ -1,7 +1,7 @@
+import threading
+import base64
 import hashlib
 import json
-import threading
-import time
 import zlib
 from collections import defaultdict
 from datetime import datetime
@@ -10,23 +10,171 @@ import networkx as nx
 from tqdm import tqdm
 
 from toolboxv2.utils.Irings.tk_live import NetworkVisualizer, process_with_visualization
-from toolboxv2.utils.Irings.utils import RingSerializer, RingFormatter
+from toolboxv2.utils.Irings.utils import SemanticConceptSplitter
 from toolboxv2.utils.Irings.Optimizer import RingRestructurer, TopologyOptimizer
-from toolboxv2.utils.Irings.splitters import SemanticConceptSplitter
-from toolboxv2.utils.Irings.zero import IntelligenceRing, Concept
-from typing import List, Dict, Tuple, Set, Optional
+from toolboxv2.utils.Irings.one import IntelligenceRing, Concept
+from typing import List, Dict, Tuple, Set, Optional, Any
 import numpy as np
 from dataclasses import dataclass
+
+
+class RingSerializer:
+
+    def _concept_to_dict(self, concept: Concept) -> Dict[str, Any]:
+        return {
+            'id': concept.id,
+            'name': concept.name,
+            'ttl': int(concept.ttl),
+            'created_at': concept.created_at.isoformat(),
+            'vector': base64.b64encode(concept.vector.tobytes()).decode('utf-8'),
+            'vector_shape': concept.vector.shape,
+            'contradictions': list(concept.contradictions),
+            'similar_concepts': list(concept.similar_concepts),
+            'relations': {k: float(v) for k, v in concept.relations.items()},
+            'stage': concept.stage,
+            'metadata': concept.metadata
+
+        }
+
+    def _dict_to_concept(self, data: Dict[str, Any]) -> Concept:
+        vector_bytes = base64.b64decode(data['vector'].encode('utf-8'))
+        vector = np.frombuffer(vector_bytes, dtype=np.float32).reshape(data['vector_shape'])
+
+        return Concept(
+            id=data['id'],
+            name=data['name'],
+            ttl=data['ttl'],
+            created_at=datetime.fromisoformat(data['created_at']),
+            vector=vector,
+            contradictions=set(data['contradictions']),
+            similar_concepts=set(data['similar_concepts']),
+            relations=data['relations'],
+            stage=data['stage'],
+            metadata=data['metadata']
+        )
+
+    def ring_to_hex(self, ring: IntelligenceRing) -> str:
+        data = {
+            'ring_id': ring.ring_id,
+            'metadata': {
+                'timestamp': datetime.now().isoformat(),
+                'num_threads': ring.num_threads,
+                'max_concepts': ring.concept_graph.max_concepts,
+                'max_relations': ring.concept_graph.max_relations
+            }
+        }
+        json_str = json.dumps(data)
+        compressed = zlib.compress(json_str.encode('utf-8'))
+        hex_code = compressed.hex()
+        checksum = hashlib.sha256(hex_code.encode()).hexdigest()[:8]
+
+        return f"{checksum}:{hex_code}"
+
+    def hex_to_ring(self, hex_string: str) -> IntelligenceRing:
+        try:
+            checksum, hex_code = hex_string.split(':')
+            if checksum != hashlib.sha256(hex_code.encode()).hexdigest()[:8]:
+                raise ValueError("Checksum verification failed")
+
+            compressed = bytes.fromhex(hex_code)
+            json_str = zlib.decompress(compressed).decode('utf-8')
+            data = json.loads(json_str)
+
+            ring = IntelligenceRing(
+                ring_id=data['ring_id'],
+                num_threads=data['metadata']['num_threads']
+            )
+
+            ring.concept_graph.max_concepts = data['metadata']['max_concepts']
+            ring.concept_graph.max_relations = data['metadata']['max_relations']
+
+            return ring
+
+        except Exception as e:
+            raise ValueError(f"Failed to deserialize ring: {str(e)}")
+
+
+class RingFormatter:
+    @staticmethod
+    def format_ring_data(ring_data: dict, mode: str) -> str:
+        formatters = {
+            'explain': RingFormatter._format_explanation,
+            'graph': RingFormatter._format_graph,
+            'summary': RingFormatter._format_summary,
+            'technical': RingFormatter._format_technical,
+            'llm': RingFormatter._format_llm,
+            'row': lambda x: x
+        }
+        return formatters.get(mode, RingFormatter._format_explanation)(ring_data)
+
+    @staticmethod
+    def _format_explanation(data: dict) -> str:
+        concepts = sorted(data['concepts'], key=lambda x: x['stage'], reverse=True)
+
+        output = [
+            f"Ring ID: {data['ring_id']}",
+            "\nKey Concepts:",
+            *[f"- {c['name']} (Stage {c['stage']})" for c in concepts if c['stage'] > 2],
+            "\nEmerging Concepts:",
+            *[f"- {c['name']} (Stage {c['stage']})" for c in concepts if c['stage'] <= 2],
+            f"\nTotal Concepts: {len(concepts)}",
+            f"Created: {data['metadata']['timestamp']}"
+        ]
+        return '\n'.join(output)
+
+    @staticmethod
+    def _format_graph(data: dict) -> str:
+        output = ["Concept Graph:", ""]
+        for concept in data['concepts']:
+            output.extend([
+                f"{concept['name']}",
+                f"├── Stage: {concept['stage']}",
+                f"└── Metadata: {concept['metadata']}"
+            ])
+        return '\n'.join(output)
+
+    @staticmethod
+    def _format_summary(data: dict) -> str:
+        mature_concepts = [c for c in data['concepts'] if c['stage'] > 2]
+        return (f"Ring {data['ring_id']} contains {len(data['concepts'])} concepts "
+                f"({len(mature_concepts)} mature)")
+
+    @staticmethod
+    def _format_technical(data: dict) -> str:
+        return json.dumps(data, indent=2)
+
+    @staticmethod
+    def _format_llm(data: dict) -> str:
+        concepts = sorted(data['concepts'], key=lambda x: x['stage'], reverse=True)
+
+        output = [
+            f"# Ring Analysis ({data['ring_id']})",
+            f"## Maturity Analysis",
+            f"- Total Concepts: {len(concepts)}",
+            f"- Mature Concepts: {len([c for c in concepts if c['stage'] > 2])}",
+            f"- Developing Concepts: {len([c for c in concepts if c['stage'] <= 2])}",
+            "",
+            "## Key Concepts",
+            *[f"- {c['name']} [Stage {c['stage']}]" for c in concepts[:5]],
+            "",
+            "## Metadata",
+            f"- Created: {data['metadata']['timestamp']}"
+        ]
+        return '\n'.join(output)
+
 
 
 @dataclass
 class NetworkMetrics:
     new_ideas: int = 0
+    latest_concepts: List[str] = None
     base_concepts: Dict[str, Set[str]] = None
     last_activated: str = ""
     interactions: Dict[str, int] = None
 
     def __post_init__(self):
+        if self.latest_concepts is None:
+            self.latest_concepts = []
         if self.base_concepts is None:
             self.base_concepts = {}
         if self.interactions is None:
@@ -40,9 +188,10 @@ class NetworkState:
 
 
 class NetworkManager:
-    def __init__(self, num_empty_rings: int, preset_rings: List[IntelligenceRing] or None, max_connections = None, max_new = 15):
+    def __init__(self, num_empty_rings: int,  preset_rings: List[IntelligenceRing] or None, name="MainN", max_connections = None, max_new = 15):
         self.max_connections = (num_empty_rings+len(preset_rings)) // 2 if max_connections is None else max_connections
         self.max_new = max_new
+        self.name = name
         self.rings: Dict[str, IntelligenceRing] = {}
         self.connections: Dict[str, Dict[str, float]] = defaultdict(dict)
         self.state = NetworkState.ACTIVE
@@ -72,14 +221,15 @@ class NetworkManager:
 
         # Create empty rings
         for i in range(num_empty):
-            ring_id = f"ring-{i}"
+            ring_id = f"ring-{i}-"+self.name
             self.rings[ring_id] = IntelligenceRing(ring_id)
 
         # Initialize full connectivity
         self._establish_initial_connections()
 
     def add_ring(self, ring_id):
-        self.rings[ring_id] = IntelligenceRing(ring_id)
+        self.rings[ring_id+'-'+self.name] = IntelligenceRing(ring_id+'-'+self.name)
+        return ring_id+'-'+self.name
 
     def _establish_initial_connections(self):
         ring_ids = list(self.rings.keys())
@@ -96,20 +246,22 @@ class NetworkManager:
                     self.rings[ring_id].adapter
                 )
 
-    def process_input(self, text: str) -> str:
+    def process_input(self, text: str, v=None) -> List[str]:
         if self.state != NetworkState.ACTIVE:
-            return "Network is not active"
+            raise ValueError("Network is not active")
 
         vector = self.rings[next(iter(self.rings))].input_processor.process_text(text)
         subconcepts = self.splitter.split(text, vector)
-
+        self.metrics.latest_concepts = []
         # Process each subconcept
         results = []
         for subconcept in tqdm(iterable=subconcepts, desc="Process", total=len(subconcepts)):
             ring_id = self._route_information(subconcept.vector)
+            if v is not None:
+                v.mark_active(ring_id)
             self._process_in_ring(
                 ring_id,
-                subconcept.metadata["source_text"],
+                subconcept.metadata["text"],
                 subconcept.vector
             )
             self._update_metrics(ring_id)
@@ -117,6 +269,8 @@ class NetworkManager:
             for s in subconcept.relations:
                 s_vector = self.rings[next(iter(self.rings))].input_processor.process_text(s)
                 s_ring = self._route_information(s_vector)
+                if v is not None:
+                    v.mark_active(s_ring)
                 self._process_in_ring(s_ring, s, vector)
                 self._update_metrics(s_ring)
 
@@ -125,7 +279,7 @@ class NetworkManager:
             self.topology_optimizer.optimize()
 
         # Restructure affected rings
-        for ring_id in set(results):
+        for ring_id in tqdm(set(results), desc=f"Restructure rings", total=len(set(results))):
             restructurer = RingRestructurer(self.rings[ring_id])
             restructurer.restructure()
 
@@ -137,23 +291,30 @@ class NetworkManager:
 
         for ring_id, ring in self.rings.items():
             if not ring.concept_graph.concepts:
+                best_similarity = 0.5
+                best_ring_id = ring_id
                 continue
 
+            for concept in ring.concept_graph.concepts.values():
+                if not concept.vector.shape and 'text' in concept.metadata:
+                    concept.vector = ring.input_processor.process_text(concept.metadata.get('text', concept.name))
             # Get similarity to ring's key concepts
             similarities = [
                 np.dot(vector, concept.vector)
                 for concept in ring.concept_graph.concepts.values()
                 if concept.stage > 0
             ]
-
             if similarities:
                 max_sim = max(similarities)
                 if max_sim > best_similarity:
                     best_similarity = max_sim
                     best_ring_id = ring_id
 
-        if best_ring_id is None:
+        if best_similarity < 0.2:
             return self._get_empty_ring()
+
+        if best_ring_id is None:
+            return self.add_ring("new-"+str(len(self.rings.keys())))
 
         return best_ring_id
 
@@ -162,12 +323,7 @@ class NetworkManager:
 
         # If empty ring, establish key concept
         if not ring.concept_graph.concepts:
-            concept_id = ring.concept_graph.add_concept(
-                name=text[:50],
-                vector=vector,
-                ttl=3,
-                metadata={"type": "key_concept", 'text': text}
-            )
+            concept_id = ring.process(text, metadata={"type": "key_concept"})
             return
 
         # Process in existing ring
@@ -176,36 +332,51 @@ class NetworkManager:
 
         # Process each subconcept
         for subconcept in subconcepts[:self.max_new]:
-            concept_id = ring.concept_graph.add_concept(
-                name=text[:50],
-                vector=subconcept.vector,
-                metadata={"type": "derived", 'text': subconcept.metadata["source_text"]}
-            )
+            parrent_id = ring.process(subconcept.metadata["text"], metadata={"type": "derived"})
+            self.metrics.latest_concepts.append(f"{ring_id}:{parrent_id}")
 
             for s in subconcept.relations:
-                s_vector = ring.input_processor.process_text(s)
-                concept_id = ring.concept_graph.add_concept(
-                    name=s[:50],
-                    vector=s_vector,
-                    metadata={"type": "derived", 'text': s}
-                )
+                d_id = ring.process(s, metadata={"type": "derived", "parent": parrent_id})
+                self.metrics.latest_concepts.append(f"{d_id}:{parrent_id}")
 
         # Update connections based on concept relations
         self._update_connections(ring_id)
 
+    def _is_connected(self, source_ring_id):
+        if source_ring_id not in self.rings:
+            source_ring_id = self.add_ring(source_ring_id.replace('-'+self.name, ''))
+        if self.connections.keys() == self.rings.keys():
+            return
+        for ring_keys in self.rings.keys():
+            if ring_keys not in self.connections:
+                self.connections[ring_keys] = {}
+        ring_ids = list(self.rings.keys())
+        for i, ring_id in enumerate(ring_ids):
+            weight = 1.0
+            self.connections[ring_id][source_ring_id] = weight
+            self.connections[source_ring_id][ring_id] = weight
+
+            self.rings[ring_id].adapter.connect_ring(
+                self.rings[source_ring_id].adapter
+            )
+            self.rings[source_ring_id].adapter.connect_ring(
+                self.rings[ring_id].adapter
+            )
 
     def _update_connections(self, source_ring_id: str):
         with self.lock:
-            connections = self.connections[source_ring_id]
+            self._is_connected(source_ring_id)
+            connections = self.connections.get(source_ring_id)
 
             # Remove lowest weight connection if too many
             if len(connections) > self.max_connections:
                 min_ring = min(connections.items(), key=lambda x: x[1])[0]
                 del connections[min_ring]
                 del self.connections[min_ring][source_ring_id]
-
-                self.rings[source_ring_id].adapter.connected_rings.pop(min_ring)
-                self.rings[min_ring].adapter.connected_rings.pop(source_ring_id)
+                if min_ring in self.rings[source_ring_id].adapter.connected_rings:
+                    self.rings[source_ring_id].adapter.connected_rings.pop(min_ring)
+                if source_ring_id in self.rings[min_ring].adapter.connected_rings:
+                    self.rings[min_ring].adapter.connected_rings.pop(source_ring_id)
 
             # Update remaining weights based on concept similarity
             source_ring = self.rings[source_ring_id]
@@ -221,8 +392,8 @@ class NetworkManager:
 
     def _calculate_ring_similarity(self, graph1, graph2) -> float:
         similarities = []
-        for c1 in graph1.concepts.values():
-            for c2 in graph2.concepts.values():
+        for c1 in list(graph1.concepts.values()).copy():
+            for c2 in list(graph2.concepts.values()).copy():
                 similarities.append(np.dot(c1.vector, c2.vector))
         return max(similarities) if similarities else 0.0
 
@@ -287,16 +458,27 @@ class NetworkManager:
             "network_state": self.state
         }
 
-    def get_references(self, text: str, top_k: int = 5, concept_elem=None) -> List[Tuple[str, float]]:
-        vector = self.rings[next(iter(self.rings))].input_processor.process_text(text)
-
+    def get_references(self, text: str, top_k: int = 5, concept_elem=None, ring_id=None, all_=None) -> List[Tuple[str, float]]:
+        v = self.rings[next(iter(self.rings))].input_processor.process_text(text)
+        if v is None:
+            v = self.rings[next(iter(self.rings))].input_processor.process_text(text[:50])
+        sub_set = self.splitter.split(text, v)
         all_similarities = []
-        for ring_id, ring in self.rings.items():
-            similarities = ring.retrieval_system.find_similar(vector, top_k)
-            all_similarities.extend([
-                (f"{ring_id}:{concept_id}" if not (concept_elem is not None and hasattr(Concept, concept_elem)) else getattr(self.get_concept_from_code(f"{ring_id}:{concept_id}"), concept_elem), score)
-                for concept_id, score in similarities
-            ])
+
+        for s in sub_set:
+            rings = self.rings.items() if all_ is True else self._route_information(s.vector) if ring_id not in self.rings else ring_id
+            rings = rings if all_ is True else [(rings, self.rings[rings])]
+            for ring_id_, ring in rings:
+                try:
+                    similarities = ring.retrieval_system.find_similar(s.vector, top_k)
+                except RuntimeError:
+                    continue
+                all_similarities.extend([
+                    (
+                    f"{ring_id_}:{concept_id}" if concept_elem is None else getattr(
+                        self.get_concept_from_code(f"{ring_id_}:{concept_id}"), concept_elem), score)
+                    for concept_id, score in similarities
+                ])
 
         return sorted(all_similarities, key=lambda x: x[1], reverse=True)[:top_k]
 
@@ -307,6 +489,11 @@ class NetworkManager:
         if ring_id not in self.rings:
             return None
         return self.rings[ring_id].get_concept_by_id(concept_id)
+
+    def get_best_ring(self, text, is_vector=False):
+        if not is_vector:
+            text = self.rings[next(iter(self.rings))].input_processor.process_text(text)
+        return self._route_information(text)
 
     def save_to_file(self, filepath: str):
         serializer = NetworkSerializer()
@@ -334,6 +521,7 @@ class NetworkSerializer:
             },
             'connections': {k: {_k: float(_v) for _k, _v in v.items()} for k, v in network.connections.items()},
             'state': network.state,
+            'name': network.name,
             'metrics': {
                 'new_ideas': network.metrics.new_ideas,
                 'base_concepts': {
@@ -371,7 +559,7 @@ class NetworkSerializer:
             }
 
             # Create network
-            network = NetworkManager(0, list(rings.values()))
+            network = NetworkManager(0, list(rings.values()), name=data['name'])
             # network.rings = rings
             network.connections = data['connections']
             network.state = data['state']
@@ -437,7 +625,8 @@ class NetworkDisplayer:
                 }
             } for ring_id, ring in self.network.rings.items()],
             'connections': dict(self.network.connections),
-            'metrics': self.network.get_metrics()
+            'metrics': self.network.get_metrics(),
+            'name': self.network.name
         }
 
     def _display_network_graph(self, data: Dict) -> str:
@@ -508,7 +697,7 @@ class NetworkDisplayer:
 
 if __name__ == "__main__":
     # preset_rings = [IntelligenceRing("preset-1"), IntelligenceRing("preset-2")]
-    network = NetworkManager(num_empty_rings=3, preset_rings=None)
+    network = NetworkManager(num_empty_rings=3, preset_rings=None, name="test")
 
     visualizer = NetworkVisualizer(network)
 
