@@ -318,7 +318,7 @@ class InputProcessor(metaclass=Singleton):
                         if chunk_embedding:
                             chunk_embeddings.append(chunk_embedding)
                     except Exception:
-                        pass
+                        continue
                     try:
                         input_data = InputData(chunk[len(chunk)//2:], modality)
                         chunk_embedding = self.embedding_function.process_input(input_data).flatten().tolist()
@@ -359,6 +359,12 @@ class InputProcessor(metaclass=Singleton):
             return np.zeros(self.vector_size)
         emb = self.get_embedding(content, modality="text")
         return emb
+
+    def pcs(self, x,y):
+        ex, ey = self.process_text(x), self.process_text(y)
+        if ex is not None and ey is not None:
+            return self.compute_similarity(ex,ey)
+        return -1
 
     @staticmethod
     def compute_similarity(x1: np.ndarray, x2: np.ndarray) -> float:

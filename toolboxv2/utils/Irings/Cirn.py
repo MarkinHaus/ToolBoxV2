@@ -100,10 +100,10 @@ class CognitiveNetwork:
         self.rs_config = rs_config or {
             "confidence_threshold": 0.5,
             "retrieval_threshold": 0.8,
-            "max_notes": 4,
-            "max_depth": 4,
-            "max_branches_per_node": 4,
-            "max_retrievals_per_branch": 4
+            "max_notes": 2,
+            "max_depth": 2,
+            "max_branches_per_node": 1,
+            "max_retrievals_per_branch": 2
         }
         self.rs: Optional[ReasoningSystem] = None
 
@@ -119,7 +119,7 @@ class CognitiveNetwork:
         self.rs = ReasoningSystem(
             llm=self.think_llm,
             retriever=lambda text: '\n\n'.join(
-                [x['text'] for x ,s in self.network.get_references(text, concept_elem="metadata", all_=True) if 'text' in x.keys()]),
+                [x['text'] for x ,s in self.network.get_references(text, concept_elem="metadata", all_=False) if 'text' in x.keys()]),
             vector_encoder=self.network.rings[self.agent_state.current_focus].input_processor.process_text,
             similarity_engine=self.network.rings[self.agent_state.current_focus].input_processor.compute_similarity,
             vector_dimension=self.network.rings[self.agent_state.current_focus].input_processor.vector_size,
@@ -153,14 +153,13 @@ class CognitiveNetwork:
 
     def _inner_monologue(self, context: str) -> str:
         """Generate inner thoughts based on current context"""
-        cfr = ""
-        if c := self.network.rings[self.agent_state.current_focus].retrieval_system.find_similar(self.network.rings[self.agent_state.current_focus].input_processor.process_text(context)):
-            cfr = self.network.rings[self.agent_state.current_focus].get_concept_by_id(c[0])
+        texts = [t for t in [x['metadata']['text'] if 'text' in x['metadata'] else x['name'] for x in self._get_active_concepts()]
+         if self.network.rings[self.agent_state.current_focus].input_processor.pcs(t,context) > 0.2 ]
+        concepts_str = "\n\nConcept: ".join(texts)
         monologue_prompt = f"""
         Current Context: {context[:100000]}
-        Current Focus Ring: {cfr}
         Last Action: {self.agent_state.last_action['details']}
-        Active Concepts: {[x['metadata']['text'] if 'text' in x['metadata'] else x['name'] for x in self._get_active_concepts()]}
+        Active Concepts: {concepts_str}
 
         Generate inner reasoning about the current situation and next steps.
         """
@@ -170,6 +169,7 @@ class CognitiveNetwork:
 
         thought, last_reasoning_logs = self.rs.generate(monologue_prompt, True)
 
+        print("SYSTEM inner ms", thought)
         thought = str(thought)
         self.agent_state.inner_state["monologue"].append({
             "type": "inner_monologue",
@@ -207,14 +207,13 @@ class CognitiveNetwork:
             user_input: The input text from user
             callback: Optional function to handle the final processed result
         """
-        ac = '\n\n'.join([x.get('metadata', {}).get('text')
-                          for x in self._get_active_concepts()][:self.network.max_new])
         # Get immediate interface response
+        if not self.agent_state.inner_state['thought_chain']:
+            self._inner_monologue(user_input)
         interface_response = self.user_llm.process(
             f"User input: {user_input[:100000]}\nProvide immediate clear response."
-            f"active_concepts: \n{ac}"
-            f"Agen Inner thought: {self.agent_state.inner_state['thought_chain'][-1] if self.agent_state.inner_state['thought_chain'] else 'None'}\n"
-            f"Provide an immediate, clear, and concise response to the user based on the available context."
+            f"PAST HISTORY Agen Inner thought: {self.agent_state.inner_state['thought_chain'][-1] if self.agent_state.inner_state['thought_chain'] else 'None'}\n"
+            f"HISTORY END\nProvide an immediate, clear, and concise response to the user based on the available context."
             ,
             max_tokens=None
         )
@@ -291,6 +290,7 @@ class CognitiveNetwork:
             self.init_reasoning_system()
 
         thought, last_reasoning_logs = self.rs.generate(guided_prompt, True)
+        print("SYSTEM inner gt:", thought)
         self.agent_state.inner_state["monologue"].append({
             "type": "guided_thoughts",
             "timestamp": time.time(),

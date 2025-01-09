@@ -130,7 +130,7 @@ class ReasoningSystem:
         """Encode state into vector representation"""
         return self.vector_encoder(state)
 
-    def _generate_retrieval_queries(self, node: ReasoningNode) -> List[str]:
+    def _generate_retrieval_queries(self, node: ReasoningNode, iquery) -> List[str]:
         """Generate diverse retrieval queries based on current reasoning state"""
         queries = []
         base_query = node.state
@@ -138,12 +138,13 @@ class ReasoningSystem:
         # Generate variations using different reasoning types
         for reasoning_type in ReasoningType:
             prompt = f"""
+            Current query: {iquery}
             Current state: {node.state}
             Current reasoning: {node.reasoning}
             Reasoning type: {reasoning_type.value}
-            Generate a focused query to retrieve relevant information. from a vector db!
+            Generate a focused query to retrieve relevant information. for a vector db!
             """
-            query = self.llm.process(prompt, max_tokens=75)
+            query = self.llm.process(prompt, max_tokens=15)
             queries.append(query)
 
         return queries[:self.max_retrievals_per_branch]
@@ -164,7 +165,7 @@ class ReasoningSystem:
 
         # Retrieve relevant information
         retrieved_info = []
-        retrieval_queries = self._generate_retrieval_queries(node)
+        retrieval_queries = self._generate_retrieval_queries(node, query)
 
         for ret_query in retrieval_queries:
             # Check cache first
@@ -232,6 +233,9 @@ class ReasoningSystem:
             loop += 1
             print(f"LOOP INDEX {loop} max : {self.max_notes}")
             _, current_node = priority_queue.get()
+            print("Note Confidace:", _)
+            if _ != 0.0 and _ < 0.1:
+                continue
 
             if (current_node.confidence >= self.confidence_threshold or
                 current_node.depth >= self.max_depth):
@@ -253,7 +257,7 @@ class ReasoningSystem:
             for node in new_nodes:
                 if node.state not in self.active_nodes:
                     current_node.children.append(node)
-                    priority_queue.put((-node.confidence, node))
+                    priority_queue.put((node.confidence, node))
                     self.active_nodes.add(node.state)
 
                     if node.confidence > best_node.confidence:
@@ -295,9 +299,9 @@ class ReasoningSystem:
         # Initialize root node
         initial_state = ""
         root = ReasoningNode(
-            state=initial_state,
+            state=query,
             vector_state=VectorState(
-                embedding=self._encode_state(initial_state)
+                embedding=self._encode_state(query)
             ),
             reasoning_type="Custom",
             reasoning="Initial state",

@@ -389,7 +389,7 @@ async def installer(app: Optional[App], module_name: str, build_state=True):
         if len(lpm.keys()) > 0 else (
         app.print(f"Mod version is  {remote_pack_version=}"))
     if remote_pack_version >= local_pack_version:
-        mod_url = response['url'].replace(app.session.base, "/")
+        mod_url = "/installer/" + response['url'].replace(app.session.base, "/").split("/installer/")[-1]
         print(f"mod url is : {app.session.base + mod_url}")
         if not await app.session.download_file(mod_url, app.start_dir + '/mods_sto'):
             print("failed to download mod")
