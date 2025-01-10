@@ -97,7 +97,7 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
     log_format = f"{app_name} %(asctime)s - %(name)s - %(levelname)s - %(filename)s - %(funcName)s:%(lineno)d - %(message)s"
 
     if interminal:
-        logging.basicConfig(level=level, format=f"{app_name} %(asctime)s %(levelname)s - %(message)s", datefmt="%Y-%m-%d#%H:%M:%S")
+        logging.basicConfig(level=level, format=f"{app_name} %(asctime)s %(levelname)s %(name)s - %(message)s", datefmt="%Y-%m-%d#%H:%M:%S")
     else:
         logging.basicConfig(level=level, filename=log_filename, format=log_format, datefmt="%Y-%m-%d %H:%M:%S")
 

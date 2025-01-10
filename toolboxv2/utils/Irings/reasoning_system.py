@@ -3,13 +3,15 @@ import os
 import threading
 import time
 
+from pydantic import BaseModel
+
 from toolboxv2.utils.Irings.network import NetworkManager
 from toolboxv2.utils.Irings.tk_live import NetworkVisualizer
 from toolboxv2.utils.Irings.one import IntelligenceRing, InputProcessor
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Set, Union
+from typing import Any, Dict, List, Optional, Tuple, Set, Union, Callable
 from queue import PriorityQueue
 import numpy as np
 from collections import defaultdict
@@ -92,7 +94,7 @@ class ReasoningSystem:
 
     def __init__(
         self,
-        llm: Any,
+        format_class: Callable,
         retriever: Any,
         vector_encoder: Any,
         similarity_engine: Optional[Any] = None,
@@ -105,7 +107,7 @@ class ReasoningSystem:
         max_retrievals_per_branch: int = 2,
         extra_reasoning_steps: Optional[Any] = None,
     ):
-        self.llm = llm
+        self.format_class = format_class
         self.retriever = retriever
         self.vector_encoder = vector_encoder
         self.similarity_engine = similarity_engine
@@ -132,21 +134,32 @@ class ReasoningSystem:
 
     def _generate_retrieval_queries(self, node: ReasoningNode, iquery) -> List[str]:
         """Generate diverse retrieval queries based on current reasoning state"""
-        queries = []
-        base_query = node.state
 
+        class RetrievalQuery(BaseModel):
+            """focused query to retrieve relevant information. for a vector db!"""
+            query: str
+
+        class RetrievalQueries(BaseModel):
+            queries: List[RetrievalQuery]
+
+        queries = []
         # Generate variations using different reasoning types
-        for reasoning_type in ReasoningType:
+        for i in range(len(iquery)//10000, 10000):
             prompt = f"""
-            Current query: {iquery}
+            Current query: {iquery[i:i+10000]}
             Current state: {node.state}
             Current reasoning: {node.reasoning}
-            Reasoning type: {reasoning_type.value}
             Generate a focused query to retrieve relevant information. for a vector db!
             """
-            query = self.llm.process(prompt, max_tokens=15)
-            queries.append(query)
+            queries += [(x.query, self.similarity_engine(
+                self._encode_state(x.query),
+                self._encode_state(iquery)
+            )) for x in self.format_class(RetrievalQueries, prompt, agent_name="think").queries if x.query]
+            print(f"Generated {len(queries)}")
+            if len(queries) > self.max_retrievals_per_branch*1.75:
+                break
 
+        queries = [x[0] for x in sorted(queries, key=lambda x: x[1], reverse=True)]
         return queries[:self.max_retrievals_per_branch]
 
     def _apply_flare_reasoning(
@@ -194,9 +207,13 @@ class ReasoningSystem:
         for _ in range(self.max_branches_per_node):
             combined_context = f"{context} {node.state} {' '.join(retrieved_info)}"
 
-            new_state = self.llm.process(
-                f"Reasoning about {query} with context: {combined_context}", max_tokens=300
-            )
+            class ReasoningState(BaseModel):
+                """focused internal next reasoning and multistep thinking!"""
+                state: str
+
+            new_state = self.format_class(ReasoningState,
+                                          f"Reasoning about {query} with context: {combined_context}", agent_name="think"
+                                          ).state
 
             confidence = self._calculate_confidence(new_state, context, retrieved_info)
             node.reasoning_path.append(ReasoningStep.REASONING)
@@ -247,10 +264,10 @@ class ReasoningSystem:
             new_nodes = []
             for i, ex_fuc in enumerate(self.extra_reasoning_steps):
                 #try:
-                    # print(f"Process {i} from {len(self.extra_reasoning_steps)} steps")
-                    new_nodes.extend(ex_fuc(current_node, query, context))
-                #except Exception as e:
-                #    print(f"Error applying extra reasoning step: {i} with {str(e)}")
+                # print(f"Process {i} from {len(self.extra_reasoning_steps)} steps")
+                new_nodes.extend(ex_fuc(current_node, query, context))
+            #except Exception as e:
+            #    print(f"Error applying extra reasoning step: {i} with {str(e)}")
             # new_nodes.extend(self._apply_tor_reasoning(current_node, query, context))
 
             # Add new nodes to queue

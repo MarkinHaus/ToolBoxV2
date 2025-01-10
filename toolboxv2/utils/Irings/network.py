@@ -1,3 +1,4 @@
+import random
 import threading
 import base64
 import hashlib
@@ -10,7 +11,7 @@ import networkx as nx
 from tqdm import tqdm
 
 from toolboxv2.utils.Irings.tk_live import NetworkVisualizer, process_with_visualization
-from toolboxv2.utils.Irings.utils import SemanticConceptSplitter
+from toolboxv2.utils.Irings.utils import SemanticConceptSplitter, SubConcept
 from toolboxv2.utils.Irings.Optimizer import RingRestructurer, TopologyOptimizer
 from toolboxv2.utils.Irings.one import IntelligenceRing, Concept
 from typing import List, Dict, Tuple, Set, Optional, Any
@@ -246,7 +247,7 @@ class NetworkManager:
                     self.rings[ring_id].adapter
                 )
 
-    def process_input(self, text: str, v=None) -> List[str]:
+    def process_input(self, text: str, v=None, get_subconcepts=False) -> List[str] or Tuple[List[str], List[SubConcept]]:
         if self.state != NetworkState.ACTIVE:
             raise ValueError("Network is not active")
 
@@ -283,6 +284,8 @@ class NetworkManager:
             restructurer = RingRestructurer(self.rings[ring_id])
             restructurer.restructure()
 
+        if get_subconcepts:
+            return results, subconcepts
         return results
 
     def _route_information(self, vector: np.ndarray) -> str:
@@ -294,8 +297,9 @@ class NetworkManager:
                 best_similarity = 0.5
                 best_ring_id = ring_id
                 continue
-
-            for concept in ring.concept_graph.concepts.values():
+            c = list(ring.concept_graph.concepts.values())
+            random.shuffle(c)
+            for concept in c[:50]:
                 if not concept.vector.shape and 'text' in concept.metadata:
                     concept.vector = ring.input_processor.process_text(concept.metadata.get('text', concept.name))
             # Get similarity to ring's key concepts

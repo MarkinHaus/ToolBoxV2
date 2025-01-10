@@ -845,6 +845,7 @@ async def helper(id_name):
     tb_app.get_mod("WebSocketManager")
 
     from .fast_api_install import router as install_router
+    from .fast_lit import st_router as lit_router
     tb_app.sprint("loading CloudM")
     tb_app.get_mod("CloudM")
     # all_mods = tb_app.get_all_mods()
@@ -860,6 +861,7 @@ async def helper(id_name):
     install_router.add_api_route('/' + "get", get_d, methods=["GET"], description="get_species_data")
     tb_app.sprint("include Installer")
     app.include_router(install_router)
+    app.include_router(lit_router)
 
     async def proxi_helper(*__args, **__kwargs):
         await tb_app.client.get('sender')({'name': "a_run_any", 'args': __args, 'kwargs': __kwargs})

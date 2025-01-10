@@ -411,7 +411,7 @@ def user_input(app: App,
 
     @bindings.add('s-up')
     def run_in_shell(event):
-        buff = event.app.current_buffer.text
+        buff = event.st_router.current_buffer.text
 
         def run_in_console():
             if buff.startswith('cd'):
@@ -421,11 +421,11 @@ def user_input(app: App,
             os.system(buff)
 
         run_in_terminal(run_in_console)
-        event.app.current_buffer.text = ""
+        event.st_router.current_buffer.text = ""
 
     @bindings.add('c-up')
     def run_in_shell(event):
-        buff = event.app.current_buffer.text
+        buff = event.st_router.current_buffer.text
 
         def run_in_console():
             if buff.startswith('cd'):
@@ -450,12 +450,12 @@ def user_input(app: App,
             app.locals['user']['counts'] += 1
 
         run_in_terminal(run_in_console)
-        event.app.current_buffer.text = ""
+        event.st_router.current_buffer.text = ""
 
     @bindings.add('s-left')
     def user_helper(event):
 
-        buff = event.app.current_buffer.text.strip()
+        buff = event.st_router.current_buffer.text.strip()
 
         def print_help():
             if buff == "":
@@ -478,7 +478,7 @@ def user_input(app: App,
     @bindings.add('c-space')
     def state_completion(event):
         " Initialize autocompletion, or select the next completion. "
-        buff = event.app.current_buffer
+        buff = event.st_router.current_buffer
         if buff.complete_state:
             buff.complete_next()
         else:

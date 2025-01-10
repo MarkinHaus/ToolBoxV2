@@ -36,12 +36,14 @@ class CognitiveNetwork:
         network_file="network.hex",
         display=False,
         think_llm=None,
+        format_class=None,
         rs_config=None,
     ):
         self._processing_thread = None
         self.name = name
         self.user_llm = user_llm
         self.think_llm = think_llm if think_llm is not None else user_llm
+        self.format_class = format_class if format_class is not None else user_llm
         self.agent_llm = agent_llm
         self.inference_time = inference_time
 
@@ -66,14 +68,14 @@ class CognitiveNetwork:
             self._v = v
             self.og_processor = self.network.process_input
 
-            def process_with_visualization(text):
+            def process_with_visualization(text, **k):
                 """Process input text and update visualization"""
                 self.network.resume()
-                results = self.og_processor(text, v)
+                results = self.og_processor(text, v, **k)
                 self.network.freeze()
                 return results
 
-            self.network.process_input = lambda text: process_with_visualization(text)
+            self.network.process_input = lambda text, **k: process_with_visualization(text, **k)
 
         # Initialize agent state with improved structure
         self.agent_state = AgentState(
@@ -117,7 +119,7 @@ class CognitiveNetwork:
 
         # Initialize the reasoning system
         self.rs = ReasoningSystem(
-            llm=self.think_llm,
+            format_class=self.format_class,
             retriever=lambda text: '\n\n'.join(
                 [x['text'] for x ,s in self.network.get_references(text, concept_elem="metadata", all_=False) if 'text' in x.keys()]),
             vector_encoder=self.network.rings[self.agent_state.current_focus].input_processor.process_text,
@@ -156,18 +158,8 @@ class CognitiveNetwork:
         texts = [t for t in [x['metadata']['text'] if 'text' in x['metadata'] else x['name'] for x in self._get_active_concepts()]
          if self.network.rings[self.agent_state.current_focus].input_processor.pcs(t,context) > 0.2 ]
         concepts_str = "\n\nConcept: ".join(texts)
-        monologue_prompt = f"""
-        Current Context: {context[:100000]}
-        Last Action: {self.agent_state.last_action['details']}
-        Active Concepts: {concepts_str}
 
-        Generate inner reasoning about the current situation and next steps.
-        """
-
-        if self.rs is None:
-            self.init_reasoning_system()
-
-        thought, last_reasoning_logs = self.rs.generate(monologue_prompt, True)
+        thought, last_reasoning_logs = self.vFlare(context[:100000]+concepts_str[:10000], True)
 
         print("SYSTEM inner ms", thought)
         thought = str(thought)
@@ -281,15 +273,8 @@ class CognitiveNetwork:
         guided_prompt = f"""
         Previous thought: {last_thought}
         New context: {context}
-        Current focus: {self.agent_state.current_focus}
-
-        Generate refined thought considering previous context and new input.
         """
-
-        if self.rs is None:
-            self.init_reasoning_system()
-
-        thought, last_reasoning_logs = self.rs.generate(guided_prompt, True)
+        thought, last_reasoning_logs = self.vFlare(guided_prompt, True)
         print("SYSTEM inner gt:", thought)
         self.agent_state.inner_state["monologue"].append({
             "type": "guided_thoughts",
