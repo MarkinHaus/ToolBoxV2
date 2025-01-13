@@ -11,7 +11,7 @@ import requests
 from toolboxv2 import MainTool, FileHandler, get_app, Style
 from toolboxv2.utils.system.state_system import get_state_from_app, TbState
 from .UserInstances import UserInstances
-from ...utils.system.api import find_highest_zip_version_entry
+from ...utils.system.api import find_highest_zip_version_entry, find_highest_zip_version
 
 from .extras import create_magic_log_in
 
@@ -107,11 +107,8 @@ class Tools(MainTool, FileHandler):
     def get_mod_snapshot(self, mod_name):
         if mod_name is None:
             return None
-        try:
-            return find_highest_zip_version_entry(mod_name, filepath=f'{self.app.start_dir}/tbState.yaml')
-        except FileNotFoundError:
-            get_state_from_app(self.app)
-            return find_highest_zip_version_entry(mod_name, filepath=f'{self.app.start_dir}/tbState.yaml')
+        self.print("")
+        return find_highest_zip_version(mod_name, version_only=True)
 
 
 # Create a hashed password

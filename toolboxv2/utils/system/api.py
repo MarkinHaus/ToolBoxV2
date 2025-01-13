@@ -1,8 +1,6 @@
-
-
-import yaml
+from pathlib import Path
 from packaging import version
-
+import re
 
 def find_highest_zip_version_entry(name, target_app_version=None, filepath='tbState.yaml'):
     """
@@ -13,6 +11,7 @@ def find_highest_zip_version_entry(name, target_app_version=None, filepath='tbSt
     :param filepath: Der Pfad zur YAML-Datei.
     :return: Den Eintrag mit der höchsten ZIP-Version innerhalb der Ziel-App-Version oder None, falls nicht gefunden.
     """
+    import yaml
     highest_zip_ver = None
     highest_entry = {}
 
@@ -46,3 +45,45 @@ def find_highest_zip_version_entry(name, target_app_version=None, filepath='tbSt
                         highest_zip_ver = current_zip_ver
                         highest_entry = value
     return highest_entry
+
+
+def find_highest_zip_version(name_filter: str, app_version: str = None, root_dir: str = "mods_sto", version_only=False) -> str:
+    """
+    Findet die höchste verfügbare ZIP-Version in einem Verzeichnis basierend auf einem Namensfilter.
+
+    Args:
+        root_dir (str): Wurzelverzeichnis für die Suche
+        name_filter (str): Namensfilter für die ZIP-Dateien
+        app_version (str, optional): Aktuelle App-Version für Kompatibilitätsprüfung
+
+    Returns:
+        str: Pfad zur ZIP-Datei mit der höchsten Version oder None wenn keine gefunden
+    """
+
+    # Kompiliere den Regex-Pattern für die Dateinamen
+    pattern = fr"{name_filter}&v[0-9.]+§([0-9.]+)\.zip$"
+
+    highest_version = None
+    highest_version_file = None
+
+    # Durchsuche das Verzeichnis
+    root_path = Path(root_dir)
+    for file_path in root_path.rglob("*.zip"):
+        match = re.search(pattern, str(file_path).split("RST$")[-1])
+        if match:
+            zip_version = match.group(1)
+
+            # Prüfe App-Version Kompatibilität falls angegeben
+            if app_version:
+                file_app_version = re.search(r"&v([0-9.]+)§", str(file_path)).group(1)
+                if version.parse(file_app_version) > version.parse(app_version):
+                    continue
+
+            # Vergleiche Versionen
+            current_version = version.parse(zip_version)
+            if highest_version is None or current_version > highest_version:
+                highest_version = current_version
+                highest_version_file = str(file_path)
+    if version_only:
+        return str(highest_version)
+    return highest_version_file

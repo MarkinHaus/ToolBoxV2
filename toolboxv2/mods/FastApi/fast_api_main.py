@@ -863,32 +863,13 @@ async def helper(id_name):
     # all_mods = tb_app.get_all_mods()
     provider = os.environ.get("MOD_PROVIDER", default="http://127.0.0.1:5000/")
 
-    tb_state = [None]
 
     def get_d(name="CloudM"):
-        if tb_state[0] is None:
-            tb_state[0] = get_state_from_app(tb_app, simple_core_hub_url=provider)
         return tb_app.get_mod("CloudM").get_mod_snapshot(name)
 
-    install_router.add_api_route('/' + "get", get_d, methods=["GET"], description="get_species_data")
+    install_router.add_api_route('/' + "version", get_d, methods=["GET"], description="get_species_data")
     tb_app.sprint("include Installer")
     app.include_router(install_router)
-
-
-    from nicegui import ui
-
-    # Register a GUI
-    @ui.page('/custom-gui')
-    def custom_gui():
-        ui.label('Custom GUI')
-        ui.button('Click me!', on_click=lambda: ui.notify('Hello!'))
-
-    nicegui_manager.register_gui(
-        'my-gui',
-        setup_func=custom_gui,
-        mount_path='/custom-gui'
-    )
-
 
     async def proxi_helper(*__args, **__kwargs):
         await tb_app.client.get('sender')({'name': "a_run_any", 'args': __args, 'kwargs': __kwargs})

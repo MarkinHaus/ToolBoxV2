@@ -1,6 +1,4 @@
-import asyncio
-import json
-import os
+from packaging.version import Version
 import shutil
 import subprocess
 import sys
@@ -8,16 +6,20 @@ import tempfile
 import time
 import urllib.request
 import zipfile
-from typing import Optional
-from packaging import version as p_version
 
 import yaml
 from tqdm import tqdm
 
 from toolboxv2 import get_app, App, __version__, Spinner
 from toolboxv2.utils.extras.reqbuilder import generate_requirements
-from toolboxv2.utils.system.api import find_highest_zip_version_entry
+from toolboxv2.utils.system.api import find_highest_zip_version
 from toolboxv2.utils.system.types import ToolBoxInterfaces, Result
+from typing import Optional
+from packaging import version as pv
+from pathlib import Path
+import os
+import asyncio
+from toolboxv2.utils.system.state_system import get_state_from_app
 
 Name = 'CloudM'
 export = get_app(f"{Name}.Export").tb
@@ -25,7 +27,6 @@ version = "0.0.3"
 default_export = export(mod_name=Name, version=version, interface=ToolBoxInterfaces.native, test=False)
 mv = None
 
-from packaging.version import Version
 
 def increment_version(version_str: str, max_value: int = 99) -> str:
     """
@@ -224,56 +225,76 @@ def uninstall_module(path, module_name='', version='-.-.-', additional_dirs=None
     shutil.rmtree(zip_path)
 
 
-def unpack_and_move_module(zip_path, base_path='./mods', module_name=''):
+def unpack_and_move_module(zip_path: str, base_path: str = './mods', module_name: str = '') -> str:
     """
     Entpackt eine ZIP-Datei und verschiebt die Inhalte an die richtige Stelle.
+    Überschreibt existierende Dateien für Update-Unterstützung.
 
     Args:
-        zip_path (str): Pfad zur ZIP-Datei, die entpackt werden soll.
-        base_path (str): Basispfad, unter dem das Modul gespeichert werden soll.
-        module_name (str): Name des Moduls, der aus dem ZIP-Dateinamen extrahiert oder als Argument übergeben werden kann.
+        zip_path (str): Pfad zur ZIP-Datei, die entpackt werden soll
+        base_path (str): Basispfad, unter dem das Modul gespeichert werden soll
+        module_name (str): Name des Moduls (optional, wird sonst aus ZIP-Namen extrahiert)
+
+    Returns:
+        str: Name des installierten Moduls
     """
+    # Konvertiere Pfade zu Path-Objekten für bessere Handhabung
+    zip_path = Path(zip_path)
+    base_path = Path(base_path)
+
+    # Extrahiere Modulnamen falls nicht angegeben
     if not module_name:
-        # Extrahiere den Modulnamen aus dem ZIP-Pfad, wenn nicht explizit angegeben
-        module_name = os.path.basename(zip_path).split('$')[1].split('&')[0]
+        module_name = zip_path.name.split('$')[1].split('&')[0]
 
-    module_path = os.path.join(base_path, module_name)
+    module_path = base_path / module_name
+    temp_base = Path('./mods_sto/temp')
 
-    os.makedirs("./mods_sto/temp/", exist_ok=True)
-    # Temporäres Verzeichnis für das Entpacken erstellen
-    temp_dir = tempfile.mkdtemp(dir=os.path.join("./mods_sto", "temp"))
+    try:
+        # Erstelle temporäres Verzeichnis
+        temp_base.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=str(temp_base)) as temp_dir:
+            temp_dir = Path(temp_dir)
 
-    with Spinner(f"ZipFile extractall {zip_path[-15:]} to {temp_dir[-15:]}"):
-        # ZIP-Datei entpacken
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(temp_dir)
+            with Spinner(f"Extracting {zip_path.name}"):
+                # Entpacke ZIP-Datei
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(temp_dir)
 
-    # Sicherstellen, dass das Zielverzeichnis existiert
-    if os.path.isdir(module_name):
-        os.makedirs(module_path, exist_ok=True)
+            # Behandle Modul-Verzeichnis
+            source_module = temp_dir / module_name
+            if source_module.exists():
+                with Spinner(f"Installing module to {module_path}"):
+                    if module_path.exists():
+                        # Lösche existierendes Modul-Verzeichnis für sauberes Update
+                        shutil.rmtree(module_path)
+                    # Verschiebe neues Modul-Verzeichnis
+                    shutil.copytree(source_module, module_path, dirs_exist_ok=True)
 
-    with Spinner(f"move src data {temp_dir[-15:]} to {module_path[-15:]}"):
-        shutil.move(os.path.join(temp_dir, module_name), module_path)
+            # Behandle zusätzliche Dateien im Root
+            with Spinner("Installing additional files"):
+                for item in temp_dir.iterdir():
+                    if item.name == module_name:
+                        continue
 
-    with Spinner(f"move additional data {temp_dir[-15:]} to {module_path[-15:]}"):
-        # Inhalte aus dem temporären Verzeichnis in das Zielverzeichnis verschieben
-        for item in os.listdir(temp_dir):
-            s = os.path.join(temp_dir, item)
-            d = os.path.join("./", item)
+                    target = Path('./') / item.name
+                    if item.is_dir():
+                        with Spinner(f"Installing directory {item.name}"):
+                            if target.exists():
+                                shutil.rmtree(target)
+                            shutil.copytree(item, target, dirs_exist_ok=True)
+                    else:
+                        with Spinner(f"Installing file {item.name}"):
+                            shutil.copy2(item, target)
 
-            if os.path.isdir(s):
-                with Spinner(f"move dir data {s[-15:]} to {d[-15:]}"):
-                    shutil.move(s, d)
-            else:
-                with Spinner(f"move file data {s[-15:]} to {d[-15:]}"):
-                    shutil.copy2(s, d)
+            print(f"Successfully installed/updated module {module_name} to {module_path}")
+            return module_name
 
-    with Spinner(f"Cleanup"):
-        # Temporäres Verzeichnis löschen
-        shutil.rmtree(temp_dir)
-
-    print(f"Modul {module_name} wurde erfolgreich nach {module_path} entpackt und verschoben.")
-    return module_name
+    except Exception as e:
+        print(f"Error during installation: {str(e)}")
+        # Cleanup bei Fehler
+        if module_path.exists():
+            shutil.rmtree(module_path)
+        raise
 
 
 @export(mod_name=Name, name="make_install", test=False)
@@ -324,9 +345,9 @@ async def upload(app: Optional[App], module_name: str):
     if app is None:
         app = get_app(f"{Name}.installer")
 
-    zip_path = \
-        find_highest_zip_version_entry(module_name, filepath=f'{app.start_dir}/tbState.yaml').get('url', '').split(
-            'mods_sto')[-1]
+    zip_path = find_highest_zip_version(module_name)
+       # find_highest_zip_version_entry(module_name, filepath=f'{app.start_dir}/tbState.yaml').get('url', '').split(
+        #    'mods_sto')[-1]
 
     if upload or 'y' in input(f"uploade zip file {zip_path} ?"):
         await app.session.upload_file(zip_path, '/installer/upload-file/')
@@ -334,112 +355,107 @@ async def upload(app: Optional[App], module_name: str):
 
 @export(mod_name=Name, name="install", test=False)
 async def installer(app: Optional[App], module_name: str, build_state=True):
-    from toolboxv2.utils.system.state_system import get_state_from_app
+    """
+    Installiert oder aktualisiert ein Modul basierend auf der Remote-Version.
+    """
     if app is None:
         app = get_app(f"{Name}.installer")
 
-    fetch_remote = True
-    do_install = True
-    if not app.session.valid:
-        if not await app.session.login():
-            fetch_remote = False
-            build_state = False
-    if fetch_remote:
-        response = await app.session.fetch("/installer/get?name=" + module_name, method="GET")
-        response = await response.json()
+    if not app.session.valid and not await app.session.login():
+        return Result.default_user_error("Please login with CloudM login")
 
-        if "provider" not in response.keys() and "url" not in response.keys():
-            print("Error while fetching mod data", response)
-            do_install = False
+    # Hole nur die höchste verfügbare Version vom Server
+    response = await app.session.fetch(f"/installer/version/{module_name}", method="GET")
+    remote_version = await response.text()
 
-        if response['provider'] != "SimpleCore":
-            print("Error while fetching mod data")
-            do_install = False
+    # Finde lokale Version
+    local_version = find_highest_zip_version(
+        os.path.join(app.start_dir, 'mods_sto'),
+        module_name
+    )
 
-        if module_name not in response['url']:
-            print("404 mod not found")
-            do_install = False
-
-    from packaging import version as pv
-    if not os.path.exists(os.path.join(app.start_dir, 'tbState.yaml')):
-        get_state_from_app(app)
-    lpm = find_highest_zip_version_entry(module_name, filepath=os.path.join(app.start_dir,'tbState.yaml'))
-    if len(lpm.keys()) == 0 and not do_install:
+    if not local_version and not remote_version:
         return Result.default_user_error(f"404 mod {module_name} not found")
-    if len(lpm.keys()) == 0 and not fetch_remote:
-        return Result.default_user_error("Pleas login, wit CloudM login")
-    lv = lpm.get('version', app.version)
-    if fetch_remote:
-        rv = response["version"]
-    else:
-        rv = ['0.0.0', '0.0.0']
-    if isinstance(lv, list) and isinstance(rv, list) and len(rv) == len(lv) and len(lv) >= 2:
-        lv_ = lv[1]
-        rv_ = rv[1]
-        if pv.parse(lv_) != pv.parse(rv_):
-            lv = lv[1]
-            rv = rv[1]
-    if isinstance(lv, list):
-        lv = lv[0]
-    if isinstance(rv, list):
-        rv = rv[0]
-    local_pack_version = pv.parse(lv)
-    remote_pack_version = pv.parse(rv)
-    app.print(f"Mod version is {local_pack_version=} and {remote_pack_version=}") \
-        if len(lpm.keys()) > 0 else (
-        app.print(f"Mod version is  {remote_pack_version=}"))
-    if remote_pack_version >= local_pack_version:
-        mod_url = "/installer/" + response['url'].replace(app.session.base, "/").split("/installer/")[-1]
-        print(f"mod url is : {app.session.base + mod_url}")
-        if not await app.session.download_file(mod_url, app.start_dir + '/mods_sto'):
-            print("failed to download mod")
-            print("optional download it ur self and put the zip in the mods_sto folder")
-            if 'y' not in input("Done ? will start set up from the mods_sto folder").lower():
-                return
+
+    # Vergleiche Versionen
+    local_ver = pv.parse(local_version) if local_version else pv.parse("0.0.0")
+    remote_ver = pv.parse(remote_version)
+
+    app.print(f"Mod versions - Local: {local_ver}, Remote: {remote_ver}")
+
+    if remote_ver > local_ver:
+        # Konstruiere die URL direkt aus Modulname und Version
+        mod_url = f"/installer/mods_sto/RST${module_name}&v{app.version}§{remote_version}.zip"
+        download_path = Path(app.start_dir) / 'mods_sto'
+
+        if not await app.session.download_file(mod_url, str(download_path)):
+            app.print("Failed to download mod")
+            if 'y' not in input("Download manually and place in mods_sto folder. Done? (y/n) ").lower():
+                return Result.default_user_error("Installation cancelled")
+
+        # Korrigiere Dateinamen
+        zip_name = mod_url.split('/')[-1]
+        clean_name = zip_name.replace("$", '').replace("&", '').replace("§", '')
         try:
-            os.rename(app.start_dir + '/mods_sto/' + mod_url.split('/')[-1].replace("$", '').replace("&", '').replace("§", ''),
-                      app.start_dir + '/mods_sto/' + mod_url.split('/')[-1])
+            os.rename(
+                str(download_path / clean_name),
+                str(download_path / zip_name)
+            )
         except FileExistsError:
             pass
-    else:
-        mod_url = lpm['url'].replace(app.session.base, "/")
-    with Spinner("Installing from zip"):
-        report = install_from_zip(app, mod_url.split('/')[-1])
-    if not report:
-        print("Set up error")
+
+        with Spinner("Installing from zip"):
+            report = install_from_zip(app, zip_name)
+
+        if not report:
+            return Result.default_user_error("Setup error occurred")
+
+        if build_state:
+            get_state_from_app(app)
+
         return report
-    if build_state:
-        get_state_from_app(app)
-    return report
+
+    app.print("Module is already up to date")
+    return Result.ok()
 
 
 @export(mod_name=Name, name="update_all", test=False)
-async def update_all_mods(app, ignor_app_version=True):
+async def update_all_mods(app):
+    """
+    Aktualisiert alle installierten Module mit minimalen Server-Anfragen.
+    """
     if app is None:
         app = get_app(f"{Name}.update_all")
+
     all_mods = app.get_all_mods()
+    update_tasks = []
 
-    async def pipeline(name):
-        mod_info = await app.session.fetch("/install/get?name="+name)
-        json_response = await mod_info.json()
-        mod_version = [__version__, app.get_mod(name).version]
-        remote_mod_version = json.loads(json_response).get("version", [__version__, '0'])
-        if len(remote_mod_version) == 1:
-            remote_mod_version = [remote_mod_version[0], '0']
+    async def check_and_update(mod_name: str):
+        # Hole nur die Version vom Server
+        version_response = await app.session.fetch(f"/installer/version/{mod_name}")
+        remote_version = await version_response.text()
 
-        local_app_version, local_mod_version = (p_version.parse(mod_version[0]),
-                                                p_version.parse(mod_version[1]))
-        remote_app_version, remote_mod_version = (p_version.parse(remote_mod_version[0]),
-                                                  p_version.parse(remote_mod_version[1]))
+        if not remote_version:
+            app.print(f"Could not fetch version for {mod_name}")
+            return
 
-        if not ignor_app_version and local_app_version < remote_app_version:
-            app.run_any("CloudM", "update_core")
-            exit(0)
+        local_mod = app.get_mod(mod_name)
+        if not local_mod:
+            app.print(f"Local mod {mod_name} not found")
+            return
 
-        if local_mod_version < remote_mod_version:
-            await installer(app, name)
+        if pv.parse(remote_version) > pv.parse(local_mod.version):
+            await installer(app, mod_name, build_state=False)
 
-    [await pipeline(mod) for mod in all_mods]
+    # Erstelle Update-Tasks für alle Module
+    for mod in all_mods:
+        update_tasks.append(check_and_update(mod))
+
+    # Führe Updates parallel aus
+    await asyncio.gather(*update_tasks)
+
+    # Aktualisiere den State einmal am Ende
+    get_state_from_app(app)
 
 
 @export(mod_name=Name, name="build_all", test=False)
