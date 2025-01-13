@@ -47,6 +47,8 @@ TB_R_KEY="root@remote"
 VAULTS =
 HOSTNAME="localhost"
 
+TOKEN_SECRET="012345678900000987654321asdfghjkl"
+
 DEFAULTMODEL0="gpt-3.5-turbo-0613"
 DEFAULTMODEL1="gpt-3.5-turbo-0613"
 DEFAULTMODEL2="text-davinci-003"

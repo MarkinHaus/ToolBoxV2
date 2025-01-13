@@ -16,6 +16,7 @@ from starlette.websockets import WebSocketDisconnect
 from fastapi.responses import RedirectResponse
 from watchfiles import awatch
 
+from toolboxv2.mods.FastApi.fast_lit import BidirectionalStreamlitAppManager
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.system.session import RequestSession
 from toolboxv2.utils.extras.blobs import BlobFile
@@ -33,6 +34,7 @@ from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
 from toolboxv2.utils.system.state_system import get_state_from_app
 from functools import partial, wraps
 
+from .fast_nice import create_nicegui_manager
 dev_hr_index = "v0.0.1"
 
 
@@ -713,6 +715,18 @@ async def websocket_endpoint(websocket: WebSocket, pool_id: str, ws_id: str):
         await manager.remove_connection(pool_id, connection_id)
         tb_app.logger.info(f"Connection closed and removed: pool_id={pool_id}, connection_id={connection_id}")
 
+# Example WebSocket message handler registration
+@app.on_event("startup")
+async def startup_event():
+    pass
+    #async def handle_data_update(session_id: str, message: dict):
+     #   await app.state.ws_manager.broadcast_to_session(
+    #        session_id,
+     #       {"type": "data_update", "data": message.get("data")}
+     #   )
+
+    #app.state.ws_manager.register_handler("data_update", handle_data_update)
+
 
 @app.get("/web/login")
 async def login_page(access_allowed: bool = Depends(lambda: check_access_level(0))):
@@ -809,7 +823,6 @@ async def helper(id_name):
     global tb_app
     is_proxy = False
     # tb_app = await a_get_proxy_app(tb_app)
-
     if "HotReload" in tb_app.id:
         @app.get("/HotReload")
         async def exit_code():
@@ -845,7 +858,6 @@ async def helper(id_name):
     tb_app.get_mod("WebSocketManager")
 
     from .fast_api_install import router as install_router
-    from .fast_lit import st_router as lit_router
     tb_app.sprint("loading CloudM")
     tb_app.get_mod("CloudM")
     # all_mods = tb_app.get_all_mods()
@@ -861,7 +873,22 @@ async def helper(id_name):
     install_router.add_api_route('/' + "get", get_d, methods=["GET"], description="get_species_data")
     tb_app.sprint("include Installer")
     app.include_router(install_router)
-    app.include_router(lit_router)
+
+
+    from nicegui import ui
+
+    # Register a GUI
+    @ui.page('/custom-gui')
+    def custom_gui():
+        ui.label('Custom GUI')
+        ui.button('Click me!', on_click=lambda: ui.notify('Hello!'))
+
+    nicegui_manager.register_gui(
+        'my-gui',
+        setup_func=custom_gui,
+        mount_path='/custom-gui'
+    )
+
 
     async def proxi_helper(*__args, **__kwargs):
         await tb_app.client.get('sender')({'name': "a_run_any", 'args': __args, 'kwargs': __kwargs})
@@ -944,12 +971,22 @@ async def helper(id_name):
 
 
 print("API: ", __name__)
+
+app.add_middleware(
+    BidirectionalStreamlitAppManager,
+    streamlit_apps_dir="./apps"
+)
+
+nicegui_manager = create_nicegui_manager(app)
+
 app.add_middleware(SessionAuthMiddleware)
 
 app.add_middleware(SessionMiddleware,
                    session_cookie=Code.one_way_hash(tb_app.id, 'session'),
                    https_only='live' in tb_app.id,
                    secret_key=Code.one_way_hash(DEVICE_KEY(), tb_app.id))
+
+
 tb_app.run_a_from_sync(helper, id_name)
 
 
