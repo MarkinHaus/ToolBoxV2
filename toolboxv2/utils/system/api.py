@@ -69,7 +69,9 @@ def find_highest_zip_version(name_filter: str, app_version: str = None, root_dir
     # Durchsuche das Verzeichnis
     root_path = Path(root_dir)
     for file_path in root_path.rglob("*.zip"):
-        match = re.search(pattern, str(file_path).split("RST$")[-1])
+        if "RST$"+name_filter not in str(file_path):
+            continue
+        match = re.search(pattern, str(file_path).split("RST$")[-1].strip())
         if match:
             zip_version = match.group(1)
 

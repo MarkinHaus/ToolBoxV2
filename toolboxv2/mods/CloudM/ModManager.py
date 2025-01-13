@@ -365,13 +365,14 @@ async def installer(app: Optional[App], module_name: str, build_state=True):
         return Result.default_user_error("Please login with CloudM login")
 
     # Hole nur die höchste verfügbare Version vom Server
-    response = await app.session.fetch(f"/installer/version/{module_name}", method="GET")
-    remote_version = await response.text()
-
+    response = await app.session.fetch(f"/installer/version?name={module_name}", method="GET")
+    remote_version : str = await response.text()
+    remote_version = remote_version.split('"')[1]
+    if remote_version == "None":
+        remote_version = None
     # Finde lokale Version
     local_version = find_highest_zip_version(
-        os.path.join(app.start_dir, 'mods_sto'),
-        module_name
+        module_name, version_only=True
     )
 
     if not local_version and not remote_version:
@@ -385,9 +386,10 @@ async def installer(app: Optional[App], module_name: str, build_state=True):
 
     if remote_ver > local_ver:
         # Konstruiere die URL direkt aus Modulname und Version
-        mod_url = f"/installer/mods_sto/RST${module_name}&v{app.version}§{remote_version}.zip"
+        mod_url = f"/installer/mods_sto/RST${module_name}&{app.version}§{remote_version}.zip"
         download_path = Path(app.start_dir) / 'mods_sto'
 
+        app.print(f"Fetching Mod from {app.session.base+mod_url}")
         if not await app.session.download_file(mod_url, str(download_path)):
             app.print("Failed to download mod")
             if 'y' not in input("Download manually and place in mods_sto folder. Done? (y/n) ").lower():
@@ -435,7 +437,7 @@ async def update_all_mods(app):
         version_response = await app.session.fetch(f"/installer/version/{mod_name}")
         remote_version = await version_response.text()
 
-        if not remote_version:
+        if not remote_version or remote_version == "None":
             app.print(f"Could not fetch version for {mod_name}")
             return
 
@@ -443,7 +445,7 @@ async def update_all_mods(app):
         if not local_mod:
             app.print(f"Local mod {mod_name} not found")
             return
-
+        remote_version = remote_version.spilt('"')[1]
         if pv.parse(remote_version) > pv.parse(local_mod.version):
             await installer(app, mod_name, build_state=False)
 

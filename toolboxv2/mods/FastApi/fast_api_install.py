@@ -1,5 +1,6 @@
 import json
 import os
+import pathlib
 import platform
 import time
 import uuid
@@ -394,49 +395,40 @@ async def create_upload_file(file: UploadFile):
         raise HTTPException(status_code=400, detail=f"Invalid filename: {file.filename}")
 
 
+
+# Zugelassene Verzeichnisse
+ALLOWED_DIRECTORIES = {"mods_sto", "flows", "tests", "data", "installer", "builds", "apps"}
+
 @router.get("/download/{path:path}")
 def download_file(path: str):
-    file_name = path
-    if file_name.startswith(".") or file_name.startswith('%20') or not file_name or '/.' in file_name or ".." in file_name:
-        return JSONResponse(content={"message": f"directory not public ."}, status_code=403)
-    TB_DIR = get_app().start_dir
-    if "/" in file_name:
-        directory = file_name.split("/")
-    elif "\\" in file_name:
-        directory = file_name.split("\\")
-    else:
-        directory = file_name.split("%5C")
-    get_logger().info(f"Request file {file_name}")
+    # Wurzelverzeichnis für statische Dateien
+    STATIC_DIR = pathlib.Path(get_app().start_dir).resolve()
 
-    if platform.system() == "Darwin" or platform.system() == "Linux":
-        file_path = TB_DIR + "/" + file_name
-    else:
-        file_path = TB_DIR + "\\" + file_name
+    # Sicherheit: Normalisiere und überprüfe den Pfad
+    file_path = (STATIC_DIR / path).resolve()
 
-    if len(directory) > 1:
+    # Prüfe, ob der Pfad innerhalb des erlaubten Verzeichnisses liegt
+    if not file_path.is_relative_to(STATIC_DIR):
+        raise HTTPException(status_code=403, detail="Access to this directory is forbidden.")
 
-        print(f"{directory=}!!!!!!")
-        directory = directory[0]
+    # Prüfe, ob der Verzeichnisname erlaubt ist
+    if not any(part in ALLOWED_DIRECTORIES for part in file_path.parts[len(STATIC_DIR.parts):]):
+        raise HTTPException(status_code=403, detail="Directory not public.")
 
-        if directory not in ["mods_sto", "runnable", "tests", "data", "installer", "builds"] or directory == '/':
-            get_logger().warning(f"{file_path} not public")
-            return JSONResponse(content={"message": f"directory not public {directory}"}, status_code=403)
+    # Wenn der Pfad existiert
+    if file_path.exists():
+        if file_path.is_file():
+            return FileResponse(
+                path=str(file_path),
+                media_type="application/octet-stream",
+                filename=file_path.name,
+            )
+        elif file_path.is_dir():
+            # Liste Verzeichniseinträge auf
+            return JSONResponse(
+                content={"files": os.listdir(file_path)},
+                status_code=200
+            )
 
-        if directory == "tests":
-            if platform.system() == "Darwin" or platform.system() == "Linux":
-                file_path = "/".join(TB_DIR.split("/")[:-1]) + "/" + file_name
-            else:
-                file_path = "\\".join(TB_DIR.split("\\")[:-1]) + "\\" + file_name
-
-        if os.path.exists(file_path):
-            get_logger().info(f"Downloading from {file_path}")
-            if os.path.isfile(file_path):
-                return FileResponse(file_path, media_type='application/octet-stream', filename=file_name)
-            return JSONResponse(content={"message": f"is directory", "files": os.listdir(file_path)}, status_code=201)
-        else:
-            get_logger().error(f"{file_path} not found")
-            return JSONResponse(content={"message": "File not found"}, status_code=404)
-
-    else:
-        return JSONResponse(content={"message": f"no listing of all files! use get withe an mod name or CloudM for mods_sto."}, status_code=403)
-
+    # Datei oder Verzeichnis nicht gefunden
+    raise HTTPException(status_code=404, detail="File or directory not found.")
