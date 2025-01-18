@@ -13,11 +13,10 @@
                 </div>
 
                 <input type="text" id="username" placeholder="Username">
-                <label>Register Device <input type="checkbox" id="remember-me" onchange='function checkedF() {
+                <label>Register Device <input type="checkbox" id="register-device" onchange='function checkedF() {
       checked = [true]
       console.log("[checked]:", checked)
-      document.getElementById("remember-me").classList.add("none")
-      document.getElementById("remeberText").textContent = "Halten sie Ihr gerät welches sie beim sig up verwendend haben beriet."
+      document.getElementById("register-device").classList.add("none")
       }
       checkedF()'></label>
                 <button type="submit">Login</button>

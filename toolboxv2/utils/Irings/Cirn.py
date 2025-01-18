@@ -7,7 +7,6 @@ from litellm import max_tokens
 
 from toolboxv2.utils.Irings.network import NetworkManager
 from toolboxv2.utils.Irings.reasoning_system import ReasoningSystem
-from toolboxv2.utils.Irings.tk_live import NetworkVisualizer
 from toolboxv2.utils.Irings.one import IntelligenceRing
 
 from dataclasses import dataclass
@@ -38,6 +37,8 @@ class CognitiveNetwork:
         think_llm=None,
         format_class=None,
         rs_config=None,
+        tk=False,
+        web=False,
     ):
         self._processing_thread = None
         self.name = name
@@ -63,8 +64,17 @@ class CognitiveNetwork:
             )
 
         self._v = None
+        self.display = None
         if display:
+            if tk:
+                from toolboxv2.utils.Irings.tk_live import NetworkVisualizer
+            elif web:
+                from toolboxv2.utils.Irings.nicegui_live import NetworkVisualizer
+            else:
+                raise ValueError("tk or web")
             v = NetworkVisualizer(self.network)
+            if web:
+                self.display = v.create_ui
             self._v = v
             self.og_processor = self.network.process_input
 

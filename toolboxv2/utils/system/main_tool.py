@@ -37,7 +37,7 @@ class MainTool:
         self.name = kwargs["name"]
         self.logger = kwargs.get("logs", get_logger())
         self.color = kwargs.get("color", "WHITE")
-        self.todo = kwargs.get("load", lambda: None)
+        self.todo = kwargs.get("load", kwargs.get("on_start", lambda: None))
         if not hasattr(self, 'config'):
             self.config = {}
         self.user = None
@@ -51,7 +51,8 @@ class MainTool:
                     await self.todo()
                 else:
                     self.todo()
-                await asyncio.sleep(0)
+                await asyncio.sleep(0.1)
+                get_logger().info(f"{self.name} on load suspended")
             except Exception as e:
                 get_logger().error(f" Error loading mod {self.name} {e}")
         else:

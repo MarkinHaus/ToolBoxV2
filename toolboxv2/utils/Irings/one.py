@@ -1,4 +1,5 @@
 import os
+import time
 from dataclasses import dataclass
 from typing import Dict, List, Set, Optional, Tuple, Union, Any
 from datetime import datetime
@@ -274,17 +275,26 @@ class Concept:
 
 class InputProcessor(metaclass=Singleton):
     def __init__(self):
-        self.embedding_function = IntelligenceRingEmbeddings()
-        self.vector_size = self.embedding_function.vector_size
+        self.started = threading.Event()
+        def helper():
+            print("InputProcessor starting ...")
+            self.started.clear()
+            self.embedding_function = IntelligenceRingEmbeddings()
+            self.vector_size = self.embedding_function.vector_size
 
-        cache_dir = os.getenv('APPDATA') if os.name == 'nt' else os.getenv('XDG_CONFIG_HOME') or os.path.expanduser(
-            '~/.config') if os.name == 'posix' else "."
-        self.cache = FileCache(
-            folder=cache_dir + f'\\ToolBoxV2\\cache\\InputProcessor\\',
-            filename=cache_dir + f'\\ToolBoxV2\\cache\\InputProcessor\\cache.db'
-        )
+            cache_dir = os.getenv('APPDATA') if os.name == 'nt' else os.getenv('XDG_CONFIG_HOME') or os.path.expanduser(
+                '~/.config') if os.name == 'posix' else "."
+            self.cache = FileCache(
+                folder=cache_dir + f'\\ToolBoxV2\\cache\\InputProcessor\\',
+                filename=cache_dir + f'\\ToolBoxV2\\cache\\InputProcessor\\cache.db'
+            )
+            print("InputProcessor online ...")
+            self.started.set()
+        threading.Thread(target=helper, daemon=True).start()
 
     def get_embedding(self, content: Union[str, bytes, np.ndarray], modality: str = "text") -> Optional[np.ndarray]:
+        while not self.started.is_set():
+            time.sleep(1)
         # Only cache text embeddings
         if modality == "text" and isinstance(content, str):
             cache_key = str((content, "en"))

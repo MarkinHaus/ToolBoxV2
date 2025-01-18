@@ -401,26 +401,6 @@ class App(AppType, metaclass=Singleton):
                 self.print("ERROR OVERRIDE")
                 raise ImportError(f"Module already known {modular_id}")
 
-            on_start = self.functions[modular_id].get("on_start")
-            if on_start is not None:
-                i = 1
-                for f in on_start:
-                    try:
-                        f_, e = self.get_function((modular_id, f), state=True, specification=spec)
-                        if e == 0:
-                            self.logger.info(Style.GREY(f"Running On start {f} {i}/{len(on_start)}"))
-                            o = f_()
-                            if o is not None:
-                                self.print(f"Function On start result: {o}")
-                        else:
-                            self.logger.warning(f"starting function not found {e}")
-                    except Exception as e:
-                        self.logger.debug(Style.YELLOW(
-                            Style.Bold(f"modular:{modular_id}.{f} on_start error {i}/{len(on_start)} -> {e}")))
-                        self.debug_rains(e)
-                    finally:
-                        i += 1
-
         elif tools_class is not None:
             if modular_id not in self.functions:
                 self.functions[modular_id] = {}
@@ -445,7 +425,28 @@ class App(AppType, metaclass=Singleton):
 
         else:
             raise ImportError(f"Modular {modular_id} is not a valid mod")
-
+        on_start = self.functions[modular_id].get("on_start")
+        if on_start is not None:
+            i = 1
+            for f in on_start:
+                try:
+                    f_, e = self.get_function((modular_id, f), state=True, specification=spec)
+                    if e == 0:
+                        self.logger.info(Style.GREY(f"Running On start {f} {i}/{len(on_start)}"))
+                        if asyncio.iscoroutinefunction(f_):
+                            self.print(f"Async on start is only in Tool claas supported for {modular_id}.{f}" if tools_class is None else f"initialization starting soon for {modular_id}.{f}")
+                        else:
+                            o = f_()
+                            if o is not None:
+                                self.print(f"Function {modular_id} On start result: {o}")
+                    else:
+                        self.logger.warning(f"starting function not found {e}")
+                except Exception as e:
+                    self.logger.debug(Style.YELLOW(
+                        Style.Bold(f"modular:{modular_id}.{f} on_start error {i}/{len(on_start)} -> {e}")))
+                    self.debug_rains(e)
+                finally:
+                    i += 1
         return instance if tools_class is None else tools_class
 
     def save_initialized_module(self, tools_class, spec):
@@ -606,10 +607,6 @@ class App(AppType, metaclass=Singleton):
 
         tasks: set[Task] = set()
 
-        # if 'isaa' in module_list:
-        #     threading.Thread(target=self.save_load, args=("isaa", 'app'), daemon=True).start()
-        #     module_list.remove('isaa')
-
         _ = {tasks.add(asyncio.create_task(asyncio.to_thread(self.save_load, mod, 'app'))) for mod in module_list}
         for t in asyncio.as_completed(tasks):
             try:
@@ -617,7 +614,24 @@ class App(AppType, metaclass=Singleton):
                 if hasattr(result, 'Name'):
                     print('Opened :', result.Name)
                 elif hasattr(result, 'name'):
-                    print('Opened :', result.name)
+                    if hasattr(result, 'async_initialized'):
+                        if not result.async_initialized:
+                            async def _():
+                                try:
+                                    await result
+                                    if hasattr(result, 'Name'):
+                                        print('Opened :', result.Name)
+                                    elif hasattr(result, 'name'):
+                                        print('Opened :', result.name)
+                                except Exception as e:
+                                    self.debug_rains(e)
+                                    if hasattr(result, 'Name'):
+                                        print('Error opening :', result.Name)
+                                    elif hasattr(result, 'name'):
+                                        print('Error opening :', result.name)
+                            asyncio.create_task(_())
+                        else:
+                            print('Opened :', result.name)
                 else:
                     print('Opened :', result)
             except Exception as e:

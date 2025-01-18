@@ -12,6 +12,7 @@ from numpy.core.defchararray import endswith
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse, FileResponse, Response
+from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 from fastapi.responses import RedirectResponse
 from watchfiles import awatch
@@ -502,6 +503,7 @@ def protect_url_split_helper(url_split):
 @app.middleware("http")
 async def protector(request: Request, call_next):
     needs_protection = protect_url_split_helper(request.url.path.split('/'))
+
     if not needs_protection:
         return await user_runner(request, call_next)
 
@@ -839,6 +841,8 @@ async def helper(id_name):
     except FileNotFoundError:
         pass
     await tb_app.load_all_mods_in_file()
+    if tb_app.mod_online("isaa") and not tb_app.get_mod("isaa").async_initialized:
+        await tb_app.get_mod("isaa")
     if id_name.endswith("_D"):
         with BlobFile(f"FastApi/{id_name}/dev", mode='r') as f:
             modules = f.read_json().get("modules", [])
@@ -857,12 +861,11 @@ async def helper(id_name):
         exit()
     tb_app.get_mod("WebSocketManager")
 
-    from .fast_api_install import router as install_router
+    from .fast_api_install import register, router as install_router
     tb_app.sprint("loading CloudM")
     tb_app.get_mod("CloudM")
     # all_mods = tb_app.get_all_mods()
     provider = os.environ.get("MOD_PROVIDER", default="http://127.0.0.1:5000/")
-
 
     def get_d(name="CloudM"):
         return tb_app.get_mod("CloudM").get_mod_snapshot(name)
@@ -870,6 +873,7 @@ async def helper(id_name):
     install_router.add_api_route('/' + "version", get_d, methods=["GET"], description="get_species_data")
     tb_app.sprint("include Installer")
     app.include_router(install_router)
+    nicegui_manager.register_gui("install", register(), install_router.prefix)
 
     async def proxi_helper(*__args, **__kwargs):
         await tb_app.client.get('sender')({'name': "a_run_any", 'args': __args, 'kwargs': __kwargs})
@@ -959,6 +963,7 @@ app.add_middleware(
 )
 
 nicegui_manager = create_nicegui_manager(app)
+print("UI Manager online:", nicegui_manager)
 
 app.add_middleware(SessionAuthMiddleware)
 
@@ -966,7 +971,6 @@ app.add_middleware(SessionMiddleware,
                    session_cookie=Code.one_way_hash(tb_app.id, 'session'),
                    https_only='live' in tb_app.id,
                    secret_key=Code.one_way_hash(DEVICE_KEY(), tb_app.id))
-
 
 tb_app.run_a_from_sync(helper, id_name)
 

@@ -29,15 +29,6 @@ def start(app=None):
     global talk_generate, talk_tts
     if app is None:
         app = get_app("Starting Talk interface")
-    if not app.mod_online("audio"):
-        app.print(f"TalK is starting AUDIO")
-        audio_mod = app.load_mod("audio")
-        if audio_mod:
-            audio_mod.on_start()
-    if not app.mod_online("audio"):
-        print("Talk Offline install isaa")
-        return
-    app.get_mod("isaa").init_isaa(build=False)
     talk_generate = app.run_any(TBEF.AUDIO.STT_GENERATE,
                                 model="openai/whisper-small",
                                 row=True, device=1)
@@ -388,19 +379,7 @@ async def main_web_talk_entry(app: App = None, request: Request or None = None, 
                     }
                 };
 
-                //mediaRecorder.ondataavailable = event => {
-                //    if (event.data.size > 0) {
-                //        audioChunks.push(event.data);
-//
-                //        // Sende Audiodaten erst nach dem ersten Chunk
-                //        if (!isFirstChunk && webSocket && webSocket.readyState === WebSocket.OPEN) {
-                //            const blob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
-                //            webSocket.send(blob);
-                //            audioChunks = []; // Leere den Puffer nach dem Senden
-                //        }
-                //        isFirstChunk = false;
-                //    }
-                //};
+
                 mediaRecorder.onstart = () => {
             console.log("MediaRecorder gestartet");
             audioChunks = [];

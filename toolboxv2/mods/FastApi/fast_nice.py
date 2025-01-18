@@ -1,3 +1,7 @@
+import asyncio
+import inspect
+from concurrent.futures import ThreadPoolExecutor
+
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from nicegui import app as nicegui_app, ui
@@ -7,11 +11,17 @@ from typing import Dict, Optional, Callable, Any
 from datetime import datetime
 import os
 
-from toolboxv2 import Singleton
+from starlette.responses import RedirectResponse
+
+from toolboxv2 import Singleton, get_app
+from toolboxv2.utils.extras.base_widget import get_user_from_request, get_spec, get_s_id
+from toolboxv2.utils.system.session import RequestSession
 
 
 class NiceGUIManager(metaclass=Singleton):
-    def __init__(self, fastapi_app: FastAPI, styles_path: str = "./web/assets/styles.css"):
+    def __init__(self, fastapi_app: FastAPI = None, styles_path: str = "./web/assets/styles.css"):
+        if fastapi_app is None:
+            return self
         self.admin_password = os.getenv("TB_R_KEY", "root@admin")
         self.app = fastapi_app
         self.styles_path = styles_path
@@ -19,6 +29,7 @@ class NiceGUIManager(metaclass=Singleton):
         self.ws_connections: Dict[str, Dict[str, WebSocket]] = {}
         self.mount_path = "/gui"
         self.init = False
+        self.helper_contex = open("./dist/helper.html", "r", encoding="utf-8").read()
 
         self.app.add_middleware(BaseHTTPMiddleware, dispatch=self.middleware_dispatch)
 
@@ -29,27 +40,23 @@ class NiceGUIManager(metaclass=Singleton):
     def _setup_admin_gui(self):
         """Setup the admin GUI interface"""
 
-        @ui.page(f'{self.mount_path}/admin')
-        def admin_gui():
-            if not nicegui_app.storage.user.get('is_admin', False):
-                self._show_admin_login()
+        @ui.page(f'/admin')
+        def admin_gui(user=None):
+            print("admin_gui;", user)
+            if user is None or user.name != "root":
                 return
 
-            with ui.card().classes('w-full'):
+            with ui.card().style("background-color: var(--background-color) !important").classes('w-full'):
                 ui.label('NiceGUI Manager Admin Interface').classes('text-2xl font-bold mb-4')
 
-                # Dark mode toggle
-                with ui.row().classes('items-center mb-4'):
-                    ui.icon('dark_mode')
-                    ui.switch('Dark Mode').bind_value(nicegui_app.storage.user, 'dark_mode')
-
                 # GUI Management Section
-                with ui.tabs() as tabs:
+                with ui.tabs().style("background-color: var(--background-color) !important") as tabs:
                     ui.tab('Registered GUIs')
                     ui.tab('Add New GUI')
                     ui.tab('System Status')
 
-                with ui.tab_panels(tabs, value='Registered GUIs'):
+                with ui.tab_panels(tabs, value='Registered GUIs').style(
+                    "background-color: var(--background-color) !important"):
                     with ui.tab_panel('Registered GUIs'):
                         self._show_registered_guis()
 
@@ -59,36 +66,22 @@ class NiceGUIManager(metaclass=Singleton):
                     with ui.tab_panel('System Status'):
                         self._show_system_status()
 
-    def _show_admin_login(self):
-        """Show admin login form"""
-        with ui.card().classes('w-full max-w-md mx-auto mt-8'):
-            ui.label('Admin Login').classes('text-xl font-bold mb-4')
-
-            password = ui.input('Password', password=True).classes('w-full')
-
-            def try_login():
-                if password.value == self.admin_password:
-                    nicegui_app.storage.user['is_admin'] = True
-                    ui.notify('Login successful')
-                    ui.navigate(f'{self.mount_path}/admin')  # Refresh page
-                else:
-                    ui.notify('Invalid password', color='negative')
-
-            ui.button('Login', on_click=try_login).classes('w-full mt-4')
+        self.register_gui("admin", admin_gui, "/admin")
 
     def _show_registered_guis(self):
         """Show list of registered GUIs with management options"""
         with ui.column().classes('w-full gap-4'):
             for gui_id, gui_info in self.registered_guis.items():
-                with ui.card().classes('w-full'):
-                    with ui.row().classes('w-full items-center justify-between'):
+                with ui.card().classes('w-full').style("background-color: var(--background-color) !important"):
+                    with ui.row().classes('w-full items-center justify-between').style(
+                        "background-color: var(--background-color) !important"):
                         ui.label(f'GUI ID: {gui_id}').classes('font-bold')
                         ui.label(f'Path: {gui_info["path"]}')
 
                         created_at = gui_info['created_at'].strftime('%Y-%m-%d %H:%M:%S')
                         ui.label(f'Created: {created_at}')
 
-                        with ui.row().classes('gap-2'):
+                        with ui.row().classes('gap-2').style("background-color: var(--background-color) !important"):
                             ui.button('View', on_click=lambda g=gui_info['path']: ui.navigate(g))
                             ui.button('Remove', on_click=lambda g=gui_id: self._handle_gui_removal(g))
                             ui.button('Restart', on_click=lambda g=gui_id: self._handle_gui_restart(g))
@@ -102,7 +95,7 @@ class NiceGUIManager(metaclass=Singleton):
 
     def _show_add_gui_form(self):
         """Show form for adding new GUI"""
-        with ui.card().classes('w-full'):
+        with ui.card().classes('w-full').style("background-color: var(--background-color) !important"):
             gui_id = ui.input('GUI ID').classes('w-full')
             mount_path = ui.input('Mount Path (optional)').classes('w-full')
 
@@ -135,7 +128,7 @@ class NiceGUIManager(metaclass=Singleton):
 
     def _show_system_status(self):
         """Show system status information"""
-        with ui.card().classes('w-full'):
+        with ui.card().classes('w-full').style("background-color: var(--background-color) !important"):
             ui.label('System Status').classes('text-xl font-bold mb-4')
 
             # System stats
@@ -189,26 +182,122 @@ class NiceGUIManager(metaclass=Singleton):
 
     def register_gui(self, gui_id: str, setup_func: Callable, mount_path: Optional[str] = None) -> None:
         """Register a new NiceGUI application"""
-        path = mount_path or f"{self.mount_path}/{gui_id}"
+        path = mount_path or f"/{gui_id}"
+
+        def has_parameters(func, *params):
+            """
+            Überprüft, ob die Funktion bestimmte Parameter hat.
+
+            :param func: Die zu analysierende Funktion.
+            :param params: Eine Liste der zu suchenden Parameter.
+            :return: Ein Dictionary mit den Parametern und einem booleschen Wert.
+            """
+            signature = inspect.signature(func)
+            func_params = signature.parameters.keys()
+            return {param: param in func_params for param in params}
+
+        async def request_to_request_session(request):
+            jk = request.json()
+            if asyncio.iscoroutine(jk):
+                try:
+                    jk = await jk
+                except Exception:
+                    pass
+            js = lambda: jk
+            return RequestSession(
+                session=request.session,
+                body=request.body,
+                json=js,
+                row=request,
+            )
+
+        async def execute_in_threadpool(coroutine, *args):
+            loop = asyncio.get_running_loop()
+            with ThreadPoolExecutor() as executor:
+                return await loop.run_in_executor(executor, lambda: asyncio.run(coroutine(*args)))
+
+        tb_app = get_app()
 
         @ui.page(path)
-        def wrapped_gui():
+        async def wrapped_gui(request: Request):
             # Inject custom styles
-            ui.html(f'<style>{self._load_styles()}</style>')
-
-            # Add dark mode toggle
-            with ui.row().classes('items-center'):
-                ui.icon('dark_mode')
-                ui.switch('Dark Mode')
+            ui.add_body_html(self.helper_contex)
+            # ui.switch('Dark').bind_value(ui, 'dark_mode')
+            # ui.add_css("q-card {background-color: var(--background-color)} !important")
+            # ui.add_body_html('<script src="../index.js" type="module" defer></script>')
 
             # Initialize the GUI
-            setup_func()
+            params_ = {}
+            params = has_parameters(setup_func, 'request', 'user', 'session', 'id', 'sid')
+
+            if params.get('request'):
+                params_['request'] = await request_to_request_session(request)
+            if params.get('user'):
+                params_['user'] = await get_user_from_request(get_app(), request)
+            if params.get('session'):
+                params_['session'] = request.session
+            if params.get('spec'):
+                params_['spec'] = get_spec(request)
+            if params.get('sid'):
+                params_['sid'] = get_s_id(request)
+
+            async def task():
+                if asyncio.iscoroutine(setup_func):
+
+                    # Event Listener für Button hinzufügen
+                    await ui.run_javascript('''
+                            Quasar.Dark.set("auto");
+                            tailwind.config.darkMode = "media";
+                        ''')
+
+                    await ui.run_javascript("""
+                    document.getElementById('darkModeToggle').addEventListener('click', function () {
+                    const labelToggel = document.getElementById('toggleLabel')
+                    if (labelToggel.innerHTML == `<span class="material-symbols-outlined">
+dark_mode
+</span>`){
+                            Quasar.Dark.set(true);
+                            tailwind.config.darkMode = "class";
+                            document.body.classList.add("dark");
+                        }else{
+                            Quasar.Dark.set(false);
+                            tailwind.config.darkMode = "class"
+                            document.body.classList.remove("dark");
+                        }
+                    });
+                    """)
+
+                    if not params_:
+                        await setup_func()
+                    else:
+                        await setup_func(**params_)
+                else:
+                    if not params_:
+                        setup_func()
+                    else:
+                        setup_func(**params_)
+
+
+            # Starte die Aufgabe in einem separaten Thread
+            # future = asyncio.create_task(execute_in_threadpool(task))
+            result = None
+            # Nicht blockierendes Warten
+
+            # while tb_app.alive:
+            #    if future.done():
+            #        result = future.result()
+            #        break
+            #    await asyncio.sleep(0.1)
+
+            await task()
 
         self.registered_guis[gui_id] = {
             'path': path,
             'setup': setup_func,
             'created_at': datetime.now()
         }
+
+        print("Registered GUI:", self.registered_guis[gui_id])
 
     def remove_gui(self, gui_id: str) -> bool:
         """Remove a registered GUI application"""
@@ -260,13 +349,10 @@ class NiceGUIManager(metaclass=Singleton):
 
     async def middleware_dispatch(self, request: Request, call_next) -> Response:
         """Custom middleware for session handling and authentication"""
-        if request.url.path.startswith(self.mount_path):
+        if request.url.path.startswith(self.mount_path) and "open" not in request.url.path:
             # Verify session if needed
             if not request.session.get("valid", False):
-                return JSONResponse(
-                    status_code=401,
-                    content={"message": "Invalid session"}
-                )
+                return RedirectResponse("/web/login")
 
         response = await call_next(request)
         return response
@@ -276,23 +362,28 @@ class NiceGUIManager(metaclass=Singleton):
         self.init = True
         ui.run_with(
             self.app,
-            mount_path=self.mount_path
+            mount_path=self.mount_path,
+            favicon="../favicon.ico",
+            show_welcome_message=False,
+            # prod_js=False,
         )
 
 
-is_gui_online = [False]
+manager_online = [False]
 
 
 # Usage example:
 def create_nicegui_manager(app: FastAPI, token_secret: Optional[str] = None) -> NiceGUIManager:
     """Create and initialize a NiceGUI manager instance"""
-    is_gui_online[0] = True
     manager = NiceGUIManager(app, token_secret)
     manager.init_app()
+    manager_online[0] = True
     return manager
 
 
-def get_nicegui_manager() -> NiceGUIManager:
-    if is_gui_online[0]:
-        return NiceGUIManager(..., ...)
-    raise ValueError("Gui not online")
+def register_nicegui(gui_id: str, setup_func: Callable, mount_path: Optional[str] = None) -> None:
+    if not manager_online[0]:
+        print("NO FAST API RUNNING")
+        return
+    print("ADDED GUI:", gui_id)
+    return NiceGUIManager().register_gui(gui_id, setup_func, mount_path)

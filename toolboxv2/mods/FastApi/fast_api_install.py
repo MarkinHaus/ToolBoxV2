@@ -4,11 +4,13 @@ import pathlib
 import platform
 import time
 import uuid
+from typing import Set
 from zipfile import ZipFile
 
 import yaml
 from fastapi import APIRouter, UploadFile, WebSocket, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.responses import HTMLResponse
 
 from toolboxv2 import get_logger, App, get_app
 from toolboxv2.utils.system.api import find_highest_zip_version_entry
@@ -18,6 +20,7 @@ from packaging import version
 router = APIRouter(
     prefix="/installer",
 )
+
 
 async def ws_send(data, websocket=None):
     time.sleep(0.001)
@@ -76,7 +79,8 @@ async def generate_download_zip(websocket: WebSocket):
             continue
         installation_data["mods"].append(mod_data)
         await ws_send(f"mods @> added {mod_name} ", websocket=websocket)
-        await ws_send(f"mods @> {mod_name} data: shasum = {mod_data.get('shasum')} url = {mod_data.get('url')}", websocket=websocket)
+        await ws_send(f"mods @> {mod_name} data: shasum = {mod_data.get('shasum')} url = {mod_data.get('url')}",
+                      websocket=websocket)
         await ws_send(f"mods @> {mod_name} infos: version= {mod_data.get('version')}", websocket=websocket)
         await ws_send(f"mods @> {mod_name} infos: provider = {mod_data.get('provider')}", websocket=websocket)
     await ws_send(f"root @> adding Core", websocket=websocket)
@@ -178,14 +182,14 @@ if %ERRORLEVEL% == 0 (
 
 :: ToolboxV2 installieren
 echo Installiere ToolboxV2...
-"""+installation_data['core']+"""
+""" + installation_data['core'] + """
 
 
 ToolboxV2ModuleDir=$(python -c "import os, ToolboxV2; print(os.path.dirname(ToolboxV2.__file__))")
 ModsStoDir="$ToolboxV2ModuleDir/mods_sto"
 mkdir -p "$ModsStoDir"
 
-urls="""+str(tuple(urls))+""""
+urls=""" + str(tuple(urls)) + """"
 
 for url in "${urls[@]}"; do
     echo "Lade herunter und installiere Modul von: $url"
@@ -276,14 +280,14 @@ fi
 
 # Optionale Custom-Flag-Eingabe
 echo "Installiere ToolboxV2..."
-"""+installation_data['core']+"""
+""" + installation_data['core'] + """
 
 
 ToolboxV2ModuleDir=$(python -c "import os, ToolboxV2; print(os.path.dirname(ToolboxV2.__file__))")
 ModsStoDir="$ToolboxV2ModuleDir/mods_sto"
 mkdir -p "$ModsStoDir"
 
-urls="""+str(tuple(urls))+""""
+urls=""" + str(tuple(urls)) + """"
 
 for url in "${urls[@]}"; do
     echo "Lade herunter und installiere Modul von: $url"
@@ -307,7 +311,7 @@ read -p " END " T"""
         await websocket.send_text(line)
 
     print(f"Full script : {script}")
-    custom_script_name = f"ReSimpleToolBoxV{target_version}-{str(uuid.uuid4())[:4]}."+end
+    custom_script_name = f"ReSimpleToolBoxV{target_version}-{str(uuid.uuid4())[:4]}." + end
     await ws_send("saving custom script", websocket=websocket)
     await ws_send("Crating Installation link", websocket=websocket)
     with open(f"./installer/{custom_script_name}", "w") as script_file:
@@ -367,7 +371,6 @@ def save_mod_snapshot(app, mod_name, provider=None, tb_state: TbState or None = 
 
 @router.post("/upload-file/")
 async def create_upload_file(file: UploadFile):
-
     # if tb_app.debug:
     # Ensure the target directory exists
     target_dir = "./mods_sto/"
@@ -395,40 +398,77 @@ async def create_upload_file(file: UploadFile):
         raise HTTPException(status_code=400, detail=f"Invalid filename: {file.filename}")
 
 
+from nicegui import ui
 
-# Zugelassene Verzeichnisse
-ALLOWED_DIRECTORIES = {"mods_sto", "flows", "tests", "data", "installer", "builds", "apps"}
 
-@router.get("/download/{path:path}")
-def download_file(path: str):
-    # Wurzelverzeichnis für statische Dateien
-    STATIC_DIR = pathlib.Path(get_app().start_dir).resolve()
+class FileBrowser:
+    ALLOWED_DIRECTORIES: Set[str] = {"mods_sto", "flows", "static", "apps"}
 
-    # Sicherheit: Normalisiere und überprüfe den Pfad
-    file_path = (STATIC_DIR / path).resolve()
+    def __init__(self, start_dir: str):
+        self.static_dir = pathlib.Path(start_dir).resolve()
+        self.current_container = None
 
-    # Prüfe, ob der Pfad innerhalb des erlaubten Verzeichnisses liegt
-    if not file_path.is_relative_to(STATIC_DIR):
-        raise HTTPException(status_code=403, detail="Access to this directory is forbidden.")
+    def is_path_allowed(self, file_path: pathlib.Path) -> bool:
+        """Check if the path is within allowed directories."""
+        if not file_path.is_relative_to(self.static_dir):
+            return False
 
-    # Prüfe, ob der Verzeichnisname erlaubt ist
-    if not any(part in ALLOWED_DIRECTORIES for part in file_path.parts[len(STATIC_DIR.parts):]):
-        raise HTTPException(status_code=403, detail="Directory not public.")
+        relative_parts = file_path.parts[len(self.static_dir.parts):]
+        return any(part in self.ALLOWED_DIRECTORIES for part in relative_parts)
 
-    # Wenn der Pfad existiert
-    if file_path.exists():
-        if file_path.is_file():
-            return FileResponse(
-                path=str(file_path),
-                media_type="application/octet-stream",
-                filename=file_path.name,
-            )
-        elif file_path.is_dir():
-            # Liste Verzeichniseinträge auf
-            return JSONResponse(
-                content={"files": os.listdir(file_path)},
-                status_code=200
-            )
+    async def download_file(self, file_path: pathlib.Path) -> None:
+        """Handle file download."""
+        if not file_path.is_file() or not self.is_path_allowed(file_path):
+            ui.notify('Access denied or file not found', type='negative')
+            return
 
-    # Datei oder Verzeichnis nicht gefunden
-    raise HTTPException(status_code=404, detail="File or directory not found.")
+        # Use NiceGUI's download function
+        await ui.download(str(file_path))
+
+    def refresh_view(self, path: pathlib.Path) -> None:
+        """Refresh the file browser view."""
+        if self.current_container:
+            self.current_container.clear()
+
+        with self.current_container:
+            # Add header with current path
+            ui.label(f'Current directory: {path.relative_to(self.static_dir)}').classes('text-h6')
+
+            # Add parent directory link if not at root
+            if path != self.static_dir and path.parent.is_relative_to(self.static_dir):
+                with ui.row().classes('w-full items-center'):
+                    ui.button('..', on_click=lambda p=path.parent: self.refresh_view(p)) \
+                        .classes('bg-blue-100 px-4 py-2 rounded')
+
+            # List directories first
+            for item in sorted(path.iterdir()):
+                if not self.is_path_allowed(item):
+                    continue
+
+                with ui.row().classes('w-full items-center gap-2'):
+                    if item.is_dir():
+                        ui.button(f'📁 {item.name}/',
+                                  on_click=lambda p=item: self.refresh_view(p)) \
+                            .classes('bg-blue-100 px-4 py-2 rounded')
+                    else:
+                        ui.label(f'📄 {item.name}').classes('flex-grow')
+                        ui.button('Download',
+                                  on_click=lambda p=item: self.download_file(p)) \
+                            .classes('bg-green-100 px-4 py-2 rounded')
+
+
+def register():
+    @ui.page('/installer')
+    def main():
+        """Main page setup."""
+        browser = FileBrowser('.')  # Replace with your actual start directory
+
+        # Create main container
+        with (ui.card().
+                  classes('w-full max-w-3xl mx-auto p-4').
+                  style("background-color: var(--background-color) !important")):
+            ui.label('File Browser').classes('text-h4 mb-4')
+            browser.current_container = ui.column().classes('w-full gap-2')
+            browser.refresh_view(browser.static_dir)
+
+    return main

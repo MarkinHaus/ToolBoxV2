@@ -63,7 +63,7 @@ class VerificationSystem:
         else:
             allt = self.get_all_templates()
 
-            for k,v in allt.items():
+            for k, v in allt.items():
                 if 'name' not in v:
                     continue
                 self.tidmp[v['name']] = k
@@ -131,7 +131,7 @@ class VerificationSystem:
         templates = self.get_all_templates()
         print(templates, self.tidmp, template_id)
         if template_id not in templates:
-            template_id = self.tidmp.get(template_id,template_id)
+            template_id = self.tidmp.get(template_id, template_id)
         if template_id not in templates:
             raise ValueError("Invalid configuration template")
 
@@ -293,6 +293,8 @@ def example_usage(app=None):
     assert vs_secondary.get_all_templates() == vs_secondary2.get_all_templates()
     assert len(vs_main.get_all_templates().keys()) != 0
     assert len(vs_main.get_all_templates().keys()) == 2
+
+
 # Note: This requires a tools_db instance from toolboxv2.mods.DB to be passed in
 
 
@@ -300,6 +302,7 @@ if __name__ == "__main__":
     example_usage[0](get_app())
 
 VS = {}
+
 
 @closed_api_export
 def init_scope(app=None, scope="Main"):
@@ -314,11 +317,12 @@ def init_scope(app=None, scope="Main"):
     VS[scope] = vs
     return Result.ok(vs)
 
+
 @closed_api_export
-def add_template(app =None, scope="Main", name="null",
-        usage_type="null",
-        max_uses=1,
-        valid_duration=None, **kwargs):
+def add_template(app=None, scope="Main", name="null",
+                 usage_type="null",
+                 max_uses=1,
+                 valid_duration=None, **kwargs):
     if app is None:
         app = get_app(Name)
 
@@ -327,13 +331,14 @@ def add_template(app =None, scope="Main", name="null",
         name=name,
         usage_type=usage_type,
         max_uses=max_uses,
-        valid_duration=valid_duration, # 24 hours
+        valid_duration=valid_duration,  # 24 hours
         additional_params=kwargs,
     )))
 
+
 @export(mod_name=Name, version=version, level=1, api=True, name="generate_api")
 @closed_api_export
-def generate(app =None, scope="Main", template_id=None):
+def generate(app=None, scope="Main", template_id=None):
     if app is None:
         app = get_app(Name)
     if template_id is None:
@@ -342,9 +347,10 @@ def generate(app =None, scope="Main", template_id=None):
     # Add templates to different scopes
     return Result.ok(init_scope(app, scope).get().generate_code(template_id))
 
+
 @export(mod_name=Name, version=version, level=0, name="validate")
 @open_api_export
-def validate_api(app =None, scope="Main", code=None):
+def validate_api(app=None, scope="Main", code=None):
     if app is None:
         app = get_app(Name)
     if code is None:
@@ -352,15 +358,17 @@ def validate_api(app =None, scope="Main", code=None):
 
     return Result.ok(init_scope(app, scope).get().validate_code(code))
 
+
 @closed_api_export
-def all_templates(app =None, scope="Main"):
+def all_templates(app=None, scope="Main"):
     if app is None:
         app = get_app(Name)
 
     return Result.ok(init_scope(app, scope).get().get_all_templates())
 
+
 @closed_api_export
-def reset_templates(app =None, scope="Main"):
+def reset_templates(app=None, scope="Main"):
     if app is None:
         app = get_app(Name)
 
@@ -369,20 +377,24 @@ def reset_templates(app =None, scope="Main"):
 
 
 from toolboxv2.utils.extras.base_widget import get_user_from_request
+
 withe_list = ['root', 'loot']
 scoped_withe_list = {}
+
+
 @export(mod_name=Name, version=version, api=True,
         name="pannel", row=True, request_as_kwarg=True)
-async def pannel(app = None, request=None, scope="Main"):
+async def pannel(app=None, request=None, scope="Main"):
     if request is None:
         return HTMLResponse(content="<h1>No access</h1><a href='/'>home</a>")
     if app is None:
-        app =get_app(Name)
+        app = get_app(Name)
 
     user = await get_user_from_request(app, request)
     if user.name not in withe_list:
         return HTMLResponse(content="<h1>No access not on with list </h1><a href='/'>home</a>")
     return HTMLResponse(content=html_template)
+
 
 """if __name__ == "__main__":
 

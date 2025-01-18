@@ -48,6 +48,7 @@ class BaseWidget:
         self.name = name
         self.openWidgetsIDs = {}
         self.onReload = []
+        self.iframes = {}
 
     def register(self, app, fuction, version=None, name="get_widget", level=1, **kwargs):
         if version is None:
@@ -179,3 +180,81 @@ class BaseWidget:
     def hash_wrapper(self, _id, _salt=''):
         from ..security.cryp import Code
         return Code.one_way_hash(text=_id, salt=_salt, pepper=self.name)
+
+    def register_iframe(self, iframe_id: str, src: str, width: str = "100%", height: str = "500px", **kwargs):
+        """
+        Registriert einen iframe mit gegebener ID und Quelle
+
+        Args:
+            iframe_id: Eindeutige ID für den iframe
+            src: URL oder Pfad zur Quelle des iframes
+            width: Breite des iframes (default: "100%")
+            height: Höhe des iframes (default: "500px")
+            **kwargs: Weitere iframe-Attribute
+        """
+        iframe_config = {
+            'src': src,
+            'width': width,
+            'height': height,
+            **kwargs
+        }
+        self.iframes[iframe_id] = iframe_config
+
+    def create_iframe_asset(self, app, iframe_id: str, asset_id: str = None):
+        """
+        Erstellt ein Asset für einen registrierten iframe
+
+        Args:
+            app: App-Instanz
+            iframe_id: ID des registrierten iframes
+            asset_id: Optional, spezifische Asset-ID
+        """
+        if iframe_id not in self.iframes:
+            raise ValueError(f"iframe mit ID {iframe_id} nicht registriert")
+
+        if asset_id is None:
+            asset_id = str(uuid.uuid4())[:4]
+
+        iframe_config = self.iframes[iframe_id]
+        iframe_template = """
+        <iframe id="{iframe_id}"
+                src="{src}"
+                width="{width}"
+                height="{height}"
+                frameborder="0"
+                {additional_attrs}></iframe>
+        """.strip()
+
+        # Filtere bekannte Attribute heraus und erstelle String für zusätzliche Attribute
+        known_attrs = {'src', 'width', 'height'}
+        additional_attrs = ' '.join(
+            f'{k}="{v}"' for k, v in iframe_config.items()
+            if k not in known_attrs
+        )
+
+        iframe_html = iframe_template.format(
+            iframe_id=iframe_id,
+            src=iframe_config['src'],
+            width=iframe_config['width'],
+            height=iframe_config['height'],
+            additional_attrs=additional_attrs
+        )
+
+        return self.asset_loder(
+            app=app,
+            name=f"iframe-{iframe_id}",
+            asset_id=asset_id,
+            template=iframe_html
+        )
+
+    def load_iframe(self, app, iframe_id: str, asset_id: str = None):
+        """
+        Lädt einen registrierten iframe und gibt das HTML-Element zurück
+
+        Args:
+            app: App-Instanz
+            iframe_id: ID des registrierten iframes
+            asset_id: Optional, spezifische Asset-ID
+        """
+        asset = self.create_iframe_asset(app, iframe_id, asset_id)
+        return self.generate_html(app, f"iframe-{iframe_id}", asset_id)[0]['html_element']

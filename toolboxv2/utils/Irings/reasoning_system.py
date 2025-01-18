@@ -115,9 +115,15 @@ class ReasoningSystem:
         self.retrieval_threshold = retrieval_threshold
         self.max_depth = max_depth
         self.max_notes = max_notes
-        self.vector_dimension = vector_dimension
         self.max_branches_per_node = max_branches_per_node
         self.max_retrievals_per_branch = max_retrievals_per_branch
+
+        self.base_max_depth = max_depth
+        self.base_max_notes = max_notes
+        self.base_max_branches_per_node = max_branches_per_node
+        self.base_max_retrievals_per_branch = max_retrievals_per_branch
+
+        self.vector_dimension = vector_dimension
         if extra_reasoning_steps is None:
             extra_reasoning_steps = []
         extra_reasoning_steps = [self._apply_flare_reasoning] + extra_reasoning_steps
@@ -131,6 +137,35 @@ class ReasoningSystem:
     def _encode_state(self, state: str) -> np.ndarray:
         """Encode state into vector representation"""
         return self.vector_encoder(state)
+
+    def get_complexity_score(self, query: str) -> float:
+        """Evaluate the complexity of the query using format_class"""
+        # Implement logic to determine complexity score
+        # For example, using format_class to analyze query structure or semantics
+        # Return a score between 0.0 and 1.0
+        class ComplexityScore(BaseModel):
+            """Evaluate the complexity of the query. Return a score between 0.0 and 1.0"""
+            complexity: float = field(default=.0)
+
+        return self.format_class(ComplexityScore, query ).complexity
+
+    def adjust_parameters(self, complexity_score: float):
+        """Adjust system parameters based on complexity score"""
+        if complexity_score < 0.3:
+            # Simple query
+            self.max_depth = 2
+            self.max_branches_per_node = 1
+            self.max_retrievals_per_branch = 1
+        elif complexity_score < 0.7:
+            # Medium complexity query
+            self.max_depth = self.base_max_depth
+            self.max_branches_per_node = self.base_max_branches_per_node
+            self.max_retrievals_per_branch = self.base_max_retrievals_per_branch
+        else:
+            # Complex query
+            self.max_depth = self.base_max_depth * 2
+            self.max_branches_per_node = self.base_max_branches_per_node * 2
+            self.max_retrievals_per_branch = self.base_max_retrievals_per_branch * 2
 
     def _generate_retrieval_queries(self, node: ReasoningNode, iquery) -> List[str]:
         """Generate diverse retrieval queries based on current reasoning state"""
@@ -310,11 +345,17 @@ class ReasoningSystem:
         self.reasoning_history = []
         self.active_nodes = set()
 
+        # Assess query complexity
+        complexity_score = 0
+        try:
+            complexity_score = self.get_complexity_score(query)
+        except Exception as e:
+            pass
+        self.adjust_parameters(complexity_score)
         # Start new reasoning task
         task_id = self.history_manager.start_task(query, task_type)
 
         # Initialize root node
-        initial_state = ""
         root = ReasoningNode(
             state=query,
             vector_state=VectorState(

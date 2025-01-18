@@ -126,12 +126,12 @@ class SemanticConceptSplitter(ConceptSplitter):
 
             # Find related concepts in chunk
             chunk_keywords = self._extract_keywords(chunk)
-            relations = self._find_relations(chunk_vector, chunk_keywords)
+            # relations = self._find_relations(chunk_vector, chunk_keywords)
 
             subconcepts.append(SubConcept(
                 vector=chunk_vector,
                 importance=importance,
-                relations=relations,
+                relations=chunk_keywords,
                 metadata={
                     "text": chunk,
                     "keywords": chunk_keywords
@@ -164,7 +164,7 @@ class SemanticConceptSplitter(ConceptSplitter):
         # Generate embeddings for keywords
         keyword_vectors = {
             word: self.processor.process_text(word)
-            for word in keywords
+            for word in keywords[:10]
         }
 
         # Find related concepts based on vector similarity

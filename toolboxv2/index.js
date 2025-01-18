@@ -22,6 +22,7 @@ const rpIdUrl_fs = ()=> {
     }
 }
 
+
 let init_d = false
 let DOME;
 let isHtmxAfterRequestListenerAdded = false;
@@ -232,7 +233,7 @@ function updateDome(dome, add_script=true, linkExtra=null){
         if (link.href.toString().startsWith(state.TBv.base)) {
             let route = "/" + new URL(link.href).pathname.split('/').slice(1).join('/');
             // console.log("REGISTERED:", route)
-
+            // && !link.href.toString().includes("/gui/")
             link.addEventListener("click", function(e) {
                 e.preventDefault();
                 linkEffect()

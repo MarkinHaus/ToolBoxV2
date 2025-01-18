@@ -91,9 +91,9 @@ async function handleLoginSuccess(data) {
     document.getElementById('infoText').textContent = "Login in progress";
     document.getElementById('infoPopup').style.display = 'block';
 
-    console.log("[checked]:", document.getElementById("remember-me").classList.contains('none'))
+    console.log("[checked]:", document.getElementById("register-device").classList.contains('none'))
 
-    if (document.getElementById("remember-me").classList.contains('none')){
+    if (document.getElementById("register-device").classList.contains('none')){
         if(await authorisazeUser(data.get().rowId, data.get().challenge, document.getElementById('username').value, get_handleLoginError("authorisazeUser"), handleLoginSuccessVP)){
             document.getElementById('infoText').textContent = "Validate user successful";
         }
@@ -117,10 +117,9 @@ async function handleLoginSuccess(data) {
 
 function loginDevice(username) {
     window.TBf.animator("P2-101")
-    httpPostUrl('CloudM.AuthManager', 'get_to_sing_data', 'username='+username + '&personal_key='+document.getElementById("remember-me").classList.contains('none').toString(), get_handleLoginError("loginDevice"), handleLoginSuccess);
+    httpPostUrl('CloudM.AuthManager', 'get_to_sing_data', 'username='+username + '&personal_key='+document.getElementById("register-device").classList.contains('none').toString(), get_handleLoginError("loginDevice"), handleLoginSuccess);
 }
 
-console.log("added")
 document.getElementById('loginForm').addEventListener('submit', function(event) {
     event.preventDefault();
 

@@ -71,7 +71,7 @@ class NetworkDataHolder:
             ring_states={
                 ring_id: {
                     "concepts": [c.to_dict() for c in ring.concept_graph.concepts.values()],
-                    "stage": ring.stage
+                    "stage": 10
                 }
                 for ring_id, ring in network.rings.items()
             },
