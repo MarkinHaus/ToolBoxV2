@@ -294,7 +294,7 @@ class InputProcessor(metaclass=Singleton):
 
     def get_embedding(self, content: Union[str, bytes, np.ndarray], modality: str = "text") -> Optional[np.ndarray]:
         while not self.started.is_set():
-            time.sleep(1)
+            time.sleep(0.2)
         # Only cache text embeddings
         if modality == "text" and isinstance(content, str):
             cache_key = str((content, "en"))
@@ -309,7 +309,6 @@ class InputProcessor(metaclass=Singleton):
 
         # Initialize a list to store embeddings for all chunks
         chunk_embeddings = []
-
         for chunk in chunks:
             # Check cache for each chunk
             cache_key = str((chunk, "en"))
@@ -339,7 +338,7 @@ class InputProcessor(metaclass=Singleton):
                             raise e
 
 
-                if modality == "text" and isinstance(content, str):
+                if chunk_embedding is not None and modality == "text" and isinstance(content, str):
                     # Cache the chunk embedding
                     self.cache.set(cache_key, chunk_embedding)
 
@@ -579,8 +578,16 @@ class IntelligenceRing:
     def get_concept_by_id(self, concept_id: str) -> Optional[Concept]:
         return self.concept_graph.concepts.get(concept_id)
 
-    def process(self, text, metadata=None, name=None, ttl=None):
+    def process(self, text, vector=None, importance=0, metadata=None, name=None, ttl=None):
         concepts = []
+        if vector is not None:
+            concepts.append(self.concept_graph.add_concept(
+                name=name if name else text[:50],
+                vector=vector,
+                ttl=(int(importance * 10) if importance > 0 else 1) if ttl is None else ttl,
+                metadata=metadata
+            ))
+            return concepts
         sub_concepts = self.splitter.split(text, self.input_processor.process_text(text))
         for concept in sub_concepts:
             concepts.append(self.concept_graph.add_concept(
@@ -597,11 +604,11 @@ def main():
     ring = IntelligenceRing("ring-1")
 
     # Create a key concept
-    text = " AI Ethics and its implications on society." * 63
-    vector = ring.input_processor.get_embedding(text)
-    for i in range(100):
+    text = "AI Ethics and its implications on society." * 64
+    # vector = ring.input_processor.get_embedding(text)
+    for i in range(1, 100):
         print(i,  ring.input_processor.get_embedding(text* i).shape, len(text* i))
-
+    return
     key_concept_id = ring.process(text,
                                   name="AI Ethics",
                                   ttl=-1,

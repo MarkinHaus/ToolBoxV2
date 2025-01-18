@@ -1010,10 +1010,18 @@ class App(AppType, metaclass=Singleton):
             return self.fuction_runner(function, function_data, args, kwargs)
 
     def run_a_from_sync(self, function, *args):
-        try:
-            return asyncio.ensure_future(function(*args))
-        except RuntimeError:
-            return async_test(function)(*args)
+
+        if self.loop is None:
+            try:
+                self.loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self.loop = asyncio.new_event_loop()
+        future = self.loop.create_task(function(*args))
+        return self.loop.run_until_complete(future)
+
+    #try:
+    #    return asyncio.ensure_future(function(*args))
+    #except RuntimeError:
 
     def fuction_runner(self, function, function_data: dict, args: list, kwargs: dict):
 

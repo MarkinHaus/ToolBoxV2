@@ -1,3 +1,4 @@
+import os
 import random
 import threading
 import base64
@@ -19,6 +20,92 @@ from typing import List, Dict, Tuple, Set, Optional, Any
 import numpy as np
 from dataclasses import dataclass
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
+import math
+from tqdm import tqdm
+
+
+class ParallelProcessor:
+    def __init__(self, original_processor):
+        self.processor = original_processor
+        # Locks for thread safety
+        self.metrics_lock = Lock()
+        self.rings_lock = Lock()
+
+    def process_batch(self, batch):
+        """Process a batch of subconcepts"""
+        batch_results = []
+        for subconcept in batch:
+            try:
+                ring_id = self.processor._route_information(subconcept.vector)
+
+                # Handle visualization if present
+                if hasattr(self.processor, 'v') and self.processor.v is not None:
+                    with self.rings_lock:
+                        self.processor.v.mark_active(ring_id)
+
+                # Process in ring with lock for thread safety
+                with self.rings_lock:
+                    self.processor._process_in_ring(
+                        ring_id,
+                        subconcept.metadata["text"],
+                        subconcept.vector
+                    )
+
+                # Update metrics with lock
+                with self.metrics_lock:
+                    self.processor._update_metrics(ring_id)
+
+                # Handle restructuring if needed
+                if subconcept.importance > 0.65:
+                    with self.rings_lock:
+                        RingRestructurer(self.processor.rings[ring_id]).restructure()
+
+                batch_results.append(ring_id)
+            except Exception as e:
+                print(f"Error processing subconcept: {e}")
+                batch_results.append(None)
+
+        return batch_results
+
+
+def parallel_process(self, subconcepts, max_workers=None):
+    """
+    Process subconcepts in parallel using ThreadPool
+    """
+    # Calculate batch size (min of 100 or 10% of input size)
+    total_size = len(subconcepts)
+    batch_size = min(10, max(1, total_size // 10))
+
+    # Create batches
+    batches = [
+        subconcepts[i:i + batch_size]
+        for i in range(0, total_size, batch_size)
+    ]
+
+    # Initialize parallel processor
+    processor = ParallelProcessor(self)
+    results = []
+
+    # Default to number of CPUs if max_workers not specified
+    if max_workers is None:
+        max_workers = min(32, (os.cpu_count() or 1) + 4)
+
+    # Process batches in parallel with progress bar
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(processor.process_batch, batch) for batch in batches]
+
+        # Show progress with tqdm
+        for future in tqdm(
+            futures,
+            desc="Processing batches",
+            total=len(batches)
+        ):
+            batch_results = future.result()
+            results.extend(batch_results)
+
+    return results
 
 class RingSerializer:
 
@@ -254,27 +341,27 @@ class NetworkManager:
         List[str], List[SubConcept]]:
         if self.state != NetworkState.ACTIVE:
             raise ValueError("Network is not active")
-
         vector = self.rings[next(iter(self.rings))].input_processor.process_text(text)
         subconcepts = self.splitter.split(text, vector)
         self.metrics.latest_concepts = []
         # Process each subconcept
         results = []
-        for subconcept in tqdm(iterable=subconcepts, desc="Process", total=len(subconcepts)):
-            ring_id = self._route_information(subconcept.vector)
-            if v is not None:
-                v.mark_active(ring_id)
-            self._process_in_ring(
-                ring_id,
-                subconcept.metadata["text"],
-                subconcept.vector
-            )
-            self._update_metrics(ring_id)
-            results.append(ring_id)
-
-            if subconcept.importance > 0.65:
-                RingRestructurer(self.rings[ring_id]).restructure()
-
+        if len(subconcepts) < 10:
+            for subconcept in tqdm(iterable=subconcepts, desc="Process", total=len(subconcepts)):
+                ring_id = self._route_information(subconcept.vector)
+                if v is not None:
+                    v.mark_active(ring_id)
+                self._process_in_ring(
+                    ring_id,
+                    subconcept.metadata["text"],
+                    subconcept.vector
+                )
+                self._update_metrics(ring_id)
+                results.append(ring_id)
+                if subconcept.importance > 0.65:
+                    RingRestructurer(self.rings[ring_id]).restructure()
+        else:
+            results = parallel_process(self, subconcepts)
         # Optimize network topology
         if get_subconcepts:
             return results, subconcepts
@@ -333,12 +420,11 @@ class NetworkManager:
 
         # Process each subconcept
         for subconcept in subconcepts[:self.max_new]:
-            parrent_id = ring.process(subconcept.metadata["text"], metadata={"type": "derived"})
+            parrent_id = ring.process(subconcept.metadata["text"],
+                                      vector=subconcept.vector,
+                                      importance=subconcept.importance,
+                                      metadata={"type": "derived"})
             self.metrics.latest_concepts.append(f"{ring_id}:{parrent_id}")
-
-            for s in subconcept.relations:
-                d_id = ring.process(s, metadata={"type": "derived", "parent": parrent_id})
-                self.metrics.latest_concepts.append(f"{d_id}:{parrent_id}")
 
         # Update connections based on concept relations
         self._update_connections(ring_id)

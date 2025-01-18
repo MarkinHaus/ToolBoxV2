@@ -7,7 +7,26 @@ from toolboxv2 import Spinner
 from nltk.tokenize import sent_tokenize
 import networkx as nx
 
-
+lang_dict = {
+    'cs': 'czech',
+    'da': 'danish',
+    'de': 'german',
+    'el': 'greek',
+    'en': 'english',
+    'es': 'spanish',
+    'et': 'estonian',
+    'fi': 'finnish',
+    'fr': 'french',
+    'it': 'italian',
+    'nl': 'dutch',
+    'no': 'norwegian',
+    'pl': 'polish',
+    'pt': 'portuguese',
+    'ru': 'russian',
+    'sl': 'slovene',
+    'sv': 'swedish',
+    'tr': 'turkish',
+}
 @dataclass
 class SplitConfig:
     min_chunk_size: int = 50
@@ -38,32 +57,45 @@ class SemanticConceptSplitter(ConceptSplitter):
 
     def split(self, text: str, context_vector: np.ndarray) -> List[SubConcept]:
         # Extract semantic units
-        with Spinner("sent_tokenize 1/5"):
-            sentences = sent_tokenize(text)
-        with Spinner("sent_vectorize 2/5"):
-            sentence_vectors = self._vectorize_sentences(sentences)
+        from langdetect import detect
+        lang = lang_dict.get(detect(text), "en")
+        sentences = sent_tokenize(text, lang)
+        sentence_vectors = self._vectorize_sentences(sentences)
 
         # Create semantic graph
-        with Spinner("Create semantic graph 3/5"):
-            graph = self._build_semantic_graph(sentence_vectors)
+        graph, reordered_sentences = self._build_semantic_graph(sentence_vectors)
 
         # Extract coherent chunks
-        with Spinner("Extract coherent chunks 4/5"):
-            chunks = self._extract_chunks(graph, sentences)
-        with Spinner("Generate and rank subconcepts 5/5"):
-            # Generate and rank subconcepts
-            pass
+        chunks = self._extract_chunks(graph, sentences)
+
         return self._create_subconcepts(chunks, context_vector)
 
     def _vectorize_sentences(self, sentences: List[str]) -> np.ndarray:
         vectors = []
+        fist_len = 0
         for sentence in sentences:
             if len(sentence.split()) >= 3:  # Skip very short sentences
                 vector = self.processor.process_text(sentence)
-                vectors.append(vector)
+                if vector is None:
+                    print("Error processing v", len(vectors))
+                    continue
+                if len(vector) == 0:
+                    fist_len = len(vector)
+
+                if len(vector) == fist_len:
+                    vectors.append(vector)
         return np.array(vectors)
 
-    def _build_semantic_graph(self, vectors: np.ndarray) -> nx.Graph:
+    def _build_semantic_graph(self, vectors: np.ndarray) -> [nx.Graph, List[str]]:
+        """
+        Builds a semantic graph from the given sentence vectors.
+
+        Args:
+        vectors (np.ndarray): Sentence vectors.
+
+        Returns:
+        nx.Graph: The built semantic graph.
+        """
         graph = nx.Graph()
 
         # Add nodes
@@ -77,7 +109,65 @@ class SemanticConceptSplitter(ConceptSplitter):
                 if similarity > self.config.similarity_threshold:
                     graph.add_edge(i, j, weight=similarity)
 
-        return graph
+        # Identify scattered concepts using graph clustering
+        clusters = self._cluster_graph(graph)
+
+        # Reorder sentences based on cluster structure
+        reordered_sentences = self._reorder_sentences(graph, clusters)
+
+        return graph, reordered_sentences
+
+    def _cluster_graph(self, graph: nx.Graph) -> list:
+        """
+        Clusters nodes in the given graph using a simple threshold-based approach.
+
+        Args:
+        graph (nx.Graph): The input graph.
+
+        Returns:
+        list: A list of cluster assignments for each node.
+        """
+        clusters = []
+        visited = set()
+        for node in graph.nodes():
+            if node not in visited:
+                cluster = []
+                self._dfs(graph, node, visited, cluster)
+                clusters.append(cluster)
+        return clusters
+
+    def _dfs(self, graph: nx.Graph, node: int, visited: set, cluster: list):
+        """
+        Performs a depth-first search (DFS) in the graph starting from the given node.
+
+        Args:
+        graph (nx.Graph): The input graph.
+        node (int): The current node.
+        visited (set): A set of visited nodes.
+        cluster (list): A list of nodes in the current cluster.
+        """
+        visited.add(node)
+        cluster.append(node)
+        for neighbor in graph.neighbors(node):
+            if neighbor not in visited:
+                self._dfs(graph, neighbor, visited, cluster)
+
+    def _reorder_sentences(self, graph: nx.Graph, clusters: list) -> list:
+        """
+        Reorders sentences based on cluster structure.
+
+        Args:
+        graph (nx.Graph): The input graph.
+        clusters (list): A list of cluster assignments for each node.
+
+        Returns:
+        list: A list of reordered sentence indices.
+        """
+        reordered_sentences = []
+        for cluster in clusters:
+            for node in cluster:
+                reordered_sentences.append(node)
+        return reordered_sentences
 
     def _extract_chunks(self, graph: nx.Graph, sentences: List[str]) -> List[str]:
         # Find communities using Louvain method
@@ -103,7 +193,8 @@ class SemanticConceptSplitter(ConceptSplitter):
 
         if current_chunk:
             chunks.append(' '.join(current_chunk))
-
+        if len(chunks) == 0:
+            chunks = sentences
         return chunks
 
     def _create_subconcepts(
@@ -117,8 +208,14 @@ class SemanticConceptSplitter(ConceptSplitter):
             if len(chunk) < self.config.min_chunk_size:
                 return
 
+            if len(chunk) > self.config.max_chunk_size:
+                helper(chunk[self.config.max_chunk_size:])
+                chunk = chunk[:self.config.max_chunk_size]
+
             # Process chunk
             chunk_vector = self.processor.process_text(chunk)
+            if chunk_vector is None:
+                return
             importance = np.dot(chunk_vector, context_vector)
 
             if importance < self.config.min_importance:
