@@ -26,87 +26,6 @@ import math
 from tqdm import tqdm
 
 
-class ParallelProcessor:
-    def __init__(self, original_processor):
-        self.processor = original_processor
-        # Locks for thread safety
-        self.metrics_lock = Lock()
-        self.rings_lock = Lock()
-
-    def process_batch(self, batch):
-        """Process a batch of subconcepts"""
-        batch_results = []
-        for subconcept in batch:
-            try:
-                ring_id = self.processor._route_information(subconcept.vector)
-
-                # Handle visualization if present
-                if hasattr(self.processor, 'v') and self.processor.v is not None:
-                    with self.rings_lock:
-                        self.processor.v.mark_active(ring_id)
-
-                # Process in ring with lock for thread safety
-                with self.rings_lock:
-                    self.processor._process_in_ring(
-                        ring_id,
-                        subconcept.metadata["text"],
-                        subconcept.vector
-                    )
-
-                # Update metrics with lock
-                with self.metrics_lock:
-                    self.processor._update_metrics(ring_id)
-
-                # Handle restructuring if needed
-                if subconcept.importance > 0.65:
-                    with self.rings_lock:
-                        RingRestructurer(self.processor.rings[ring_id]).restructure()
-
-                batch_results.append(ring_id)
-            except Exception as e:
-                print(f"Error processing subconcept: {e}")
-                batch_results.append(None)
-
-        return batch_results
-
-
-def parallel_process(self, subconcepts, max_workers=None):
-    """
-    Process subconcepts in parallel using ThreadPool
-    """
-    # Calculate batch size (min of 100 or 10% of input size)
-    total_size = len(subconcepts)
-    batch_size = min(10, max(1, total_size // 10))
-
-    # Create batches
-    batches = [
-        subconcepts[i:i + batch_size]
-        for i in range(0, total_size, batch_size)
-    ]
-
-    # Initialize parallel processor
-    processor = ParallelProcessor(self)
-    results = []
-
-    # Default to number of CPUs if max_workers not specified
-    if max_workers is None:
-        max_workers = min(32, (os.cpu_count() or 1) + 4)
-
-    # Process batches in parallel with progress bar
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(processor.process_batch, batch) for batch in batches]
-
-        # Show progress with tqdm
-        for future in tqdm(
-            futures,
-            desc="Processing batches",
-            total=len(batches)
-        ):
-            batch_results = future.result()
-            results.extend(batch_results)
-
-    return results
-
 class RingSerializer:
 
     def _concept_to_dict(self, concept: Concept) -> Dict[str, Any]:
@@ -337,31 +256,33 @@ class NetworkManager:
                     self.rings[ring_id].adapter
                 )
 
-    def process_input(self, text: str, v=None, get_subconcepts=False) -> List[str] or Tuple[
+    def process_input(self, text: str, v=None, get_subconcepts=False, ref=None) -> List[str] or Tuple[
         List[str], List[SubConcept]]:
         if self.state != NetworkState.ACTIVE:
             raise ValueError("Network is not active")
-        vector = self.rings[next(iter(self.rings))].input_processor.process_text(text)
+        if ref is None:
+            ref = text
+        vector = self.rings[next(iter(self.rings))].input_processor.process_text(ref)
         subconcepts = self.splitter.split(text, vector)
         self.metrics.latest_concepts = []
         # Process each subconcept
         results = []
-        if len(subconcepts) < 10:
-            for subconcept in tqdm(iterable=subconcepts, desc="Process", total=len(subconcepts)):
-                ring_id = self._route_information(subconcept.vector)
-                if v is not None:
-                    v.mark_active(ring_id)
-                self._process_in_ring(
-                    ring_id,
-                    subconcept.metadata["text"],
-                    subconcept.vector
-                )
-                self._update_metrics(ring_id)
-                results.append(ring_id)
-                if subconcept.importance > 0.65:
-                    RingRestructurer(self.rings[ring_id]).restructure()
-        else:
-            results = parallel_process(self, subconcepts)
+
+        for subconcept in tqdm(iterable=subconcepts, desc="Process", total=len(subconcepts)):
+            # print(subconcept.metadata.get('text'))
+            ring_id = self._route_information(subconcept.vector)
+            if v is not None:
+                v.mark_active(ring_id)
+            self._process_in_ring(
+                ring_id,
+                subconcept,
+                refv=vector
+            )
+            self._update_metrics(ring_id)
+            results.append(ring_id)
+            if subconcept.importance > 0.65:
+                RingRestructurer(self.rings[ring_id]).restructure()
+
         # Optimize network topology
         if get_subconcepts:
             return results, subconcepts
@@ -379,23 +300,13 @@ class NetworkManager:
                 best_similarity = 0.5
                 best_ring_id = ring_id if best_ring_id is None else best_ring_id
                 continue
-            c = list(ring.concept_graph.concepts.values())
-            random.shuffle(c)
-            for concept in c[:25]:
-                if not concept.vector.shape and 'text' in concept.metadata:
-                    concept.vector = ring.input_processor.process_text(concept.metadata.get('text', concept.name))
-            # Get similarity to ring's key concepts
-            c = list(ring.concept_graph.concepts.values())
-            random.shuffle(c)
-            similarities = [
-                np.dot(vector, concept.vector)
-                for concept in c[:25]
-                if concept.stage > 0
-            ]
+            similarities = ring.retrieval_system.find_similar(vector, top_k=5)
+            similarities = [x[1] for x in similarities]
+
             if similarities:
-                max_sim = max(similarities)
-                if max_sim > best_similarity:
-                    best_similarity = max_sim
+                avg_sim = sum(similarities) / len(similarities)
+                if avg_sim > best_similarity:
+                    best_similarity = avg_sim
                     best_ring_id = ring_id
 
         if best_similarity < 0.2:
@@ -406,28 +317,22 @@ class NetworkManager:
 
         return best_ring_id
 
-    def _process_in_ring(self, ring_id: str, text: str, vector: np.ndarray):
+    def _process_in_ring(self, ring_id: str, subconcept: SubConcept, refv=None):
         ring = self.rings[ring_id]
 
         # If empty ring, establish key concept
         if not ring.concept_graph.concepts:
-            concept_id = ring.process(text, metadata={"type": "key_concept"})
+            concept_id = ring.process(subconcept.metadata["text"], metadata={"type": "key_concept"})
             return
 
-        # Process in existing ring
-
-        subconcepts = self.splitter.split(text, vector)
-
-        # Process each subconcept
-        for subconcept in subconcepts[:self.max_new]:
-            parrent_id = ring.process(subconcept.metadata["text"],
-                                      vector=subconcept.vector,
-                                      importance=subconcept.importance,
-                                      metadata={"type": "derived"})
-            self.metrics.latest_concepts.append(f"{ring_id}:{parrent_id}")
+        parrent_id = ring.process(subconcept.metadata["text"],
+                                  vector=subconcept.vector,
+                                  importance=subconcept.importance,
+                                  metadata={"type": "derived"}, refv=refv)
+        self.metrics.latest_concepts.append(f"{ring_id}:{parrent_id}")
 
         # Update connections based on concept relations
-        self._update_connections(ring_id)
+        self._update_connections(ring_id, subconcept.vector)
 
     def _is_connected(self, source_ring_id):
         if source_ring_id not in self.rings:
@@ -450,7 +355,7 @@ class NetworkManager:
                 self.rings[ring_id].adapter
             )
 
-    def _update_connections(self, source_ring_id: str):
+    def _update_connections(self, source_ring_id: str, vector: np.ndarray):
         with self.lock:
             self._is_connected(source_ring_id)
             connections = self.connections.get(source_ring_id)
@@ -471,18 +376,23 @@ class NetworkManager:
             for target_id in connections:
                 target_ring = self.rings[target_id]
 
-                sim = self._calculate_ring_similarity(
-                    source_ring.concept_graph,
-                    target_ring.concept_graph
-                )
+                source_res = source_ring.retrieval_system.find_similar(vector, top_k=50)
+                target_res = []
+                if len(source_res) != 0:
+                    target_res = target_ring.retrieval_system.find_similar(vector, top_k=min(len(source_res), 50))
+                max_len = min(len(source_res), len(target_res))
+                if max_len < 1:
+                    sim = 0
+                else:
+                    sv = [v[1] for v in source_res[:max_len]]
+                    tv = [v[1] for v in target_res[:max_len]]
+                    sim = np.mean(np.array(sv)-np.array(tv))
                 connections[target_id] = sim
                 self.connections[target_id][source_ring_id] = sim
 
     def _calculate_ring_similarity(self, graph1, graph2) -> float:
         similarities = []
-        for c1 in list(graph1.concepts.values()).copy():
-            for c2 in list(graph2.concepts.values()).copy():
-                similarities.append(np.dot(c1.vector, c2.vector))
+
         return max(similarities) if similarities else 0.0
 
     def _get_empty_ring(self) -> str:

@@ -51,7 +51,7 @@ class IntelligenceRingEmbeddings(lancedb.embeddings.EmbeddingFunction):
     clip_name: str = "openai/clip-vit-base-patch32"
     wav2vec_name: str = "facebook/wav2vec2-base-960h"
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    vector_size: int = 2036
+    vector_size: int = 768
     tokenizer: Optional[Any] = None
     text_model: Optional[Any] = None
 
@@ -209,7 +209,7 @@ class IntelligenceRingEmbeddings(lancedb.embeddings.EmbeddingFunction):
 
 # LanceDB Schema for Concepts
 class ConceptSchema(LanceModel):
-    vector: Vector(2036)
+    vector: Vector(768)
     id: str
     name: str
     ttl: int
@@ -309,6 +309,7 @@ class InputProcessor(metaclass=Singleton):
 
         # Initialize a list to store embeddings for all chunks
         chunk_embeddings = []
+
         for chunk in chunks:
             # Check cache for each chunk
             cache_key = str((chunk, "en"))
@@ -345,8 +346,7 @@ class InputProcessor(metaclass=Singleton):
                 chunk_embeddings.append(chunk_embedding)
 
         # Combine all chunk embeddings into a single vector of the same shape
-        combined_embedding = np.mean(chunk_embeddings, axis=0) if chunk_embeddings else None
-
+        combined_embedding = np.mean([e for e in chunk_embeddings if len(e) == self.vector_size], axis=0) if chunk_embeddings else None
         return combined_embedding
 
 
@@ -578,7 +578,7 @@ class IntelligenceRing:
     def get_concept_by_id(self, concept_id: str) -> Optional[Concept]:
         return self.concept_graph.concepts.get(concept_id)
 
-    def process(self, text, vector=None, importance=0, metadata=None, name=None, ttl=None):
+    def process(self, text, vector=None, importance=0, metadata=None, name=None, ttl=None, ref=None, refv=None):
         concepts = []
         if vector is not None:
             concepts.append(self.concept_graph.add_concept(
@@ -588,7 +588,11 @@ class IntelligenceRing:
                 metadata=metadata
             ))
             return concepts
-        sub_concepts = self.splitter.split(text, self.input_processor.process_text(text))
+
+        if refv is None:
+            refv = self.input_processor.process_text(ref if ref is not None else text)
+
+        sub_concepts = self.splitter.split(text, refv)
         for concept in sub_concepts:
             concepts.append(self.concept_graph.add_concept(
                 name=name if name else concept.metadata['text'][:50],
@@ -605,10 +609,10 @@ def main():
 
     # Create a key concept
     text = "AI Ethics and its implications on society." * 64
-    # vector = ring.input_processor.get_embedding(text)
+    vector = ring.input_processor.get_embedding(text)
     for i in range(1, 100):
         print(i,  ring.input_processor.get_embedding(text* i).shape, len(text* i))
-    return
+    # return
     key_concept_id = ring.process(text,
                                   name="AI Ethics",
                                   ttl=-1,

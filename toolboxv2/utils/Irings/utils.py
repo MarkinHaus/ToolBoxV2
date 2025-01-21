@@ -58,26 +58,35 @@ class SemanticConceptSplitter(ConceptSplitter):
     def split(self, text: str, context_vector: np.ndarray) -> List[SubConcept]:
         # Extract semantic units
         from langdetect import detect
-        lang = lang_dict.get(detect(text), "en")
+        lang = lang_dict.get(detect(text), "english")
         sentences = sent_tokenize(text, lang)
         sentence_vectors = self._vectorize_sentences(sentences)
 
         # Create semantic graph
-        graph, reordered_sentences = self._build_semantic_graph(sentence_vectors)
+        graph = self._build_semantic_graph(sentence_vectors)
 
         # Extract coherent chunks
         chunks = self._extract_chunks(graph, sentences)
 
-        return self._create_subconcepts(chunks, context_vector)
+        subconcepts = self._create_subconcepts(chunks, context_vector)
+        return subconcepts
 
     def _vectorize_sentences(self, sentences: List[str]) -> np.ndarray:
         vectors = []
         fist_len = 0
         for sentence in sentences:
             if len(sentence.split()) >= 3:  # Skip very short sentences
+                if len(sentence) > 2500:
+                    vector0 = self.processor.process_text(sentence[:1250])
+                    if vector0 is not None and len(vector0) == 0:
+                        fist_len = len(vector0)
+
+                    if vector0 is not None and len(vector0) == fist_len:
+                        vectors.append(vector0)
+                    sentence = sentence[1250:]
                 vector = self.processor.process_text(sentence)
                 if vector is None:
-                    print("Error processing v", len(vectors))
+                    print("Error processing v", len(vectors), len(sentences), len(sentence))
                     continue
                 if len(vector) == 0:
                     fist_len = len(vector)
@@ -86,7 +95,7 @@ class SemanticConceptSplitter(ConceptSplitter):
                     vectors.append(vector)
         return np.array(vectors)
 
-    def _build_semantic_graph(self, vectors: np.ndarray) -> [nx.Graph, List[str]]:
+    def _build_semantic_graph(self, vectors: np.ndarray) -> nx.Graph:
         """
         Builds a semantic graph from the given sentence vectors.
 
@@ -109,65 +118,8 @@ class SemanticConceptSplitter(ConceptSplitter):
                 if similarity > self.config.similarity_threshold:
                     graph.add_edge(i, j, weight=similarity)
 
-        # Identify scattered concepts using graph clustering
-        clusters = self._cluster_graph(graph)
+        return graph
 
-        # Reorder sentences based on cluster structure
-        reordered_sentences = self._reorder_sentences(graph, clusters)
-
-        return graph, reordered_sentences
-
-    def _cluster_graph(self, graph: nx.Graph) -> list:
-        """
-        Clusters nodes in the given graph using a simple threshold-based approach.
-
-        Args:
-        graph (nx.Graph): The input graph.
-
-        Returns:
-        list: A list of cluster assignments for each node.
-        """
-        clusters = []
-        visited = set()
-        for node in graph.nodes():
-            if node not in visited:
-                cluster = []
-                self._dfs(graph, node, visited, cluster)
-                clusters.append(cluster)
-        return clusters
-
-    def _dfs(self, graph: nx.Graph, node: int, visited: set, cluster: list):
-        """
-        Performs a depth-first search (DFS) in the graph starting from the given node.
-
-        Args:
-        graph (nx.Graph): The input graph.
-        node (int): The current node.
-        visited (set): A set of visited nodes.
-        cluster (list): A list of nodes in the current cluster.
-        """
-        visited.add(node)
-        cluster.append(node)
-        for neighbor in graph.neighbors(node):
-            if neighbor not in visited:
-                self._dfs(graph, neighbor, visited, cluster)
-
-    def _reorder_sentences(self, graph: nx.Graph, clusters: list) -> list:
-        """
-        Reorders sentences based on cluster structure.
-
-        Args:
-        graph (nx.Graph): The input graph.
-        clusters (list): A list of cluster assignments for each node.
-
-        Returns:
-        list: A list of reordered sentence indices.
-        """
-        reordered_sentences = []
-        for cluster in clusters:
-            for node in cluster:
-                reordered_sentences.append(node)
-        return reordered_sentences
 
     def _extract_chunks(self, graph: nx.Graph, sentences: List[str]) -> List[str]:
         # Find communities using Louvain method
@@ -204,6 +156,10 @@ class SemanticConceptSplitter(ConceptSplitter):
     ) -> List[SubConcept]:
         subconcepts = []
 
+        avg_min_importance = [0, 0]
+        if context_vector is None:
+            context_vector = self.processor.process_text('')
+
         def helper(chunk):
             if len(chunk) < self.config.min_chunk_size:
                 return
@@ -217,8 +173,13 @@ class SemanticConceptSplitter(ConceptSplitter):
             if chunk_vector is None:
                 return
             importance = np.dot(chunk_vector, context_vector)
+            avg_min_importance[1] += 1
+            if avg_min_importance[0] == 0:
+                avg_min_importance[0] = importance
+            else:
+                avg_min_importance[0] += max(importance, 0)
 
-            if importance < self.config.min_importance:
+            if importance < avg_min_importance[0]/avg_min_importance[1]:
                 return
 
             # Find related concepts in chunk
@@ -281,12 +242,8 @@ class TransformerSplitter(ConceptSplitter):
         # Split text into semantic chunks
         chunks = self._chunk_text(text)
         subconcepts = []
-        chunk_vectors = self.processor.batch_get_embeddings(chunks, ["text"] * len(chunks))
         for chunk in chunks:
-            if chunk_vectors is None:
-                chunk_vector = self.processor.process_text(chunk)
-            else:
-                chunk_vector = chunk_vectors[chunks.index(chunk)]
+            chunk_vector = self.processor.process_text(chunk)
             importance = np.dot(chunk_vector, vector) if vector is not None else -1
 
             subconcepts.append(SubConcept(

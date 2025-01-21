@@ -153,7 +153,7 @@ class CognitiveNetwork:
         else:
             context = self.agent_state.inner_state["monologue"][-1].get("thought")
 
-        results = self.network.process_input(context)
+        results = self.network.process_input(context, ref=self.agent_state.inner_state["monologue"][-1].get("thought"))
 
         for ring_id in results[::-1]:
             self._v.mark_active(ring_id) if self._v is not None else None
@@ -239,13 +239,13 @@ class CognitiveNetwork:
                         self.internal_update()
 
                 if len(user_input) > 200000:
-                    self.network.process_input(user_input)
+                    self.network.process_input(user_input, ref=user_input)
 
                 # Process through network
                 res = self._process_agent_action(interface_response)
 
                 # Get active concepts
-                ac = '\n\n'.join([x.get('metadata', {}).get('text')
+                ac = '\n\n'.join([x.get('metadata', {}).get('text', '')
                                   for x in self._get_active_concepts()][:self.network.max_new])
 
                 # Generate detailed response
@@ -322,7 +322,7 @@ class CognitiveNetwork:
         action = self.agent_llm.process(action_prompt, max_tokens=1500)
         action = str(action)
         # Process action through network
-        result = self.network.process_input(instruction + action)
+        result = self.network.process_input(instruction, ref=action)
 
         # Update agent state with structured action info
         self._update_agent_state(action, result)
