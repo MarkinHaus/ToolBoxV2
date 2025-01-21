@@ -19,16 +19,18 @@ from toolboxv2.utils.system.session import RequestSession
 
 
 class NiceGUIManager(metaclass=Singleton):
+    init = False
     def __init__(self, fastapi_app: FastAPI = None, styles_path: str = "./web/assets/styles.css"):
+
         if fastapi_app is None:
-            return self
+            return None
         self.admin_password = os.getenv("TB_R_KEY", "root@admin")
         self.app = fastapi_app
         self.styles_path = styles_path
         self.registered_guis: Dict[str, Dict[str, Any]] = {}
         self.ws_connections: Dict[str, Dict[str, WebSocket]] = {}
         self.mount_path = "/gui"
-        self.init = False
+
         self.helper_contex = open("./dist/helper.html", "r", encoding="utf-8").read()
 
         self.app.add_middleware(BaseHTTPMiddleware, dispatch=self.middleware_dispatch)

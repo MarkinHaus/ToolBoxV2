@@ -178,6 +178,7 @@ class App(AppType, metaclass=Singleton):
         )
 
         self.args_sto = args
+        self.loop = None
 
         from .system.session import Session
         self.session: Session = Session(self.get_username())
@@ -831,8 +832,9 @@ class App(AppType, metaclass=Singleton):
                     print("Unsave Exit")
                     break
         if hasattr(self, 'loop'):
-            with Spinner(f"closing Event loop:", symbols="+"):
-                self.loop.stop()
+            if self.loop is not None:
+                with Spinner(f"closing Event loop:", symbols="+"):
+                    self.loop.stop()
 
     async def a_exit(self):
         await self.a_remove_all_modules()
