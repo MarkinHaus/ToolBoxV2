@@ -7,7 +7,7 @@ const rpIdUrl_f = ()=> {
     if (window.location.href.match("localhost")) {
         return "localhost"
     } else {
-        return "simplecore.app"
+        return window.location.origin
     }
 }
 const rpIdUrl = rpIdUrl_f()

@@ -10,7 +10,7 @@ const rpIdUrl_f = ()=> {
     if (window.location.href.match("localhost")) {
         return "http://localhost:" + window.location.port
     } else {
-        return "https://simplecore.app"
+        return window.location.origin
     }
 }
 
@@ -455,7 +455,7 @@ function router(url, extend = false, id = "main", Dome = DOME, callback=null) {
     }
 
     async function fetchFromRBackend(uri) {
-        const backendUrl = `https://simplecore.app/${uri}`;
+        const backendUrl = `${window.location.origin}/${uri}`;
         try {
             const response = await fetch(backendUrl);
             if (response.ok) {

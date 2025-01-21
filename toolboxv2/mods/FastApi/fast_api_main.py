@@ -403,6 +403,7 @@ origins = [
     "http://0.0.0.0",
     "http://localhost",
     "https://simplecore.app",
+    "https://simplecorehub.acom",
 ]
 
 app.add_middleware(

@@ -411,7 +411,7 @@ async def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
     if challenge is None:
         return Result.default_user_error(info="No challenge found in data invalid date parsed", data=user_result)
 
-    valid_origen = ["https://simplecore.app", "http://localhost:5000"] + (
+    valid_origen = ["https://simplecore.app", "https://simplecorehub.com", "http://localhost:5000"] + (
         ["http://localhost:5000"] if app.debug else [])
 
     if origin not in valid_origen:
@@ -571,7 +571,7 @@ async def validate_persona(app: App, data: VpUSER) -> ApiResult:
     if user.is_persona == "":
         return Result.default_user_error(info="No Persona key registered")
 
-    valid_origen = ["https://simplecore.app"] + (
+    valid_origen = ["https://simplecore.app","https://simplecorehub.com" ] + (
         ["http://localhost:5000"] if app.debug else [])
 
     try:
