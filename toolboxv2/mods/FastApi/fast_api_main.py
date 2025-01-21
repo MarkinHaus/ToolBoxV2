@@ -972,8 +972,8 @@ app.add_middleware(SessionMiddleware,
                    https_only='live' in tb_app.id,
                    secret_key=Code.one_way_hash(DEVICE_KEY(), tb_app.id))
 
-tb_app.run_a_from_sync(helper, id_name)
-
+# tb_app.run_a_from_sync(helper, id_name)
+asyncio.ensure_future(helper(id_name))
 
 async def serve_files(path: str, request: Request, access_allowed: bool = Depends(lambda: check_access_level(0))):
     return serve_app_func(path)
