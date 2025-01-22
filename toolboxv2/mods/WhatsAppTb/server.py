@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 class AppManager(metaclass=Singleton):
     pepper = "pepper0"
+
     def __init__(self, start_port: int = 8000, port_range: int = 10, em=None):
         self.instances: Dict[str, Dict] = {}
         self.start_port = start_port
@@ -29,9 +30,8 @@ class AppManager(metaclass=Singleton):
         self.message_queue: asyncio.Queue = asyncio.Queue()
         self.last_messages: Dict[str, datetime] = {}
         self.keys: Dict[str, str] = {}
-
-
         self.forwarders: Dict[str, Dict] = {}
+
         if em is None:
             from toolboxv2 import get_app
             em = get_app().get_mod("EventManager")
@@ -45,29 +45,9 @@ class AppManager(metaclass=Singleton):
         except Exception:
             pass
 
-    async def initialize(self):
-        print("WhatsAppTb6")
-        if self.event_manager.identification != "P0|S0":
-            self.event_manager.identification = "P0|S0"
-            await self.event_manager.identity_post_setter()
-        service_event = self.event_manager.make_event_from_fuction(self.online(),
-                                                                   "whatsapp-connection-point",
-                                                                   source_types=SourceTypes.AP,
-                                                                   scope=Scope.global_network,
-                                                                   threaded=True)
-        await self.event_manager.register_event(service_event)
+    def offline(self, key):
 
-        service_event = self.event_manager.make_event_from_fuction(self.offline(),
-                                                                   "whatsapp-disconnection-point",
-                                                                   source_types=SourceTypes.AP,
-                                                                   scope=Scope.global_network,
-                                                                   threaded=True)
-        await self.event_manager.register_event(service_event)
-
-    def offline(self):
-
-        async def mark_as_offline(payload):
-            key = payload.payload.get('key', None)
+        def mark_as_offline():
             if key is None:
                 return "Invalid key"
             if key not in self.keys:
@@ -77,39 +57,23 @@ class AppManager(metaclass=Singleton):
 
         return mark_as_offline
 
-    def online(self):
+    def online(self, key):
 
-        async def mark_as_online(payload):
-            key = payload.payload.get('key', None)
+        def mark_as_online():
             if key is None:
                 return "Invalid key"
             if key not in self.keys:
                 return "Invalid key 404"
-            self.crate_sender(self.keys[key], payload.payload.get('source_id'), payload.payload.get('sKey'))
-            await self.forwarders[self.keys[key]]['send'](Message(id=0, instance=None, content="test", to="0000", data={'none':'none'}))
-            return "accepted"
+            return self.instances[self.keys[key]]
 
-        return mark_as_online
+        def set_callbacks(callback, e_callback=None):
+            if callback is not None:
+                self.forwarders[self.keys[key]]['send'] = callback
+            if e_callback is not None:
+                self.forwarders[self.keys[key]]['sende'] = e_callback
+            self.forwarders[self.keys[key]]['send'](Message(id=0, instance=None, content="test", to="0000", data={'none':'none'}))
 
-    def crate_sender(self, identifier, source_id, sKey):
-
-        async def send(message: Message):
-            if source_id is None:
-                print('No source', identifier)
-                return
-            message_data = {
-                'id': message.id,
-                'data': message.data,
-                'content': message.content,
-                'to': message.to,
-                'rec_type': message.rec,
-
-            }
-            c_data = Code.encrypt_asymmetric(json.dumps(message_data), sKey)
-            await self.event_manager.trigger_event(EventID.crate(f"{source_id}:S0", "on-message",
-                                                                 payload={'data': c_data}))
-
-        self.forwarders[identifier]['send'] = send
+        return mark_as_online(), set_callbacks
 
     def get_next_available_port(self) -> int:
         """Find the next available port in the range."""
@@ -181,27 +145,17 @@ class AppManager(metaclass=Singleton):
                 instance_data['app'] = WhatsApp(**instance_data['kwargs'])
                 continue
 
-    async def message_forwarder(self):
-        """Forward messages between instances."""
-        while True:
-            message_data = await self.message_queue.get()
-            identifier = message_data['identifier']
-            message = message_data['message']
-
-            if identifier in self.forwarders:
-                await self.forwarders[identifier]['send'](message)
-
     async def on_message(self, instance_id: str, message: Message):
         """Handle and forward incoming messages."""
         logger.info(f"Message from instance {instance_id}: {message}")
-        await self.message_queue.put({
-            'identifier': instance_id,
-            'message': message
-        })
+        if instance_id in self.forwarders and 'send' in self.forwarders[instance_id]:
+            self.forwarders[instance_id]['send'](message)
 
     async def on_event(self, instance_id: str, event):
         """Handle events."""
         logger.info(f"Event from instance {instance_id}: {event}")
+        if instance_id in self.forwarders and 'sende' in self.forwarders[instance_id]:
+            self.forwarders[instance_id]['sende'](event)
 
     async def on_verification(self, instance_id: str, verification):
         """Handle verification events."""
@@ -210,7 +164,6 @@ class AppManager(metaclass=Singleton):
     def run_all_instances(self):
         """Start all instances in separate daemon threads."""
         # Start message forwarder
-        asyncio.create_task(self.message_forwarder())
 
         # Start all instances
         for instance_id in self.instances:
