@@ -128,7 +128,7 @@ class AppManager(metaclass=Singleton):
 
         port = self.get_next_available_port()
         app_instance = WhatsApp(**kwargs)
-
+        print("app_instance", app_instance.verify_token)
         self.instances[instance_id] = {
             'app': app_instance,
             'port': port,
@@ -164,7 +164,7 @@ class AppManager(metaclass=Singleton):
         while not stop_event.is_set():
             try:
                 logger.info(f"Starting instance {instance_id} on port {instance_data['port']}")
-                instance_data['app'].run(port=instance_data['port'])
+                instance_data['app'].run(host='0.0.0.0', port=instance_data['port'])
 
             except Exception as e:
                 logger.error(f"Error in instance {instance_id}: {str(e)}")
@@ -357,22 +357,5 @@ class AppManager(metaclass=Singleton):
                 instances_container = ui.column().classes('w-full')
                 for instance_id in self.instances:
                     create_instance_card(instance_id)
-
-                # Logging Display
-                with ui.card().classes('w-full p-4 mt-4'):
-                    ui.label('Log Messages').classes('text-xl font-bold mb-4')
-                    log_display = ui.log().classes('w-full h-64')
-
-                    # Create custom handler for the log display
-                    class UiLogHandler(logging.Handler):
-                        def emit(self, record):
-                            log_display.push(self.format(record))
-
-                    # Add handler to logger
-                    handler = UiLogHandler()
-                    handler.setFormatter(
-                        logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-                    )
-                    logging.getLogger().addHandler(handler)
 
         return ui_manager  # Return the ui object for registration

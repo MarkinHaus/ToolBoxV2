@@ -1,3 +1,5 @@
+from urllib.request import Request
+
 import asyncio
 import os
 
@@ -11,8 +13,8 @@ managers = []
 
 
 @get_app().tb(mod_name="WhatsAppTb", name="exit", exit_f=True)
-def on_exit(*a):
-    managers[0].stop_all_instances()
+async def on_exit(*a):
+    await managers[0].stop_all_instances()
 
 
 @get_app().tb(mod_name="WhatsAppTb", name="init", initial=True)
@@ -30,10 +32,13 @@ def on_start(app: App):
     print("WhatsAppTb2.1")
     managers.append(manager)
     print("WhatsAppTb2.2")
+    verify_token = os.getenv("WHATSAPP_VERIFY_TOKEN", "0000d004567cs890d987")
+    print("WhatsAppTb2.3", verify_token)
     manager.add_instance(
         "main",
         token=os.getenv("WHATSAPP_API_TOKEN"),
-        phone_number_id={"key": os.getenv("WHATSAPP_PHONE_NUMBER_ID")}
+        phone_number_id={"key": os.getenv("WHATSAPP_PHONE_NUMBER_ID")},
+        verify_token=verify_token
     )
     print("WhatsAppTb3")
     try:
@@ -48,7 +53,7 @@ def on_start(app: App):
                 print(e)
             asyncio.ensure_future(manager.initialize())
             print("WhatsAppTb5")
-            manager.run_all_instances()
+            # manager.run_all_instances()
             return
         else:
             print("No ui")

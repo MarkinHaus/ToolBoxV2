@@ -17,6 +17,7 @@ from starlette.websockets import WebSocketDisconnect
 from fastapi.responses import RedirectResponse
 from watchfiles import awatch
 
+import httpx
 from toolboxv2.mods.FastApi.fast_lit import BidirectionalStreamlitAppManager
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.system.session import RequestSession
@@ -776,6 +777,38 @@ def serve_app_func(path: str, prefix: str = os.getcwd() + "/dist/"):
     # Fallback to a 404 page if the file does not exist
     return FileResponse(os.path.join(os.getcwd(), "dist", "web/assets/404.html"), media_type="text/html")
 
+
+@app.api_route("/whatsappHook/{port}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+async def forward_request(port: int, request: Request):
+    try:
+        # Construct the target URL dynamically
+        target_url = f"http://127.0.0.1:{port}{request.url.path.replace(f'/whatsappHook/{port}', '')}"
+        print("ROuting to ", target_url)
+        if request.query_params:
+            target_url += '?'
+            for k,v in request.query_params.items():
+                target_url += f'{k}={v}&'
+            target_url = target_url[:-1]
+        print("FIX ROuting to ", target_url)
+        # Extract the method, headers, and body from the incoming request
+        method = request.method
+        headers = dict(request.headers)
+        body = await request.body()
+
+        # Use httpx to forward the request to the target service
+        async with httpx.AsyncClient() as client:
+            response = await client.request(
+                method=method,
+                url=target_url,
+                headers=headers,
+                content=body,
+            )
+
+        # Return the response from the target service
+        return response.json()
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.on_event("startup")
 async def startup_event():

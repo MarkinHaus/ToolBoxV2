@@ -1,11 +1,7 @@
-import tkinter as tk
-from typing import Dict, Set
-import math
-import colorsys
-import threading
-import queue
-from datetime import datetime
-import tkinter as tk
+try:
+    import tkinter as tk
+except ImportError:
+    tk = None
 from typing import Dict, Set
 import math
 import colorsys
