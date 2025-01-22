@@ -4,6 +4,7 @@ import asyncio
 import os
 
 from toolboxv2 import App, get_app
+from toolboxv2.mods.WhatsAppTb.client import runner
 
 from toolboxv2.mods.WhatsAppTb.server import AppManager
 
@@ -14,6 +15,8 @@ managers = []
 
 @get_app().tb(mod_name="WhatsAppTb", name="exit", exit_f=True)
 async def on_exit(*a):
+    if len(managers) < 1:
+        return
     await managers[0].stop_all_instances()
 
 
@@ -61,3 +64,4 @@ def on_start(app: App):
         print("No ui")
 
     print("WhatsAppTb6 No ui")
+    waa = runner(app, os.getenv("WHATSAPP_PHONE_NUMBER_ID"))

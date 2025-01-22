@@ -53,7 +53,7 @@ class ProgressMessenger:
         logging.info(f"Initial message sent: {content}")
         return self.message_id
 
-    def update_progress(self):
+    def update_progress(self, step_flag: threading.Event):
         """
         Updates the reaction on the message to represent progress.
         """
@@ -64,7 +64,9 @@ class ProgressMessenger:
             emoji = self.emoji_set[step % len(self.emoji_set)]
             message.react(emoji)
             logging.info(f"Progress updated: Step {step + 1}/{self.max_steps} with emoji {emoji}")
-            time.sleep(2)  # Simulate time delay between steps
+            while not step_flag.is_set():
+                time.sleep(0.5)
+            step_flag.clear()
         # Final acknowledgment
         message.react("👍")
         logging.info("Progress completed with final acknowledgment.")
@@ -88,11 +90,11 @@ class ProgressMessenger:
         logging.info("Loading completed with final acknowledgment.")
         message.reply("✅Done✅")
 
-    def start_progress_in_background(self):
+    def start_progress_in_background(self, step_flag):
         """
         Starts the progress update in a separate thread.
         """
-        threading.Thread(target=self.update_progress, daemon=True).start()
+        threading.Thread(target=self.update_progress, args=(step_flag, ), daemon=True).start()
 
     def start_loading_in_background(self, stop_flag: threading.Event):
         """
