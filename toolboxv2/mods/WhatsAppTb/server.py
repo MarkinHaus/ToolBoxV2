@@ -1,4 +1,6 @@
 import json
+import os
+import threading
 
 from nicegui import ui
 from datetime import datetime
@@ -31,6 +33,7 @@ class AppManager(metaclass=Singleton):
         self.last_messages: Dict[str, datetime] = {}
         self.keys: Dict[str, str] = {}
         self.forwarders: Dict[str, Dict] = {}
+        self.runner = lambda :None
 
         if em is None:
             from toolboxv2 import get_app
@@ -45,33 +48,24 @@ class AppManager(metaclass=Singleton):
         except Exception:
             pass
 
-    def offline(self, key):
+    def offline(self, instance_id):
 
         def mark_as_offline():
-            if key is None:
-                return "Invalid key"
-            if key not in self.keys:
-                return "Invalid key 404"
-            self.forwarders[self.keys[key]]['send'] = None
+            self.forwarders[instance_id]['send'] = None
             return 'done'
 
         return mark_as_offline
 
-    def online(self, key):
+    def online(self, instance_id):
 
         def mark_as_online():
-            if key is None:
-                return "Invalid key"
-            if key not in self.keys:
-                return "Invalid key 404"
-            return self.instances[self.keys[key]]
+            return self.instances[instance_id]['app']
 
         def set_callbacks(callback, e_callback=None):
             if callback is not None:
-                self.forwarders[self.keys[key]]['send'] = callback
+                self.forwarders[instance_id]['send'] = callback
             if e_callback is not None:
-                self.forwarders[self.keys[key]]['sende'] = e_callback
-            self.forwarders[self.keys[key]]['send'](Message(id=0, instance=None, content="test", to="0000", data={'none':'none'}))
+                self.forwarders[instance_id]['sende'] = e_callback
 
         return mark_as_online(), set_callbacks
 
@@ -92,17 +86,19 @@ class AppManager(metaclass=Singleton):
 
         port = self.get_next_available_port()
         app_instance = WhatsApp(**kwargs)
-        print("app_instance", app_instance.verify_token)
+
         self.instances[instance_id] = {
             'app': app_instance,
             'port': port,
             'kwargs': kwargs,
+            'phone_number_id': kwargs.get("phone_number_id", {}),
             'retry_count': 0,
             'max_retries': 3,
             'retry_delay': 5
         }
         self.keys[instance_id] = Code.one_way_hash(kwargs.get("phone_number_id", {}).get("key"), "WhatsappAppManager",
                                                    self.pepper)
+        self.forwarders[instance_id] = {}
 
         # Set up message handlers
         @app_instance.on_message
@@ -117,7 +113,7 @@ class AppManager(metaclass=Singleton):
         async def verification_handler(verification):
             await self.on_verification(instance_id, verification)
 
-        # Create stop event for this instance
+        # Create stop event for this instance Error parsing message1:
         self.stop_events[instance_id] = Event()
 
     def run_instance(self, instance_id: str):
@@ -149,12 +145,12 @@ class AppManager(metaclass=Singleton):
         """Handle and forward incoming messages."""
         logger.info(f"Message from instance {instance_id}: {message}")
         if instance_id in self.forwarders and 'send' in self.forwarders[instance_id]:
-            self.forwarders[instance_id]['send'](message)
+            await self.forwarders[instance_id]['send'](message)
 
     async def on_event(self, instance_id: str, event):
         """Handle events."""
         logger.info(f"Event from instance {instance_id}: {event}")
-        if instance_id in self.forwarders and 'sende' in self.forwarders[instance_id]:
+        if instance_id in self.forwarders and 'sende' in self.forwarders[instance_id] and self.forwarders[instance_id]['sende'] is not None:
             self.forwarders[instance_id]['sende'](event)
 
     async def on_verification(self, instance_id: str, verification):
@@ -190,12 +186,11 @@ class AppManager(metaclass=Singleton):
         for thread in self.threads.values():
             thread.join(timeout=5)
 
-    def create_manager_ui(self):
-        """Create a NiceGUI interface for the WhatsApp App Manager."""
-
+    def create_manager_ui(self, start_assistant):
+        """Enhanced WhatsApp Manager UI with instance configuration controls"""
+        self.runner = start_assistant
         def ui_manager():
-            # Add last message timestamp tracking to manager
-            # Enhance message handler to track timestamps
+            # Track instance states and messages
             original_on_message = self.on_message
 
             async def enhanced_on_message(instance_id: str, message):
@@ -205,110 +200,146 @@ class AppManager(metaclass=Singleton):
             self.on_message = enhanced_on_message
 
             def create_instance_card(instance_id: str):
-                """Create a card for a single WhatsApp instance."""
-                with ui.card().classes('w-full p-4 mb-4'):
+                """Interactive instance control card"""
+                config = self.instances[instance_id]
+                with ui.card().classes('w-full p-4 mb-4 bg-gray-50 dark:bg-gray-800').style("background-color: var(--background-color) !important"):
+                    # Header Section
                     with ui.row().classes('w-full justify-between items-center'):
-                        ui.label(f'Instance: {instance_id}').classes('text-xl font-bold')
-                        status_label = ui.label('Status: Running').classes('text-green-500')
+                        ui.label(f'📱 {instance_id}').classes('text-xl font-bold')
 
-                        async def update_status():
-                            while True:
-                                is_running = (
-                                    instance_id in self.threads
-                                    and self.threads[instance_id].is_alive()
-                                )
-                                status_label.text = f'Status: {"Running" if is_running else "Stopped"}'
-                                status_label.classes(
-                                    'text-green-500' if is_running else 'text-red-500',
-                                )
-                                await asyncio.sleep(1)
+                        # Status Indicator
+                        ui.label().bind_text_from(
+                            self.threads, instance_id,
+                            lambda x: 'Running' if x and x.is_alive() else 'Stopped'
+                        )
 
-                        ui.timer(0.1, lambda: asyncio.create_task(update_status()))
+                    # Configuration Display
+                    with ui.grid(columns=2).classes('w-full mt-4 gap-2'):
 
-                    with ui.row().classes('w-full mt-2'):
-                        ui.label(f'Port: {self.instances[instance_id]["port"]}')
-                        last_msg = ui.label('Last Message: Never')
+                        ui.label('port:').classes('font-bold')
+                        ui.label(config['port'])
 
-                        async def update_last_message():
-                            while True:
-                                timestamp = self.last_messages.get(instance_id)
-                                last_msg.text = (
-                                    f'Last Message: {timestamp.strftime("%Y-%m-%d %H:%M:%S")}'
-                                    if timestamp else 'Last Message: Never'
-                                )
-                                await asyncio.sleep(1)
+                        ui.label('Last Activity:').classes('font-bold')
+                        ui.label().bind_text_from(
+                            self.last_messages, instance_id,
+                            lambda x: x.strftime("%Y-%m-%d %H:%M:%S") if x else 'Never'
+                        )
 
-                        ui.timer(0.1, lambda: asyncio.create_task(update_last_message()))
-
+                    # Action Controls
                     with ui.row().classes('w-full mt-4 gap-2'):
-                        async def restart_instance():
-                            if instance_id in self.threads:
-                                self.stop_events[instance_id].set()
-                                self.threads[instance_id].join(timeout=5)
-                            thread = Thread(
-                                target=self.run_instance,
-                                args=(instance_id,),
-                                daemon=True,
-                                name=f"WhatsApp-{instance_id}"
-                            )
-                            self.threads[instance_id] = thread
-                            thread.start()
+                        with ui.button(icon='settings', on_click=lambda: edit_dialog.open()).props('flat'):
+                            ui.tooltip('Configure')
 
-                        async def stop_instance():
-                            if instance_id in self.stop_events:
-                                self.stop_events[instance_id].set()
-                                if instance_id in self.threads:
-                                    self.threads[instance_id].join(timeout=5)
+                        with ui.button(icon='refresh', color='orange',
+                                       on_click=lambda: self.restart_instance(instance_id)):
+                            ui.tooltip('Restart')
 
-                        ui.button('Restart', on_click=restart_instance).props('color=warning')
-                        ui.button('Stop', on_click=stop_instance).props('color=negative')
+                        with ui.button(icon='stop', color='red',
+                                       on_click=lambda: self.stop_instance(instance_id)):
+                            ui.tooltip('Stop')
+
+                    # Edit Configuration Dialog
+                    with ui.dialog() as edit_dialog, ui.card().classes('p-4 gap-4'):
+                        new_key = ui.input('API Key', value=config['phone_number_id'].get('key', ''))
+                        new_number = ui.input('Phone Number', value=config['phone_number_id'].get('number', ''))
+
+                        with ui.row().classes('w-full justify-end'):
+                            ui.button('Cancel', on_click=edit_dialog.close)
+                            ui.button('Save', color='primary', on_click=lambda: (
+                                self.update_instance_config(
+                                    instance_id,
+                                    new_key.value,
+                                    new_number.value
+                                ),
+                                edit_dialog.close()
+                            ))
 
             # Main UI Layout
-            with ui.column().classes('w-full max-w-3xl mx-auto p-4'):
+            with ui.column().classes('w-full max-w-4xl mx-auto p-4'):
                 ui.label('WhatsApp Instance Manager').classes('text-2xl font-bold mb-6')
 
-                # Instance Creation Form
-                with ui.card().classes('w-full p-4 mb-6'):
-                    ui.label('Add New Instance').classes('text-xl font-bold mb-4')
+                # Add Instance Section
+                with ui.expansion('➕ Add New Instance', icon='add').classes('w-full'):
+                    with ui.card().classes('w-full p-4 mt-2'):
+                        instance_id = ui.input('Instance ID').classes('w-full')
+                        token = ui.input('API Token').classes('w-full')
+                        phone_key = ui.input('Phone Number Key').classes('w-full')
+                        phone_number = ui.input('Phone Number').classes('w-full')
 
-                    instance_id = ui.input('Instance ID').classes('w-full')
-                    token = ui.input('Token').classes('w-full')
-                    phone_id = ui.input('Phone Number ID').classes('w-full')
-
-                    async def add_new_instance():
-                        try:
-                            self.add_instance(
-                                instance_id.value,
-                                token=token.value,
-                                phone_number_id={"key": phone_id.value}
-                            )
-                            thread = Thread(
-                                target=self.run_instance,
-                                args=(instance_id.value,),
-                                daemon=True,
-                                name=f"WhatsApp-{instance_id.value}"
-                            )
-                            self.threads[instance_id.value] = thread
-                            thread.start()
-
-                            # Refresh instances display
-                            instances_container.clear()
-                            for inst_id in self.instances:
-                                create_instance_card(inst_id)
-
-                            # Clear form
-                            instance_id.value = ''
-                            token.value = ''
-                            phone_id.value = ''
-
-                        except Exception as e:
-                            ui.notify(f'Error adding instance: {str(e)}', type='negative')
-
-                    ui.button('Add Instance', on_click=add_new_instance).props('color=positive')
+                        with ui.row().classes('w-full justify-end gap-2'):
+                            ui.button('Clear', on_click=lambda: (
+                                instance_id.set_value(''),
+                                token.set_value(''),
+                                phone_key.set_value(''),
+                                phone_number.set_value('')
+                            ))
+                            ui.button('Create', color='positive', on_click=lambda: (
+                                self.add_update_instance(
+                                    instance_id.value,
+                                    token.value,
+                                    phone_key.value,
+                                    phone_number.value
+                                ),
+                                instances_container.refresh()
+                            ))
 
                 # Instances Display
                 instances_container = ui.column().classes('w-full')
-                for instance_id in self.instances:
-                    create_instance_card(instance_id)
+                with instances_container:
+                    for instance_id in self.instances:
+                        create_instance_card(instance_id)
 
-        return ui_manager  # Return the ui object for registration
+        return ui_manager
+
+    # Add to manager class
+    def add_update_instance(self, instance_id, token, phone_key, phone_number):
+        """Add or update instance configuration"""
+        if instance_id in self.instances:
+            self.stop_instance(instance_id)
+            del self.instances[instance_id]
+
+        self.add_instance(
+            instance_id,
+            token=token,
+            phone_number_id={
+                'key': phone_key,
+                'number': phone_number
+            },
+            verify_token=os.getenv("WHATSAPP_VERIFY_TOKEN")
+        )
+        self.start_instance(instance_id)
+
+    def update_instance_config(self, instance_id, new_key, new_number):
+        """Update existing instance configuration"""
+        if instance_id in self.instances:
+            self.instances[instance_id]['phone_number_id'] = {
+                'key': new_key,
+                'number': new_number
+            }
+            self.restart_instance(instance_id)
+
+    def restart_instance(self, instance_id):
+        """Safe restart of instance"""
+        self.stop_instance(instance_id)
+        self.start_instance(instance_id)
+
+    def stop_instance(self, instance_id):
+        """Graceful stop of instance"""
+        if instance_id in self.threads:
+            self.stop_events[instance_id].set()
+            self.threads[instance_id].join(timeout=5)
+            del self.threads[instance_id]
+
+    def start_instance(self, instance_id):
+        """Start instance thread"""
+        print("Starting Istance")
+
+        self.stop_events[instance_id] = threading.Event()
+        self.threads[instance_id] = threading.Thread(
+            target=self.run_instance,
+            args=(instance_id,),
+            daemon=True
+        )
+        self.threads[instance_id].start()
+        print("Running starter", self.runner())
+

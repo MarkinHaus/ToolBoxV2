@@ -778,37 +778,70 @@ def serve_app_func(path: str, prefix: str = os.getcwd() + "/dist/"):
     return FileResponse(os.path.join(os.getcwd(), "dist", "web/assets/404.html"), media_type="text/html")
 
 
-@app.api_route("/whatsappHook/{port}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+# Configure a longer timeout and more robust handling
 async def forward_request(port: int, request: Request):
     try:
         # Construct the target URL dynamically
         target_url = f"http://127.0.0.1:{port}{request.url.path.replace(f'/whatsappHook/{port}', '')}"
-        print("ROuting to ", target_url)
-        if request.query_params:
-            target_url += '?'
-            for k,v in request.query_params.items():
-                target_url += f'{k}={v}&'
-            target_url = target_url[:-1]
-        print("FIX ROuting to ", target_url)
-        # Extract the method, headers, and body from the incoming request
+
+        # Prepare query parameters
+        query_params = request.query_params
+        if query_params:
+            target_url += '?' + '&'.join(f'{k}={v}' for k, v in query_params.items())
+
+        # Extract method, headers, and body
         method = request.method
         headers = dict(request.headers)
         body = await request.body()
 
-        # Use httpx to forward the request to the target service
-        async with httpx.AsyncClient() as client:
-            response = await client.request(
-                method=method,
-                url=target_url,
-                headers=headers,
-                content=body,
+        # Create an async client with extended timeout
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                connect=150.0,  # Connection timeout
+                read=300.0,  # Extended read timeout for long-running requests (5 minutes)
+                write=150.0,  # Write timeout
+                pool=None  # No pool timeout
             )
+        ) as client:
+            # Forward the request with additional error handling
+            try:
+                response = await client.request(
+                    method=method,
+                    url=target_url,
+                    headers=headers,
+                    content=body,
+                )
 
-        # Return the response from the target service
-        return response.json()
+                # Return the response, handling different content types
+                try:
+                    return response.json()
+                except ValueError:
+                    # If not JSON, return text content
+                    return response.text
+
+            except httpx.RequestError as e:
+                # More specific error handling for network-related issues
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Request failed: {str(e)}"
+                )
+            except httpx.HTTPStatusError as e:
+                # Handle HTTP error status codes
+                raise HTTPException(
+                    status_code=e.response.status_code,
+                    detail=f"HTTP error: {str(e)}"
+                )
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Catch-all error handling with more detailed logging
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error in webhook forwarding: {str(e)}"
+        )
+
+@app.api_route("/whatsappHook/{port}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+async def webhook_handler(port: int, request: Request):
+    return await forward_request(port, request)
 
 @app.on_event("startup")
 async def startup_event():

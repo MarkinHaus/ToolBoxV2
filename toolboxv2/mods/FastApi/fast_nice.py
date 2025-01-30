@@ -365,7 +365,7 @@ dark_mode
         ui.run_with(
             self.app,
             mount_path=self.mount_path,
-            favicon="../favicon.ico",
+            favicon="/root/Toolboxv2/toolboxv2/favicon.ico",
             show_welcome_message=False,
             # prod_js=False,
         )

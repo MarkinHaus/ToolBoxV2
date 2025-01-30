@@ -39,14 +39,13 @@ class ProgressMessenger:
         elif mode == "loading":
             content = (
                 "Loading in progress! 🌀\n"
-                "Watch this space for updates.\n\n"
                 "The indicator will loop until work is done."
             )
         else:
             raise ValueError("Invalid mode. Use 'progress' or 'loading'.")
 
         if self.content is not None:
-            content += '\n'+content
+            content += '\n'+self.content
         message = self.messenger.create_message(content=content, to=self.recipient_phone)
         response = message.send(sender=0)
         self.message_id = response.get("messages", [{}])[0].get("id")

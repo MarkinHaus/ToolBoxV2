@@ -14,10 +14,10 @@ managers = []
 
 
 @get_app().tb(mod_name="WhatsAppTb", name="exit", exit_f=True)
-async def on_exit(*a):
+def on_exit(*a):
     if len(managers) < 1:
         return
-    await managers[0].stop_all_instances()
+    managers[0].stop_all_instances()
 
 
 @get_app().tb(mod_name="WhatsAppTb", name="init", initial=True)
@@ -44,24 +44,19 @@ def on_start(app: App):
         verify_token=verify_token
     )
     print("WhatsAppTb3")
+    def start(WHATSAPP_PHONE_NUMBER_ID=None, RECIPIENT_PHONE=None):
+        waa = runner(app, os.getenv("WHATSAPP_PHONE_NUMBER_ID"), to=os.getenv("RECIPIENT_PHONE"))
+        print("WhatsAppTb6")
+        return "Online"
     try:
         from toolboxv2.mods.FastApi.fast_nice import NiceGUIManager
         nm = NiceGUIManager(None,...)
         if nm.init:
-            nm.register_gui("WhatsAppTb", manager.create_manager_ui())
+            nm.register_gui("WhatsAppTb", manager.create_manager_ui(start_assistant=start))
             print("WhatsAppTb4")
-            try:
-                app.run_a_from_sync(manager.initialize)
-            except Exception as e:
-                print(e)
-            asyncio.ensure_future(manager.initialize())
-            print("WhatsAppTb5")
-            # manager.run_all_instances()
-            return
         else:
             print("No ui")
     except ImportError:
         print("No ui")
 
-    print("WhatsAppTb6 No ui")
-    waa = runner(app, os.getenv("WHATSAPP_PHONE_NUMBER_ID"))
+    print("WhatsAppTb5 ")
