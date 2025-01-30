@@ -14,7 +14,7 @@ managers = []
 
 
 @get_app().tb(mod_name="WhatsAppTb", name="exit", exit_f=True)
-def on_exit(*a):
+async def on_exit(*a):
     if len(managers) < 1:
         return
     managers[0].stop_all_instances()
@@ -44,13 +44,17 @@ def on_start(app: App):
         verify_token=verify_token
     )
     print("WhatsAppTb3")
-    def start(WHATSAPP_PHONE_NUMBER_ID=None, RECIPIENT_PHONE=None):
-        waa = runner(app, os.getenv("WHATSAPP_PHONE_NUMBER_ID"), to=os.getenv("RECIPIENT_PHONE"))
-        print("WhatsAppTb6")
-        return "Online"
+
     try:
         from toolboxv2.mods.FastApi.fast_nice import NiceGUIManager
         nm = NiceGUIManager(None,...)
+
+        def start(WHATSAPP_PHONE_NUMBER_ID=None, RECIPIENT_PHONE=None):
+            if not nm.init:
+                return
+            waa = runner(app, os.getenv("WHATSAPP_PHONE_NUMBER_ID"), to=os.getenv("RECIPIENT_PHONE"))
+            print("WhatsAppTb6")
+            return "Online"
         if nm.init:
             nm.register_gui("WhatsAppTb", manager.create_manager_ui(start_assistant=start))
             print("WhatsAppTb4")
