@@ -6,7 +6,6 @@ import time
 from litellm import max_tokens
 
 from toolboxv2.utils.Irings.network import NetworkManager
-from toolboxv2.utils.Irings.reasoning_system import ReasoningSystem
 from toolboxv2.utils.Irings.one import IntelligenceRing
 
 from dataclasses import dataclass
@@ -117,27 +116,12 @@ class CognitiveNetwork:
             "max_branches_per_node": 1,
             "max_retrievals_per_branch": 2
         }
-        self.rs: Optional[ReasoningSystem] = None
 
     def print_inner_state(self):
         print(json.dumps(self.agent_state.inner_state, indent=2))
 
     def print_last_monolog(self):
         print(json.dumps(self.agent_state.inner_state.get("monologue", [{}])[-1], indent=2))
-
-    def init_reasoning_system(self):
-
-        # Initialize the reasoning system
-        self.rs = ReasoningSystem(
-            format_class=self.format_class,
-            retriever=lambda text: '\n\n'.join(
-                [x['text'] for x ,s in self.network.get_references(text, concept_elem="metadata", all_=False) if 'text' in x.keys()]),
-            vector_encoder=self.network.rings[self.agent_state.current_focus].input_processor.process_text,
-            similarity_engine=self.network.rings[self.agent_state.current_focus].input_processor.compute_similarity,
-            vector_dimension=self.network.rings[self.agent_state.current_focus].input_processor.vector_size,
-            **self.rs_config
-
-        )
 
     def internal_update(self):
 
@@ -169,7 +153,7 @@ class CognitiveNetwork:
          if self.network.rings[self.agent_state.current_focus].input_processor.pcs(t,context) > 0.2 ]
         concepts_str = "\n\nConcept: ".join(texts)
 
-        thought, last_reasoning_logs = self.vFlare(context[:100000]+concepts_str[:10000], True)
+        thought = self.vFlare(context[:100000]+'...\n'+concepts_str[:10000]+'...')
 
         print("SYSTEM inner ms", thought)
         thought = str(thought)
@@ -177,16 +161,18 @@ class CognitiveNetwork:
             "type": "inner_monologue",
             "timestamp": time.time(),
             "thought": thought,
-            "last_reasoning_logs": last_reasoning_logs,
         })
 
         self.agent_state.inner_state["last_inference"] = time.time()
         return thought
 
-    def vFlare(self, prompt, return_reasoning: bool = False):
-        if self.rs is None:
-            self.init_reasoning_system()
-        return self.rs.generate(prompt, return_reasoning=return_reasoning)
+    def vFlare(self, prompt):
+        from pydantic import BaseModel
+        class FinalOutput(BaseModel):
+            """Key thought reasoning"""
+            thought: str
+
+        return self.format_class(FinalOutput, prompt).thought
 
     def _get_active_concepts(self) -> List[Dict]:
         """Get currently active concepts from focused ring"""
@@ -284,13 +270,12 @@ class CognitiveNetwork:
         Previous thought: {last_thought}
         New context: {context}
         """
-        thought, last_reasoning_logs = self.vFlare(guided_prompt, True)
+        thought = self.vFlare(guided_prompt)
         print("SYSTEM inner gt:", thought)
         self.agent_state.inner_state["monologue"].append({
             "type": "guided_thoughts",
             "timestamp": time.time(),
             "thought": thought,
-            "last_reasoning_logs": last_reasoning_logs,
         })
         self.agent_state.inner_state["last_inference"] = time.time()
 
@@ -504,13 +489,14 @@ def main():
     # Create cognitive network
     cognitive_net = CognitiveNetwork(
         user_llm=user_interface_llm,
+        format_class=agent_llm.agent.format_class,
         agent_llm=agent_llm,
         initial_ring_content=initial_content,
         inference_time=5,
         num_empty_rings=4,
         auto_save=False,
         name="test1",
-        display=True,
+        display=False,
     )
 
     t = time.process_time()

@@ -476,8 +476,8 @@ class NetworkManager:
                 all_similarities.extend([
                     (
                         f"{ring_id_}:{concept_id}" if concept_elem is None else getattr(
-                            self.get_concept_from_code(f"{ring_id_}:{concept_id}"), concept_elem), score)
-                    for concept_id, score in similarities
+                            self.get_concept_from_code(f"{ring_id_}:{concept_id}"), concept_elem) , score)
+                    for concept_id, score in similarities if concept_elem is None or hasattr(self.get_concept_from_code(f"{ring_id_}:{concept_id}"), concept_elem)
                 ])
 
         return sorted(all_similarities, key=lambda x: x[1], reverse=True)[:top_k]
