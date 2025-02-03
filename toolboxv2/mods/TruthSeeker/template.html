@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TruthSeeker - Precision. Discovery.</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+</head>
+    <style>
+        * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', sans-serif;
+    line-height: 1.6;
+    color: #333;
+    background-color: #f4f6f9;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 15px;
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 0;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.logo h1 {
+    font-size: 24px;
+    font-weight: 600;
+    color: #2c3e50;
+}
+
+.logo p {
+    color: #7f8c8d;
+    font-size: 14px;
+}
+
+nav a {
+    text-decoration: none;
+    color: #34495e;
+    margin-left: 20px;
+    font-weight: 400;
+    transition: color 0.3s ease;
+}
+
+nav a.active, nav a:hover {
+    color: #3498db;
+}
+
+.search-section {
+    text-align: center;
+    padding: 50px 0;
+}
+
+.search-container h2 {
+    margin-bottom: 30px;
+    color: #2c3e50;
+}
+
+#search-form {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+#query-input {
+    width: 100%;
+    max-width: 600px;
+    padding: 12px 15px;
+    margin-bottom: 15px;
+    border: 2px solid #bdc3c7;
+    border-radius: 5px;
+    font-size: 16px;
+}
+
+.search-options {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+#research-depth {
+    padding: 10px;
+    border: 2px solid #bdc3c7;
+    border-radius: 5px;
+}
+
+button {
+    padding: 10px 20px;
+    background-color: #3498db;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+button:hover {
+    background-color: #2980b9;
+}
+
+.status-container {
+    display: flex;
+    justify-content: center;
+    gap: 30px;
+    margin-top: 30px;
+}
+
+.status-step {
+    text-align: center;
+    opacity: 0.4;
+}
+
+.status-step.active {
+    opacity: 1;
+}
+
+.status-icon {
+    font-size: 40px;
+    display: block;
+    margin-bottom: 10px;
+}
+
+.pricing-section {
+    background-color: white;
+    padding: 50px 0;
+    text-align: center;
+}
+
+.pricing-cards {
+    display: flex;
+    justify-content: center;
+    gap: 30px;
+    margin-top: 30px;
+}
+
+.pricing-card {
+    background-color: #f8f9fa;
+    border-radius: 10px;
+    padding: 30px;
+    width: 300px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.pricing-card.highlighted {
+    transform: scale(1.05);
+    background-color: #3498db;
+    color: white;
+}
+
+.pricing-card.highlighted button{
+    background-color: white;
+    color: #3498db;
+}
+
+.pricing-card .price {
+    font-size: 24px;
+    font-weight: 600;
+    margin: 20px 0;
+}
+
+.pricing-card ul {
+    list-style-type: none;
+    margin-bottom: 20px;
+}
+
+.pricing-card ul li {
+    margin-bottom: 10px;
+}
+
+footer {
+    text-align: center;
+    padding: 20px;
+    background-color: #2c3e50;
+    color: white;
+}
+
+.footer-container {
+display: flex;
+justify-content: space-between;
+width: 100%;
+}
+
+.footer-links a {
+color: #00bcd4;
+margin: 0 10px;
+text-decoration: none;
+}
+
+.footer-links a:hover {
+text-decoration: underline;
+}
+
+.pricing-card ul {
+    list-style-type: none;
+    margin-bottom: 30px;
+}
+
+.pricing-card ul li {
+    margin-bottom: 15px;
+    position: relative;
+    padding-left: 25px;
+}
+
+.pricing-card ul li::before {
+    content: '✓';
+    position: absolute;
+    left: 0;
+    color: var(--accent-color);
+}
+.pricing-card ul li::before {
+    content: '✓';
+    position: absolute;
+    left: 0;
+    color: var(--accent-color);
+}
+
+.close {
+color: #aaa;
+float: right;
+font-size: 28px;
+font-weight: bold;
+}
+
+.close:hover,
+.close:focus {
+color: #000;
+text-decoration: none;
+cursor: pointer;
+}
+
+.codes-section {
+    background-color: #f9f9f9;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    max-width: 500px;
+    margin: 20px auto;
+    font-family: 'Inter', sans-serif;
+}
+
+.ppc-section {
+    background-color: #f9f9f9;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    max-width: 500px;
+    margin: 20px auto;
+    font-family: 'Inter', sans-serif;
+}
+.summary-section {
+    background-color: #f9f9f9;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    max-width: 500px;
+    margin: 20px auto;
+    font-family: 'Inter', sans-serif;
+}
+.details-section {
+    background-color: #f9f9f9;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    max-width: 500px;
+    margin: 20px auto;
+    font-family: 'Inter', sans-serif;
+}
+
+.codes-section h3 {
+    font-size: 1.2rem;
+    margin-bottom: 10px;
+    color: #333;
+}
+
+.code-input-group {
+    display: flex;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.code-input-group input {
+    flex: 1;
+    padding: 10px;
+    font-size: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 5px 0 0 5px;
+    outline: none;
+    transition: border-color 0.3s;
+}
+
+.code-input-group input:focus {
+    border-color: #007bff;
+}
+
+.code-input-group button {
+    padding: 10px 20px;
+    font-size: 1rem;
+    background-color: #007bff;
+    color: #fff;
+    border: none;
+    border-radius: 0 5px 5px 0;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.code-input-group button:hover {
+    background-color: #0056b3;
+}
+
+.apply-code-button {
+    min-width: 100px;
+    font-weight: 600;
+}
+
+.none {
+display: none
+}
+
+/* Dialog/Modal Styles */
+/* Modern Dialog Styles */
+dialog {
+    max-width: 600px;
+    width: 90%;
+    border-radius: 15px;
+    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.2);
+    padding: 30px;
+    margin: auto;
+    background: #fff;
+    position: relative;
+    animation: scaleIn 0.3s ease-in-out;
+    font-family: 'Arial', sans-serif;
+}
+
+dialog::backdrop {
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(5px); /* Adds a subtle blur effect to the backdrop */
+}
+
+.dialog-content {
+    text-align: center;
+}
+
+.dialog-content h2 {
+    margin-bottom: 20px;
+    font-size: 1.8rem;
+    color: #2c3e50;
+}
+
+.dialog-content p {
+    font-size: 1rem;
+    color: #7f8c8d;
+    margin-bottom: 20px;
+    line-height: 1.6;
+}
+
+.dialog-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+}
+
+.dialog-buttons button {
+    padding: 10px 20px;
+    font-size: 1rem;
+    margin: auto;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.dialog-buttons .btn-primary {
+    background-color: #3498db;
+    color: #fff;
+}
+
+.dialog-buttons .btn-primary:hover {
+    background-color: #2980b9;
+}
+
+.dialog-buttons .btn-secondary {
+    background-color: #ecf0f1;
+    color: #2c3e50;
+}
+
+.dialog-buttons .btn-secondary:hover {
+    background-color: #bdc3c7;
+}
+
+@keyframes scaleIn {
+    from {
+        transform: scale(0.8);
+        opacity: 0;
+    }
+    to {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+
+/* Responsive Adjustments */
+@media screen and (max-width: 768px) {
+    .container {
+        padding: 0 15px;
+    }
+
+    header {
+        flex-direction: column;
+        text-align: center;
+    }
+
+    nav {
+        margin-top: 20px;
+    }
+
+    .pricing-cards {
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .pricing-card {
+        width: 90%;
+        max-width: 350px;
+    }
+}
+    </style>
+<script src="/web/scripts/AutoMarkdown.js" type="module" defer></script>
+    <script unSave="true">
+        document.addEventListener('DOMContentLoaded', () => {
+    const queryInput = document.getElementById('query-input');
+    const searchForm = document.getElementById('search-form');
+    const statusDisplay = document.getElementById('status-display');
+    const resultsContainer = document.getElementById('results-container');
+    const summarySection = document.getElementById('summary-section');
+    const ppcSection = document.getElementById('ppc-section');
+    const detailsSection = document.getElementById('details-section');
+    const email = document.getElementById('EmailS');
+
+    // API Base URL
+    const API_BASE_URL = '/api/TruthSeeker'; // Replace with your API URL
+
+    // Helper function: Update status display
+    const updateStatus = (step) => {
+        const steps = statusDisplay.querySelectorAll('.status-step');
+        steps.forEach(s => s.classList.remove('active'));
+        document.getElementById(step).classList.add('active');
+    };
+
+    // Handle search form submission
+    searchForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const query = queryInput.value.trim();
+        const depth = document.getElementById('research-depth').value;
+        const promoCode = document.getElementById('promo-code').value;
+        const ontimeCode = document.getElementById('ontime-code').value;
+
+        if (!query) {
+            showError('Please enter a research question.');
+            return;
+        }
+	
+	searchForm.classList.add("none")
+        // Clear previous results
+        ppcSection.innerHTML = '';
+        summarySection.innerHTML = '';
+        detailsSection.innerHTML = '';
+        resultsContainer.style.display = 'none';
+
+        // testing codes
+        try {
+
+            updateStatus('query-generation');
+            const response = await fetch(`${API_BASE_URL}/codes`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query, depth, promoCode, ontimeCode}),
+            });
+
+             if (!response.ok) throw new Error('Error processing the request.');
+
+            const {ontimeKey, valid, ppc} = await response.json();
+
+            const f = () => {
+
+                setTimeout( async () => await ProcessResults(query, depth, ontimeKey), 0)
+
+
+            }
+            ppcResults(ppc, valid, f);
+
+        } catch (error) {
+            console.error('Error:', error);
+            showError('Failed to fetch results. Please try again.');
+            return
+        }
+    });
+
+    // Display results
+    const displayResults = (data) => {
+        updateStatus('insight-generation');
+        email.classList.add("none")
+	searchForm.classList.remove("none")
+        const { is_true ,summary, insights, papers } = data;
+
+        // Display summary
+        summarySection.innerHTML = `<h4>IS True</h4><p>${is_true}</p>`+`<h4>Summary</h4><p>${summary}</p>`;
+
+        summarySection.classList.add("codes-section")
+        // Display insights
+        detailsSection.innerHTML = `<h4>Insights</h4>`;
+        insights.forEach((insight, index) => {
+            detailsSection.innerHTML += `
+                <div class="insight">
+                    <h5>Insight ${index + 1}</h5>
+                    <p>${insight}</p>
+                </div>`;
+        });
+
+        var event = new CustomEvent("markdownVisible", { "detail": "Example of an event" });
+        summarySection.dispatchEvent(event)
+
+        detailsSection.classList.add("codes-section")
+
+        // Display detailed paper data
+        detailsSection.innerHTML += `<h4>Processed Papers</h4>`;
+        papers.forEach((paper) => {
+            detailsSection.innerHTML += `
+                <div class="paper">
+                    <h5>${paper.title}</h5>
+                    <p><strong>Summary:</strong> ${paper.summary}</p>
+                    <p><strong>Relevance Score:</strong> ${paper.overall_relevance_score}</p>
+                    <a href="${paper.pdf_url}" target="_blank">View PDF</a>
+                </div>`;
+        });
+
+        resultsContainer.style.display = 'block';
+    };
+    const showError = (error) => {
+        const dialog = document.getElementById("error-dialog");
+        dialog.showModal();
+        const dialog_content = document.getElementById("error-dialog-content");
+        dialog_content.innerHTML = `<p>infos:</p><h3>${error}</h3>`
+    };
+
+    // Display ppc
+    const ppcResults = (ppc, valid, f) => {
+
+        const {timeEstimation,price} = ppc
+        let v = ''
+        if (!valid) {
+            v =  `<h4>Price for the Query :</h4><p>${price/100}</p><button data-modal-target="payment-dialog" id="pay-button-ontime" onclick="
+                document.getElementById("payment-dialog").showModal();">Pay</button>`
+        }
+
+        ppcSection.classList.add("codes-section")
+
+        ppcSection.innerHTML = `<h4>~ Time estimation :</h4><p>${timeEstimation}</p>`+ v;
+        resultsContainer.style.display = 'block';
+
+        if(valid){
+            f()
+        }
+
+    };
+
+    const ProcessResults = async (query, depth, ontimeKey) => {
+
+         // Start query processing
+         const email = document.getElementById("Email").value
+        try {
+
+            updateStatus('paper-processing');
+            const response = await fetch(`${API_BASE_URL}/process`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query, depth, ontimeKey, email}),
+            });
+
+            if (!response.ok) throw new Error('Error processing the request.');
+
+            const result = await response.json();
+
+            // Populate Results
+            displayResults(result);
+
+        } catch (error) {
+            console.error('Error:', error);
+            showError('Failed to fetch results. Please try again.');
+        }
+    };
+});
+
+    </script>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <h1>TruthSeeker</h1>
+                <p>Precision. Discovery.</p>
+            </div>
+            <nav>
+                <a href="#home" class="active">Search</a>
+                <a href="#pricing">Pricing</a>
+                <a href="#about">About</a>
+            </nav>
+        </header>
+
+        <main>
+            <section id="home" class="search-section">
+                <div class="search-container">
+                    <h2>Scientific Insights at Your Fingertips</h2>
+                    <form id="search-form">
+                        <input type="text" id="query-input" placeholder="Enter your research question..." required>
+                        <div class="search-options">
+                            <select id="research-depth">
+                                <option value="quick">Quick Analysis</option>
+                                <option value="indeep">In-depth Analysis</option>
+                                <option value="expert">Expert Analysis</option>
+                                <option value="pro" class="none">Experimental Analysis</option>
+                            </select>
+                            <button type="submit">Search</button>
+                        </div>
+                    </form>
+                </div>
+
+                <div id="status-display" class="status-container">
+                    <div class="status-step" id="query-generation">
+                        <span class="status-icon">🔍</span>
+                        <p>Searching scientific publications...</p>
+                    </div>
+                    <div class="status-step" id="paper-processing">
+                        <span class="status-icon">📄</span>
+                        <p>Processing relevant Papers...</p>
+                    </div>
+                    <div class="status-step" id="insight-generation">
+                        <span class="status-icon">💡</span>
+                        <p>Summarizing insights...</p>
+                    </div>
+                </div>
+
+                <div id="results-container" class="results-container autoMarkdownVisible">
+                    <div id="ppc-section"></div>
+
+                    <div id="summary-section" class="markdown"></div>
+                    <div id="details-section"></div>
+                </div>
+
+                <div class="codes-section none" id="EmailS">
+                    <p>Get research result via Email</p>
+                    <div class="code-input-group">
+                        <input type="text" id="Email" placeholder="Enter before Search">
+                        <button id="add-email-button">#</button>
+                    </div>
+                </div>
+            </section>
+
+            <section id="pricing" class="pricing-section">
+                <h2>Our Pricing Plans</h2>
+                <div class="pricing-cards">
+                    <div class="pricing-card">
+                        <h3>Single Request</h3>
+                        <p class="price">0 - 2€ / request</p>
+                        <ul>
+                            <li>Individual Research</li>
+                            <li>Compact Analysis</li>
+                            <li>Custom Pricing</li>
+                            <li>Just start Using :)</li>
+                        </ul>
+                    </div>
+                    <div class="pricing-card highlighted">
+                        <h3>Onetime Unlimited</h3>
+                        <p class="price">€10 / 48 hours</p>
+                        <ul>
+                            <li>Unlimited Requests</li>
+                            <li>Priority Processing</li>
+                            <li>No Limits</li>
+                        </ul>
+                         <button data-modal-target="payment-dialog">Buy Now</button>
+                    </div>
+                    <div class="pricing-card">
+                        <h3>Annual Unlimited</h3>
+                        <p class="price">€199 / year</p>
+                        <ul>
+                            <li>Unlimited Research</li>
+                            <li>Advanced Insights</li>
+                            <li>5 Queries / Day</li>
+                        </ul>
+                         <button data-modal-target="payment-dialog">Buy Now</button>
+                    </div>
+                </div>
+
+                <div class="codes-section">
+                    <h3>Promo Code</h3>
+                    <div class="code-input-group">
+                        <input type="text" id="promo-code" placeholder="Enter promo code">
+                        <button id="apply-promo-button">#</button>
+                    </div>
+
+                    <h3>Ontime- usage- Code</h3>
+                    <div class="code-input-group">
+                        <input type="password" id="ontime-code" placeholder="Enter ontime code">
+                        <button id="apply-ontime-button">#</button>
+                    </div>
+                </div>
+            </section>
+
+            <section id="about" class="about-section codes-section">
+                <h2>About this Platform</h2>
+                <p>Welcome! At TruthSeeker,  TruthSeeker aims to democratize access to scientific knowledge, making complex academic research comprehensible and transparent. By bridging the gap ... <a href="?abut=True">read more</a> or visit <a href="https://simplecore.app" target="_blank">The main website</a> to learn more! Support and Contact via MarkinHausDev@gmail.com</p>
+            </section>
+        </main>
+
+    </div>
+
+        <footer  id="main-footer" class="footer">
+            <div class="footer-container">
+                <div class="footer-links">
+                    <button data-modal-target="terms-dialog">Terms of Service</button>
+                    <button data-modal-target="privacy-dialog">Privacy Policy</button>
+                    <button data-modal-target="imprint-dialog">Imprint</button>
+                </div>
+                <div class="footer-info">
+                    <p>&copy; <span id="current-year"></span> TruthSeeker. All rights reserved.</p>
+                </div>
+            </div>
+        </footer>
+
+        <!-- Dialogs -->
+        <dialog id="payment-dialog">
+            <div class="dialog-content">
+                <h2>Payment Options</h2>
+                <div class="payment-methods none">
+                    <button>PayPal</button>
+                    <button>Google Pay</button>
+                    <button>Apple Pay</button>
+                </div>
+                <div class="code-section">
+                    <h1>Currrently in Closed Beta</h1>
+                    <h2> Wating list in progress</h2>
+                    <h3> For (iiii) : MarkinHausDev@gmail.com,  ideas, inspiration, interest or information </h3>
+                </div>
+                <button class="close-dialog">Close</button>
+            </div>
+        </dialog>
+
+        <dialog id="terms-dialog">
+            <div class="dialog-content">
+                <h2>Terms of Service</h2>
+                <div class="scrollable-content">
+                    <h3>1. Acceptance of Terms</h3>
+                    <p>By accessing and using TruthSeeker, you agree to these terms of service...</p>
+
+                    <h3>2. Service Description</h3>
+                    <p>TruthSeeker provides research and scientific insight generation tools...</p>
+
+                    <h3>3. User Responsibilities</h3>
+                    <p>Users are responsible for the accuracy and appropriate use of generated insights...</p>
+                </div>
+                <button class="close-dialog">Close</button>
+            </div>
+        </dialog>
+
+        <dialog id="privacy-dialog">
+            <div class="dialog-content">
+                <h2>Privacy Policy</h2>
+                <div class="scrollable-content">
+                    <h3>1. Information Collection</h3>
+                    <p>We collect minimal personal information necessary for service delivery...</p>
+
+                    <h3>2. Data Usage</h3>
+                    <p>Your data is used solely for providing and improving our research services...</p>
+
+                    <h3>3. Data Protection</h3>
+                    <p>We implement industry-standard security measures to protect your information...</p>
+                </div>
+                <button class="close-dialog">Close</button>
+            </div>
+        </dialog>
+
+        <dialog id="imprint-dialog">
+            <div class="dialog-content">
+                <h2>Imprint</h2>
+                <div class="contact-info">
+                    <h3>Company Details</h3>
+                    <p>TruthSeeker GmbH</p>
+                    <p>Street Address</p>
+                    <p>City, Country</p>
+                    <p>Contact Email: contact@truthseeker.com</p>
+                    <p>VAT ID: XX-XXXXXXXX</p>
+                </div>
+                <button class="close-dialog">Close</button>
+            </div>
+        </dialog>
+
+        <dialog id="error-dialog">
+            <div class="dialog-content">
+                <h2>Error</h2>
+                <div class="scrollable-content" id="error-dialog-content">
+
+                </div>
+                <button class="close-dialog">Close</button>
+            </div>
+        </dialog>
+    </div>
+
+    <script unSave="true">
+        // Update current year
+        document.getElementById("current-year").textContent = new Date().getFullYear();
+
+        // Modal/Dialog handling
+        document.querySelectorAll('[data-modal-target]').forEach(button => {
+            button.addEventListener('click', () => {
+                const dialogId = button.dataset.modalTarget;
+                const dialog = document.getElementById(dialogId);
+                dialog.showModal();
+            });
+        });
+
+        // Close dialog buttons
+        document.querySelectorAll('.close-dialog').forEach(button => {
+            button.addEventListener('click', () => {
+                const dialog = button.closest('dialog');
+                dialog.close();
+            });
+        });
+
+        // Optional: Close dialog when clicking outside
+        document.querySelectorAll('dialog').forEach(dialog => {
+            dialog.addEventListener('click', (e) => {
+                if (e.target === dialog) {
+                    dialog.close();
+                }
+            });
+        });
+        // JavaScript to parse the URL and extract query parameters
+        function getQueryParam(param) {
+            // Create a URLSearchParams object to easily access query parameters
+            const params = new URLSearchParams(window.location.search);
+            return params.get(param);
+        }
+
+        // Set the input fields with the values from the URL
+        window.onload = function() {
+            const ontimeCode = getQueryParam('ontimeCode');
+            const promoCode = getQueryParam('promoCode');
+
+            if (ontimeCode) {
+                document.getElementById('ontime-code').value = ontimeCode;
+            }
+            if (promoCode) {
+                document.getElementById('promo-code').value = promoCode;
+            }
+        };
+    </script>
+</body>
+</html>

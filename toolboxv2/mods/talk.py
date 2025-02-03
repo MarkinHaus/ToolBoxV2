@@ -1,12 +1,6 @@
 import json
-import os
-import io
-import subprocess
-import tempfile
 import threading
-import wave
 
-from litellm import max_tokens
 from starlette.responses import HTMLResponse
 
 from toolboxv2 import get_app, App, TBEF, Spinner
@@ -128,8 +122,8 @@ async def stream_response(app, input_text, websocket: WebSocket,
     agent_t = app.run_any(TBEF.ISAA.GET_AGENT_CLASS, agent_name='TaskCompletion')
 
     agent_t.post_callback = stream_text_t
-    from toolboxv2.mods.isaa.AgentFramwork import ConversationMode
-    from toolboxv2.mods.isaa.userRequestAnalyszer import intelligent_isaa_dispatcher, ChatSession
+    from toolboxv2.mods.isaa.extras.modes import ConversationMode
+    from toolboxv2.mods.isaa.extras.session import intelligent_isaa_dispatcher, ChatSession
 
     if chat_session is None:
         chat_session = ChatSession(app.get_mod('isaa').get_context_memory())

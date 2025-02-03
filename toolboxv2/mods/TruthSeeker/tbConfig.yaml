@@ -1,0 +1,4 @@
+dependencies_file: ./mods/TruthSeeker/requirements.txt
+module_name: TruthSeeker
+version: 0.0.1
+zip: "RST$TruthSeeker&v0.1.20\xA70.0.1.zip"

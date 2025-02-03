@@ -1,0 +1,8 @@
+tqdm
+PIL
+PyPDF2
+urllib3
+starlette
+pydantic
+requests
+arxiv

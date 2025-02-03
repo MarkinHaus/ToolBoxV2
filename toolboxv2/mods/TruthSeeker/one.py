@@ -1,33 +1,21 @@
 import os
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Set, Optional, Tuple, Union, Any
+from typing import Dict, List, Set, Optional, Union, Any
 from datetime import datetime
 import threading
 import numpy as np
-import multiprocessing as mp
-from queue import PriorityQueue
-import uuid
-import json
-from pathlib import Path
 import io
 from PIL import Image
 
 import base64
 
 import torch
-from lancedb.embeddings.registry import register
 
 from transformers import AutoTokenizer, AutoModel, CLIPProcessor, CLIPModel
 from transformers import Wav2Vec2Processor, Wav2Vec2Model
-import lancedb
-from lancedb.pydantic import LanceModel, Vector
-
-from lancedb.embeddings import EmbeddingFunctionRegistry
 
 from toolboxv2 import get_logger, Singleton
-from toolboxv2.utils.Irings.zero import RingAdapter
-from toolboxv2.utils.Irings.utils import TransformerSplitter
 from toolboxv2.utils.system import FileCache
 
 logger = get_logger()
@@ -45,8 +33,7 @@ class InputData:
         self.metadata = metadata or {}
 
 
-@register("intelligence-ring-embeddings")
-class IntelligenceRingEmbeddings(lancedb.embeddings.EmbeddingFunction):
+class IntelligenceRingEmbeddings():
     name: str = "sentence-transformers/all-MiniLM-L6-v2"
     clip_name: str = "openai/clip-vit-base-patch32"
     wav2vec_name: str = "facebook/wav2vec2-base-960h"
@@ -205,21 +192,6 @@ class IntelligenceRingEmbeddings(lancedb.embeddings.EmbeddingFunction):
 
     def ndims(self) -> int:
         return self._ndims
-
-
-# LanceDB Schema for Concepts
-class ConceptSchema(LanceModel):
-    vector: Vector(768)
-    id: str
-    name: str
-    ttl: int
-    created_at: datetime
-    contradictions: List[str]
-    similar_concepts: List[str]
-    relations: str
-    stage: int
-    metadata: str
-    modality: str  # New field
 
 
 @dataclass
@@ -381,276 +353,3 @@ class InputProcessor(metaclass=Singleton):
         norm2 = np.linalg.norm(x2)
         return float(np.dot(x1, x2) / (norm1 * norm2)) if norm1 > 0 and norm2 > 0 else 0.0
 
-
-
-class RetrievalSystem:
-    def __init__(self, concept_graph: 'ConceptGraph'):
-        self.concept_graph = concept_graph
-        self.similarity_threshold = 0.8
-
-    def find_similar(self, vector: np.ndarray, top_k: int = 5) -> List[Tuple[str, float]]:
-        # query_vector = vector.tolist()
-        results = self.concept_graph.table.search(vector).limit(top_k).to_list()
-        return sorted([(result["id"], 1 / result["_distance"] if result["_distance"] > 0 else 1) for result in results],
-                      key=lambda x: x[1], reverse=True)
-
-
-class ConceptGraph:
-    def __init__(self, ring_id: str, max_concepts: int = 1000, max_relations_per_concept: int = 50):
-        self.ring_id = ring_id
-        self.max_concepts = max_concepts
-        self.max_relations = max_relations_per_concept
-        self.lock = threading.Lock()
-
-        # Initialize LanceDB
-        db_path = Path(f"./.data/intelligence_rings/{ring_id}")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = lancedb.connect(str(db_path))
-
-        # Create or load the table
-        if f"concepts_{ring_id}" in self.db.table_names():
-            self.table = self.db.open_table(f"concepts_{ring_id}")
-        else:
-            self.table = self.db.create_table(
-                f"concepts_{ring_id}",
-                schema=ConceptSchema.to_arrow_schema(),
-                # mode="create"
-            )
-
-        # Load concepts into memory
-        self.concepts: Dict[str, Concept] = self._load_concepts()
-
-    def _load_concepts(self) -> Dict[str, Concept]:
-        concepts = {}
-        for row in self.table.to_pandas().to_dict('records'):
-            concept = Concept(
-                id=row["id"],
-                name=row["name"],
-                ttl=row["ttl"],
-                created_at=row["created_at"],
-                vector=np.array(row["vector"]),
-                contradictions=set(row["contradictions"]),
-                similar_concepts=set(row["similar_concepts"]),
-                relations=json.loads(row["relations"]),
-                stage=row["stage"],
-                metadata=json.loads(row["metadata"]),
-                modality=row["modality"]
-            )
-            concepts[concept.id] = concept
-        return concepts
-
-    def _cleanup_oldest(self):
-        with self.lock:
-            expired_ids = []
-            expired_vec = []
-            for concept_id, concept in self.concepts.items():
-                if concept.is_expired():
-                    expired_ids.append(concept_id)
-                    expired_vec.append(concept.vector)
-
-            # Remove from memory
-            for concept_id in expired_ids:
-                del self.concepts[concept_id]
-
-            # Remove from LanceDB
-            if expired_ids:
-                try:
-                    self.table.delete(f"id IN {tuple(expired_ids)}")
-                except Exception:
-                    print("Could not delete using ID try v")
-                    for vec in expired_vec:
-                        self.table.delete(f"vector = {vec}")
-
-    def add_concept(self, name: str, vector: np.ndarray, ttl: int = 2,
-                    metadata: Dict = None, modality: str = "text") -> str:
-        with self.lock:
-            if len(self.concepts) >= self.max_concepts:
-                self._cleanup_oldest()
-
-            concept_id = str(uuid.uuid4())
-            concept = Concept(
-                id=concept_id,
-                name=name,
-                ttl=ttl,
-                created_at=datetime.now(),
-                vector=vector,
-                contradictions=set(),
-                similar_concepts=set(),
-                relations={},
-                stage=1,
-                metadata=metadata or {},
-                modality=modality
-            )
-
-            # Add to memory
-            self.concepts[concept_id] = concept
-            self.table.add([{
-                "vector": vector,
-                "id": concept_id,
-                "name": concept.name,
-                "ttl": concept.ttl,
-                "created_at": concept.created_at,
-                "contradictions": list(concept.contradictions),
-                "similar_concepts": list(concept.similar_concepts),
-                "relations": json.dumps(concept.relations),
-                "stage": concept.stage,
-                "metadata": json.dumps(concept.metadata),
-                "modality": concept.modality
-            }])
-            self._update_similarities(concept_id)
-            return concept_id
-
-    def _update_similarities(self, concept_id: str):
-        concept = self.concepts[concept_id]
-        vector = concept.vector.tolist()
-
-        self.table.delete(f"vector = {vector}")
-
-        # Use LanceDB for similarity search
-        similar_concepts = self.table.search(vector).limit(self.max_relations).to_list()
-        v = {}  #{"stage": min(max(concept.stage+1, 3), concept.stage)}
-        for similar in similar_concepts:
-            if similar["id"] != concept_id:
-                similarity = 1 / similar["_distance"] if similar[
-                                                             "_distance"] > 0 else 1  # Convert distance to similarity
-                if similarity > 0.8:
-                    concept.similar_concepts.add(similar["id"])
-                elif similarity < 0.1:
-                    concept.contradictions.add(similar["id"])
-
-                # Update relations
-                concept.relations[similar["id"]] = similarity
-        # self.table.delete(f"id = {concept_id}")
-        self.table.add([{
-            "vector": vector,
-            "id": concept_id,
-            "name": concept.name,
-            "ttl": concept.ttl,
-            "created_at": concept.created_at,
-            "contradictions": list(concept.contradictions),
-            "similar_concepts": list(concept.similar_concepts),
-            "relations": json.dumps(concept.relations),
-            "stage": concept.stage + 1,
-            "metadata": json.dumps(concept.metadata),
-            "modality": concept.modality
-        }])
-
-
-class IntelligenceRing:
-    def __init__(self, ring_id: str, num_threads: int = mp.cpu_count()):
-        self.ring_id = ring_id
-        self.concept_graph = ConceptGraph(ring_id)
-        self.input_processor = InputProcessor()
-        self.splitter = TransformerSplitter(self.input_processor)
-        self.retrieval_system = RetrievalSystem(self.concept_graph)
-        self.adapter = RingAdapter(ring_id)
-        self.processing_queue = PriorityQueue()
-        self.num_threads = num_threads
-        self.workers = []
-        self._initialize_workers()
-
-    def _initialize_workers(self):
-        for _ in range(self.num_threads):
-            worker = threading.Thread(target=self._process_queue)
-            worker.daemon = True
-            worker.start()
-            self.workers.append(worker)
-
-    def _process_queue(self):
-        while True:
-            try:
-                priority, concept_id = self.processing_queue.get()
-                if concept_id in self.concept_graph.concepts:
-                    self._advance_concept_stage(concept_id)
-                self.processing_queue.task_done()
-            except Exception as e:
-                logger.error(f"Error processing concept: {e}")
-
-    def _advance_concept_stage(self, concept_id: str):
-        concept = self.concept_graph.concepts.get(concept_id)
-        if concept:
-            concept.stage += 1
-            # Update stage in LanceDB
-            self.concept_graph.table.update().where(f"id = '{concept_id}'").set({
-                "stage": concept.stage
-            }).execute()
-
-    def get_concept_by_id(self, concept_id: str) -> Optional[Concept]:
-        return self.concept_graph.concepts.get(concept_id)
-
-    def process(self, text, vector=None, importance=0, metadata=None, name=None, ttl=None, ref=None, refv=None):
-        concepts = []
-        if vector is not None:
-            concepts.append(self.concept_graph.add_concept(
-                name=name if name else text[:50],
-                vector=vector,
-                ttl=(int(importance * 10) if importance > 0 else 1) if ttl is None else ttl,
-                metadata=metadata
-            ))
-            return concepts
-
-        if refv is None:
-            refv = self.input_processor.process_text(ref if ref is not None else text)
-
-        sub_concepts = self.splitter.split(text, refv)
-        for concept in sub_concepts:
-            concepts.append(self.concept_graph.add_concept(
-                name=name if name else concept.metadata['text'][:50],
-                vector=concept.vector,
-                ttl=(int(concept.importance * 10) if concept.importance > 0 else 1) if ttl is None else ttl,
-                metadata={**concept.metadata, **metadata} if metadata else concept.metadata
-            ))
-        return concepts
-
-
-def main():
-    # Create an intelligence ring
-    ring = IntelligenceRing("ring-1")
-
-    # Create a key concept
-    text = "AI Ethics and its implications on society." * 64
-    vector = ring.input_processor.get_embedding(text)
-    for i in range(1, 100):
-        print(i,  ring.input_processor.get_embedding(text* i).shape, len(text* i))
-    # return
-    key_concept_id = ring.process(text,
-                                  name="AI Ethics",
-                                  ttl=-1,
-                                  metadata={"domain": "technology", "importance": "high"}
-                                  )
-
-    # Create related concepts
-    related_concepts = [
-        ("Data Privacy", "The importance of protecting personal information in AI systems"),
-        ("Machine Learning", "Core principles and applications of machine learning"),
-        ("Human Rights", "Intersection of AI and human rights considerations"),
-    ]
-
-    for name, description in related_concepts:
-        ring.process(description,
-                     name=name,
-                     ttl=3600,
-                     metadata={"domain": "technology"}
-                     )
-
-    # Retrieve similar concepts
-    similar_concepts = ring.retrieval_system.find_similar(vector)
-    print("\nSimilar concepts to 'AI Ethics':")
-    for concept_id, similarity in similar_concepts:
-        concept = ring.get_concept_by_id(concept_id)
-        if concept:
-            print(f"- {concept.name}: {similarity:.3f}")
-
-        # Search by metadata
-    # Example: Print concept relationships
-    print("\nConcept relationships for AI Ethics:")
-    key_concept = ring.get_concept_by_id(key_concept_id)
-    if key_concept:
-        for related_id, similarity in key_concept.relations.items():
-            related = ring.get_concept_by_id(related_id)
-            if related:
-                print(f"- {related.name}: {similarity:.3f}")
-
-
-if __name__ == "__main__":
-    main()

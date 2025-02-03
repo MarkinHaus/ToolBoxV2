@@ -1,21 +1,8 @@
-import asyncio
+from toolboxv2 import App, AppArgs, TBEF
+
 import threading
 import time
 import os
-import platform
-
-import keyboard
-import pyperclip
-
-import inspect
-
-from toolboxv2 import App, AppArgs, TBEF, get_app
-
-import asyncio
-import threading
-import time
-import os
-import platform
 import signal
 import pyperclip
 import queue
@@ -23,7 +10,6 @@ from typing import Optional, Dict, Callable
 from PIL import Image
 from dataclasses import dataclass
 import curses
-from datetime import datetime
 
 # For Windows
 import pystray
@@ -309,13 +295,12 @@ llm_text = [""]
 
 
 def run(app: App, _: AppArgs, voice=True, timeout=8):
-    from toolboxv2.mods.isaa.ObsidianMem import graph_to_string, save_graph_as_png
     from toolboxv2.mods.isaa import Tools
 
-    from toolboxv2.mods.isaa.AgentFramwork import ConversationMode, PreciseResponder
+    from toolboxv2.mods.isaa.extras.modes import ConversationMode, PreciseResponder
     from toolboxv2.mods.isaa.isaa_modi import browse_website
     from toolboxv2.mods.isaa.subtools.file_loder import route_local_file_to_function
-    from toolboxv2.mods.isaa.userRequestAnalyszer import isaa_mode_dispatch, intelligent_isaa_dispatcher, ChatSession
+    from toolboxv2.mods.isaa.extras.session import isaa_mode_dispatch, intelligent_isaa_dispatcher, ChatSession
 
     if isinstance(timeout, str):
         timeout = int(timeout)
@@ -587,9 +572,7 @@ def run(app: App, _: AppArgs, voice=True, timeout=8):
 
     def main_analyses(user_context):
         sys_graph = isaa.agent_memory.analyze_and_process_vault(process=True, all_files=False)
-        sys_context = graph_to_string(sys_graph)
-        isaa.agent_memory.process_data(sys_context)
-        return helper_c_to_r(user_context, sys_context)
+        return sys_graph
 
     def inject_web_url(url):
         question = get_user_input_text()

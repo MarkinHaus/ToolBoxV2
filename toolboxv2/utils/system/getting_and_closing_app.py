@@ -25,7 +25,7 @@ def override_main_app(app):
 
 def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None, sync=False) -> AppType:
     global registered_apps
-    # print(f"get app requested from: {from_} withe name: {name}")
+    print(f"get app requested from: {from_} withe name: {name}")
     logger = get_logger()
     logger.info(Style.GREYBG(f"get app requested from: {from_}"))
     if registered_apps[0] is not None:
@@ -39,13 +39,7 @@ def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None, sync=
     else:
         app = app_con()
     logger.info(Style.Bold(f"App instance, returned ID: {app.id}"))
-    if from_ != "InitialStartUp" and not hasattr(app, 'loop') and not sync:
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-        print("ADDET A LOOP")
-        app.loop = loop
+
     registered_apps[0] = app
     return app
 
@@ -101,18 +95,6 @@ async def a_save_closing_app():
     if app.called_exit[0] and time.time() - app.called_exit[1] > 15:
         app.print(Style.Bold(Style.ITALIC(f"- zombie sice|{time.time() - app.called_exit[1]:.2f}s kill -")))
         await app.a_exit()
-
-    if hasattr(app, 'loop'):
-        if app.loop is not None:
-            if app.loop.is_closed():
-               app.loop.close()
-            else:
-                await app.loop.shutdown_asyncgens()
-                if hasattr(app.loop, "shutdown_default_executor"):
-                    await app.loop.shutdown_default_executor()
-                if not app.loop.is_closed():
-                    pass
-                    # print("Loop still running")
 
     app.print(Style.Bold(Style.ITALIC("- completed -")))
     registered_apps[0] = None

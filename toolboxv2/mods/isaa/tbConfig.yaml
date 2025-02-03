@@ -1,0 +1,4 @@
+dependencies_file: ./mods/isaa/requirements.txt
+module_name: isaa
+version: 0.1.4
+zip: "RST$isaa&v0.1.20\xA70.1.4.zip"
