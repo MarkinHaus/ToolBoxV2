@@ -126,7 +126,7 @@ async def stream_response(app, input_text, websocket: WebSocket,
     from toolboxv2.mods.isaa.extras.session import intelligent_isaa_dispatcher, ChatSession
 
     if chat_session is None:
-        chat_session = ChatSession(app.get_mod('isaa').get_context_memory())
+        chat_session = ChatSession(app.get_mod('isaa').get_memory())
 
     agent.mode = app.get_mod('isaa').controller.rget(ConversationMode)
     agent.stream_function = stream_text

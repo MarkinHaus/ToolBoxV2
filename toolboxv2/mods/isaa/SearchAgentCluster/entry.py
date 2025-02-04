@@ -103,7 +103,7 @@ class ContentAnalyzer:
         class ContentCategorys(BaseModel):
             contentCategorys: List[ContentCategory]
 
-        categories = self.isaa.format_class(ContentCategorys, categorization_prompt).contentCategorys
+        categories = self.isaa.format_class(ContentCategorys, categorization_prompt)["contentCategorys"]
         return categories
 
 
@@ -162,7 +162,7 @@ class SemanticSearchEngine:
         class Urls(BaseModel):
             urls : List[str]
 
-        urls = self.isaa.format_class(Urls, url_prompt).urls
+        urls = self.isaa.format_class(Urls, url_prompt)["urls"]
         return [url.strip() for url in urls if url.strip()]
 
     def _calculate_relevance(self, content: str, query: str) -> float:

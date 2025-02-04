@@ -10,9 +10,10 @@ from datetime import datetime
 from json import JSONDecodeError
 from typing import List, Optional, Dict, Any, Union, Tuple
 
+import numpy as np
 import requests
 import tiktoken
-from litellm import token_counter
+from litellm import token_counter, acompletion
 from pebble import concurrent
 
 from toolboxv2 import Style, get_logger, Singleton
@@ -639,7 +640,6 @@ import json
 from typing import Dict, Optional, List, Tuple, Any, Union
 from lightrag import LightRAG, QueryParam
 from lightrag.utils import EmbeddingFunc
-import textract
 
 
 import litellm
@@ -650,7 +650,7 @@ class AISemanticMemory(metaclass=Singleton):
     def __init__(self,
                  base_path: str = "/semantic_memory",
                  default_model: str = os.getenv("DEFAULTMODEL1"),
-                 default_embedding_model: str = "text-embedding-3-small",
+                 default_embedding_model: str = os.getenv("DEFAULTMODELEMBEDDING"),
                  default_kv_storage: str = "JsonKVStorage",
                  default_vector_storage: str = "NanoVectorDBStorage",
                  default_graph_storage: str = "NetworkXStorage"):
@@ -665,7 +665,7 @@ class AISemanticMemory(metaclass=Singleton):
             default_vector_storage: Default vector storage backend
             default_graph_storage: Default graph storage backend
         """
-        self.base_path = os.path.join(os.getcwd(), base_path.strip("/"))
+        self.base_path = os.path.join(os.getcwd(), ".data" ,base_path.strip("/"))
         self.memories: Dict[str, LightRAG] = {}
         self.default_config = {
             "llm_model_func": self._litellm_wrapper(default_model),
@@ -686,26 +686,25 @@ class AISemanticMemory(metaclass=Singleton):
 
     def _litellm_wrapper(self, model: str) -> callable:
         """Wrap LiteLLM completion for LightRAG"""
-
-        def llm_func(prompt: str, **kwargs) -> str:
-            response = completion(
-                model=model,
-                messages=[{"content": prompt, "role": "user"}],
-                **kwargs
-            )
-            return response.choices[0].message.content
+        async def llm_func(prompt: str, **kwargs) -> str:
+            if prompt.strip("MANY entities were missed in the last extraction.  Add them below using the same format:"):
+                return ""
+            response = await get_app().get_mod("isaa").get_agent_class("self").a_mini_task(prompt)
+            return response
 
         return llm_func
 
     def _embedding_wrapper(self, model: str) -> callable:
         """Wrap LiteLLM embeddings for LightRAG"""
 
-        def embedding_func(texts: List[str], **kwargs) -> List[List[float]]:
-            return litellm.embedding(
+        async def embedding_func(texts: List[str], **kwargs):
+            print("Embedding", len(texts))
+            res = await litellm.aembedding(
                 model=model,
                 input=texts,
                 **kwargs
-            ).data
+            )
+            return res.data[0].get('embedding')
 
         return embedding_func
 
@@ -768,7 +767,7 @@ class AISemanticMemory(metaclass=Singleton):
         )
         return True
 
-    def add_data(self,
+    async def add_data(self,
                  memory_name: str,
                  data: Union[str, List[str], bytes, dict],
                  metadata: Optional[Dict] = None,
@@ -795,6 +794,7 @@ class AISemanticMemory(metaclass=Singleton):
         # Handle file uploads
         if isinstance(data, bytes):
             try:
+                import textract
                 text = textract.process(data).decode('utf-8')
                 data = [text]
             except Exception as e:
@@ -803,17 +803,14 @@ class AISemanticMemory(metaclass=Singleton):
         # Normalize data format
         data = [data] if isinstance(data, str) else data
 
-        # Insert with metadata and batch processing
-        insert_params = {"metadata": metadata} if metadata else {}
-
-        try:
-            if batch_size > 1 and len(data) > batch_size:
-                for i in range(0, len(data), batch_size):
-                    rag.insert(data[i:i + batch_size], **insert_params)
-            else:
-                rag.insert(data, **insert_params)
-        except Exception as e:
-            raise RuntimeError(f"Insert failed: {str(e)}")
+        #try:
+        if batch_size > 1 and len(data) > batch_size:
+            for i in range(0, len(data), batch_size):
+                await rag.ainsert(data[i:i + batch_size])
+        else:
+            await rag.ainsert(data)
+        #except Exception as e:
+        #    raise RuntimeError(f"Insert failed: {str(e)}")
 
         return True
 
@@ -869,6 +866,13 @@ class AISemanticMemory(metaclass=Singleton):
                 print(f"Query failed on {name}: {str(e)}")
 
         return self._consolidate_results(results, consensus_threshold, to_str)
+
+    async def directly(self, query, memory_names, **kwargs):
+        targets = self._get_target_memories(memory_names)
+        if len(targets) != 1:
+            return None
+        _, rag = targets[0]
+        return await rag.aquery(query, param=QueryParam(**kwargs))
 
     def _get_target_memories(self, memory_names):
         """Resolve target memories with validation"""
@@ -1277,11 +1281,15 @@ class PyEnvEval:
     def format_env(env):
         return '\n'.join(f'{key}: {value}' for key, value in env.items())
 
-    def run_and_display(self, code):
-        start = f'Startzustand:\n{self.get_env()}'
-        result = self.eval_code(code)
-        end = f'Endzustand:\n{self.get_env()}'
-        return f'{start}\nAusführungsergebnis:\n{result}\n{end}'
+    def run_and_display(self, python_code):
+        """function to eval python code"""
+        start = f'Start-state:\n{self.get_env()}'
+        result = self.eval_code(python_code)
+        end = f'End-state:\n{self.get_env()}'
+        return f'{start}\nResult:\n{result}\n{end}'
+
+    def tool(self):
+        return {"PythonEval": {"func": self.run_and_display, "description": "Use Python Code to Get to an Persis Answer! input must be valid python code all non code parts must be comments!"}}
 
 
 def get_token_mini(text: str, model_name=None, isaa=None, only_len=True):

@@ -7,6 +7,22 @@ let checked = [false]
 let caunter = 0
 let username
 
+let next_url = "/web/dashboard"
+getKeyFromURL()
+
+function getKeyFromURL() {
+    // Create a URL object based on the current window location
+    const url = new URL(window.location.href);
+    console.log("URL:", url)
+    // Use URLSearchParams to get the 'key' query parameter
+    const next_ = url.searchParams.get('next');
+
+    if (next_) {
+        next_url = next_;
+    }
+
+}
+
 
 function get_handleLoginError(id) {
     function handleLoginError(data) {
@@ -36,7 +52,7 @@ function rr(){
         localStorage.setItem("local_ws.onopen:installMod-welcome", 'false');
         window.TBf.animator("Y2+203")
         await AuthHttpPostData(username, get_handleLoginError("Session Error"), (_)=>{
-            window.TBf.router("/web/dashboard")
+            window.TBf.router(next_url)
         })
     }, 200);
 }

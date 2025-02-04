@@ -13,11 +13,13 @@ from typing import Callable, Any, Tuple, Literal
 from enum import Enum
 from typing import Optional
 from inspect import signature
+
+import asyncio
 from langchain_community.llms import HuggingFaceHub
 
 from litellm.utils import trim_messages, get_max_tokens
 
-from litellm import BudgetManager, batch_completion
+from litellm import BudgetManager, batch_completion, acompletion
 from pydantic import BaseModel
 
 from toolboxv2.mods.isaa.base.AgentUtils import ShortTermMemory, AISemanticMemory, get_token_mini, get_max_token_fom_model_name, \
@@ -327,11 +329,6 @@ class LLMFunctionRunner:
             return "Error " + str(e)
 
 
-@dataclass
-class AHolder(metaclass=Singleton):
-    fallbacks: None
-
-
 # Define Task data class
 @dataclass
 class Task:
@@ -471,6 +468,9 @@ class Agent:
     vision: Optional[bool] = field(default=None)
     audio: Optional[bool] = field(default=None)
 
+    if_for_fuction_use_overrides: bool = False
+
+
     def show_word_model(self):
         if not self.world_model:
             return "balnk"
@@ -490,16 +490,16 @@ class Agent:
 
         model_action = self.format_class(WorldModelAdaption, prompt)
         self.print_verbose(str(model_action))
-        if model_action.action is None or model_action.key is None:
+        if model_action["action"] is None or model_action["key"] is None:
             return
 
-        if ("remove" in model_action.action or "del" in model_action.action) and model_action.key in self.world_model:
-            del self.world_model[model_action.key]
+        if ("remove" in model_action["action"] or "del" in model_action["action"]) and model_action["key"] in self.world_model:
+            del self.world_model[model_action["key"]]
 
-        if model_action.informations is None:
+        if model_action["informations"] is None:
             return
 
-        self.world_model[model_action.key] = model_action.informations
+        self.world_model[model_action["key"]] = model_action["informations"]
 
     def run_in_background(self):
         """Start a task in background mode"""
@@ -537,7 +537,7 @@ class Agent:
 
                 try:
                     # Run the main agent logic
-                    result = self.run(task)
+                    result = asyncio.run(self.run(task))
 
                 except Exception as e:
                     status.status = "error"
@@ -550,12 +550,13 @@ class Agent:
 
         self.state = AgentState.STOPPED
 
-    def run(self, user_input_or_task: str or Task, with_memory=None, with_functions=None, max_iterations=3, **kwargs):
+    async def run(self, user_input_or_task: str or Task, with_memory=None, with_functions=None, max_iterations=3, chat_session=None, **kwargs):
 
         persist = False
         task_from = "user"
         persist_mem = False
         out = None
+        # print(user_input_or_task)
         if max_iterations <= 0:
             return "overflow max iterations"
         if isinstance(user_input_or_task, str):
@@ -571,30 +572,40 @@ class Agent:
         stage = [1]
 
         if self.progress_callback is None:
-            self.progress_callback = lambda x: print(x)
+            self.progress_callback = lambda x: None
 
-        def update_progress(total_stages: int = 13):
-            status = self.status_dict[task.id]
+        async def update_progress(total_stages: int = 13):
+            status = self.status_dict.get(task.id, None)
+            if status is None:
+                return
             status.progress = float(f"{stage[0] / total_stages:.2f}")
             stage[0] += 1
             status.status = "running" if stage[0] < total_stages else "completed"
-            self.progress_callback(status)
+            if asyncio.iscoroutinefunction(self.progress_callback):
+                await self.progress_callback(status)
+            else:
+                self.progress_callback(status)
 
-        update_progress()
+        await update_progress()
         self.flow_world_model(user_input)
         message = [{"role": "system", "content": f"World Model(read only): {self.show_word_model()}"}]
 
-        if self.last_result:
-            message.append({"role": "assistant", "content": str(self.last_result)})
+        if chat_session is not None:
+            history = " ==== CHAT HISTORY ===\n"+ "\n".join(f"{x['role'].upper()}: {x['content']}" for x in chat_session.get_past_x(self.max_history_length)) + " === HISTORY END ==="
+        else:
+            history = " ==== CHAT HISTORY ===\nASSISTANT: "+ str(self.last_result)+ " === HISTORY END ==="
+
+        if len(history) > 260:
+            message.append({"role": "system", "content": history})
 
         class DoSplit(BaseModel):
             """Deside if u need to split ths Task in sub tasks, only ste try on complex tasks"""
             split: bool = field(default=False)
 
-        split_task = self.format_class(DoSplit, user_input).split
+        split_task = self.format_class(DoSplit, user_input)["split"]
 
         self.print_verbose(f'Split {split_task}')
-        update_progress()
+        await update_progress()
         if split_task:
 
             class TaskList(BaseModel):
@@ -617,63 +628,63 @@ class Agent:
 """
                 sub_tasks: List[sTask]
 
-            sub_tasks = self.format_class(TaskList, user_input).sub_tasks
+            sub_tasks = self.format_class(TaskList, user_input)["sub_tasks"]
 
             self.print_verbose(f"Subtasks {len(sub_tasks)}")
-            st_d = '\n'.join([f'{i}) '+s.description + '\n' for i, s in enumerate(sub_tasks)])
+            st_d = '\n'.join([f'{i}) '+s["description"] + '\n' for i, s in enumerate(sub_tasks)])
             self.print_verbose(f"Subtasks\n {st_d}")
 
             if len(sub_tasks) > 1:
                 for subt in sub_tasks[1:][::-1]:
                     subt_ = Task(
                         id=str(uuid.uuid4())[:16],
-                        description=subt.description,
-                        priority=subt.priority,
-                        estimated_complexity=subt.estimated_complexity,
-                        time_sensitivity=subt.time_sensitivity,
+                        description=subt["description"],
+                        priority=subt["priority"],
+                        estimated_complexity=subt["estimated_complexity"],
+                        time_sensitivity=subt["time_sensitivity"],
                         created_at=datetime.now()
                     )
                     self.taskstack.add_task(subt_)
 
-            if len(sub_tasks) > 0 and sub_tasks[0].description != "" and sub_tasks[
-                0].description != "default description":
+            if len(sub_tasks) > 0 and sub_tasks[0]["description"] != "" and sub_tasks[
+                0]["description"] != "default description":
                 _sub_tasks = sub_tasks[0]
                 task = Task(
                     id=task.id,
-                    description=_sub_tasks.description + task.description if len(sub_tasks) == 1 else '',
-                    priority=_sub_tasks.priority,
-                    estimated_complexity=_sub_tasks.estimated_complexity,
-                    time_sensitivity=_sub_tasks.time_sensitivity,
+                    description=_sub_tasks["description"] + task.description if len(sub_tasks) == 1 else '',
+                    priority=_sub_tasks["priority"],
+                    estimated_complexity=_sub_tasks["estimated_complexity"],
+                    time_sensitivity=_sub_tasks["time_sensitivity"],
                     created_at=datetime.now()
                 )
 
         # Stage 2: Memory handling
         # Stage 1: Initialize and validate inputs
-        update_progress()
+        await update_progress()
         if with_functions is None:
             class WithFunctions(BaseModel):
                 f"""Deside if u need to call one function to perform this task {[f.name for f in self.functions]}"""
                 use_function: bool = field(default=False)
 
-            with_functions = self.format_class(WithFunctions, user_input).use_function
+            with_functions = self.format_class(WithFunctions, user_input)["use_function"]
             self.print_verbose(f'Auto {with_functions=}')
 
-        update_progress()
+        await update_progress()
         if with_memory is None:
             class WithMemory(BaseModel):
                 """Deside if u need to get memory data to perform this task"""
                 use_memory: bool = field(default=False)
 
-            with_memory = self.format_class(WithMemory, user_input).use_memory
+            with_memory = self.format_class(WithMemory, user_input)["use_memory"]
             self.print_verbose(f'Auto {with_memory=}')
         # Stage 4: Function execution
-        update_progress()
+        await update_progress()
         if with_memory:
             persist_mem = True
-            message = self.get_memory(user_input, message, callback=update_progress)
+            message = await self.get_memory(user_input, message, callback=update_progress)
 
         # Stage 3: Function execution
-        update_progress()
+        await update_progress()
 
         if with_functions is False:
             self.add_function_to_prompt = False
@@ -681,15 +692,15 @@ class Agent:
             with Spinner(message="Fetching llm_message...", symbols='+'):
                 llm_message = self.get_llm_message(user_input, persist=persist,
                                                    task_from=task_from, message=message)
-            update_progress()
+            await update_progress()
 
             iterations = max_iterations
             while out is None and iterations > 0:
                 iterations -= 1
                 out = self.run_model(llm_message=llm_message, persist_local=persist, persist_mem=persist_mem, **kwargs)
-            update_progress()
+            await update_progress()
 
-            update_progress()
+            await update_progress()
 
         elif with_functions is True:
             self.add_function_to_prompt = True
@@ -697,27 +708,30 @@ class Agent:
             with Spinner(message="Fetching llm_message...", symbols='+'):
                 llm_message = self.get_llm_message(user_input, persist=persist,
                                                    task_from=task_from, message=message)
-            update_progress()
+            await update_progress()
 
             iterations = max_iterations
             while out is None and iterations > 0:
                 iterations -= 1
-                out = self.run_model(llm_message=llm_message, persist_local=persist, persist_mem=persist_mem, **kwargs)
-            update_progress()
+                out = await self.a_run_model(llm_message=llm_message, persist_local=persist, persist_mem=persist_mem, **kwargs)
+            await update_progress()
 
             if self.if_for_fuction_use(out):
-                out_ = f"(system tool '{self.llm_function_runner.llm_function.name if self.llm_function_runner is not None else '-#-'}' inputs : {self.llm_function_runner.args if self.llm_function_runner is not None else '-#-'} output): {self.execute_fuction(persist=persist, persist_mem=persist_mem)}"
-                out += self.run(out_, with_functions=None, max_iterations=max_iterations - 1)
-            update_progress()
+                res = await self.execute_fuction(persist=persist, persist_mem=persist_mem)
+                out_ = f"(system tool '{self.llm_function_runner.llm_function.name if self.llm_function_runner is not None else '-#-'}' inputs : {self.llm_function_runner.args if self.llm_function_runner is not None else '-#-'} output): {res}"
+                out += await self.a_mini_task(out_, "system", "return a MD formatted Output of the function call and the context!", message=[x for x in llm_message if x.get('role') != "system"])
+            await update_progress()
 
         else:
             raise ValueError(f"Could not {with_functions=} must be true or false")
 
-        update_progress()
+        stage[0] = 1
+        await update_progress(1)
 
         self.status_dict[task.id].status = "completed"
         self.status_dict[task.id].result = out
         self.status_dict[task.id].progress = 1.0
+
         return out
 
     def _to_task(self, query):
@@ -730,9 +744,9 @@ class Agent:
         task = Task(
             id=str(uuid.uuid4())[:16],
             description=query,
-            priority=ts.priority,
-            estimated_complexity=ts.complexity,
-            time_sensitivity=1 - ts.complexity,
+            priority=ts["priority"],
+            estimated_complexity=ts["complexity"],
+            time_sensitivity=1 - ts["complexity"],
             created_at=datetime.now()
         )
         self.status_dict[task.id] = TaskStatus(
@@ -742,7 +756,7 @@ class Agent:
         )
         return task
 
-    def get_memory(self, ref, massages=None, callback=None, memory_names=None, **kwargs):
+    async def get_memory(self, ref, massages=None, callback=None, memory_names=None, **kwargs):
 
         if massages is None:
             massages = []
@@ -765,35 +779,25 @@ class Agent:
 
         queries = self.format_class(RefMemory, ref)
 
-        if isinstance(queries, RefMemory):
-            queries = queries.queries[:3]
-        elif isinstance(queries, dict):
-            queries = queries["queries"][:3]
-        else:
-            queries = []
-        update_progress()
+        queries = queries["queries"][:3]
+        await update_progress()
         if self.memory:
             for query in queries:
-                if isinstance(queries, RefMemory):
-                    query = query.query
-                elif isinstance(queries, dict):
-                    query = query["query"]
-                else:
-                    query = query
+                query = query["query"]
                 memory_task = self.memory.query(query, memory_names=[self.amd.name] if memory_names is None else memory_names, to_str=True, **kwargs)
                 if memory_task:
                     mem_data = json.dumps(memory_task, indent=2)
                     add_unique_message("system", "(system General-context) :" + mem_data)
-        update_progress()
+        await update_progress()
         if self.content_memory and len(self.content_memory.text) > 260:
             class Context(BaseModel):
                 f"""Persise and relavent context only for {ref[:5000]}"""
                 context: str
 
-            context = self.format_class(Context, self.content_memory.text).context
+            context = self.format_class(Context, self.content_memory.text)["context"]
             if context:
                 add_unique_message("system", "(system memory-context) :" + context)
-            update_progress()
+            await update_progress()
         self.print_verbose(f"Addet {len(massages)} entry(s)")
         return massages
 
@@ -811,6 +815,20 @@ class Agent:
             raise ValueError(f"Invalid mini_task type valid ar str or List[str] is {type(mini_task)}")
         return self.run_model(llm_message=llm_message, persist_local=persist, batch=isinstance(mini_task, list))
 
+    async def a_mini_task(self, user_task, task_from="user", mini_task=None, message=None, persist=False):
+        if message is None:
+            message = []
+        if mini_task is not None:
+            message.append({'role': 'system', 'content': mini_task})
+        self.add_function_to_prompt = False
+        if isinstance(user_task, str):
+            llm_message = self.get_llm_message(user_task, persist=persist, task_from=task_from, message=message)
+        elif isinstance(user_task, list):
+            llm_message = await self.get_batch_llm_messages(user_task, task_from=task_from, message=message.copy())
+        else:
+            raise ValueError(f"Invalid mini_task type valid ar str or List[str] is {type(mini_task)}")
+        return await self.a_run_model(llm_message=llm_message, persist_local=persist, batch=isinstance(mini_task, list))
+
     def format_class(self, format_class, task, **kwargs):
         tstrem = self.stream
         self.stream = False
@@ -819,17 +837,16 @@ class Agent:
             response_format=format_class,
         )
         self.stream = tstrem
-        print(format_class)
-        print(resp)
         c = resp.choices[0].message.content
+        if c is None:
+            c = resp.choices[0].message.tool_calls[0].function.arguments
         c = c.replace('\n', '').replace('</invoke>', '').rstrip()
-        print(c)
-        d= json.loads(c)
-        try:
-            return format_class(**d)
-        except Exception as e:
-            print("ERROR :", e, d, type(d))
-            return d
+        d = json.loads(c)
+        if len(d.keys()) == 1 and isinstance(d[list(d.keys())[0]], dict) and len(d[list(d.keys())[0]]) > 1:
+            d = d[list(d.keys())[0]]
+
+        # print("<invoke> DATA", d)
+        return d
 
 
 
@@ -897,13 +914,13 @@ class Agent:
             message.append({'role': 'system', 'content': llm_prompt})
         return message
 
-    def get_batch_llm_messages(self, user_input: List[str], fetch_memory: Optional[bool] = None,
+    async def get_batch_llm_messages(self, user_input: List[str], fetch_memory: Optional[bool] = None,
                                message=None, task_from: str = 'user'):
         llm_messages = []
         for task in user_input:
             msg = self.get_llm_message(user_input=task, persist=False, message=message, task_from=task_from)
             if fetch_memory:
-                msg = self.get_memory(task, msg)
+                msg = await self.get_memory(task, msg)
             llm_messages.append(msg)
         return llm_messages
 
@@ -1087,7 +1104,7 @@ class Agent:
             'api_version': self.amd.api_version,
             'api_key': self.amd.api_key,
             'verbose': self.verbose,
-            'fallbacks': self.amd.fallbacks,
+            # 'fallbacks': self.amd.fallbacks,
             'caching': self.amd.caching,
             'functions': [{"name": f.name, "description": f.description, "parameters": f.parameters} for f in
                                    self.functions] if self.add_function_to_prompt else None,
@@ -1107,7 +1124,7 @@ class Agent:
             result = batch_completion(
                 model=self.amd.model,
                 messages=llm_message,
-                fallbacks=os.getenv("FALLBACKS_MODELS").split(','),
+                # fallbacks=os.getenv("FALLBACKS_MODELS").split(','),
                 **kwargs
             )
         else:
@@ -1115,7 +1132,120 @@ class Agent:
             result = completion(
                 model=self.amd.model,
                 messages=llm_message,
-                fallbacks=os.getenv("FALLBACKS_MODELS").split(','),
+                # fallbacks=os.getenv("FALLBACKS_MODELS").split(','),
+                **kwargs
+            )
+
+        litellm.add_function_to_prompt = False
+        self.print_verbose("Completion", "Done" if not self.stream else "in progress..")
+        return result
+
+    async def acompletion(self, llm_message, batch=False, **kwargs):
+        self.print_verbose("Starting acompletion")
+
+        if self.vision:
+            llm_message = llm_message.copy()
+            for msg in llm_message:
+                if msg.get('role') != 'assistant':
+                    msg['content'] = self.content_add_immage(msg['content'])
+
+        if self.amd.provider is not None and self.amd.provider.upper() == "GPT4All" and self.model is None:
+            self.model = gpt4all.GPT4All(self.amd.model)
+
+        if self.amd.provider is not None and self.amd.provider.upper() == "GPT4All" and self.model is not None:
+            prompt = self.prompt_str(llm_message)
+
+            if not prompt:
+                print("No prompt")
+                return
+
+            if kwargs.get('mock_response', False):
+                return kwargs.get('mock_response')
+
+            stop_callback = None
+
+            if self.amd.stop_sequence:
+
+                self.hits = ""  # TODO : IO string wirte
+
+                def stop_callback_func(token: int, response):
+                    self.hits += response
+                    if self.hits in self.amd.stop_sequence:
+                        return False
+                    if response == ' ':
+                        self.hits = ""
+
+                    return True
+
+                stop_callback = stop_callback_func
+
+            # Werte, die überprüft werden sollen
+            dynamic_values = {
+
+                'streaming': self.stream,
+                'temp': self.amd.temperature,
+                'top_k': self.amd.top_k,
+                'top_p': self.amd.top_p,
+                'repeat_penalty': self.amd.repeat_penalty,
+                'repeat_last_n': self.amd.repeat_last_n,
+                'n_batch': self.amd.n_batch,
+                'max_tokens': self.max_tokens,
+                'callback': stop_callback
+            }
+
+            # Füge Werte zu kwargs hinzu, wenn sie nicht None sind
+            kwargs.update(add_to_kwargs_if_not_none(**dynamic_values))
+
+            result = self.model.generate(
+                prompt=prompt,
+                **kwargs
+            )
+            self.print_verbose("Local Completion don")
+            return result
+
+        # Werte, die überprüft werden sollen
+        dynamic_values = {
+            'response_format': self.rformat,
+            'temperature': self.amd.temperature,
+            'top_p': self.amd.top_p,
+            'top_k': self.amd.top_k,
+            'stream': self.stream,
+            'stop': self.amd.stop_sequence,
+            'max_tokens': self.max_tokens,
+            'user': self.amd.user_id,
+            'api_base': self.amd.api_base,
+            'api_version': self.amd.api_version,
+            'api_key': self.amd.api_key,
+            'verbose': self.verbose,
+            # 'fallbacks': self.amd.fallbacks,
+            'caching': self.amd.caching,
+            'functions': [{"name": f.name, "description": f.description, "parameters": f.parameters} for f in
+                                   self.functions] if self.add_function_to_prompt else None,
+            'custom_llm_provider': self.amd.provider if self.amd.provider is not None and self.amd.provider.upper() != "DEFAULT" else None
+        }
+
+        if 'claude' in self.amd.model:
+            dynamic_values['drop_params'] = True
+
+        if self.add_function_to_prompt:
+            litellm.add_function_to_prompt = True
+
+        # Füge Werte zu kwargs hinzu, wenn sie nicht None sind
+        kwargs.update(add_to_kwargs_if_not_none(**dynamic_values))
+
+        if batch:
+            result = batch_completion(
+                model=self.amd.model,
+                messages=llm_message,
+                # fallbacks=os.getenv("FALLBACKS_MODELS").split(','),
+                **kwargs
+            )
+        else:
+            # print("Model completion", self.amd.model, llm_message, kwargs)
+            result = await acompletion(
+                model=self.amd.model,
+                messages=llm_message,
+                # fallbacks=os.getenv("FALLBACKS_MODELS").split(','),
                 **kwargs
             )
 
@@ -1135,6 +1265,32 @@ class Agent:
             response_format=response_format,
         )
 
+    def model_function_result_passer(self, result, default=None):
+        if default is None:
+            default = ""
+        else:
+            default +="\n"
+        if hasattr(result.choices[0].message, "tool_calls") and result.choices[0].message.tool_calls and self.functions is not None:
+            if len(result.choices[0].message.tool_calls) != 1:
+                default += f"taskstack addet {len(result.choices[0].message.tool_calls)}"
+                for fuc_call in result.choices[0].message.tool_calls:
+                    self.taskstack.add_task(self._to_task(f" Call this function '{fuc_call.function.name}'with "
+                                                          f"thies arguments: {fuc_call.function.arguments} "))
+            else:
+                callable_functions = [function_name.name.lower() for function_name in self.functions]
+                llm_function = self.functions[
+                    callable_functions.index(result.choices[0].message.tool_calls[0].function.name.lower())]
+                self.if_for_fuction_use_overrides = True
+                d = json.loads(result.choices[0].message.tool_calls[0].function.arguments)
+                if 'properties' in d and isinstance(d['properties'], dict):
+                    d = d['properties']
+                self.llm_function_runner = LLMFunctionRunner(
+                    llm_function=llm_function,
+                    args=(),
+                    kwargs=d,
+                )
+                default += "Calling "+result.choices[0].message.tool_calls[0].function.name+" with arguments "+ result.choices[0].message.tool_calls[0].function.arguments
+        return default
     def run_model(self, llm_message, persist_local=True, persist_mem=True, batch=False, **kwargs):
 
         if not llm_message:
@@ -1195,6 +1351,7 @@ class Agent:
 
         if not self.stream:
             llm_response += get_str_response(chunk=result)
+
         if self.stream:
             self.print_verbose("Start streaming")
 
@@ -1203,16 +1360,121 @@ class Agent:
 
             for chunk in result:
                 message = get_str_response(chunk=chunk)
+                message = self.model_function_result_passer(result, message)
                 llm_response += message
                 if self.stream_function(message):
                     break
             self.print_verbose("Done streaming")
             print()
-
+        llm_response = self.model_function_result_passer(result, llm_response)
         if not batch:
             return self.compute_result(result, llm_message, llm_response, persist_local, persist_mem)
         return [self.compute_result(_result, llm_message, llm_response, persist_local, persist_mem) for _result in
                 result]
+
+    async def a_run_model(self, llm_message, persist_local=True, persist_mem=True, batch=False, **kwargs):
+
+        if not llm_message:
+            return None
+
+        self.print_verbose("Running llm model")
+
+        self.next_fuction = None
+
+        if len(llm_message) > 2:
+            llm_message = [{'role': 'assistant',
+                            'content': f'Hello, I am an intelligent agent created to assist you. To provide the best possible response, I will first gather information about you and any relevant context. I will then analyze the requirements for a unified agent response and develop a multi-step reasoning process to address your needs. This process will involve distinct streams of thought and personality, culminating in a final, cohesive action. Please provide any additional details or instructions you may have, and I will do my best to deliver a helpful and personalized solution. [system time {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]'}] + llm_message
+
+        if len(llm_message) == 1 and llm_message[0]['role'] != 'user':
+            llm_message = [{'role': 'user', 'content': 'Performe the system task!'}] + llm_message
+        if llm_message[0]['role'] != 'user':
+            llm_message = [{'role': 'user', 'content': '.'}] + llm_message
+        # print_prompt(llm_message)
+
+        result = None
+        max_r = 2
+        r_try = 0
+        last_error_ = None
+        llm_response = ""
+        tok_input = get_token_mini(llm_message, self.amd.model)
+        tok_max = get_max_tokens(self.amd.model)
+        print(f"AGENT {self.amd.name} TOKENS {tok_input} {tok_max}")
+        if tok_input > tok_max:
+            llm_message = self.trim_msg(llm_message)
+        while result is None and r_try < max_r:
+            try:
+                result = await self.acompletion(llm_message=llm_message, batch=batch, **kwargs)
+                r_try = 9999
+                break
+            except litellm.RateLimitError as e:
+                print(f"RateLimitError {e}")
+                last_error_ = e
+                if '413' in str(e) and not 'reduce' in str(e):
+                    with Spinner("Reitlimit Waiting 1 minute"):
+                        time.sleep(30)
+                r_try += 1
+                llm_message = self.trim_msg(llm_message)
+            except litellm.InternalServerError as e:
+                print(f"InternalServerError {e}")
+                last_error_ = e
+                r_try += 1
+                # print_prompt(llm_message)
+                lm = len(llm_message)
+                llm_message = self.trim_msg(llm_message)
+                print(f"AFTER TRIM {lm}/{len(llm_message)}")
+                # print_prompt(llm_message)
+                with Spinner("Waring... for api", count_down=True, time_in_s=r_try * 10):
+                    time.sleep(r_try * 10)
+                continue
+
+        if result is None and last_error_ is not None:
+            raise last_error_
+
+        if not self.stream:
+            llm_response += get_str_response(chunk=result)
+        if self.stream:
+            self.print_verbose("Start streaming")
+
+            if self.stream_function is None:
+                self.stream_function = stram_print
+
+            for chunk in result:
+                message = get_str_response(chunk=chunk)
+                message = self.model_function_result_passer(result, message)
+                llm_response += message
+                if await self.stream_function(message):
+                    break
+            self.print_verbose("Done streaming")
+            print()
+        llm_response = self.model_function_result_passer(result, llm_response)
+        if not batch:
+            return await self.acompute_result(result, llm_message, llm_response, persist_local, persist_mem)
+        return [await self.acompute_result(_result, llm_message, llm_response, persist_local, persist_mem) for _result in
+                result]
+
+    async def acompute_result(self, result, llm_message, llm_response, persist_local=False, persist_mem=False) -> str:
+        print_prompt(llm_message + [{'content': llm_response, 'role': 'assistant'}])
+        self.last_result = llm_response
+        if self.amd.budget_manager:
+            self.amd.budget_manager.update_cost(user=self.amd.user_id, model=self.amd.model, completion_obj=result)
+
+        self.save_to_memory(llm_response, persist_local, persist_mem)
+
+        if self.mode is not None:
+            if isinstance(llm_message[-1], dict):
+                _llm_message = [llm_message]
+            else:
+                _llm_message = llm_message
+            for llm_message in _llm_message:
+                # print(f"{isinstance(self.mode, ModeController)=} and {hasattr(self.mode, 'add_shot')=} and {llm_message[-1].get('content', False)=}")
+                if isinstance(self.mode, ModeController) and hasattr(self.mode, 'add_shot') and llm_message[-1].get(
+                    'content',
+                    False):
+                    self.mode.add_shot(llm_message[-1].get('content'), llm_response)
+
+        if self.post_callback:
+            await self.post_callback(llm_response)
+        return llm_response
 
     def compute_result(self, result, llm_message, llm_response, persist_local=False, persist_mem=False) -> str:
         print_prompt(llm_message + [{'content': llm_response, 'role': 'assistant'}])
@@ -1263,51 +1525,22 @@ class Agent:
         helper()
         # threading.Thread(target=helper, daemon=True).start()
 
-    async def a_run_model(self, llm_message, persist_local=True, persist_mem=True, batch=False, **kwargs):
-
-        if not llm_message:
-            return None
-
-        self.print_verbose("Running llm model")
-
-        self.next_fuction = None
-        result = self.completion(llm_message, batch, **kwargs)
-
-        self.last_result = result
-        llm_response = ""
-        if not self.stream:
-            llm_response = get_str_response(chunk=result)
-        if self.stream:
-            self.print_verbose("Start streaming")
-
-            if self.stream_function is None:
-                self.stream_function = stram_print
-
-            for chunk in result:
-                message = get_str_response(chunk=chunk)
-                llm_response += message
-                if await self.stream_function(message):
-                    break
-            print()
-
-        if not batch:
-            return self.compute_result(result, llm_message, llm_response, persist_local, persist_mem)
-        return [self.compute_result(_result, llm_message, llm_response, persist_local, persist_mem) for _result in
-                result]
-
     def if_for_fuction_use(self, llm_response):
+        if self.if_for_fuction_use_overrides:
+            self.if_for_fuction_use_overrides = False
+            self.print_verbose("Function runner initialized")
+            return True
         llm_fuction = None
         fuction_inputs = None
         self.next_fuction = None
+        callable_functions = [fuction_name.name.lower() for fuction_name in self.capabilities.functions]
         if self.capabilities is not None and self.capabilities.functions is not None and len(
             self.capabilities.functions) > 0:
-            callable_functions = [fuction_name.name.lower() for fuction_name in self.capabilities.functions]
             self.next_fuction, fuction_inputs = self.test_use_function(llm_response, callable_functions)
             if self.next_fuction is not None:
                 llm_fuction = self.capabilities.functions[callable_functions.index(self.next_fuction.lower())]
 
         if self.functions is not None and len(self.functions) > 0 and self.next_fuction is None:
-            callable_functions = [fuction_name.name.lower() for fuction_name in self.functions]
             self.next_fuction, fuction_inputs = self.test_use_function(llm_response, callable_functions)
             if self.next_fuction is not None:
                 llm_fuction = self.functions[callable_functions.index(self.next_fuction.lower())]
@@ -1341,7 +1574,7 @@ class Agent:
             print(Style.BLUE(f"AGENT:{self.amd.name}: "), end='')
             print(' '.join(args)[:250], **kwargs)
 
-    def execute_fuction(self, persist=True, persist_mem=True):
+    async def execute_fuction(self, persist=True, persist_mem=True):
         if self.next_fuction is None:
             if self.verbose:
                 print("No fuction to execute")
@@ -1358,6 +1591,8 @@ class Agent:
             return "Invalid llm function runner"
 
         result = self.llm_function_runner()
+        if asyncio.iscoroutine(result):
+            result = await result
 
         self.print_verbose(f"Fuction {self.llm_function_runner.llm_function.name} Result : {result}")
 
@@ -1369,7 +1604,7 @@ class Agent:
             self.print_verbose("Persist to content Memory")
 
         if persist_mem and self.memory is not None:
-            self.memory.add_data(self.amd.name, f"FUNKTION Result:{result}")
+            await self.memory.add_data(self.amd.name, f"FUNKTION Result:{result}")
             self.print_verbose(f"Persist to Memory sapce {self.amd.name}")
         if not isinstance(result, str):
             result = str(result)
@@ -1387,7 +1622,7 @@ class Agent:
         if name == 'None':
             return
         self.print_verbose("Initializing Memory")
-        self.memory = isaa.get_context_memory()
+        self.memory = isaa.get_memory()
         self.content_memory = ShortTermMemory(isaa, name + "-ShortTermMemory")
 
     def save_memory(self):

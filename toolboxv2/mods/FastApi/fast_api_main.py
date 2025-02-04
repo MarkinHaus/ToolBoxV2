@@ -37,6 +37,8 @@ from toolboxv2.utils.system.state_system import get_state_from_app
 from functools import partial, wraps
 
 from .fast_nice import create_nicegui_manager
+from .util import serve_app_func
+
 dev_hr_index = "v0.0.1"
 
 
@@ -493,6 +495,15 @@ def protect_url_split_helper(url_split):
     elif url_split[1] == "web":
         return False
 
+    elif url_split[-1] == "favicon.ico":
+        return False
+    elif "_nicegui" in url_split and url_split[-1] == "codehilite.css":
+        return False
+    elif "_nicegui" in url_split and "static" in url_split:
+        return False
+    elif "_nicegui" in url_split and "components" in url_split:
+        return False
+
     elif url_split[1] == "api" and url_split[2] in [
         'CloudM.AuthManager',
         'email_waiting_list'
@@ -752,30 +763,6 @@ async def quicknote(access_allowed: bool = Depends(lambda: check_access_level(2)
     return serve_app_func('web/dashboards/dashboard.html')  # 'dashboards/dashboard_builder.html')
 
 
-def serve_app_func(path: str, prefix: str = os.getcwd() + "/dist/"):
-    # Default to 'index.html' if no specific path is given
-    if not path or '.' not in path:  # No file extension, assume SPA route
-        path = "index.html"
-
-    # Full path to the requested file
-    request_file_path = Path(prefix) / path
-
-    # MIME types dictionary
-    mime_types = {
-        '.js': 'application/javascript',
-        '.html': 'text/html',
-        '.css': 'text/css',
-    }
-
-    # Determine MIME type based on file extension, default to 'text/html'
-    content_type = mime_types.get(request_file_path.suffix, 'text/html')
-
-    # Serve the requested file if it exists, otherwise fallback to index.html for SPA
-    if request_file_path.exists():
-        return FileResponse(request_file_path, media_type=content_type)
-
-    # Fallback to a 404 page if the file does not exist
-    return FileResponse(os.path.join(os.getcwd(), "dist", "web/assets/404.html"), media_type="text/html")
 
 
 # Configure a longer timeout and more robust handling
@@ -1018,6 +1005,8 @@ async def helper(id_name):
             app.include_router(router)
 
     app.add_api_route("/{path:path}", serve_files)
+    from toolboxv2.flows.apiFlow import run as run_flow
+    await run_flow(tb_app, app)
     if id_name in tb_app.id:
         print("🟢 START")
 

@@ -159,7 +159,7 @@ class Tools(MainTool, FileHandler):
             "run_task": self.run_task,
             "crate_task_chain": self.crate_task_chain,
             "format_class": self.format_class,
-            "get_context_memory": self.get_context_memory,
+            "get_memory": self.get_memory,
             "rget_mode": lambda mode: self.controller.rget(mode),
             "set_local_files_tools": self.set_local_files_tools,
         }
@@ -174,7 +174,7 @@ class Tools(MainTool, FileHandler):
         self.agent_chain_executor.function_runner = lambda name, **b: self.get_agent_class("self").function_invoke(name,
                                                                                                                    **b)
         self.agent_chain_executor.agent_runner = lambda name, task, **k: self.run_agent(name, task, **k)
-        self.agent_memory: AISemanticMemory = extra_path
+        self.agent_memory: AISemanticMemory = f".data/{app.id}{extra_path}/Memory"
         self.controller = ControllerManager({})
         self.summarization_mode = 1  # 0 to 3  0 huggingface 1 text 2 opnai 3 gpt
         self.summarization_limiter = 102000
@@ -242,7 +242,7 @@ class Tools(MainTool, FileHandler):
             task_chain_agent.set_mode(tcm)
             self.register_agent(task_chain_agent)
 
-        task_chain: TaskChain = self.format_class(TaskChain, prompt, agent_name="TaskChainAgent")
+        task_chain: TaskChain = TaskChain(**self.format_class(TaskChain, prompt, agent_name="TaskChainAgent"))
 
         self.print(f"New TaskChain {task_chain.name} len:{len(task_chain.tasks)}")
 
@@ -479,7 +479,7 @@ class Tools(MainTool, FileHandler):
                 self.config[key] = False
             if key == 'agents-name-list':
                 self.config[key] = []
-        print(self.config)
+        # print(self.config)
         self.add_to_save_file_handler(self.keys["Config"], json.dumps(self.config))
         self.save_file_handler()
         self.agent_chain.save_to_file()
@@ -623,7 +623,7 @@ class Tools(MainTool, FileHandler):
         if self.global_stream_override:
             agent_builder.set_stream(True)
 
-        mem = self.get_context_memory()
+        mem = self.get_memory()
         tools = {}
 
         agent_builder.set_amd_model(self.config['DEFAULTMODEL1'])
@@ -663,7 +663,7 @@ class Tools(MainTool, FileHandler):
             return "Provide Information in The Action Input: fild or function call"
 
         def memory_search(query: str):
-            ress = self.get_context_memory().get_context_for(query, get_all=True)
+            ress = self.get_memory().get_context_for(query, get_all=True)
 
             if not ress:
                 return "no informations found for :" + query
@@ -677,8 +677,8 @@ class Tools(MainTool, FileHandler):
 
             return ress
 
-        def ad_data(data: str):
-            mem.add_data(name, str(data))
+        async def ad_data(data: str):
+            await mem.add_data(name, str(data))
 
             return 'added to memory'
 
@@ -1162,7 +1162,7 @@ class Tools(MainTool, FileHandler):
         return out
 
     @get_app().tb(name=Name, test=False)
-    def run_agent(self, name: str or Agent,
+    async def run_agent(self, name: str or Agent,
                   text: str,
                   verbose: bool = False,
                   **kwargs):
@@ -1198,7 +1198,7 @@ class Tools(MainTool, FileHandler):
         if stream and agent.stream_function is None:
             agent.stream_function = self.print_stream
 
-        return agent.run(text, **kwargs)
+        return await agent.run(text, **kwargs)
 
     def mas_text_summaries(self, text, min_length=1600, ref=None):
 
@@ -1214,7 +1214,7 @@ class Tools(MainTool, FileHandler):
 
         if ref is None:
             ref = text
-        meme = self.get_context_memory()
+        meme = self.get_memory()
         res, sub_c = meme.cognitive_network.network.process_input(text, get_subconcepts=True, ref=ref)
 
         with Spinner("Processioning Summarization"):
@@ -1254,7 +1254,7 @@ class Tools(MainTool, FileHandler):
                     bf = self.mas_text_summaries(' '.join(relevant_texts[20:]), min_length=min_length + 100, ref=ref)
                     relevant_texts = relevant_texts[:20] + [bf]
                 segments = self.format_class(SummarizationSegments,
-                                  '\n'.join(relevant_texts)).segments
+                                  '\n'.join(relevant_texts))["segments"]
                 if sum([len(segment.information) for segment in segments]) > min_length*2:
                     summary = self.mini_task_completion(mini_task="Create a Summary" +
                                                                   (
@@ -1279,7 +1279,7 @@ class Tools(MainTool, FileHandler):
 
         return summary
 
-    def mass_text_summaries(self, text: str, min_length: int = 1600, ref: Optional[str] = None) -> str:
+    async def mass_text_summaries(self, text: str, min_length: int = 1600, ref: Optional[str] = None) -> str:
         """
         Efficient large-text summarization using semantic memory retrieval
         Features:
@@ -1300,7 +1300,7 @@ class Tools(MainTool, FileHandler):
             return cached
 
         # 2. Memory Initialization
-        semantic_memory = self.get_context_memory()
+        semantic_memory = self.get_memory()
         ref_query = ref or text
 
         def _chunk_text(text: str, chunk_size: int = 4000) -> List[str]:
@@ -1308,16 +1308,12 @@ class Tools(MainTool, FileHandler):
             return [text[i:i + chunk_size]
                     for i in range(0, len(text), chunk_size - 200)]
 
-        # 3. Parallel Chunk Processing
-        with ThreadPoolExecutor() as executor:
-            # Split and process chunks in parallel
-            chunks = _chunk_text(text, chunk_size=4000)
-            futures = [executor.submit(semantic_memory.add_data,
-                                       "summary_cache",
-                                       chunk,
-                                       {"source": "mass_summary"})
-                       for chunk in chunks]
-            [f.result() for f in futures]
+        chunks = _chunk_text(text, chunk_size=4000)
+        await semantic_memory.add_data(
+                                   "summary_cache",
+                                   chunks,
+                                   {"source": "mass_summary"})
+
 
         # 4. LightRAG-Powered Relevance Extraction
         from lightrag import QueryParam
@@ -1355,7 +1351,7 @@ class Tools(MainTool, FileHandler):
         return self.get_agent_class("self").mini_task(summary_prompt)
 
 
-    def get_context_memory(self) -> AISemanticMemory:
+    def get_memory(self) -> AISemanticMemory:
         logger = get_logger()
         if isinstance(self.agent_memory, str):
             logger.info(Style.GREYBG(f"AISemanticMemory Initialized"))
@@ -1389,7 +1385,7 @@ import sys
 def detect_shell() -> str:
     """Detect system-appropriate shell with fallbacks"""
     if platform.system() == "Windows":
-        return "powershell.exe" if sys.stdout.encoding == "utf-8" else "cmd.exe"
+        return "cmd.exe"
 
     # For Unix-like systems
     return os.environ.get("SHELL", "/bin/sh")
@@ -1445,7 +1441,7 @@ def shell_tool_function(command: str) -> str:
 
         result.update({
             "success": True,
-            "output": safe_decode(process.stdout),
+            "output": safe_decode(process.stdout).split("EndOfString")[-1],
             "error": ""
         })
 

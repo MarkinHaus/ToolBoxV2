@@ -182,9 +182,11 @@ class NiceGUIManager(metaclass=Singleton):
             print(f"Error loading styles: {e}")
             return ""
 
-    def register_gui(self, gui_id: str, setup_func: Callable, mount_path: Optional[str] = None) -> None:
+    def register_gui(self, gui_id: str, setup_func: Callable, mount_path: Optional[str] = None, additional: Optional[str] = None) -> None:
         """Register a new NiceGUI application"""
         path = mount_path or f"/{gui_id}"
+        if additional is None:
+            additional = ""
 
         def has_parameters(func, *params):
             """
@@ -223,7 +225,7 @@ class NiceGUIManager(metaclass=Singleton):
         @ui.page(path)
         async def wrapped_gui(request: Request):
             # Inject custom styles
-            ui.add_body_html(self.helper_contex)
+            ui.add_body_html(self.helper_contex + additional)
             # ui.switch('Dark').bind_value(ui, 'dark_mode')
             # ui.add_css("q-card {background-color: var(--background-color)} !important")
             # ui.add_body_html('<script src="../index.js" type="module" defer></script>')
@@ -300,6 +302,7 @@ dark_mode
         }
 
         print("Registered GUI:", self.registered_guis[gui_id])
+        return True
 
     def remove_gui(self, gui_id: str) -> bool:
         """Remove a registered GUI application"""
@@ -351,10 +354,28 @@ dark_mode
 
     async def middleware_dispatch(self, request: Request, call_next) -> Response:
         """Custom middleware for session handling and authentication"""
-        if request.url.path.startswith(self.mount_path) and "open" not in request.url.path:
-            # Verify session if needed
-            if not request.session.get("valid", False):
-                return RedirectResponse("/web/login")
+        async def callN():
+            response = await call_next(request)
+            return response
+
+        if not request.url.path.startswith(self.mount_path):
+            return await callN()
+
+        if request.url.path.endswith("/favicon.ico"):
+            return await callN()
+        if "_nicegui" in request.url.path and "static" in request.url.path:
+            return await callN()
+        if "_nicegui" in request.url.path and "components" in request.url.path:
+            return await callN()
+        if "_nicegui" in request.url.path and "codehilite" in request.url.path:
+            return await callN()
+
+        if "open" in request.url.path:
+            return await callN()
+
+        # Verify session if needed
+        if not request.session.get("valid", False):
+            return RedirectResponse(f"/web/login?next={request.url.path}")
 
         response = await call_next(request)
         return response
@@ -365,7 +386,7 @@ dark_mode
         ui.run_with(
             self.app,
             mount_path=self.mount_path,
-            favicon="/root/Toolboxv2/toolboxv2/favicon.ico",
+            favicon=os.getenv("FAVI"), # "/root/Toolboxv2/toolboxv2/favicon.ico"
             show_welcome_message=False,
             # prod_js=False,
         )
@@ -383,9 +404,9 @@ def create_nicegui_manager(app: FastAPI, token_secret: Optional[str] = None) -> 
     return manager
 
 
-def register_nicegui(gui_id: str, setup_func: Callable, mount_path: Optional[str] = None) -> None:
+def register_nicegui(gui_id: str, setup_func: Callable, mount_path: Optional[str] = None, additional: Optional[str] = None) -> None:
     if not manager_online[0]:
         print("NO FAST API RUNNING")
         return
     print("ADDED GUI:", gui_id)
-    return NiceGUIManager().register_gui(gui_id, setup_func, mount_path)
+    return NiceGUIManager().register_gui(gui_id, setup_func, mount_path, additional=additional)

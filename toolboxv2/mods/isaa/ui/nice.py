@@ -149,7 +149,7 @@ class IsaaWebSocketUI(metaclass=Singleton):
                 )
 
             # Save to network branch
-            network = self.isaa.get_context_memory().cognitive_network.network
+            network = self.isaa.get_memory().cognitive_network.network
             branch_id = f"chat-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
             network.data_holder.create_branch(network, branch_id)
 
@@ -216,14 +216,14 @@ class IsaaWebSocketUI(metaclass=Singleton):
                         message.get('agent')
                     )
                 elif message['type'] == 'get_branches':
-                    network = self.isaa.get_context_memory().cognitive_network.network
+                    network = self.isaa.get_memory().cognitive_network.network
                     branches = network.data_holder.get_visualization_data().get('branches', [])
                     await websocket.send_json({
                         'type': 'branches',
                         'branches': branches
                     })
                 elif message['type'] == 'switch_branch':
-                    network = self.isaa.get_context_memory().cognitive_network.network
+                    network = self.isaa.get_memory().cognitive_network.network
                     success = network.data_holder.switch_branch(
                         network,
                         message['branch_id']

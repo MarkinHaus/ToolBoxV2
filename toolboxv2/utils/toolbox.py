@@ -269,6 +269,8 @@ class App(AppType, metaclass=Singleton):
                 return await self.flows[name](get_app(from_="runner"), self.args_sto, **kwargs)
             else:
                 return self.flows[name](get_app(from_="runner"), self.args_sto, **kwargs)
+        else:
+            print("Flow not found, active flows:", len(self.flows.keys()))
 
     def _coppy_mod(self, content, new_mod_dir, mod_name, file_type='py'):
 

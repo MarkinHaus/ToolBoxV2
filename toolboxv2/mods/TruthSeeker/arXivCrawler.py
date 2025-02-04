@@ -1,6 +1,9 @@
 import threading
 import time
+import uuid
 from typing import List, Tuple, Optional, Dict
+
+import asyncio
 from pydantic import BaseModel, Field
 from toolboxv2 import get_app, Spinner
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,7 +20,7 @@ import logging
 
 from urllib3 import Retry
 
-from .one import InputProcessor
+from toolboxv2.mods.isaa.base.AgentUtils import AISemanticMemory
 
 
 class RobustPDFDownloader:
@@ -212,12 +215,14 @@ class ArXivPDFProcessor:
                  max_workers=None,
                  num_search_result_per_query=3,
                  max_search=6,
-                 download_dir="pdfs"):
+                 download_dir="pdfs",
+                 callback=None):
         # Initialize components
+        self.mem_name = None
+        self.current_session = None
         self.last_insights_list = None
         self.max_workers = max_workers
         self.tools = tools
-        self.semantic_similarity =  InputProcessor().pcs
             #with Spinner("Building agent"):
             #    self.tools.init_isaa(build=True)
 
@@ -225,6 +230,7 @@ class ArXivPDFProcessor:
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.nsrpq = num_search_result_per_query
+        self.callback = callback if callback is not None else lambda x:None
         self.max_search = max_search
 
         # query
@@ -236,6 +242,7 @@ class ArXivPDFProcessor:
 
         # Ref Papers
         self.all_ref_papers = 0
+        self.initialize(str(uuid.uuid4()))
 
     def generate_queries(self) -> List[str]:
         """Generate search queries based on the query"""
@@ -252,64 +259,20 @@ class ArXivPDFProcessor:
             self.nsrpq = self.nsrpq * self.max_search
             return [self.query]
 
-        query_generator = [self.query] + query_generator.queries
-        quereis = [sorted_query[0] for sorted_query in sorted([(str_query, self.semantic_similarity(str_query, self.query)) for str_query in query_generator], key=lambda query_tup: query_tup[1], reverse=True)]
-        return quereis[:self.max_search]
+        query_generator = [self.query] + query_generator["queries"]
+        return query_generator[:self.max_search]
 
-    def _chunk_document(self, full_text: str) -> List[DocumentChunk]:
-        """Split document into manageable chunks"""
-        chunks = []
-        words = full_text.split()
+    def init_process_papers(self):
+        self.tools.get_memory().create_memory(self.mem_name)
+        self.callback({})
 
-        try:
-            for i in range(0, len(words), self.chunk_size - self.overlap):
-                chunk_words = words[i:i + self.chunk_size]
-                chunk_content = " ".join(chunk_words)
 
-                # Create chunk
-                chunk = DocumentChunk(
-                    content=chunk_content,
-                    page_number=i // self.chunk_size + 1,
-                )
-                chunks.append(chunk)
-        except ValueError:
-            chunks = [words]
-
-        return chunks
-
-    def __assess_chunk_relevance(self, chunk: DocumentChunk) -> RelevanceAssessment:
-        """Assess relevance of a document chunk"""
-
-        relevance_prompt = f"""
-        Evaluate this document chunk's relevance to the query: {self.query}
-
-        Document Chunk:
-        {chunk.content[:1000]}...
-
-        Provide:
-        1. A relevance score (0-1)
-        2. Key sections that are most relevant to the query
-
-        IMPORTANT: Be precise and concise.
-        """
-
-        return self.tools.format_class(RelevanceAssessment, relevance_prompt)
-
-    def _assess_chunk_relevance(self, chunk: DocumentChunk, query=None) -> float:
-        """Assess relevance of a document chunk"""
-        query = query if query else self.query
-        return self.semantic_similarity(query, chunk.content)
-
-    def search_and_process_papers(self, queries: List[str]) -> List[Paper]:
+    async def search_and_process_papers(self, queries: List[str]) -> List[Paper]:
         """Search ArXiv, download PDFs, and process them in parallel batches."""
         all_papers = []
-
-        from toolboxv2.mods.isaa.subtools.web_loder import get_pdf_from_url
         lock = threading.Lock()
 
-        def process_query(query):
-            papers_for_query = []
-            # Search papers
+        async def process_query(query):
             papers = search_papers(query, max_results=self.nsrpq)
             with lock:
                 self.all_ref_papers += len(papers)
@@ -317,7 +280,7 @@ class ArXivPDFProcessor:
             for paper in papers:
                 try:
                     # Download PDF
-                    pdf_path = self.parser.download_pdf(paper.pdf_url, 'temp_pdf'+paper.title[:20])
+                    pdf_path = self.parser.download_pdf(paper.pdf_url, 'temp_pdf' + paper.title[:20])
                     pdf_pages = self.parser.extract_text_from_pdf(pdf_path)
                     if self.temp:
                         os.remove(pdf_path)
@@ -325,163 +288,108 @@ class ArXivPDFProcessor:
                     print(f"Error processing PDF {paper.pdf_url}: {e}")
                     continue
 
+                #try:
+                print("Adding ", len(pdf_pages), " chunks to document ", self.mem_name)
+                await self.tools.get_memory().add_data(memory_name=self.mem_name, data=[page['text'] for page in pdf_pages])
+                #except ValueError as e:
+                #    print(f"Error processing PDF {paper.pdf_url}: {e}")
+                #    continue
+            return papers
 
-                # Assess relevance of each chunk
-                relevant_chunks = []
-                total_relevance = 0
-                ref_pages = []
-                for page in pdf_pages:
-                    # Chunk the document
-                    chunks = self._chunk_document(page['text'])
-                    for chunk in chunks:
-                        relevance_assessment =  sum([self._assess_chunk_relevance(chunk, q) for q in queries])
-                        # print(relevance_assessment, chunks.index(chunk))
-                        if relevance_assessment >= self.limiter:
-                            chunk.relevance_score = relevance_assessment
-                            relevant_chunks.append(chunk)
-                            total_relevance += relevance_assessment
-                            ref_pages.append(page['page_number'])
-
-                # Only add paper if it has relevant chunks
-                if relevant_chunks:
-                    paper_obj = Paper(
-                        title=paper.title,
-                        summary=paper.summary,
-                        pdf_url=paper.pdf_url,
-                        chunks=relevant_chunks,
-                        ref_pages=ref_pages,
-                        overall_relevance_score=total_relevance / len(relevant_chunks)
-                    )
-                    papers_for_query.append(paper_obj)
-
-            return papers_for_query
-
+        for query_ in tqdm(queries, total=len(queries), desc="Processing queries"):
+            result = await process_query(query_)
+            all_papers.append(result)
         # Use ThreadPoolExecutor for parallel processing
-        with ThreadPoolExecutor() as executor:
-            future_to_query = {executor.submit(process_query, query): query for query in queries}
+        # with ThreadPoolExecutor() as executor:
+        #     future_to_query = {executor.submit(process_query, query): query for query in queries}
 
-            for future in tqdm(as_completed(future_to_query), total=len(queries), desc="Processing queries"):
-                query = future_to_query[future]
-                try:
-                    result = future.result()
-                    all_papers.extend(result)
-                except Exception as e:
-                    print(f"Error processing query '{query}': {e}")
+        #     for future in tqdm(as_completed(future_to_query), total=len(queries), desc="Processing queries"):
+        #         query = future_to_query[future]
+        #         try:
+        #             result = future.result()
+        #             all_papers.append(result)
+        #         except Exception as e:
+        #             print(f"Error processing query '{query}': {e}")
+        return all_papers
 
-        return sorted(all_papers, key=lambda x: x.overall_relevance_score, reverse=True)
-
-    def generate_insights(self, papers: List[Paper]) -> Insights:
+    async def generate_insights(self) -> dict:
         """Generate insights using format_class"""
-        if papers is None or len(papers) == 0:
-            return Insights(
-            is_true=None,
-            summary = f"No information's Found on the topik '{self.query}'",
-            key_point = ""
+        results = await self.tools.get_memory().directly(
+            query=self.query,
+            memory_names=self.mem_name,
+            mode="global",
         )
-        batches = [
-            f"Title: {p.title}\n"
-            f"Summary: {p.summary}\n"
-            f"Relevance Score: {p.overall_relevance_score}\n"
-            f"Relevant Chunks: {' | '.join([chunk.content[:600] for chunk in p.chunks[:3]])}"
-                for p in papers
-        ]
-        infos = []
-        for i in range(0, min(len(batches), 10), max(1, len(batches)//10)):
-            infos.append("\n\n".join(batches[i:i+(len(batches)//10)]))
-        # Prepare paper information
+        if len(results) < 360:
+            results = await self.tools.get_memory().directly(
+                query=self.query,
+                memory_names=self.mem_name,
+                mode="naive",
+            )
+        """{
+                "answer": consolidated_answer,
+                "sources": [
+                    {"memory": name, "confidence": score, "content": text},
+                    ...
+                ]
+            }"""
+        print(results)
+        for r in results:
+            print(r)
+            self.callback(r)
+        return results
 
-        if 'InsightsAgent' not in self.tools.config['agents-name-list']:
-            insights_agent = self.tools.get_default_agent_builder("think")
-            insights_agent.set_amd_name("InsightsAgent")
-            plan_agent = self.tools.register_agent(insights_agent)
-            self.tools.format_class_generator(Insights, plan_agent)
-
-        self.tools.print(f"Analysing {len(infos)} key infos chunks")
-
-        def helper_info(h_info):
-            try:
-                return self.tools.format_class(Insights, (
-                f"query: {self.query}"
-
-                "Analyze the following research papers and provide comprehensive insights specifically cut for the query."
-                "Papers:"
-                   f" {h_info}"
-                " Instructions:"
-                "1. Create a concise summary relevant for the query!"
-                "2. Extract key points directly addressing the query"
-                "3. Be precise and evidence-based"
-                "4. Only provide date from the papers!"
-                "5. if the is_true var is not clear set it to null"
-                ))
-            except Exception as e:
-                def is_true_(info_):
-                    try:
-                        return self.tools.format_class(ISTRUE, info_).value
-                    except Exception as e_:
-                        return None
-                def summary_(info_):
-                    try:
-                        return self.tools.mini_task_completion(mini_task="Comprehensive summary addressing the query: "+self.query, user_task=info_)
-                    except Exception as e_:
-                        return " Error " + info_[:500]
-                def key_point_(info_):
-                    try:
-                        return self.tools.mini_task_completion(mini_task="Extract the single Most important findings for this  query: "+self.query, user_task=info_)
-                    except Exception as e_:
-                        return " Error " + info_[:500]
-                return Insights(
-                    is_true=is_true_(h_info),
-                    summary=summary_(h_info),
-                    key_point=key_point_(h_info)
-                )
-
-        insights_list: List[Insights] = [
-            helper_info(info)
-            for info in infos
-        ]
-
-        is_true = [b.is_true for b in insights_list if isinstance(b.is_true, bool)]
-        if len(is_true) == 0:
-            is_true = None
-        else:
-            is_true = all(is_true)
-
-        self.last_insights_list = insights_list
-        print(insights_list)
-        return Insights(
-            is_true=is_true,
-            summary = self.tools.run_agent("self", text="Summaries (Short, Compact, specific, Include Facts and numbers, and relation ships!)  the following text in relevance for this query: "+self.query+ '\n'+'\n\n'.join([i.summary for i in insights_list])),
-            key_point =">\n\n<".join(kp.key_point for kp in insights_list)
+    async def extra_query(self, query, **kwargs):
+        results = await self.tools.get_memory().directly(
+            query=query,
+            memory_names=self.mem_name,
+            stream=True,
+            **kwargs
         )
+        print(results)
+        for r in results:
+            print(r)
+            self.callback(r)
+        return results
 
-    def process(self) -> Tuple[List[Paper], Insights]:
+    def generate_mem_name(self):
+        return self.tools.get_agent_class("thinkm").mini_task(self.query, "user", "Unique name based on the user query for an memory instance. only the name nothing else!")
+
+    def initialize(self, session_id):
+        self.current_session = session_id
+        self.mem_name = self.generate_mem_name() + '_' +session_id
+        self.init_process_papers()
+
+    async def process(self, query=None) -> Tuple[List[Paper], dict]:
         """Main processing method"""
+        if query is not None:
+            self.query = query
         t0 = time.process_time()
-        with Spinner("Generating Queries"):
-            queries = self.generate_queries()
-        # print(f"Queries : {queries}")
-        with Spinner("Processing Papers"):
-            papers = self.search_and_process_papers(queries)
-
-        with Spinner("Generating Insights"):
-            insights = self.generate_insights(papers)
+        queries = self.generate_queries()
+        papers = await self.search_and_process_papers(queries)
+        print("DOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOONNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN"*12)
+        res = await self.generate_insights()
         print(f"Total Presses Time: {time.process_time()-t0:.2f}\nTotal papers Analysed : {len(papers)}/{self.all_ref_papers}")
-        return papers, insights
+        return papers, res
 
-def main(query: str = "Beste strategien in bretspielen sitler von katar"):
+async def main(query: str = "Beste strategien in bretspielen sitler von katar"):
     """Main execution function"""
     with Spinner("Init Isaa"):
-        tools = get_app("ArXivPDFProcessor").get_mod("isaa")
+        tools = get_app("ArXivPDFProcessor", name=None).get_mod("isaa")
         tools.init_isaa(build=True)
     processor = ArXivPDFProcessor(query, tools=tools, limiter=0.5)
-    papers, insights = processor.process()
+    papers, insights = await processor.process()
 
     print("Generated Insights:", insights)
     print("Generated Insights_list:", processor.last_insights_list)
+    await get_app("ArXivPDFProcessor", name=None).a_idle()
     return insights
 
 
 if __name__ == "__main__":
-    while True:
-        main(input("Query:"))
+    asyncio.run(main("Beste strategien AI Agents Development"))
 
+
+
+"""
+
+"""

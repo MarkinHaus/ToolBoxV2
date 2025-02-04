@@ -340,7 +340,7 @@ def run(app: App, _: AppArgs, voice=True, timeout=8):
 
     put, res_que = app.get_function(("audio", "transcript"))[0](rate=16000, chunk_duration=4.0, amplitude_min=30, microphone_index=-1)
     isaa.agent_memory.ai_content = True
-    cs = ChatSession(isaa.get_context_memory())
+    cs = ChatSession(isaa.get_memory())
 
     def complexity_callback(user_input, complexity):
 

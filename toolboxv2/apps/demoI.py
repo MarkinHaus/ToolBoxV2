@@ -66,13 +66,13 @@ class ToolsUI:
 
         # Display Rings Metrics
         st.subheader("Rings Metrics")
-        rings_metrics = self.tools.get_context_memory().get_metrics()
+        rings_metrics = self.tools.get_memory().get_metrics()
         st.write("Rings Metrics:")
         st.json(rings_metrics)
 
         # Display Network Metrics
         st.subheader("Network Metrics")
-        network_metrics = self.tools.get_context_memory().cognitive_network.network.get_metrics()
+        network_metrics = self.tools.get_memory().cognitive_network.network.get_metrics()
         st.write("Network Metrics:")
         st.json(network_metrics)
 
@@ -81,7 +81,7 @@ class ToolsUI:
 
         # Display Network Graph
         st.subheader("Network Graph")
-        network_graph = self.tools.get_context_memory().cognitive_network.network
+        network_graph = self.tools.get_memory().cognitive_network.network
         st.write("Network Graph Visualization:")
         # Here you can use a library like NetworkX or similar to visualize the graph
         # For simplicity, we'll just display the connections
@@ -94,13 +94,13 @@ class ToolsUI:
 
         # Display Current Action
         st.subheader("Current Action")
-        current_action = self.tools.get_context_memory().cognitive_network.agent_state.last_action
+        current_action = self.tools.get_memory().cognitive_network.agent_state.last_action
         st.write("Current Action:")
         st.json(current_action)
 
         # Display Inner State
         st.subheader("Inner State")
-        inner_state = self.tools.get_context_memory().cognitive_network.agent_state.inner_state
+        inner_state = self.tools.get_memory().cognitive_network.agent_state.inner_state
         st.write("Inner State:")
         st.json(inner_state)
 

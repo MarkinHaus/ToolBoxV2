@@ -24,7 +24,7 @@ test_only = export(mod_name=Name, test_only=True, version=version, state=True)
 def parse_code(source, isaa: Tools, space_name) -> str:
     """ start analyse, write docs and save to vector store mit meat daten analysed-code """
 
-    mem = isaa.get_context_memory()
+    mem = isaa.get_memory()
     mem_name = space_name + 'Code'
     docs = mem.split_text(mem_name, source, separators='py')
     results = []
@@ -61,7 +61,7 @@ def analyze_usage_from_markdown(documentation: str, isaa: Tools, space_name: str
     Returns:
     - None
     """
-    mem = isaa.get_context_memory()
+    mem = isaa.get_memory()
     mem_name = space_name + 'Docs'
     # Split the documentation into sections for detailed analysis
     documentation_sections = mem.split_text(mem_name, documentation, separators='md')
@@ -324,7 +324,7 @@ def runner(request: str or list,
     if request_dict["result_list"][2] < 0.3:
         pass
 
-    mem = isaa.get_context_memory()
+    mem = isaa.get_memory()
     with tqdm(total=1, unit='step', desc='divide request') as pbar:
         imple_plan = isaa.mini_task_completion(request_dict['request'], isaa.controller.rget(DivideMode))
         pbar.update()

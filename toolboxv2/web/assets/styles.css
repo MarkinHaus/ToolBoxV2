@@ -1,5 +1,6 @@
 :root {
     --font-family: 'Roboto', sans-serif;
+    font-size: calc(14px + 0.390625vw);
     --spacing: 1rem;
 
     --primary-color: rgba(0,0,0,0);
@@ -96,31 +97,6 @@
     }
 }
 
-/* body,p, span,*/
-input, button {
-    font-size: 1rem;
-}
-
-
-h1 {
-    font-size: 2rem; /* 32px */
-}
-
-h2 {
-    font-size: 1.75rem; /* 28px */
-}
-
-h3 {
-    font-size: 1.5rem; /* 24px */
-}
-
-h4 {
-    font-size: 1.25rem; /* 20px */
-}
-
-h5 {
-    font-size: 1rem; /* 16px */
-}
 
 a, u {
   text-decoration: none;
@@ -184,7 +160,7 @@ body.dark-mode {
 */
 .dark-mode-toggle {
     position: absolute;
-    right: 0;
+    right: -0.5vw;
     top: 0;
     scale: 1.4;
     margin-bottom: 5px;
@@ -420,17 +396,11 @@ input[type="checkbox"] {
 }
 
 .Mcontent {
-    position: relative;
-    margin: 0 auto;
-    text-align: center;
-    min-width: fit-content;
-    padding-bottom: 20px;
-    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-    min-height: max-content;
-    /*overflow-y: auto;*/
-    overflow-x: clip;
-    border-radius: 4px;
+    width: 100vw;
+    height: 100vh;
+    overflow-x: hidden;
 }
+
 
 /* Scrollbar styles */
 .main-content::-webkit-scrollbar {
@@ -528,4 +498,28 @@ textarea:hover {
         'wght' var(--wght),
         'GRAD' var(--GRAD),
         'opsz' var(--opsz)
+}
+
+
+.card {
+    background-color: var(--background-color);
+    color: var(--text-color);
+    border: 1px solid var(--primary-color);
+    padding: 1rem;
+    border-radius: 4px;
+    margin: 1rem 0;
+}
+
+.card:hover {
+    background-color: var(--primary-color);
+}
+
+.card-title {
+    color: var(--text-color);
+    margin-bottom: 0.5rem;
+}
+
+.card-content {
+    color: var(--text-color);
+    line-height: 1.6;
 }

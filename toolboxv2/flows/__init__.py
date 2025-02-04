@@ -23,23 +23,7 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None):
             # Überprüfe, ob die Datei eine Python-Datei ist
             if file_name == "__init__.py":
                 pass
-            elif not remote and file_name.endswith('.py') and s in file_name:
-                name = os.path.splitext(file_name)[0]
-                # print("Loading :", name)
-                # Lade das Modul
-                spec = importlib.util.spec_from_file_location(name, os.path.join(dir_path, file_name))
-                module = importlib.util.module_from_spec(spec)
-                try:
-                    spec.loader.exec_module(module)
-                except Exception as e:
-                    print("Error loading module ", name)
-                    print(e)
-                    continue
 
-                # Füge das Modul der Dictionary hinzu
-                if hasattr(module, 'run') and callable(module.run) and hasattr(module, 'NAME'):
-                    # print("Collecing :", module.NAME)
-                    flows_dict_[module.NAME] = module.run
             elif remote and s in file_name and file_name.endswith('.gist'):
                 # print("Loading from Gist :", file_name)
                 name_f = os.path.splitext(file_name)[0]
@@ -60,6 +44,23 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None):
 
                 # Füge das Modul der Dictionary hinzu
                 print(f"{hasattr(module, 'run')} and {callable(module.run)} and {hasattr(module, 'NAME')}")
+                if hasattr(module, 'run') and callable(module.run) and hasattr(module, 'NAME'):
+                    # print("Collecing :", module.NAME)
+                    flows_dict_[module.NAME] = module.run
+            elif file_name.endswith('.py') and s in file_name:
+                name = os.path.splitext(file_name)[0]
+                # print("Loading :", name)
+                # Lade das Modul
+                spec = importlib.util.spec_from_file_location(name, os.path.join(dir_path, file_name))
+                module = importlib.util.module_from_spec(spec)
+                try:
+                    spec.loader.exec_module(module)
+                except Exception as e:
+                    print("Error loading module ", name)
+                    print(e)
+                    continue
+
+                # Füge das Modul der Dictionary hinzu
                 if hasattr(module, 'run') and callable(module.run) and hasattr(module, 'NAME'):
                     # print("Collecing :", module.NAME)
                     flows_dict_[module.NAME] = module.run

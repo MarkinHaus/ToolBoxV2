@@ -1318,7 +1318,7 @@ Aufgaben Name oder None:"""
 
                             sender.put({"ChairData": True, "data": {'res': chain_ret[-1][-1]}})
                         elif 'subject' in data.keys():
-                            context = self.get_context_memory().get_context_for(data['subject'])
+                            context = self.get_memory().get_context_for(data['subject'])
                             res = self.generate_task(data['subject'], str(chain_data), context)
                             sender.put({"ChairData": True, "data": {'res': res}})
 
