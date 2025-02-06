@@ -431,6 +431,7 @@ def create_research_interface(Processor):
         config_cart = None
         followup_results_content = None
         progress_card = None
+        balance = None
 
         # Global config storage with default values
         config = {
@@ -519,6 +520,7 @@ def create_research_interface(Processor):
                     status_label.set_text(f"{data}")
 
         def start_search():
+            nonlocal balance
 
             async def helper():
                 nonlocal processor_instance, overall_progress, status_label, results_card, \
@@ -555,15 +557,16 @@ def create_research_interface(Processor):
                     with main_ui:
                         research_card.visible = True
                         config_cart.visible = True
+                        show_history()
 
                 except Exception as e:
-                    import traceback
+                    # import traceback
 
                     with main_ui:
                         update_status({"progress": 0, "step": "Error", "info": str(e)})
                         ui.notify(f"Error {str(e)})", type="negative")
 
-                    print(traceback.format_exc())
+                    # print(traceback.format_exc())
 
             def target():
                 get_app().run_a_from_sync(helper, )
@@ -572,6 +575,9 @@ def create_research_interface(Processor):
             if est_price > state['balance']:
                 ui.notify(f"Insufficient balance. Need €{est_price:.2f}", type='negative')
             else:
+                state['balance'] -= est_price
+                save_user_state(session_id, state)
+                balance.set_text(f"Balance: {state['balance']:.2f}€")
                 Thread(target=target, daemon=True).start()
 
         async def start_followup():
@@ -621,9 +627,16 @@ def create_research_interface(Processor):
 
                 followup_results_content.set_content(combined_result)
 
+        def show_history():
+            with config_cart:
+                for idx, entry in enumerate(state['research_history']):
+                    with ui.card().classes("w-full backdrop-blur-lg bg-white/10 p-4").on('click',
+                                                                                         lambda _, i=idx: load_history(
+                                                                                             i)):
+                        ui.label(entry['query']).classes('text-sm')
         # UI-Aufbau
         with ui.column().classes("w-full max-w-6xl mx-auto p-6 space-y-6") as main_ui:
-            ui.label(f"Balance: {state['balance']:.2f}€").classes("text-s font-semibold")
+            balance = ui.label(f"Balance: {state['balance']:.2f}€").classes("text-s font-semibold")
 
             config_cart = config_cart
 
@@ -754,10 +767,7 @@ def create_research_interface(Processor):
                 # --- Estimated Time and Price ---
                 # ui.label("History").classes("text-xl font-semibold mt-4 mb-2")
                 ui.label('Research History').classes('text-xl p-4')
-                for idx, entry in enumerate(state['research_history']):
-                    with ui.card().classes("w-full backdrop-blur-lg bg-white/10 p-4").on('click', lambda _, i=idx: load_history(i)):
-                        ui.label(entry['query']).classes('text-sm')
-
+                show_history()
 
             ui.button('Add Credits', on_click=lambda: balance_overlay(session_id)).props('icon=paid')
             ui.label('About TruthSeeker').classes(
