@@ -400,7 +400,7 @@ class ArXivPDFProcessor:
 
     def init_process_papers(self):
         self.tools.get_memory().create_memory(self.mem_name, model_config={
-                "llm_model": "groq/gemma2-9b-it",
+                "llm_model": "anthropic/claude-3-haiku-20240307",
                 "embedding_model": "ollama/nomic-embed-text"
             })
         self.send_status("Memory initialized")
@@ -488,6 +488,10 @@ class ArXivPDFProcessor:
         estimated_price = processed_chunks * (price_per_t_chunk / 1_000)
 
         # estimated_price = 0 if query_length < 420 and estimated_price < 5 else estimated_price
+        if estimated_time < 30:
+            estimated_time = 30
+        if estimated_price < .01:
+            estimated_price = .01
         return round(estimated_time, 2), round(estimated_price, 4)
 
 async def main(query: str = "Beste strategien in bretspielen sitler von katar"):

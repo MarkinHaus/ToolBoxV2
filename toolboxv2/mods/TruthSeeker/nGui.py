@@ -20,7 +20,7 @@ from nicegui import ui
 from nicegui.events import ValueChangeEventArguments
 
 from typing import Callable, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 from toolboxv2 import get_app
 from toolboxv2.mods.FastApi.fast_nice import register_nicegui
@@ -33,6 +33,8 @@ from nicegui import ui
 
 from pathlib import Path
 import stripe
+
+from toolboxv2.mods.TruthSeeker.arXivCrawler import Paper
 
 # Set your secret key (use environment variables in production!)
 stripe.api_key = os.getenv('STRIPE_SECRET_KEY_', 'sk_test_YourSecretKey')
@@ -466,11 +468,6 @@ def create_research_interface(Processor):
                 query_length_label.set_text(f"Query len: {query_length} Total Papers: {config['max_search']*config['num_search_result_per_query']}")
                 time_label.set_text(f"Processing Time: {time_str}")
                 price_label.set_text(f"Price: {estimated_price:.2f}€")
-                # Only show the Buy button when a price is calculated and above 0
-                if estimated_price <= 0.05:
-                    price_label.set_text(f"Price: {estimated_price:.2f}€ Free until 0.05€")
-                else:
-                    price_label.set_text(f"Price: {estimated_price:.2f}")
 
             return estimated_price
 
@@ -538,6 +535,7 @@ def create_research_interface(Processor):
                     with main_ui:
                         research_card.visible = False
                         config_cart.visible = False
+                        config_section.visible = False
                     # Direkt instanziieren: Eine neue ArXivPDFProcessor-Instanz
                     processor = Processor(query_text, tools=tools, **config)
                     # Setze den Callback so, dass Updates in der GUI angezeigt werden
@@ -585,6 +583,8 @@ def create_research_interface(Processor):
 
             research_card.visible = False
             config_cart.visible = False
+            config_section.visible = False
+
             # Sammle die Suchparameter aus den UI-Elementen
             try:
                 qp = QueryParam(
@@ -803,11 +803,14 @@ def create_research_interface(Processor):
             insights = data.get("insights", [])
             if save:
                 history_entry = data.copy()
+                history_entry['papers'] = [asdict(paper) for paper in papers]
                 if processor_instance is not None and processor_instance['instance'] is not None:
                     history_entry["mam_name"] = processor_instance['instance'].mem_name
                     history_entry["query"] = processor_instance['instance'].query
                 state['research_history'].append(history_entry)
                 save_user_state(session_id, state)
+            else:
+                papers = [Paper(**paper) for paper in papers]
             with main_ui:
                 progress_card.visible = False
                 # Zusammenfassung

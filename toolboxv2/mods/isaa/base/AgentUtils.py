@@ -652,7 +652,7 @@ from litellm import completion
 class AISemanticMemory(metaclass=Singleton):
     def __init__(self,
                  base_path: str = "/semantic_memory",
-                 default_model: str = "groq/gemma2-9b-it",
+                 default_model: str = "anthropic/claude-3-haiku-20240307",
                  default_embedding_model: str = os.getenv("DEFAULTMODELEMBEDDING"),
                  default_kv_storage: str = "JsonKVStorage",
                  default_vector_storage: str = "NanoVectorDBStorage",
