@@ -1,33 +1,18 @@
 import json
-import os
-import stripe
-import asyncio
 from datetime import datetime, timedelta
-from threading import Thread
-from uuid import uuid4
-from fastapi import Request, Response
-from nicegui import ui
-import asyncio
+from fastapi import Request
 import os
 import random
-import uuid
 from threading import Thread
-from typing import List, Dict, Optional
 
 import networkx as nx
 from lightrag import QueryParam
-from nicegui import ui
-from nicegui.events import ValueChangeEventArguments
-
-from typing import Callable, Optional
-from dataclasses import dataclass, asdict
+from dataclasses import asdict
 
 from toolboxv2 import get_app
 from toolboxv2.mods.FastApi.fast_nice import register_nicegui
 
 import asyncio
-import uuid
-from typing import Dict, Optional
 
 from nicegui import ui
 
@@ -35,7 +20,6 @@ from pathlib import Path
 import stripe
 
 from toolboxv2.mods.TruthSeeker.arXivCrawler import Paper
-
 # Set your secret key (use environment variables in production!)
 stripe.api_key = os.getenv('STRIPE_SECRET_KEY_', 'sk_test_YourSecretKey')
 
