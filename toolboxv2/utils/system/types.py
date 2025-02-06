@@ -537,19 +537,25 @@ class AppType:
     def idle(self):
         import time
         self.print("idle")
-        while self.alive:
-            time.sleep(1)
+        try:
+            while self.alive:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
         self.print("idle done")
 
     async def a_idle(self):
         self.print("a idle")
-        if hasattr(self, 'daemon_app'):
-            self.print("serving daemon")
-            await self.daemon_app.connect(self)
-        else:
-            self.print("serving default")
-            while self.alive:
-                await asyncio.sleep(1)
+        try:
+            if hasattr(self, 'daemon_app'):
+                self.print("serving daemon")
+                await self.daemon_app.connect(self)
+            else:
+                self.print("serving default")
+                while self.alive:
+                    await asyncio.sleep(1)
+        except KeyboardInterrupt:
+            pass
         self.print("a idle done")
 
     @debug.setter

@@ -8,13 +8,13 @@ setTimeout(()=> {
 
     // Funktion zur Anzeige des Installationslinks
     function displayInstallLink(os) {
-        var baseUrl = "/web/core0/initialistaller/init.html";
+        var baseUrl = "/web/core0/initialistaller/init.html?os="+os;
         var devApp = "/installer/data/widgets_dev8000.exe";
         var apkApp = "/installer/data/simple.apk";
         var exeApp = "/installer/data/simple.exe";
         var linkText = "Installer für " + os;
         if (os.includes("Web")){
-            return '<a onclick="registerServiceWorker()"> Add ' + linkText + 'to Device</a>'
+            return '<a onclick="window.TBf.registerServiceWorker()"> Add ' + linkText + 'to Device</a>'
         }
         if (os.includes("exe")){
              return '<p><a href="' + exeApp + '" target="_blank">' + linkText + '</a></p>';
@@ -34,21 +34,27 @@ setTimeout(()=> {
         switch (selectedOS) {
             case 'Python Runtime':
                 autoDownloadOptions.innerHTML = displayInstallLink('CLI (Python)');
+                window.TBf.processRow(autoDownloadOptions)
                 break;
             case 'exe':
                 autoDownloadOptions.innerHTML = displayInstallLink('Desktop (exe)');
+                window.TBf.processRow(autoDownloadOptions)
                 break;
             case 'dmg':
                 autoDownloadOptions.innerHTML = displayInstallLink('Desktop (dmg)');
+                window.TBf.processRow(autoDownloadOptions)
                 break;
             case 'apk':
                 autoDownloadOptions.innerHTML = displayInstallLink('Mobile (apk)');
+                window.TBf.processRow(autoDownloadOptions)
                 break;
             case 'iOS-IPA':
                 autoDownloadOptions.innerHTML = displayInstallLink('Mobile (iOS-App)');
+                window.TBf.processRow(autoDownloadOptions)
                 break;
             case 'Web':
                 autoDownloadOptions.innerHTML = displayInstallLink('(Web-App)');
+                window.TBf.processRow(autoDownloadOptions)
                 break;
             default:
                 autoDisplay();

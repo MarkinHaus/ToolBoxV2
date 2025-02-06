@@ -26,8 +26,8 @@ class ChatSession(metaclass=Singleton):
         if self.max_length and len(self.history) > self.max_length:
             self.history.pop(0)
 
-    def get_reference(self, text):
-        return "\n".join([x for x in self.mem.query(text, self.space_name, to_tsr=False)])
+    async def get_reference(self, text):
+        return "\n".join([x for x in await self.mem.query(text, self.space_name, to_tsr=False)])
 
     def get_past_x(self, x):
         return self.history[-x:]

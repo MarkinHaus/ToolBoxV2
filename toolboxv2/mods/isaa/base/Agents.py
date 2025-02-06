@@ -21,6 +21,7 @@ from litellm.utils import trim_messages, get_max_tokens
 
 from litellm import BudgetManager, batch_completion, acompletion
 from pydantic import BaseModel
+from sentence_transformers import SentenceTransformer
 
 from toolboxv2.mods.isaa.base.AgentUtils import ShortTermMemory, AISemanticMemory, get_token_mini, get_max_token_fom_model_name, \
     _extract_from_json, _extract_from_string_de, _extract_from_string, anything_from_str_to_dict
@@ -28,6 +29,8 @@ from toolboxv2.mods.isaa.base.AgentUtils import ShortTermMemory, AISemanticMemor
 import litellm
 import logging
 from litellm import completion, token_counter
+
+from toolboxv2.mods.isaa.extras.filter import filter_relevant_texts
 
 try:
     import gpt4all
@@ -415,6 +418,9 @@ class TaskStatus:
     error: Optional[str] = None
 
 
+class StFilter(metaclass=Singleton):
+    filter: Optional[SentenceTransformer] = None
+
 @dataclass
 class Agent:
     amd: AgentModelData = field(default_factory=AgentModelData)
@@ -784,7 +790,7 @@ class Agent:
         if self.memory:
             for query in queries:
                 query = query["query"]
-                memory_task = self.memory.query(query, memory_names=[self.amd.name] if memory_names is None else memory_names, to_str=True, **kwargs)
+                memory_task = await self.memory.query(query, memory_names=[self.amd.name] if memory_names is None else memory_names, to_str=True, **kwargs)
                 if memory_task:
                     mem_data = json.dumps(memory_task, indent=2)
                     add_unique_message("system", "(system General-context) :" + mem_data)
@@ -1533,14 +1539,16 @@ class Agent:
         llm_fuction = None
         fuction_inputs = None
         self.next_fuction = None
-        callable_functions = [fuction_name.name.lower() for fuction_name in self.capabilities.functions]
         if self.capabilities is not None and self.capabilities.functions is not None and len(
             self.capabilities.functions) > 0:
+            callable_functions = [fuction_name.name.lower() for fuction_name in self.capabilities.functions]
+
             self.next_fuction, fuction_inputs = self.test_use_function(llm_response, callable_functions)
             if self.next_fuction is not None:
                 llm_fuction = self.capabilities.functions[callable_functions.index(self.next_fuction.lower())]
 
         if self.functions is not None and len(self.functions) > 0 and self.next_fuction is None:
+            callable_functions = [fuction_name.name.lower() for fuction_name in self.functions]
             self.next_fuction, fuction_inputs = self.test_use_function(llm_response, callable_functions)
             if self.next_fuction is not None:
                 llm_fuction = self.functions[callable_functions.index(self.next_fuction.lower())]
@@ -2194,6 +2202,9 @@ class AgentBuilder:
 
         if self.agent.progress_callback is None:
             self.agent.progress_callback = lambda x: print(x)
+        if StFilter.filter is None:
+            StFilter.filter = SentenceTransformer('paraphrase-MiniLM-L6-v2')
+        self.agent.filter = partial(filter_relevant_texts, model=StFilter.filter)
         return self.agent
 
     def save_to_json(self, file_path: str):

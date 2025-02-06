@@ -517,7 +517,7 @@ def uninstall_dependencies(yaml_file):
 
 
 if __name__ == "__main__":
-    app_ = get_app()
+    app_ = get_app('Manager')
     print(app_.get_all_mods())
     for module_ in app_.get_all_mods():  # ['dockerEnv', 'email_waiting_list',  'MinimalHtml', 'SchedulerManager', 'SocketManager', 'WebSocketManager', 'welcome']:
         print(f"Building module {module_}")

@@ -153,10 +153,56 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         # Dictionary to store request counts for each IP
         # 'session-id' : {'jwt-claim', 'validate', 'exit on ep time from jwt-claim', 'SiID'}
-        self.sessions = {
-
-        }
+        self.is_init = False
         self.cookie_key = tb_app.config_fh.one_way_hash(tb_app.id, 'session')
+
+        self.sessions = {}
+
+    # --- Database Setup ---
+    def get_db(self):
+        db = get_app().get_mod("DB", spec="FastApi.sessions")
+        if not self.is_init:
+            self.is_init = True
+            db.edit_cli("LD")
+            db.initialize_database()
+        return db
+
+    # --- Session State Management ---
+    def get_session(self, session_id: str) -> dict:
+        if session_id in self.sessions:
+            return self.sessions[session_id]
+        db = self.get_db()
+        session = db.get(f"FastApi::session:{session_id}")
+
+        try:
+            session = json.loads(session.get().decode('utf-8').replace("'", '"'))
+        except Exception as e:
+            session = {
+                'jwt-claim': '',
+                'validate': False,
+                'live_data': {},
+                'exp': datetime.now(),
+                'ip': '',
+                'port': '',
+                'c': 0,
+                'CHECK': '',
+                'h-sid': '',
+                'new': True
+            }
+
+        return session
+
+    def save_session(self, session_id: str, state: dict, remote=False):
+
+        self.sessions[session_id] = state
+        if not remote:
+            return
+        db = self.get_db()
+        db.set(f"FastApi::session:{session_id}", state)
+
+    def del_session(self, session_id: str):
+        db = self.get_db()
+        db.delete(f"FastApi::session:{session_id}")
 
     async def set_body(self, request: Request):
         receive_ = await request._receive()
@@ -180,7 +226,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
 
         request.session['ID'] = session_id
 
-        self.sessions[session_id] = {
+        self.save_session(session_id, {
             'jwt-claim': jwt_claim,
             'validate': False,
             'live_data': {},
@@ -188,8 +234,9 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             'ip': request.client.host,
             'port': request.client.port,
             'c': 0,
+            'CHECK': '',
             'h-sid': h_session_id
-        }
+        }, remote=True)
         # print("[jwt_claim]:, ", jwt_claim)
         # print(username)
         # print(request.json())
@@ -209,13 +256,14 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         return await self.verify_session_id(session_id, username, jwt_claim)
 
     async def verify_session_id(self, session_id, username, jwt_claim):
+        session = self.get_session(session_id)
 
         if not await tb_app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.JWT_CHECK_CLAIM_SERVER_SIDE,
                                       username=username,
                                       jwt_claim=jwt_claim):
-            # del self.sessions[session_id]
-            self.sessions[session_id]['CHECK'] = 'failed'
-            self.sessions[session_id]['c'] += 1
+            session['CHECK'] = 'failed'
+            session['c'] += 1
+            self.save_session(session_id, session)
             tb_app.logger.debug(f"Session Handler V invalid jwt from : {username}")
             return '#0'
 
@@ -224,9 +272,10 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
                                              get_results=True)
 
         if user_result.is_error():
-            # del self.sessions[session_id]
-            self.sessions[session_id]['CHECK'] = user_result.print(show=False)
-            self.sessions[session_id]['c'] += 1
+            # del session
+            session['CHECK'] = user_result.print(show=False)
+            session['c'] += 1
+            self.save_session(session_id, session)
             tb_app.logger.debug(f"Session Handler V invalid Username : {username}")
             return '#0'
 
@@ -240,7 +289,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             tb_app.logger.debug(f"Session Handler V no UsernameInstance : {username}")
             return '#0'
 
-        self.sessions[session_id] = {
+        self.save_session(session_id, {
             'jwt-claim': jwt_claim,
             'validate': True,
             'exp': datetime.now(),
@@ -253,7 +302,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
                 'user_name': tb_app.config_fh.encode_code(user.name)
             },
 
-        }
+        }, remote=True)
 
         return session_id
 
@@ -264,12 +313,10 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         if session_id is None:
             return False
 
-        exist = session_id in self.sessions
+        session = self.get_session(session_id)
 
-        if not exist:
+        if session.get('new', False):
             return False
-
-        session = self.sessions[session_id]
 
         if not session.get('validate', False):
             return False
@@ -312,7 +359,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             )
         elif not session:
             session_id = await self.crate_new_session_id(request, None, "Unknown")
-        elif request.session.get('ID', '') not in self.sessions:
+        elif request.session.get('ID', False) and self.get_session(request.session.get('ID', '')).get("new", False):
             print("Session Not Found")
             session_id = await self.crate_new_session_id(request, None, "Unknown", session_id=request.session.get('ID'))
             request.session['valid'] = False
@@ -320,17 +367,19 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             session_id: str = request.session.get('ID', '')
         request.session['live_data'] = {}
         # print("testing session")
+        session_data = self.get_session(session_id)
         if await self.validate_session(session_id):
             print("valid session")
+
             request.session['valid'] = True
-            request.session['live_data'] = self.sessions[session_id]['live_data']
+            request.session['live_data'] = session_data['live_data']
             if request.url.path == '/web/logoutS':
                 uid = tb_app.run_any(TBEF.CLOUDM_USERINSTANCES.GET_INSTANCE_SI_ID,
-                                     si_id=self.sessions[session_id]['live_data']['SiID']).get('save', {}).get('uid')
+                                     si_id=session_data['live_data']['SiID']).get('save', {}).get('uid')
                 if uid is not None:
                     print("start closing istance :t", uid)
                     tb_app.run_any(TBEF.CLOUDM_USERINSTANCES.CLOSE_USER_INSTANCE, uid=uid)
-                    del self.sessions[session_id]
+                    self.del_session(session_id)
                     print("Return redirect :t", uid)
                     return RedirectResponse(
                         url="/web/logout")  # .delete_cookie(tb_app.config_fh.one_way_hash(tb_app.id, 'session'))
@@ -360,31 +409,35 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         elif isinstance(session_id, JSONResponse):
             return session_id
         else:
+            if request.session['valid']:
+                session_data['valid'] = False
+                self.save_session(session_id, session_data, remote=True)
             request.session['valid'] = False
-            ip = self.sessions[session_id].get('ip', "unknown")
-            tb_app.logger.warning(f"SuS Request : IP : {ip} count : {self.sessions[session_id]['c']}")
+            ip = session_data.get('ip', "unknown")
+            tb_app.logger.warning(f"SuS Request : IP : {ip} count : {session_data['c']}")
             if protect_url_split_helper(request.url.path.split('/')):
-                self.sessions[session_id]['c'] += 1
+                session_data['c'] += 1
             if ip not in RateLimitingMiddleware.WHITE_LIST_IPS:
-                c = self.sessions[session_id]['c']
+                c = session_data['c']
                 if c < 20:
                     tb_app.logger.warning(f"SuS Request : IP : {ip} ")
                 elif c == 460:
-                    self.GRAY_LIST.append(self.sessions[session_id].get('ip', "unknown"))
-                    self.sessions[session_id]['what_user'] = True
+                    self.GRAY_LIST.append(session_data.get('ip', "unknown"))
+                    session_data['what_user'] = True
                 elif c == 6842:
-                    self.GRAY_LIST.append(self.sessions[session_id].get('ip', "unknown"))
-                    self.sessions[session_id]['ratelimitWarning'] = True
+                    self.GRAY_LIST.append(session_data.get('ip', "unknown"))
+                    session_data['ratelimitWarning'] = True
                     return JSONResponse(
                         status_code=401,
                         content={"message": "Login or Signup for further access"}
                     )
                 elif c > 540_000_000:
-                    self.BLACK_LIST.append(self.sessions[session_id].get('ip', "unknown"))
+                    self.BLACK_LIST.append(session_data.get('ip', "unknown"))
                     return JSONResponse(
                         status_code=403,
                         content={"message": "u got BLACK_LISTED"}
                     )
+            self.save_session(session_id, session_data)
         return await call_next(request)
 
         # if session:
@@ -502,6 +555,8 @@ def protect_url_split_helper(url_split):
     elif "_nicegui" in url_split and "static" in url_split:
         return False
     elif "_nicegui" in url_split and "components" in url_split:
+        return False
+    elif "_nicegui" in url_split and "libraries" in url_split:
         return False
 
     elif url_split[1] == "api" and url_split[2] in [
@@ -927,7 +982,7 @@ async def helper(id_name):
     install_router.add_api_route('/' + "version", get_d, methods=["GET"], description="get_species_data")
     tb_app.sprint("include Installer")
     app.include_router(install_router)
-    nicegui_manager.register_gui("install", register(), install_router.prefix)
+    nicegui_manager.register_gui("install", register(), install_router.prefix, only_valid=True)
 
     async def proxi_helper(*__args, **__kwargs):
         await tb_app.client.get('sender')({'name': "a_run_any", 'args': __args, 'kwargs': __kwargs})

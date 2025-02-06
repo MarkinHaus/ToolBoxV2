@@ -2,9 +2,10 @@ import os.path
 import sys
 import unittest
 
-from starlette.responses import HTMLResponse
+from starlette.responses import HTMLResponse, FileResponse
 
 from toolboxv2 import get_app, App
+from toolboxv2.mods.TruthSeeker.nGui import create_ui
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.system.session import RequestSession
 from toolboxv2.mods.TruthSeeker.arXivCrawler import ArXivPDFProcessor
@@ -28,7 +29,6 @@ code_templates = {
 
     "PROCESS":12*1200,
 }
-
 promo_templates = {
     "Promo15W":24*1200*7,
     "Promo15":None,
@@ -42,6 +42,7 @@ def start(app=None):
     if app is None:
         app = get_app("Starting Talk interface")
     app.get_mod("isaa").load_keys_from_env()# (build=False)
+
     app.get_mod("CodeVerification")
     # print("before miain")
     app.run_any(("CodeVerification", "init_scope"), scope=Name)
@@ -78,6 +79,8 @@ def start(app=None):
                         usage_type="one_time" if v is None else 'timed',
                         max_uses=1 if v is None or v == "PROCESS" else int(v/60*5),
                         valid_duration=v)
+    create_ui(ArXivPDFProcessor)
+
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=-1, api=True,
         name="byCode", row=True)
@@ -88,6 +91,12 @@ def byCode(app = None, request: RequestSession or None = None):
         return
     payKey, codeClass, ontimeKey = request.json()
     return {'code':"code"}
+
+
+@export(mod_name=Name, version=version, level=-1, api=True,
+        name="video", row=True)
+def video(app = None):
+    return FileResponse(r"C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\TruthSeeker\demo-demo.mp4")
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=-1, api=True,
         name="codes", row=True)

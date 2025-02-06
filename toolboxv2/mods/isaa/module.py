@@ -114,7 +114,7 @@ class Tools(MainTool, FileHandler):
         self.run_callback = None
         self.coding_projects: Dict[str, ProjectManager] = {}
         if app is None:
-            app = get_app()
+            app = get_app("isaa-mod")
         self.version = version
         self.name = "isaa"
         self.Name = "isaa"
@@ -174,7 +174,7 @@ class Tools(MainTool, FileHandler):
         self.agent_chain_executor.function_runner = lambda name, **b: self.get_agent_class("self").function_invoke(name,
                                                                                                                    **b)
         self.agent_chain_executor.agent_runner = lambda name, task, **k: self.run_agent(name, task, **k)
-        self.agent_memory: AISemanticMemory = f".data/{app.id}{extra_path}/Memory"
+        self.agent_memory: AISemanticMemory = f"{app.id}{extra_path}/Memory"
         self.controller = ControllerManager({})
         self.summarization_mode = 1  # 0 to 3  0 huggingface 1 text 2 opnai 3 gpt
         self.summarization_limiter = 102000
@@ -602,7 +602,7 @@ class Tools(MainTool, FileHandler):
             print(f"{agent_builder.agent.amd.name} Agent already registered")
             return
 
-        agent_builder.save_to_json(f".data/{get_app().id}/Agents/{agent_builder.agent.amd.name}.agent")
+        agent_builder.save_to_json(f".data/{get_app('isaa.register_agent').id}/Agents/{agent_builder.agent.amd.name}.agent")
         self.config[f'agent-config-{agent_builder.agent.amd.name}'] = agent_builder.build()
         self.config["agents-name-list"].append(agent_builder.agent.amd.name)
         self.agent_data[agent_builder.amd_attributes['name']] = agent_builder.get_dict()
@@ -616,8 +616,8 @@ class Tools(MainTool, FileHandler):
         agent_builder: AgentBuilder = self.get_agent_builder(name)
 
         if name != "":
-            if os.path.exists(f".data/{get_app().id}/Memory/{name}.agent"):
-                agent_builder = agent_builder.load_from_json_file(f".data/{get_app().id}/Memory/{name}.agent", Agent)
+            if os.path.exists(f".data/{get_app('isaa.get_default_agent_builder').id}/Memory/{name}.agent"):
+                agent_builder = agent_builder.load_from_json_file(f".data/{get_app('isaa.get_default_agent_builder').id}/Memory/{name}.agent", Agent)
                 agent_builder.set_isaa_reference(self)
 
         if self.global_stream_override:
@@ -820,8 +820,8 @@ class Tools(MainTool, FileHandler):
 
         llm_functions = self.tools_to_llm_functions(tools)
         agent_builder.set_functions(llm_functions)
-        os.makedirs(f".data/{get_app().id}/Agents/", exist_ok=True)
-        agent_builder_dict = agent_builder.save_to_json(f".data/{get_app().id}/Agents/{name}.agent")
+        os.makedirs(f".data/{get_app('isaa-get-agent').id}/Agents/", exist_ok=True)
+        agent_builder_dict = agent_builder.save_to_json(f".data/{get_app('isaa-get-agent').id}/Agents/{name}.agent")
         self.agent_data[agent_builder.amd_attributes['name']] = agent_builder_dict
         # agent_builder.set_verbose(True)
         return agent_builder
@@ -1161,7 +1161,7 @@ class Tools(MainTool, FileHandler):
             return out, ""
         return out
 
-    @get_app().tb(name=Name, test=False)
+    @get_app('isaa-run-agent').tb(name=Name, test=False)
     async def run_agent(self, name: str or Agent,
                   text: str,
                   verbose: bool = False,
@@ -1324,7 +1324,7 @@ class Tools(MainTool, FileHandler):
         )
 
         # Hybrid search for key concepts
-        results = semantic_memory.query(
+        results = await semantic_memory.query(
             query=ref_query,
             memory_names="summary_cache",
             query_params=query_params
@@ -1464,7 +1464,7 @@ def shell_tool_function(command: str) -> str:
     return json.dumps(result, ensure_ascii=False)
 
 
-@get_app().tb(name="initIsaa", mod_name="isaa", test=False, initial=True, state=True)
+@get_app('isaa-initIsaa').tb(name="initIsaa", mod_name="isaa", test=False, initial=True, state=True)
 def initIsaa(self: Tools):
     self.print(f"Start {self.spec}.isaa")
     IsaaWebSocketUI(self)
@@ -1479,10 +1479,10 @@ def initIsaa(self: Tools):
 
         if self.spec == 'app':
             self.load_keys_from_env()
-        if not os.path.exists(f".data/{get_app().id}/Agents/"):
-            os.mkdir(f".data/{get_app().id}/Agents/")
+        if not os.path.exists(f".data/{get_app('isaa-initIsaa').id}/Agents/"):
+            os.mkdir(f".data/{get_app('isaa-initIsaa').id}/Agents/")
         if not os.path.exists(f".data/{get_app().id}/Memory/"):
-            os.mkdir(f".data/{get_app().id}/Memory/")
+            os.mkdir(f".data/{get_app('isaa-initIsaa').id}/Memory/")
 
 
 if __name__ == "__main__":

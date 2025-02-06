@@ -65,11 +65,11 @@ class Session(metaclass=Singleton):
         await asyncio.sleep(0.1)
 
         pub_key, prv_key = Code.generate_asymmetric_keys()
-        Code.save_keys_to_files(pub_key, prv_key, get_app().info_dir.replace(get_app().id, ''))
+        Code.save_keys_to_files(pub_key, prv_key, get_app('sys.session').info_dir.replace(get_app('sys.session').id, ''))
         parsed_url = urlparse(mak_link)
         params = parse_qs(parsed_url.query)
         invitation = params.get('key', [None])[0]
-        self.username = params.get('name', [get_app().get_username()])[0]
+        self.username = params.get('name', [get_app('sys.session').get_username()])[0]
         if not invitation:
             print('Invalid LoginKey')
             return False
@@ -85,7 +85,7 @@ class Session(metaclass=Singleton):
 
     @staticmethod
     def get_prv_key():
-        pub_key, prv_key = Code.load_keys_from_files(get_app().info_dir.replace(get_app().id, ''))
+        pub_key, prv_key = Code.load_keys_from_files(get_app('sys.session.get_prv_key').info_dir.replace(get_app('sys.session.get_prv_key').id, ''))
         return prv_key
 
     def if_key(self):

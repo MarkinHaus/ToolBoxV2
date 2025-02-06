@@ -56,7 +56,7 @@ def on_start(app: App):
             print("WhatsAppTb6")
             return "Online"
         if nm.init:
-            nm.register_gui("WhatsAppTb", manager.create_manager_ui(start_assistant=start))
+            nm.register_gui("WhatsAppTb", manager.create_manager_ui(start_assistant=start), only_root=True)
             print("WhatsAppTb4")
         else:
             print("No ui")

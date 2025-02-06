@@ -4,7 +4,10 @@ import uuid
 from typing import List, Tuple, Optional, Dict
 
 import asyncio
+
+from lightrag import QueryParam
 from pydantic import BaseModel, Field
+
 from toolboxv2 import get_app, Spinner
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
@@ -21,6 +24,7 @@ import logging
 from urllib3 import Retry
 
 from toolboxv2.mods.isaa.base.AgentUtils import AISemanticMemory
+from toolboxv2.mods.isaa.extras.filter import filter_relevant_texts
 
 
 class RobustPDFDownloader:
@@ -205,47 +209,177 @@ def search_papers(query: str, max_results=10) -> List[Paper]:
     return results
 
 
+
 class ArXivPDFProcessor:
     def __init__(self,
                  query: str,
                  tools,
                  chunk_size: int = 1000,
                  overlap: int = 200,
-                 limiter=0.2,
                  max_workers=None,
-                 num_search_result_per_query=3,
+                 num_search_result_per_query=6,
                  max_search=6,
                  download_dir="pdfs",
-                 callback=None):
-        # Initialize components
-        self.mem_name = None
-        self.current_session = None
-        self.last_insights_list = None
-        self.max_workers = max_workers
+                 callback=None, num_workers=None):
+        self.insights_generated = False
+        self.queries_generated = False
+        self.query = query
         self.tools = tools
-            #with Spinner("Building agent"):
-            #    self.tools.init_isaa(build=True)
-
-        # chunking parameters
         self.chunk_size = chunk_size
         self.overlap = overlap
+        self.max_workers = max_workers if max_workers is not None else os.cpu_count() or 4
         self.nsrpq = num_search_result_per_query
-        self.callback = callback if callback is not None else lambda x:None
         self.max_search = max_search
-
-        # query
-        self.query = query
-        self.limiter = limiter
-
-        self.temp = True
+        self.download_dir = download_dir
         self.parser = RobustPDFDownloader(download_dir=download_dir)
+        self.callback = callback if callback is not None else lambda status: None
 
-        # Ref Papers
+        self.mem_name = None
+        self.current_session = None
         self.all_ref_papers = 0
-        self.initialize(str(uuid.uuid4()))
+        self.last_insights_list = None
+
+        self.all_texts_len = 0
+        self.f_texts_len = 0
+
+        self.s_id = str(uuid.uuid4())
+        from sentence_transformers import SentenceTransformer
+        self.semantic_model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
+        self._query_progress = {}
+        self._progress_lock = threading.Lock()  # to guard shared variables
+        if num_workers is None:
+            self.num_workers = max(1, (os.cpu_count() or 1))  # Ensure at least 1 worker
+        else:
+            self.num_workers = min(num_workers, (os.cpu_count() or max_workers))
+
+    def _update_global_progress(self) -> float:
+        """Calculate overall progress considering all processing phases."""
+        total_queries = len(self._query_progress)
+
+        # Phase progress calculations
+        generate_queries_progress = 1.0 if self.queries_generated else 0.0
+        insights_progress = 1.0 if self.insights_generated else 0.0
+
+        if total_queries == 0:
+            search_progress = 0.0
+            process_progress = 0.0
+        else:
+            # Calculate search progress (0.0-0.3 range per query)
+            search_progress = sum(min(p, 0.3) for p in self._query_progress.values()) / (0.3 * total_queries)
+            # Calculate processing progress (0.3-1.0 range per query)
+            process_progress = sum(max(p - 0.3, 0) for p in self._query_progress.values()) / (0.7 * total_queries)
+
+        # Weighted phase contributions
+        overall = (
+            0.1 * generate_queries_progress +  # Query generation phase
+            0.4 * search_progress +  # Search and download phase
+            0.3 * process_progress +  # Processing phase
+            0.2 * insights_progress  # Insights generation phase
+        )
+        return max(0.0, min(overall, 1.0))
+
+    async def search_and_process_papers(self, queries: List[str]) -> List[Paper]:
+        self.send_status("Starting search and processing papers")
+        all_papers = []
+        lock = threading.Lock()
+        total_queries = len(queries)
+        # Initialize per-query progress to 0 for each query index.
+        self._query_progress = {i: 0.0 for i in range(total_queries)}
+
+        # Create a semaphore to limit the number of concurrent queries.
+        semaphore = asyncio.Semaphore(self.num_workers)
+
+        async def process_query(i: int, query: str) -> List[Paper]:
+            async with semaphore:
+                # --- Phase 1: Searching ---
+                # Wrap blocking search in asyncio.to_thread
+                papers = await asyncio.to_thread(search_papers, query, self.nsrpq)
+                with lock:
+                    self.all_ref_papers += len(papers)
+                # Mark search phase as 30% complete for this query.
+                self._query_progress[i] = 0.3
+                self.send_status(f"Found {len(papers)} papers for '{query}'")
+
+                # --- Phase 2: Process each paper's PDF ---
+                num_papers = len(papers)
+                for j, paper in enumerate(papers):
+                    try:
+                        # Download the PDF (blocking) in a thread.
+                        self.send_status(f"Processing '{query}' ration : {self.all_texts_len} / {self.f_texts_len} ")
+                        pdf_path = await asyncio.to_thread(
+                            self.parser.download_pdf,
+                            paper.pdf_url,
+                            'temp_pdf_' + paper.title[:20]
+                        )
+                        # Extract text from PDF (blocking) in a thread.
+                        pdf_pages = await asyncio.to_thread(
+                            self.parser.extract_text_from_pdf,
+                            pdf_path
+                        )
+
+                        # Save extracted data to memory (this is async already).
+                        texts = [page['text'] for page in pdf_pages]
+                        self.all_texts_len += len(texts)
+                        # --- Apply Fuzzy & Semantic Filtering ---
+                        # Filter pages relevant to the current query.
+                        if self.nsrpq * self.max_search > 6_000:
+                            scaled_value = 11
+                        else:
+                            scaled_value = -4 + (self.nsrpq * self.max_search - 1) * (10 - (-4)) / (6_000 - 1)
+                        if scaled_value < -4:
+                            scaled_value = -4
+                        print("scaled_value", scaled_value)
+                        filtered_texts = filter_relevant_texts(
+                            query=query,
+                            texts=texts,
+                            fuzzy_threshold=int(70.0 + scaled_value),  # adjust as needed
+                            semantic_threshold=0.75 + (scaled_value/10),  # adjust as needed
+                            model=self.semantic_model  # reuse the preloaded model
+                        )
+                        self.f_texts_len += len(filtered_texts)
+
+                        # Save filtered extracted data to memory.
+
+                        self.send_status(f"Filtered {len(texts)} / {len(filtered_texts)}",
+                                         additional_info=paper.title)
+                        await self.tools.get_memory().add_data(memory_name=self.mem_name,
+                                                                 data=filtered_texts)
+                        # Update status with paper title
+                    except Exception as e:
+                        self.send_status("Error processing PDF",
+                                         additional_info=f"{paper.title}: {e}")
+                        continue
+                    # Update the progress for this query:
+                    # The PDF processing phase is 70% of the query’s portion.
+                    self._query_progress[i] = 0.3 + ((j + 1) / num_papers) * 0.7
+
+                return papers
+
+        # Launch all queries concurrently.
+        tasks = [asyncio.create_task(process_query(i, query)) for i, query in enumerate(queries)]
+        # Wait for all tasks to complete.
+        results = await asyncio.gather(*tasks, return_exceptions=False)
+        # Flatten the list of lists of papers.
+        for res in results:
+            all_papers.extend(res)
+
+        # Final status update.
+        self.send_status("Completed processing all papers", progress=1.0)
+        return all_papers
+
+    def send_status(self, step: str, progress: float = None, additional_info: str = ""):
+        """Send status update via callback."""
+        if progress is None:
+            progress = self._update_global_progress()
+        self.callback({
+            "step": step,
+            "progress": progress,
+            "info": additional_info
+        })
 
     def generate_queries(self) -> List[str]:
-        """Generate search queries based on the query"""
+        self.send_status("Generating search queries")
+        self.queries_generated = False
 
         class ArXivQueries(BaseModel):
             queries: List[str] = Field(..., description="List of ArXiv search queries (en)")
@@ -255,128 +389,113 @@ class ArXivPDFProcessor:
                 ArXivQueries,
                 f"Generate a list of precise ArXiv search queries to comprehensively address: {self.query}"
             )
+            queries = [self.query] + query_generator["queries"]
         except Exception:
-            self.nsrpq = self.nsrpq * self.max_search
-            return [self.query]
+            self.send_status("Error generating queries", additional_info="Using default query.")
+            queries = [self.query]
 
-        query_generator = [self.query] + query_generator["queries"]
-        return query_generator[:self.max_search]
+        if len(queries[:self.max_search]) > 0:
+            self.queries_generated = True
+        return queries[:self.max_search]
 
     def init_process_papers(self):
-        self.tools.get_memory().create_memory(self.mem_name)
-        self.callback({})
+        self.tools.get_memory().create_memory(self.mem_name, model_config={
+                "llm_model": "groq/gemma2-9b-it",
+                "embedding_model": "ollama/nomic-embed-text"
+            })
+        self.send_status("Memory initialized")
 
 
-    async def search_and_process_papers(self, queries: List[str]) -> List[Paper]:
-        """Search ArXiv, download PDFs, and process them in parallel batches."""
-        all_papers = []
-        lock = threading.Lock()
+    async def generate_insights(self, queries) -> dict:
+        self.send_status("Generating insights")
+        query = self.query
+        max_it = 0
+        results = {"sources": []}
+        while max_it < 3 and len(results.get("sources")) < 1:
+            max_it += 1
+            results = await self.tools.get_memory().query(query=query, memory_names=self.mem_name, query_params=QueryParam(mode="global"))
+            query = queries[min(len(queries)-1, max_it)]
 
-        async def process_query(query):
-            papers = search_papers(query, max_results=self.nsrpq)
-            with lock:
-                self.all_ref_papers += len(papers)
-
-            for paper in papers:
-                try:
-                    # Download PDF
-                    pdf_path = self.parser.download_pdf(paper.pdf_url, 'temp_pdf' + paper.title[:20])
-                    pdf_pages = self.parser.extract_text_from_pdf(pdf_path)
-                    if self.temp:
-                        os.remove(pdf_path)
-                except Exception as e:
-                    print(f"Error processing PDF {paper.pdf_url}: {e}")
-                    continue
-
-                #try:
-                print("Adding ", len(pdf_pages), " chunks to document ", self.mem_name)
-                await self.tools.get_memory().add_data(memory_name=self.mem_name, data=[page['text'] for page in pdf_pages])
-                #except ValueError as e:
-                #    print(f"Error processing PDF {paper.pdf_url}: {e}")
-                #    continue
-            return papers
-
-        for query_ in tqdm(queries, total=len(queries), desc="Processing queries"):
-            result = await process_query(query_)
-            all_papers.append(result)
-        # Use ThreadPoolExecutor for parallel processing
-        # with ThreadPoolExecutor() as executor:
-        #     future_to_query = {executor.submit(process_query, query): query for query in queries}
-
-        #     for future in tqdm(as_completed(future_to_query), total=len(queries), desc="Processing queries"):
-        #         query = future_to_query[future]
-        #         try:
-        #             result = future.result()
-        #             all_papers.append(result)
-        #         except Exception as e:
-        #             print(f"Error processing query '{query}': {e}")
-        return all_papers
-
-    async def generate_insights(self) -> dict:
-        """Generate insights using format_class"""
-        results = await self.tools.get_memory().directly(
-            query=self.query,
-            memory_names=self.mem_name,
-            mode="global",
-        )
-        if len(results) < 360:
-            results = await self.tools.get_memory().directly(
-                query=self.query,
-                memory_names=self.mem_name,
-                mode="naive",
-            )
-        """{
-                "answer": consolidated_answer,
-                "sources": [
-                    {"memory": name, "confidence": score, "content": text},
-                    ...
-                ]
-            }"""
-        print(results)
-        for r in results:
-            print(r)
-            self.callback(r)
+        self.insights_generated = True
+        self.send_status("Insights generated", progress=1.0)
         return results
 
-    async def extra_query(self, query, **kwargs):
-        results = await self.tools.get_memory().directly(
-            query=query,
-            memory_names=self.mem_name,
-            stream=True,
-            **kwargs
-        )
-        print(results)
-        for r in results:
-            print(r)
-            self.callback(r)
+    async def extra_query(self, query, query_params=None):
+        self.send_status("Processing follow-up query", progress=0.5)
+        results = await self.tools.get_memory().query(query=query, memory_names=self.mem_name, query_params=query_params)
+        self.send_status("Processing follow-up query Done", progress=1)
         return results
 
     def generate_mem_name(self):
-        return self.tools.get_agent_class("thinkm").mini_task(self.query, "user", "Unique name based on the user query for an memory instance. only the name nothing else!")
+        return self.tools.get_agent_class("thinkm").mini_task(self.query, "user",
+                                                              "Generate a unique memory name based on the user query. only return the name nothing else!")
 
     def initialize(self, session_id):
         self.current_session = session_id
-        self.mem_name = self.generate_mem_name() + '_' +session_id
+        self.mem_name = self.generate_mem_name().strip().replace("\n", '') + '_' + session_id
         self.init_process_papers()
+        self.insights_generated = False
+        self.queries_generated = False
 
     async def process(self, query=None) -> Tuple[List[Paper], dict]:
-        """Main processing method"""
-        if query is not None:
+        if query:
             self.query = query
+        self.send_status("Starting research process")
         t0 = time.process_time()
+        self.initialize(self.s_id)
+
         queries = self.generate_queries()
+
         papers = await self.search_and_process_papers(queries)
-        print("DOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOONNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN"*12)
-        res = await self.generate_insights()
-        print(f"Total Presses Time: {time.process_time()-t0:.2f}\nTotal papers Analysed : {len(papers)}/{self.all_ref_papers}")
-        return papers, res
+
+        insights = await self.generate_insights(queries)
+
+        elapsed_time = time.process_time() - t0
+        self.send_status("Process complete", progress=1.0,
+                         additional_info=f"Total time: {elapsed_time:.2f}s, Papers analyzed: {len(papers)}/{self.all_ref_papers}")
+
+        return papers, insights
+
+    @staticmethod
+    def estimate_processing_metrics(query_length: int, **config) -> (float, float):
+        """Return estimated time (seconds) and price for processing."""
+        total_papers = config['max_search'] * config['num_search_result_per_query']
+        median_text_length = 100000  # 10 pages * 10000 characters
+
+        # Estimated chunks to process
+        total_chunks = total_papers * (median_text_length / config['chunk_size'])
+        processed_chunks = total_chunks * 0.3
+
+        # Time estimation (seconds)
+        processing_time_per_chunk = .5  # Hypothetical time per chunk in seconds
+        estimated_time = (
+            (processed_chunks * processing_time_per_chunk)
+        )
+
+        # Add fixed time components (hypothetical values)
+        estimated_time += total_papers * 2.0  # Download time
+        estimated_time += total_papers * 1.1  # Insights time
+
+        price_per_t_chunk = 0.08
+
+        if total_papers > 10:
+            price_per_t_chunk = 0.2
+        if total_papers > 100:
+            price_per_t_chunk = 0.6
+        if total_papers > 1000:
+            price_per_t_chunk = 1.2
+
+        estimated_price = processed_chunks * (price_per_t_chunk / 1_000)
+
+        # estimated_price = 0 if query_length < 420 and estimated_price < 5 else estimated_price
+        return round(estimated_time, 2), round(estimated_price, 4)
 
 async def main(query: str = "Beste strategien in bretspielen sitler von katar"):
     """Main execution function"""
     with Spinner("Init Isaa"):
         tools = get_app("ArXivPDFProcessor", name=None).get_mod("isaa")
         tools.init_isaa(build=True)
-    processor = ArXivPDFProcessor(query, tools=tools, limiter=0.5)
+    processor = ArXivPDFProcessor(query, tools=tools)
     papers, insights = await processor.process()
 
     print("Generated Insights:", insights)

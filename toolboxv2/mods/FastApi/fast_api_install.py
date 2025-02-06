@@ -33,6 +33,8 @@ async def generate_download_zip(websocket: WebSocket):
     data = await websocket.receive_json()
     if isinstance(data, str):
         data = json.loads(data)
+
+    ClientInfos = {'os': data.get('os', 'None')}
     app = get_app("Instalelr_for_user")
     """
     {
@@ -109,17 +111,8 @@ async def generate_download_zip(websocket: WebSocket):
 
     await ws_send("Data crated successfully:", websocket=websocket)
     # Senden des Download-Links als letzte Nachricht
-    await ws_send(f"Data: {installation_data}", websocket=websocket)
+    await ws_send(f"Data: {json.dumps(installation_data, indent=2)}", websocket=websocket)
 
-    ClientInfos = await websocket.receive_json()
-    """{
-            userAgent: navigator.userAgent,
-            platform: navigator.platform,
-            browser: '',
-            browserVersion: '',
-            os: '',
-            osVersion: ''
-    }"""
     urls = []
     for mods_data in installation_data["mods"]:
         urls.append(mods_data.get('url'))

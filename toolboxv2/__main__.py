@@ -628,7 +628,7 @@ async def command_runner(tb_app, command, **kwargs):
         tb_app.print_functions()
         tb_app.print(
             "minimum command length is 2 {module_name} {function_name} optional args... Com^C to exit")
-        return await tb_app.idle()
+        return await tb_app.a_idle()
 
     tb_app.print(f"Running command: {' '.join(command)} {kwargs}")
     call = CallingObject().empty()

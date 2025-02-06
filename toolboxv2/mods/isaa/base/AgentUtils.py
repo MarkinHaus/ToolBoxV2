@@ -13,12 +13,15 @@ from typing import List, Optional, Dict, Any, Union, Tuple
 import numpy as np
 import requests
 import tiktoken
+
 from litellm import token_counter, acompletion
 from pebble import concurrent
 
 from toolboxv2 import Style, get_logger, Singleton
 from toolboxv2 import get_app
 from langchain_text_splitters import CharacterTextSplitter
+
+from toolboxv2.mods.isaa.extras.adapter import litellm_complete
 
 
 def dilate_string(text, split_param, remove_every_x, start_index):
@@ -649,7 +652,7 @@ from litellm import completion
 class AISemanticMemory(metaclass=Singleton):
     def __init__(self,
                  base_path: str = "/semantic_memory",
-                 default_model: str = os.getenv("DEFAULTMODEL1"),
+                 default_model: str = "groq/gemma2-9b-it",
                  default_embedding_model: str = os.getenv("DEFAULTMODELEMBEDDING"),
                  default_kv_storage: str = "JsonKVStorage",
                  default_vector_storage: str = "NanoVectorDBStorage",
@@ -665,12 +668,13 @@ class AISemanticMemory(metaclass=Singleton):
             default_vector_storage: Default vector storage backend
             default_graph_storage: Default graph storage backend
         """
-        self.base_path = os.path.join(os.getcwd(), ".data" ,base_path.strip("/"))
+        self.base_path = os.path.join(os.getcwd(), ".data" ,base_path)
         self.memories: Dict[str, LightRAG] = {}
         self.default_config = {
             "llm_model_func": self._litellm_wrapper(default_model),
+            "llm_model_name": default_model,
             "embedding_func": EmbeddingFunc(
-                embedding_dim=1536,
+                embedding_dim=768,
                 max_token_size=8192,
                 func=self._embedding_wrapper(default_embedding_model)
             ),
@@ -686,19 +690,25 @@ class AISemanticMemory(metaclass=Singleton):
 
     def _litellm_wrapper(self, model: str) -> callable:
         """Wrap LiteLLM completion for LightRAG"""
-        async def llm_func(prompt: str, **kwargs) -> str:
-            if prompt.strip("MANY entities were missed in the last extraction.  Add them below using the same format:"):
-                return ""
-            response = await get_app().get_mod("isaa").get_agent_class("self").a_mini_task(prompt)
-            return response
 
-        return llm_func
+        if "ollama" in model:
+            from lightrag.llm.ollama import ollama_model_complete
+            from lightrag.llm.openai import openai_complete
+            return ollama_model_complete
+
+        return litellm_complete
 
     def _embedding_wrapper(self, model: str) -> callable:
         """Wrap LiteLLM embeddings for LightRAG"""
 
+        if "ollama" in model:
+            from lightrag.llm.ollama import ollama_embedding
+            return lambda texts: ollama_embedding(
+                texts,
+                embed_model="nomic-embed-text:latest"
+            )
+
         async def embedding_func(texts: List[str], **kwargs):
-            print("Embedding", len(texts))
             res = await litellm.aembedding(
                 model=model,
                 input=texts,
@@ -716,6 +726,12 @@ class AISemanticMemory(metaclass=Singleton):
         if len(name) < 3:
             name += "Z" * (3 - len(name))
         return name
+
+    def get_memory_base(self, name):
+        sanitized = self._sanitize_name(name)
+        if sanitized not in self.memories:
+            return None
+        return os.path.join(self.base_path, sanitized)
 
     def create_memory(self,
                       name: str,
@@ -827,7 +843,7 @@ class AISemanticMemory(metaclass=Singleton):
         except Exception as e:
             raise RuntimeError(f"KG insert failed: {str(e)}")
 
-    def query(self,
+    async def query(self,
               query: str,
               memory_names: Optional[Union[str, List[str]]] = None,
               query_params: Optional[QueryParam] = None,
@@ -850,17 +866,20 @@ class AISemanticMemory(metaclass=Singleton):
                 ]
             }
         """
-        query_params = query_params or QueryParam(mode="naive")
+        if query_params is None:
+            query_params = QueryParam(mode="naive")
+
         targets = self._get_target_memories(memory_names)
 
         results = []
         for name, rag in targets:
             try:
-                result = rag.query(query, param=query_params)
+                result = await rag.aquery(query, param=query_params)
+                print("MEMORY result :", result)
                 results.append({
                     "memory": name,
                     "result": result,
-                    "embedding": self._get_embedding(result["answer"])
+                    # "embedding": self._get_embedding(result["answer"])
                 })
             except Exception as e:
                 print(f"Query failed on {name}: {str(e)}")
@@ -894,15 +913,24 @@ class AISemanticMemory(metaclass=Singleton):
     def _consolidate_results(self, results, threshold, to_str=False):
         """Advanced consensus algorithm with embedding similarity"""
         if not results:
-            return {"answer": "No relevant information found", "sources": []}
+            return {"answer": "No relevant information found ", "sources": [results]}
 
         if len(results) == 1:
+            if isinstance(results[0]["result"], str):
+                return {
+                    "answer": results[0]["result"],
+                    "sources": [{
+                        "memory": results[0]["memory"],
+                        "confidence": 1.0,
+                        "content": results[0]["result"]
+                    }]
+                }
             return {
                 "answer": results[0]["result"]["answer"],
                 "sources": [{
                     "memory": results[0]["memory"],
                     "confidence": 1.0,
-                    "content": results[0]["result"]["context"]
+                    "content": results[0]["result"].get("context")
                 }]
             }
 

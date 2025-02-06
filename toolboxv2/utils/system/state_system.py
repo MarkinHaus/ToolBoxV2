@@ -198,7 +198,7 @@ def get_state_from_app(app, simple_core_hub_url="https://simplecore.app/",
 
 if __name__ == "__main__":
     # Provide the directory to search for Python files
-    app = get_app()
+    app = get_app('state.system')
     app.load_all_mods_in_file()
     state = get_state_from_app(app)
     print(state)

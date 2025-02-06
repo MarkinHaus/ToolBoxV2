@@ -143,6 +143,12 @@ export default {
       filename: './web/dashboards/dashboard.html',
       chunks: ['main']
     }),
+      // For Apps
+    new HtmlWebpackPlugin({
+      template: './web/mainContent.html',
+      filename: './web/mainContent.html',
+      chunks: ['main']
+    }),
     // For helper.js
     new HtmlWebpackPlugin({
       template: './helper.html',
@@ -173,6 +179,7 @@ export default {
              '**/web/assets/401.html',
              '**/web/assets/m_log_in.html',
              '**/web/assets/logout.html',
+             '**/web/mainContent.html',
              '**/web/dashboards/dashboard.html',
              '**/web/dashboards/user_dashboard.html',
              '**/web/assets/login.html',

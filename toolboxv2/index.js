@@ -833,7 +833,7 @@ function linksInit(){
     let linksContent =  `<div class="links-form" >
             <ul>
                 <li><a href="/">Home</a></li>
-                <li><a href="/web/dashboard">Dashboard</a></li>
+                <li><a href="/web/mainContent.html">Apps</a></li>
                 <hr style="margin: -0.25vh 0"/>
                 <li><a href="/web/login">Login</a></li>
                 <li><a href="/web/signup">Sign Up</a></li>
@@ -889,3 +889,143 @@ function linksInit(){
     });
 
 }
+
+
+setTimeout((function() {
+  const STORAGE_KEY = 'cookieConsent';
+  const savedSettings = localStorage.getItem(STORAGE_KEY);
+
+  if (savedSettings) {
+    const { analytics, mode } = JSON.parse(savedSettings);
+    if (analytics) initPosthog(mode);
+    return;
+  }
+
+  // Create minimalist banner
+  const banner = document.createElement('div');
+  banner.id = 'cookie-banner';
+  banner.innerHTML = `
+    <h3>We value your privacy.</h3>
+    </p> Data is keep privat!</p>
+    <button id="accept-minimal" style="padding: 12px">Continue</button><label for="accept-minimal">Recommended</label>
+     <h4>Cookies Configuration</h4>
+    <button id="show-complex" style="margin-left:8px; padding: 6px; text-decoration:underline">
+      Options
+    </button><label for="show-complex">Advanced</label>
+  `;
+  document.body.appendChild(banner);
+
+  // Complex modal structure
+  const modal = document.createElement('div');
+  modal.id = 'cookie-modal';
+  modal.innerHTML = `
+    <div class="modal-screen active" data-step="1">
+      <h3>Enhanced Privacy Controls</h3>
+      <div class="complex-option" data-action="accept">
+        <h4>Optimal Experience (Recommended)</h4>
+        <p>Allow all features for full functionality</p>
+      </div>
+      <div class="complex-option" data-action="customize">
+        <h4>Custom Configuration</h4>
+        <p>Disable Profile Analytics</p>
+        <p>Disable Analytics</p>
+      </div>
+    </div>
+
+    <div class="modal-screen" data-step="2">
+      <h3>Technical Preferences</h3>
+      <p>Essential features cannot be disabled</p>
+
+      <div class="complex-option" onclick="this.classList.toggle('selected')">
+        <h4>Performance Analytics</h4>
+        <p>Disabling may impact site optimization</p>
+        <p>click to enable disable</p>
+      </div>
+      <input type="checkbox" class="hidden-toggle">
+
+      <p>Continue without Profile Analytics</p>
+
+      <div style="margin-top:2rem">
+        <button id="showScreen-1" style="padding: 8px">Back</button>
+        <button id="finalize-settings" style="padding: 6px">Continue</button>
+      </div>
+    </div>
+
+    <div class="modal-screen" data-step="3">
+      <h3>Confirm Your Selection</h3>
+      <p>By disabling enhanced features, you may experience:</p>
+      <ul>
+        <li>Reduced personalization</li>
+        <li>Limited functionality</li>
+        <li>No Profile Analytics</li>
+        <li>No Analytics</li>
+      </ul>
+      <button  id="showScreen-2" style="padding: 6px">Modify Choices</button>
+      <button id="confirm-complex" style="padding: 8px">Accept Limitations</button>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  // Interaction handlers
+  document.getElementById('accept-minimal').addEventListener('click', () => {
+    saveSettings(true, 'always');
+    banner.remove();
+  });
+
+  document.getElementById('show-complex').addEventListener('click', () => {
+    modal.style.display = 'block';
+    showScreen(1);
+  });
+
+  modal.addEventListener('click', e => {
+    const option = e.target.closest('.complex-option');
+    if (!option) return;
+
+    const action = option.dataset.action;
+    if (action === 'accept') {
+      saveSettings(true, 'always');
+      modal.style.display = 'none';
+      banner.remove();
+    }
+    if (action === 'customize') showScreen(2);
+  });
+
+  document.getElementById('finalize-settings').addEventListener('click', () => {
+    const analyticsEnabled = !!modal.querySelector('.selected');
+    if (analyticsEnabled) showScreen(3);
+    else {
+      saveSettings(true, 'identified_only');
+      modal.style.display = 'none';
+      banner.remove();
+    }
+  });
+
+  document.getElementById('showScreen-1').addEventListener('click', () => {
+   showScreen(1)
+  });
+  document.getElementById('showScreen-2').addEventListener('click', () => {
+   showScreen(2)
+  });
+
+  document.getElementById('confirm-complex').addEventListener('click', () => {
+    saveSettings(false, 'none');
+    modal.style.display = 'none';
+    banner.remove();
+  });
+
+  function showScreen(step) {
+    modal.querySelectorAll('.modal-screen').forEach(screen => {
+      screen.classList.toggle('active', screen.dataset.step == step);
+    });
+  }
+
+  function saveSettings(analytics, mode) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ analytics, mode }));
+    if (analytics) initPosthog(mode);
+  }
+
+  function initPosthog(mode) {
+    !function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="init capture register register_once register_for_session unregister unregister_for_session getFeatureFlag getFeatureFlagPayload isFeatureEnabled reloadFeatureFlags updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures on onFeatureFlags onSessionId getSurveys getActiveMatchingSurveys renderSurvey canRenderSurvey getNextSurveyStep identify setPersonProperties group resetGroups setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags reset get_distinct_id getGroups get_session_id get_session_replay_url alias set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException loadToolbar get_property getSessionProperty createPersonProfile opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing clear_opt_in_out_capturing debug getPageViewId".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
+    posthog.init('phc_pS5UW6EXAXg0KTYNWBstKNYoGPfWejZCbd8JLAAU7Gq', {api_host: 'https://us.i.posthog.com', person_profiles: mode});
+  }
+}), 2100)

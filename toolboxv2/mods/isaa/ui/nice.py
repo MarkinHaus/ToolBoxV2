@@ -113,7 +113,7 @@ class IsaaWebSocketUI(metaclass=Singleton):
             def get_callback(agent_name_):
                 def helper(response_chunk, *a, **k):
                     try:
-                        return get_app().run_a_from_sync(self._send_stream_update, *[client_id,
+                        return get_app('nice.get_callback.helper').run_a_from_sync(self._send_stream_update, *[client_id,
                                                                                      response_chunk,
                                                                                      agent_name_])
                     except Exception as e:
@@ -1112,7 +1112,7 @@ window.onload = () => new EnhancedChat();
         return template.replace("$agent_options", agent_options)
 
 
-export = get_app().tb
+export = get_app('nice.export').tb
 
 from fastapi import Request
 
@@ -1121,7 +1121,7 @@ from fastapi import Request
 @export(mod_name="isaa", request_as_kwarg=True, level=1, api=True,
         name="handle_websocket_audio", row=True)
 async def chat_websocket(websocket: WebSocket, spec: str = "main"):
-    chat_widget = IsaaWebSocketUI(get_app().get_mod("isaa", spec=spec))
+    chat_widget = IsaaWebSocketUI(get_app('chat.websocket').get_mod("isaa", spec=spec))
     # await chat_widget.handle_websocket_audio(websocket)
 
 
@@ -1129,7 +1129,7 @@ async def chat_websocket(websocket: WebSocket, spec: str = "main"):
 @export(mod_name="isaa", request_as_kwarg=True, level=1, api=True,
         name="chat_websocket", row=True)
 async def chat_websocket(websocket: WebSocket, spec: str = "main"):
-    chat_widget = IsaaWebSocketUI(get_app().get_mod("isaa", spec=spec))
+    chat_widget = IsaaWebSocketUI(get_app('chat.websocket').get_mod("isaa", spec=spec))
     await chat_widget.handle_websocket_chat(websocket)
 
 
@@ -1139,7 +1139,7 @@ async def main_web_isaa_entry(request: Request or None = None):
     if request is None:
         return
     spec = get_spec(request).get(default="main-demo")
-    chat_widget = IsaaWebSocketUI(get_app().get_mod("isaa", spec=spec))
+    chat_widget = IsaaWebSocketUI(get_app('chat.main_web_isaa_entry').get_mod("isaa", spec=spec))
     content = chat_widget.get_widget()
     content = content.replace("/handle_websocket_audio", "/handle_websocket_audio?spec=" + spec)
     content = content.replace("/chat_websocket", "/chat_websocket?spec=" + spec)

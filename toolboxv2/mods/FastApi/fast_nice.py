@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from mockito import kwargs
 from nicegui import app as nicegui_app, ui
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -16,6 +17,18 @@ from starlette.responses import RedirectResponse
 from toolboxv2 import Singleton, get_app
 from toolboxv2.utils.extras.base_widget import get_user_from_request, get_spec, get_s_id
 from toolboxv2.utils.system.session import RequestSession
+from typing import List, Dict
+from dataclasses import dataclass, asdict
+import json
+
+@dataclass
+class UIEndpoint:
+    path: str
+    title: str
+    description: str = ""
+    show: bool = True
+    only_valid: bool = False
+    only_root: bool = False
 
 
 class NiceGUIManager(metaclass=Singleton):
@@ -30,6 +43,7 @@ class NiceGUIManager(metaclass=Singleton):
         self.registered_guis: Dict[str, Dict[str, Any]] = {}
         self.ws_connections: Dict[str, Dict[str, WebSocket]] = {}
         self.mount_path = "/gui"
+        self.endpoints: List[UIEndpoint] = []
 
         self.helper_contex = open("./dist/helper.html", "r", encoding="utf-8").read()
 
@@ -38,6 +52,22 @@ class NiceGUIManager(metaclass=Singleton):
         # Add WebSocket endpoint
         self.app.websocket("/ws/{session_id}/{gui_id}")(self.websocket_endpoint)
         self._setup_admin_gui()
+        self._setup_endpoints_api()
+
+    def _setup_endpoints_api(self):
+        @self.app.get("/api/ui-endpoints")
+        def get_ui_endpoints(request: Request) -> List[Dict]:
+            def _(endpoint):
+                add_true = True
+                if endpoint.only_valid:
+                    add_true = request.session['valid']
+
+                if add_true and endpoint.only_root:
+                    add_true = request.session.get('live_data', {}).get('user_name') == 'root'
+                return add_true
+            return [{"path": endpoint.path,
+    "title": endpoint.title,
+    "description": endpoint.description} for endpoint in self.endpoints if endpoint.show and _(endpoint)]
 
     def _setup_admin_gui(self):
         """Setup the admin GUI interface"""
@@ -68,7 +98,7 @@ class NiceGUIManager(metaclass=Singleton):
                     with ui.tab_panel('System Status'):
                         self._show_system_status()
 
-        self.register_gui("admin", admin_gui, "/admin")
+        self.register_gui("admin", admin_gui, "/admin", only_root=True)
 
     def _show_registered_guis(self):
         """Show list of registered GUIs with management options"""
@@ -84,7 +114,7 @@ class NiceGUIManager(metaclass=Singleton):
                         ui.label(f'Created: {created_at}')
 
                         with ui.row().classes('gap-2').style("background-color: var(--background-color) !important"):
-                            ui.button('View', on_click=lambda g=gui_info['path']: ui.navigate(g))
+                            ui.button('View', on_click=lambda g=gui_info['path']: ui.navigate.to(g))
                             ui.button('Remove', on_click=lambda g=gui_id: self._handle_gui_removal(g))
                             ui.button('Restart', on_click=lambda g=gui_id: self._handle_gui_restart(g))
 
@@ -122,7 +152,7 @@ class NiceGUIManager(metaclass=Singleton):
                     )
 
                     ui.notify('GUI added successfully')
-                    ui.navigate(f'{self.mount_path}/admin')  # Refresh page
+                    ui.navigate.to(f'admin')  # Refresh page
                 except Exception as e:
                     ui.notify(f'Error adding GUI: {str(e)}', color='negative')
 
@@ -144,7 +174,7 @@ class NiceGUIManager(metaclass=Singleton):
             ui.label(f'Memory Usage: {memory_usage:.2f} MB')
 
             # Add refresh button
-            ui.button('Refresh Stats', on_click=lambda: ui.navigate(f'{self.mount_path}/admin'))
+            ui.button('Refresh Stats', on_click=lambda: ui.navigate.to(f'/admin'))
 
     def _handle_gui_removal(self, gui_id: str):
         """Handle GUI removal with confirmation"""
@@ -152,7 +182,7 @@ class NiceGUIManager(metaclass=Singleton):
         def confirm_remove():
             if self.remove_gui(gui_id):
                 ui.notify(f'GUI {gui_id} removed successfully')
-                ui.navigate(f'{self.mount_path}/admin')  # Refresh page
+                ui.navigate.to(f'/admin')  # Refresh page
             else:
                 ui.notify('Error removing GUI', color='negative')
 
@@ -182,9 +212,10 @@ class NiceGUIManager(metaclass=Singleton):
             print(f"Error loading styles: {e}")
             return ""
 
-    def register_gui(self, gui_id: str, setup_func: Callable, mount_path: Optional[str] = None, additional: Optional[str] = None) -> None:
+    def register_gui(self, gui_id: str, setup_func: Callable, mount_path: Optional[str] = None, additional: Optional[str] = None, title: Optional[str] = None , description: Optional[str] = None, **kwargs) -> None:
         """Register a new NiceGUI application"""
         path = mount_path or f"/{gui_id}"
+        self.endpoints.append(UIEndpoint(path=self.mount_path+path, title=title if title is not None else path.replace('/', '') , description=description if description is not None else '', **kwargs))
         if additional is None:
             additional = ""
 
@@ -369,6 +400,8 @@ dark_mode
             return await callN()
         if "_nicegui" in request.url.path and "codehilite" in request.url.path:
             return await callN()
+        if "_nicegui" in request.url.path and "libraries" in request.url.path:
+            return await callN()
 
         if "open" in request.url.path:
             return await callN()
@@ -404,9 +437,9 @@ def create_nicegui_manager(app: FastAPI, token_secret: Optional[str] = None) -> 
     return manager
 
 
-def register_nicegui(gui_id: str, setup_func: Callable, mount_path: Optional[str] = None, additional: Optional[str] = None) -> None:
+def register_nicegui(gui_id: str, setup_func: Callable, mount_path: Optional[str] = None, additional: Optional[str] = None, **kwargs) -> None:
     if not manager_online[0]:
         print("NO FAST API RUNNING")
         return
     print("ADDED GUI:", gui_id)
-    return NiceGUIManager().register_gui(gui_id, setup_func, mount_path, additional=additional)
+    return NiceGUIManager().register_gui(gui_id, setup_func, mount_path, additional=additional, **kwargs)

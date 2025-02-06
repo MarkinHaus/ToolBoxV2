@@ -164,7 +164,7 @@ async def upload_audio_isaa_context(websocket: WebSocket):
             audio_data: bytes = await websocket.receive_bytes()
             text = talk_generate(audio_data)['text']
             print(text)
-            text = get_app().run_any(TBEF.ISAA.MINI_TASK, mini_task=f"{text}",
+            text = get_app('talk.upload_audio_isaa_context').run_any(TBEF.ISAA.MINI_TASK, mini_task=f"{text}",
                                      mode=None, fetch_memory=True, all_mem=True)
             print(text)
             audio_data: bytes = app.run_any(TBEF.AUDIO.SPEECH, voice_index=0,
