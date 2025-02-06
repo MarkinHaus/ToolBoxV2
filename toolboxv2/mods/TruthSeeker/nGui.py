@@ -787,7 +787,7 @@ def create_research_interface(Processor):
             insights = data.get("insights", [])
             if save:
                 history_entry = data.copy()
-                history_entry['papers'] = [asdict(paper) for paper in papers]
+                history_entry['papers'] = [paper.model_dump_json() for paper in papers]
                 if processor_instance is not None and processor_instance['instance'] is not None:
                     history_entry["mam_name"] = processor_instance['instance'].mem_name
                     history_entry["query"] = processor_instance['instance'].query
