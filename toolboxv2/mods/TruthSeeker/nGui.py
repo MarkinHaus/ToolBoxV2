@@ -392,7 +392,7 @@ def get_user_state(session_id: str) -> dict:
 def save_user_state(session_id: str, state: dict):
     db = get_db()
     print("Saving state")
-    db.set(f"TruthSeeker::session:{session_id}", state).print()
+    db.set(f"TruthSeeker::session:{session_id}", json.dumps(state).encode('utf-8')).print()
 
 def reset_daily_balance(state: dict, valid=False) -> dict:
     now = datetime.utcnow()
