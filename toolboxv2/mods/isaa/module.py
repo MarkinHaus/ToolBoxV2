@@ -14,7 +14,7 @@ from typing import Optional, List, Dict, Callable
 import requests
 import torch
 from langchain_experimental.tools import PythonREPLTool
-from litellm.utils import function_to_dict
+
 from pydantic import BaseModel
 
 from tqdm import tqdm
@@ -575,6 +575,7 @@ class Tools(MainTool, FileHandler):
             if parameters is None:
 
                 try:
+                    from litellm.utils import function_to_dict
                     parameters = function_to_dict(func)["parameters"]["properties"]
                 except:
                     parameters = {}
@@ -1351,13 +1352,18 @@ class Tools(MainTool, FileHandler):
         return self.get_agent_class("self").mini_task(summary_prompt)
 
 
-    def get_memory(self) -> AISemanticMemory:
+    def get_memory(self, name: Optional[str]=None) -> AISemanticMemory:
         logger = get_logger()
         if isinstance(self.agent_memory, str):
             logger.info(Style.GREYBG(f"AISemanticMemory Initialized"))
             self.agent_memory = AISemanticMemory(base_path=self.agent_memory)
         logger.info(Style.GREYBG(f"AIContextMemory requested"))
         cm = self.agent_memory
+        if name is not None:
+            r = cm.get(name)
+            if len(r) == 1:
+                return r[0]
+            return r
         logger.info(Style.Bold(f"AISemanticMemory instance, returned"))
         return cm
 

@@ -37,8 +37,8 @@ Usage:
 """
 
 __version__ = "1.0.0"
-__author__ = "Lightrag Team"
-__status__ = "Production"
+__author__ = "Markin Hausmanns"
+__status__ = "Demo"
 
 import sys
 import os
@@ -124,15 +124,18 @@ async def litellm_complete_if_cache(
     logger.debug(f"System prompt: {system_prompt}")
     logger.debug("Full context:")
 
-    print(kwargs)
     # Depending on the response format, choose the appropriate API call
     if "response_format" in kwargs:
         response = await acompletion(
-            model=model, messages=messages, fallbacks=os.getenv("FALLBACKS_MODELS", '').split(','), **kwargs
+            model=model, messages=messages,
+            fallbacks=os.getenv("FALLBACKS_MODELS", '').split(','),
+            **kwargs
         )
     else:
         response = await acompletion(
-            model=model, messages=messages, fallbacks=os.getenv("FALLBACKS_MODELS", '').split(','), **kwargs
+            model=model, messages=messages,
+            fallbacks=os.getenv("FALLBACKS_MODELS", '').split(','),
+            **kwargs
         )
 
     # Check if the response is a streaming response (i.e. an async iterator)
@@ -152,13 +155,15 @@ async def litellm_complete_if_cache(
     else:
         # Non-streaming: extract and return the full content string
         content = response.choices[0].message.content
+        if content is None:
+            content = response.choices[0].message.tool_calls[0].function.arguments
         if r"\u" in content:
             content = safe_unicode_decode(content.encode("utf-8"))
         return content
 
 
 async def litellm_complete(
-    prompt, system_prompt=None, history_messages=None, keyword_extraction=False, **kwargs
+    prompt, system_prompt=None, history_messages=None, keyword_extraction=False,model_name = "groq/gemma2-9b-it", **kwargs
 ) -> Union[str, AsyncIterator[str]]:
     """
     Public completion interface using the model name specified in the global configuration.
@@ -170,7 +175,8 @@ async def litellm_complete(
     keyword_extraction_flag = kwargs.pop("keyword_extraction", None)
     if keyword_extraction_flag:
         kwargs["response_format"] = "json"
-    model_name = kwargs["hashing_kv"].global_config["llm_model_name"]
+     # kwargs["hashing_kv"].global_config["llm_model_name"]
+
     return await litellm_complete_if_cache(
         model_name,
         prompt,
@@ -188,17 +194,15 @@ async def litellm_complete(
 )
 async def litellm_embed(
     texts: list[str],
-    model: str = "text-embedding-3-small",
+    model: str = "gemini/text-embedding-004",
     base_url: str = None,
     api_key: str = None,
 ) -> np.ndarray:
     """
     Generates embeddings for the given list of texts using LiteLLM.
     """
-    if api_key:
-        os.environ["LITELLM_API_KEY"] = api_key
-
     response = await litellm.aembedding(
-        model=model, input=texts, encoding_format="float"
+        model=model, input=texts,
+        # encoding_format="float"
     )
     return np.array([dp.embedding for dp in response.data])

@@ -231,16 +231,10 @@ def get_tools():
 
 def create_graph_tab(memory, processor_instance, summary_content, analysis_content, ui_main):
     # Load GraphML file
-    if processor_instance is None or processor_instance[
-        "instance"] is None:
+    if processor_instance is None or processor_instance["instance"] is None:
         return
-    graph_path = Path(memory.get_memory_base(processor_instance[
-        "instance"].mem_name)) / "graph_chunk_entity_relation.graphml"
 
-    if not graph_path.exists():
-        ui.label("Error finding graph file")
-        return
-    G = nx.read_graphml(graph_path)
+    G = processor_instance["instance"].tools.get_memory(processor_instance["instance"].mem_name).concept_extractor.concept_graph.convert_to_networkx()
 
     # Precompute layouts
     pos_2d = nx.spring_layout(G, dim=2, seed=42)
@@ -533,8 +527,7 @@ def create_research_interface(Processor):
                     # Update Ergebnisse in der GUI
                     update_results({
                         "papers": papers,
-                        "summary": insights.get("answer", "Keine Zusammenfassung erhalten."),
-                        "insights": insights.get("sources", [])
+                        "insights": insights
                     })
                     with main_ui:
                         research_card.visible = True
@@ -782,9 +775,15 @@ def create_research_interface(Processor):
 
         def update_results(data: dict, save=True):
             nonlocal summary_content, analysis_content, references_content, results_card, followup_card
+
+            # Handle papers (1-to-1 case)
             papers = data.get("papers", [])
-            summary = data.get("summary", "")
+            if not isinstance(papers, list):
+                papers = [papers]
+
+            # Get insights
             insights = data.get("insights", [])
+
             if save:
                 history_entry = data.copy()
                 history_entry['papers'] = [paper.model_dump_json() for paper in papers]
@@ -795,12 +794,22 @@ def create_research_interface(Processor):
                 save_user_state(session_id, state)
             else:
                 papers = [Paper(**paper) for paper in papers]
+
             with main_ui:
                 progress_card.visible = False
-                # Zusammenfassung
-                summary_content.set_content(f"# Research Summary\n\n{summary}")
 
-                # Analyse: Hier werden die Inhalte der Quellen als Liste dargestellt.
+                # Build summary from insights
+                summaries = []
+                for insight in insights:
+                    if 'result' in insight and 'summary' in insight['result']:
+                        main_summary = insight['result']['summary'].get('main_summary', '')
+                        if main_summary:
+                            summaries.append(main_summary)
+
+                summary_text = "\n\n".join(summaries) if summaries else "No summary available."
+                summary_content.set_content(f"# Research Summary\n\n{summary_text}")
+
+                # Analysis section (unchanged if processor details haven't changed)
                 if processor_instance["instance"] is not None:
                     inst = processor_instance["instance"]
                     analysis_md = (
@@ -819,24 +828,59 @@ def create_research_interface(Processor):
                         f"- **final_texts_len:** {inst.f_texts_len}\n"
                         f"- **num_workers:** {inst.num_workers}"
                     )
-
-                    # Set the markdown content
                     analysis_content.set_content(analysis_md)
 
-                # Referenzen: Falls Paper-Objekte Attribute wie title oder relevance besitzen
-                references_md = "# Referenzen\n" + "\n".join(
+                # References and Insights section
+                references_md = "# References\n"
+                # Add papers
+                references_md += "\n".join(
                     f"- ({i}) {getattr(paper, 'title', 'Unknown Title')} *{getattr(paper, 'pdf_url', 'Unknown URL')}*"
                     for i, paper in enumerate(papers)
-                )+ "# Summarys\n"+"\n".join(
-                    f"- ({i}) {getattr(paper, 'summary', 'Unknown summary')}"
-                    for i, paper in enumerate(papers)
-                )+"\n".join(
-                    f"- ({i}) insight: {insight}"
-                    for i, insight in enumerate(insights)
                 )
+
+                # Add detailed insights
+                references_md += "\n\n# Insights\n"
+                for i, insight in enumerate(insights):
+                    result = insight.get('result', {})
+                    summary = result.get('summary', {})
+
+                    # Main summary
+                    references_md += f"\n## Insight {i + 1}\n"
+                    references_md += f"### Main Summary\n{summary.get('main_summary', 'No summary available.')}\n"
+
+                    # Concept Analysis
+                    concept_analysis = summary.get('concept_analysis', {})
+                    if concept_analysis:
+                        references_md += "\n### Concept Analysis\n"
+                        references_md += "#### Key Concepts\n- " + "\n- ".join(
+                            concept_analysis.get('key_concepts', [])) + "\n"
+                        references_md += "\n#### Relationships\n- " + "\n- ".join(
+                            concept_analysis.get('relationships', [])) + "\n"
+                        references_md += "\n#### Importance Hierarchy\n- " + "\n- ".join(
+                            concept_analysis.get('importance_hierarchy', [])) + "\n"
+
+                    # Topic Insights
+                    topic_insights = summary.get('topic_insights', {})
+                    if topic_insights:
+                        references_md += "\n### Topic Insights\n"
+                        references_md += "#### Primary Topics\n- " + "\n- ".join(
+                            topic_insights.get('primary_topics', [])) + "\n"
+                        references_md += "\n#### Cross References\n- " + "\n- ".join(
+                            topic_insights.get('cross_references', [])) + "\n"
+                        references_md += "\n#### Knowledge Gaps\n- " + "\n- ".join(
+                            topic_insights.get('knowledge_gaps', [])) + "\n"
+
+                    # Relevance Assessment
+                    relevance = summary.get('relevance_assessment', {})
+                    if relevance:
+                        references_md += "\n### Relevance Assessment\n"
+                        references_md += f"- Query Alignment: {relevance.get('query_alignment', 'N/A')}\n"
+                        references_md += f"- Confidence Score: {relevance.get('confidence_score', 'N/A')}\n"
+                        references_md += f"- Coverage Analysis: {relevance.get('coverage_analysis', 'N/A')}\n"
+
                 references_content.set_content(references_md)
 
-                # Ergebnisse und Follow-Up Bereich einblenden
+                # Show results and followup cards
                 results_card.visible = True
                 followup_card.visible = True
 

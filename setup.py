@@ -7,6 +7,8 @@ from os import path
 
 from setuptools import setup, find_packages
 
+# from mypyc.build import mypycify
+
 with open('README.md', encoding="utf8") as readme_file:
     readme = readme_file.read()
 #
@@ -35,6 +37,7 @@ with io.open(path.join(here, "requirements_isaa.txt"), encoding="utf-8") as f:
 install_requires_isaa = [x.strip() for x in all_reqs if "git+" not in x]
 install_requires_isaa.extend(install_requires_dev[:8])
 
+compiled_files = ["toolboxv2/utils/toolbox.py"]
 requirements = []
 
 setup_requirements = []
@@ -61,6 +64,7 @@ setup(
             'tb=toolboxv2.__main__:main_runner',
         ],
     },
+    # ext_modules=mypycify(compiled_files),
     install_requires=install_requires,
     dependency_links=dependency_links,
     extras_require={

@@ -9,7 +9,8 @@ import reedsolo
 import yaml
 
 from ..security.cryp import Code
-from ... import get_app, Singleton
+from ... import Singleton, get_app
+
 
 
 class BlobStorage(metaclass=Singleton):

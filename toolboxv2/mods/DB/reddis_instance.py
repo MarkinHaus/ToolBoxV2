@@ -1,10 +1,11 @@
+import json
 import time
-from typing import Optional
+from typing import Optional, Any, Callable
 
 try:
     import redis
 except ImportError:
-    redis = lambda: None
+    redis: Callable[[], None] = lambda: None
     redis.Redis = None
 
 from toolboxv2 import Result, get_logger
@@ -85,24 +86,25 @@ class MiniRedis:
             return Result.default_internal_error(info='Pleas run initialize').set_origin("Reddis DB")
 
         if not isinstance(value, list):
-            value = [value]
+            value: list[Any] = [value]
 
-        val = self.rcon.get(key)
-
-        if val:
-            val = eval(val)
-            if not isinstance(val, list):
+        db_val: Optional[str] = self.rcon.get(key)
+        save_val: str = db_val or '{"set": {}}'
+        if db_val:
+            set_val: list = json.loads(db_val).get('set', {})
+            if not isinstance(db_val, list):
                 return Result.default_user_error(info="Error key: " + str(key) + " is not a set",
                                                  exec_code=-4).set_origin("Reddis DB")
             for new_val in value:
-                if new_val in val:
+                if new_val in set_val:
                     return Result.default_user_error(info="Error value: " + str(new_val) + " already in list",
                                                      exec_code=-5).set_origin("Reddis DB")
-                val.append(new_val)
+                set_val.append(new_val)
+            save_val = json.dumps({'set':save_val})
         else:
-            val = value
+            save_val = json.dumps({'set': value})
 
-        self.rcon.set(key, str(val))
+        self.rcon.set(key, save_val)
 
         return Result.ok().set_origin("Reddis DB")
 

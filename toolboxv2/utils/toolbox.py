@@ -12,6 +12,7 @@ from importlib import import_module, reload
 from inspect import signature
 from types import ModuleType
 from functools import partial, wraps
+from typing import Optional, List, Callable, Dict, Any
 
 from yaml import safe_load
 
@@ -61,7 +62,7 @@ class App(AppType, metaclass=Singleton):
             with open(f"{lapp}last-app-prefix.txt", "r") as prefix_file:
                 cont = prefix_file.read()
                 if cont:
-                    prefix = cont
+                    prefix = cont.rstrip()
         else:
             if not os.path.exists(f"{lapp}last-app-prefix.txt"):
                 os.makedirs(lapp, exist_ok=True)
@@ -1249,6 +1250,8 @@ class App(AppType, metaclass=Singleton):
         return res
 
     def get_mod(self, name, spec='app') -> ModuleType or MainToolType:
+        if spec != "app":
+            self.print(f"Getting Module {name} spec: {spec}")
         if name not in self.functions.keys():
             mod = self.save_load(name, spec=spec)
             if mod is False or (isinstance(mod, Result) and mod.is_error()):
@@ -1334,20 +1337,20 @@ class App(AppType, metaclass=Singleton):
                           api: bool = False,
                           helper: str = "",
                           version: str or None = None,
-                          initial=False,
-                          exit_f=False,
-                          test=True,
-                          samples=None,
-                          state=None,
-                          pre_compute=None,
-                          post_compute=None,
-                          api_methods=None,
-                          memory_cache=False,
-                          file_cache=False,
-                          request_as_kwarg=False,
-                          row=False,
-                          memory_cache_max_size=100,
-                          memory_cache_ttl=300):
+                          initial: bool=False,
+                          exit_f: bool=False,
+                          test: bool=True,
+                          samples:Optional[List[Dict[str, Any]]]=None,
+                          state:Optional[bool]=None,
+                          pre_compute:Optional[Callable]=None,
+                          post_compute:Optional[Callable[[], Result]]=None,
+                          api_methods:Optional[List[str]]=None,
+                          memory_cache: bool=False,
+                          file_cache: bool=False,
+                          request_as_kwarg: bool=False,
+                          row: bool=False,
+                          memory_cache_max_size:int=100,
+                          memory_cache_ttl:int=300):
 
         if isinstance(type_, Enum):
             type_ = type_.value
@@ -1530,7 +1533,7 @@ class App(AppType, metaclass=Singleton):
     def tb(self, name=None,
            mod_name: str = "",
            helper: str = "",
-           version: str or None = None,
+           version: Optional[str] = None,
            test: bool = True,
            restrict_in_virtual_mode: bool = False,
            api: bool = False,
@@ -1541,7 +1544,7 @@ class App(AppType, metaclass=Singleton):
            file_cache: bool = False,
            request_as_kwarg: bool = False,
            row: bool = False,
-           state: bool or None = None,
+           state: Optional[bool] = None,
            level: int = -1,
            memory_cache_max_size: int = 100,
            memory_cache_ttl: int = 300,

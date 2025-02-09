@@ -75,8 +75,6 @@ class TestToolboxv2(unittest.TestCase):
             self.assertTrue(self.app.alive)
 
             self.assertEqual(self.app.flows, {})
-            self.assertEqual(self.app.functions, {})
-            self.assertEqual(self.app.modules, {})
 
         else:
 

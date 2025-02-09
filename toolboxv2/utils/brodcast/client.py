@@ -3,7 +3,7 @@ import os
 import socket
 
 
-def start_client(host_ip, port=44667):
+def start_client(host_ip: int, port: int=44667) -> None:
     known = {}
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)  # UDP
 

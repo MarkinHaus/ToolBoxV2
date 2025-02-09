@@ -1,6 +1,7 @@
+import abc
 import os
 from abc import ABC
-from typing import Any
+from typing import Any, Optional
 
 from toolboxv2 import MainTool, FileHandler, Result, get_app
 from toolboxv2.utils.security.cryp import Code
@@ -15,8 +16,7 @@ export = get_app(from_="DB.EXPORT").tb
 
 load_dotenv(verbose=True)
 
-
-def pre_function(*args, **kwargs) -> (list, dict):
+def pre_function(*args, **kwargs) -> tuple[list, dict]:
     # Verarbeitung der args mit der encode_code-Methode
     encoded_args = map(lambda x: str(x) if type(x).__name__ in ['str', 'int', 'dict', 'list', 'tupel'] else x, args)
 
@@ -51,22 +51,27 @@ def post_function(result: Result) -> Result:
 # interface=result.result.data_to)
 
 class DB(ABC):
-
+    @abc.abstractmethod
     def get(self, query: str) -> Result:
         """get data"""
 
+    @abc.abstractmethod
     def set(self, query: str, value) -> Result:
         """set data"""
 
+    @abc.abstractmethod
     def append_on_set(self, query: str, value) -> Result:
         """append set data"""
 
+    @abc.abstractmethod
     def delete(self, query: str, matching=False) -> Result:
         """delete data"""
 
+    @abc.abstractmethod
     def if_exist(self, query: str) -> bool:
         """return True if query exists"""
 
+    @abc.abstractmethod
     def exit(self) -> Result:
         """Close DB connection and optional save data"""
 
@@ -75,13 +80,13 @@ class Tools(MainTool, FileHandler):
     version = "0.0.3"
 
     def __init__(self, app=None):
-        self.name = Name
+        self.name = "DB"
         self.color = "YELLOWBG"
 
         self.keys = {"mode": "db~mode~~:"}
         self.encoding = 'utf-8'
 
-        self.data_base: MiniRedis or MiniDictDB or DB or None = None
+        self.data_base: Optional[MiniRedis , MiniDictDB , DB , None] = None
         self.mode = DatabaseModes.crate(
             os.getenv("DB_MODE_KEY", "LC") if 'test' not in get_app("DB_MODE_KEY").id else os.getenv("DB_MODE_KEY_TEST",
                                                                                                      "LC"))
@@ -184,14 +189,16 @@ class Tools(MainTool, FileHandler):
         interface=ToolBoxInterfaces.internal,
     )
     def delete(self, query: str, matching=False) -> Result:
-        if self.data_base is None:
+        if not self.initialized():
             return Result.default_internal_error(info="No database connection")
 
         if self.mode.value == "LOCAL_DICT" or self.mode.value == "LOCAL_REDDIS" or self.mode.value == "REMOTE_REDDIS":
             try:
                 return self.data_base.delete(query, matching)
-            except ValueError and KeyError:
-                return Result.default_user_error(info=f"'{query=}' not in database")
+            except ValueError:
+                return Result.default_user_error(info=f"'{query=}' not in database ValueError")
+            except KeyError:
+                return Result.default_user_error(info=f"'{query=}' not in database KeyError")
 
         if self.mode.value == "REMOTE_DICT":
             return Result.custom_error(info="Not Implemented yet")  # TODO: add remote dict storage
@@ -211,13 +218,10 @@ class Tools(MainTool, FileHandler):
         if data is None:
             return Result.default_user_error(info="None value is not valid value must have a to str & be serialise")
 
-        if self.mode.value == "LOCAL_DICT" or self.mode.value == "LOCAL_REDDIS" or self.mode.value == "REMOTE_REDDIS":
-            return self.data_base.append_on_set(query, data)
-
         if self.mode.value == "REMOTE_DICT":
             return Result.custom_error(info="Not Implemented yet")  # TODO: add remote dict storage
 
-        return Result.default_internal_error(info="Database is not configured")
+        return self.data_base.append_on_set(query, data)
 
     def initialize_database(self) -> Result:
         if self.data_base is not None:
@@ -237,6 +241,7 @@ class Tools(MainTool, FileHandler):
 
         self.app.logger.info(f"Running DB in mode : {self.mode.value}")
         self.print(f"Running DB.{self.spec} in mode : {self.mode.value}")
+        return Result.ok()
 
     def _autoresize(self):
 

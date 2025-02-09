@@ -1,6 +1,7 @@
 import uuid
 from dataclasses import asdict
 from datetime import datetime
+from typing import Optional
 
 from fastapi import Request
 
@@ -216,7 +217,7 @@ async def get_user_from_request(app, request):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-async def removed(app, index, request: Request or None = None):
+async def removed(app, index, request: Optional[Request, None]= None):
     if request is None:
         return Result.default_internal_error("No request specified")
     user: User = await get_user_from_request(app, request=request)
@@ -230,7 +231,7 @@ async def removed(app, index, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-async def danger(app, request: Request or None = None):
+async def danger(app, request: Optional[Request, None]= None):
     if request is None:
         return Result.default_internal_error("No request specified")
     user = await get_user_from_request(app, request=request)
@@ -245,7 +246,7 @@ async def danger(app, request: Request or None = None):
 # danger functions
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-async def stop(app, request: Request or None = None):
+async def stop(app, request: Optional[Request, None]= None):
     if request is None:
         return Result.default_internal_error("No request specified")
     user = await get_user_from_request(app, request=request)
@@ -259,7 +260,7 @@ async def stop(app, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-async def reset(app, request: Request or None = None):
+async def reset(app, request: Optional[Request, None]= None):
     if request is None:
         return Result.default_internal_error("No request specified")
     user = await get_user_from_request(app, request=request)
@@ -271,7 +272,7 @@ async def reset(app, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-async def link(app, request: Request or None = None):
+async def link(app, request: Optional[Request, None] = None):
     if request is None:
         return Result.default_internal_error("No request specified")
     user = await get_user_from_request(app, request=request)
@@ -282,7 +283,7 @@ async def link(app, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-async def info(app, request: Request or None = None):
+async def info(app, request: Optional[Request, None]= None):
     if request is None:
         return Result.default_internal_error("No request specified")
     user = await get_user_from_request(app, request=request)
@@ -296,7 +297,7 @@ async def info(app, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-async def deleteUser(app, user: str, request: Request or None = None):
+async def deleteUser(app, user: str, request: Optional[Request, None]= None):
     if request is None:
         return Result.default_internal_error("No request specified")
     user_ob = await get_user_from_request(app, request=request)
@@ -309,7 +310,7 @@ async def deleteUser(app, user: str, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-async def sendMagicLink(app, user: str, request: Request or None = None):
+async def sendMagicLink(app, user: str, request: Optional[Request, None]= None):
     if request is None:
         return Result.default_internal_error("No request specified")
     user_ob = await get_user_from_request(app, request=request)
@@ -326,7 +327,7 @@ async def sendMagicLink(app, user: str, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-async def setUserLevel(app, user: str, request: Request or None = None):
+async def setUserLevel(app, user: str, request: Optional[Request, None]= None):
     if request is None:
         return Result.default_internal_error("No request specified")
     user_ob = await get_user_from_request(app, request=request)
@@ -343,7 +344,7 @@ async def setUserLevel(app, user: str, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-async def mods(app, request: Request or None = None):
+async def mods(app, request: Optional[Request, None]= None):
     if request is None:
         return Result.default_internal_error("No request specified")
     user = await get_user_from_request(app, request=request)
@@ -357,7 +358,7 @@ async def mods(app, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-async def addMod(app, modId: str, request: Request or None = None):
+async def addMod(app, modId: str, request: Optional[Request, None]= None):
     if request is None:
         return Result.default_internal_error("No request specified")
     user = await get_user_from_request(app, request=request)
@@ -372,7 +373,7 @@ async def addMod(app, modId: str, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
-async def remove(app, modId: str, request: Request or None = None):
+async def remove(app, modId: str, request: Optional[Request, None]= None):
     if request is None:
         return Result.default_internal_error("No request specified")
     user = await get_user_from_request(app, request=request)
@@ -387,7 +388,7 @@ async def remove(app, modId: str, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="get_widget")
-async def get_widget(app: App = None, request: Request or None = None, **kwargs):
+async def get_widget(app: Optional[App] = None, request: Optional[Request, None]= None, **kwargs):
     if app is None:
         app = get_app(from_=f"{Name}.get_widget")
 

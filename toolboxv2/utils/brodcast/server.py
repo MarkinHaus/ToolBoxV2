@@ -1,9 +1,10 @@
 import json
 import socket
 import time
+from typing import Dict, Any, Optional
 
 
-def make_known(name: str, get_flag: bytes = b"R", port=44667):
+def make_known(name: str, get_flag: bytes = b"R", port=44667) -> Any | None:
     server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
 
     # Enable port reusage so we will be able to run multiple clients and servers on single (host, port).
@@ -32,4 +33,6 @@ def make_known(name: str, get_flag: bytes = b"R", port=44667):
         pass
     finally:
         server.close()
+
+    out: Optional[Dict[str, int | str]] = None
     return json.loads(data.decode())

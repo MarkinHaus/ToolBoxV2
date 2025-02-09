@@ -26,8 +26,11 @@ def start(app=None):
     talk_generate = app.run_any(TBEF.AUDIO.STT_GENERATE,
                                 model="openai/whisper-small",
                                 row=True, device=1)
+    func = app.get_function(TBEF.AUDIO.SPEECH, state=False)[0]
 
-    talk_tts = partial(app.get_function(TBEF.AUDIO.SPEECH)[0], voice_index=0,
+    if func is None or func == "404":
+        return "Talke Offline"
+    talk_tts = partial(func, voice_index=0,
                        use_cache=False,
                        provider='piper',
                        config={'play_local': False},
@@ -123,7 +126,7 @@ async def stream_response(app, input_text, websocket: WebSocket,
 
     agent_t.post_callback = stream_text_t
     from toolboxv2.mods.isaa.extras.modes import ConversationMode
-    from toolboxv2.mods.isaa.extras.session import intelligent_isaa_dispatcher, ChatSession
+    from toolboxv2.mods.isaa.extras.session import ChatSession
 
     if chat_session is None:
         chat_session = ChatSession(app.get_mod('isaa').get_memory())
@@ -131,22 +134,19 @@ async def stream_response(app, input_text, websocket: WebSocket,
     agent.mode = app.get_mod('isaa').controller.rget(ConversationMode)
     agent.stream_function = stream_text
 
-    metat_data, out = intelligent_isaa_dispatcher(app.get_mod('isaa'), input_text, chat_session, None)
-    f_out = out
-    chat_session.add_message({'content': input_text, 'role': 'user'})
+    await chat_session.add_message({'content': input_text, 'role': 'user'})
 
-    if metat_data['complexity_rating'] > 6:
-        with Spinner(message="Fetching llm_message...", symbols='+'):
-            llm_message = agent.get_llm_message(input_text, persist=True, fetch_memory=fetch_memory,
-                                                isaa=app.get_mod("isaa"),
-                                                task_from="user", all_meme=all_meme)
+    with Spinner(message="Fetching llm_message...", symbols='+'):
+        llm_message = agent.get_llm_message(input_text, persist=True, fetch_memory=fetch_memory,
+                                            isaa=app.get_mod("isaa"),
+                                            task_from="user", all_meme=all_meme)
 
-        out = await agent.a_run_model(llm_message=llm_message, persist_local=True,
-                                      persist_mem=fetch_memory)
-        f_out = ''
-        if f and agent.if_for_fuction_use(out):
-            f_out = agent.execute_fuction(persist=True, persist_mem=fetch_memory)
-            await stream_text(f_out)
+    out = await agent.a_run_model(llm_message=llm_message, persist_local=True,
+                                  persist_mem=fetch_memory)
+    f_out = ''
+    if f and agent.if_for_fuction_use(out):
+        f_out = agent.execute_fuction(persist=True, persist_mem=fetch_memory)
+        await stream_text(f_out)
     return out, f_out
 
 

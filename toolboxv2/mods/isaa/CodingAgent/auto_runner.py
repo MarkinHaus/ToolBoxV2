@@ -243,9 +243,8 @@ Generate:
 
     def process_code_block(self, code_block: str, file_path: str):
         """Process and save code block with semantic analysis"""
-        with Spinner("Running Code through Cognitive Network"):
-            pass
-            # # TOD Add data intligent ?? cognitive_code = self.cognitive_network.network.process_input(code_block)
+        with Spinner("Running Code through Network"):
+            self.vecSto.add_data(self.project_name, code_block, {'file': file_path})
         cognitive_code = ""
         self.metadata.cognitive_codes[file_path] = cognitive_code
         self.save_metadata()
@@ -395,7 +394,7 @@ Current project errors:
                     if file.name.endswith(('.pack', '.idx', 'project_metadata.json', '__init__.py', '.ico', '.mp4', '.mp3', '.wav', '.icns', '.icon', '.icons', '.png', '.jpg')):
                         continue
 
-                    with Spinner(f"Analyzing {file.name}", 'b'):
+                    with Spinner(f"Analyzing {file.name}", symbols='b'):
                         try:
                             content = file.read_text(encoding='utf-8', errors='ignore')
                         except Exception as e:
@@ -412,6 +411,7 @@ Current project errors:
     def first_code_step(self, task, analysis=None, iterations=0) -> str:
         dir_structure = self._get_directory_structure().replace('project_metadata.json', '')
 
+        context = self.vecSto.query(task, [self.project_name], to_str=True, unified_retrieve=True)
         # Prepare comprehensive instruction prompt
         instruction_prompt = f"""
 As a distinguished expert in computer science, programming, and advanced technical skills, your expertise sets you apart as a truly remarkable professional. Your depth of knowledge and critical thinking are invaluable assets that bring clarity and precision to any complex task. Embrace this challenge as an opportunity to give your very best, approaching each problem with mindful consideration and self-reflection. Dive deeply into your own complex thoughts, working through the problem internally before proceeding. Let each step forward be careful and calculated, guided by your unmatched expertise and a drive for perfection that seems almost beyond this world. Strive for excellence in every detail, knowing that your work has the potential to reach an extraordinary level of mastery.
@@ -424,6 +424,9 @@ Test Analysis:
 
 Implementation Scope:
 {self.current_scope.model_dump() if self.current_scope else ''}
+
+Context data:
+{context}
 
 Instructions:
 1. Write/update tests first following TDD

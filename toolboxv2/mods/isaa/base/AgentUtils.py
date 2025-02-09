@@ -2,26 +2,27 @@ import json
 import os
 import pickle
 import platform
-import re
+
 import socket
 import subprocess
 import threading
 from datetime import datetime
 from json import JSONDecodeError
-from typing import List, Optional, Dict, Any, Union, Tuple
+
+import re
+from typing import Dict, Optional, List, Tuple, Union
 
 import numpy as np
 import requests
 import tiktoken
 
-from litellm import token_counter, acompletion
 from pebble import concurrent
 
 from toolboxv2 import Style, get_logger, Singleton
-from toolboxv2 import get_app
-from langchain_text_splitters import CharacterTextSplitter
 
-from toolboxv2.mods.isaa.extras.adapter import litellm_complete
+
+from toolboxv2.mods.isaa.base.KnowledgeBase import KnowledgeBase, DataModel, ConceptAnalysis, TopicInsights, \
+    RelevanceAssessment
 
 
 def dilate_string(text, split_param, remove_every_x, start_index):
@@ -637,88 +638,54 @@ class AgentChain:
 
 
 
-import os
-import re
-import json
-from typing import Dict, Optional, List, Tuple, Any, Union
-from lightrag import LightRAG, QueryParam
-from lightrag.utils import EmbeddingFunc
-
-
-import litellm
-from litellm import completion
-
-
 class AISemanticMemory(metaclass=Singleton):
     def __init__(self,
                  base_path: str = "/semantic_memory",
-                 default_model: str = "anthropic/claude-3-haiku-20240307",
+                 default_model: str = "gemini/gemini-2.0-flash",
                  default_embedding_model: str = os.getenv("DEFAULTMODELEMBEDDING"),
-                 default_kv_storage: str = "JsonKVStorage",
-                 default_vector_storage: str = "NanoVectorDBStorage",
-                 default_graph_storage: str = "NetworkXStorage"):
+                 default_similarity_threshold: float = 0.7,
+                 default_batch_size: int = 64,
+                 default_n_clusters: int = 26,
+                 default_deduplication_threshold: float = 0.85):
         """
-        Initialize AISemanticMemory with LiteLLM integration
+        Initialize AISemanticMemory with KnowledgeBase integration
 
         Args:
             base_path: Root directory for memory storage
-            default_model: Default LiteLLM model string
+            default_model: Default model for text generation
             default_embedding_model: Default embedding model
-            default_kv_storage: Default key-value storage backend
-            default_vector_storage: Default vector storage backend
-            default_graph_storage: Default graph storage backend
+            default_similarity_threshold: Default similarity threshold for retrieval
+            default_batch_size: Default batch size for processing
+            default_n_clusters: Default number of clusters for FAISS
+            default_deduplication_threshold: Default threshold for deduplication
         """
-        self.base_path = os.path.join(os.getcwd(), ".data" ,base_path)
-        self.memories: Dict[str, LightRAG] = {}
-        self.default_config = {
-            "llm_model_func": self._litellm_wrapper(default_model),
-            "llm_model_name": default_model,
-            "embedding_func": EmbeddingFunc(
-                embedding_dim=768,
-                max_token_size=8192,
-                func=self._embedding_wrapper(default_embedding_model)
-            ),
-            "kv_storage": default_kv_storage,
-            "vector_storage": default_vector_storage,
-            "graph_storage": default_graph_storage,
-            "log_level": "WARNING",
-            "addon_params": {"insert_batch_size": 20}
+        self.base_path = os.path.join(os.getcwd(), ".data", base_path)
+        self.memories: Dict[str, KnowledgeBase] = {}
+
+        # Map of embedding models to their dimensions
+        self.embedding_dims = {
+            "text-embedding-3-small": 1536,
+            "text-embedding-3-large": 3072,
+            "nomic-embed-text": 768,
+            "default": 768
         }
 
-        litellm.drop_params = True
-        litellm.set_verbose = False
+        self.default_config = {
+            "embedding_model": default_embedding_model,
+            "embedding_dim": self._get_embedding_dim(default_embedding_model),
+            "similarity_threshold": default_similarity_threshold,
+            "batch_size": default_batch_size,
+            "n_clusters": default_n_clusters,
+            "deduplication_threshold": default_deduplication_threshold,
+            "model_name": default_model
+        }
 
-    def _litellm_wrapper(self, model: str) -> callable:
-        """Wrap LiteLLM completion for LightRAG"""
+    def _get_embedding_dim(self, model_name: str) -> int:
+        """Get embedding dimension for a model"""
+        return self.embedding_dims.get(model_name, 768)
 
-        if "ollama" in model:
-            from lightrag.llm.ollama import ollama_model_complete
-            from lightrag.llm.openai import openai_complete
-            return ollama_model_complete
-
-        return litellm_complete
-
-    def _embedding_wrapper(self, model: str) -> callable:
-        """Wrap LiteLLM embeddings for LightRAG"""
-
-        if "ollama" in model:
-            from lightrag.llm.ollama import ollama_embedding
-            return lambda texts: ollama_embedding(
-                texts,
-                embed_model="nomic-embed-text:latest"
-            )
-
-        async def embedding_func(texts: List[str], **kwargs):
-            res = await litellm.aembedding(
-                model=model,
-                input=texts,
-                **kwargs
-            )
-            return res.data[0].get('embedding')
-
-        return embedding_func
-
-    def _sanitize_name(self, name: str) -> str:
+    @staticmethod
+    def _sanitize_name(name: str) -> str:
         """Sanitize memory name for filesystem safety"""
         name = re.sub(r'[^a-zA-Z0-9_-]', '-', name)[:63].strip('-')
         if not name:
@@ -727,176 +694,156 @@ class AISemanticMemory(metaclass=Singleton):
             name += "Z" * (3 - len(name))
         return name
 
-    def get_memory_base(self, name):
-        sanitized = self._sanitize_name(name)
-        if sanitized not in self.memories:
-            return None
-        return os.path.join(self.base_path, sanitized)
-
     def create_memory(self,
                       name: str,
                       model_config: Optional[Dict] = None,
                       storage_config: Optional[Dict] = None) -> bool:
         """
-        Create new semantic memory store with custom configuration
+        Create new memory store with KnowledgeBase
 
         Args:
             name: Unique name for the memory store
-            model_config: {
-                "llm_model": "anthropic/claude-3-sonnet",
-                "embedding_model": "cohere/embed-english-v3.0",
-                "llm_params": {"temperature": 0.3}
-            }
-            storage_config: Custom storage configuration
+            model_config: Configuration for embedding model
+            storage_config: Configuration for KnowledgeBase parameters
         """
         sanitized = self._sanitize_name(name)
         if sanitized in self.memories:
             raise ValueError(f"Memory '{name}' already exists")
 
-        config = self.default_config.copy()
-
-        # Update model configuration
+        # Determine embedding model and dimension
+        embedding_model = self.default_config["embedding_model"]
+        model_name = self.default_config["model_name"]
         if model_config:
-            llm_model = model_config.get("llm_model", self.default_config["llm_model_func"])
-            embedding_model = model_config.get("embedding_model",
-                                               self.default_config["embedding_func"].func)
+            embedding_model = model_config.get("embedding_model", embedding_model)
+            model_name = model_config.get("model_name", model_name)
+        embedding_dim = self._get_embedding_dim(embedding_model)
 
-            config["llm_model_func"] = self._litellm_wrapper(llm_model)
-            config["embedding_func"].func = self._embedding_wrapper(embedding_model)
-            config["llm_model_kwargs"] = model_config.get("llm_params", {})
+        # Get KnowledgeBase parameters
+        kb_params = {
+            "embedding_dim": embedding_dim,
+            "embedding_model": embedding_model,
+            "similarity_threshold": self.default_config["similarity_threshold"],
+            "batch_size": self.default_config["batch_size"],
+            "n_clusters": self.default_config["n_clusters"],
+            "deduplication_threshold": self.default_config["deduplication_threshold"],
+            "model_name": model_name,
+        }
 
-        # Update storage configuration
         if storage_config:
-            config.update({
-                "kv_storage": storage_config.get("kv_storage", config["kv_storage"]),
-                "vector_storage": storage_config.get("vector_storage", config["vector_storage"]),
-                "graph_storage": storage_config.get("graph_storage", config["graph_storage"]),
-                "addon_params": storage_config.get("addon_params", config["addon_params"])
+            kb_params.update({
+                "similarity_threshold": storage_config.get("similarity_threshold", kb_params["similarity_threshold"]),
+                "batch_size": storage_config.get("batch_size", kb_params["batch_size"]),
+                "n_clusters": storage_config.get("n_clusters", kb_params["n_clusters"]),
+                "model_name": storage_config.get("model_name", kb_params["model_name"]),
+                "embedding_model": storage_config.get("embedding_model", kb_params["embedding_model"]),
+                "deduplication_threshold": storage_config.get("deduplication_threshold",
+                                                              kb_params["deduplication_threshold"]),
             })
 
-        working_dir = os.path.join(self.base_path, sanitized)
-        os.makedirs(working_dir, exist_ok=True)
-
-        self.memories[sanitized] = LightRAG(
-            working_dir=working_dir,
-            **config
-        )
+        # Create KnowledgeBase instance
+        self.memories[sanitized] = KnowledgeBase(**kb_params)
         return True
 
     async def add_data(self,
-                 memory_name: str,
-                 data: Union[str, List[str], bytes, dict],
-                 metadata: Optional[Dict] = None,
-                 batch_size: int = 20) -> bool:
+                       memory_name: str,
+                       data: Union[str, List[str], bytes, dict],
+                       metadata: Optional[Dict] = None) -> bool:
         """
-        Add data to memory store with advanced handling
+        Add data to memory store
 
         Args:
             memory_name: Target memory store
-            data: Can be text, list of texts, binary file, or custom KG
-            metadata: Optional metadata dictionary
-            batch_size: Batch size for large inserts
+            data: Text, list of texts, binary file, or structured data
+            metadata: Optional metadata
         """
         name = self._sanitize_name(memory_name)
-        rag = self.memories.get(name)
-        if not rag:
+        kb = self.memories.get(name)
+        if not kb:
             self.create_memory(name)
-            rag =self.memories.get(name)
+            kb = self.memories.get(name)
 
-        # Handle custom knowledge graph
-        if isinstance(data, dict):
-            return self._add_custom_kg(rag, data, metadata)
-
-        # Handle file uploads
+        # Process input data
+        texts = []
         if isinstance(data, bytes):
             try:
                 import textract
                 text = textract.process(data).decode('utf-8')
-                data = [text]
+                texts = [text]
             except Exception as e:
                 raise ValueError(f"File processing failed: {str(e)}")
-
-        # Normalize data format
-        data = [data] if isinstance(data, str) else data
-
-        #try:
-        if batch_size > 1 and len(data) > batch_size:
-            for i in range(0, len(data), batch_size):
-                await rag.ainsert(data[i:i + batch_size])
+        elif isinstance(data, str):
+            texts = [data]
+        elif isinstance(data, list):
+            texts = data
+        elif isinstance(data, dict):
+            # Custom KG not supported in current KnowledgeBase
+            raise NotImplementedError("Custom knowledge graph insertion not supported")
         else:
-            await rag.ainsert(data)
-        #except Exception as e:
-        #    raise RuntimeError(f"Insert failed: {str(e)}")
+            raise ValueError("Unsupported data type")
 
-        return True
-
-    def _add_custom_kg(self, rag: LightRAG, kg: Dict, metadata: Dict) -> bool:
-        """Insert custom knowledge graph"""
+        # Add data to KnowledgeBase
         try:
-            rag.insert_custom_kg({
-                "entities": kg.get("entities", []),
-                "relationships": kg.get("relationships", []),
-                "chunks": kg.get("chunks", []),
-                "metadata": metadata
-            })
-            return True
+            added, duplicates = await kb.add_data(texts, metadata)
+            return added > 0
         except Exception as e:
-            raise RuntimeError(f"KG insert failed: {str(e)}")
+            raise RuntimeError(f"Data addition failed: {str(e)}")
+
+    def get(self, names):
+        return [m for n,m in self._get_target_memories(names)]
 
     async def query(self,
-              query: str,
-              memory_names: Optional[Union[str, List[str]]] = None,
-              query_params: Optional[QueryParam] = None,
-              consensus_threshold: float = 0.7, to_str=False) -> Union[Dict, List[Dict]]:
+                    query: str,
+                    memory_names: Optional[Union[str, List[str]]] = None,
+                    query_params: Optional[Dict] = None,
+                    to_str: bool = False,
+                    unified_retrieve: bool =False) -> Union[str, List[Dict]]:
         """
-        Enhanced query with cross-memory consensus
+        Query memories using KnowledgeBase retrieval
 
         Args:
             query: Search query
-            memory_names: Single or list of memory names
-            query_params: LightRAG QueryParam configuration
-            consensus_threshold: Similarity threshold (0-1)
-
-        Returns:
-            {
-                "answer": consolidated_answer,
-                "sources": [
-                    {"memory": name, "confidence": score, "content": text},
-                    ...
-                ]
-            }
+            memory_names: Target memory names
+            query_params: Query parameters
+            to_str: Return string format
+            unified_retrieve: Unified retrieve
         """
-        if query_params is None:
-            query_params = QueryParam(mode="naive")
-
         targets = self._get_target_memories(memory_names)
+        if not targets:
+            return [{"answer": "No memories available", "sources": []}]
 
         results = []
-        for name, rag in targets:
+        for name, kb in targets:
             try:
-                result = await rag.aquery(query, param=query_params)
-                print("MEMORY result :", result)
+                # Use KnowledgeBase's retrieve_with_overview for comprehensive results
+                result = await kb.retrieve_with_overview(
+                    query=query,
+                    k=query_params.get("k", 5) if query_params else 5,
+                    min_similarity=query_params.get("min_similarity", 0.7) if query_params else 0.7,
+                    cross_ref_depth=query_params.get("cross_ref_depth", 2) if query_params else 2,
+                    max_cross_refs=query_params.get("max_cross_refs", 10) if query_params else 10,
+                    max_sentences=query_params.get("max_sentences", 5) if query_params else 5
+                ) if not unified_retrieve else await kb.unified_retrieve(
+                    query=query,
+                    k=query_params.get("k", 5) if query_params else 5,
+                    min_similarity=query_params.get("min_similarity", 0.7) if query_params else 0.7,
+                    cross_ref_depth=query_params.get("cross_ref_depth", 2) if query_params else 2,
+                    max_cross_refs=query_params.get("max_cross_refs", 10) if query_params else 10,
+                    max_sentences=query_params.get("max_sentences", 10) if query_params else 10
+                )
                 results.append({
                     "memory": name,
-                    "result": result,
-                    # "embedding": self._get_embedding(result["answer"])
+                    "result": result
                 })
             except Exception as e:
                 print(f"Query failed on {name}: {str(e)}")
+        if to_str:
+            return json.dumps(results, indent=2)
+        return results
 
-        return self._consolidate_results(results, consensus_threshold, to_str)
-
-    async def directly(self, query, memory_names, **kwargs):
-        targets = self._get_target_memories(memory_names)
-        if len(targets) != 1:
-            return None
-        _, rag = targets[0]
-        return await rag.aquery(query, param=QueryParam(**kwargs))
-
-    def _get_target_memories(self, memory_names):
-        """Resolve target memories with validation"""
+    def _get_target_memories(self, memory_names: Optional[Union[str, List[str]]]) -> List[Tuple[str, KnowledgeBase]]:
+        """Get target memories for query"""
         if not memory_names:
-            return self.memories.items()
+            return list(self.memories.items())
 
         if isinstance(memory_names, str):
             names = [memory_names]
@@ -906,209 +853,56 @@ class AISemanticMemory(metaclass=Singleton):
         targets = []
         for name in names:
             sanitized = self._sanitize_name(name)
-            if rag := self.memories.get(sanitized):
-                targets.append((sanitized, rag))
+            if kb := self.memories.get(sanitized):
+                targets.append((sanitized, kb))
         return targets
 
-    def _consolidate_results(self, results, threshold, to_str=False):
-        """Advanced consensus algorithm with embedding similarity"""
-        if not results:
-            return {"answer": "No relevant information found ", "sources": [results]}
 
-        if len(results) == 1:
-            if isinstance(results[0]["result"], str):
-                return {
-                    "answer": results[0]["result"],
-                    "sources": [{
-                        "memory": results[0]["memory"],
-                        "confidence": 1.0,
-                        "content": results[0]["result"]
-                    }]
-                }
-            return {
-                "answer": results[0]["result"]["answer"],
-                "sources": [{
-                    "memory": results[0]["memory"],
-                    "confidence": 1.0,
-                    "content": results[0]["result"].get("context")
-                }]
-            }
+    def _format_results(self, consolidated: Dict, to_str: bool) -> Union[Dict, str]:
+        """Format consolidated results as either dict or string"""
+        if not to_str:
+            return consolidated
 
-        # Calculate pairwise similarity
-        similarities = []
-        for i in range(len(results)):
-            for j in range(i + 1, len(results)):
-                sim = self._cosine_similarity(
-                    results[i]["embedding"],
-                    results[j]["embedding"]
-                )
-                similarities.append(sim)
+        if "summary" in consolidated:  # Unified retrieve format
+            return self._format_unified_results(consolidated)
+        else:  # Overview format
+            return self._format_overview_results(consolidated)
 
-        avg_similarity = sum(similarities) / len(similarities) if similarities else 0
-        if avg_similarity >= threshold:
-            # Return consensus answer
-            return self._merge_answers(results, to_str)
-        else:
-            # Return disambiguated answers
-            return self._handle_conflicting_results(results, to_str)
-
-    def _merge_answers(self, results, to_str):
-        """Use LLM to merge similar answers"""
-        prompt = """Synthesize a comprehensive answer from these responses:
-        {responses}
-
-        Instructions:
-        1. Identify common themes
-        2. Resolve any minor conflicts
-        3. Maintain important nuances
-        4. Return in markdown format"""
-
-        responses = [f"## {r['memory']}\n{r['result']['answer']}" for r in results]
-        answer = completion(
-            model=self.default_config["llm_model_func"].model,
-            messages=[{
-                "role": "user",
-                "content": prompt.format(responses="\n\n".join(responses))
-            }]
-        ).choices[0].message.content
-
-
-        def format_results(results):
-            sources = "\n".join(
-                [f"- Memory: {r['memory']}, Confidence: 1.0, Content: {r['result']['context']}" for r in results]
-            )
-
-        return f"Answer: {answer}\nSources:\n{format_results(results)}" if to_str else {
-            "answer": answer,
-            "sources": [{
-                "memory": r["memory"],
-                "confidence": 1.0,
-                "content": r["result"]["context"]
-            } for r in results]
-        }
-
-    def _handle_conflicting_results(self, results, to_str=False):
-        """Handle conflicting results with source attribution"""
-        res = {
-            "answer": "Multiple conflicting perspectives found:\n" +
-                      "\n\n".join([f"**{r['memory']}:** {r['result']['answer']}"
-                                   for r in results]),
-            "sources": [{
-                "memory": r["memory"],
-                "confidence": 0.5,
-                "content": r["result"]["context"]
-            } for r in results]
-        }
-
-        def format_conflicting_results(results):
-            answer = "Multiple conflicting perspectives found:\n\n" + "\n\n".join(
-                [f"**{r['memory']}:** {r['result']['answer']}" for r in results]
-            )
-            sources = "\n".join(
-                [f"- Memory: {r['memory']}, Confidence: 0.5, Content: {r['result']['context']}" for r in results]
-            )
-            return f"{answer}\n\nSources:\n{sources}"
-        return format_conflicting_results(res) if to_str else res
-
-
-
-    def _cosine_similarity(self, vec1, vec2):
-        """Calculate cosine similarity between two vectors"""
-        dot = sum(a * b for a, b in zip(vec1, vec2))
-        norm = (sum(a ** 2 for a in vec1) ** 0.5) * (sum(b ** 2 for b in vec2) ** 0.5)
-        return dot / norm if norm else 0
-
-    def _get_embedding(self, text: str) -> List[float]:
-        """Get embedding for text"""
-        return self.default_config["embedding_func"].func([text])[0]
-
-    def delete_data(self, memory_name: str, delete_config: Dict) -> bool:
-        """
-        Advanced deletion operations
-
-        Args:
-            delete_config: {
-                "type": "entity"|"document"|"metadata",
-                "target": "entity_name"|"doc_id"|{"key": "value"},
-                "scope": "all"|"latest"|"date_range"
-            }
-        """
-        rag = self.memories.get(self._sanitize_name(memory_name))
-        if not rag:
-            return False
-
-        delete_type = delete_config.get("type", "document")
-        try:
-            if delete_type == "entity":
-                rag.delete_by_entity(delete_config["target"])
-            elif delete_type == "document":
-                rag.delete_by_doc_id(delete_config["target"])
-            elif delete_type == "metadata":
-                # Custom metadata deletion
-                self._delete_by_metadata(rag, delete_config["target"])
-            return True
-        except Exception as e:
-            raise RuntimeError(f"Deletion failed: {str(e)}")
-
-    def _delete_by_metadata(self, rag: LightRAG, filters: Dict):
-        """Custom metadata-based deletion"""
-        # Implementation depends on storage backend
-        # Example for JSON KV storage:
-        metadata_path = os.path.join(rag.working_dir, "metadata.json")
-        if os.path.exists(metadata_path):
-            with open(metadata_path, "r") as f:
-                metadata = json.load(f)
-
-            new_metadata = {
-                k: v for k, v in metadata.items()
-                if not all(v.get(key) == value for key, value in filters.items())
-            }
-
-            with open(metadata_path, "w") as f:
-                json.dump(new_metadata, f)
-
-
-    def restore_memory(self, backup_file: str, new_name: Optional[str] = None) -> str:
-        """
-        Restore memory from backup
-
-        Args:
-            backup_file: Path to backup file
-            new_name: Optional new name for restored memory
-
-        Returns:
-            Name of restored memory
-        """
-        # Implementation would vary by storage backend
-        # Placeholder implementation
-        name = new_name or os.path.basename(backup_file).split("_")[0]
-        sanitized = self._sanitize_name(name)
-
-        if sanitized in self.memories:
-            raise ValueError(f"Memory '{name}' already exists")
-
-        # Actual restore implementation would go here
-        self.memories[sanitized] = LightRAG(
-            working_dir=os.path.join(self.base_path, sanitized),
-            **self.default_config
-        )
-        return name
-
-    def list_memories(self) -> List[Dict]:
-        """Get list of all memories with basic stats"""
+    def list_memories(self) -> List[str]:
+        """List all available memories"""
         return list(self.memories.keys())
 
-    def update_llm(self, memory_name: str, new_model: str, params: Dict = None):
-        """Dynamically update LLM configuration"""
-        sanitized = self._sanitize_name(memory_name)
-        if sanitized not in self.memories:
-            raise ValueError(f"Memory '{memory_name}' not found")
+    async def delete_memory(self, name: str) -> bool:
+        """Delete a memory store"""
+        sanitized = self._sanitize_name(name)
+        if sanitized in self.memories:
+            del self.memories[sanitized]
+            return True
+        return False
 
-        if params is None:
-            params = {}
+    def save_memory(self, name: str, path: str) -> bool:
+        """Save a memory store to disk"""
+        sanitized = self._sanitize_name(name)
+        if kb := self.memories.get(sanitized):
+            try:
+                kb.save(path)
+                return True
+            except Exception as e:
+                print(f"Error saving memory: {str(e)}")
+                return False
+        return False
 
-        self.memories[sanitized].llm_model_func = self._litellm_wrapper(new_model)
-        self.memories[sanitized].llm_model_kwargs.update(params)
+    def load_memory(self, name: str, path: str) -> bool:
+        """Load a memory store from disk"""
+        sanitized = self._sanitize_name(name)
+        if sanitized in self.memories:
+            return False
+        try:
+            self.memories[sanitized] = KnowledgeBase.load(path)
+            return True
+        except Exception as e:
+            print(f"Error loading memory: {str(e)}")
+            return False
 
 
 """```

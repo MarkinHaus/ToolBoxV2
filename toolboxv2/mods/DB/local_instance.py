@@ -110,8 +110,11 @@ class MiniDictDB:
         try:
             save_to_json({"data": data}, self.location)
             print("Success data saved to", self.location)
-        except PermissionError and FileNotFoundError as f:
-            return Result.custom_error(data=f, info=f"Error Exiting local DB instance {f}").set_origin("Dict DB")
+        except PermissionError as f:
+            return Result.custom_error(data=f, info=f"Error Exiting local DB instance PermissionError").set_origin("Dict DB")
+
+        except FileNotFoundError as f:
+            return Result.custom_error(data=f, info=f"Error Exiting local DB instance FileNotFoundError").set_origin("Dict DB")
 
         return Result.ok().set_origin("Dict DB")
 

@@ -214,8 +214,8 @@ class ArXivPDFProcessor:
     def __init__(self,
                  query: str,
                  tools,
-                 chunk_size: int = 1000,
-                 overlap: int = 200,
+                 chunk_size: int = 1_000_000,
+                 overlap: int = 2_000,
                  max_workers=None,
                  num_search_result_per_query=6,
                  max_search=6,
@@ -225,6 +225,7 @@ class ArXivPDFProcessor:
         self.queries_generated = False
         self.query = query
         self.tools = tools
+        self.mem = self.tools.get_memory()
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.max_workers = max_workers if max_workers is not None else os.cpu_count() or 4
@@ -328,7 +329,7 @@ class ArXivPDFProcessor:
                             scaled_value = -4 + (self.nsrpq * self.max_search - 1) * (10 - (-4)) / (6_000 - 1)
                         if scaled_value < -4:
                             scaled_value = -4
-                        print("scaled_value", scaled_value)
+                        # print("scaled_value", scaled_value)
                         filtered_texts = filter_relevant_texts(
                             query=query,
                             texts=texts,
@@ -342,7 +343,7 @@ class ArXivPDFProcessor:
 
                         self.send_status(f"Filtered {len(texts)} / {len(filtered_texts)}",
                                          additional_info=paper.title)
-                        await self.tools.get_memory().add_data(memory_name=self.mem_name,
+                        await self.mem.add_data(memory_name=self.mem_name,
                                                                  data=filtered_texts)
                         # Update status with paper title
                     except Exception as e:
@@ -399,22 +400,16 @@ class ArXivPDFProcessor:
         return queries[:self.max_search]
 
     def init_process_papers(self):
-        self.tools.get_memory().create_memory(self.mem_name, model_config={
-                "llm_model": "anthropic/claude-3-haiku-20240307",
-                "embedding_model": "ollama/nomic-embed-text"
-            })
+        self.mem.create_memory(self.mem_name, model_config={"model_name": "anthropic/claude-3-5-haiku-20241022"})
         self.send_status("Memory initialized")
 
 
     async def generate_insights(self, queries) -> dict:
         self.send_status("Generating insights")
         query = self.query
-        max_it = 0
-        results = {"sources": []}
-        while max_it < 3 and len(results.get("sources")) < 1:
-            max_it += 1
-            results = await self.tools.get_memory().query(query=query, memory_names=self.mem_name, query_params=QueryParam(mode="global"))
-            query = queries[min(len(queries)-1, max_it)]
+        # max_it = 0
+        results = await self.mem.query(query=query, memory_names=self.mem_name, unified_retrieve=True)
+        #query = queries[min(len(queries)-1, max_it)]
 
         self.insights_generated = True
         self.send_status("Insights generated", progress=1.0)
@@ -422,7 +417,8 @@ class ArXivPDFProcessor:
 
     async def extra_query(self, query, query_params=None):
         self.send_status("Processing follow-up query", progress=0.5)
-        results = await self.tools.get_memory().query(query=query, memory_names=self.mem_name, query_params=query_params)
+        results = await self.mem.query(query=query, memory_names=self.mem_name,
+                                                      query_params=query_params, unified_retrieve=True)
         self.send_status("Processing follow-up query Done", progress=1)
         return results
 
@@ -504,15 +500,15 @@ async def main(query: str = "Beste strategien in bretspielen sitler von katar"):
 
     print("Generated Insights:", insights)
     print("Generated Insights_list:", processor.last_insights_list)
-    await get_app("ArXivPDFProcessor", name=None).a_idle()
+    kb = tools.get_memory(processor.mem_name)
+    print(await kb.query_concepts("AI"))
+    print(await kb.retrieve("Evaluation metrics for assessing AI Agent performance"))
+    print(kb.concept_extractor.concept_graph.concepts.keys())
+    kb.vis(output_file="insights_graph.html")
+    kb.save("mem.plk")
+    # await get_app("ArXivPDFProcessor", name=None).a_idle()
     return insights
 
 
 if __name__ == "__main__":
     asyncio.run(main("Beste strategien AI Agents Development"))
-
-
-
-"""
-
-"""

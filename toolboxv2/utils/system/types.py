@@ -11,6 +11,63 @@ from .all_functions_enums import *
 from .file_handler import FileHandler
 from ..extras.Style import Spinner
 
+import asyncio
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
+from typing import Dict, List, Tuple, Any
+from ..extras import generate_test_cases
+from dataclasses import dataclass, field
+import multiprocessing as mp
+
+import asyncio
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
+from typing import Dict, List, Tuple, Any
+from ..extras import generate_test_cases
+from dataclasses import dataclass, field
+import multiprocessing as mp
+import cProfile
+import pstats
+import io
+from contextlib import contextmanager
+import time
+
+
+@contextmanager
+def profile_section(profiler, enable_profiling: bool):
+    if enable_profiling:
+        profiler.enable()
+    try:
+        yield
+    finally:
+        if enable_profiling:
+            profiler.disable()
+
+
+@dataclass
+class ModuleInfo:
+    functions_run: int = 0
+    functions_fatal_error: int = 0
+    error: int = 0
+    functions_sug: int = 0
+    calls: Dict[str, List[Any]] = field(default_factory=dict)
+    callse: Dict[str, List[Any]] = field(default_factory=dict)
+    coverage: List[int] = field(default_factory=lambda: [0, 0])
+    execution_time: float = 0.0
+    profiling_stats: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ExecutionStats:
+    modular_run: int = 0
+    modular_fatal_error: int = 0
+    errors: int = 0
+    modular_sug: int = 0
+    coverage: List[str] = field(default_factory=list)
+    total_coverage: Dict = field(default_factory=dict)
+    total_execution_time: float = 0.0
+    profiling_data: Dict[str, Any] = field(default_factory=dict)
+
 
 class AppArgs:
     init = None
@@ -443,7 +500,7 @@ class AppType:
     config_dir: str
     info_dir: str
 
-    logger: logging
+    logger: logging.Logger
     logging_filename: str
 
     api_allowed_mods_list: List[str] = []
@@ -492,8 +549,10 @@ class AppType:
     appdata = None
     exit_tasks = []
 
+    enable_profiling: bool = False
+    sto = None
+
     def __init__(self, prefix: Optional[str] = None, args: Optional[AppArgs] = None):
-        self.sto = None
         self.args_sto = args
         self.prefix = prefix
         """proxi attr"""
@@ -900,7 +959,7 @@ class AppType:
     def save_registry_as_enums(self, directory: str, filename: str):
         """proxi attr"""
 
-    async def execute_all_functions(self, m_query='', f_query=''):
+    async def execute_all_functions_(self, m_query='', f_query=''):
         print("Executing all functions")
         from ..extras import generate_test_cases
         all_data = {
@@ -1027,3 +1086,200 @@ class AppType:
         avg_complexity = avg_complexity / i
         print(f"\nAVG Complexity: {avg_complexity:.2f}")
         print(f"Total Rank: {cc_rank(int(avg_complexity + i // 10))}")
+
+    async def execute_function_test(self, module_name: str, function_name: str,
+                                    function_data: dict, test_kwargs: dict,
+                                    profiler: cProfile.Profile) -> Tuple[bool, str, dict, float]:
+        start_time = time.time()
+        with profile_section(profiler, hasattr(self, 'enable_profiling') and self.enable_profiling):
+            try:
+                result = await self.a_run_function(
+                    (module_name, function_name),
+                    tb_run_function_with_state=function_data.get('state'),
+                    **test_kwargs
+                )
+
+                if not isinstance(result, Result):
+                    result = Result.ok(result)
+
+                success = result.info.exec_code == 0
+                execution_time = time.time() - start_time
+                return success, str(result), test_kwargs, execution_time
+            except Exception as e:
+                execution_time = time.time() - start_time
+                return False, str(e), test_kwargs, execution_time
+
+    async def process_function(self, module_name: str, function_name: str,
+                               function_data: dict, profiler: cProfile.Profile) -> Tuple[str, ModuleInfo]:
+        start_time = time.time()
+        info = ModuleInfo()
+
+        with profile_section(profiler, hasattr(self, 'enable_profiling') and self.enable_profiling):
+            if not isinstance(function_data, dict):
+                return function_name, info
+
+            test = function_data.get('do_test')
+            info.coverage[0] += 1
+
+            if test is False:
+                return function_name, info
+
+            params = function_data.get('params')
+            sig = function_data.get('signature')
+            samples = function_data.get('samples')
+
+            test_kwargs_list = [{}] if params is None else (
+                samples if samples is not None else generate_test_cases(sig=sig)
+            )
+
+            info.coverage[1] += 1
+
+            # Create tasks for all test cases
+            tasks = [
+                self.execute_function_test(module_name, function_name, function_data, test_kwargs, profiler)
+                for test_kwargs in test_kwargs_list
+            ]
+
+            # Execute all tests concurrently
+            results = await asyncio.gather(*tasks)
+
+            total_execution_time = 0
+            for success, result_str, test_kwargs, execution_time in results:
+                info.functions_run += 1
+                total_execution_time += execution_time
+
+                if success:
+                    info.functions_sug += 1
+                    info.calls[function_name] = [test_kwargs, result_str]
+                else:
+                    info.functions_sug += 1
+                    info.error += 1
+                    info.callse[function_name] = [test_kwargs, result_str]
+
+            info.execution_time = time.time() - start_time
+            return function_name, info
+
+    async def process_module(self, module_name: str, functions: dict,
+                             f_query: str, profiler: cProfile.Profile) -> Tuple[str, ModuleInfo]:
+        start_time = time.time()
+
+        with profile_section(profiler, hasattr(self, 'enable_profiling') and self.enable_profiling):
+            async with asyncio.Semaphore(mp.cpu_count()):
+                tasks = [
+                    self.process_function(module_name, fname, fdata, profiler)
+                    for fname, fdata in functions.items()
+                    if fname.startswith(f_query)
+                ]
+
+                if not tasks:
+                    return module_name, ModuleInfo()
+
+                results = await asyncio.gather(*tasks)
+
+                # Combine results from all functions in the module
+                combined_info = ModuleInfo()
+                total_execution_time = 0
+
+                for _, info in results:
+                    combined_info.functions_run += info.functions_run
+                    combined_info.functions_fatal_error += info.functions_fatal_error
+                    combined_info.error += info.error
+                    combined_info.functions_sug += info.functions_sug
+                    combined_info.calls.update(info.calls)
+                    combined_info.callse.update(info.callse)
+                    combined_info.coverage[0] += info.coverage[0]
+                    combined_info.coverage[1] += info.coverage[1]
+                    total_execution_time += info.execution_time
+
+                combined_info.execution_time = time.time() - start_time
+                return module_name, combined_info
+
+    async def execute_all_functions(self, m_query='', f_query='', enable_profiling=True):
+        """
+        Execute all functions with parallel processing and optional profiling.
+
+        Args:
+            m_query (str): Module name query filter
+            f_query (str): Function name query filter
+            enable_profiling (bool): Enable detailed profiling information
+        """
+        print("Executing all functions in parallel" + (" with profiling" if enable_profiling else ""))
+
+        start_time = time.time()
+        stats = ExecutionStats()
+        items = list(self.functions.items()).copy()
+
+        # Set up profiling
+        self.enable_profiling = enable_profiling
+        profiler = cProfile.Profile()
+
+        with profile_section(profiler, enable_profiling):
+            # Filter modules based on query
+            filtered_modules = [
+                (mname, mfuncs) for mname, mfuncs in items
+                if mname.startswith(m_query)
+            ]
+
+            stats.modular_run = len(filtered_modules)
+
+            # Process all modules concurrently
+            async with asyncio.Semaphore(mp.cpu_count()):
+                tasks = [
+                    self.process_module(mname, mfuncs, f_query, profiler)
+                    for mname, mfuncs in filtered_modules
+                ]
+
+                results = await asyncio.gather(*tasks)
+
+            # Combine results and calculate statistics
+            for module_name, info in results:
+                if info.functions_run == info.functions_sug:
+                    stats.modular_sug += 1
+                else:
+                    stats.modular_fatal_error += 1
+
+                stats.errors += info.error
+
+                # Calculate coverage
+                coverage = (info.coverage[1] / info.coverage[0]) if info.coverage[0] > 0 else 0
+                stats.coverage.append(f"{module_name}:{coverage:.2f}\n")
+
+                # Store module info
+                stats.__dict__[module_name] = info
+
+            # Calculate total coverage
+            total_coverage = (
+                sum(float(t.split(":")[-1]) for t in stats.coverage) / len(stats.coverage)
+                if stats.coverage else 0
+            )
+
+            stats.total_execution_time = time.time() - start_time
+
+            # Generate profiling stats if enabled
+            if enable_profiling:
+                s = io.StringIO()
+                ps = pstats.Stats(profiler, stream=s).sort_stats('cumulative')
+                ps.print_stats()
+                stats.profiling_data = {
+                    'detailed_stats': s.getvalue(),
+                    'total_time': stats.total_execution_time,
+                    'function_count': stats.modular_run,
+                    'successful_functions': stats.modular_sug
+                }
+
+            print(
+                f"\n{stats.modular_run=}"
+                f"\n{stats.modular_sug=}"
+                f"\n{stats.modular_fatal_error=}"
+                f"\n{total_coverage=}"
+                f"\nTotal execution time: {stats.total_execution_time:.2f}s"
+            )
+
+            if enable_profiling:
+                print("\nProfiling Summary:")
+                print(f"{'=' * 50}")
+                print(f"Top 10 time-consuming functions:")
+                ps.print_stats(10)
+
+            analyzed_data = analyze_data(stats.__dict__)
+            return Result.ok(data=stats.__dict__, data_info=analyzed_data)

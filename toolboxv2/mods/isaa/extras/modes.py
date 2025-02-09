@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 
 
 from langchain_community.agent_toolkits.load_tools import load_tools, load_huggingface_tool
-from litellm.utils import function_to_dict
+
 
 from toolboxv2.mods.isaa.base.Agents import Agent, get_free_agent_data_factory, LLMMode, LLMFunction, Capabilities
 from langchain_core.tools import BaseTool
@@ -76,6 +76,7 @@ def functions_to_llm_functions(functions: list):
     llm_functions = []
     for function in functions:
         try:
+            from litellm.utils import function_to_dict
             parameters = function_to_dict(function)["parameters"]["properties"]
         except:
             parameters = list(function.__annotations__.keys())

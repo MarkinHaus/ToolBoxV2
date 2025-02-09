@@ -556,7 +556,7 @@ class Agent:
 
         self.state = AgentState.STOPPED
 
-    async def run(self, user_input_or_task: str or Task, with_memory=None, with_functions=None, max_iterations=3, chat_session=None, **kwargs):
+    async def run(self, user_input_or_task: str or Task, with_memory=None, with_functions=None, max_iterations=3, chat_session=None, with_split=False, **kwargs):
 
         persist = False
         task_from = "user"
@@ -601,14 +601,19 @@ class Agent:
         else:
             history = " ==== CHAT HISTORY ===\nASSISTANT: "+ str(self.last_result)+ " === HISTORY END ==="
 
-        if len(history) > 260:
+        if len(history) > 75:
             message.append({"role": "system", "content": history})
 
-        class DoSplit(BaseModel):
-            """Deside if u need to split ths Task in sub tasks, only ste try on complex tasks"""
-            split: bool = field(default=False)
+        if with_split is None:
 
-        split_task = self.format_class(DoSplit, user_input)["split"]
+            class DoSplit(BaseModel):
+                """Deside if u need to split ths Task in sub tasks, only ste try on complex tasks"""
+                split: bool = field(default=False)
+
+            split_task = self.format_class(DoSplit, user_input)["split"]
+
+        else:
+            split_task = with_split
 
         self.print_verbose(f'Split {split_task}')
         await update_progress()
@@ -768,7 +773,8 @@ class Agent:
             massages = []
 
         if callback is None:
-            callback = lambda: None
+            async def callback(*a,**k):
+                pass
         update_progress = callback
 
         def add_unique_message(role: str, content: str):
@@ -1520,9 +1526,8 @@ class Agent:
             if self.amd.name.startswith("TaskC"):
                 return
             if persist_mem and self.memory is not None:
-                pass
-                # self.print_verbose("persist response to persistent_memory")
-                # self.memory.add_data(self.amd.name, "QUERY:\n" + self.user_input + '\nRESPONSE:\n' + str(llm_response))
+                self.print_verbose("persist response to persistent_memory")
+                self.memory.add_data(self.amd.name,  'CHAT - HISTORY\n'+self.user_input + '\n:\n' + str(llm_response))
 
             if persist_mem and self.content_memory is not None:
                 self.print_verbose("persist response to content_memory")

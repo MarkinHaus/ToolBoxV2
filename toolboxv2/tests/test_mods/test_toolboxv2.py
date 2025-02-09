@@ -28,8 +28,9 @@ class TestToolboxv2Mods(unittest.TestCase):
     app = None
 
     @classmethod
-    async def setUpClass(cls):
+    async def setUpClass(cls, *a, **kw):
         # Code, der einmal vor allen Tests ausgeführt wird
+        print("Setting up Test class", a, kw)
         cls.t0 = time.perf_counter()
         cls.app = get_app(from_="test.toolbox", name="test-debug")
         cls.app.mlm = "I"
@@ -331,7 +332,7 @@ class TestToolboxv2Mods(unittest.TestCase):
 
     async def test_all_functions(self):
         print("STARTING test")
-        res = await self.app.execute_all_functions()
+        res = await self.app.execute_all_functions_()
         print("RES: ", res.result.data_info)
         # data = res.get()
         # print(res.result.data_info)
