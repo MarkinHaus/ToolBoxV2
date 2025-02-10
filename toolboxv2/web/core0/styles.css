@@ -11,6 +11,69 @@ body h4 {
     color: var(--text-color);
 }
 
+
+/* Webkit scrollbar styles (Chrome, Safari, newer Edge) */
+body::-webkit-scrollbar,
+.main-page::-webkit-scrollbar {
+    width: var(--scrollbar-width);
+}
+
+body::-webkit-scrollbar-track,
+.main-page::-webkit-scrollbar-track {
+    background: var(--scrollbar-track-color);
+    backdrop-filter: blur(5px);
+}
+
+body::-webkit-scrollbar-thumb,
+.main-page::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb-color);
+    border-radius: 6px;
+    border: 3px solid var(--scrollbar-track-color);
+    transition: all 0.3s ease;
+}
+
+body::-webkit-scrollbar-thumb:hover,
+.main-page::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+}
+
+/* Firefox scrollbar styles */
+body,
+.main-page {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb-color) var(--scrollbar-track-color);
+}
+
+/* Ensure smooth scrolling */
+html {
+    scroll-behavior: smooth;
+}
+
+/* Main page specific styles */
+.main-page {
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --scrollbar-track-color: rgba(233, 248, 249, 0.1);
+        --scrollbar-thumb-color: var(--dark-secondary-color);
+        --scrollbar-thumb-hover: var(--dark-nav-link-hover-color);
+    }
+}
+
+/* Remove the hide-scrollbar class styles */
+.main-page.hide-scrollbar {
+    -ms-overflow-style: auto;
+    scrollbar-width: thin;
+}
+
+.main-page.hide-scrollbar::-webkit-scrollbar {
+    display: block;
+}
+
 .wrapper{
     box-sizing: content-box;
     background-color: var(--background-color);
@@ -145,10 +208,6 @@ body h4 {
     margin: 0 auto;
     padding: 20px;
 }
-#main-idea {
-    margin: 5%;
-}
-
 
 /* Stil für den Footer */
 footer {

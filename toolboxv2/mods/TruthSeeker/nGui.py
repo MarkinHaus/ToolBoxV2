@@ -1,12 +1,15 @@
+import colorsys
 import json
+import time
 from datetime import datetime, timedelta
+from typing import Dict
+
 from fastapi import Request
 import os
 import random
 from threading import Thread
 
 import networkx as nx
-from lightrag import QueryParam
 from dataclasses import asdict
 
 from toolboxv2 import get_app
@@ -20,6 +23,8 @@ from pathlib import Path
 import stripe
 
 from toolboxv2.mods.TruthSeeker.arXivCrawler import Paper
+from toolboxv2.mods.isaa.base.AgentUtils import anything_from_str_to_dict
+
 # Set your secret key (use environment variables in production!)
 stripe.api_key = os.getenv('STRIPE_SECRET_KEY_', 'sk_test_YourSecretKey')
 
@@ -229,110 +234,131 @@ def get_tools():
     return get_app("ArXivPDFProcessor", name=None).get_mod("isaa")
 
 
-def create_graph_tab(memory, processor_instance, summary_content, analysis_content, ui_main):
-    # Load GraphML file
-    if processor_instance is None or processor_instance["instance"] is None:
-        return
+def create_fullscreen_toggle(container: ui.element):
+    """Create fullscreen toggle functionality for a container"""
 
-    G = processor_instance["instance"].tools.get_memory(processor_instance["instance"].mem_name).concept_extractor.concept_graph.convert_to_networkx()
+    # Add fullscreen state tracking
+    container.is_fullscreen = False
 
-    # Precompute layouts
-    pos_2d = nx.spring_layout(G, dim=2, seed=42)
-    pos_3d = nx.spring_layout(G, dim=3, seed=42)
-
-    # Prepare data for ECharts
-    nodes = list(G.nodes())
-    edges = list(G.edges())
-
-    echart = None
-    is_3d = None
-
-    # 2D data: note that each node has a name and a value (the coordinates)
-    nodes_2d = [{'name': node, 'value': list(pos_2d[node])} for node in nodes]
-    # For links, we use the index positions of the node in the nodes list.
-    edges_2d = [{'source': nodes.index(u), 'target': nodes.index(v)} for u, v in edges]
-
-    # 3D data: add a random z value so that nodes have 3 coordinates
-    nodes_3d = [{'name': node, 'value': list(pos_3d[node]) + [random.uniform(0, 1)]} for node in nodes]
-    edges_3d = []
-    for u, v in edges:
-        # Each edge is given two endpoints; each endpoint gets its own random z value
-        edges_3d.append([
-            list(pos_3d[u]) + [random.uniform(0, 1)],
-            list(pos_3d[v]) + [random.uniform(0, 1)]
-        ])
-
-    # Create UI elements in the Analysis tab
-    with ui_main:
-        # 3D toggle switch
-        is_3d = ui.switch('3D Mode').classes('mb-4')
-        # The chart container: note the height and width classes
-        echart
-
-    def update_graph():
-        nonlocal echart, is_3d
-        if is_3d.value:
-            # 3D configuration (ECharts will automatically load 3D libraries if keys contain "3D")
-            options = {
-                'xAxis3D': {'type': 'value'},
-                'yAxis3D': {'type': 'value'},
-                'zAxis3D': {'type': 'value'},
-                'grid3D': {'show': True},
-                'series': [
-                    {
-                        'type': 'scatter3D',
-                        'data': [n['value'] for n in nodes_3d],
-                        'symbolSize': 12,
-                        'itemStyle': {'color': '#4CAF50'}
-                    },
-                    {
-                        'type': 'lines3D',
-                        'data': edges_3d,
-                        'lineStyle': {'color': '#607D8B', 'width': 1}
-                    }
-                ]
-            }
+    def toggle_fullscreen():
+        container.is_fullscreen = not container.is_fullscreen
+        if container.is_fullscreen:
+            container.classes('fixed top-0 left-0 w-screen h-screen z-50 bg-gray-900 m-0')
+            toggle_btn.text = '⮌ Exit Fullscreen'
         else:
-            # 2D configuration
-            options = {
-                'xAxis': {'show': False},
-                'yAxis': {'show': False},
-                'series': [
-                    {
-                        'type': 'graph',
-                        'layout': 'none',
-                        'data': nodes_2d,
-                        'links': edges_2d,
-                        'roam': True,
-                        'label': {'show': True, 'position': 'right'},
-                        'edgeSymbol': ['circle', 'arrow'],
-                        'edgeSymbolSize': [4, 10],
-                        'itemStyle': {'color': '#4CAF50'},
-                        'lineStyle': {'color': '#607D8B', 'width': 1}
-                    }
-                ]
-            }
-        echart = ui.echart(options).classes('w-full h-96')
-        echart.update()
+            container.classes('w-full max-w-6xl mx-auto p-6 space-y-6')
+            toggle_btn.text = '⛶ Fullscreen'
 
-    # Initial render
-    update_graph()
+    # Create toggle button
+    toggle_btn = ui.button('⛶ Fullscreen',
+                           on_click=toggle_fullscreen) \
+        .classes('absolute top-2 right-2 bg-gray-800 hover:bg-gray-700 text-white')
 
-    # Update graph when switching modes
-    is_3d.on('update:model-value', update_graph)
+    return toggle_btn
 
-    # Define the click handler for points in the chart
-    def handle_click(e):
-        # e.series_type can be 'scatter3D' or 'graph'
-        if e.series_type in ('scatter3D', 'graph'):
-            # e.data_index holds the index of the clicked node in our nodes list.
-            node_name = nodes[e.data_index]
-            summary_content.set_content(f"**Selected Node:** {node_name}")
-            num_neighbors = len(list(G.neighbors(node_name)))
-            analysis_content.set_content(f"## Analysis for {node_name}\nNode connections: {num_neighbors}")
+def create_graph_tab(processor_instance: Dict, graph_ui: ui.element, main_ui: ui.element):
+    """Create and update the graph visualization"""
 
-    # Register the click event for the chart
-    echart.on_point_click(handle_click)
+    # Get HTML graph from processor
+    html_content = processor_instance["instance"].tools.get_memory(processor_instance["instance"].mem_name).vis(get_output_html=True)
+
+    # Ensure static directory exists
+    static_dir = Path('dist/static')
+    static_dir.mkdir(exist_ok=True)
+
+    # Save HTML to static file
+    graph_file = static_dir / f'graph{processor_instance["instance"].mem_name}.html'
+    # Save HTML to static file with added fullscreen functionality
+    enhanced_html = html_content.replace('</head>', '''
+               <style>
+                   .fullscreen {
+                       position: fixed !important;
+                       top: 0 !important;
+                       left: 0 !important;
+                       width: 100vw !important;
+                       height: 100vh !important;
+                       z-index: 9999 !important;
+                   }
+                   #fullscreen-btn {
+                       position: absolute;
+                       top: 10px;
+                       right: 10px;
+                       z-index: 10000;
+                       padding: 8px;
+                       background: rgba(0,0,0,0.7);
+                       color: white;
+                       border: none;
+                       border-radius: 4px;
+                       cursor: pointer;
+                   }
+                   #fullscreen-btn:hover {
+                       background: rgba(0,0,0,0.9);
+                   }
+               </style>
+           </head>''').replace('<div id="mynetwork"', '''
+               <button id="fullscreen-btn" onclick="toggleFullscreen()">
+                   <span id="fullscreen-icon">⛶</span>
+               </button>
+               <div id="mynetwork"''')
+
+    # Add fullscreen JavaScript
+    enhanced_html = enhanced_html.replace('</body>', '''
+               <script>
+                   function toggleFullscreen() {
+                       const container = document.querySelector('.card');
+                       const btn = document.getElementById('fullscreen-btn');
+                       const icon = document.getElementById('fullscreen-icon');
+
+                       if (container.classList.contains('fullscreen')) {
+                           container.classList.remove('fullscreen');
+                           icon.textContent = '⛶';  // Maximize icon
+                       } else {
+                           container.classList.add('fullscreen');
+                           icon.textContent = '⮌';  // Minimize icon
+                       }
+
+                       // Trigger network resize after transition
+                       setTimeout(() => {
+                           if (typeof network !== 'undefined') {
+                               network.fit();
+                           }
+                       }, 100);
+                   }
+
+                   // Add keyboard shortcut (Esc to exit fullscreen)
+                   document.addEventListener('keydown', function(e) {
+                       if (e.key === 'Escape') {
+                           const container = document.querySelector('.card');
+                           if (container.classList.contains('fullscreen')) {
+                               container.classList.remove('fullscreen');
+                               document.getElementById('fullscreen-icon').textContent = '⛶';
+                               if (typeof network !== 'undefined') {
+                                   setTimeout(() => network.fit(), 100);
+                               }
+                           }
+                       }
+                   });
+               </script>
+           </body>''')
+    graph_file.write_text(enhanced_html, encoding='utf-8')
+
+    with main_ui:
+        # Clear existing content except fullscreen button
+        for child in graph_ui.default_slot.children[:]:
+            if not isinstance(child, ui.button):  # Preserve the fullscreen button
+                child.delete()
+
+        # Ensure content is properly positioned in both modes
+        graph_container = ui.card().classes('w-full h-full')
+        with graph_container:
+            ui.html(f'''
+                <iframe
+                     src="/static/graph{processor_instance["instance"].mem_name}.html"
+                    style="width: 100%; height: 800px; border: none; background: #1a1a1a;"
+                    allowfullscreen>
+                </iframe>
+            ''').classes('w-full h-full')
+
 
 is_init = [False]
 # --- Database Setup ---
@@ -344,50 +370,192 @@ def get_db():
         db.initialize_database()
     return db
 
+import pickle
 # --- Session State Management ---
-def get_user_state(session_id: str) -> dict:
+def get_user_state(session_id: str, is_new=False) -> dict:
     db = get_db()
     state_ = {
-        'balance': 1.0,
+        'balance': .5,
         'last_reset': datetime.utcnow().isoformat(),
         'research_history': [],
         'payment_id': '',
     }
     if session_id is None:
         state_['balance'] *= -1
+        if is_new:
+            return state_, True
         return state_
     state = db.get(f"TruthSeeker::session:{session_id}")
     print("STAR>E:::", state, state.get(), "###")
     if state.get() is None:
         state = state_
+        if is_new:
+            return state_, True
     else:
         try:
-            state = json.loads(state.get().decode('utf-8').replace("'", '"'))
+            state = pickle.loads(state.get())
         except Exception as e:
             print(e)
-            state = state_
+            state = {
+        'balance': 0.04,
+        'last_reset': datetime.utcnow().isoformat(),
+        'research_history': ["Sorry we had an error recreating your state"],
+        'payment_id': '',
+            }
+            if is_new:
+                return state, True
+    if is_new:
+        return state, False
     return state
 
 
 def save_user_state(session_id: str, state: dict):
     db = get_db()
     print("Saving state")
-    db.set(f"TruthSeeker::session:{session_id}", json.dumps(state).encode('utf-8')).print()
+    db.set(f"TruthSeeker::session:{session_id}", pickle.dumps(state)).print()
+
+def delete_user_state(session_id: str):
+    db = get_db()
+    print("Saving state")
+    db.delete(f"TruthSeeker::session:{session_id}").print()
 
 def reset_daily_balance(state: dict, valid=False) -> dict:
     now = datetime.utcnow()
     last_reset = datetime.fromisoformat(state.get('last_reset', now.isoformat()))
     if now - last_reset > timedelta(hours=24):
-        state['balance'] = max(state.get('balance', 1.2 if valid else 0.5), 1.2 if valid else 0.5)
+        state['balance'] = max(state.get('balance', 1.6 if valid else 0.5), 1.6 if valid else 0.5)
         state['last_reset'] = now.isoformat()
     return state
 
+def create_followup_section(processor_instance: Dict, main_ui: ui.element):
+    main_ui.clear()
+    with main_ui:
+        ui.label("Advanced Query Interface").classes("text-xl font-semibold mb-4")
+
+        # Container for query inputs
+        query_container = ui.column().classes("w-full gap-4")
+        query_inputs = []  # Store references to query inputs
+        # Query parameters section
+        with ui.expansion("Query Parameters", icon="settings").classes("w-full") as query_e:
+            with ui.grid(columns=2).classes("w-full gap-4"):
+                k_input = ui.number("Results Count (k)", value=5, min=1, max=20)
+                min_sim = ui.number("Min Similarity", value=0.7, min=0, max=1, step=0.1)
+                cross_depth = ui.number("Cross Reference Depth", value=2, min=1, max=5)
+                max_cross = ui.number("Max Cross References", value=10, min=1, max=20)
+                max_sent = ui.number("Max Sentences", value=10, min=1, max=50)
+                unified = ui.switch("Unified Retrieve", value=True)
+
+        # Results display
+        results_display = ui.markdown().classes("w-full mt-4")
+
+    async def execute_query(query_input, params):
+        """Execute a single query with parameters"""
+        try:
+            query_text = query_input.value
+            if not query_text.strip():
+                return ""
+
+            # Construct query parameters
+            query_params = {
+                "k": params["k"],
+                "min_similarity": params["min_similarity"],
+                "cross_ref_depth": params["cross_ref_depth"],
+                "max_cross_refs": params["max_cross_refs"],
+                "max_sentences": params["max_sentences"]
+            }
+
+            # Execute query
+            results = await processor_instance["instance"].extra_query(
+                query=query_text,
+                query_params=query_params,
+                unified_retrieve=params["unified"]
+            )
+
+            # Format results
+            formatted_result = "### Query: " + query_text + "\n\n"
+
+            if isinstance(results, list):
+                for mem_result in results:
+                    memory_name = mem_result.get("memory", "Unknown")
+                    result = mem_result.get("result", {})
+
+                    formatted_result += f"**Memory: {memory_name}**\n\n"
+
+                    if isinstance(result, dict):
+                        answer = result.get("answer", "No answer available")
+                        sources = result.get("sources", [])
+
+                        formatted_result += f"{answer}\n\n"
+                        if sources:
+                            formatted_result += "**Sources:**\n"
+                            for src in sources:
+                                formatted_result += f"- {src}\n"
+                    else:
+                        formatted_result += str(result) + "\n\n"
+            else:
+                formatted_result += str(results) + "\n\n"
+
+        except Exception as e:
+            return f"Error executing query: {str(e)}\n\n"
+
+    def add_query_input():
+        """Add a new query input field"""
+        with query_container:
+            new_input = ui.textarea("Query", placeholder="Enter your query...") \
+                .classes("w-full")
+            query_inputs.append(new_input)
+
+    async def execute_all_queries():
+        """Execute all queries in sequence"""
+        if not processor_instance.get("instance"):
+            ui.notify("No active processor instance", type="warning")
+            return
+
+        # Collect parameters
+        params = {
+            "k": k_input.value,
+            "min_similarity": min_sim.value,
+            "cross_ref_depth": cross_depth.value,
+            "max_cross_refs": max_cross.value,
+            "max_sentences": max_sent.value,
+            "unified": unified.value
+        }
+
+        # Execute queries and combine results
+        combined_results = ""
+        for query_input in query_inputs:
+            result = await execute_query(query_input, params)
+            combined_results += result + "\n---\n\n"
+
+        # Update display
+        with main_ui:
+            results_display.set_content(combined_results)
+
+    # Add initial query input
+    add_query_input()
+    with main_ui:
+        # Control buttons
+        with ui.row().classes("w-full gap-4 mt-4"):
+            ui.button("Add Query", on_click=add_query_input) \
+                .classes("bg-blue-600 hover:bg-blue-700")
+            ui.button("Execute Queries", on_click=lambda: asyncio.create_task(execute_all_queries())) \
+                .classes("bg-green-600 hover:bg-green-700")
+            ui.button("Clear Results", on_click=lambda: results_display.set_content("")) \
+                .classes("bg-red-600 hover:bg-red-700")
 
 def create_research_interface(Processor):
 
     def helpr(request, session: dict):
+        print("Creating research interface", session)
         session_id = session.get('ID')
-        state = get_user_state(session_id)
+        session_id_h = session.get('IDh')
+
+        state, is_new = get_user_state(session_id, is_new=True)
+
+        if is_new and session_id_h != "#0":
+            state = get_user_state(session_id_h)
+            save_user_state(session_id, state)
+            delete_user_state(session_id_h)
         if session_rid := request.row.query_params.get('session_id'): # MACh schluer gege trikser uws
             if state.get('balance') < get_user_state(session_rid).get('balance') and get_user_state(session_rid).get('balance') != 1.0:
                 pass
@@ -412,12 +580,15 @@ def create_research_interface(Processor):
         followup_results_content = None
         progress_card = None
         balance = None
+        md_node = None
+        analysis_node = None
+        graph_ui = None
 
         # Global config storage with default values
         config = {
-            'chunk_size': 1000,
-            'overlap': 100,
-            'num_search_result_per_query': 2,
+            'chunk_size': 21000,
+            'overlap': 2100,
+            'num_search_result_per_query': 3,
             'max_search': 3,
             'num_workers': None
         }
@@ -535,13 +706,18 @@ def create_research_interface(Processor):
                         show_history()
 
                 except Exception as e:
-                    # import traceback
+                    import traceback
 
                     with main_ui:
                         update_status({"progress": 0, "step": "Error", "info": str(e)})
+                        state['balance'] += est_price
+                        save_user_state(session_id, state)
+                        balance.set_text(f"Balance: {state['balance']:.2f}€")
                         ui.notify(f"Error {str(e)})", type="negative")
-
-                    # print(traceback.format_exc())
+                        research_card.visible = True
+                        config_cart.visible = True
+                        config_section.visible = True
+                    print(traceback.format_exc())
 
             def target():
                 get_app().run_a_from_sync(helper, )
@@ -555,62 +731,12 @@ def create_research_interface(Processor):
                 balance.set_text(f"Balance: {state['balance']:.2f}€")
                 Thread(target=target, daemon=True).start()
 
-        async def start_followup():
-            nonlocal processor_instance, progress_card, response_type_input
-
-            research_card.visible = False
-            config_cart.visible = False
-            config_section.visible = False
-
-            # Sammle die Suchparameter aus den UI-Elementen
-            try:
-                qp = QueryParam(
-                    mode=mode_select.value,
-                    only_need_context=False,
-                    only_need_prompt=False,
-                    response_type=response_type_input.value,
-                    stream=False,
-                    top_k=60,
-                    max_token_for_text_unit=4000
-                )
-            except Exception as e:
-                ui.notify(f"Fehler bei den Suchparametern: {e}", type="warning")
-                return
-            with main_ui:
-                combined_result = ""
-                # Verarbeite jede eingegebene Folgefrage
-                for input_comp in followup_inputs:
-                    question = (input_comp.value or "").strip()
-                    if not question:
-                        continue  # Leere Eingaben überspringen
-                    # Prüfe, ob eine aktive Research-Session vorhanden ist
-                    if not processor_instance["instance"]:
-                        ui.notify("Keine aktive Research-Session vorhanden.", type="warning")
-                        return
-
-                    progress_card.visible = True
-                    # Rufe extra_query mit den Suchparametern auf
-                    results = await processor_instance["instance"].extra_query(question, query_params=qp)
-                    progress_card.visible = False
-                    answer = results.get("answer", "Keine Antwort erhalten.")
-                    combined_result += f"### Frage: {question}\n{answer}\n\n"
-
-                if not combined_result:
-                    ui.notify("Bitte mindestens eine gültige Folgefrage eingeben.", type="warning")
-                    return
-
-                research_card.visible = True
-                config_cart.visible = True
-
-                followup_results_content.set_content(combined_result)
-
         def show_history():
             with config_cart:
                 for idx, entry in enumerate(state['research_history']):
-                    with ui.card().classes("w-full backdrop-blur-lg bg-white/10 p-4").on('click',
-                                                                                         lambda _, i=idx: load_history(
-                                                                                             i)):
+                    with ui.card().classes("w-full backdrop-blur-lg bg-white/10 p-4"):
                         ui.label(entry['query']).classes('text-sm')
+                        ui.button("Open").on_click(lambda _, i=idx: load_history(i))
         # UI-Aufbau
         with ui.column().classes("w-full max-w-6xl mx-auto p-6 space-y-6") as main_ui:
             balance = ui.label(f"Balance: {state['balance']:.2f}€").classes("text-s font-semibold")
@@ -644,11 +770,11 @@ def create_research_interface(Processor):
                 ui.label("Configuration Options").classes("text-xl font-semibold mt-4 mb-2")
                 with ui.row():
                     chunk_size_input = ui.number(label="Chunk Size",
-                                                 value=config['chunk_size'], format='%.0f', max=32_000, min=1000,
+                                                 value=config['chunk_size'], format='%.0f', max=64_000, min=1000,
                                                  step=100) \
                         .on('change', on_config_change).style("color: var(--text-color)")
                     overlap_input = ui.number(label="Overlap",
-                                              value=config['overlap'], format='%.0f', max=3200, min=100, step=50) \
+                                              value=config['overlap'], format='%.0f', max=6400, min=100, step=50) \
                         .on('change', on_config_change).style("color: var(--text-color)")
 
                 with ui.row():
@@ -665,61 +791,32 @@ def create_research_interface(Processor):
             config_section = config_section
             config_section.visible = False
             # --- Ergebnisse anzeigen ---
-            with ui.card().classes("w-full backdrop-blur-lg p-4 bg-white/10 hidden") as results_card:
+            with ui.card().classes("w-full backdrop-blur-lg p-4 bg-white/10") as results_card:
                 ui.label("Research Results").classes("text-xl font-semibold mb-4")
                 with ui.tabs() as tabs:
                     ui.tab("Summary")
                     ui.tab("References")
-                    ui.tab("Graph")
                     ui.tab("SystemStates")
                 with ui.tab_panels(tabs, value="Summary").classes("w-full").style("background-color: var(--background-color)"):
                     with ui.tab_panel("Summary"):
                         summary_content = ui.markdown("").style("color : var(--text-color)")
                     with ui.tab_panel("References"):
                         references_content = ui.markdown("").style("color : var(--text-color)")
-                    with ui.tab_panel("Graph") as graph_ui:
-                        # ...and then add the graph (chart)
-                        md_node = ui.markdown("").style("color : var(--text-color)")
-                        analysis_node = ui.markdown("").style("color : var(--text-color)")
-                        ui.button("Show Graph", on_click= lambda :create_graph_tab(get_tools().get_memory(), processor_instance, md_node, analysis_node, graph_ui))
-
                     with ui.tab_panel("SystemStates"):
                         analysis_content = ui.markdown("").style("color : var(--text-color)")
 
+
             # Ergebnisse sichtbar machen, sobald sie vorliegen.
             results_card = results_card
+            results_card.visible = False
 
             # --- Follow-Up Bereich mit mehrfachen Folgefragen und Suchparametern ---
             with ui.card().classes("w-full backdrop-blur-lg bg-white/10 p-4 hidden") as followup_card:
-                ui.label("Follow-Up Fragen & Suchparameter").classes("text-xl font-semibold mb-4")
-
-                followup_inputs = []  # Liste zur Speicherung der Referenzen auf die Eingabefelder
-
-                def add_followup_input():
-                    # Erstelle ein neues Textarea für eine Folgefrage und füge es der Liste hinzu
-                    input_comp = ui.input("Follow-Up Frage", placeholder="Gib deine Folgefrage ein...") \
-                        .classes("w-full min-h-[60px] mb-2")
-                    followup_inputs.append(input_comp)
-
-                # Erstes Eingabefeld sofort anzeigen
-                add_followup_input()
-
-                # --- Suchparameter (QueryParam) ---
-                ui.label("Suchparameter").classes("text-lg font-semibold mb-2")
-                with ui.row():
-                    mode_select = ui.select(label="Modus", value="global",
-                                            options=["local", "global", "hybrid", "naive", "mix"]).style("color: var(--text-color)")
-                    response_type_input = ui.input(label="Antwort-Typ", value="Multiple Paragraphs").style("color: var(--text-color)")
-
-                # Ausgabe der Ergebnisse
-                followup_results_content = ui.markdown("")
-
-                # Absende-Button für Follow-Up Anfragen
-                ui.button("Follow-Up absenden", on_click=lambda: asyncio.create_task(start_followup())) \
-                    .classes("bg-green-600 hover:bg-green-700 py-3 rounded-lg")
+                pass
 
             # Zugriff auf followup_card (falls später benötigt)
             followup_card = followup_card
+            followup_card.visible = False
 
             # --- Fortschrittsanzeige ---
             with ui.card().classes("w-full backdrop-blur-lg bg-white/10 p-4") as progress_card:
@@ -752,7 +849,26 @@ def create_research_interface(Processor):
                 'transition-colors duration-300'
             ).on('click', lambda: ui.navigate.to('/open-Seeker.about', new_tab=True))
 
+            with ui.element('div').classes("w-full max-w-6xl mx-auto p-6 space-y-6") as graph_ui:
+                fullscreen_btn = create_fullscreen_toggle(graph_ui)
+                md_node = ui.markdown("").style("color: var(--text-color)")
+                analysis_node = ui.markdown("").style("color: var(--text-color)")
+                ui.button("Show Graph", on_click=lambda: create_graph_tab(
+                    processor_instance, graph_ui, main_ui
+                ))
+
+                def handle_key(e):
+                    if e.key == 'Escape':
+                        fullscreen_btn.clicked()
+
+                ui.keyboard(on_key=handle_key)
+            md_node = md_node
+            analysis_node = analysis_node
+            graph_ui = graph_ui
+            graph_ui.visible = False
         main_ui = main_ui
+
+
         # --- Hilfsfunktionen ---
         def validate_inputs() -> bool:
             if not query.value.strip():
@@ -768,13 +884,15 @@ def create_research_interface(Processor):
             # Ergebnisse und Follow-Up Bereich verstecken
             results_card.visible = False
             followup_card.visible = False
+            graph_ui.visible = False
 
         def show_progress_indicators():
             nonlocal progress_card
             progress_card.visible = True
 
         def update_results(data: dict, save=True):
-            nonlocal summary_content, analysis_content, references_content, results_card, followup_card
+            nonlocal summary_content, analysis_content, references_content, results_card,\
+                followup_card, md_node,analysis_node,graph_ui
 
             # Handle papers (1-to-1 case)
             papers = data.get("papers", [])
@@ -790,22 +908,25 @@ def create_research_interface(Processor):
                 if processor_instance is not None and processor_instance['instance'] is not None:
                     history_entry["mam_name"] = processor_instance['instance'].mem_name
                     history_entry["query"] = processor_instance['instance'].query
+
+                    processor_instance['instance'].tools.get_memory().save_memory(history_entry["mam_name"], history_entry["mam_name"] + '.plt')
                 state['research_history'].append(history_entry)
                 save_user_state(session_id, state)
             else:
-                papers = [Paper(**paper) for paper in papers]
-
+                papers = [Paper(**json.loads(paper)) for paper in papers]
+            create_followup_section(processor_instance, followup_card)
             with main_ui:
                 progress_card.visible = False
-
                 # Build summary from insights
                 summaries = []
                 for insight in insights:
                     if 'result' in insight and 'summary' in insight['result']:
+                        if isinstance(insight['result']['summary'], str):
+                            print(insight['result']['summary'], "NEXT", json.loads(insight['result']['summary'][:-1]),"NEXT22",  type(json.loads(insight['result']['summary'][:-1])))
+                            insight['result']['summary'] = json.loads(insight['result']['summary'][:-1])
                         main_summary = insight['result']['summary'].get('main_summary', '')
                         if main_summary:
                             summaries.append(main_summary)
-
                 summary_text = "\n\n".join(summaries) if summaries else "No summary available."
                 summary_content.set_content(f"# Research Summary\n\n{summary_text}")
 
@@ -841,8 +962,12 @@ def create_research_interface(Processor):
                 # Add detailed insights
                 references_md += "\n\n# Insights\n"
                 for i, insight in enumerate(insights):
+                    print(insight)
                     result = insight.get('result', {})
                     summary = result.get('summary', {})
+
+                    if isinstance(summary, str):
+                        summary = json.loads(summary)
 
                     # Main summary
                     references_md += f"\n## Insight {i + 1}\n"
@@ -880,9 +1005,17 @@ def create_research_interface(Processor):
 
                 references_content.set_content(references_md)
 
+                # nx concpts graph
+                if processor_instance["instance"] is not None:
+                    create_graph_tab(
+                        processor_instance,
+                        graph_ui,main_ui
+                    )
+
                 # Show results and followup cards
                 results_card.visible = True
                 followup_card.visible = True
+                graph_ui.visible = True
 
         def load_history(index: int):
             entry = state['research_history'][index]
@@ -890,6 +1023,7 @@ def create_research_interface(Processor):
 
                 processor_instance["instance"].mem_name = entry["mam_name"]
                 processor_instance['instance'].query = entry["query"]
+
                 pass
             else:
                 processor = Processor(entry["query"], tools=get_tools(), **config)
@@ -897,6 +1031,7 @@ def create_research_interface(Processor):
                 processor.callback = update_status
                 processor.mem_name = entry["mam_name"]
                 processor_instance["instance"] = processor
+                processor.tools.get_memory().load_memory(entry["mam_name"], entry["mam_name"]+'.plt')
             update_results(entry, save=False)
 
     return helpr
@@ -907,7 +1042,7 @@ def regiser_stripe_integration(is_scc=True):
 
         state = get_user_state(request.row.query_params.get('session_id'))
 
-        if state['payment_id'] is '':
+        if state['payment_id'] == '':
             with ui.card().classes("w-full items-center").style("background-color: var(--background-color)"):
                 ui.label(f"No payment id!").classes("text-lg font-bold")
                 ui.button(

@@ -216,15 +216,16 @@ class ConceptGraph:
         G = nx.DiGraph()
 
         for concept in self.concepts.values():
+            cks = '\n - '.join(concept.context_snippets[:4])
             G.add_node(
                 concept.name,
                 size=concept.importance_score * 10,
                 group=concept.category,
                 title=f"""
-                    <b>{concept.name}</b><br>
-                    Category: {concept.category}<br>
-                    Importance: {concept.importance_score:.2f}<br>
-                    Context: {', '.join(concept.context_snippets[:3])}
+                    {concept.name}
+                    Category: {concept.category}
+                    Importance: {concept.importance_score:.2f}
+                    Context: {cks}
                     """
             )
 
@@ -253,7 +254,9 @@ class GraphVisualizer:
         net.save_graph(output_file)
         print(f"Graph saved to {output_file}. Open in browser to view.")
         if get_output:
-            return open(output_file, "r", encoding="utf-8").read()
+            c = open(output_file, "r", encoding="utf-8").read()
+            os.remove(output_file)
+            return c
 
 class ConceptExtractor:
     """Handles extraction of concepts and relationships from text"""
@@ -1690,9 +1693,11 @@ class KnowledgeBase:
             print(f"Error loading knowledge base: {str(e)}")
             raise
 
-    def vis(self,output_file: str = "concept_graph.html", get_output=False):
-        return GraphVisualizer.visualize(self.concept_extractor.concept_graph.convert_to_networkx(),
-                                         output_file=output_file, get_output=get_output)
+    def vis(self,output_file: str = "concept_graph.html", get_output_html=False, get_output_net=False):
+        net = self.concept_extractor.concept_graph.convert_to_networkx()
+        if get_output_net:
+            return net
+        return GraphVisualizer.visualize(net,output_file=output_file, get_output=get_output_html)
 
 async def main():
     kb = KnowledgeBase(n_clusters=3)

@@ -94,28 +94,42 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
         with open(log_filename, "a"):
             pass
 
-    log_format = f"{app_name} %(asctime)s - %(name)s - %(levelname)s - %(filename)s - %(funcName)s:%(lineno)d - %(message)s"
-
-    if interminal:
-        logging.basicConfig(level=level, format=f"{app_name} %(asctime)s %(levelname)s %(name)s - %(message)s", datefmt="%Y-%m-%d#%H:%M:%S")
-    else:
-        logging.basicConfig(level=level, filename=log_filename, format=log_format, datefmt="%Y-%m-%d %H:%M:%S")
-
     logger = logging.getLogger(name)
 
-    if interminal:
-        handler = logging.FileHandler(log_filename)
-        handler.setFormatter(logging.Formatter(log_format))
-        handler.setLevel(file_level)
-        logger.addHandler(handler)
-
-    if is_online:
-        handler = SocketHandler(log_info_data["H"], log_info_data["P"])
-        handler.setFormatter(logging.Formatter(log_format))
-        handler.setLevel(online_level)
-        logger.addHandler(handler)
-
     logger.setLevel(level)
+    # Prevent logger from propagating to parent loggers
+    logger.propagate = False
+
+    terminal_format = f"{app_name} %(asctime)s %(levelname)s %(name)s - %(message)s"
+    file_format = f"{app_name} %(asctime)s - %(name)s - %(levelname)s - %(filename)s - %(funcName)s:%(lineno)d - %(message)s"
+
+    # Configure handlers
+    handlers = []
+
+    # File handler (always added)
+    file_handler = logging.FileHandler(log_filename)
+    file_handler.setFormatter(logging.Formatter(file_format))
+    file_handler.setLevel(file_level)
+    handlers.append(file_handler)
+
+    # Terminal handler (if requested)
+    if interminal:
+        terminal_handler = logging.StreamHandler()
+        terminal_handler.setFormatter(logging.Formatter(terminal_format))
+        terminal_handler.setLevel(level)
+        handlers.append(terminal_handler)
+
+    # Socket handler (if requested)
+    if is_online:
+        socket_handler = SocketHandler(log_info_data["H"], log_info_data["P"])
+        socket_handler.setFormatter(logging.Formatter(file_format))
+        socket_handler.setLevel(online_level)
+        handlers.append(socket_handler)
+
+    # Add all handlers to logger
+    for handler in handlers:
+        logger.addHandler(handler)
+
     return logger, filename
 
 

@@ -193,7 +193,21 @@ if (!isHtmxAfterRequestListenerAdded) {
     isHtmxAfterRequestListenerAdded = true;
 }
 
+
+// Add this near the top of your script, after the state initialization
+window.addEventListener('popstate', function(event) {
+    // Get URL from state, fallback to current location if state is missing
+    const url = event.state?.url || window.location.href;
+
+    // Call router with the URL from history state
+    router(url);
+});
 // Renderer
+
+document.addEventListener("DOMContentLoaded", () => {
+    console.log("NOW DOMContentLoaded", document.getElementById('Nav-Controls'))
+    forceRerender(document.getElementById('Nav-Controls'))
+});
 
 function linkEffect() {
         let transition = document.getElementById('overlay');
@@ -279,9 +293,7 @@ function updateDome(dome, add_script=true, linkExtra=null){
         }
     });
     }
-
     htmx.process(dome);
-
 }
 
 function initDome(){
@@ -315,14 +327,14 @@ light_mode
     });
 
 
-
     document.body.addEventListener('mousedown', () => {StartBgInteract()});
     document.body.addEventListener('mouseup', () => {EndBgInteract()});
 
     document.body.addEventListener("touchstart", () => {StartBgInteract()});
     document.body.addEventListener("touchend", () => {EndBgInteract()});
 
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    const stored_mode = sessionStorage.getItem('darkModeStatus')? sessionStorage.getItem('darkModeStatus') : "dark";
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches && stored_mode==="dark") {
         // The user prefers dark color scheme
         toggleDarkMode(true, "dark")
         document.getElementById('toggleLabel').innerHTML = `<span class="material-symbols-outlined">
@@ -340,6 +352,18 @@ dark_mode
 </span>`
     }
 
+}
+
+function forceRerender(element) {
+    if (!element){
+        console.log("NO ELEMENT TO forceRerender")
+        return
+    }
+    element.style.display = "none";
+    setTimeout(() => {
+        element.style.display = "";
+        console.log("forceRerender DONE for", element)
+    }, 0); // Small delay ensures reflow
 }
 
 function renderer({content="", extend = false, id = "main", Dome = DOME, add_script = true, helper = undefined, insert=false}) {
@@ -401,8 +425,241 @@ function dashboard_init() {
 
 }
 
+// Funktion zum Erstellen der Ladeansicht mit zufälligem Bild von Picsum
+async function createLoadingView() {
+    // Zufällige ID zwischen 1 und 1000 für verschiedene Bilder
+    const randomId = Math.floor(Math.random() * 1000) + 1;
+    const imageUrl = `https://picsum.photos/id/${randomId}/800/600`;
+
+    // Alternative APIs, falls Picsum nicht funktioniert
+    const fallbackApis = [
+        'https://source.unsplash.com/random/800x600',
+        'https://api.lorem.space/image/movie?w=800&h=600',
+    ];
+
+    return `
+        <div class="loading-container">
+            <div class="loading-image-container">
+                <img src="${imageUrl}"
+                     alt="Loading"
+                     class="loading-image"
+                     onerror="this.onerror=null; this.src='${fallbackApis[0]}'">
+                <div class="loading-placeholder">
+                    <div class="loading-spinner"></div>
+                </div>
+            </div>
+            <div class="loading-text">
+                <h2>Wird vorbereitet...</h2>
+                <div class="loading-progress"></div>
+            </div>
+        </div>
+    `;
+}
+
+// Verbesserte CSS-Styles
+const loadingStyles = `
+    <style>
+        .loading-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 9999;
+            transition: opacity 0.5s ease;
+        }
+
+        .loading-image-container {
+            position: relative;
+            width: 80vw;
+            max-width: 800px;
+            height: 60vh;
+            max-height: 600px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
+        }
+
+        .loading-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: opacity 0.3s ease;
+        }
+
+        .loading-placeholder {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.2);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .loading-text {
+            margin-top: 20px;
+            color: white;
+            text-align: center;
+            font-family: Arial, sans-serif;
+        }
+
+        .loading-text h2 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 300;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid #ffffff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        .loading-progress {
+            margin-top: 10px;
+            width: 200px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .loading-progress::after {
+            content: '';
+            display: block;
+            width: 40%;
+            height: 100%;
+            background: white;
+            animation: progress 2s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        @keyframes progress {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(350%); }
+        }
+    </style>
+`;
+
+function createLoadingManager() {
+    const events = new EventTarget();
+    let resourcesLoaded = 0;
+    let totalResources = 0;
+
+    return {
+        // Signalisiert, dass eine neue Ressource geladen wird
+        addResource() {
+            totalResources++;
+        },
+        // Signalisiert, dass eine Ressource fertig geladen wurde
+        resourceLoaded() {
+            resourcesLoaded++;
+            const progress = (resourcesLoaded / totalResources) * 100;
+            events.dispatchEvent(new CustomEvent('loadingProgress', {
+                detail: { progress }
+            }));
+
+            if (resourcesLoaded >= totalResources) {
+                events.dispatchEvent(new CustomEvent('loadingComplete'));
+            }
+        },
+        // Wartet auf das Laden aller Ressourcen
+        waitForLoading() {
+            return new Promise((resolve) => {
+                if (resourcesLoaded >= totalResources) {
+                    resolve();
+                } else {
+                    events.addEventListener('loadingComplete', () => resolve());
+                }
+            });
+        },
+        // Event-Listener für den Ladefortschritt
+        onProgress(callback) {
+            events.addEventListener('loadingProgress', (e) => callback(e.detail.progress));
+        },
+        // Setzt den Loading-Manager zurück
+        reset() {
+            resourcesLoaded = 0;
+            totalResources = 0;
+        }
+    };
+}
+
+// Erstelle eine Instanz des Loading-Managers
+
+
+
 // Router
 function router(url, extend = false, id = "main", Dome = DOME, callback=null) {
+    const isFirstLoad = !sessionStorage.getItem('appInitialized');
+    let loadingManager =  {resourceLoaded() {},}
+    if (isFirstLoad) {
+        const loadingElement = document.createElement('div');
+        createLoadingView().then(loadingView => {
+            loadingElement.innerHTML = loadingStyles + loadingView;
+            document.body.appendChild(loadingElement);
+
+            const progressBar = loadingElement.querySelector('.loading-progress');
+
+            // Überwache den Ladefortschritt
+            loadingManager.onProgress((progress) => {
+                progressBar.style.setProperty('--progress', `${progress}%`);
+            });
+
+            // Definiere minimale und maximale Anzeigezeit
+            const MIN_DISPLAY_TIME = 750; // .75 Sekunde minimum
+            const MAX_DISPLAY_TIME = 25000; // 25 Sekunden maximum
+
+            // Starte Timer für minimale Anzeigezeit
+            const minTimePromise = new Promise(resolve =>
+                setTimeout(resolve, MIN_DISPLAY_TIME)
+            );
+
+            // Timer für maximale Anzeigezeit
+            const maxTimePromise = new Promise(resolve =>
+                setTimeout(resolve, MAX_DISPLAY_TIME)
+            );
+
+            // Warte auf das Laden der App
+            const loadingPromise = loadingManager.waitForLoading();
+
+            // Warte auf minimale Zeit UND Laden oder maximale Zeit
+            Promise.race([
+                Promise.all([minTimePromise, loadingPromise]),
+                maxTimePromise
+            ]).then(() => {
+                // Sanft ausblenden
+                loadingElement.style.opacity = '0';
+                setTimeout(() => {
+                    loadingElement.remove();
+                    sessionStorage.setItem('appInitialized', 'true');
+                }, 500);
+            });
+        });
+            loadingManager = createLoadingManager();
+            loadingManager.addResource();
+            loadingManager.addResource();
+            loadingManager.addResource();
+            loadingManager.addResource();
+            loadingManager.addResource();
+            loadingManager.addResource();
+    }
 
     // console.log("[url]:", url.toString())
     if (url.startsWith(state.TBv.base)) {
@@ -487,25 +744,26 @@ function router(url, extend = false, id = "main", Dome = DOME, callback=null) {
 
     let content = null
     const isProduction = window.location.origin.includes('3001')
+
     setTimeout(async ()=>{
 
         if (!isProduction){
             content = await fetchFromLocal(uri);
         }
-
+        loadingManager.resourceLoaded();
         // If the file wasn't found locally, fetch it from the backend API
         if (!content) {
             content = await fetchFromBackend(uri);
         }
-
+        loadingManager.resourceLoaded();
         if (!content) {
             content = await loadHtmlFile(uri);
         }
-
+        loadingManager.resourceLoaded();
         if (!content) {
             content = await fetchFromRBackend(uri);
         }
-
+        loadingManager.resourceLoaded();
         console.log("[content]:", content.toString().length, content)
 
         if (content.toString().startsWith("HTTP error!") && content.toString().includes("404")){
@@ -521,7 +779,8 @@ function router(url, extend = false, id = "main", Dome = DOME, callback=null) {
             }
 
             renderer({content, extend, id, Dome})
-
+            Dome.scrollIntoView({ behavior: "instant" });
+            loadingManager.resourceLoaded();
         }
 
     }, 0)
@@ -535,6 +794,7 @@ function router(url, extend = false, id = "main", Dome = DOME, callback=null) {
     if (callback){
         callback();
     }
+    loadingManager.resourceLoaded();
 }
 
 function cleanUrl(url) {

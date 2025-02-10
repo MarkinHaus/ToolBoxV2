@@ -37,11 +37,62 @@
     --GRAD: 50;
     --opsz: 24;
 
+    /* Scrollbar-specific variables */
+    --scrollbar-width: 10px;
+    --scrollbar-height: 10px;
+    --scrollbar-track-color: var(--background-color);
+    --scrollbar-thumb-color: var(--secondary-color);
+    --scrollbar-thumb-hover-color: var(--light-acent);
+    --scrollbar-thumb-active-color: var(--dark-acent);
 
     --primary: var(--primary-color);
     --primary-hover:  var(--secondary-color);
     --primary-focus: rgba(var(--secondary-color), 0.25);
     --primary-inverse: var(--text-color);
+
+
+    /* Base font sizes for different screen sizes */
+    --font-size-xs: clamp(0.75rem, 0.7rem + 0.25vw, 0.875rem);
+    --font-size-sm: clamp(0.875rem, 0.8rem + 0.375vw, 1rem);
+    --font-size-base: clamp(1rem, 0.9rem + 0.5vw, 1.125rem);
+    --font-size-lg: clamp(1.125rem, 1rem + 0.625vw, 1.25rem);
+    --font-size-xl: clamp(1.25rem, 1.125rem + 0.75vw, 1.5rem);
+    --font-size-2xl: clamp(1.5rem, 1.375rem + 1vw, 2rem);
+    --font-size-3xl: clamp(1.875rem, 1.75rem + 1.25vw, 2.5rem);
+    --font-size-4xl: clamp(2.25rem, 2rem + 1.5vw, 3rem);
+
+    /* Font weights */
+    --font-weight-light: 300;
+    --font-weight-regular: 400;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
+
+    /* Line heights */
+    --line-height-tight: 1.2;
+    --line-height-snug: 1.375;
+    --line-height-normal: 1.5;
+    --line-height-relaxed: 1.625;
+    --line-height-loose: 2;
+
+    /* Letter spacing */
+    --letter-spacing-tight: -0.025em;
+    --letter-spacing-normal: 0em;
+    --letter-spacing-wide: 0.025em;
+    --letter-spacing-wider: 0.05em;
+
+
+    /* Font families */
+    --font-family-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+        Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --font-family-serif: Georgia, Cambria, 'Times New Roman', Times, serif;
+    --font-family-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        'Liberation Mono', 'Courier New', monospace;
+
+    /* Font smoothing */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
 
 }
 
@@ -67,16 +118,135 @@
     --primary-hover:  var(--secondary-color);
     --primary-focus: rgba(var(--secondary-color), 0.25);
     --primary-inverse: var(--text-color);
+
+    --scrollbar-track-color: var(--dark-background-color);
+    --scrollbar-thumb-color: var(--dark-secondary-color);
+    --scrollbar-thumb-hover-color: var(--dark-nav-link-hover-color);
+    --scrollbar-thumb-active-color: var(--dark-nav-link-color);
 }
 
 
+/* Webkit scrollbar styles */
+::-webkit-scrollbar {
+    width: var(--scrollbar-width);
+    height: var(--scrollbar-height);
+}
+
+::-webkit-scrollbar-track {
+    background: var(--scrollbar-track-color);
+    border-radius: calc(var(--scrollbar-width) / 2);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb-color);
+    border-radius: calc(var(--scrollbar-width) / 2);
+    border: 2px solid var(--scrollbar-track-color);
+    transition: background 0.3s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover-color);
+}
+
+::-webkit-scrollbar-thumb:active {
+    background: var(--scrollbar-thumb-active-color);
+}
+
+::-webkit-scrollbar-corner {
+    background: var(--scrollbar-track-color);
+}
+
+/* Firefox scrollbar styles */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb-color) var(--scrollbar-track-color);
+}
+
+
+/* Hide scrollbar but keep functionality */
+.hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+    display: none;
+}
+
+
+/* Remove the hide-scrollbar class styles */
+.main-page.hide-scrollbar {
+    -ms-overflow-style: auto;
+    scrollbar-width: thin;
+}
+
+.main-page.hide-scrollbar::-webkit-scrollbar {
+    display: block;
+}
+
+html {
+    font-size: 21px;
+     scroll-behavior: smooth;
+    line-height: var(--line-height-normal);
+}
+
+body {
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-regular);
+}
+
+/* Heading styles */
+h1 {
+    font-size: var(--font-size-4xl);
+    line-height: var(--line-height-tight);
+    font-weight: var(--font-weight-bold);
+    letter-spacing: var(--letter-spacing-tight);
+}
+
+h2 {
+    font-size: var(--font-size-3xl);
+    line-height: var(--line-height-tight);
+    font-weight: var(--font-weight-bold);
+}
+
+h3 {
+    font-size: var(--font-size-2xl);
+    line-height: var(--line-height-snug);
+    font-weight: var(--font-weight-semibold);
+}
+
+h4 {
+    font-size: var(--font-size-xl);
+    line-height: var(--line-height-snug);
+    font-weight: var(--font-weight-semibold);
+}
+
+/* Responsive text classes */
+.text-small {
+    font-size: var(--font-size-sm);
+}
+
+.text-large {
+    font-size: var(--font-size-lg);
+}
+
+.text-display {
+    font-size: var(--font-size-4xl);
+    line-height: var(--line-height-tight);
+    font-weight: var(--font-weight-bold);
+    letter-spacing: var(--letter-spacing-tight);
+}
+
+/* Font weight utility classes */
+.font-light { font-weight: var(--font-weight-light); }
+.font-regular { font-weight: var(--font-weight-regular); }
+.font-medium { font-weight: var(--font-weight-medium); }
+.font-semibold { font-weight: var(--font-weight-semibold); }
+.font-bold { font-weight: var(--font-weight-bold); }
 
 @media screen and (max-width: 2000px) and (min-width: 1024px) {
     .container {
         max-width: 90%;
-    }
-    html {
-        font-size: 36px;
     }
     button{
         padding: 0.2rem 0.2rem;
@@ -85,9 +255,6 @@
 }
 
 @media screen and (max-width: 1023px) and (min-width: 767px) {
-    html {
-        font-size: 20px;
-    }
     button{
         padding: 0.1rem 0.15rem;
         border-radius: 5px;
@@ -102,39 +269,10 @@
     .motto {
         font-size: 18px;
     }
-    html {
-        font-size: 24px;
-    }
     button{
         padding: 0.02rem 0.1rem;
         border-radius: 9px;
     }
-}
-
-/* body,p, span,*/
-input, button {
-    font-size: 1rem;
-}
-
-
-h1 {
-    font-size: 2rem; /* 32px */
-}
-
-h2 {
-    font-size: 1.75rem; /* 28px */
-}
-
-h3 {
-    font-size: 1.5rem; /* 24px */
-}
-
-h4 {
-    font-size: 1.25rem; /* 20px */
-}
-
-h5 {
-    font-size: 1rem; /* 16px */
 }
 
 
@@ -170,7 +308,6 @@ a:hover , u:hover  {
 }
 
 body {
-    font-family: var(--font-family);
     color: var(--text-color);
     /* background-color: var(--background-color); */
     transition: background-color 0.5s ease;
@@ -200,13 +337,15 @@ body.dark-mode {
 */
 .dark-mode-toggle {
     position: absolute;
-    right: -0.5vw;
-    top: 0;
-    scale: 1.4;
+    left: 8vw;
+    top: 2vh;
+    scale: 2;
     margin-bottom: 5px;
     padding: 0.25rem 0;
 }
-
+.material-symbols-outlined {
+    scale: 2;
+}
 
 /* Navigation */
 @keyframes fadeInFromLeft {
@@ -280,13 +419,50 @@ nav ul li a:hover {
     }
 }
 
-
-/* Links */
 .NavMain {
     position: absolute;
     top: 0;
     left: 0;
-    z-index: 99;
+    z-index: 9999;
+    background-color: var(--background-color, #fff);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    padding: 10px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+    pointer-events: auto; /* Ensure clicks pass through */
+}
+
+.q-page-container {
+    z-index: 1;!important;
+}
+
+
+
+/* Main Navigation */
+#Nav-Main {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+
+/* Circle Button */
+.circle {
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+/* Dark Mode Toggle */
+#darkModeToggle {
+    display: none;  /* Hide default checkbox */
+}
+/* Toggle Label (Styled Switch) */
+#toggleLabel {
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
 }
 
 .links-form {
@@ -378,6 +554,21 @@ input {
     border-radius: 3px;
     border: 2px var(--secondary-color) outset;
 }
+
+textarea {
+    padding: 10px;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    border-radius: 3px;
+    border: 2px var(--secondary-color) outset;
+    resize: vertical; /* Allows vertical resizing but prevents horizontal stretching */
+    font-family: inherit; /* Ensures consistency with input fields */
+    font-size: inherit;
+    min-height: 50px; /* Adjust as needed */
+}
+
 
 button {
     background-color: var(--background-color);

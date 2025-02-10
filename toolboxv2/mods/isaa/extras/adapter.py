@@ -8,16 +8,6 @@ including text generation and embedding capabilities.
 Author: Lightrag Team
 Created: 2025-02-04
 License: MIT License
-
-Copyright (c) 2025 Lightrag
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
 Version: 1.0.0
 
 Change Log:
@@ -65,13 +55,6 @@ from tenacity import (
 )
 
 # lightRag utilities and types
-from lightrag.utils import (
-    wrap_embedding_func_with_attrs,
-    locate_json_string_body_from_string,
-    safe_unicode_decode,
-    logger,
-)
-from lightrag.types import GPTKeywordExtractionFormat
 
 import numpy as np
 
@@ -119,10 +102,7 @@ async def litellm_complete_if_cache(
     messages.append({"role": "user", "content": prompt})
 
     # Log query details for debugging purposes
-    logger.debug("===== Query Input to LLM =====")
-    logger.debug(f"Query: {prompt}")
-    logger.debug(f"System prompt: {system_prompt}")
-    logger.debug("Full context:")
+
 
     # Depending on the response format, choose the appropriate API call
     if "response_format" in kwargs:
@@ -147,8 +127,6 @@ async def litellm_complete_if_cache(
                 content = chunk.choices[0].delta.content
                 if content is None:
                     continue
-                if r"\u" in content:
-                    content = safe_unicode_decode(content.encode("utf-8"))
                 yield content
 
         return inner()
@@ -157,8 +135,6 @@ async def litellm_complete_if_cache(
         content = response.choices[0].message.content
         if content is None:
             content = response.choices[0].message.tool_calls[0].function.arguments
-        if r"\u" in content:
-            content = safe_unicode_decode(content.encode("utf-8"))
         return content
 
 
@@ -186,7 +162,6 @@ async def litellm_complete(
     )
 
 
-@wrap_embedding_func_with_attrs(embedding_dim=1536, max_token_size=8192)
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=60),

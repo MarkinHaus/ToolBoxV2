@@ -439,7 +439,6 @@ def create_nicegui_manager(app: FastAPI, token_secret: Optional[str] = None) -> 
 
 def register_nicegui(gui_id: str, setup_func: Callable, mount_path: Optional[str] = None, additional: Optional[str] = None, **kwargs) -> None:
     if not manager_online[0]:
-        print("NO FAST API RUNNING")
         return
     print("ADDED GUI:", gui_id)
     return NiceGUIManager().register_gui(gui_id, setup_func, mount_path, additional=additional, **kwargs)

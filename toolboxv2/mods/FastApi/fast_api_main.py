@@ -225,6 +225,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             session_id = hex(tb_app.config_fh.generate_seed())
 
         request.session['ID'] = session_id
+        request.session['IDh'] = h_session_id
 
         self.save_session(session_id, {
             'jwt-claim': jwt_claim,
@@ -359,7 +360,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             )
         elif not session:
             session_id = await self.crate_new_session_id(request, None, "Unknown")
-        elif request.session.get('ID', False) and self.get_session(request.session.get('ID', '')).get("new", False):
+        elif request.session.get('ID', True) and self.get_session(request.session.get('ID', '')).get("new", False):
             print("Session Not Found")
             session_id = await self.crate_new_session_id(request, None, "Unknown", session_id=request.session.get('ID'))
             request.session['valid'] = False
@@ -409,7 +410,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         elif isinstance(session_id, JSONResponse):
             return session_id
         else:
-            if request.session['valid']:
+            if request.session.get('valid', False):
                 session_data['valid'] = False
                 self.save_session(session_id, session_data, remote=True)
             request.session['valid'] = False
@@ -546,6 +547,9 @@ def protect_url_split_helper(url_split):
         return True
 
     elif url_split[1] == "web":
+        return False
+
+    elif url_split[1] == "static":
         return False
 
     elif url_split[-1] == "favicon.ico":

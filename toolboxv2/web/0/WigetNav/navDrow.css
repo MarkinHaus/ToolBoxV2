@@ -4,25 +4,17 @@
     width: min-content;
     height: fit-content;
     display: inline-flex;
+    scale: 2;
+    left: 2.3vw;
+    top: 2vh;
 }
 
-.circle {
-    width: 30px;
-    height: 30px;
-    border-radius: 25%;
-    background-color: var(--background-color);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    cursor: pointer;
-    transition: transform 0.5s;
-    margin-right: 1vh;
-}
 
 .plus {
     color: var(--text-color);
     font-size: 24px;
     font-weight: bold;
+    scale: 2;
 }
 
 .dropdown-menu {

@@ -1317,12 +1317,7 @@ class Tools(MainTool, FileHandler):
 
 
         # 4. LightRAG-Powered Relevance Extraction
-        from lightrag import QueryParam
-        query_params = QueryParam(
-            mode="mix",
-            top_k=min(50, max(10, len_text // 1000)),
-            max_token_for_text_unit=8000
-        )
+        query_params = {}
 
         # Hybrid search for key concepts
         results = await semantic_memory.query(

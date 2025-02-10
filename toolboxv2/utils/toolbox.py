@@ -622,7 +622,8 @@ class App(AppType, metaclass=Singleton):
                         if not result.async_initialized:
                             async def _():
                                 try:
-                                    await result
+                                    if asyncio.iscoroutine(result):
+                                        await result
                                     if hasattr(result, 'Name'):
                                         print('Opened :', result.Name)
                                     elif hasattr(result, 'name'):

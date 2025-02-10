@@ -5,7 +5,6 @@ from typing import List, Tuple, Optional, Dict
 
 import asyncio
 
-from lightrag import QueryParam
 from pydantic import BaseModel, Field
 
 from toolboxv2 import get_app, Spinner
@@ -303,6 +302,7 @@ class ArXivPDFProcessor:
 
                 # --- Phase 2: Process each paper's PDF ---
                 num_papers = len(papers)
+                final_papers = []
                 for j, paper in enumerate(papers):
                     try:
                         # Download the PDF (blocking) in a thread.
@@ -343,7 +343,9 @@ class ArXivPDFProcessor:
 
                         self.send_status(f"Filtered {len(texts)} / {len(filtered_texts)}",
                                          additional_info=paper.title)
-                        await self.mem.add_data(memory_name=self.mem_name,
+                        if len(filtered_texts) > 0 or len(filtered_texts)/len(texts) > 0.24:
+                            final_papers.append(paper)
+                            await self.mem.add_data(memory_name=self.mem_name,
                                                                  data=filtered_texts)
                         # Update status with paper title
                     except Exception as e:
@@ -354,7 +356,7 @@ class ArXivPDFProcessor:
                     # The PDF processing phase is 70% of the query’s portion.
                     self._query_progress[i] = 0.3 + ((j + 1) / num_papers) * 0.7
 
-                return papers
+                return final_papers
 
         # Launch all queries concurrently.
         tasks = [asyncio.create_task(process_query(i, query)) for i, query in enumerate(queries)]
@@ -415,10 +417,10 @@ class ArXivPDFProcessor:
         self.send_status("Insights generated", progress=1.0)
         return results
 
-    async def extra_query(self, query, query_params=None):
+    async def extra_query(self, query, query_params=None, unified_retrieve=True):
         self.send_status("Processing follow-up query", progress=0.5)
         results = await self.mem.query(query=query, memory_names=self.mem_name,
-                                                      query_params=query_params, unified_retrieve=True)
+                                                      query_params=query_params, unified_retrieve=unified_retrieve)
         self.send_status("Processing follow-up query Done", progress=1)
         return results
 
@@ -444,6 +446,17 @@ class ArXivPDFProcessor:
 
         papers = await self.search_and_process_papers(queries)
 
+        if len(papers) == 0:
+            class UserQuery:
+                """Fix all typos and clear the original user query"""
+                new_query: str
+            self.query= self.tools.format_class(
+                UserQuery,
+                self.query
+            )["new_query"]
+            queries = self.generate_queries()
+            papers = await self.search_and_process_papers(queries)
+
         insights = await self.generate_insights(queries)
 
         elapsed_time = time.process_time() - t0
@@ -459,35 +472,31 @@ class ArXivPDFProcessor:
         median_text_length = 100000  # 10 pages * 10000 characters
 
         # Estimated chunks to process
-        total_chunks = total_papers * (median_text_length / config['chunk_size'])
-        processed_chunks = total_chunks * 0.3
+        total_chunks = total_papers * (median_text_length / config['chunk_size']) + 1 / config['overlap']
+        processed_chunks = total_chunks * 0.45
 
         # Time estimation (seconds)
-        processing_time_per_chunk = .5  # Hypothetical time per chunk in seconds
+        processing_time_per_chunk = .75  # Hypothetical time per chunk in seconds
         estimated_time = (
-            (processed_chunks * processing_time_per_chunk)
+            (processed_chunks * processing_time_per_chunk) - (config.get('num_workers', 16) if config.get('num_workers', 16) is not None else 16 / 10)
         )
 
         # Add fixed time components (hypothetical values)
         estimated_time += total_papers * 2.0  # Download time
         estimated_time += total_papers * 1.1  # Insights time
 
-        price_per_t_chunk = 0.08
 
-        if total_papers > 10:
-            price_per_t_chunk = 0.2
-        if total_papers > 100:
-            price_per_t_chunk = 0.6
-        if total_papers > 1000:
-            price_per_t_chunk = 1.2
+        price_per_char = 0.00001
+        price_per_t_chunk = config['chunk_size'] * total_chunks * price_per_char
+
 
         estimated_price = processed_chunks * (price_per_t_chunk / 1_000)
 
         # estimated_price = 0 if query_length < 420 and estimated_price < 5 else estimated_price
         if estimated_time < 30:
             estimated_time = 30
-        if estimated_price < .01:
-            estimated_price = .01
+        if estimated_price < .04:
+            estimated_price = .04
         return round(estimated_time, 2), round(estimated_price, 4)
 
 async def main(query: str = "Beste strategien in bretspielen sitler von katar"):
