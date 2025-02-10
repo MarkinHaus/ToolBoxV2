@@ -822,8 +822,6 @@ async def quicknote(access_allowed: bool = Depends(lambda: check_access_level(2)
     return serve_app_func('web/dashboards/dashboard.html')  # 'dashboards/dashboard_builder.html')
 
 
-
-
 # Configure a longer timeout and more robust handling
 async def forward_request(port: int, request: Request):
     try:
@@ -1077,15 +1075,16 @@ app.add_middleware(
     streamlit_apps_dir="./apps"
 )
 
-nicegui_manager = create_nicegui_manager(app)
-print("UI Manager online:", nicegui_manager)
-
 app.add_middleware(SessionAuthMiddleware)
 
 app.add_middleware(SessionMiddleware,
                    session_cookie=Code.one_way_hash(tb_app.id, 'session'),
                    https_only='live' in tb_app.id,
                    secret_key=Code.one_way_hash(DEVICE_KEY(), tb_app.id))
+
+
+nicegui_manager = create_nicegui_manager(app)
+print("UI Manager online:", nicegui_manager)
 
 # tb_app.run_a_from_sync(helper, id_name)
 asyncio.ensure_future(helper(id_name))

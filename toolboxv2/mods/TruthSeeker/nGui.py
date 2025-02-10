@@ -2,12 +2,13 @@ import colorsys
 import json
 import time
 from datetime import datetime, timedelta
+from queue import Queue
 from typing import Dict, Union, List, Any
 
 from fastapi import Request
 import os
 import random
-from threading import Thread
+from threading import Thread, Event
 
 import networkx as nx
 from dataclasses import asdict
@@ -548,26 +549,87 @@ def create_followup_section(processor_instance: Dict, main_ui: ui.element, sessi
 
     # Add initial query input
 
+online_states = [0]
 def create_research_interface(Processor):
 
     def helpr(request, session: dict):
-        print("Creating research interface", session)
+
+        state = {'balance':0, 'research_history': []}
+        main_ui = None
+        with ui.column().classes("w-full max-w-6xl mx-auto p-6 space-y-6") as loading:
+            ui.spinner(size='lg')
+            ui.label('Initializing...').classes('ml-2')
+
+        # Container for main content (initially hidden)
+        content = ui.column().classes('hidden')
+
+        # Extract session data before spawning thread
         session_id = session.get('ID')
         session_id_h = session.get('IDh')
+        session_rid = request.row.query_params.get('session_id')
+        session_valid = session.get('valid')
 
-        state, is_new = get_user_state(session_id, is_new=True)
+        # Thread communication
+        result_queue = Queue()
+        ready_event = Event()
 
-        if is_new and session_id_h != "#0":
-            state = get_user_state(session_id_h)
-            save_user_state(session_id, state)
-            delete_user_state(session_id_h)
-        if session_rid := request.row.query_params.get('session_id'): # MACh schluer gege trikser uws
-            state_, is_new_ = get_user_state(session_rid, is_new=True)
-            if not is_new_:
-                state = state_
-                delete_user_state(session_rid)
-        state = reset_daily_balance(state, session.get('valid'))
-        save_user_state(session_id, state)
+        def init_background():
+            nonlocal session_id, session_id_h, session_rid, session_valid
+            try:
+                # Original initialization logic
+                _state, is_new = get_user_state(session_id, is_new=True)
+
+                if is_new and session_id_h != "#0":
+                    _state = get_user_state(session_id_h)
+                    save_user_state(session_id, _state)
+                    delete_user_state(session_id_h)
+                if session_rid:
+                    state_, is_new_ = get_user_state(session_rid, is_new=True)
+                    if not is_new_:
+                        _state = state_
+                        delete_user_state(session_rid)
+                _state = reset_daily_balance(_state, session_valid)
+                save_user_state(session_id, _state)
+
+                # Send result back to main thread
+                result_queue.put(_state)
+                ready_event.set()
+            except Exception as e:
+                result_queue.put(e)
+                ready_event.set()
+
+            # Start background initialization
+
+        Thread(target=init_background).start()
+
+        def check_ready():
+            nonlocal state
+            if ready_event.is_set():
+                result = result_queue.get()
+
+                # Check if initialization failed
+                if isinstance(result, Exception):
+                    loading.clear()
+                    with loading:
+                        ui.label(f"Error during initialization: {str(result)}").classes('text-red-500')
+                    return
+
+                # Get state and build main UI
+                state = result
+                loading.classes('hidden')
+                content.classes(remove='hidden')
+                main_ui.visible = True
+                with main_ui:
+                    balance.set_text(f"Balance: {state['balance']:.2f}€")
+                    show_history()
+                return  # Stop the timer
+
+            # Check again in 100ms
+            ui.timer(0.1, check_ready, once=True)
+
+        # Start checking for completion
+        check_ready()
+
         # Wir speichern die aktive Instanz, damit Follow-Up Fragen gestellt werden können
         processor_instance = {"instance": None}
 
@@ -582,10 +644,14 @@ def create_research_interface(Processor):
         followup_card = None
         research_card = None
         config_cart = None
-        followup_results_content = None
         progress_card = None
         balance = None
         graph_ui = None
+
+        sr_button = None
+        r_button = None
+        r_text = None
+
 
         # Global config storage with default values
         config = {
@@ -605,7 +671,9 @@ def create_research_interface(Processor):
             query_length = len(query_text)
             # For example: estimated time scales with chunk size and query length.
             estimated_time ,estimated_price = Processor.estimate_processing_metrics(query_length, **config)
-
+            estimated_time *= max(1, online_states[0] * 6)
+            if processor_instance["instance"] is not None:
+                estimated_price += .25
             if estimated_time < 60:
                 time_str = f"~{int(estimated_time)}s"
             elif estimated_time < 3600:
@@ -677,7 +745,7 @@ def create_research_interface(Processor):
 
             async def helper():
                 nonlocal processor_instance, overall_progress, status_label, results_card, \
-                    summary_content, analysis_content,config, references_content, followup_card
+                    summary_content, analysis_content,config, references_content, followup_card,sr_button,r_button,r_text
 
                 try:
                     if not validate_inputs():
@@ -696,17 +764,23 @@ def create_research_interface(Processor):
                         research_card.visible = False
                         config_cart.visible = False
                         config_section.visible = False
+                        query.set_value("")
                     # Direkt instanziieren: Eine neue ArXivPDFProcessor-Instanz
-                    processor = Processor(query_text, tools=tools, **config)
+                    if processor_instance["instance"] is not None:
+                        processor = processor_instance["instance"]
+                        processor.chunk_size = config['chunk_size']
+                        processor.overlap = config['overlap']
+                        processor.num_search_result_per_query = config['num_search_result_per_query']
+                        processor.max_search = config['max_search']
+                        processor.num_workers = config['num_workers']
+                        papers, insights = await processor.process(query_text)
+                    else:
+                        processor = Processor(query_text, tools=tools, **config)
                     # Setze den Callback so, dass Updates in der GUI angezeigt werden
-                    processor.callback = update_status
-                    processor_instance["instance"] = processor
+                        processor.callback = update_status
+                        processor_instance["instance"] = processor
+                        papers, insights = await processor.process()
 
-                    # p_button[0].disabled = True
-                    # Starte den Prozess (dieser gibt am Ende die verarbeiteten Papers und Insights zurück)
-                    papers, insights = await processor.process()
-                    # p_button[0].disabled = False
-                    # Update Ergebnisse in der GUI
                     update_results({
                         "papers": papers,
                         "insights": insights
@@ -741,8 +815,14 @@ def create_research_interface(Processor):
                 state['balance'] -= est_price
                 save_user_state(session_id, state)
                 with main_ui:
-                    balance.set_text(f"Balance: {state['balance']:.2f}€")
+                    online_states[0] += 1
+                    balance.set_text(f"Balance: {state['balance']:.2f}€ Running Queries: {online_states[0]}")
+
                 Thread(target=target, daemon=True).start()
+                with main_ui:
+                    online_states[0] -= 1
+                    balance.set_text(f"Balance: {get_user_state(session_id)['balance']:.2f}€")
+
 
         def show_history():
             with config_cart:
@@ -750,7 +830,22 @@ def create_research_interface(Processor):
                     with ui.card().classes("w-full backdrop-blur-lg bg-white/10 p-4"):
                         ui.label(entry['query']).classes('text-sm')
                         ui.button("Open").on_click(lambda _, i=idx: load_history(i))
+
+        def reset():
+            nonlocal processor_instance, results_card, followup_card, sr_button, r_button, r_text
+            processor_instance["instance"] = None
+            show_progress_indicators()
+            with main_ui:
+                config_cart.visible = False
+                config_section.visible = False
+                followup_card.visible = False
+                results_card.visible = False
+                r_button.visible = False
+                r_text.set_text("Research Interface")
+                sr_button.set_text("Start Research")
+            start_search()
         # UI-Aufbau
+
         with ui.column().classes("w-full max-w-6xl mx-auto p-6 space-y-6") as main_ui:
             balance = ui.label(f"Balance: {state['balance']:.2f}€").classes("text-s font-semibold")
 
@@ -758,7 +853,7 @@ def create_research_interface(Processor):
 
             # --- Research Input UI Card ---
             with ui.card().classes("w-full backdrop-blur-lg bg-white/10 p-4") as research_card:
-                ui.label("Research Interface").classes("text-3xl font-bold mb-4")
+                r_text = ui.label("Research Interface").classes("text-3xl font-bold mb-4")
 
                 # Query input section with auto-updating estimates
                 query = ui.input("Research Query",
@@ -769,12 +864,17 @@ def create_research_interface(Processor):
 
                 # --- Action Buttons ---
                 with ui.row().classes("mt-4"):
-                    ui.button("Start Research", on_click=start_search) \
+                    sr_button =ui.button("Start Research", on_click=start_search) \
                         .classes("bg-blue-600 hover:bg-blue-700 py-3 rounded-lg")
                     ui.button("toggle config",
-                              on_click=lambda: setattr(config_section, 'visible', not config_section.visible)).style(
+                              on_click=lambda: setattr(config_section, 'visible', not config_section.visible) or show_progress_indicators()).style(
                         "color: var(--text-color)")
-
+                    r_button = ui.button("Start new Research",
+                              on_click=reset).style(
+                        "color: var(--text-color)")
+            sr_button = sr_button
+            r_button = r_button
+            r_button.visible = False
             research_card = research_card
 
             # --- Options Cart / Configurations ---
@@ -865,10 +965,17 @@ def create_research_interface(Processor):
             with ui.element('div').classes("w-full").style("white:100%; height:100%") as graph_ui:
                 pass
 
+            with ui.card().style("background-color: var(--background-color)"):
+                ui.label("Privat Session link (restore the Session on an different device)")
+                base_url = f'{os.environ["HOSTNAME"]}/gui/open-Seeker.seek' if not 'localhost' in os.environ[
+                    "HOSTNAME"] else 'http://localhost:5000/gui/open-Seeker.seek'
+                ui.label(f"{base_url}?session_id={session_id}")
+                ui.label("Changes each time!")
+
             graph_ui = graph_ui
             graph_ui.visible = False
         main_ui = main_ui
-
+        main_ui.visible = False
 
         # --- Hilfsfunktionen ---
         def validate_inputs() -> bool:
@@ -894,8 +1001,11 @@ def create_research_interface(Processor):
 
         def update_results(data: dict, save=True):
             nonlocal summary_content, analysis_content, references_content, results_card,\
-                followup_card,graph_ui
-
+                followup_card,graph_ui, r_button, r_text, sr_button
+            with main_ui:
+                r_button.visible = True
+                r_text.set_text("Add to current Results or press 'Start new Research'")
+                sr_button.set_text("Add to current Results")
             # Handle papers (1-to-1 case)
             papers = data.get("papers", [])
             if not isinstance(papers, list):
@@ -1209,5 +1319,3 @@ def create_ui(processor):
     }
     </style>
     """, show=False)
-
-

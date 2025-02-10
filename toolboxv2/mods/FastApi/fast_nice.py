@@ -246,11 +246,6 @@ class NiceGUIManager(metaclass=Singleton):
                 row=request,
             )
 
-        async def execute_in_threadpool(coroutine, *args):
-            loop = asyncio.get_running_loop()
-            with ThreadPoolExecutor() as executor:
-                return await loop.run_in_executor(executor, lambda: asyncio.run(coroutine(*args)))
-
         tb_app = get_app()
 
         @ui.page(path)
@@ -313,18 +308,10 @@ dark_mode
                         setup_func(**params_)
 
 
-            # Starte die Aufgabe in einem separaten Thread
-            # future = asyncio.create_task(execute_in_threadpool(task))
-            result = None
-            # Nicht blockierendes Warten
 
-            # while tb_app.alive:
-            #    if future.done():
-            #        result = future.result()
-            #        break
-            #    await asyncio.sleep(0.1)
 
             await task()
+            # return result
 
         self.registered_guis[gui_id] = {
             'path': path,

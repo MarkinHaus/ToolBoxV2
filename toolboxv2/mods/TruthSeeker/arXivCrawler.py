@@ -430,19 +430,21 @@ class ArXivPDFProcessor:
         return self.tools.get_agent_class("thinkm").mini_task(self.query, "user",
                                                               "Generate a unique memory name based on the user query. only return the name nothing else!")
 
-    def initialize(self, session_id):
+    def initialize(self, session_id, second=False):
         self.current_session = session_id
-        self.mem_name = self.generate_mem_name().strip().replace("\n", '') + '_' + session_id
-        self.init_process_papers()
         self.insights_generated = False
         self.queries_generated = False
+        if second:
+            return
+        self.mem_name = self.generate_mem_name().strip().replace("\n", '') + '_' + session_id
+        self.init_process_papers()
 
     async def process(self, query=None) -> Tuple[List[Paper], dict]:
-        if query:
+        if query is not None:
             self.query = query
         self.send_status("Starting research process")
         t0 = time.process_time()
-        self.initialize(self.s_id)
+        self.initialize(self.s_id, query is not None)
 
         queries = self.generate_queries()
 
