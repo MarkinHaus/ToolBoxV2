@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import math
 import os
 import pickle
 import time
@@ -225,7 +226,7 @@ class ConceptGraph:
                     {concept.name}
                     Category: {concept.category}
                     Importance: {concept.importance_score:.2f}
-                    Context: {cks}
+                    Context: \n - {cks}
                     """
             )
 
@@ -463,6 +464,35 @@ class TextSplitter:
         self.chunk_overlap = chunk_overlap
         self.separator = separator
 
+    def approximate(self, text_len: int) -> float:
+        """
+        Approximate the number of chunks and average chunk size for a given text length
+
+        Args:
+            text_len (int): Length of the text to be split
+
+        Returns:
+            Tuple[int, int]: (number_of_chunks, approximate_chunk_size)
+        """
+        if text_len <= self.chunk_size:
+            return 1, text_len
+
+        # Handle extreme overlap cases
+        if self.chunk_overlap >= self.chunk_size:
+            estimated_chunks = text_len
+            return estimated_chunks, 1
+
+        # Calculate based on overlap ratio
+        overlap_ratio = self.chunk_overlap / self.chunk_size
+        base_chunks = math.ceil(text_len / self.chunk_size)
+        estimated_chunks = base_chunks * 2 / (overlap_ratio if overlap_ratio > 0 else 1)
+
+        # print('#',estimated_chunks, base_chunks, overlap_ratio)
+        # Calculate average chunk size
+        avg_chunk_size = max(1, math.ceil(text_len / estimated_chunks))
+
+        return estimated_chunks * avg_chunk_size
+
     def split_text(self, text: str) -> List[str]:
         """Split text into chunks with overlap"""
         # Clean and normalize text
@@ -485,15 +515,18 @@ class TextSplitter:
 
             # Try to find a natural break point
             last_separator = text.rfind(self.separator, start, end)
-
             if last_separator != -1:
                 end = last_separator
 
             # Add chunk
             chunks.append(text[start:end])
 
-            # Move start position considering overlap
-            start = end - self.chunk_overlap
+            # Calculate allowed overlap for this chunk
+            chunk_length = end - start
+            allowed_overlap = min(self.chunk_overlap, chunk_length - 1)
+
+            # Move start position considering adjusted overlap
+            start = end - allowed_overlap
 
         return chunks
 
@@ -503,7 +536,7 @@ class KnowledgeBase:
         embedding_dim: int = 768,
         similarity_threshold: float = 0.7,
         batch_size: int = 64,
-        n_clusters: int = 26,
+        n_clusters: int = 4,
         deduplication_threshold: float = 0.85,
         model_name = "groq/llama3-70b-8192",
         embedding_model = "gemini/text-embedding-004"
@@ -722,6 +755,8 @@ class KnowledgeBase:
     ) -> List[Chunk]:
         """Retrieve relevant chunks"""
         if not self.is_trained:
+            self._rebuild_index()
+        if not self.is_trained:
             get_logger().warning("Index not trained yet, returning empty results")
             return []
 
@@ -845,7 +880,16 @@ class KnowledgeBase:
 
     def _train_index(self, vectors: np.ndarray) -> None:
         """Train the IVF index if not already trained"""
-        if not self.is_trained and vectors.shape[0] >= self.n_clusters:
+        if not self.is_trained:
+            if vectors.shape[0] >= self.n_clusters:
+                n_clusters = max(2, vectors.shape[0] // 6)
+                self.index = faiss.IndexIVFFlat(
+                    self.quantizer,
+                    self.embedding_dim,
+                    n_clusters,
+                    faiss.METRIC_INNER_PRODUCT
+                )
+                self.index.nprobe = min(20, n_clusters)
             get_logger().info("Training IVF index...")
             try:
                 self.index.train(vectors)
@@ -874,6 +918,7 @@ class KnowledgeBase:
                 )
         except Exception as e:
             get_logger().error(f"Error rebuilding index: {str(e)}")
+            print(f"Error rebuilding index: {str(e)}")
             raise
 
     async def forget_irrelevant(self, irrelevant_concepts: List[str], similarity_threshold: Optional[float]=None) -> int:
@@ -1814,5 +1859,5 @@ async def rgen():
 if __name__ == "__main__":
     get_app(name="main2")
 
-    asyncio.run(main())
+    #asyncio.run(main())
 

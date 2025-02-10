@@ -23,6 +23,7 @@ import logging
 from urllib3 import Retry
 
 from toolboxv2.mods.isaa.base.AgentUtils import AISemanticMemory
+from toolboxv2.mods.isaa.base.KnowledgeBase import TextSplitter
 from toolboxv2.mods.isaa.extras.filter import filter_relevant_texts
 
 
@@ -343,7 +344,7 @@ class ArXivPDFProcessor:
 
                         self.send_status(f"Filtered {len(texts)} / {len(filtered_texts)}",
                                          additional_info=paper.title)
-                        if len(filtered_texts) > 0 or len(filtered_texts)/len(texts) > 0.24:
+                        if len(filtered_texts) > 0:
                             final_papers.append(paper)
                             await self.mem.add_data(memory_name=self.mem_name,
                                                                  data=filtered_texts)
@@ -410,7 +411,8 @@ class ArXivPDFProcessor:
         self.send_status("Generating insights")
         query = self.query
         # max_it = 0
-        results = await self.mem.query(query=query, memory_names=self.mem_name, unified_retrieve=True)
+        results = await self.mem.query(query=query, memory_names=self.mem_name, unified_retrieve=True, query_params={
+            "max_sentences": 25})
         #query = queries[min(len(queries)-1, max_it)]
 
         self.insights_generated = True
@@ -447,7 +449,7 @@ class ArXivPDFProcessor:
         papers = await self.search_and_process_papers(queries)
 
         if len(papers) == 0:
-            class UserQuery:
+            class UserQuery(BaseModel):
                 """Fix all typos and clear the original user query"""
                 new_query: str
             self.query= self.tools.format_class(
@@ -474,23 +476,16 @@ class ArXivPDFProcessor:
         # Estimated chunks to process
         total_chunks = total_papers * (median_text_length / config['chunk_size']) + 1 / config['overlap']
         processed_chunks = total_chunks * 0.45
-
+        total_chars = TextSplitter(config['chunk_size'],
+                     config['overlap']
+                     ).approximate(config['chunk_size'] * processed_chunks)
         # Time estimation (seconds)
-        processing_time_per_chunk = .75  # Hypothetical time per chunk in seconds
-        estimated_time = (
-            (processed_chunks * processing_time_per_chunk) - (config.get('num_workers', 16) if config.get('num_workers', 16) is not None else 16 / 10)
-        )
+        processing_time_per_char = .75 / config['chunk_size']  # Hypothetical time per chunk in seconds
+        estimated_time = (total_chunks * 0.4 + total_papers * 3.0 + (total_chars * processing_time_per_char)) / (config.get('num_workers', 16) if config.get('num_workers', 16) is not None else 16 / 10)
 
-        # Add fixed time components (hypothetical values)
-        estimated_time += total_papers * 2.0  # Download time
-        estimated_time += total_papers * 1.1  # Insights time
-
-
-        price_per_char = 0.00001
-        price_per_t_chunk = config['chunk_size'] * total_chunks * price_per_char
-
-
-        estimated_price = processed_chunks * (price_per_t_chunk / 1_000)
+        price_per_char = 0.0000012525
+        price_per_t_chunk =  total_chars * price_per_char
+        estimated_price = price_per_t_chunk ** 1.7
 
         # estimated_price = 0 if query_length < 420 and estimated_price < 5 else estimated_price
         if estimated_time < 30:

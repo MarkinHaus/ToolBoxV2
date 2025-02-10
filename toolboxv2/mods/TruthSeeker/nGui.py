@@ -2,7 +2,7 @@ import colorsys
 import json
 import time
 from datetime import datetime, timedelta
-from typing import Dict
+from typing import Dict, Union, List, Any
 
 from fastapi import Request
 import os
@@ -233,34 +233,12 @@ def get_tools():
     """
     return get_app("ArXivPDFProcessor", name=None).get_mod("isaa")
 
-
-def create_fullscreen_toggle(container: ui.element):
-    """Create fullscreen toggle functionality for a container"""
-
-    # Add fullscreen state tracking
-    container.is_fullscreen = False
-
-    def toggle_fullscreen():
-        container.is_fullscreen = not container.is_fullscreen
-        if container.is_fullscreen:
-            container.classes('fixed top-0 left-0 w-screen h-screen z-50 bg-gray-900 m-0')
-            toggle_btn.text = '⮌ Exit Fullscreen'
-        else:
-            container.classes('w-full max-w-6xl mx-auto p-6 space-y-6')
-            toggle_btn.text = '⛶ Fullscreen'
-
-    # Create toggle button
-    toggle_btn = ui.button('⛶ Fullscreen',
-                           on_click=toggle_fullscreen) \
-        .classes('absolute top-2 right-2 bg-gray-800 hover:bg-gray-700 text-white')
-
-    return toggle_btn
-
 def create_graph_tab(processor_instance: Dict, graph_ui: ui.element, main_ui: ui.element):
     """Create and update the graph visualization"""
 
     # Get HTML graph from processor
-    html_content = processor_instance["instance"].tools.get_memory(processor_instance["instance"].mem_name).vis(get_output_html=True)
+    _html_content = processor_instance["instance"].tools.get_memory(processor_instance["instance"].mem_name)
+    html_content = "" if isinstance(_html_content, list) else _html_content.vis(get_output_html=True)
 
     # Ensure static directory exists
     static_dir = Path('dist/static')
@@ -269,93 +247,21 @@ def create_graph_tab(processor_instance: Dict, graph_ui: ui.element, main_ui: ui
     # Save HTML to static file
     graph_file = static_dir / f'graph{processor_instance["instance"].mem_name}.html'
     # Save HTML to static file with added fullscreen functionality
-    enhanced_html = html_content.replace('</head>', '''
-               <style>
-                   .fullscreen {
-                       position: fixed !important;
-                       top: 0 !important;
-                       left: 0 !important;
-                       width: 100vw !important;
-                       height: 100vh !important;
-                       z-index: 9999 !important;
-                   }
-                   #fullscreen-btn {
-                       position: absolute;
-                       top: 10px;
-                       right: 10px;
-                       z-index: 10000;
-                       padding: 8px;
-                       background: rgba(0,0,0,0.7);
-                       color: white;
-                       border: none;
-                       border-radius: 4px;
-                       cursor: pointer;
-                   }
-                   #fullscreen-btn:hover {
-                       background: rgba(0,0,0,0.9);
-                   }
-               </style>
-           </head>''').replace('<div id="mynetwork"', '''
-               <button id="fullscreen-btn" onclick="toggleFullscreen()">
-                   <span id="fullscreen-icon">⛶</span>
-               </button>
-               <div id="mynetwork"''')
 
     # Add fullscreen JavaScript
-    enhanced_html = enhanced_html.replace('</body>', '''
-               <script>
-                   function toggleFullscreen() {
-                       const container = document.querySelector('.card');
-                       const btn = document.getElementById('fullscreen-btn');
-                       const icon = document.getElementById('fullscreen-icon');
-
-                       if (container.classList.contains('fullscreen')) {
-                           container.classList.remove('fullscreen');
-                           icon.textContent = '⛶';  // Maximize icon
-                       } else {
-                           container.classList.add('fullscreen');
-                           icon.textContent = '⮌';  // Minimize icon
-                       }
-
-                       // Trigger network resize after transition
-                       setTimeout(() => {
-                           if (typeof network !== 'undefined') {
-                               network.fit();
-                           }
-                       }, 100);
-                   }
-
-                   // Add keyboard shortcut (Esc to exit fullscreen)
-                   document.addEventListener('keydown', function(e) {
-                       if (e.key === 'Escape') {
-                           const container = document.querySelector('.card');
-                           if (container.classList.contains('fullscreen')) {
-                               container.classList.remove('fullscreen');
-                               document.getElementById('fullscreen-icon').textContent = '⛶';
-                               if (typeof network !== 'undefined') {
-                                   setTimeout(() => network.fit(), 100);
-                               }
-                           }
-                       }
-                   });
-               </script>
-           </body>''')
-    graph_file.write_text(enhanced_html, encoding='utf-8')
+    graph_file.write_text(html_content, encoding='utf-8')
 
     with main_ui:
         # Clear existing content except fullscreen button
-        for child in graph_ui.default_slot.children[:]:
-            if not isinstance(child, ui.button):  # Preserve the fullscreen button
-                child.delete()
+        graph_ui.clear()
 
-        # Ensure content is properly positioned in both modes
-        graph_container = ui.card().classes('w-full h-full')
-        with graph_container:
+        with graph_ui:
             ui.html(f'''
+
                 <iframe
                      src="/static/graph{processor_instance["instance"].mem_name}.html"
                     style="width: 100%; height: 800px; border: none; background: #1a1a1a;"
-                    allowfullscreen>
+                    >
                 </iframe>
             ''').classes('w-full h-full')
 
@@ -427,34 +333,184 @@ def reset_daily_balance(state: dict, valid=False) -> dict:
         state['last_reset'] = now.isoformat()
     return state
 
-def create_followup_section(processor_instance: Dict, main_ui: ui.element):
+
+class MemoryResultsDisplay:
+    def __init__(self, results: List[Dict[str, Any]], main_ui: ui.element):
+        self.results = results
+        self.main_ui = main_ui
+        self.setup_ui()
+
+    def setup_ui(self):
+        """Set up the main UI for displaying memory results"""
+        with self.main_ui:
+            self.main_ui.clear()
+            with ui.column().classes('w-full'):
+                for mem_result in self.results:
+                    self.create_memory_card(mem_result)
+
+    def create_memory_card(self, mem_result: Dict[str, Any]):
+        """Create a card for each memory result"""
+        result = mem_result.get("result", {})
+        with self.main_ui:
+            if isinstance(result, dict):
+                self.display_dict_result(result)
+            elif hasattr(result, 'overview'):  # Assuming RetrievalResult type
+                self.display_retrieval_result(result)
+            else:
+                ui.label("Unsupported result type").classes('--text-color:error')
+
+    def display_dict_result(self, result: Dict[str, Any]):
+        """Display dictionary-based result with collapsible sections"""
+        # Summary Section
+        summary = result.get("summary", {})
+        if isinstance(summary, str):
+            try:
+                summary = json.loads(summary[:-1])
+            except json.JSONDecodeError:
+                summary = {"error": "Could not parse summary"}
+
+        # Raw Results Section
+        raw_results = result.get("raw_results", {})
+        if isinstance(raw_results, str):
+            try:
+                raw_results = json.loads(raw_results[:-1])
+            except json.JSONDecodeError:
+                raw_results = {"error": "Could not parse raw results"}
+
+        # Metadata Section
+        metadata = result.get("metadata", {})
+        with self.main_ui:
+            # Collapsible Sections
+            with ui.column().classes('w-full space-y-2').style("max-width: 100%;"):
+                # Summary Section
+                with ui.expansion('Summary', icon='description').classes('w-full') as se:
+                    self.display_nested_data(summary, main_ui=se)
+
+                # Raw Results Section
+                with ui.expansion('Raw Results', icon='work').classes('w-full') as re:
+                    self.display_nested_data(raw_results, main_ui=re)
+
+                # Metadata Section
+                if metadata:
+                    with ui.expansion('Metadata', icon='info').classes('w-full'):
+                        ui.markdown(f"```json\n{json.dumps(metadata, indent=2)}\n```").style("max-width: 100%;")
+
+    def display_retrieval_result(self, result):
+        """Display retrieval result with detailed sections"""
+        with self.main_ui:
+            with ui.column().classes('w-full space-y-4').style("max-width: 100%;"):
+                # Overview Section
+                with ui.expansion('Overview', icon='visibility').classes('w-full') as ov:
+                    for overview_item in result.overview:
+                        if isinstance(overview_item, str):
+                            overview_item = json.loads(overview_item)
+                        self.display_nested_data(overview_item, main_ui=ov)
+
+                # Details Section
+                with ui.expansion('Details', icon='article').classes('w-full'):
+                    for chunk in result.details:
+                        with ui.card().classes('w-full p-3 mb-2').style("background: var(--background-color)"):
+                            ui.label(chunk.text).classes('font-medium mb-2 --text-color:secondary')
+
+                            with ui.row().classes('w-full justify-between').style("background: var(--background-color)"):
+                                ui.label(f"Embedding Shape: {chunk.embedding.shape}").classes('text-sm')
+                                ui.label(f"Content Hash: {chunk.content_hash}").classes('text-sm')
+
+                            if chunk.cluster_id is not None:
+                                ui.label(f"Cluster ID: {chunk.cluster_id}").classes('text-sm')
+
+                # Cross References Section
+                with ui.expansion('Cross References', icon='link').classes('w-full'):
+                    for topic, chunks in result.cross_references.items():
+                        with ui.card().classes('w-full p-3 mb-2').style("background: var(--background-color)"):
+                            ui.label(topic).classes('font-semibold mb-2 --text-color:secondary')
+                            for chunk in chunks:
+                                ui.label(chunk.text).classes('text-sm mb-1')
+
+    def display_nested_data(self, data: Union[Dict, List], indent: int = 0, main_ui=None):
+        """Recursively display nested dictionary or list data"""
+        with (self.main_ui if main_ui is None else main_ui):
+            if isinstance(data, dict):
+                with ui.column().classes(f'ml-{indent * 2}').style("max-width: 100%;"):
+                    for key, value in data.items():
+                        with ui.row().classes('items-center'):
+                            ui.label(f"{key}:").classes('font-bold mr-2 --text-color:primary')
+                            if isinstance(value, list):
+                                if key == "main_chunks":
+                                    continue
+                                self.display_nested_data(value, indent + 1, main_ui=main_ui)
+                            if isinstance(value, dict):
+                                ui.markdown(f"```json\n{json.dumps(value, indent=2)}\n```").classes("break-words w-full").style("max-width: 100%;")
+                            else:
+                                ui.label(str(value)).classes('--text-color:secondary')
+            elif isinstance(data, list):
+                with ui.column().classes(f'ml-{indent * 2}').style("max-width: 100%;"):
+                    for item in data:
+                        if isinstance(item, str):
+                            item = json.loads(item)
+                        if isinstance(item, list):
+                            self.display_nested_data(item, indent + 1, main_ui=main_ui)
+                        if isinstance(item, dict):
+                            ui.markdown(f"```json\n{json.dumps(item, indent=2)}\n```").classes("break-words w-full").style("max-width: 100%;")
+                        else:
+                            ui.label(str(item)).classes('--text-color:secondary')
+
+def create_followup_section(processor_instance: Dict, main_ui: ui.element, session_id, balance):
     main_ui.clear()
     with main_ui:
-        ui.label("Advanced Query Interface").classes("text-xl font-semibold mb-4")
+        ui.label("Query Interface  (1ct)").classes("text-xl font-semibold mb-4")
 
         # Container for query inputs
         query_container = ui.column().classes("w-full gap-4")
-        query_inputs = []  # Store references to query inputs
+        query = ""  # Store references to query inputs
         # Query parameters section
         with ui.expansion("Query Parameters", icon="settings").classes("w-full") as query_e:
             with ui.grid(columns=2).classes("w-full gap-4"):
-                k_input = ui.number("Results Count (k)", value=5, min=1, max=20)
-                min_sim = ui.number("Min Similarity", value=0.7, min=0, max=1, step=0.1)
+                k_input = ui.number("Results Count (k)", value=2, min=1, max=20)
+                min_sim = ui.number("Min Similarity", value=.3, min=0, max=1, step=0.1)
                 cross_depth = ui.number("Cross Reference Depth", value=2, min=1, max=5)
                 max_cross = ui.number("Max Cross References", value=10, min=1, max=20)
                 max_sent = ui.number("Max Sentences", value=10, min=1, max=50)
-                unified = ui.switch("Unified Retrieve", value=True)
+                unified = ui.switch("Unified Retrieve (+3ct)", value=True)
 
         # Results display
-        results_display = ui.markdown().classes("w-full mt-4")
+        with ui.element("div").classes("w-full mt-4") as results_display:
+            pass
+        results_display = results_display
+        with query_container:
+            query_input = ui.input("Query", placeholder="Enter your query...") \
+                .classes("w-full")
+        # Control buttons
+        with ui.row().classes("w-full gap-4 mt-4"):
+            ui.button("Execute Query", on_click=lambda: asyncio.create_task(execute_query())) \
+                .classes("bg-green-600 hover:bg-green-700")
+            ui.button("Clear Results", on_click=lambda: results_display.clear()) \
+                .classes("bg-red-600 hover:bg-red-700")
+    query_input = query_input
 
-    async def execute_query(query_input, params):
+    async def execute_query():
         """Execute a single query with parameters"""
+        nonlocal query_input, results_display, main_ui
         try:
             query_text = query_input.value
             if not query_text.strip():
+                with main_ui:
+                    ui.notify("No Input", type="warning")
                 return ""
 
+            if not processor_instance.get("instance"):
+                with main_ui:
+                    ui.notify("No active processor instance", type="warning")
+                return
+            # Collect parameters
+            params = {
+                "k": int(k_input.value),
+                "min_similarity": min_sim.value,
+                "cross_ref_depth": int(cross_depth.value),
+                "max_cross_refs": int(max_cross.value),
+                "max_sentences": int(max_sent.value),
+                "unified": unified.value
+            }
             # Construct query parameters
             query_params = {
                 "k": params["k"],
@@ -471,77 +527,26 @@ def create_followup_section(processor_instance: Dict, main_ui: ui.element):
                 unified_retrieve=params["unified"]
             )
 
+            s = get_user_state(session_id)
+            s['balance'] -= .04 if unified.value else .01
+            save_user_state(session_id, s)
+            with main_ui:
+                balance.set_text(f"Balance: {s['balance']:.2f}€")
             # Format results
             formatted_result = "### Query: " + query_text + "\n\n"
 
-            if isinstance(results, list):
-                for mem_result in results:
-                    memory_name = mem_result.get("memory", "Unknown")
-                    result = mem_result.get("result", {})
-
-                    formatted_result += f"**Memory: {memory_name}**\n\n"
-
-                    if isinstance(result, dict):
-                        answer = result.get("answer", "No answer available")
-                        sources = result.get("sources", [])
-
-                        formatted_result += f"{answer}\n\n"
-                        if sources:
-                            formatted_result += "**Sources:**\n"
-                            for src in sources:
-                                formatted_result += f"- {src}\n"
-                    else:
-                        formatted_result += str(result) + "\n\n"
-            else:
-                formatted_result += str(results) + "\n\n"
+            with main_ui:
+                with results_display:
+                    MemoryResultsDisplay(results, results_display)
 
         except Exception as e:
             return f"Error executing query: {str(e)}\n\n"
 
-    def add_query_input():
-        """Add a new query input field"""
-        with query_container:
-            new_input = ui.textarea("Query", placeholder="Enter your query...") \
-                .classes("w-full")
-            query_inputs.append(new_input)
 
-    async def execute_all_queries():
-        """Execute all queries in sequence"""
-        if not processor_instance.get("instance"):
-            ui.notify("No active processor instance", type="warning")
-            return
+        return formatted_result
 
-        # Collect parameters
-        params = {
-            "k": k_input.value,
-            "min_similarity": min_sim.value,
-            "cross_ref_depth": cross_depth.value,
-            "max_cross_refs": max_cross.value,
-            "max_sentences": max_sent.value,
-            "unified": unified.value
-        }
-
-        # Execute queries and combine results
-        combined_results = ""
-        for query_input in query_inputs:
-            result = await execute_query(query_input, params)
-            combined_results += result + "\n---\n\n"
-
-        # Update display
-        with main_ui:
-            results_display.set_content(combined_results)
 
     # Add initial query input
-    add_query_input()
-    with main_ui:
-        # Control buttons
-        with ui.row().classes("w-full gap-4 mt-4"):
-            ui.button("Add Query", on_click=add_query_input) \
-                .classes("bg-blue-600 hover:bg-blue-700")
-            ui.button("Execute Queries", on_click=lambda: asyncio.create_task(execute_all_queries())) \
-                .classes("bg-green-600 hover:bg-green-700")
-            ui.button("Clear Results", on_click=lambda: results_display.set_content("")) \
-                .classes("bg-red-600 hover:bg-red-700")
 
 def create_research_interface(Processor):
 
@@ -557,10 +562,10 @@ def create_research_interface(Processor):
             save_user_state(session_id, state)
             delete_user_state(session_id_h)
         if session_rid := request.row.query_params.get('session_id'): # MACh schluer gege trikser uws
-            if state.get('balance') < get_user_state(session_rid).get('balance') and get_user_state(session_rid).get('balance') != 1.0:
-                pass
-            else:
-                state = get_user_state(session_rid)
+            state_, is_new_ = get_user_state(session_rid, is_new=True)
+            if not is_new_:
+                state = state_
+                delete_user_state(session_rid)
         state = reset_daily_balance(state, session.get('valid'))
         save_user_state(session_id, state)
         # Wir speichern die aktive Instanz, damit Follow-Up Fragen gestellt werden können
@@ -580,14 +585,12 @@ def create_research_interface(Processor):
         followup_results_content = None
         progress_card = None
         balance = None
-        md_node = None
-        analysis_node = None
         graph_ui = None
 
         # Global config storage with default values
         config = {
             'chunk_size': 21000,
-            'overlap': 2100,
+            'overlap': 600,
             'num_search_result_per_query': 3,
             'max_search': 3,
             'num_workers': None
@@ -604,7 +607,7 @@ def create_research_interface(Processor):
             estimated_time ,estimated_price = Processor.estimate_processing_metrics(query_length, **config)
 
             if estimated_time < 60:
-                time_str = f"~{estimated_time:.2f}s"
+                time_str = f"~{int(estimated_time)}s"
             elif estimated_time < 3600:
                 minutes = estimated_time // 60
                 seconds = estimated_time % 60
@@ -614,7 +617,7 @@ def create_research_interface(Processor):
                 minutes = (estimated_time % 3600) // 60
                 time_str = f"~{int(hours)}h {int(minutes)}m"
             with main_ui:
-                query_length_label.set_text(f"Query len: {query_length} Total Papers: {config['max_search']*config['num_search_result_per_query']}")
+                query_length_label.set_text(f"Total Papers: {config['max_search']*config['num_search_result_per_query']}")
                 time_label.set_text(f"Processing Time: {time_str}")
                 price_label.set_text(f"Price: {estimated_price:.2f}€")
 
@@ -630,6 +633,10 @@ def create_research_interface(Processor):
                 pass
             try:
                 config['overlap'] = int(overlap_input.value)
+                if config['overlap'] > config['chunk_size'] / 4:
+                    config['overlap'] = int(config['chunk_size'] / 4)
+                    with main_ui:
+                        overlap_input.value = config['overlap']
             except ValueError:
                 pass
             try:
@@ -674,6 +681,10 @@ def create_research_interface(Processor):
 
                 try:
                     if not validate_inputs():
+                        with main_ui:
+                            state['balance'] += est_price
+                            save_user_state(session_id, state)
+                            balance.set_text(f"Balance: {state['balance']:.2f}€")
                         return
                     reset_interface()
                     show_progress_indicators()
@@ -724,11 +735,13 @@ def create_research_interface(Processor):
 
             est_price = update_estimates()
             if est_price > state['balance']:
-                ui.notify(f"Insufficient balance. Need €{est_price:.2f}", type='negative')
+                with main_ui:
+                    ui.notify(f"Insufficient balance. Need €{est_price:.2f}", type='negative')
             else:
                 state['balance'] -= est_price
                 save_user_state(session_id, state)
-                balance.set_text(f"Balance: {state['balance']:.2f}€")
+                with main_ui:
+                    balance.set_text(f"Balance: {state['balance']:.2f}€")
                 Thread(target=target, daemon=True).start()
 
         def show_history():
@@ -849,21 +862,9 @@ def create_research_interface(Processor):
                 'transition-colors duration-300'
             ).on('click', lambda: ui.navigate.to('/open-Seeker.about', new_tab=True))
 
-            with ui.element('div').classes("w-full max-w-6xl mx-auto p-6 space-y-6") as graph_ui:
-                fullscreen_btn = create_fullscreen_toggle(graph_ui)
-                md_node = ui.markdown("").style("color: var(--text-color)")
-                analysis_node = ui.markdown("").style("color: var(--text-color)")
-                ui.button("Show Graph", on_click=lambda: create_graph_tab(
-                    processor_instance, graph_ui, main_ui
-                ))
+            with ui.element('div').classes("w-full").style("white:100%; height:100%") as graph_ui:
+                pass
 
-                def handle_key(e):
-                    if e.key == 'Escape':
-                        fullscreen_btn.clicked()
-
-                ui.keyboard(on_key=handle_key)
-            md_node = md_node
-            analysis_node = analysis_node
             graph_ui = graph_ui
             graph_ui.visible = False
         main_ui = main_ui
@@ -872,7 +873,8 @@ def create_research_interface(Processor):
         # --- Hilfsfunktionen ---
         def validate_inputs() -> bool:
             if not query.value.strip():
-                ui.notify("Bitte gib eine Forschungsfrage ein.", type="warning")
+                with main_ui:
+                    ui.notify("Bitte gib eine Forschungsfrage ein.", type="warning")
                 return False
             return True
 
@@ -892,7 +894,7 @@ def create_research_interface(Processor):
 
         def update_results(data: dict, save=True):
             nonlocal summary_content, analysis_content, references_content, results_card,\
-                followup_card, md_node,analysis_node,graph_ui
+                followup_card,graph_ui
 
             # Handle papers (1-to-1 case)
             papers = data.get("papers", [])
@@ -914,7 +916,7 @@ def create_research_interface(Processor):
                 save_user_state(session_id, state)
             else:
                 papers = [Paper(**json.loads(paper)) for paper in papers]
-            create_followup_section(processor_instance, followup_card)
+            create_followup_section(processor_instance, followup_card, session_id, balance)
             with main_ui:
                 progress_card.visible = False
                 # Build summary from insights
@@ -922,7 +924,7 @@ def create_research_interface(Processor):
                 for insight in insights:
                     if 'result' in insight and 'summary' in insight['result']:
                         if isinstance(insight['result']['summary'], str):
-                            print(insight['result']['summary'], "NEXT", json.loads(insight['result']['summary'][:-1]),"NEXT22",  type(json.loads(insight['result']['summary'][:-1])))
+                            # print(insight['result']['summary'], "NEXT", json.loads(insight['result']['summary'][:-1]),"NEXT22",  type(json.loads(insight['result']['summary'][:-1])))
                             insight['result']['summary'] = json.loads(insight['result']['summary'][:-1])
                         main_summary = insight['result']['summary'].get('main_summary', '')
                         if main_summary:
@@ -955,7 +957,7 @@ def create_research_interface(Processor):
                 references_md = "# References\n"
                 # Add papers
                 references_md += "\n".join(
-                    f"- ({i}) {getattr(paper, 'title', 'Unknown Title')} *{getattr(paper, 'pdf_url', 'Unknown URL')}*"
+                    f"- ({i}) [{getattr(paper, 'title', 'Unknown Title')}]({getattr(paper, 'pdf_url', 'Unknown URL')})"
                     for i, paper in enumerate(papers)
                 )
 
@@ -1038,7 +1040,7 @@ def create_research_interface(Processor):
 
 # --- Stripe Integration ---
 def regiser_stripe_integration(is_scc=True):
-    def stripe_callback(request: Request, session: str):
+    def stripe_callback(request: Request):
 
         state = get_user_state(request.row.query_params.get('session_id'))
 
@@ -1047,7 +1049,7 @@ def regiser_stripe_integration(is_scc=True):
                 ui.label(f"No payment id!").classes("text-lg font-bold")
                 ui.button(
                     "Start Research",
-                    on_click=lambda: ui.navigate.to("/open-Seeker.seek")
+                    on_click=lambda: ui.navigate.to("/open-Seeker.seek?session_id="+request.row.query_params.get('session_id'))
                 ).classes(
                     "w-full px-6 py-4 text-lg font-bold "
                     "bg-primary hover:bg-primary-dark "
@@ -1075,7 +1077,7 @@ def regiser_stripe_integration(is_scc=True):
                 return
         with ui.card().classes("w-full items-center").style("background-color: var(--background-color)"):
             if is_scc and state['payment_id'] != '' and session_data.payment_status == 'paid':
-                state = get_user_state(session)
+                state = get_user_state(request.row.query_params.get('session_id'))
                 amount = session_data.amount_total / 100  # Convert cents to euros
                 state['balance'] += amount
                 state['payment_id'] = ''

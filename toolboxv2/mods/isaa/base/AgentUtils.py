@@ -645,7 +645,7 @@ class AISemanticMemory(metaclass=Singleton):
                  default_embedding_model: str = os.getenv("DEFAULTMODELEMBEDDING"),
                  default_similarity_threshold: float = 0.7,
                  default_batch_size: int = 64,
-                 default_n_clusters: int = 26,
+                 default_n_clusters: int = 2,
                  default_deduplication_threshold: float = 0.85):
         """
         Initialize AISemanticMemory with KnowledgeBase integration
