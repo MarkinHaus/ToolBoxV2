@@ -2,7 +2,7 @@ import os.path
 import sys
 import unittest
 
-from starlette.responses import HTMLResponse, FileResponse
+from starlette.responses import HTMLResponse, FileResponse, RedirectResponse
 
 from toolboxv2 import get_app, App
 from toolboxv2.mods.TruthSeeker.nGui import create_ui
@@ -219,5 +219,5 @@ def process(app = None, request: RequestSession or None = None):
 def main_web_entry(app: App = None, abut=None):
     if abut:
         return HTMLResponse(content=abut_content)
-    return HTMLResponse(content=content)
+    return RedirectResponse(url="/gui/open-Seek")
 

@@ -27,7 +27,7 @@ from toolboxv2.mods.TruthSeeker.arXivCrawler import Paper
 from toolboxv2.mods.isaa.base.AgentUtils import anything_from_str_to_dict
 
 # Set your secret key (use environment variables in production!)
-stripe.api_key = os.getenv('STRIPE_SECRET_KEY_', 'sk_test_YourSecretKey')
+stripe.api_key = os.getenv('STRIPE_SECRET_KEY', 'sk_test_YourSecretKey')
 
 def create_landing_page():
     # Set up dynamic background

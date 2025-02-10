@@ -256,6 +256,8 @@ class App(AppType, metaclass=Singleton):
 
     def debug_rains(self, e):
         if self.debug:
+            import traceback
+            print(traceback.format_exc())
             raise e
 
     def set_flows(self, r):
@@ -356,6 +358,7 @@ class App(AppType, metaclass=Singleton):
                 self.print(Style.RED(f"module {loc + mod_name} not found is type sensitive {e}"))
                 if self.debug or self.args_sto.sysPrint:
                     self.python_module_import_classifier(mod_name, str(e))
+                self.debug_rains(e)
                 return None
         else:
             self.print(f"module {loc + mod_name} is not valid")
