@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Any, Tuple
 from collections import deque
 
-import faiss
 import networkx as nx
 import numpy as np
 import umap
@@ -27,9 +26,9 @@ from collections import defaultdict
 from typing import List
 import re
 
+from toolboxv2.mods.isaa.base.VectorStores.defaults import AbstractVectorStore, FastVectorStoreO, FaissVectorStore, \
+    EnhancedVectorStore, FastVectorStore1
 from toolboxv2.mods.isaa.extras.adapter import litellm_complete
-
-from pyvis.network import Network
 
 i__ = [0, 0]
 
@@ -530,22 +529,26 @@ class TextSplitter:
 
         return chunks
 
+
+import hnswlib
+import numpy as np
+from typing import List
+from threading import Lock
+from collections import deque
+
+
+
 class KnowledgeBase:
-    def __init__(
-        self,
-        embedding_dim: int = 768,
-        similarity_threshold: float = 0.7,
-        batch_size: int = 64,
-        n_clusters: int = 4,
-        deduplication_threshold: float = 0.85,
-        model_name = "groq/llama3-70b-8192",
-        embedding_model = "gemini/text-embedding-004"
-    ):
+    def __init__(self, embedding_dim: int = 768, similarity_threshold: float = 0.7, batch_size: int = 64,
+                 n_clusters: int = 4, deduplication_threshold: float = 0.85, model_name="groq/llama3-70b-8192",
+                 embedding_model="gemini/text-embedding-004",
+                 vis_class:Optional[str] = "FastVectorStoreO",
+                 vis_kwargs:Optional[Dict[str, Any]]=None):
         """Initialize the knowledge base with given parameters"""
-        self.chunks: deque = deque(maxlen=1_000_000_000)
+
         self.existing_hashes: Set[str] = set()
-        self.embedding_dim = embedding_dim
         self.embedding_model = embedding_model
+        self.embedding_dim = embedding_dim
         self.similarity_threshold = similarity_threshold
         self.deduplication_threshold = deduplication_threshold
         self.batch_size = batch_size
@@ -557,16 +560,34 @@ class KnowledgeBase:
         self.similarity_graph = {}
         self.concept_extractor = ConceptExtractor(self)
 
-        # Initialize FAISS index
-        self.quantizer = faiss.IndexFlatIP(embedding_dim)
-        self.index = faiss.IndexIVFFlat(
-            self.quantizer,
-            embedding_dim,
-            n_clusters,
-            faiss.METRIC_INNER_PRODUCT
-        )
-        self.index.nprobe = min(20, n_clusters)
-        self.is_trained = False
+        self.vis_class = None
+        self.vis_kwargs = None
+        self.vdb = None
+        self.init_vis(vis_class, vis_kwargs)
+
+    def init_vis(self, vis_class, vis_kwargs):
+        if vis_class is None:
+            vis_class = "FastVectorStoreO"
+        if vis_class == "FastVectorStoreO":
+            if vis_kwargs is None:
+                vis_kwargs = {
+                    "embedding_size": self.embedding_dim
+                }
+            self.vdb = FastVectorStoreO(**vis_kwargs)
+        if vis_class == "FaissVectorStore":
+            if vis_kwargs is None:
+                vis_kwargs = {
+                    "dimension": self.embedding_dim
+                }
+            self.vdb = FaissVectorStore(**vis_kwargs)
+        if vis_class == "EnhancedVectorStore":
+            self.vdb = EnhancedVectorStore(**vis_kwargs)
+        if vis_class == "FastVectorStore1":
+            self.vdb = FastVectorStore1()
+
+        self.vis_class = vis_class
+        self.vis_kwargs = vis_kwargs
+
 
     @staticmethod
     def compute_hash(text: str) -> str:
@@ -594,25 +615,11 @@ class KnowledgeBase:
             get_logger().error(f"Error generating embeddings: {str(e)}")
             raise
 
-    def _find_similar_chunks(self, embeddings: np.ndarray, threshold: float) -> np.ndarray:
-        """Find chunks that are similar above the threshold"""
-        if not self.is_trained or len(self.chunks) == 0:
-            return np.zeros(len(embeddings), dtype=bool)
 
-        try:
-            # Search for nearest neighbors
-            k = min(10, len(self.chunks))  # Search top-k nearest neighbors
-            D, _ = self.index.search(embeddings, k)
-
-            # Check if any similarity is above threshold
-            return np.any(D >= threshold, axis=1)
-        except Exception as e:
-            get_logger().error(f"Error finding similar chunks: {str(e)}")
-            raise
 
     def _remove_similar_chunks(self, threshold: float = None) -> int:
         """Remove chunks that are too similar to each other"""
-        if len(self.chunks) < 2:
+        if len(self.vdb.chunks) < 2:
             return 0
 
         if threshold is None:
@@ -620,7 +627,7 @@ class KnowledgeBase:
 
         try:
             # Get all embeddings
-            embeddings = np.vstack([c.embedding for c in self.chunks])
+            embeddings = np.vstack([c.embedding for c in self.vdb.chunks])
             n = len(embeddings)
 
             # Compute similarity matrix
@@ -642,16 +649,16 @@ class KnowledgeBase:
                 keep_mask[similar_indices] = False
 
             # Keep only unique chunks
-            unique_chunks = [chunk for chunk, keep in zip(self.chunks, keep_mask) if keep]
-            removed_count = len(self.chunks) - len(unique_chunks)
+            unique_chunks = [chunk for chunk, keep in zip(self.vdb.chunks, keep_mask) if keep]
+            removed_count = len(self.vdb.chunks) - len(unique_chunks)
 
             # Update chunks and hashes
-            self.chunks = deque(unique_chunks, maxlen=self.chunks.maxlen)
-            self.existing_hashes = {chunk.content_hash for chunk in self.chunks}
+            self.vdb.chunks = unique_chunks
+            self.existing_hashes = {chunk.content_hash for chunk in self.vdb.chunks}
 
             # Rebuild index if chunks were removed
             if removed_count > 0:
-                self._rebuild_index()
+                self.vdb.rebuild_index()
 
 
             return removed_count
@@ -669,7 +676,8 @@ class KnowledgeBase:
         Process and add new data to the knowledge base
         Returns: Tuple of (added_count, duplicate_count)
         """
-
+        if len(texts) == 0:
+            return -1, -1
         try:
             # Compute hashes and filter exact duplicates
             hashes = [self.compute_hash(text) for text in texts]
@@ -684,27 +692,27 @@ class KnowledgeBase:
             if not unique_data:
                 return 0, len(texts)
 
-            texts, metadata, hashes = zip(*unique_data)
-            texts = list(texts)
-            metadata = list(metadata)
-            hashes = list(hashes)
-
             # Get embeddings
             embeddings = await self._get_embeddings(texts)
 
-            # Check for near-duplicates using embeddings
-            if self.is_trained:
-                similar_mask = self._find_similar_chunks(
-                    embeddings,
-                    self.deduplication_threshold
-                )
+            texts = []
+            metadata = []
+            hashes = []
+            embeddings_final = []
+            if len(self.vdb.chunks):
+                for i, d in enumerate(zip(*unique_data)):
+                    c = self.vdb.search(embeddings[i], 5, self.deduplication_threshold)
+                    if len(c) > 2:
+                        continue
+                    t, m, h = d
+                    texts.append(t)
+                    metadata.append(m)
+                    hashes.append(h)
+                    embeddings_final.append(embeddings[i])
 
-                # Keep only non-similar chunks
-                keep_mask = ~similar_mask
-                texts = [t for t, k in zip(texts, keep_mask) if k]
-                metadata = [m for m, k in zip(metadata, keep_mask) if k]
-                hashes = [h for h, k in zip(hashes, keep_mask) if k]
-                embeddings = embeddings[keep_mask]
+            else:
+                texts , metadata, hashes = zip(*unique_data)
+                embeddings_final = embeddings
 
             if not texts:  # All were similar to existing chunks
                 return 0, len(unique_data)
@@ -712,72 +720,32 @@ class KnowledgeBase:
             # Create and add new chunks
             new_chunks = [
                 Chunk(text=t, embedding=e, metadata=m, content_hash=h)
-                for t, e, m, h in zip(texts, embeddings, metadata, hashes)
+                for t, e, m, h in zip(texts, embeddings_final, metadata, hashes)
             ]
-
+            print("new_chunks ing", len(new_chunks))
             # Add new chunks
-            self.chunks.extend(new_chunks)
             # Update index
             if new_chunks:
                 all_embeddings = np.vstack([c.embedding for c in new_chunks])
-                self._train_index(all_embeddings)
-
-                if self.is_trained:
-                    n = len(new_chunks)
-                    start_idx = len(self.chunks) - n
-                    self.index.add_with_ids(
-                        all_embeddings,
-                        np.arange(start_idx, start_idx + n, dtype=np.int64)
-                    )
+                self.vdb.add_embeddings(all_embeddings, new_chunks)
 
             # Remove similar chunks from the entire collection
             removed = self._remove_similar_chunks()
             get_logger().info(f"Removed {removed} similar chunks during deduplication")
-
             # Invalidate visualization cache
 
             if len(new_chunks) - removed > 0:
                 # Process new chunks for concepts
-                new_chunks = list(self.chunks)[-(len(new_chunks) - removed):]
+                new_chunks = self.vdb.chunks[-(len(new_chunks) - removed):]
                 await self.concept_extractor.process_chunks(new_chunks)
             print("i________________________________________________________________", i__)
+
             return len(new_chunks) - removed, len(texts) - len(new_chunks) + removed
 
         except Exception as e:
             get_logger().error(f"Error adding data: {str(e)}")
             raise
 
-    async def _retrieve(
-        self,
-        query_embedding: np.ndarray,
-        k: int = 5,
-        min_similarity: float = 0.7
-    ) -> List[Chunk]:
-        """Retrieve relevant chunks"""
-        if not self.is_trained:
-            self._rebuild_index()
-        if not self.is_trained:
-            get_logger().warning("Index not trained yet, returning empty results")
-            return []
-
-        try:
-            query_embedding = normalize_vectors(
-                query_embedding.reshape(1, -1)
-            )
-
-            D, I = self.index.search(query_embedding, k)
-            mask = D[0] >= min_similarity
-            results = [list(self.chunks)[i] for i in I[0][mask]]
-
-            return sorted(
-                results,
-                key=lambda x: np.dot(x.embedding, query_embedding[0]),
-                reverse=True
-            )[:k]
-
-        except Exception as e:
-            get_logger().error(f"Error retrieving chunks: {str(e)}")
-            raise
 
     async def add_data(
         self,
@@ -796,7 +764,6 @@ class KnowledgeBase:
         if len(texts) == 1 and len(texts[0]) < 10_000:
             if len(self.sto) < self.batch_size and len(texts) == 1:
                 self.sto.append((texts[0], metadata[0]))
-                print("slipp", len(self.sto), len(texts[0]))
                 return -1, -1
             if len(self.sto) >= self.batch_size:
                 _ = [texts.append(t) or metadata.append([m]) for (t, m) in self.sto]
@@ -852,7 +819,7 @@ class KnowledgeBase:
         """Enhanced retrieval with connected information"""
         if query_embedding is None:
             query_embedding = (await self._get_embeddings([query]))[0]
-        initial_results = await self._retrieve(query_embedding, k, min_similarity)
+        initial_results = self.vdb.search(query_embedding, k, min_similarity)
 
         if not include_connected or not initial_results:
             return initial_results
@@ -860,12 +827,12 @@ class KnowledgeBase:
         # Find connected chunks
         connected_chunks = set()
         for chunk in initial_results:
-            chunk_id = list(self.chunks).index(chunk)
+            chunk_id = self.vdb.chunks.index(chunk)
             if chunk_id in self.similarity_graph:
                 connected_chunks.update(self.similarity_graph[chunk_id])
 
         # Add connected chunks to results
-        all_chunks = list(self.chunks)
+        all_chunks = self.vdb.chunks
         additional_results = [all_chunks[i] for i in connected_chunks
                               if all_chunks[i] not in initial_results]
 
@@ -877,49 +844,6 @@ class KnowledgeBase:
             key=lambda x: np.dot(x.embedding, query_embedding),
             reverse=True
         )[:k * 2]  # Return more results when including connected information
-
-    def _train_index(self, vectors: np.ndarray) -> None:
-        """Train the IVF index if not already trained"""
-        if not self.is_trained:
-            if vectors.shape[0] >= self.n_clusters:
-                n_clusters = max(2, vectors.shape[0] // 6)
-                self.index = faiss.IndexIVFFlat(
-                    self.quantizer,
-                    self.embedding_dim,
-                    n_clusters,
-                    faiss.METRIC_INNER_PRODUCT
-                )
-                self.index.nprobe = min(20, n_clusters)
-            get_logger().info("Training IVF index...")
-            try:
-                self.index.train(vectors)
-                self.is_trained = True
-                get_logger().info("IVF index training completed")
-            except Exception as e:
-                get_logger().error(f"Error training index: {str(e)}")
-                raise
-
-    def _rebuild_index(self) -> None:
-        """Rebuild the FAISS index"""
-        if not self.chunks:
-            return
-
-        try:
-            embeddings = np.vstack([c.embedding for c in self.chunks])
-            n = embeddings.shape[0]
-
-            self._train_index(embeddings)
-
-            self.index.reset()
-            if self.is_trained:
-                self.index.add_with_ids(
-                    embeddings,
-                    np.arange(n, dtype=np.int64)
-                )
-        except Exception as e:
-            get_logger().error(f"Error rebuilding index: {str(e)}")
-            print(f"Error rebuilding index: {str(e)}")
-            raise
 
     async def forget_irrelevant(self, irrelevant_concepts: List[str], similarity_threshold: Optional[float]=None) -> int:
         """
@@ -934,7 +858,7 @@ class KnowledgeBase:
 
         try:
             irrelevant_embeddings = await self._get_embeddings(irrelevant_concepts)
-            initial_count = len(self.chunks)
+            initial_count = len(self.vdb.chunks)
 
             def is_relevant(chunk: Chunk) -> bool:
                 similarities = np.dot(chunk.embedding, irrelevant_embeddings.T)
@@ -947,16 +871,16 @@ class KnowledgeBase:
                 return False
 
             relevant_chunks = deque(
-                [chunk for chunk in self.chunks if is_relevant(chunk)],
-                maxlen=self.chunks.maxlen
+                [chunk for chunk in self.vdb.chunks if is_relevant(chunk)],
+                maxlen=self.vdb.chunks.maxlen
             )
 
-            self.chunks = relevant_chunks
-            self.existing_hashes = {chunk.content_hash for chunk in self.chunks}
-            self._rebuild_index()
+            self.vdb.chunks = relevant_chunks
+            self.existing_hashes = {chunk.content_hash for chunk in self.vdb.chunks}
+            self.vdb.rebuild_index()
 
 
-            return initial_count - len(self.chunks)
+            return initial_count - len(self.vdb.chunks)
 
         except Exception as e:
             get_logger().error(f"Error forgetting irrelevant concepts: {str(e)}")
@@ -1239,7 +1163,7 @@ class KnowledgeBase:
             return RetrievalResult([], [], {})
 
         # Find cross-references with similarity scoring
-        initial_ids = {list(self.chunks).index(chunk) for chunk in initial_results}
+        initial_ids = {self.vdb.chunks.index(chunk) for chunk in initial_results}
         related_ids = self._find_cross_references(
             initial_ids,
             depth=cross_ref_depth,
@@ -1247,7 +1171,7 @@ class KnowledgeBase:
         )
 
         # Get all relevant chunks with smarter filtering
-        all_chunks = list(self.chunks)
+        all_chunks = self.vdb.chunks
         all_relevant_chunks = initial_results + [
             chunk for i, chunk in enumerate(all_chunks)
             if i in related_ids and self._is_relevant_cross_ref(
@@ -1349,7 +1273,7 @@ class KnowledgeBase:
                     candidates = self.similarity_graph[chunk_id] - related_ids
                     scored_candidates = [
                         (cid, self._calculate_topic_relevance(
-                            [list(self.chunks)[cid]],
+                            [self.vdb.chunks[cid]],
                             query_embedding
                         ))
                         for cid in candidates
@@ -1612,7 +1536,7 @@ class KnowledgeBase:
             }
         }
 
-    def save(self, path: str) -> None:
+    def save(self, path: str) -> Optional[bytes]:
         """
         Save the complete knowledge base to disk, including all sub-components
 
@@ -1620,13 +1544,12 @@ class KnowledgeBase:
             path (str): Path where the knowledge base will be saved
         """
         try:
-            # Create a dictionary with all components that need to be saved
             data = {
                 # Core components
-                'chunks': list(self.chunks),
+                'vdb': self.vdb.save(),
+                'vis_kwargs': self.vis_kwargs,
+                'vis_class': self.vis_class,
                 'existing_hashes': self.existing_hashes,
-                'index': faiss.serialize_index(self.index),
-                'is_trained': self.is_trained,
 
                 # Configuration parameters
                 'embedding_dim': self.embedding_dim,
@@ -1663,7 +1586,8 @@ class KnowledgeBase:
                     }
                 }
             }
-
+            if path is None:
+                return pickle.dumps(data)
             # Save to disk using pickle
             with open(path, 'wb') as f:
                 pickle.dump(data, f)
@@ -1672,9 +1596,10 @@ class KnowledgeBase:
         except Exception as e:
             print(f"Error saving knowledge base: {str(e)}")
             raise
-
+    def init_vdb(self, db:AbstractVectorStore=AbstractVectorStore):
+        pass
     @classmethod
-    def load(cls, path: str) -> 'KnowledgeBase':
+    def load(cls, path: str | bytes) -> 'KnowledgeBase':
         """
         Load a complete knowledge base from disk, including all sub-components
 
@@ -1685,9 +1610,14 @@ class KnowledgeBase:
             KnowledgeBase: A fully restored knowledge base instance
         """
         try:
-            # Load data from disk
-            with open(path, 'rb') as f:
-                data = pickle.load(f)
+            if isinstance(path, str):
+                # Load data from disk
+                with open(path, 'rb') as f:
+                    data = pickle.load(f)
+            elif isinstance(path, bytes):
+                data = pickle.loads(path)
+            else:
+                raise ValueError("Invalid path type")
 
             # Create new knowledge base instance with saved configuration
             kb = cls(
@@ -1701,9 +1631,8 @@ class KnowledgeBase:
             )
 
             # Restore core components
-            kb.chunks = deque(data['chunks'], maxlen=kb.chunks.maxlen)
+            kb.init_vis(data['vis_class'], data['vis_kwargs'])
             kb.existing_hashes = data['existing_hashes']
-            kb.index = faiss.deserialize_index(data['index'])
             kb.is_trained = data['is_trained']
 
             # Restore cache and graph data
@@ -1793,7 +1722,7 @@ async def main():
     #for i, (t,m )in enumerate(zip(texts, metadata)):
     _, t = await benchmark(f"Adding data ({0})", kb.add_data(texts, metadata))
     t0 += t
-    print("Total time from 7.57 to: 5.5 (one by one) ", t0)
+    print("Total time from 7.57 to: 5.5 (one by one) ", t0, _)
     #await benchmark("Forgetting irrelevant",
     #                kb.forget_irrelevant(["lazy", "unimportant"]))
     results_, _ = await benchmark("Retrieving",
@@ -1844,7 +1773,7 @@ async def main():
     print ("I / len(T)", i__, len(texts))
 
     nx_graph = kb.concept_extractor.concept_graph.convert_to_networkx()
-    GraphVisualizer.visualize(nx_graph)
+    GraphVisualizer.visualize(nx_graph, "test_output_file.html")
     kb.save("bas.pkl")
 
 async def rgen():
@@ -1859,5 +1788,5 @@ async def rgen():
 if __name__ == "__main__":
     get_app(name="main2")
 
-    #asyncio.run(main())
+    asyncio.run(main())
 

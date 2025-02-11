@@ -161,7 +161,7 @@ class Tools(MainTool, FileHandler):
                 f.write_json({'modules': modules})
             api_name = api_name_dev
 
-        return self._start_api(api_name, live=False, reload=True, test_override=False, host="localhost")
+        return self._start_api(api_name, live=False, reload=False, test_override=False, host="localhost")
 
     def start_live(self, api_name: str) -> Optional[str]:
         """
@@ -173,7 +173,7 @@ class Tools(MainTool, FileHandler):
         """
         Start an API in debug mode.
         """
-        return self._start_api(api_name, live=False, reload=False, test_override=True, host="localhost")
+        return self._start_api(api_name, live=False, reload=True, test_override=True, host="localhost")
 
     def _start_api(
         self,

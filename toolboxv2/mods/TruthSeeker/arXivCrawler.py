@@ -483,15 +483,17 @@ class ArXivPDFProcessor:
                      ).approximate(config['chunk_size'] * processed_chunks)
         # Time estimation (seconds)
         processing_time_per_char = .75 / config['chunk_size']  # Hypothetical time per chunk in seconds
-        estimated_time = (total_chunks * 0.4 + total_papers * 3.0 + (total_chars * processing_time_per_char)) / (config.get('num_workers', 16) if config.get('num_workers', 16) is not None else 16 / 10)
+        w = (config.get('num_workers', 16) if config.get('num_workers', 16) is not None else 16 / 10)
+        # Processing_ time - Insights Genration - Insights Query   -   Indexing Time     -    Download Time     -       workers   -   Query Genration time - Ui - Init Db
+        estimated_time = (total_papers*0.012+(total_chunks/20000) * .005 + (total_chunks/2) * .0003 + total_papers * 2.3 ) / w + (0.25 * config['max_search']) + 4 + 3
 
         price_per_char = 0.0000012525
         price_per_t_chunk =  total_chars * price_per_char
         estimated_price = price_per_t_chunk ** 1.7
 
         # estimated_price = 0 if query_length < 420 and estimated_price < 5 else estimated_price
-        if estimated_time < 30:
-            estimated_time = 30
+        if estimated_time < 10:
+            estimated_time = 10
         if estimated_price < .04:
             estimated_price = .04
         return round(estimated_time, 2), round(estimated_price, 4)

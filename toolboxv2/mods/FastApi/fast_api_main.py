@@ -155,16 +155,19 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         # 'session-id' : {'jwt-claim', 'validate', 'exit on ep time from jwt-claim', 'SiID'}
         self.is_init = False
         self.cookie_key = tb_app.config_fh.one_way_hash(tb_app.id, 'session')
-
+        self.db = None
         self.sessions = {}
 
     # --- Database Setup ---
     def get_db(self):
+        if self.db is not None:
+            return self.db
         db = get_app().get_mod("DB", spec="FastApi.sessions")
         if not self.is_init:
             self.is_init = True
             db.edit_cli("LD")
             db.initialize_database()
+        self.db = db
         return db
 
     # --- Session State Management ---

@@ -880,19 +880,18 @@ class AISemanticMemory(metaclass=Singleton):
             return True
         return False
 
-    def save_memory(self, name: str, path: str) -> bool:
+    def save_memory(self, name: str, path: str) -> bool | bytes:
         """Save a memory store to disk"""
         sanitized = self._sanitize_name(name)
         if kb := self.memories.get(sanitized):
             try:
-                kb.save(path)
-                return True
+                return kb.save(path)
             except Exception as e:
                 print(f"Error saving memory: {str(e)}")
                 return False
         return False
 
-    def load_memory(self, name: str, path: str) -> bool:
+    def load_memory(self, name: str, path: str | bytes) -> bool:
         """Load a memory store from disk"""
         sanitized = self._sanitize_name(name)
         if sanitized in self.memories:

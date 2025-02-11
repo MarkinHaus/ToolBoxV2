@@ -293,7 +293,6 @@ def get_user_state(session_id: str, is_new=False) -> dict:
             return state_, True
         return state_
     state = db.get(f"TruthSeeker::session:{session_id}")
-    print("STAR>E:::", state, state.get(), "###")
     if state.get() is None:
         state = state_
         if is_new:
@@ -527,24 +526,19 @@ def create_followup_section(processor_instance: Dict, main_ui: ui.element, sessi
                 query_params=query_params,
                 unified_retrieve=params["unified"]
             )
-
+            print("results",results)
             s = get_user_state(session_id)
             s['balance'] -= .04 if unified.value else .01
             save_user_state(session_id, s)
             with main_ui:
                 balance.set_text(f"Balance: {s['balance']:.2f}€")
             # Format results
-            formatted_result = "### Query: " + query_text + "\n\n"
-
             with main_ui:
                 with results_display:
                     MemoryResultsDisplay(results, results_display)
 
         except Exception as e:
             return f"Error executing query: {str(e)}\n\n"
-
-
-        return formatted_result
 
 
     # Add initial query input
@@ -966,7 +960,7 @@ def create_research_interface(Processor):
                 pass
 
             with ui.card().style("background-color: var(--background-color)"):
-                ui.label("Privat Session link (restore the Session on an different device)")
+                ui.label("Private Session link (restore the session on a different device)")
                 base_url = f'{os.environ["HOSTNAME"]}/gui/open-Seeker.seek' if not 'localhost' in os.environ[
                     "HOSTNAME"] else 'http://localhost:5000/gui/open-Seeker.seek'
                 ui.label(f"{base_url}?session_id={session_id}")
@@ -1021,7 +1015,9 @@ def create_research_interface(Processor):
                     history_entry["mam_name"] = processor_instance['instance'].mem_name
                     history_entry["query"] = processor_instance['instance'].query
 
-                    processor_instance['instance'].tools.get_memory().save_memory(history_entry["mam_name"], history_entry["mam_name"] + '.plt')
+                    history_entry["processor_memory"] = processor_instance['instance'].tools.get_memory(
+
+                    ).save_memory(history_entry["mam_name"], None)
                 state['research_history'].append(history_entry)
                 save_user_state(session_id, state)
             else:
@@ -1143,7 +1139,8 @@ def create_research_interface(Processor):
                 processor.callback = update_status
                 processor.mem_name = entry["mam_name"]
                 processor_instance["instance"] = processor
-                processor.tools.get_memory().load_memory(entry["mam_name"], entry["mam_name"]+'.plt')
+
+            processor_instance["instance"].tools.get_memory().load_memory(entry["mam_name"], entry["processor_memory"])
             update_results(entry, save=False)
 
     return helpr
@@ -1194,7 +1191,13 @@ def regiser_stripe_integration(is_scc=True):
                 save_user_state(request.row.query_params.get('session_id'), state)
 
             # ui.navigate.to(f'/session?session={session}')
-                ui.label(f"Transaction Complete - New Balace :{state['balance']}").classes("text-lg font-bold")
+                ui.label(f"Transaction Complete - New balance :{state['balance']}").classes("text-lg font-bold")
+                with ui.card().style("background-color: var(--background-color)"):
+                    ui.label("Privat Session link (restore the Session on an different device)")
+                    base_url = f'{os.environ["HOSTNAME"]}/gui/open-Seeker.seek' if not 'localhost' in os.environ[
+                        "HOSTNAME"] else 'http://localhost:5000/gui/open-Seeker.seek'
+                    ui.label(f"{base_url}?session_id={request.row.query_params.get('session_id')}")
+                    ui.label("Changes each time!")
             else:
                 ui.label(f"Transaction Error! {session_data}, {dir(session_data)}").classes("text-lg font-bold")
             ui.button(
