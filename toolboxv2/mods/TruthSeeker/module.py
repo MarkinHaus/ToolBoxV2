@@ -215,9 +215,11 @@ def process(app = None, request: RequestSession or None = None):
     return {'is_true': insights.is_true, 'summary':insights.summary, 'insights': insights.key_point.split(">\n\n<"), 'papers':[p.model_dump() for p in papers]}
 
 @export(mod_name=Name, version=version, api=True,
-        name="main_web_entry", row=True)
-def main_web_entry(app: App = None, abut=None):
+        name="main_web_entry", row=True,request_as_kwarg=True)
+def main_web_entry(app: App = None, abut=None, request: RequestSession or None = None):
     if abut:
         return HTMLResponse(content=abut_content)
+    if sid := request.row.query_params.get('session_id'):
+        return RedirectResponse(url="/gui/open-Seeker.seek?session_id=%s" % sid)
     return RedirectResponse(url="/gui/open-Seeker")
 
