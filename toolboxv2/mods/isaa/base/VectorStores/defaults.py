@@ -430,6 +430,7 @@ class VectorStoreConfig:
     use_gpu: bool = False
 
 try:
+    import taichi as ti
     @ti.kernel
     def batch_normalize(
         vectors: ti.types.ndarray(dtype=ti.f32),
@@ -461,8 +462,6 @@ try:
 except ImportError:
     import math
 
-
-    @ti.kernel
     def batch_normalize(
         vectors,
         output,
