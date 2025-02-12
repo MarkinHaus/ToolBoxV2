@@ -961,8 +961,7 @@ def create_research_interface(Processor):
 
             with ui.card().style("background-color: var(--background-color)"):
                 ui.label("Private Session link (restore the session on a different device)")
-                base_url = f'{os.environ["HOSTNAME"]}/gui/open-Seeker.seek' if not 'localhost' in os.environ[
-                    "HOSTNAME"] else 'http://localhost:5000/gui/open-Seeker.seek'
+                base_url = f'https://{os.getenv("HOSTNAME")}/gui/open-Seeker.stripe' if not 'localhost' in os.getenv("HOSTNAME") else 'http://localhost:5000/gui/open-Seeker.seek'
                 ui.label(f"{base_url}?session_id={session_id}")
                 ui.label("Changes each time!")
 
@@ -1194,8 +1193,7 @@ def regiser_stripe_integration(is_scc=True):
                 ui.label(f"Transaction Complete - New balance :{state['balance']}").classes("text-lg font-bold")
                 with ui.card().style("background-color: var(--background-color)"):
                     ui.label("Privat Session link (restore the Session on an different device)")
-                    base_url = f'{os.environ["HOSTNAME"]}/gui/open-Seeker.seek' if not 'localhost' in os.environ[
-                        "HOSTNAME"] else 'http://localhost:5000/gui/open-Seeker.seek'
+                    base_url = f'https://{os.getenv("HOSTNAME")}/gui/open-Seeker.stripe' if not 'localhost' in os.getenv("HOSTNAME")else 'http://localhost:5000/gui/open-Seeker.seek'
                     ui.label(f"{base_url}?session_id={request.row.query_params.get('session_id')}")
                     ui.label("Changes each time!")
             else:
@@ -1216,7 +1214,7 @@ def regiser_stripe_integration(is_scc=True):
 
 
 def handle_stripe_payment(amount: float, session_id):
-    base_url = f'{os.environ["HOSTNAME"]}/gui/open-Seeker.stripe' if not 'localhost' in os.environ["HOSTNAME"] else 'http://localhost:5000/gui/open-Seeker.stripe'
+    base_url = f'https://{os.getenv("HOSTNAME")}/gui/open-Seeker.stripe' if not 'localhost' in os.getenv("HOSTNAME") else 'http://localhost:5000/gui/open-Seeker.stripe'
     session = stripe.checkout.Session.create(
         payment_method_types=['card', 'paypal',
                               "link",

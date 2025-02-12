@@ -813,7 +813,7 @@ class AISemanticMemory(metaclass=Singleton):
 
         results = []
         for name, kb in targets:
-            try:
+            #try:
                 # Use KnowledgeBase's retrieve_with_overview for comprehensive results
                 result = await kb.retrieve_with_overview(
                     query=query,
@@ -834,8 +834,8 @@ class AISemanticMemory(metaclass=Singleton):
                     "memory": name,
                     "result": result
                 })
-            except Exception as e:
-                print(f"Query failed on {name}: {str(e)}")
+            #except Exception as e:
+            #    print(f"Query failed on {name}: {str(e)}")
         if to_str:
             return json.dumps(results, indent=2)
         return results

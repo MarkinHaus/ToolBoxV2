@@ -485,7 +485,7 @@ class ArXivPDFProcessor:
         processing_time_per_char = .75 / config['chunk_size']  # Hypothetical time per chunk in seconds
         w = (config.get('num_workers', 16) if config.get('num_workers', 16) is not None else 16 / 10)
         # Processing_ time - Insights Genration - Insights Query   -   Indexing Time     -    Download Time     -       workers   -   Query Genration time - Ui - Init Db
-        estimated_time = (total_papers*0.012+(total_chunks/20000) * .005 + (total_chunks/2) * .0003 + total_papers * 2.3 ) / w + (0.25 * config['max_search']) + 4 + 3
+        estimated_time = ((8+total_papers*0.012)+(total_chunks/20000) * .005 + (total_chunks/2) * .0003 + total_papers * 2.8 ) / w + (0.25 * config['max_search']) + 6 + 4
 
         price_per_char = 0.0000012525
         price_per_t_chunk =  total_chars * price_per_char
