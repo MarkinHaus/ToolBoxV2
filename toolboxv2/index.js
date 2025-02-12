@@ -1168,7 +1168,8 @@ setTimeout((function() {
     <button id="close-banner" title="Accept">&times;</button>
     <h3>We value your privacy.</h3>
     </p> Data is keep privat!</p>
-    <a href="/web/assets/terms.html">Terms and Conditions</a>
+    <a href="/web/assets/terms.html">Terms and Conditions (8)</a>
+    <br>
     <button id="accept-minimal" style="padding: 12px">Continue</button><label for="accept-minimal">Recommended</label>
      <h4>Cookies Configuration</h4>
     <button id="show-complex" style="margin-left:8px; padding: 6px; text-decoration:underline">
