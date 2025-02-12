@@ -219,5 +219,5 @@ def process(app = None, request: RequestSession or None = None):
 def main_web_entry(app: App = None, abut=None):
     if abut:
         return HTMLResponse(content=abut_content)
-    return RedirectResponse(url="/gui/open-Seek")
+    return RedirectResponse(url="/gui/open-Seeker")
 
