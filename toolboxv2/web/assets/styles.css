@@ -796,7 +796,7 @@ textarea:hover {
     font-size: 1.2em;
     cursor: pointer;
     color: #666;
-    margin-left: 10px;
+    margin-left: 95%;
 }
 #close-banner:hover {
     color: var(--text-color);
