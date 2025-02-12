@@ -4,31 +4,30 @@ import math
 import os
 import pickle
 import time
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Any, Tuple
-from collections import deque
+from typing import Any
 
 import networkx as nx
 import numpy as np
-import umap
 from litellm import batch_completion, ModelResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from toolboxv2 import get_logger, get_app
 from sklearn.cluster import HDBSCAN
 
-from typing import Dict, List, Set, Tuple, Optional, NamedTuple
+from typing import Dict, Set, Tuple, Optional, NamedTuple
 from dataclasses import dataclass
 import json
 import asyncio
 from collections import defaultdict
-
-from typing import List
 import re
 
 from toolboxv2.mods.isaa.base.VectorStores.defaults import AbstractVectorStore, FastVectorStoreO, FaissVectorStore, \
     EnhancedVectorStore, FastVectorStore1
 from toolboxv2.mods.isaa.extras.adapter import litellm_complete
+import numpy as np
+from typing import List
+from collections import deque
+
 
 i__ = [0, 0]
 
@@ -528,15 +527,6 @@ class TextSplitter:
             start = end - allowed_overlap
 
         return chunks
-
-
-import hnswlib
-import numpy as np
-from typing import List
-from threading import Lock
-from collections import deque
-
-
 
 class KnowledgeBase:
     def __init__(self, embedding_dim: int = 768, similarity_threshold: float = 0.7, batch_size: int = 64,

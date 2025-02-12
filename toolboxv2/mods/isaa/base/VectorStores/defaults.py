@@ -1,7 +1,3 @@
-import platform
-from concurrent.futures import ThreadPoolExecutor
-from multiprocessing import shared_memory
-
 import numba
 import numpy as np
 import taichi as ti
