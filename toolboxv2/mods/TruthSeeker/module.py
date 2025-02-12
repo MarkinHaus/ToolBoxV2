@@ -219,7 +219,11 @@ def process(app = None, request: RequestSession or None = None):
 def main_web_entry(app: App = None, abut=None, request: RequestSession or None = None):
     if abut:
         return HTMLResponse(content=abut_content)
-    if sid := request.row.query_params.get('session_id'):
-        return RedirectResponse(url="/gui/open-Seeker.seek?session_id=%s" % sid)
+    if hasattr(request, 'row'):
+        if sid := request.row.query_params.get('session_id'):
+            return RedirectResponse(url="/gui/open-Seeker.seek?session_id=%s" % sid)
+    if hasattr(request, 'query_params'):
+        if sid := request.query_params.get('session_id'):
+            return RedirectResponse(url="/gui/open-Seeker.seek?session_id=%s" % sid)
     return RedirectResponse(url="/gui/open-Seeker")
 

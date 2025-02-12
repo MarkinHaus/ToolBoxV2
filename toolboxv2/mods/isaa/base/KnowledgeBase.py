@@ -529,7 +529,7 @@ class TextSplitter:
         return chunks
 
 class KnowledgeBase:
-    def __init__(self, embedding_dim: int = 768, similarity_threshold: float = 0.7, batch_size: int = 64,
+    def __init__(self, embedding_dim: int = 768, similarity_threshold: float = 0.61, batch_size: int = 64,
                  n_clusters: int = 4, deduplication_threshold: float = 0.85, model_name="groq/llama3-70b-8192",
                  embedding_model="gemini/text-embedding-004",
                  vis_class:Optional[str] = "FastVectorStoreO",
@@ -803,7 +803,7 @@ class KnowledgeBase:
         query: str="",
         query_embedding: Optional[np.ndarray] = None,
         k: int = 5,
-        min_similarity: float = 0.7,
+        min_similarity: float = 0.2,
         include_connected: bool = True
     ) -> List[Chunk]:
         """Enhanced retrieval with connected information"""
@@ -1138,7 +1138,7 @@ class KnowledgeBase:
         query: str,
         query_embedding=None,
         k: int = 5,
-        min_similarity: float = 0.7,
+        min_similarity: float = 0.2,
         max_sentences: int = 5,
         cross_ref_depth: int = 2,
         max_cross_refs: int = 10  # New parameter to control cross-reference count
@@ -1390,7 +1390,7 @@ class KnowledgeBase:
         self,
         query: str,
         k: int = 5,
-        min_similarity: float = 0.7,
+        min_similarity: float = 0.2,
         cross_ref_depth: int = 2,
         max_cross_refs: int = 10,
         max_sentences: int = 10
@@ -1623,7 +1623,6 @@ class KnowledgeBase:
             # Restore core components
             kb.init_vis(data['vis_class'], data['vis_kwargs'])
             kb.existing_hashes = data['existing_hashes']
-            kb.is_trained = data['is_trained']
 
             # Restore cache and graph data
             kb.similarity_graph = data.get('similarity_graph', {})

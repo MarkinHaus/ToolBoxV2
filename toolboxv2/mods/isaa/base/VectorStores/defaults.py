@@ -791,6 +791,8 @@ class FastVectorStore(AbstractVectorStore):
 
             # Process results
             top_k = min(k, len(similarities))
+            if top_k <= 0:
+                return []
             top_indices = np.argpartition(-similarities, top_k)[:top_k]
             top_indices = top_indices[np.argsort(-similarities[top_indices])]
 
@@ -816,6 +818,8 @@ class FastVectorStore(AbstractVectorStore):
 
             # Get top-k results
             top_k = min(k, len(similarities))
+            if top_k <= 0:
+                return []
             top_local_indices = np.argpartition(-similarities, top_k)[:top_k]
             top_local_indices = top_local_indices[np.argsort(-similarities[top_local_indices])]
 
@@ -985,6 +989,8 @@ class FastVectorStoreO(AbstractVectorStore):
 
             # Process results
             top_k = min(k, len(similarities))
+            if top_k <= 0:
+                return []
             top_indices = np.argpartition(-similarities, top_k)[:top_k]
             top_indices = top_indices[np.argsort(-similarities[top_indices])]
 
@@ -1010,6 +1016,8 @@ class FastVectorStoreO(AbstractVectorStore):
 
             # Get top-k results
             top_k = min(k, len(similarities))
+            if top_k <= 0:
+                return []
             top_local_indices = np.argpartition(-similarities, top_k)[:top_k]
             top_local_indices = top_local_indices[np.argsort(-similarities[top_local_indices])]
 
@@ -1322,6 +1330,8 @@ class FastVectorStore2(AbstractVectorStore):
 
         # Process results
         top_k = min(k, len(similarities))
+        if top_k <= 0:
+            return []
         indices = np.argpartition(-similarities, top_k)[:top_k]
         indices = indices[np.argsort(-similarities[indices])]
 

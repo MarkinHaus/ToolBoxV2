@@ -560,7 +560,7 @@ def create_research_interface(Processor):
         # Extract session data before spawning thread
         session_id = session.get('ID')
         session_id_h = session.get('IDh')
-        session_rid = request.row.query_params.get('session_id')
+        session_rid = request.row.query_params.get('session_id') if hasattr(request, 'row') else request.query_params.get('session_id')
         session_valid = session.get('valid')
 
         # Thread communication
@@ -578,10 +578,15 @@ def create_research_interface(Processor):
                     save_user_state(session_id, _state)
                     delete_user_state(session_id_h)
                 if session_rid:
+                    state_: dict
                     state_, is_new_ = get_user_state(session_rid, is_new=True)
                     if not is_new_:
-                        _state = state_
-                        delete_user_state(session_rid)
+                        _state = state_.copy()
+                        state_['payment_id'] = ''
+                        state_['last_reset'] = datetime.utcnow().isoformat()
+                        state_['research_history'] = state_['research_history'][:3]
+                        state_['balance'] = 0
+                        save_user_state(session_id, _state)
                 _state = reset_daily_balance(_state, session_valid)
                 save_user_state(session_id, _state)
 
@@ -959,10 +964,10 @@ def create_research_interface(Processor):
             with ui.element('div').classes("w-full").style("white:100%; height:100%") as graph_ui:
                 pass
 
-            with ui.card().style("background-color: var(--background-color)"):
+            with ui.card().classes("w-full p-4").style("background-color: var(--background-color)"):
                 ui.label("Private Session link (restore the session on a different device)")
                 base_url = f'https://{os.getenv("HOSTNAME")}/gui/open-Seeker.seek' if not 'localhost' in os.getenv("HOSTNAME") else 'http://localhost:5000/gui/open-Seeker.seek'
-                ui.label(f"{base_url}?session_id={session_id}")
+                ui.label(f"{base_url}?session_id={session_id}").style("white:100%")
                 ui.label("Changes each time!")
 
             graph_ui = graph_ui
@@ -1149,14 +1154,15 @@ def create_research_interface(Processor):
 def regiser_stripe_integration(is_scc=True):
     def stripe_callback(request: Request):
 
-        state = get_user_state(request.row.query_params.get('session_id'))
+        sid = request.row.query_params.get('session_id') if hasattr(request, 'row') else request.query_params.get('session_id')
+        state = get_user_state(sid)
 
         if state['payment_id'] == '':
             with ui.card().classes("w-full items-center").style("background-color: var(--background-color)"):
                 ui.label(f"No payment id!").classes("text-lg font-bold")
                 ui.button(
                     "Start Research",
-                    on_click=lambda: ui.navigate.to("/open-Seeker.seek?session_id="+request.row.query_params.get('session_id'))
+                    on_click=lambda: ui.navigate.to("/open-Seeker.seek?session_id="+sid)
                 ).classes(
                     "w-full px-6 py-4 text-lg font-bold "
                     "bg-primary hover:bg-primary-dark "
@@ -1184,18 +1190,18 @@ def regiser_stripe_integration(is_scc=True):
                 return
         with ui.card().classes("w-full items-center").style("background-color: var(--background-color)"):
             if is_scc and state['payment_id'] != '' and session_data.payment_status == 'paid':
-                state = get_user_state(request.row.query_params.get('session_id'))
+                state = get_user_state(sid)
                 amount = session_data.amount_total / 100  # Convert cents to euros
                 state['balance'] += amount
                 state['payment_id'] = ''
-                save_user_state(request.row.query_params.get('session_id'), state)
+                save_user_state(sid, state)
 
             # ui.navigate.to(f'/session?session={session}')
                 ui.label(f"Transaction Complete - New balance :{state['balance']}").classes("text-lg font-bold")
-                with ui.card().style("background-color: var(--background-color)"):
-                    ui.label("Privat Session link (restore the Session on an different device)")
+                with ui.card().classes("w-full p-4").style("background-color: var(--background-color)"):
+                    ui.label("Private Session link (restore the session on a different device)")
                     base_url = f'https://{os.getenv("HOSTNAME")}/gui/open-Seeker.seek' if not 'localhost' in os.getenv("HOSTNAME")else 'http://localhost:5000/gui/open-Seeker.seek'
-                    ui.label(f"{base_url}?session_id={request.row.query_params.get('session_id')}")
+                    ui.label(f"{base_url}?session_id={sid}").style("white:100%")
                     ui.label("Changes each time!")
             else:
                 ui.label(f"Transaction Error! {session_data}, {dir(session_data)}").classes("text-lg font-bold")
@@ -1217,7 +1223,7 @@ def regiser_stripe_integration(is_scc=True):
 def handle_stripe_payment(amount: float, session_id):
     base_url = f'https://{os.getenv("HOSTNAME")}/gui/open-Seeker.stripe' if not 'localhost' in os.getenv("HOSTNAME") else 'http://localhost:5000/gui/open-Seeker.stripe'
     session = stripe.checkout.Session.create(
-        payment_method_types=['card', 'paypal',
+        payment_method_types=['card',
                               "link",
                               ],
         line_items=[{
