@@ -1197,7 +1197,7 @@ setTimeout((function() {
 
     <div class="modal-screen" data-step="2">
       <h3>Technical Preferences</h3>
-      <p>Essential features cannot be disabled</p>
+      <p>Profile Analytics ar disabled press 'Continue'</p>
 
       <div class="complex-option" onclick="this.classList.toggle('selected')">
         <h4>Performance Analytics</h4>
