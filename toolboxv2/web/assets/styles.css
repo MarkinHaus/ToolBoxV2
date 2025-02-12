@@ -787,6 +787,20 @@ textarea:hover {
     z-index: 2000;
 }
 
+ #cookie-banner a:hover {
+    text-decoration: underline;
+}
+#close-banner {
+    background: none;
+    border: none;
+    font-size: 1.2em;
+    cursor: pointer;
+    color: #666;
+    margin-left: 10px;
+}
+#close-banner:hover {
+    color: var(--text-color);
+}
 .modal-screen {
     display: none;
     background: rgba(var(--background-color), 0.4);

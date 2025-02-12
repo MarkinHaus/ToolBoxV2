@@ -1100,7 +1100,7 @@ function linksInit(){
                 <li><a href="/web/core0/Poffer/PublicDashboard.html">Offer</a></li>
                 <hr style="margin: -0.25vh 0"/>
                 <li><a href="/web/assets/terms.html">Terms and Conditions</a></li>
-                <li><a href="/web/assets/terms.html">Contact</a></li>
+                <li><a href="/web/core0/kontakt.html">Contact</a></li>
             </ul>
         </div>`
 
@@ -1165,8 +1165,10 @@ setTimeout((function() {
   const banner = document.createElement('div');
   banner.id = 'cookie-banner';
   banner.innerHTML = `
+    <button id="close-banner" title="Accept">&times;</button>
     <h3>We value your privacy.</h3>
     </p> Data is keep privat!</p>
+    <a href="/web/assets/terms.html">Terms and Conditions</a>
     <button id="accept-minimal" style="padding: 12px">Continue</button><label for="accept-minimal">Recommended</label>
      <h4>Cookies Configuration</h4>
     <button id="show-complex" style="margin-left:8px; padding: 6px; text-decoration:underline">
@@ -1228,6 +1230,12 @@ setTimeout((function() {
 
   // Interaction handlers
   document.getElementById('accept-minimal').addEventListener('click', () => {
+    saveSettings(true, 'always');
+    banner.remove();
+  });
+
+  // Interaction handlers
+  document.getElementById('close-banner').addEventListener('click', () => {
     saveSettings(true, 'always');
     banner.remove();
   });
