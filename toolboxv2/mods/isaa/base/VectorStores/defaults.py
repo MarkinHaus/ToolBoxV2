@@ -1,7 +1,5 @@
 import numba
 import numpy as np
-import taichi as ti
-import hnswlib
 import os
 import threading
 
@@ -63,33 +61,57 @@ class AbstractVectorStore(ABC):
 
 
 
-@ti.kernel
-def batch_normalize(
-    vectors: ti.types.ndarray(dtype=ti.f32),
-    output: ti.types.ndarray(dtype=ti.f32),
-    n: ti.i32,
-    dim: ti.i32
-):
-    ti.loop_config(block_dim=256)
-    for i in range(n):
-        # Calculate norm
-        norm_sq = 0.0
-        for j in range(dim):
-            val = vectors[i, j]
-            norm_sq += val * val
+try:
+    import taichi as ti
+    @ti.kernel
+    def batch_normalize(
+        vectors: ti.types.ndarray(dtype=ti.f32),
+        output: ti.types.ndarray(dtype=ti.f32),
+        n: ti.i32,
+        dim: ti.i32
+    ):
+        ti.loop_config(block_dim=256)
+        for i in range(n):
+            # Calculate norm
+            norm_sq = 0.0
+            for j in range(dim):
+                val = vectors[i, j]
+                norm_sq += val * val
 
-        norm = ti.sqrt(norm_sq)
-        inv_norm = 1.0 / (norm + 1e-8)
+            norm = ti.sqrt(norm_sq)
+            inv_norm = 1.0 / (norm + 1e-8)
 
-        # Normalize
-        for j in range(dim):
-            output[i, j] = vectors[i, j] * inv_norm
+            # Normalize
+            for j in range(dim):
+                output[i, j] = vectors[i, j] * inv_norm
+except ImportError:
 
+    import math
+    def batch_normalize(
+        vectors,
+        output,
+        n,
+        dim
+    ):
+        for i in range(n):
+            # Calculate norm
+            norm_sq = 0.0
+            for j in range(dim):
+                val = vectors[i, j]
+                norm_sq += val * val
+
+            norm = math.sqrt(norm_sq)
+            inv_norm = 1.0 / (norm + 1e-8)
+
+            # Normalize
+            for j in range(dim):
+                output[i, j] = vectors[i, j] * inv_norm
 class NumpyVectorStore(AbstractVectorStore):
     def __init__(self, use_gpu=False):
         self.embeddings = np.empty((0, 0))
         self.chunks = []
-        # Initialize Taichi
+        # Initialize Taich
+        import taichi as ti
         ti.init(arch=ti.gpu if use_gpu else ti.cpu)
         self.normalized_embeddings = None
 
@@ -123,7 +145,7 @@ class NumpyVectorStore(AbstractVectorStore):
         # Enhanced Taichi kernel for similarity computation
         n = len(self.chunks)
         similarities = np.zeros(n, dtype=np.float32)
-
+        import taichi as ti
         @ti.kernel
         def compute_similarities_optimized(
             query: ti.types.ndarray(dtype=ti.f32),
@@ -407,44 +429,77 @@ class VectorStoreConfig:
     use_mmap: bool = True  # Use memory mapping for large datasets
     use_gpu: bool = False
 
-@ti.kernel
-def batch_normalize(
-    vectors: ti.types.ndarray(dtype=ti.f32),
-    output: ti.types.ndarray(dtype=ti.f32),
-    n: ti.i32,
-    dim: ti.i32
-):
-    for i in range(n):
-        # Use block-wise processing for better cache utilization
-        norm_sq = 0.0
-        for j in range(0, dim):  # Process in blocks of 16
-            if j % 16 != 0:
-                continue
-            block_sum = 0.0
-            for k in range(j, ti.min(j + 16, dim)):
-                val = vectors[i, k]
-                block_sum += val * val
-            norm_sq += block_sum
+try:
+    @ti.kernel
+    def batch_normalize(
+        vectors: ti.types.ndarray(dtype=ti.f32),
+        output: ti.types.ndarray(dtype=ti.f32),
+        n: ti.i32,
+        dim: ti.i32
+    ):
+        for i in range(n):
+            # Use block-wise processing for better cache utilization
+            norm_sq = 0.0
+            for j in range(0, dim):  # Process in blocks of 16
+                if j % 16 != 0:
+                    continue
+                block_sum = 0.0
+                for k in range(j, ti.min(j + 16, dim)):
+                    val = vectors[i, k]
+                    block_sum += val * val
+                norm_sq += block_sum
 
-        norm = ti.sqrt(norm_sq)
-        inv_norm = 1.0 / (norm + 1e-8)
+            norm = ti.sqrt(norm_sq)
+            inv_norm = 1.0 / (norm + 1e-8)
 
-        # Normalize with block processing
-        for j in range(0, dim):
-            if j % 16 != 0:
-                continue
-            for k in range(j, ti.min(j + 16, dim)):
-                output[i, k] = vectors[i, k] * inv_norm
+            # Normalize with block processing
+            for j in range(0, dim):
+                if j % 16 != 0:
+                    continue
+                for k in range(j, ti.min(j + 16, dim)):
+                    output[i, k] = vectors[i, k] * inv_norm
+except ImportError:
+    import math
+
+
+    @ti.kernel
+    def batch_normalize(
+        vectors,
+        output,
+        n,
+        dim
+    ):
+        for i in range(n):
+            # Use block-wise processing for better cache utilization
+            norm_sq = 0.0
+            for j in range(0, dim):  # Process in blocks of 16
+                if j % 16 != 0:
+                    continue
+                block_sum = 0.0
+                for k in range(j, min(j + 16, dim)):
+                    val = vectors[i, k]
+                    block_sum += val * val
+                norm_sq += block_sum
+
+            norm = math.sqrt(norm_sq)
+            inv_norm = 1.0 / (norm + 1e-8)
+
+            # Normalize with block processing
+            for j in range(0, dim):
+                if j % 16 != 0:
+                    continue
+                for k in range(j, min(j + 16, dim)):
+                    output[i, k] = vectors[i, k] * inv_norm
 
 class EnhancedVectorStore(AbstractVectorStore):
     def __init__(self, config: VectorStoreConfig):
         self.hard = False
         self.config = config or VectorStoreConfig(max_memory_mb=4096)
         self.lock = threading.Lock()
-
+        import taichi as ti
         # Initialize Taichi with appropriate backend
         ti.init(arch=ti.cuda if self.config.use_gpu else ti.cpu)
-
+        import hnswlib
         # Initialize HNSW index
         self.index = hnswlib.Index(space='cosine', dim=self.config.dimension)
         self.index.init_index(
@@ -572,6 +627,7 @@ class EnhancedVectorStore(AbstractVectorStore):
             return self
 
     def clear(self) -> None:
+        import hnswlib
         with self.lock:
             self.index = hnswlib.Index(space='cosine', dim=self.config.dimension)
             self.chunks = []
@@ -1112,6 +1168,7 @@ class FastVectorStore1(AbstractVectorStore):
 class FastVectorStore2(AbstractVectorStore):
     def __init__(self, embedding_size=768, initial_buffer_size=1000000, use_gpu=False):
         # Initialize Taichi with GPU if available
+        import taichi as ti
         ti.init(arch=ti.gpu if use_gpu else ti.cpu)
 
         self.embedding_size = embedding_size
@@ -1133,6 +1190,7 @@ class FastVectorStore2(AbstractVectorStore):
         self._compile_kernels()
 
     def _compile_kernels(self):
+        import taichi as ti
         # Taichi kernels for GPU-accelerated operations
         @ti.kernel
         def normalize_batch_gpu_FastVectorStore2(
