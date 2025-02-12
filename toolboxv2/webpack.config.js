@@ -152,7 +152,7 @@ export default {
     // For helper.js
     new HtmlWebpackPlugin({
       template: './helper.html',
-      filename: '/helper.html',
+      filename: './helper.html',
       chunks: ['main']
     }),
     // For user_dashboard.html
