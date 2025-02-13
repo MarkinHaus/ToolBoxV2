@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Union
 import requests  # if needed for diagnostics
 
 from toolboxv2 import MainTool, FileHandler, get_app
-from toolboxv2.utils.extras.blobs import BlobFile
+from toolboxv2.utils.extras.blobs import BlobFile, BlobStorage
 from toolboxv2.utils.extras.qr import print_qrcode_to_console
 from toolboxv2.utils.system.session import Session, get_local_ip, get_public_ip
 

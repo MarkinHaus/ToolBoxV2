@@ -1,13 +1,14 @@
 from datetime import datetime
 from toolboxv2 import Singleton
 
-class ChatSession(metaclass=Singleton):
+class ChatSession:
 
     def __init__(self, mem, max_length=None):
         self.mem = mem
         self.space_name = "chat_session"
         self.max_length = max_length
         self.history = []
+        self.mem.create_memory(self.space_name)
 
     async def add_message(self, message):
         self.history.append(message)
@@ -27,8 +28,9 @@ class ChatSession(metaclass=Singleton):
             self.history.pop(0)
 
     async def get_reference(self, text):
-        return "\n".join([x for x in await self.mem.query(text, self.space_name, to_tsr=False)])
+        return "\n".join([str(x) for x in await self.mem.query(text, self.space_name)])
 
     def get_past_x(self, x):
         return self.history[-x:]
+
 

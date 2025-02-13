@@ -217,7 +217,8 @@ class BidirectionalStreamlitAppManager(BaseHTTPMiddleware, metaclass=Singleton):
             streamlit_url = f"http://{host}:{port}?token={streamlit_token}"
             return RedirectResponse(url=streamlit_url)
 
-        return await call_next(request)
+        resposee = await call_next(request)
+        return resposee
 
 
 async def make_api_request(endpoint: str, method: str = "GET", data: Optional[dict] = None):

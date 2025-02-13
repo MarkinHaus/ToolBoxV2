@@ -10,10 +10,10 @@ from toolboxv2.mods.isaa.base.Agents import Agent, get_free_agent_data_factory, 
 from langchain_core.tools import BaseTool
 
 
-def get_free_agent(name: str) -> Agent:
+def get_free_agent(name: str, *args, **kwargs) -> Agent:
     return Agent(
-        amd=get_free_agent_data_factory(name, ),  # model="GPT4All-13B-snoozy.ggmlv3.q4_0.bin"
-        stream=False
+        amd=get_free_agent_data_factory(name, *args),  # model="GPT4All-13B-snoozy.ggmlv3.q4_0.bin"
+        stream=False, **kwargs
     )
 
 

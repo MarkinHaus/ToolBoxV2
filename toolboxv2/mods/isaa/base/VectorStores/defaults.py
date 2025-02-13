@@ -907,7 +907,7 @@ class FastVectorStoreO(AbstractVectorStore):
                 centroids[i] = np.sum(chunk, axis=0) / chunk.shape[0]
             return centroids
 
-        @numba.jit(nopython=True, parallel=True, fastmath=True, cache=True)
+        @numba.jit(nopython=True, fastmath=True, cache=True)
         def _batch_similarity(query, vectors):
             return vectors @ query
 
@@ -1024,7 +1024,7 @@ class FastVectorStoreO(AbstractVectorStore):
             # Map to original indices and filter
             filtered_indices = candidate_indices[top_local_indices[similarities[top_local_indices] >= min_similarity]]
 
-        return [self.chunks[idx] for idx in filtered_indices]
+        return [self.chunks[idx] for idx in filtered_indices if idx < len(self.chunks)]
 
     def save(self) -> bytes:
         state = {

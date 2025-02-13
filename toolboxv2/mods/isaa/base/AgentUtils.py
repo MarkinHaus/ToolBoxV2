@@ -809,7 +809,7 @@ class AISemanticMemory(metaclass=Singleton):
         """
         targets = self._get_target_memories(memory_names)
         if not targets:
-            return [{"answer": "No memories available", "sources": []}]
+            return []
 
         results = []
         for name, kb in targets:
@@ -817,18 +817,18 @@ class AISemanticMemory(metaclass=Singleton):
                 # Use KnowledgeBase's retrieve_with_overview for comprehensive results
                 result = await kb.retrieve_with_overview(
                     query=query,
-                    k=query_params.get("k", 5) if query_params else 5,
-                    min_similarity=query_params.get("min_similarity", 0.7) if query_params else 0.7,
+                    k=query_params.get("k", 3) if query_params else 3,
+                    min_similarity=query_params.get("min_similarity", 0.2) if query_params else 0.2,
                     cross_ref_depth=query_params.get("cross_ref_depth", 2) if query_params else 2,
-                    max_cross_refs=query_params.get("max_cross_refs", 10) if query_params else 10,
+                    max_cross_refs=query_params.get("max_cross_refs", 2) if query_params else 2,
                     max_sentences=query_params.get("max_sentences", 5) if query_params else 5
                 ) if not unified_retrieve else await kb.unified_retrieve(
                     query=query,
-                    k=query_params.get("k", 5) if query_params else 5,
-                    min_similarity=query_params.get("min_similarity", 0.7) if query_params else 0.7,
+                    k=query_params.get("k", 2) if query_params else 2,
+                    min_similarity=query_params.get("min_similarity", 0.2) if query_params else 0.2,
                     cross_ref_depth=query_params.get("cross_ref_depth", 2) if query_params else 2,
-                    max_cross_refs=query_params.get("max_cross_refs", 10) if query_params else 10,
-                    max_sentences=query_params.get("max_sentences", 10) if query_params else 10
+                    max_cross_refs=query_params.get("max_cross_refs", 6) if query_params else 6,
+                    max_sentences=query_params.get("max_sentences", 12) if query_params else 12
                 )
                 results.append({
                     "memory": name,
@@ -837,7 +837,7 @@ class AISemanticMemory(metaclass=Singleton):
             #except Exception as e:
             #    print(f"Query failed on {name}: {str(e)}")
         if to_str:
-            return json.dumps(results, indent=2)
+            return "\n".join([f"{x['memory']} - {json.dumps(x['result'].overview, indent=2)}\n - {[c.text for c in x['result'].details]}\n - {[(k, [c.text for c in v]) for k,v in x['result'].cross_references.items()]}" for x in results]) if not unified_retrieve else json.dumps(results, indent=2)
         return results
 
     def _get_target_memories(self, memory_names: Optional[Union[str, List[str]]]) -> List[Tuple[str, KnowledgeBase]]:

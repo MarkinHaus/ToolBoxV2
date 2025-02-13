@@ -21,7 +21,7 @@ import httpx
 from toolboxv2.mods.FastApi.fast_lit import BidirectionalStreamlitAppManager
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.system.session import RequestSession
-from toolboxv2.utils.extras.blobs import BlobFile
+from toolboxv2.utils.extras.blobs import BlobFile, BlobStorage
 from toolboxv2.utils.security.cryp import DEVICE_KEY, Code
 
 from fastapi import FastAPI, Request, WebSocket, APIRouter, HTTPException, Depends
@@ -92,6 +92,7 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
     RATE_LIMIT_REQUESTS_app = 800
     RATE_LIMIT_REQUESTS_api = 60
     WHITE_LIST_IPS = ["127.0.0.1"]
+    BLACK_LIST_IPS = []
 
     def __init__(self, app):
         super().__init__(app)
@@ -101,6 +102,12 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         # Get the client's IP address
         client_ip = request.client.host
+
+        if client_ip in self.BLACK_LIST_IPS:
+            return JSONResponse(
+                status_code=200,
+                content={"message": "NO ACCESS"}
+            )
 
         # Check if IP is already present in request_counts
         request_count_app: int
@@ -129,17 +136,51 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
                     status_code=429,
                     content={"message": "Rate limit exceeded. Please try again later. api"}
                 )
-            if 'web' in request.url.path:
+            if 'web' in request.url.path or 'gui' in request.url.path or 'index.html' in request.url.path or 'vendors-' in request.url.path:
                 request_count_app += 1
-            else:
+            elif 'api' in request.url.path:
                 request_count_api += 1
-
-        # Update the request count and last request timestamp for the IP
-        if client_ip not in self.WHITE_LIST_IPS:
-            self.request_counts[client_ip] = (request_count_app, request_count_api, datetime.now())
+            else:
+                request_count_api += 2
+                request_count_app += 10
 
         # Proceed with the request
         response = await call_next(request)
+        if hasattr(response, 'status_code'):
+            if not protect_url_split_helper(request.url.path.split('/')):
+                if response.status_code == 307:
+                    request_count_app += 50
+                    request_count_api += 30
+                if response.status_code != 200:
+                    request_count_app += 50
+                    request_count_api += 15
+                if response.status_code == 401:
+                    request_count_app += 60
+                    request_count_api += 10
+            else:
+                if response.status_code == 307:
+                    request_count_app += 25
+                    request_count_api += 3
+                if response.status_code != 200:
+                    request_count_app += 15
+                    request_count_api += 5
+                if response.status_code == 401:
+                    request_count_app += 300
+                    request_count_api += 40
+                if response.status_code == 404:
+                    request_count_app += 15
+                    request_count_api += 5
+        else:
+            if not protect_url_split_helper(request.url.path.split('/')):
+                request_count_app += 15
+                request_count_api += 5
+            else:
+                request_count_app += 350
+                request_count_api += 20
+        # Update the request count and last request timestamp for the IP
+        if client_ip not in self.WHITE_LIST_IPS:
+            self.request_counts[client_ip] = (request_count_app, request_count_api, datetime.now())
+        tb_app.logger.warning(f"SuS Request : IP : {client_ip} count : {request_count_app=} | {request_count_api=}")
         return response
 
 
@@ -172,6 +213,8 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
 
     # --- Session State Management ---
     def get_session(self, session_id: str) -> dict:
+        if len(session_id) == 0:
+            return {}
         if session_id in self.sessions:
             return self.sessions[session_id]
         db = self.get_db()
@@ -340,10 +383,8 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         session = request.cookies.get(self.cookie_key)
         tb_app.logger.debug(f"({request.session} --> {request.url.path})")
         if request.url.path == '/validateSession':
-            print("INSSSSO")
             await self.set_body(request)
             body = await request.body()
-            print("BODY #####", body)
             if body == b'':
                 return JSONResponse(
                     status_code=401,
@@ -365,7 +406,10 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             session_id = await self.crate_new_session_id(request, None, "Unknown")
         elif request.session.get('ID', True) and self.get_session(request.session.get('ID', '')).get("new", False):
             print("Session Not Found")
-            session_id = await self.crate_new_session_id(request, None, "Unknown", session_id=request.session.get('ID'))
+            if request.session.get('ID') in self.sessions:
+                session_id = request.session.get('ID')
+            else:
+                session_id = await self.crate_new_session_id(request, None, "Unknown", session_id=request.session.get('ID'))
             request.session['valid'] = False
         else:
             session_id: str = request.session.get('ID', '')
@@ -417,31 +461,6 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
                 session_data['valid'] = False
                 self.save_session(session_id, session_data, remote=True)
             request.session['valid'] = False
-            ip = session_data.get('ip', "unknown")
-            tb_app.logger.warning(f"SuS Request : IP : {ip} count : {session_data['c']}")
-            if protect_url_split_helper(request.url.path.split('/')):
-                session_data['c'] += 1
-            if ip not in RateLimitingMiddleware.WHITE_LIST_IPS:
-                c = session_data['c']
-                if c < 20:
-                    tb_app.logger.warning(f"SuS Request : IP : {ip} ")
-                elif c == 460:
-                    self.GRAY_LIST.append(session_data.get('ip', "unknown"))
-                    session_data['what_user'] = True
-                elif c == 6842:
-                    self.GRAY_LIST.append(session_data.get('ip', "unknown"))
-                    session_data['ratelimitWarning'] = True
-                    return JSONResponse(
-                        status_code=401,
-                        content={"message": "Login or Signup for further access"}
-                    )
-                elif c > 540_000_000:
-                    self.BLACK_LIST.append(session_data.get('ip', "unknown"))
-                    return JSONResponse(
-                        status_code=403,
-                        content={"message": "u got BLACK_LISTED"}
-                    )
-            self.save_session(session_id, session_data)
         return await call_next(request)
 
         # if session:
@@ -958,7 +977,7 @@ async def helper(id_name):
     if tb_app.mod_online("isaa") and not tb_app.get_mod("isaa").async_initialized:
         await tb_app.get_mod("isaa")
     if id_name.endswith("_D"):
-        with BlobFile(f"FastApi/{id_name}/dev", mode='r') as f:
+        with BlobFile(f"FastApi/{id_name}/dev", mode='r', storage=BlobStorage(storage_directory=get_app(from_="BlobStorage").data_dir.replace('_D', ''))) as f:
             modules = f.read_json().get("modules", [])
         for mods in modules:
             tb_app.print(f"ADDING :  {mods}")

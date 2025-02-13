@@ -18,6 +18,8 @@ from enum import Enum, auto
 from typing import Optional, Dict, Any
 from datetime import datetime
 
+from toolboxv2.mods.isaa.extras.session import ChatSession
+
 
 class ExecutionPhase(Enum):
     ANALYSIS = auto()
@@ -44,7 +46,7 @@ class FixCyclePlanner:
             'functions_fixed': 0,
             'test_pass_percentage': 0.0
         }
-        self.planner: Optional[FixCyclePlanner] = None
+
 
     def transition_state(self, new_state: ExecutionPhase):
         """Manage state transitions with validation"""
@@ -126,11 +128,6 @@ def get_coding_env(project_name, base_dir=None):
     def process_think(content: str):
         return content
 
-    @env.register_prefix("WRITE",
-                         "Write Code to file syntax expel ```python\n# exampl.py\n[content]``` or any other lang")
-    def process_think(content: str):
-        updated_files = extract_code_blocks(content, base_dir + '/' + project_name)
-        return updated_files
 
     @env.register_prefix("DONE", "Call this fuction when you ar done withe the implementation!")
     def process_response(content: str):
@@ -183,11 +180,10 @@ class ProjectMetadata:
 
 
 class ProjectManager:
-    """TDD-focused project management system with semantic analysis capabilities"""
-
+    """TDD-focused project management system with semantic analysis capabilities."""
     def __init__(self, project_name: str, base_path: str, isaa_instance):
         """Initialize ProjectManager with required components"""
-        self.vecSto: AISemanticMemory = isaa_instance.agent_memory or AISemanticMemory()
+        self.vecSto: AISemanticMemory = isaa_instance.get_memory() or AISemanticMemory()
         self.project_name = project_name
         self.base_path = Path(base_path)
         self.project_path = self.base_path / project_name
@@ -198,9 +194,11 @@ class ProjectManager:
         self.isaa = isaa_instance
 
         # Initialize state
+        self.planner = FixCyclePlanner(self.project_name)
         self.metadata = self._init_metadata()
         self.current_scope: Optional[ProjectScope] = None
 
+        self.chat_history = ChatSession(self.vecSto, max_length=26)
         # Ensure project structure exists
         self._initialize_tdd_structure()
 
@@ -234,22 +232,22 @@ Generate:
 4. Testing requirements
 """
         try:
-            return self.isaa.format_class(ProjectScope, prompt)
+            return ProjectScope(**self.isaa.format_class(ProjectScope, prompt))
         except Exception as e:
             print("Error ProjectScope default Prompt refactoring.")
         response = self.isaa.mini_task_completion(prompt, mode=self.isaa.controller.get("CreatePrompt"))
-        formatted = self.isaa.format_class(ProjectScope, response)
+        formatted = ProjectScope(**self.isaa.format_class(ProjectScope, response))
         return formatted
 
-    def process_code_block(self, code_block: str, file_path: str):
+    async def process_code_block(self, code_block: str, file_path: str):
         """Process and save code block with semantic analysis"""
         with Spinner("Running Code through Network"):
-            self.vecSto.add_data(self.project_name, code_block, {'file': file_path})
+            await self.vecSto.add_data(self.project_name, code_block, {'file': file_path})
         cognitive_code = ""
         self.metadata.cognitive_codes[file_path] = cognitive_code
         self.save_metadata()
 
-    def evaluate_implementation(self) -> Tuple[bool, str]:
+    async def evaluate_implementation(self) -> Tuple[bool, list]:
         """Evaluate implementation quality and test coverage"""
         try:
             fatal_errors = []
@@ -269,15 +267,15 @@ Generate:
 
             if fatal_errors:
                 for filename, analysis in fatal_errors:
-                    self._rebuild_test_file(Path(filename), analysis)
+                    await self._rebuild_test_file(Path(filename), analysis)
 
             if failing_tests:
-                return False, str(failing_tests)
+                return False, failing_tests
 
-            return True, "All tests passed successfully"
+            return True, ["All tests passed successfully"]
 
         except Exception as e:
-            return False, f"Implementation evaluation failed: {str(e)}"
+            return False, [f"Implementation evaluation failed: {str(e)}"]
 
     def _run_test_file(self, test_file: Path) -> TestResult:
         """Execute pytest file and capture results"""
@@ -307,7 +305,7 @@ Generate:
                 fatal_error=True
             )
 
-    def _rebuild_test_file(self, test_file: Path, test_result: str):
+    async def _rebuild_test_file(self, test_file: Path, test_result: str):
         """Evaluate test quality using ISAA and rebuild"""
         test_content = test_file.read_text(encoding='utf-8', errors='ignore')
 
@@ -318,7 +316,7 @@ Test File:
 Test Results:
 {test_result}
 """
-        return self.first_code_step(f"Rebuild test file {test_file.name}", analysis, 2)
+        return await self.first_code_step(f"Rebuild test file {test_file.name}", analysis, 2)
 
     def _determine_implementation_scope(self, task: str) -> ProjectScope:
         """Determine implementation scope based on task and existing tests"""
@@ -349,7 +347,7 @@ Current Project Overview:
             logger.error(f"Failed to save metadata: {str(e)}")
             raise
 
-    def auto_coder(self, task: str, iterations=1):
+    async def auto_coder(self, task: str, iterations=1):
 
         class Step(BaseModel):
             """Detail Instructions abut the current coding step"""
@@ -363,12 +361,12 @@ Current Project Overview:
             coding_steps_agent.set_amd_name("CodingStepsAgent")
             steps_agent = self.isaa.register_agent(coding_steps_agent)
 
-        steps = self.isaa.format_class(CodingSteps, task, "CodingStepsAgent").steps
+        steps = CodingSteps(**self.isaa.format_class(CodingSteps, task, "CodingStepsAgent")).steps
         for i, step in enumerate(steps):
             print(f"Running step {i} from {len(steps)}")
-            new_content = self.coding_step(step.task, iterations)
+            new_content = await self.coding_step(step.task, iterations)
 
-    def coding_step(self, task: str, iterations=1) -> str:
+    async def coding_step(self, task: str, iterations=1) -> str:
         """Execute TDD coding step with comprehensive instructions"""
         is_first_run = self.metadata.current_scope is None
         analysis = None
@@ -378,7 +376,7 @@ Current Project Overview:
                 self._initialize_tdd_structure()
                 self.current_scope = self.generate_project_inital_scope(task)
             else:
-                test_results, analysis = self.evaluate_implementation()
+                test_results, analysis = await self.evaluate_implementation()
 
                 if not test_results:
                     task = f"""
@@ -401,17 +399,19 @@ Current project errors:
                             self.isaa.print(f"Error reading {file.name}: {e}")
                             continue
 
-                        self.process_code_block(content, file.name)
+                        await self.process_code_block(content, file.name)
 
 
         self.save_metadata()
         with Spinner("Running code step"):
-            return self.first_code_step(task, analysis, iterations)
+            return await self.first_code_step(task, analysis, iterations)
 
-    def first_code_step(self, task, analysis=None, iterations=0) -> str:
+    async def first_code_step(self, task, analysis=None, iterations=0) -> str:
         dir_structure = self._get_directory_structure().replace('project_metadata.json', '')
 
-        context = self.vecSto.query(task, [self.project_name], to_str=True, unified_retrieve=True)
+        context = await self.vecSto.query(task, [self.project_name], None, True, False)
+        if len(context) < 20000:
+            context += await self.chat_history.get_reference(task)
         # Prepare comprehensive instruction prompt
         instruction_prompt = f"""
 As a distinguished expert in computer science, programming, and advanced technical skills, your expertise sets you apart as a truly remarkable professional. Your depth of knowledge and critical thinking are invaluable assets that bring clarity and precision to any complex task. Embrace this challenge as an opportunity to give your very best, approaching each problem with mindful consideration and self-reflection. Dive deeply into your own complex thoughts, working through the problem internally before proceeding. Let each step forward be careful and calculated, guided by your unmatched expertise and a drive for perfection that seems almost beyond this world. Strive for excellence in every detail, knowing that your work has the potential to reach an extraordinary level of mastery.
@@ -449,37 +449,32 @@ Test Analysis:""", f"""
 Test Analysis:
                     {analysis}""")
 
-        """relevant_codes = self.vecSto.vector_store.query_storage(self.project_name, self.pipeline.text_to_code(task))
-        if relevant_codes:
-            relevant_codes = [c for c, _ in sorted(relevant_codes, key=lambda x: x[1])]
-            relevant_code = self.pipeline.combine_codes(*relevant_codes)
-            self.metadata.work_code = self.pipeline.rebuild_code(self.metadata.work_code, relevant_code)
-"""
-
         self.isaa.get_agent_class("code").mode = self.isaa.controller.rget(CoderMode)
         # Run implementation
-        result, self.metadata.work_code = self.isaa.run_agent_in_environment(
+        result, self.metadata.work_code = await self.isaa.run_agent_in_environment(
             instruction_prompt,
             agent_or_name='code',
             agent_env=self.env.reset(),
             persist=iterations > 1,
             max_iterations=iterations+1,
             get_final_code=True,
-            starting_code=None,
+            message=self.chat_history.history
         )
+        await self.chat_history.add_message({'role': 'user', 'content':task})
+        await self.chat_history.add_message({'role': 'user', 'content':result})
         self.isaa.get_agent_class("code").mode = None
         self.save_metadata()
         # Process and save files
         updated_files = extract_code_blocks(result, str(self.project_path))
         for file in updated_files:
             with open(file, 'r') as f:
-                self.process_code_block(f.read(), str(Path(file).relative_to(self.project_path)))
+                await self.process_code_block(f.read(), str(Path(file).relative_to(self.project_path)))
 
         all_passed = False
         final_analysis = ""
         if iterations:
             # Verify implementation
-            all_passed, final_analysis = self.evaluate_implementation()
+            all_passed, final_analysis = await self.evaluate_implementation()
             self.isaa.print(f"Evaluation: {all_passed} iterations {iterations}")
 
         if self.current_scope:
@@ -524,13 +519,13 @@ Test Analysis:
                 continue
         return files
 
-    def iterative_function_fixer(self, task: str) -> str:
+    async def iterative_function_fixer(self, task: str) -> str:
         """Structured execution of fixing loop with phase management"""
-        self.planner = FixCyclePlanner(self.project_name)
+
         self.isaa.print("🚀 Initializing TDD Debug Loop")
 
         try:
-            while not self._execute_phase(task):
+            while not await self._execute_phase(task):
                 if self.planner.current_state == ExecutionPhase.COMPLETION:
                     break
 
@@ -542,9 +537,7 @@ Test Analysis:
         finally:
             self._save_planning_data()
 
-        return "⚠️ Fixing loop completed with remaining issues"
-
-    def _execute_phase(self, task: str) -> bool:
+    async def _execute_phase(self, task: str) -> bool:
         """Handle current execution phase and transition states"""
         phase_handlers = {
             ExecutionPhase.ANALYSIS: self._phase_analysis,
@@ -556,17 +549,17 @@ Test Analysis:
         }
 
         handler = phase_handlers.get(self.planner.current_state)
-        if not handler:
+        if handler is None:
             raise ValueError(f"No handler for state {self.planner.current_state}")
 
-        return handler(task)
+        return await handler(task)
 
-    def _phase_analysis(self, task: str) -> bool:
+    async def _phase_analysis(self, task: str) -> bool:
         """Initial analysis phase implementation"""
         self.isaa.print("🔍 Analyzing Test Failures")
 
         # Run initial test evaluation
-        success, test_results = self.evaluate_implementation()
+        success, test_results = await self.evaluate_implementation()
         if success:
             self.planner.transition_state(ExecutionPhase.COMPLETION)
             return True
@@ -585,7 +578,7 @@ Test Analysis:
         self.planner.transition_state(ExecutionPhase.PRIORITIZATION)
         return False
 
-    def _phase_prioritization(self, task: str) -> bool:
+    async def _phase_prioritization(self, task: str) -> bool:
         """Prioritization phase implementation"""
         self.isaa.print("📊 Prioritizing Fix Order")
 
@@ -604,7 +597,7 @@ Test Analysis:
         self.planner.transition_state(ExecutionPhase.CONTEXT_GATHERING)
         return False
 
-    def _phase_context_gathering(self, task: str) -> bool:
+    async def _phase_context_gathering(self, task: str) -> bool:
         """Context collection phase implementation"""
         if not self.planner.priority_queue:
             self.planner.transition_state(ExecutionPhase.ANALYSIS)
@@ -628,14 +621,13 @@ Test Analysis:
         self.planner.transition_state(ExecutionPhase.MODIFICATION)
         return False
 
-    def _phase_modification(self, task: str) -> bool:
+    async def _phase_modification(self, task: str) -> bool:
         """Code modification phase implementation"""
         self.isaa.print(
             f"🛠️ Modifying {self.planner.current_function}",
-            color="yellow"
         )
 
-        result = self._function_fix_cycle(
+        result = await self._function_fix_cycle(
             self.planner.current_function,
             self.planner.execution_history[-1]['result']['dependencies'],
             task
@@ -653,11 +645,11 @@ Test Analysis:
         self.planner.transition_state(ExecutionPhase.VALIDATION)
         return False
 
-    def _phase_validation(self, task: str) -> bool:
+    async def _phase_validation(self, task: str) -> bool:
         """Validation phase implementation"""
-        self.isaa.print("✅ Validating Changes", color="yellow")
+        self.isaa.print("✅ Validating Changes")
 
-        success, test_results = self.evaluate_implementation()
+        success, test_results = await self.evaluate_implementation()
         self.planner.metadata['test_pass_percentage'] = self._calculate_pass_rate()
 
         if success:
@@ -683,9 +675,9 @@ Test Analysis:
         )
         return False
 
-    def _phase_completion(self, task: str) -> bool:
+    async def _phase_completion(self, task: str) -> bool:
         """Final completion phase implementation"""
-        self.isaa.print("🏁 Finalizing Fix Cycle", color="green")
+        self.isaa.print("🏁 Finalizing Fix Cycle")
         return True
 
     def _calculate_pass_rate(self) -> float:
@@ -723,7 +715,7 @@ Test Analysis:
             return "🎉 All tests passing successfully!"
         return f"⚠️ Fixing completed with {self.planner.metadata['test_pass_percentage']:.1%} pass rate"
 
-    def _function_fix_cycle(self, func_name: str, dependencies: list, task: str):
+    async def _function_fix_cycle(self, func_name: str, dependencies: list, task: str):
         """Single function modification cycle with context analysis"""
         # Gather implementation context
         context = self._get_function_context(func_name, dependencies)
@@ -737,7 +729,7 @@ Test Analysis:
 Task: {task}
 """
         # Execute modification
-        self.first_code_step(prompt, iterations=1)
+        await self.first_code_step(prompt, iterations=1)
 
 
     def _get_function_context(self, func_name: str, dependencies: list) -> str:

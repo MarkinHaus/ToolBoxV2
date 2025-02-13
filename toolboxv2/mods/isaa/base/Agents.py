@@ -261,7 +261,7 @@ class AgentModelData:
     caching: Optional[bool] = field(default=None)
 
 
-def get_free_agent_data_factory(name="Gpt4All", model="ollama/llama2") -> AgentModelData:
+def get_free_agent_data_factory(name="Gpt4All", model="groq/deepseek-r1-distill-qwen-32b") -> AgentModelData:
     return AgentModelData(
         name=name,
         model=model,
@@ -849,10 +849,12 @@ class Agent:
             response_format=format_class,
         )
         self.stream = tstrem
+        # print(resp)
         c = resp.choices[0].message.content
         if c is None:
             c = resp.choices[0].message.tool_calls[0].function.arguments
         c = c.replace('\n', '').replace('</invoke>', '').rstrip()
+        self.last_result = c
         d = json.loads(c)
         if len(d.keys()) == 1 and isinstance(d[list(d.keys())[0]], dict) and len(d[list(d.keys())[0]]) > 1:
             d = d[list(d.keys())[0]]

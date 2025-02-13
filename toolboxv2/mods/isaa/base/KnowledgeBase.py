@@ -690,7 +690,7 @@ class KnowledgeBase:
             hashes = []
             embeddings_final = []
             if len(self.vdb.chunks):
-                for i, d in enumerate(zip(*unique_data)):
+                for i, d in enumerate(unique_data):
                     c = self.vdb.search(embeddings[i], 5, self.deduplication_threshold)
                     if len(c) > 2:
                         continue

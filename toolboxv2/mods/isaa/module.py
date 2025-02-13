@@ -48,7 +48,7 @@ from .SearchAgentCluster.search_tool import web_search
 
 PIPLINE = None
 Name = 'isaa'
-version = "0.1.4"
+version = "0.1.5"
 
 pipeline_arr = [
     # 'audio-classification',
@@ -122,13 +122,13 @@ class Tools(MainTool, FileHandler):
         self.config = {'controller-init': False,
                        'agents-name-list': [],
 
-                       "DEFAULTMODEL0": "ollama/llama2",
+                       "DEFAULTMODEL0": "ollama/llama3.1",
                        "DEFAULT_AUDIO_MODEL": "groq/whisper-large-v3-turbo",
-                       "DEFAULTMODEL1": "ollama/llama2",
-                       "DEFAULTMODEL2": "ollama/llama2",
-                       "DEFAULTMODELCODE": "ollama/llama2",
-                       "DEFAULTMODELSUMMERY": "ollama/llama2",
-                       "DEFAULTMODEL_LF_TOOLS": "ollama/llama2",
+                       "DEFAULTMODEL1": "ollama/llama3.1",
+                       "DEFAULTMODEL2": "ollama/llama3.1",
+                       "DEFAULTMODELCODE": "ollama/llama3.1",
+                       "DEFAULTMODELSUMMERY": "ollama/llama3.1",
+                       "DEFAULTMODEL_LF_TOOLS": "ollama/llama3.1",
                        }
         self.per_data = {}
         self.agent_data = {}
@@ -429,7 +429,23 @@ class Tools(MainTool, FileHandler):
         return self.version
 
     async def on_start(self):
-        pass
+        self.print(f"Start {self.spec}.isaa")
+        IsaaWebSocketUI(self)
+        with Spinner(message=f"Starting module", symbols='c'):
+            self.load_file_handler()
+            config = self.get_file_handler(self.keys["Config"])
+            if config is not None:
+                if isinstance(config, str):
+                    config = json.loads(config)
+                if isinstance(config, dict):
+                    self.config = {**config, **self.config}
+
+            if self.spec == 'app':
+                self.load_keys_from_env()
+            if not os.path.exists(f".data/{get_app('isaa-initIsaa').id}/Agents/"):
+                os.mkdir(f".data/{get_app('isaa-initIsaa').id}/Agents/")
+            if not os.path.exists(f".data/{get_app().id}/Memory/"):
+                os.mkdir(f".data/{get_app('isaa-initIsaa').id}/Memory/")
 
     def load_secrit_keys_from_env(self):
         self.config['WOLFRAM_ALPHA_APPID'] = os.getenv('WOLFRAM_ALPHA_APPID')
@@ -442,12 +458,12 @@ class Tools(MainTool, FileHandler):
         self.config['PINECONE_API_ENV'] = os.getenv('PINECONE_API_ENV')
 
     def load_keys_from_env(self):
-        self.config['DEFAULTMODEL0'] = os.getenv("DEFAULTMODEL0", "ollama/llama2")
-        self.config['DEFAULTMODEL1'] = os.getenv("DEFAULTMODEL1", "ollama/llama2")
-        self.config['DEFAULTMODEL2'] = os.getenv("DEFAULTMODEL2", "ollama/llama2")
-        self.config['DEFAULTMODELCODE'] = os.getenv("DEFAULTMODELCODE", "ollama/llama2")
-        self.config['DEFAULTMODELSUMMERY'] = os.getenv("DEFAULTMODELSUMMERY", "ollama/llama2")
-        self.config['DEFAULTMODEL_LF_TOOLS'] = os.getenv("DEFAULTMODEL_LF_TOOLS", "ollama/llama2")
+        self.config['DEFAULTMODEL0'] = os.getenv("DEFAULTMODEL0", "ollama/llama3.1")
+        self.config['DEFAULTMODEL1'] = os.getenv("DEFAULTMODEL1", "ollama/llama3.1")
+        self.config['DEFAULTMODEL2'] = os.getenv("DEFAULTMODEL2", "ollama/llama3.1")
+        self.config['DEFAULTMODELCODE'] = os.getenv("DEFAULTMODELCODE", "ollama/llama3.1")
+        self.config['DEFAULTMODELSUMMERY'] = os.getenv("DEFAULTMODELSUMMERY", "ollama/llama3.1")
+        self.config['DEFAULTMODEL_LF_TOOLS'] = os.getenv("DEFAULTMODEL_LF_TOOLS", "ollama/llama3.1")
         self.config['VAULTS'] = os.getenv("VAULTS")
 
     def webInstall(self, user_instance, construct_render) -> str:
@@ -657,10 +673,10 @@ class Tools(MainTool, FileHandler):
                 return self.run_agent(agent_name, text, **kwargs)
             return "Provide Information in The Action Input: fild or function call"
 
-        def run_agent_env(agent_name: str, text: str, **kwargs):
+        async def run_agent_env(agent_name: str, text: str, **kwargs):
             text = text.replace("'", "").replace('"', '')
             if agent_name:
-                return self.run_agent_in_environment(text, agent_name, **kwargs)
+                return await self.run_agent_in_environment(text, agent_name, **kwargs)
             return "Provide Information in The Action Input: fild or function call"
 
         def memory_search(query: str):
@@ -1033,44 +1049,38 @@ class Tools(MainTool, FileHandler):
 
         return final_messages
 
-    def code(self, project_name:str, task:str="", iterations:int=3):
+    async def code(self, project_name:str, task:str="", iterations:int=3):
 
         if project_name not in self.coding_projects:
             self.coding_projects[project_name] = ProjectManager(project_name, self.working_directory, self)
             task = task if task else project_name.replace('_', ' ')
-
-        if iterations >= 1:
-            self.coding_projects[project_name].iterative_function_fixer(task=task)
-        if iterations < 2:
-            self.coding_projects[project_name].coding_step(task=task, iterations=iterations)
+        manager = self.coding_projects[project_name]
+        if iterations == 0:
+            return await manager.iterative_function_fixer(task=task)
+        elif iterations == 1:
+            return await manager.coding_step(task=task, iterations=iterations)
         else:
-            self.coding_projects[project_name].auto_coder(task=task, iterations=iterations)
+            return await manager.auto_coder(task=task, iterations=iterations)
 
-        return "DONE"
 
-    def code_add_data(self, project_name, data_name, date):
+    async def code_add_data(self, project_name, data_name, date):
         if project_name not in self.coding_projects:
             self.coding_projects[project_name] = ProjectManager(project_name, self.working_directory, self)
 
-        self.coding_projects[project_name].process_code_block(date, data_name)
+        await self.coding_projects[project_name].process_code_block(date, data_name)
 
         return "ADDED"
 
-    def run_agent_in_environment(self, task,
+    async def run_agent_in_environment(self, task,
                                  agent_or_name: Optional[str or Agent] = None,
                                  agent_env: Optional[str or AgentVirtualEnv] = None,
                                  persist=False,
-                                 ref=False,
                                  persist_ref=False,
                                  max_iterations=10,
                                  verbose=False,
+                                 message=None,
                                  task_from='user',
-                                 personality_code=None,
-                                 personality_code_as_code=True,
-                                 starting_code=None,
-                                 starting_code_as_code=True,
-                                 get_final_code=False,
-                                 max_tokens=True):
+                                 get_final_code=False):
 
         if isinstance(agent_or_name, str):
             agent = self.get_agent_class(agent_or_name)
@@ -1113,8 +1123,9 @@ class Tools(MainTool, FileHandler):
         agent.verbose = verbose
 
         agent.capabilities = agent_env.get_llm_mode()
-        fuction_exec_helper = lambda x: agent_env.results_set(
-            agent.execute_fuction(persist=persist, persist_mem=persist_ref)) if x else None
+
+        async def fuction_exec_helper(x):
+            return await agent.execute_fuction(persist, persist_ref) if x else None
 
         out = ""
         main_task = task
@@ -1129,20 +1140,16 @@ class Tools(MainTool, FileHandler):
 
             agent_env.results_reset()
 
-            history_context = None
-
             with Spinner(message="Fetching llm_message...", symbols='+'):
-                message = agent.get_llm_message(task, persist=True, fetch_memory=False, isaa=self,
-                                                task_from=task_from, all_meme=False, personality_code=personality_code,
-                                                context_code=starting_code)
+                message = agent.get_llm_message(task, persist=True, task_from=task_from, message=message)
 
-            out_ = agent.run_model(message, persist_local=True, persist_mem=persist_ref)
+            out_ = await agent.a_run_model(message, persist_local=True, persist_mem=persist_ref)
             #print_prompt(message + [{'role': 'assistant', 'content': out_},
             #                        {'role': 'system', 'content': agent_env.results()}])
             out += out_
 
             with Spinner(message="Processioning Env step", symbols='+'):
-                [fuction_exec_helper(agent.if_for_fuction_use(line)) for line in out_.split('\n')]
+                [await fuction_exec_helper(agent.if_for_fuction_use(line)) for line in out_.split('\n')]
                 out += agent_env.results()
 
             if agent_env.break_test(out):
@@ -1465,25 +1472,6 @@ def shell_tool_function(command: str) -> str:
     return json.dumps(result, ensure_ascii=False)
 
 
-@get_app('isaa-initIsaa').tb(name="initIsaa", mod_name="isaa", test=False, initial=True, state=True)
-def initIsaa(self: Tools):
-    self.print(f"Start {self.spec}.isaa")
-    IsaaWebSocketUI(self)
-    with Spinner(message=f"Starting module", symbols='c'):
-        self.load_file_handler()
-        config = self.get_file_handler(self.keys["Config"])
-        if config is not None:
-            if isinstance(config, str):
-                config = json.loads(config)
-            if isinstance(config, dict):
-                self.config = {**config, **self.config}
-
-        if self.spec == 'app':
-            self.load_keys_from_env()
-        if not os.path.exists(f".data/{get_app('isaa-initIsaa').id}/Agents/"):
-            os.mkdir(f".data/{get_app('isaa-initIsaa').id}/Agents/")
-        if not os.path.exists(f".data/{get_app().id}/Memory/"):
-            os.mkdir(f".data/{get_app('isaa-initIsaa').id}/Memory/")
 
 
 if __name__ == "__main__":

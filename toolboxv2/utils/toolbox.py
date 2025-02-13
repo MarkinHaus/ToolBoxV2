@@ -2,6 +2,7 @@
 import asyncio
 import inspect
 import os
+import pkgutil
 import sys
 import threading
 import time
@@ -1294,14 +1295,65 @@ class App(AppType, metaclass=Singleton):
     # Decorators for the toolbox
 
     def reload_mod(self, mod_name, spec='app', is_file=True, loc="toolboxv2.mods."):
+        self.remove_mod(mod_name, delete=True)
+        if hasattr(self.modules[mod_name], 'reload_save') and self.modules[mod_name].reload_save:
+            reexecute_module_code = lambda x: x
+        else:
+            def reexecute_module_code(module_name):
+                if isinstance(module_name, str):
+                    module = import_module(module_name)
+                else:
+                    module = module_name
+                # Get the source code of the module
+                try:
+                    source = inspect.getsource(module)
+                except Exception as e:
+                    # print(f"No source for {str(module_name).split('from')[0]}: {e}")
+                    return module
+                # Compile the source code
+                try:
+                    code = compile(source, module.__file__, 'exec')
+                    # Execute the code in the module's namespace
+                    exec(code, module.__dict__)
+                except Exception as e:
+                    # print(f"No source for {str(module_name).split('from')[0]}: {e}")
+                    pass
+                return module
+
         if not is_file:
             mods = self.get_all_mods("./mods/" + mod_name)
+            def recursive_reload(package_name):
+                package = import_module(package_name)
+
+                # First, reload all submodules
+                if hasattr(package, '__path__'):
+                    for finder, name, ispkg in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
+                        try:
+                            mod = import_module(name)
+                            reexecute_module_code(mod)
+                            reload(mod)
+                        except Exception as e:
+                            print(f"Error reloading module {name}: {e}")
+                            break
+
+                # Finally, reload the package itself
+                reexecute_module_code(package)
+                reload(package)
+
             for mod in mods:
+                if mod.endswith(".txt") or mod.endswith(".yaml"):
+                    continue
                 try:
-                    reload(import_module(loc + mod_name + '.' + mod))
+                    recursive_reload(loc + mod_name + '.' + mod)
                     self.print(f"Reloaded {mod_name}.{mod}")
                 except ImportError:
                     self.print(f"Could not load {mod_name}.{mod}")
+        reexecute_module_code(self.modules[mod_name])
+        if mod_name in self.functions:
+            if "on_exit" in self.functions[mod_name]:
+                self.functions[mod_name]["on_exit"] = []
+            if "on_start" in self.functions[mod_name]:
+                self.functions[mod_name]["on_start"] = []
         self.inplace_load_instance(mod_name, spec=spec, mfo=reload(self.modules[mod_name]) if mod_name in self.modules else None)
 
     def watch_mod(self, mod_name, spec='app', loc="toolboxv2.mods.", use_thread=True, path_name=None, on_reload=None):
@@ -1328,7 +1380,7 @@ class App(AppType, metaclass=Singleton):
         if module_name not in self.functions:
             self.functions[module_name] = {}
         if func_name in self.functions[module_name]:
-            self.print(f"Overriding function {func_name} from {module_name}")
+            self.print(f"Overriding function {func_name} from {module_name}", end="\r")
             self.functions[module_name][func_name] = data
         else:
             self.functions[module_name][func_name] = data
