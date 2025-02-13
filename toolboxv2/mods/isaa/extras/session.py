@@ -3,12 +3,15 @@ from toolboxv2 import Singleton
 
 class ChatSession:
 
-    def __init__(self, mem, max_length=None):
+    def __init__(self, mem, max_length=None, space_name = "chat_session"):
         self.mem = mem
-        self.space_name = "chat_session"
+        self.space_name = space_name
         self.max_length = max_length
         self.history = []
-        self.mem.create_memory(self.space_name)
+        try:
+            self.mem.create_memory(self.space_name)
+        except ValueError:
+            pass
 
     async def add_message(self, message):
         self.history.append(message)

@@ -697,7 +697,7 @@ class AISemanticMemory(metaclass=Singleton):
     def create_memory(self,
                       name: str,
                       model_config: Optional[Dict] = None,
-                      storage_config: Optional[Dict] = None) -> bool:
+                      storage_config: Optional[Dict] = None) -> KnowledgeBase:
         """
         Create new memory store with KnowledgeBase
 
@@ -742,7 +742,7 @@ class AISemanticMemory(metaclass=Singleton):
 
         # Create KnowledgeBase instance
         self.memories[sanitized] = KnowledgeBase(**kb_params)
-        return True
+        return self.memories[sanitized]
 
     async def add_data(self,
                        memory_name: str,
@@ -759,8 +759,7 @@ class AISemanticMemory(metaclass=Singleton):
         name = self._sanitize_name(memory_name)
         kb = self.memories.get(name)
         if not kb:
-            self.create_memory(name)
-            kb = self.memories.get(name)
+            kb = self.create_memory(name)
 
         # Process input data
         texts = []

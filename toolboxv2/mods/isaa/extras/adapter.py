@@ -36,11 +36,7 @@ from typing import Union
 
 import litellm
 # Use pipmaster to ensure the litellm dependency is installed
-import pipmaster as pm
 from litellm import RateLimitError, acompletion, Timeout, APIConnectionError, fallbacks
-
-if not pm.is_installed("litellm"):
-    pm.install("litellm")
 
 # Import litellm's asynchronous client and error classes
 

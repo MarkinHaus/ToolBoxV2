@@ -1,34 +1,7 @@
-import asyncio
+from toolboxv2 import App, AppArgs
 import threading
 import time
-import os
-import platform
 
-import keyboard
-import pyperclip
-
-import inspect
-
-from toolboxv2 import App, AppArgs, TBEF, get_app
-
-import asyncio
-import threading
-import time
-import os
-import platform
-import signal
-import pyperclip
-import queue
-from typing import Optional, Dict, Callable
-from PIL import Image
-from dataclasses import dataclass
-import curses
-from datetime import datetime
-
-# For Windows
-import pystray
-from pystray import MenuItem as Item
-from pystray import Menu
 
 NAME = "vu"
 llm_text = [""]
