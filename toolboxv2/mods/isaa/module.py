@@ -46,6 +46,8 @@ from toolboxv2.mods.isaa.base.AgentUtils import AgentChain, AISemanticMemory, Sc
 from toolboxv2.mods.isaa.base.Agents import Agent, AgentBuilder, LLMFunction, ControllerManager, AgentVirtualEnv
 from .SearchAgentCluster.search_tool import web_search
 
+from toolboxv2.mods.isaa.CodingAgent.live import Pipeline
+
 PIPLINE = None
 Name = 'isaa'
 version = "0.1.5"
@@ -111,8 +113,10 @@ def extract_code(x):
 class Tools(MainTool, FileHandler):
 
     def __init__(self, app=None):
+
         self.run_callback = None
         self.coding_projects: Dict[str, ProjectManager] = {}
+        self.pipes: Dict[str, Pipeline] = {}
         if app is None:
             app = get_app("isaa-mod")
         self.version = version
@@ -160,6 +164,8 @@ class Tools(MainTool, FileHandler):
             "crate_task_chain": self.crate_task_chain,
             "format_class": self.format_class,
             "get_memory": self.get_memory,
+            "get_pipe": self.get_pipe,
+            "run_pipe": self.run_pipe,
             "rget_mode": lambda mode: self.controller.rget(mode),
             "set_local_files_tools": self.set_local_files_tools,
         }
@@ -476,6 +482,9 @@ class Tools(MainTool, FileHandler):
     def on_exit(self):
 
         threading.Thread(target=self.save_to_mem, daemon=True).start()
+
+        for v in self.pipes.values():
+            v.on_exit()
 
         self.config['augment'] = self.get_augment(exclude=['amd'])
         del self.config['augment']['tasks']
@@ -946,6 +955,23 @@ class Tools(MainTool, FileHandler):
             agent = agent_name
 
         return agent.format_class(format_class, task)
+
+    def get_pipe(self, agent_name, *args, **kwargs) -> Pipeline:
+        if isinstance(agent_name, str):
+            agent: Agent = self.get_agent_class(agent_name)
+        else:
+            agent = agent_name
+
+        if agent.amd.name in self.pipes:
+            return self.pipes[agent.amd.name]
+
+        else:
+            self.pipes[agent.amd.name] = Pipeline(agent, *args, **kwargs)
+        return self.pipes[agent.amd.name]
+
+    async def run_pipe(self, agent_name, task):
+        return await self.get_pipe(agent_name).run(task)
+
 
     def short_prompt_messages(self, messages, get_tokens, max_tokens, prompt_token_margin=20):
         prompt_len = get_tokens(messages)

@@ -860,13 +860,40 @@ class Agent:
         c = c.replace('\n', '').replace('</invoke>', '').rstrip()
         self.last_result = c
         d = json.loads(c)
+        if isinstance(d, str):
+            d = eval(d)
         if len(d.keys()) == 1 and isinstance(d[list(d.keys())[0]], dict) and len(d[list(d.keys())[0]]) > 1:
             d = d[list(d.keys())[0]]
 
         # print("<invoke> DATA", d)
         return d
 
+    async def a_format_class(self, format_class, task, **kwargs):
+        tstrem = self.stream
+        self.stream = False
+        llm_message = self.get_llm_message(task, persist=False, **kwargs)
+        if 'claude' in self.amd.model and llm_message[0]['role'] != 'user':
+            llm_message = [{'role':'user','content':'start :)'}] +llm_message
 
+        resp = await self.acompletion(
+            llm_message=llm_message,
+            response_format=format_class,
+        )
+        self.stream = tstrem
+        # print(resp)
+        c = resp.choices[0].message.content
+        if c is None:
+            c = resp.choices[0].message.tool_calls[0].function.arguments
+        c = c.replace('</invoke>', '').rstrip()
+        self.last_result = c
+        d = json.loads(c)
+        if isinstance(d, str):
+            d = eval(d)
+        if len(d.keys()) == 1 and isinstance(d[list(d.keys())[0]], dict) and len(d[list(d.keys())[0]]) > 1:
+            d = d[list(d.keys())[0]]
+
+        # print("<invoke> DATA", d)
+        return d
 
     def function_invoke(self, name, **kwargs):
         fuction_list = [f.function for f in self.functions if f.name == name]

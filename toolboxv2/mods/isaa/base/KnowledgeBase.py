@@ -1444,6 +1444,10 @@ class KnowledgeBase:
             k=k,
             min_similarity=min_similarity
         )
+        if len(basic_results) == 0:
+            return {}
+        if len(basic_results) == 1 and isinstance(basic_results[0], str) and basic_results[0].endswith('[]\n - []\n - []'):
+            return {}
 
         # Prepare context for LLM summary
         context = {

@@ -836,7 +836,15 @@ class AISemanticMemory(metaclass=Singleton):
             #except Exception as e:
             #    print(f"Query failed on {name}: {str(e)}")
         if to_str:
-            return "\n".join([f"{x['memory']} - {json.dumps(x['result'].overview, indent=2)}\n - {[c.text for c in x['result'].details]}\n - {[(k, [c.text for c in v]) for k,v in x['result'].cross_references.items()]}" for x in results]) if not unified_retrieve else json.dumps(results, indent=2)
+            if not unified_retrieve:
+                str_res = [
+                    f"{x['memory']} - {json.dumps(x['result'].overview)}\n - {[c.text for c in x['result'].details]}\n - {[(k, [c.text for c in v]) for k, v in x['result'].cross_references.items()]}"
+                    for x in results]
+                print(type(str_res), len(str_res), str_res)
+                # str_res =
+            else:
+                str_res = json.dumps(results)
+            return str_res
         return results
 
     def _get_target_memories(self, memory_names: Optional[Union[str, List[str]]]) -> List[Tuple[str, KnowledgeBase]]:
@@ -855,17 +863,6 @@ class AISemanticMemory(metaclass=Singleton):
             if kb := self.memories.get(sanitized):
                 targets.append((sanitized, kb))
         return targets
-
-
-    def _format_results(self, consolidated: Dict, to_str: bool) -> Union[Dict, str]:
-        """Format consolidated results as either dict or string"""
-        if not to_str:
-            return consolidated
-
-        if "summary" in consolidated:  # Unified retrieve format
-            return self._format_unified_results(consolidated)
-        else:  # Overview format
-            return self._format_overview_results(consolidated)
 
     def list_memories(self) -> List[str]:
         """List all available memories"""
@@ -899,7 +896,7 @@ class AISemanticMemory(metaclass=Singleton):
             self.memories[sanitized] = KnowledgeBase.load(path)
             return True
         except Exception as e:
-            print(f"Error loading memory: {str(e)}")
+            # print(f"Error loading memory: {str(e)}")
             return False
 
 
