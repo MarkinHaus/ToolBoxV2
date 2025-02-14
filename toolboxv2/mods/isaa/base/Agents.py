@@ -844,8 +844,12 @@ class Agent:
     def format_class(self, format_class, task, **kwargs):
         tstrem = self.stream
         self.stream = False
+        llm_message = self.get_llm_message(task, persist=False, **kwargs)
+        if 'claude' in self.amd.model and llm_message[0]['role'] != 'user':
+            llm_message = [{'role':'user','content':'start :)'}] +llm_message
+
         resp = self.completion(
-            llm_message=self.get_llm_message(task, persist=False, **kwargs),
+            llm_message=llm_message,
             response_format=format_class,
         )
         self.stream = tstrem

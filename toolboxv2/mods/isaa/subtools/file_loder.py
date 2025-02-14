@@ -42,6 +42,7 @@ except ImportError as e:
     MergedDataLoader_ac = e
     MergedDataLoader = None
 try:
+    #pip install PyMuPDF
     from langchain_community.document_loaders import PyPDFLoader
 
     PyPDFLoader_ac = True

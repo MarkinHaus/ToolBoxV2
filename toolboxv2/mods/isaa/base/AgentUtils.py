@@ -641,7 +641,7 @@ class AgentChain:
 class AISemanticMemory(metaclass=Singleton):
     def __init__(self,
                  base_path: str = "/semantic_memory",
-                 default_model: str = "gemini/gemini-2.0-flash",
+                 default_model: str = os.getenv("DEFAULTMODELSUMMERY"),
                  default_embedding_model: str = os.getenv("DEFAULTMODELEMBEDDING"),
                  default_similarity_threshold: float = 0.61,
                  default_batch_size: int = 64,

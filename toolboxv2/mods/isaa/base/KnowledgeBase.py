@@ -8,10 +8,10 @@ from typing import Any
 
 import networkx as nx
 import numpy as np
-from litellm import batch_completion, ModelResponse
+from litellm import batch_completion, ModelResponse, fallbacks
 from pydantic import BaseModel
 
-from toolboxv2 import get_logger, get_app
+from toolboxv2 import get_logger, get_app, Spinner
 from sklearn.cluster import HDBSCAN
 
 from typing import Dict, Set, Tuple, Optional, NamedTuple
@@ -73,14 +73,12 @@ class rConcept(BaseModel):
             value is a list of related concept names.
         importance_score (float): A numerical score representing the importance or relevance of the concept.
         context_snippets (List[str]): A list of text snippets providing context where the concept appears.
-        metadata (Dict[str, Any]): Additional metadata associated with the concept.
     """
     name: str
     category: str
     relationships: Dict[str, List[str]]
     importance_score: float
     context_snippets: List[str]
-    metadata: Dict[str, Any]
 
 @dataclass
 class Concept:
@@ -113,7 +111,7 @@ class Concepts(BaseModel):
     Represents a collection of key concepts.
 
     Attributes:
-        concepts (List[Concept]): A list of Concept instances, each representing an individual key concept.
+        concepts (List[rConcept]): A list of Concept instances, each representing an individual key concept.
     """
     concepts: List[rConcept]
 
@@ -264,7 +262,7 @@ class ConceptExtractor:
         self.kb = knowledge_base
         self.concept_graph = ConceptGraph()
 
-    def extract_concepts(self, texts: List[str]) -> List[List[Concept]]:
+    async def extract_concepts(self, texts: List[str], metadatas: List[Dict[str, str | int | float | bool]]) -> List[List[Concept]]:
         """
         Extract concepts and their relationships from a list of texts using LLM batch processing.
         Returns a list of lists of Concept objects (one list per input text).
@@ -272,11 +270,10 @@ class ConceptExtractor:
 
         system_prompt = (
             "Analyze the given text and extract key concepts and their relationships. For each concept:\n"
-            "1. Identify the concept name and category (technical, domain, method, property)\n"
-            "2. Determine relationships with other concepts (uses, part_of, similar_to, depends_on)\n"
+            "1. Identify the concept name and category (technical, domain, method, property, ...)\n"
+            "2. Determine relationships with other concepts (uses, part_of, similar_to, depends_on, ...)\n"
             "3. Assess importance (0-1 score) based on centrality to the text\n"
             "4. Extract relevant context snippets\n\n"
-            "Format the response as a JSON array of concepts with their details."
         )
 
         # Create a list of messages for each text
@@ -306,25 +303,40 @@ class ConceptExtractor:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ]
-            messages_list.append(conversation)
+            messages_list.append((prompt, system_prompt))
 
         try:
             # Increment your counter (if needed; i__[1] is from your original code)
             i__[1] += len(messages_list)
 
-            # Call batch_completion once for all texts.
-            responses = batch_completion(
-                model=self.kb.model_name,
-                messages=messages_list,
-                response_format=Concepts,
-                # fallbacks=os.getenv("FALLBACKS_MODELS", '').split(','),
+            batch_size = 35
+            responses = []
+            for messages_batch_id in range(0,len(messages_list), batch_size):
+                batch = messages_list[messages_batch_id:messages_batch_id+batch_size]
+                # Call batch_completion once for all texts.
+                t0 = time.process_time()
 
-            )
+                response = await asyncio.gather(*[litellm_complete(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    response_format=Concepts,
+                    modele=self.kb.model_name,
+                    fallbacks=os.getenv("FALLBACKS_MODELS_PREM", '').split(',')
+
+                ) for (prompt, system_prompt) in batch])
+
+                responses.extend(response)
+                d = 85-(time.process_time()-t0)
+                with Spinner("Waiting to prevent time out",count_down=True,time_in_s=d,delay=d/batch_size):
+                    await asyncio.sleep(d)
+
 
             all_concepts = []  # This will be a list (per text) of lists of Concept objects
-            for response in responses:
+            for metadata, response in zip(metadatas, responses):
+                print(response, type(response))
                 if not isinstance(response, ModelResponse):
                     continue
+                print(type(response), response)
                 c: str = response.choices[0].message.content
                 if c is None:
                     c: str = response.choices[0].message.tool_calls[0].function.arguments
@@ -340,12 +352,13 @@ class ConceptExtractor:
                         relationships={k: set(v) for k, v in concept_info["relationships"].items()},
                         importance_score=concept_info["importance_score"],
                         context_snippets=concept_info["context_snippets"],
-                        metadata={}
+                        metadata=metadata
                     )
                     concepts.append(concept)
                     # Update your concept graph if needed
                     self.concept_graph.add_concept(concept)
                 all_concepts.append(concepts)
+            print(all_concepts)
             return all_concepts
 
         except Exception as e:
@@ -361,7 +374,7 @@ class ConceptExtractor:
         # Gather all texts from the chunks.
         texts = [chunk.text for chunk in chunks]
         # Call extract_concepts once with all texts.
-        all_concepts = self.extract_concepts(texts)
+        all_concepts = await self.extract_concepts(texts, [chunk.metadata for chunk in chunks])
 
         # Update each chunk's metadata with its corresponding concepts.
         for chunk, concepts in zip(chunks, all_concepts):
@@ -454,8 +467,8 @@ class ConceptExtractor:
 class TextSplitter:
     def __init__(
         self,
-        chunk_size: int = 12_000,
-        chunk_overlap: int = 200,
+        chunk_size: int = 3600,
+        chunk_overlap: int = 130,
         separator: str = "\n"
     ):
         self.chunk_size = chunk_size
@@ -530,8 +543,8 @@ class TextSplitter:
 
 class KnowledgeBase:
     def __init__(self, embedding_dim: int = 768, similarity_threshold: float = 0.61, batch_size: int = 64,
-                 n_clusters: int = 4, deduplication_threshold: float = 0.85, model_name="groq/llama3-70b-8192",
-                 embedding_model="gemini/text-embedding-004",
+                 n_clusters: int = 4, deduplication_threshold: float = 0.85, model_name=os.getenv("DEFAULTMODELSUMMERY"),
+                 embedding_model=os.getenv("DEFAULTMODELEMBEDDING"),
                  vis_class:Optional[str] = "FastVectorStoreO",
                  vis_kwargs:Optional[Dict[str, Any]]=None):
         """Initialize the knowledge base with given parameters"""
@@ -726,7 +739,6 @@ class KnowledgeBase:
 
             if len(new_chunks) - removed > 0:
                 # Process new chunks for concepts
-                new_chunks = self.vdb.chunks[-(len(new_chunks) - removed):]
                 await self.concept_extractor.process_chunks(new_chunks)
             print("i________________________________________________________________", i__)
 
@@ -1481,12 +1493,12 @@ class KnowledgeBase:
         """
 
         try:
+            await asyncio.sleep(0.25)
             llm_response = await litellm_complete(
                 model_name=self.model_name,
                 prompt=prompt,
                 system_prompt=system_prompt,
                 response_format=DataModel,
-                #max_tokens=1000,
             )
             summary_analysis = json.loads(llm_response)
         except Exception as e:
@@ -1657,10 +1669,13 @@ class KnowledgeBase:
             raise
 
     def vis(self,output_file: str = "concept_graph.html", get_output_html=False, get_output_net=False):
+        if self.concept_extractor.concept_graph.concepts:
+            print("NO Concepts defined")
+            return None
         net = self.concept_extractor.concept_graph.convert_to_networkx()
         if get_output_net:
             return net
-        return GraphVisualizer.visualize(net,output_file=output_file, get_output=get_output_html)
+        return GraphVisualizer.visualize(net, output_file=output_file, get_output=get_output_html)
 
 async def main():
     kb = KnowledgeBase(n_clusters=3)

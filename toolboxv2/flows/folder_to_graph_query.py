@@ -39,7 +39,8 @@ async def run(app:App, __, mem_name=None, path=None):
 
         app.print("Loading Docs")
         docs, metadata = path_getter(path)
-
+        print("Loading",docs)
+        print("Loading",metadata)
         await mem_instance.add_data(docs, metadata)
         mem_instance.save(mem_name + '_save.pkl')
         mem_instance.vis(output_file=mem_name+'_graph.html')
@@ -53,8 +54,13 @@ async def run(app:App, __, mem_name=None, path=None):
             context = mem_instance.query_concepts(user_input)
         else:
             context = mem_instance.retrieve_with_overview(user_input)
-
+        print("Context:", context)
         result = agent.mini_task(user_input, "user", f"Use this context! {context}", persist=True)
+        print("")
         print("AGENT:", result)
 
 
+if __name__ == "__main__":
+    from toolboxv2 import get_app
+    import asyncio
+    asyncio.run(run(get_app(), None, "uni_lina", r"C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\data\uniAnna"))

@@ -72,7 +72,7 @@ async def litellm_complete_if_cache(
     model,
     prompt,
     system_prompt=None,
-    history_messages=[],
+    history_messages=None,
     base_url=None,
     api_key=None,
     **kwargs,
@@ -90,21 +90,22 @@ async def litellm_complete_if_cache(
     kwargs.pop("hashing_kv", None)
     kwargs.pop("keyword_extraction", None)
 
+    fallbacks_ = kwargs.pop("fallbacks", [])
     # Build the messages list from system prompt, conversation history, and the new prompt
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
-    messages.extend(history_messages)
+    if history_messages is not None:
+        messages.extend(history_messages)
     messages.append({"role": "user", "content": prompt})
 
     # Log query details for debugging purposes
-
 
     # Depending on the response format, choose the appropriate API call
     if "response_format" in kwargs:
         response = await acompletion(
             model=model, messages=messages,
-            fallbacks=os.getenv("FALLBACKS_MODELS", '').split(','),
+            fallbacks=fallbacks_+os.getenv("FALLBACKS_MODELS", '').split(','),
             **kwargs
         )
     else:
