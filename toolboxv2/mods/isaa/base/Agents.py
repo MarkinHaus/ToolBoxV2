@@ -674,7 +674,7 @@ class Agent:
         await update_progress()
         if with_functions is None:
             class WithFunctions(BaseModel):
-                f"""Deside if u need to call one function to perform this task {[f.name for f in self.functions]}"""
+                f"""Deside if u need to call one function to perform this task {[f.name for f in self.functions] if self.functions is not None else ''}"""
                 use_function: bool = field(default=False)
 
             with_functions = self.format_class(WithFunctions, user_input)["use_function"]
@@ -857,15 +857,39 @@ class Agent:
         c = resp.choices[0].message.content
         if c is None:
             c = resp.choices[0].message.tool_calls[0].function.arguments
-        c = c.replace('\n', '').replace('</invoke>', '').rstrip()
+        c = c.replace('</invoke>', '').rstrip()
         self.last_result = c
-        d = json.loads(c)
+        return self.after_format(c)
+
+    @staticmethod
+    def after_format(d:str)->dict:
+        # try:
+        #     return eval(eval(d))
+        # except Exception as e:
+        #     pass
+        def clean(_d, ex=False):
+            if ex:
+                while _d and _d[0] != '{':
+                    _d = _d[1:]
+                while d and _d[-1] != '}':
+                    _d = _d[:-1]
+                if _d.count('{') > _d.count('}'):
+                    _d = _d[:-1]
+                if d.count('{') < _d.count('}'):
+                    _d = _d[1:]
+            _d = _d.replace(': false,', ': False,')
+            _d = _d.replace(': true,', ':  True,')
+            _d = _d.replace(': \\"\\"\\"', ": '''").replace('\\"\\"\\",', "''',")
+            return _d
+        d = eval(clean(d))
         if isinstance(d, str):
-            d = eval(d)
+            try:
+                d = eval(clean(d, ex=True))
+            except Exception as e:
+                print("Error", d, type(d))
+                raise e
         if len(d.keys()) == 1 and isinstance(d[list(d.keys())[0]], dict) and len(d[list(d.keys())[0]]) > 1:
             d = d[list(d.keys())[0]]
-
-        # print("<invoke> DATA", d)
         return d
 
     async def a_format_class(self, format_class, task, **kwargs):
@@ -886,16 +910,28 @@ class Agent:
             c = resp.choices[0].message.tool_calls[0].function.arguments
         c = c.replace('</invoke>', '').rstrip()
         self.last_result = c
-        d = json.loads(c)
-        if isinstance(d, str):
-            d = eval(d)
-        if len(d.keys()) == 1 and isinstance(d[list(d.keys())[0]], dict) and len(d[list(d.keys())[0]]) > 1:
-            d = d[list(d.keys())[0]]
 
-        # print("<invoke> DATA", d)
-        return d
+        try:
+            return self.after_format(c)
+        except Exception as e:
+            self.print_verbose("Error formatting, Retrying...")
+            llm_message = [{'role': 'system', 'content': f'retry error : {e}'}] + llm_message
+            resp = await self.acompletion(
+                llm_message=llm_message,
+                response_format=format_class,
+            )
+            self.stream = tstrem
+            # print(resp)
+            c = resp.choices[0].message.content
+            if c is None:
+                c = resp.choices[0].message.tool_calls[0].function.arguments
+            c = c.replace('</invoke>', '').rstrip()
+            self.last_result = c
+            return self.after_format(c)
 
     def function_invoke(self, name, **kwargs):
+        if self.functions is None:
+            return f"no functions"
         fuction_list = [f.function for f in self.functions if f.name == name]
         if len(fuction_list):
             try:
@@ -1322,7 +1358,7 @@ class Agent:
                     self.taskstack.add_task(self._to_task(f" Call this function '{fuc_call.function.name}'with "
                                                           f"thies arguments: {fuc_call.function.arguments} "))
             else:
-                callable_functions = [function_name.name.lower() for function_name in self.functions]
+                callable_functions = [function_name.name.lower() for function_name in self.functions] if self.functions is not None else []
                 llm_function = self.functions[
                     callable_functions.index(result.choices[0].message.tool_calls[0].function.name.lower())]
                 self.if_for_fuction_use_overrides = True
@@ -2369,4 +2405,3 @@ RESPONSE: The result of 5 + 3 is 8.
 By following these prefix-based instructions, you ensure that each task is handled in a structured and effective manner, with clear separation of thought, communication, and function execution. Note: The content under the USER prefix is for internal use only and should never be directly output to the user. use actions in json format!"""
 
         return Capabilities(name, description, trait, list(self.prefixes.values()))
-

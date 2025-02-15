@@ -19,6 +19,8 @@ from pydantic import BaseModel
 
 from tqdm import tqdm
 
+from toolboxv2.mods.isaa.base.KnowledgeBase import TextSplitter
+from toolboxv2.mods.isaa.extras.filter import filter_relevant_texts
 from toolboxv2.mods.isaa.types import TaskChain
 from toolboxv2.mods.isaa.ui.nice import IsaaWebSocketUI
 from toolboxv2.utils.extras.keword_matcher import calculate_weighted_score, extract_keywords
@@ -999,79 +1001,31 @@ class Tools(MainTool, FileHandler):
         shortened_messages = [first_message]
         middle_messages = messages[1:-1]
 
-        # print("LEN", len(middle_messages), len(middle_messages) + 2 == len(messages), get_tokens(middle_messages))
-
-        # First attempt: Use dilate_string
-        for msg in middle_messages:
-            content = msg['content']
-            dilated_content = self.mas_text_summaries(content)
-            shortened_messages.append({'role': msg['role'], 'content': dilated_content})
-
-        # Check if we're within token limit
-        if get_tokens(shortened_messages + [last_message]) <= max_tokens - prompt_token_margin:
-            return shortened_messages + [last_message]
-
-        # Second attempt: Use mini_task_completion
-        shortened_messages = [first_message]
-        if len(middle_messages) == 1:
-            middle_messages = [{'role': middle_messages[0].get('role'),
-                                'content': d} for d in middle_messages[0].get('content').split('\n\n')]
-        if len(middle_messages) == 1:
-            text = middle_messages[0].get('content', '').split('\n')
-            sp_n = max(5, len(text) // 10)
-            text = ['\n'.join(text[i:i + sp_n]) for i in
-                    range(0, len(text), sp_n)]
-            middle_messages = [{'role': middle_messages[0].get('role'),
-                                'content': content} for content in text]
-        for msg in tqdm(middle_messages, desc="Comprising content", total=len(middle_messages)):
-            content = msg['content']
-            if get_tokens([msg]) > max_tokens:
-                text = content.split('\n')
-                sp_n = max(5, len(text) // 10)
-                t_ps = get_tokens([{'role': msg.get('role'), 'content': '\n'.join(text[: sp_n])}])
-                while t_ps > 12000 and sp_n > 1:
-                    sp_n -= 1
-                    t_ps = get_tokens([{'role': msg.get('role'), 'content': '\n'.join(text[: sp_n])}])
-                text = ['\n'.join(text[i:i + sp_n]) for i in
-                        range(0, len(text), sp_n)]
-                content = [{'role': msg.get('role'),
-                            'content': content_} for content_ in text]
-                self.print(f"\t\t\tAdditional... {len(content)} kontext")
-                for cont in tqdm(content, desc="Comprising content (2x)", total=len(content)):
-                    shortened_content = self.mini_task_completion(
-                        user_task=dilate_string(cont['content'], split_param=0, remove_every_x=2, start_index=3),
-                        mode=TextExtractor,
-                        mini_task="Summarize the key points concisely."
-                    )
-                    shortened_messages.append({'role': cont['role'],
-                                               'content': dilate_string(shortened_content, split_param=0,
-                                                                        remove_every_x=2, start_index=3)})
-            else:
-                shortened_content = self.mini_task_completion(
-                    user_task=dilate_string(content, split_param=0, remove_every_x=2, start_index=3),
-                    mode=TextExtractor,
-                    mini_task="Summarize the key points concisely."
-                )
-                shortened_messages.append({'role': msg['role'],
-                                           'content': dilate_string(shortened_content, split_param=0, remove_every_x=2,
-                                                                    start_index=3)})
-
-        # Check if we're within token limit
-        if get_tokens(shortened_messages + [last_message]) <= max_tokens - prompt_token_margin:
-            return shortened_messages + [last_message]
-
-        # Final attempt: Use summarization
         all_content = "\n".join([msg['content'] for msg in middle_messages])
-        summary = dilate_string(all_content, "\n", 2, 1)
-        shortened_messages.append({'role': 'system',
-                                   'content': summary})
+
+        dilated_content = self.mas_text_summaries(all_content, ref=first_message+last_message)
+        shortened_messages.append({'role': "system", 'content': "History -> "+dilated_content})
+
+        # Check if we're within token limit
+        if get_tokens(shortened_messages + [last_message]) <= max_tokens - prompt_token_margin:
+            return shortened_messages + [last_message]
+
+        middle_message = shortened_messages.pop(-1)
+        # Final attempt: Use summarization
+        middle_message['content'] = dilate_string(middle_message['content'], "\n", 2, 1)
+        shortened_messages.append(middle_message)
 
         # Ensure we're within token limit
-        final_messages = [first_message] + shortened_messages[-1:] + [last_message]
+        final_messages = [first_message] + [middle_message] + [last_message]
         if get_tokens(final_messages) > max_tokens - prompt_token_margin:
             # If still too long, truncate the summary
             allowed_length = max_tokens - prompt_token_margin - get_tokens([first_message, last_message])
-            shortened_messages[-1]['content'] = shortened_messages[-1]['content'][:allowed_length]
+            if allowed_length > 0:
+                final_messages[1]['content'] = final_messages[1]['content'][:allowed_length]
+            else:
+                allowed_length *= -.5
+                final_messages[0]['content'] = final_messages[0]['content'][:allowed_length]
+                final_messages[-1]['content'] = final_messages[-1]['content'][allowed_length:]
 
         return final_messages
 
@@ -1234,7 +1188,7 @@ class Tools(MainTool, FileHandler):
 
         return await agent.run(text, **kwargs)
 
-    def mas_text_summaries(self, text, min_length=1600, ref=None):
+    def mas_text_summaries(self, text, min_length=3600, ref=None):
 
         len_text = len(text)
         if len_text < min_length:
@@ -1248,26 +1202,13 @@ class Tools(MainTool, FileHandler):
 
         if ref is None:
             ref = text
-        meme = self.get_memory()
-        res, sub_c = meme.cognitive_network.network.process_input(text, get_subconcepts=True, ref=ref)
-
         with Spinner("Processioning Summarization"):
 
-            self.print(f"Summary Volume {len(sub_c)}")
-            kw = extract_keywords(ref, remove_stopwords=True, with_weights=True)
-            score = [meme.cognitive_network.network.rings[
-                         meme.cognitive_network.agent_state.current_focus].input_processor.pcs(ref,
-                                                                                               x.metadata.get('text',
-                                                                                                              '')) * 0.6
-                     + calculate_weighted_score(x.metadata.get('text', ''), kw) * 0.4
-
-                     for x
-                     in sub_c]
-
-            relevant_texts = [x.metadata.get('text', '') for i, x in enumerate(sub_c) if
-                              score[i] > (.51 if len(score) == 0 else sum(score)/len(score))]
+            texts = TextSplitter(chunk_size=min_length*10, chunk_overlap=min_length // 10).split_text(text)
+            relevant_texts = filter_relevant_texts(ref, texts=texts, fuzzy_threshold=51, semantic_threshold=0.52)
+            self.print(f"Summary Volume from {len(text)} to {len(relevant_texts)}")
             if len(relevant_texts) == 0:
-                relevant_texts = [x.metadata.get('text', '') for i, x in enumerate(sub_c)][:(1+len(sub_c)//2)]
+                relevant_texts = texts
             relevant_text_len = len(''.join(relevant_texts))
             self.print(f"Relevant texts Volume {len(relevant_texts)} "
                        f"average cuk len {sum([len(r) for r in relevant_texts]) / len(relevant_texts)}"
@@ -1289,16 +1230,16 @@ class Tools(MainTool, FileHandler):
                     relevant_texts = relevant_texts[:20] + [bf]
                 segments = self.format_class(SummarizationSegments,
                                   '\n'.join(relevant_texts))["segments"]
-                if sum([len(segment.information) for segment in segments]) > min_length*2:
+                if sum([len(segment['information']) for segment in segments ]) > min_length*2:
                     summary = self.mini_task_completion(mini_task="Create a Summary" +
                                                                   (
                                                                       "" if ref == text else " for this reference: " + ref),
                                                         user_task='Segments:\n'.join(
-                                                            [x.information for x in segments
+                                                            [x['information'] for x in segments
                                                              ]),
                                                         mode=self.controller.rget(SummarizationMode))
                 else:
-                    summary = '\n'.join([x.information for x in segments])
+                    summary = '\n'.join([x['information']for x in segments])
                 if summary is None:
                     return relevant_texts[:18] + [f"Information chunks lost : {len(relevant_texts) - 18}"]
             else:

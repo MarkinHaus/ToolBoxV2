@@ -54,6 +54,8 @@ from tenacity import (
 
 import numpy as np
 
+from toolboxv2 import get_logger
+
 # Ensure AsyncIterator is imported correctly depending on Python version
 if sys.version_info < (3, 9):
     from typing import AsyncIterator
@@ -100,20 +102,24 @@ async def litellm_complete_if_cache(
     messages.append({"role": "user", "content": prompt})
 
     # Log query details for debugging purposes
-
-    # Depending on the response format, choose the appropriate API call
-    if "response_format" in kwargs:
-        response = await acompletion(
-            model=model, messages=messages,
-            fallbacks=fallbacks_+os.getenv("FALLBACKS_MODELS", '').split(','),
-            **kwargs
-        )
-    else:
-        response = await acompletion(
-            model=model, messages=messages,
-            fallbacks=os.getenv("FALLBACKS_MODELS", '').split(','),
-            **kwargs
-        )
+    try:
+        # Depending on the response format, choose the appropriate API call
+        if "response_format" in kwargs:
+            response = await acompletion(
+                model=model, messages=messages,
+                fallbacks=fallbacks_+os.getenv("FALLBACKS_MODELS", '').split(','),
+                **kwargs
+            )
+        else:
+            response = await acompletion(
+                model=model, messages=messages,
+                fallbacks=os.getenv("FALLBACKS_MODELS", '').split(','),
+                **kwargs
+            )
+    except Exception as e:
+        print(e)
+        get_logger().error(f"Failed to litellm memory work {e}")
+        return ""
 
     # Check if the response is a streaming response (i.e. an async iterator)
     if hasattr(response, "__aiter__"):

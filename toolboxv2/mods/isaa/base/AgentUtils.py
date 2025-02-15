@@ -767,13 +767,13 @@ class AISemanticMemory(metaclass=Singleton):
             try:
                 import textract
                 text = textract.process(data).decode('utf-8')
-                texts = [text]
+                texts = [text.replace('\\t', '').replace('\t', '')]
             except Exception as e:
                 raise ValueError(f"File processing failed: {str(e)}")
         elif isinstance(data, str):
-            texts = [data]
+            texts = [data.replace('\\t', '').replace('\t', '')]
         elif isinstance(data, list):
-            texts = data
+            texts = [d.replace('\\t', '').replace('\t', '') for d in data]
         elif isinstance(data, dict):
             # Custom KG not supported in current KnowledgeBase
             raise NotImplementedError("Custom knowledge graph insertion not supported")
@@ -785,6 +785,8 @@ class AISemanticMemory(metaclass=Singleton):
             added, duplicates = await kb.add_data(texts, metadata)
             return added > 0
         except Exception as e:
+            import traceback
+            print(traceback.format_exc())
             raise RuntimeError(f"Data addition failed: {str(e)}")
 
     def get(self, names):
@@ -1242,7 +1244,9 @@ def get_token_mini(text: str, model_name=None, isaa=None, only_len=True):
 
 
 def _get_all_model_dict_price_token_limit_approximation():
-    model_dict = {
+    model_dict = {}
+
+    model_dict_p ={
 
         # openAi Models :
 
@@ -1289,9 +1293,6 @@ def _get_all_model_dict_price_token_limit_approximation():
 
         # Huggingface :
 
-        # approximation  :
-        '/': 1012,
-
         # gpt4all :
 
         # approximation :
@@ -1322,7 +1323,7 @@ def _get_all_model_dict_price_token_limit_approximation():
         model_dict[str(model_dict[f"{i}B"])] = [i * 0.000046875, i * 0.00009375]
         model_dict[str(model_dict[f"{i}K"])] = [i * 0.00046875, i * 0.0009375]
 
-    return model_dict
+    return {**model_dict_p, **model_dict}
 
 
 def get_max_token_fom_model_name(model: str) -> int:
@@ -1332,6 +1333,7 @@ def get_max_token_fom_model_name(model: str) -> int:
     for model_name in model_dict.keys():
         if model_name in model:
             fit = model_dict[model_name]
+            break
             # print(f"Model fitting Name :: {model} Token limit: {fit} Pricing per token I/O {model_dict[str(fit)]}")
     if isinstance(fit, list):
         fit = 10000

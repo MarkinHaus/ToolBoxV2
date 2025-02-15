@@ -128,10 +128,10 @@ async def web_search(query: str, mas_text_summaries=None):
         return result
 
     data = await crawl_sequential(urls)
-    result = c_up('\n'.join(data))
+    final_result = c_up('\n'.join(data))
     if mas_text_summaries:
-        result = mas_text_summaries(result, ref=query)
-    return result
+        final_result = mas_text_summaries(final_result, ref=query)
+    return final_result
 
 
 if __name__ == "__main__":

@@ -311,9 +311,18 @@ class ConceptExtractor:
 
             batch_size = 35
             responses = []
+            t0 = 0
+            do_wait = False
             for messages_batch_id in range(0,len(messages_list), batch_size):
                 batch = messages_list[messages_batch_id:messages_batch_id+batch_size]
                 # Call batch_completion once for all texts.
+                if do_wait:
+                    d = 85-(time.process_time()-t0)
+                    with Spinner(f"Waiting to prevent time out {messages_batch_id} of {len(messages_list)}",count_down=True,time_in_s=d,delay=d/batch_size):
+                        await asyncio.sleep(d)
+                else:
+                    do_wait = True
+
                 t0 = time.process_time()
 
                 response = await asyncio.gather(*[litellm_complete(
@@ -326,17 +335,12 @@ class ConceptExtractor:
                 ) for (prompt, system_prompt) in batch])
 
                 responses.extend(response)
-                d = 85-(time.process_time()-t0)
-                with Spinner("Waiting to prevent time out",count_down=True,time_in_s=d,delay=d/batch_size):
-                    await asyncio.sleep(d)
 
 
             all_concepts = []  # This will be a list (per text) of lists of Concept objects
             for metadata, response in zip(metadatas, responses):
-                print(response, type(response))
                 if not isinstance(response, ModelResponse):
                     continue
-                print(type(response), response)
                 c: str = response.choices[0].message.content
                 if c is None:
                     c: str = response.choices[0].message.tool_calls[0].function.arguments

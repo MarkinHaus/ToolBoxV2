@@ -1,20 +1,25 @@
-import io
 import json
 import pickle
-import traceback
-from contextlib import redirect_stderr, redirect_stdout
-from pydantic import BaseModel, Field
-from pathlib import Path
+import shutil
+import sys
+import time
 
-from toolboxv2 import Style, Spinner, get_app
+import git
+from pydantic import BaseModel, Field
+
+import toolboxv2
+from toolboxv2 import Style, Spinner, get_app, get_logger
 from toolboxv2.mods.isaa.extras.modes import get_free_agent
 
-from inspect import getdoc, signature, isfunction, ismethod, currentframe
-import ast
-from collections import Counter
+from inspect import getdoc, signature, isfunction, ismethod, currentframe, Signature, isclass
+
+from collections import Counter, defaultdict
 from typing import Optional, Dict, Any, List, Union, Type, Tuple
 from copy import deepcopy
 import re
+
+import importlib
+import subprocess
 
 from toolboxv2.mods.isaa.extras.session import ChatSession
 
@@ -23,33 +28,49 @@ from toolboxv2.mods.isaa.extras.session import ChatSession
 
 from enum import Enum, auto
 from dataclasses import dataclass
-
+import asyncio
+import nest_asyncio
+import ast
+import io
+import os
+import traceback
+from pathlib import Path
+from typing import Tuple, Optional, Any, Union
 
 class VerboseFormatter:
-    def __init__(self, spinner_style: str = "d"):
+    def __init__(self,print_f, spinner_style: str = "d"):
         self.style = Style()
         self.current_spinner = None
         self.spinner_style = spinner_style
+        self.print = print_f
 
     def print_header(self, text: str):
         """Print a formatted header with separator line"""
         width = 80
-        print(f"\n{self.style.BLUE('=' * width)}")
-        print(self.style.BLUE2(f"⚡ {text.center(width - 4)} ⚡"))
-        print(f"{self.style.BLUE('=' * width)}\n")
+        self.print(f"\n{self.style.BLUE('=' * width)}")
+        self.print(self.style.BLUE2(f"⚡ {text.center(width - 4)} ⚡"))
+        self.print(f"{self.style.BLUE('=' * width)}\n")
 
     def print_section(self, title: str, content: str):
         """Print a formatted section with title and content"""
-        print(f"{self.style.YELLOW('┌─')} {self.style.YELLOW2(title)}")
+        self.print(f"{self.style.YELLOW('┌─')} {self.style.YELLOW2(title)}")
         for line in content.split('\n'):
-            print(f"{self.style.YELLOW('│')} {line}")
-        print(f"{self.style.YELLOW('└─')} {self.style.GREY('End of section')}\n")
+            try:
+                self.print(f"{self.style.YELLOW('│')} {line}")
+            except Exception as e:
+                try:
+                    pos = int(str(e).split('position ')[1].split('-')[0])
+                    line = line[:pos] + line[pos+1:]
+                    self.print(f"{self.style.YELLOW('│')} {line}")
+                except Exception as e:
+                    self.print(f"{self.style.RED('│')} UNABLE TO PRINT {str(e)}")
+        self.print(f"{self.style.YELLOW('└─')} {self.style.GREY('End of section')}\n")
 
     def print_iteration(self, current: int, maximum: int):
         """Print iteration progress with visual bar"""
         progress = int((current / maximum) * 20)
         bar = "█" * progress + "░" * (20 - progress)
-        print(f"\r{self.style.CYAN(f'Iteration [{bar}] {current}/{maximum}')}  ", end='')
+        self.print(f"\r{self.style.CYAN(f'Iteration [{bar}] {current}/{maximum}')}  ", end='')
 
     def print_state(self, state: str, details: Optional[Dict[str, Any]] = None):
         """Print current state with optional details"""
@@ -60,41 +81,41 @@ class VerboseFormatter:
             'DONE': self.style.BLUE2
         }.get(state, self.style.WHITE2)
 
-        print(f"\n{self.style.Bold(f'Current State:')} {state_color(state)}")
+        self.print(f"\n{self.style.Bold(f'Current State:')} {state_color(state)}")
 
         if details:
             for key, value in details.items():
-                print(f"  {self.style.GREY('├─')} {self.style.CYAN(key)}: {value}")
+                self.print(f"  {self.style.GREY('├─')} {self.style.CYAN(key)}: {value}")
 
     def print_method_update(self, method_update: 'MethodUpdate'):
         """Print a formatted view of a MethodUpdate structure"""
         # Header with class and method name
-        print(f"\n{self.style.BLUE('┏━')} {self.style.Bold('Method Update Details')}")
+        self.print(f"\n{self.style.BLUE('┏━')} {self.style.Bold('Method Update Details')}")
 
         # Class and method information
-        print(f"{self.style.BLUE('┣━')} Class: {self.style.GREEN2(method_update.class_name)}")
-        print(f"{self.style.BLUE('┣━')} Method: {self.style.YELLOW2(method_update.method_name)}")
+        self.print(f"{self.style.BLUE('┣━')} Class: {self.style.GREEN2(method_update.class_name)}")
+        self.print(f"{self.style.BLUE('┣━')} Method: {self.style.YELLOW2(method_update.method_name)}")
 
         # Description if available
         if method_update.description:
-            print(f"{self.style.BLUE('┣━')} Description:")
+            self.print(f"{self.style.BLUE('┣━')} Description:")
             for line in method_update.description.split('\n'):
-                print(f"{self.style.BLUE('┃')}  {self.style.GREY(line)}")
+                self.print(f"{self.style.BLUE('┃')}  {self.style.GREY(line)}")
 
         # Code section
-        print(f"{self.style.BLUE('┣━')} Code:")
+        self.print(f"{self.style.BLUE('┣━')} Code:")
         code_lines = method_update.code.split('\n')
         for i, line in enumerate(code_lines):
             # Different styling for first and last lines
             if i == 0:
-                print(f"{self.style.BLUE('┃')}  {self.style.CYAN('┌─')} {line}")
+                self.print(f"{self.style.BLUE('┃')}  {self.style.CYAN('┌─')} {line}")
             elif i == len(code_lines) - 1:
-                print(f"{self.style.BLUE('┃')}  {self.style.CYAN('└─')} {line}")
+                self.print(f"{self.style.BLUE('┃')}  {self.style.CYAN('└─')} {line}")
             else:
-                print(f"{self.style.BLUE('┃')}  {self.style.CYAN('│')} {line}")
+                self.print(f"{self.style.BLUE('┃')}  {self.style.CYAN('│')} {line}")
 
         # Footer
-        print(f"{self.style.BLUE('┗━')} {self.style.GREY('End of method update')}\n")
+        self.print(f"{self.style.BLUE('┗━')} {self.style.GREY('End of method update')}\n")
 
     async def process_with_spinner(self, message: str, coroutine):
         """Execute a coroutine with a spinner indicator"""
@@ -103,12 +124,12 @@ class VerboseFormatter:
             return result
 
 
-
-
 class EnhancedVerboseOutput:
-    def __init__(self, verbose: bool = True):
+    def __init__(self, verbose: bool = True,print_f=None):
         self.verbose = verbose
-        self.formatter = VerboseFormatter()
+        self.print = print_f or print
+        self.formatter = VerboseFormatter(self.print)
+
 
     async def log_message(self, role: str, content: str):
         """Log chat messages with role-based formatting"""
@@ -122,8 +143,8 @@ class EnhancedVerboseOutput:
         }
 
         color_func, icon = role_formats.get(role, (self.formatter.style.WHITE, "•"))
-        print(f"\n{icon} {color_func(f'[{role}]')}")
-        print(f"{self.formatter.style.GREY('└─')} {content}\n")
+        self.print(f"\n{icon} {color_func(f'[{role}]')}")
+        self.print(f"{self.formatter.style.GREY('└─')} {content}\n")
 
     async def log_think_result(self, result: Dict[str, Any]):
         """Log thinking results with structured formatting"""
@@ -164,15 +185,17 @@ class EnhancedVerboseOutput:
 
         self.formatter.print_header(text)
 
-    def log_state(self, state: str, user_ns:dict):
+    def log_state(self, state: str, user_ns:dict, override=False):
         """Log method update with structured formatting"""
-        if not self.verbose:
+        if not self.verbose and not not override:
             return
 
         self.formatter.print_state(state, user_ns)
 
     async def process(self, message: str, coroutine):
         if not self.verbose:
+            return await coroutine
+        if message == "code":
             return await coroutine
         return await self.formatter.process_with_spinner(message, coroutine)
 
@@ -218,25 +241,479 @@ class PipelineResult:
 
 ### ---- logic ---- ###
 
-class MockIPython:
-    def __init__(self, _session_dir=None):
-        self.user_ns: Dict[str, Any] = {
-            '__name__': '__main__',
-            '__builtins__': __builtins__,
+class VirtualFileSystem:
+    def __init__(self, base_dir: Path):
+        self.base_dir = base_dir
+        self.current_dir = base_dir
+        self.virtual_files: Dict[str, str] = {}
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+
+    def write_file(self, filepath: Union[str, Path], content: str) -> Path:
+        """Write content to a virtual file and persist to disk using UTF-8"""
+        abs_path = self._resolve_path(filepath)
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Store in virtual filesystem
+        rel_path = str(abs_path.relative_to(self.base_dir))
+        self.virtual_files[rel_path] = content
+
+        # Write to actual filesystem with UTF-8 encoding
+        with open(abs_path, 'w', encoding='utf-8', errors='replace') as f:
+            f.write(content)
+
+        return abs_path
+
+    def read_file(self, filepath: Union[str, Path]) -> str:
+        """Read content from a virtual file using UTF-8"""
+        abs_path = self._resolve_path(filepath)
+        if not abs_path.exists():
+            raise FileNotFoundError(f"File not found: {filepath}")
+
+        rel_path = str(abs_path.relative_to(self.base_dir))
+
+        # Check virtual filesystem first
+        if rel_path in self.virtual_files:
+            return self.virtual_files[rel_path]
+
+        # Fall back to reading from disk with UTF-8 encoding
+        with open(abs_path, encoding='utf-8', errors='replace') as f:
+            content = f.read()
+            self.virtual_files[rel_path] = content
+            return content
+
+    def delete_file(self, filepath: Union[str, Path]):
+        """Delete a virtual file"""
+        abs_path = self._resolve_path(filepath)
+        rel_path = str(abs_path.relative_to(self.base_dir))
+
+        if rel_path in self.virtual_files:
+            del self.virtual_files[rel_path]
+
+        if abs_path.exists():
+            abs_path.unlink()
+
+    def create_directory(self, dirpath: Union[str, Path]):
+        """Create a new directory"""
+        abs_path = self._resolve_path(dirpath)
+        abs_path.mkdir(parents=True, exist_ok=True)
+
+    def list_directory(self, dirpath: Union[str, Path] = '.') -> list:
+        """List contents of a directory"""
+        abs_path = self._resolve_path(dirpath)
+        if not abs_path.exists():
+            raise FileNotFoundError(f"Directory not found: {dirpath}")
+        return [p.name for p in abs_path.iterdir()]
+
+    def change_directory(self, dirpath: Union[str, Path]):
+        """Change current working directory"""
+        new_dir = self._resolve_path(dirpath)
+        if not new_dir.exists() or not new_dir.is_dir():
+            raise NotADirectoryError(f"Directory not found: {dirpath}")
+        self.current_dir = new_dir
+
+    def _resolve_path(self, filepath: Union[str, Path]) -> Path:
+        """Convert relative path to absolute path"""
+        filepath = Path(filepath)
+        if filepath.is_absolute():
+            if not str(filepath).startswith(str(self.base_dir)):
+                raise ValueError("Path must be within base directory")
+            return filepath
+        return (self.current_dir / filepath).resolve()
+
+    def save_state(self, state_file: Path):
+        """Save virtual filesystem state to disk"""
+        state = {
+            'current_dir': str(self.current_dir.relative_to(self.base_dir)),
+            'virtual_files': self.virtual_files
         }
+        with open(state_file, 'w') as f:
+            json.dump(state, f)
+
+    def load_state(self, state_file: Path):
+        """Load virtual filesystem state from disk"""
+        if not state_file.exists():
+            return
+
+        with open(state_file) as f:
+            state = json.load(f)
+            self.current_dir = self.base_dir / state['current_dir']
+            self.virtual_files = state['virtual_files']
+
+
+class EnhancedVirtualFileSystem:
+    def __init__(self, base_path: Optional[str] = None):
+        """
+        Enhanced Virtual File System with Git integration
+
+        Args:
+            base_path (Optional[str]): Base directory for file operations
+        """
+        self.base_path = Path(base_path or os.getcwd()).absolute()
+        self.repo = None
+        self.logger = get_logger()
+        self._ensure_directory_exists()
+
+    def _ensure_directory_exists(self):
+        """Ensure base path directory exists"""
+        try:
+            self.base_path.mkdir(parents=True, exist_ok=True)
+            self.logger.info(f"Ensured directory exists: {self.base_path}")
+        except Exception as e:
+            self.logger.error(f"Failed to create directory: {e}")
+            raise
+
+    def init_git_repo(self, remote_url: Optional[str] = None) -> bool:
+        """
+        Initialize a git repository locally or clone from remote
+
+        Args:
+            remote_url (Optional[str]): Remote repository URL
+
+        Returns:
+            bool: True if repository is successfully initialized/cloned
+        """
+        try:
+            if remote_url:
+                # Clone remote repository
+                self.repo = git.Repo.clone_from(remote_url, self.base_path)
+                self.logger.info(f"Cloned repository from {remote_url}")
+            else:
+                # Initialize local repository
+                self.repo = git.Repo.init(self.base_path)
+                self.logger.info("Initialized local git repository")
+
+            return True
+        except Exception as e:
+            self.logger.error(f"Git repository initialization failed: {e}")
+            return False
+
+    def commit_changes(self, message: str, force: bool = False) -> bool:
+        """
+        Commit changes to the repository
+
+        Args:
+            message (str): Commit message
+            force (bool): Force commit even with unstaged changes
+
+        Returns:
+            bool: True if commit is successful
+        """
+        if not self.repo:
+            self.logger.warning("Git repository not initialized")
+            return False
+
+        try:
+            # Stage all changes
+            self.repo.git.add(A=True)
+
+            # Optional force commit
+            if force:
+                self.repo.git.add(update=True)
+
+            # Commit changes
+            self.repo.index.commit(message)
+            self.logger.info(f"Changes committed: {message}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Commit failed: {e}")
+            return False
+
+    def pull_changes(self, remote: str = 'origin', branch: str = 'main') -> bool:
+        """
+        Pull changes from remote repository
+
+        Args:
+            remote (str): Remote name
+            branch (str): Branch to pull
+
+        Returns:
+            bool: True if pull is successful
+        """
+        if not self.repo:
+            self.logger.warning("Git repository not initialized")
+            return False
+
+        try:
+            self.repo.remotes[remote].pull(branch)
+            self.logger.info(f"Pulled changes from {remote}/{branch}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Pull failed: {e}")
+            return False
+
+    def push_changes(self, remote: str = 'origin', branch: str = 'main') -> bool:
+        """
+        Push changes to remote repository
+
+        Args:
+            remote (str): Remote name
+            branch (str): Branch to push
+
+        Returns:
+            bool: True if push is successful
+        """
+        if not self.repo:
+            self.logger.warning("Git repository not initialized")
+            return False
+
+        try:
+            self.repo.remotes[remote].push(branch)
+            self.logger.info(f"Pushed changes to {remote}/{branch}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Push failed: {e}")
+            return False
+
+    def get_repository_status(self) -> Dict[str, Any]:
+        """
+        Get comprehensive repository status
+
+        Returns:
+            Dict[str, Any]: Repository status details
+        """
+        if not self.repo:
+            return {"error": "Repository not initialized"}
+
+        status = {
+            "is_dirty": self.repo.is_dirty(),
+            "untracked_files": self.repo.untracked_files,
+            "current_branch": self.repo.active_branch.name,
+            "commits_ahead": len(list(self.repo.iter_commits())),
+        }
+        return status
+
+    def create_snapshot(self, snapshot_name: str) -> bool:
+        """
+        Create a snapshot/checkpoint of current state
+
+        Args:
+            snapshot_name (str): Name of the snapshot
+
+        Returns:
+            bool: True if snapshot created successfully
+        """
+        try:
+            self.commit_changes(f"Snapshot: {snapshot_name}", force=True)
+            return True
+        except Exception as e:
+            self.logger.error(f"Snapshot creation failed: {e}")
+            return False
+
+
+from contextlib import redirect_stdout, redirect_stderr, contextmanager
+
+
+class VirtualEnvContext:
+    """Context manager for temporary virtual environment activation"""
+
+    def __init__(self, venv_path: Path):
+        self.venv_path = venv_path
+        self._original_path = None
+        self._original_sys_path = None
+        self._original_prefix = None
+        self._original_virtual_env = None
+
+    def _get_venv_paths(self):
+        """Get virtual environment paths based on platform"""
+        if sys.platform == 'win32':
+            site_packages = self.venv_path / 'Lib' / 'site-packages'
+            scripts_dir = self.venv_path / 'Scripts'
+            python_path = scripts_dir / 'python.exe'
+        else:
+            python_version = f'python{sys.version_info.major}.{sys.version_info.minor}'
+            site_packages = self.venv_path / 'lib' / python_version / 'site-packages'
+            scripts_dir = self.venv_path / 'bin'
+            python_path = scripts_dir / 'python'
+
+        return site_packages, scripts_dir, python_path
+
+    def __enter__(self):
+        # Save original state
+        self._original_path = os.environ.get('PATH', '')
+        self._original_sys_path = sys.path.copy()
+        self._original_prefix = sys.prefix
+        self._original_virtual_env = os.environ.get('VIRTUAL_ENV')
+
+        # Get venv paths
+        site_packages, scripts_dir, python_path = self._get_venv_paths()
+
+        # Modify environment for venv
+        if scripts_dir.exists():
+            new_path = os.pathsep.join([str(scripts_dir), self._original_path])
+            os.environ['PATH'] = new_path
+
+        if site_packages.exists():
+            sys.path.insert(0, str(site_packages))
+
+        os.environ['VIRTUAL_ENV'] = str(self.venv_path)
+
+        # Return the python executable path for potential subprocess calls
+        return str(python_path)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Restore original state
+        os.environ['PATH'] = self._original_path
+        sys.path = self._original_sys_path
+
+        if self._original_virtual_env is None:
+            os.environ.pop('VIRTUAL_ENV', None)
+        else:
+            os.environ['VIRTUAL_ENV'] = self._original_virtual_env
+
+class TeeStream:
+    """Stream that writes to both console and buffer"""
+    def __init__(self, console_stream, buffer_stream):
+        self.console_stream = console_stream
+        self.buffer_stream = buffer_stream
+
+    def write(self, data):
+        self.console_stream.write(data)
+        self.buffer_stream.write(data)
+        self.console_stream.flush()  # Ensure immediate console output
+
+    def flush(self):
+        self.console_stream.flush()
+        self.buffer_stream.flush()
+
+
+class ParentNodeTransformer(ast.NodeTransformer):
+    """Add parent references to AST nodes"""
+    def visit(self, node):
+        for child in ast.iter_child_nodes(node):
+            child.parent = node
+        return super().visit(node)
+
+class AsyncCodeDetector(ast.NodeVisitor):
+    """Detect async code and top-level await"""
+    def __init__(self):
+        self.has_async = False
+        self.has_top_level_await = False
+        self.await_nodes = []
+
+    def visit_AsyncFunctionDef(self, node):
+        self.has_async = True
+        self.generic_visit(node)
+
+    def visit_Await(self, node):
+        self.has_async = True
+        # Track all await nodes
+        self.await_nodes.append(node)
+        # Check if this await is at top level
+        parent = node
+        while hasattr(parent, 'parent'):
+            parent = parent.parent
+            if isinstance(parent, (ast.AsyncFunctionDef, ast.FunctionDef)):
+                break
+        else:
+            self.has_top_level_await = True
+        self.generic_visit(node)
+
+def auto_save_import(package_name, install_method='pip', upgrade=False, quiet=False, version=None, extra_args=None):
+    '''
+    Enhanced auto-save import with version and extra arguments support
+    '''
+    try:
+        # Attempt to import the package
+        return importlib.import_module(package_name)
+    except ImportError:
+        # Package not found, prepare for installation
+        print(f"Package '{package_name}' not found. Attempting to install...")
+        try:
+            # Construct installation command with more flexibility
+            install_cmd = [sys.executable, "-m", install_method, "install"]
+            if upgrade:
+                install_cmd.append("--upgrade")
+            # Support specific version installation
+            if version:
+                install_cmd.append(f"{package_name}=={version}")
+            else:
+                install_cmd.append(package_name)
+            # Add extra arguments if provided
+            if extra_args:
+                install_cmd.extend(extra_args)
+            # Run installation with appropriate verbosity
+            installation_output = subprocess.run(
+                install_cmd,
+                capture_output=quiet,
+                text=True
+            )
+            # Check installation status
+            if installation_output.returncode == 0:
+                print(f"Successfully installed {package_name}")
+                return importlib.import_module(package_name)
+            else:
+                raise Exception(f"Installation failed: {installation_output.stderr}")
+        except Exception as install_error:
+            print(f"Error installing {package_name}: {install_error}")
+            return None
+
+class MockIPython:
+    def __init__(self, _session_dir=None, auto_remove=True):
+        self.auto_remove = auto_remove
         self.output_history = {}
         self._execution_count = 0
         self._session_dir = _session_dir or Path(get_app().appdata) / '.pipeline_sessions'
         self._session_dir.mkdir(exist_ok=True)
+        self.vfs = VirtualFileSystem(self._session_dir / 'virtual_fs')
+        self._venv_path = self._session_dir / 'venv'
+        self.user_ns: Dict[str, Any] = {}
+        nest_asyncio.apply()
+        # Set up virtual environment if it doesn't exist
+        with Spinner("Starting virtual environment"):
+            self._setup_venv()
+        self.reset()
+
+    def _setup_venv(self):
+        """Create virtual environment if it doesn't exist"""
+        if not self._venv_path.exists():
+            try:
+                import venv
+                builder = venv.EnvBuilder(with_pip=True)
+                builder.create(self._venv_path)
+            except Exception as e:
+                raise RuntimeError(f"Failed to create virtual environment: {str(e)}")
+
+    def _virtual_open(self, filepath, mode='r', *args, **kwargs):
+        """Custom open function that uses virtual filesystem"""
+        abs_path = self.vfs._resolve_path(filepath)
+
+        if 'w' in mode or 'a' in mode:
+            # Ensure parent directory exists
+            abs_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Use actual filesystem but track in virtual fs
+        real_file = open(abs_path, mode, *args, **kwargs)
+
+        if 'r' in mode:
+            # Track file content in virtual filesystem when reading
+            rel_path = str(abs_path.relative_to(self.vfs.base_dir))
+            if rel_path not in self.vfs.virtual_files:
+                try:
+                    self.vfs.virtual_files[rel_path] = real_file.read()
+                    real_file.seek(0)
+                except UnicodeDecodeError:
+                    # Handle binary files
+                    pass
+
+        return real_file
 
     def reset(self):
         """Reset the interpreter state"""
         self.user_ns = {
             '__name__': '__main__',
             '__builtins__': __builtins__,
+            'toolboxv2': toolboxv2,
+            'git': EnhancedVirtualFileSystem(self._session_dir / 'src'),
+            'git_files': VirtualFileSystem(self._session_dir / 'src'),
+            '__file__': None,
+            '__path__': [str(self.vfs.current_dir)],
+            'open': self._virtual_open,
+            'auto_save_import': auto_save_import,
         }
         self.output_history.clear()
         self._execution_count = 0
+        if self.auto_remove:
+            shutil.rmtree(self.vfs.base_dir, ignore_errors=True)
 
     def get_namespace(self) -> Dict[str, Any]:
         """Get current namespace"""
@@ -246,111 +723,227 @@ class MockIPython:
         """Update namespace with new variables"""
         self.user_ns.update(variables)
 
-
-    def _parse_code(self, code: str) -> Tuple[Any, Optional[Any]]:
-        """Parse code and separate last expression if present"""
+    @staticmethod
+    def _parse_code(code: str) -> Tuple[Any, Optional[Any], bool, bool]:
+        """Parse code and handle top-level await"""
         try:
             tree = ast.parse(code)
-            if not tree.body:
-                return None, None
+            # Add parent references
+            ParentNodeTransformer().visit(tree)
 
+            # Detect async features
+            detector = AsyncCodeDetector()
+            detector.visit(tree)
+
+            if detector.has_top_level_await:
+                # Wrap code in async function
+                wrapped_code = "async def __wrapper():\n"
+                wrapped_code += "    global result\n"  # Allow writing to global scope
+                # Indent the original code
+                wrapped_code += "\n".join(f"    {line}" for line in code.splitlines())
+                # Add return statement for last expression
+                if isinstance(tree.body[-1], ast.Expr):
+                    wrapped_code += "\n    return result"
+
+                # Parse and compile wrapped code
+                wrapped_tree = ast.parse(wrapped_code)
+                return (
+                    compile(wrapped_tree, '<exec>', 'exec'),
+                    None,
+                    True,
+                    True
+                )
+
+            # Handle regular code
             if isinstance(tree.body[-1], ast.Expr):
-                # Split into statements and expression
                 exec_code = ast.Module(
                     body=tree.body[:-1],
-                    type_ignores=[],
+                    type_ignores=[]
                 )
                 eval_code = ast.Expression(
                     body=tree.body[-1].value
                 )
-
                 return (
-                    compile(exec_code, '<string>', 'exec'),
-                    compile(eval_code, '<string>', 'eval')
+                    compile(exec_code, '<exec>', 'exec'),
+                    compile(eval_code, '<eval>', 'eval'),
+                    detector.has_async,
+                    False
                 )
-            return compile(tree, '<string>', 'exec'), None
+
+            return (
+                compile(tree, '<exec>', 'exec'),
+                None,
+                detector.has_async,
+                False
+            )
 
         except SyntaxError as e:
-            raise SyntaxError(f"Invalid syntax: {str(e)}")
+            lines = code.splitlines()
+            if e.lineno and e.lineno <= len(lines):
+                line = lines[e.lineno - 1]
+                arrow = ' ' * (e.offset - 1) + '^' if e.offset else ''
+                error_msg = (
+                    f"Syntax error at line {e.lineno}:\n"
+                    f"{line}\n"
+                    f"{arrow}\n"
+                    f"{e.msg}"
+                )
+            else:
+                error_msg = str(e)
+            raise SyntaxError(error_msg) from e
 
-    def run_cell(self, code: str) -> Any:
-        stdout = io.StringIO()
-        stderr = io.StringIO()
+    async def run_cell(self, code: str, live_output: bool = False) -> Any:
+        """Async version of run_cell that handles both sync and async code"""
         result = None
         error = None
         tb = None
+        original_dir = os.getcwd()
+
+        if live_output:
+            stdout_buffer = io.StringIO()
+            stderr_buffer = io.StringIO()
+            stdout = TeeStream(sys.__stdout__, stdout_buffer)
+            stderr = TeeStream(sys.__stderr__, stderr_buffer)
+        else:
+            stdout = io.StringIO()
+            stderr = io.StringIO()
 
         try:
-            # Parse and compile code
-            exec_code, eval_code = self._parse_code(code)
-            if exec_code is None:
-                return "No executable"
+            temp_file = self.vfs.write_file(
+                f'.temp/_temp_{self._execution_count}.py',
+                code
+            )
+            work_ns = self.user_ns.copy()
+            work_ns['__file__'] = str(temp_file)
+            work_ns['__builtins__'] = __builtins__
+            with VirtualEnvContext(self._venv_path) as python_exec:
+                try:
+                    exec_code, eval_code, is_async, has_top_level_await = self._parse_code(code.encode('utf-8', errors='replace').decode('utf-8'))
+                    if exec_code is None:
+                        return "No executable code"
 
-            # Execute in captured context
-            with redirect_stdout(stdout), redirect_stderr(stderr):
-                # Execute main code
-                exec(exec_code, self.user_ns)
+                    os.chdir(str(temp_file.parent))
+                    work_ns['PYTHON_EXEC'] = python_exec
 
-                # Evaluate final expression if present
-                if eval_code is not None:
-                    result = eval(eval_code, self.user_ns)
-                    self.user_ns['_'] = result
+                    with redirect_stdout(stdout), redirect_stderr(stderr):
+                        if has_top_level_await:
+                            try:
+                                # Execute wrapped code and await it
+                                exec(exec_code, work_ns)
+                                result = await work_ns['__wrapper']()
+                            finally:
+                                # Use a safer way to clean up
+                                work_ns.pop('__wrapper', None)  # Using pop with default value
+                        elif is_async:
+                            # Execute async code
+                            exec(exec_code, work_ns)
+                            if eval_code:
+                                result = await eval(eval_code, work_ns)
+                        else:
+                            # Execute sync code
+                            exec(exec_code, work_ns)
+                            if eval_code:
+                                result = eval(eval_code, work_ns)
+
+                        if result is not None:
+                            work_ns['_'] = result
+
+                except Exception as e:
+                    error = str(e)
+                    tb = traceback.format_exc()
+                    if live_output:
+                        sys.__stderr__.write(f"{error}\n{tb}")
+                    stderr.write(f"{error}\n{tb}")
+
+                finally:
+                    os.chdir(original_dir)
+                    self._execution_count += 1
+                    self.user_ns = work_ns.copy()
+                    if live_output:
+                        stdout_value = stdout_buffer.getvalue()
+                        stderr_value = stderr_buffer.getvalue()
+                    else:
+                        stdout_value = stdout.getvalue()
+                        stderr_value = stderr.getvalue()
+
+                    output = {
+                        'code': code,
+                        'stdout': stdout_value,
+                        'stderr': stderr_value,
+                        'result': result if result else "stdout"
+                    }
+                    self.output_history[self._execution_count] = output
+
+                    if not result:
+                        result = ""
+                    if output['stdout']:
+                        result = f"{result}\nstdout:{output['stdout']}"
+                    if output['stderr']:
+                        result = f"{result}\nstderr:{output['stderr']}"
+
+                    if self.auto_remove:
+                        self.vfs.delete_file(temp_file)
+
+                    return result
 
         except Exception as e:
-            error = str(e)
-            tb = traceback.format_exc()
-            stderr.write(f"{error}\n{tb}")
-
-        finally:
-            self._execution_count += 1
-            d = {
-                'code': code,
-                'stdout': stdout.getvalue(),
-                'stderr': stderr.getvalue(),
-                'result': result if result else "stdout"
-            }
-            self.output_history[self._execution_count] = d
-            if not result:
-                result = ""
-            if d.get('stdout'):
-                result = f"{result}\nstdout:{d.get('stdout')}"
-            if d.get('stderr'):
-                result = f"{result}\nstderr:{d.get('stderr')}"
-            return result
+            error_msg = f"Error executing code: {str(e)}\n{traceback.format_exc()}"
+            if live_output:
+                sys.__stderr__.write(error_msg)
+            return error_msg
 
     def save_session(self, name: str):
-        """Save current session to file"""
+        """Save session with UTF-8 encoding"""
         session_file = self._session_dir / f"{name}.pkl"
         user_ns = self.user_ns.copy()
         output_history = self.output_history.copy()
-        import pickle
+
+        # Ensure all strings are properly encoded
         for key, value in user_ns.items():
             try:
+                if isinstance(value, str):
+                    value = value.encode('utf-8').decode('utf-8')
                 pickle.dumps(value)
             except Exception as e:
                 user_ns[key] = f"not serializable: {str(value)}"
-                continue
+
         for key, value in output_history.items():
             try:
+                if isinstance(value, dict):
+                    for k, v in value.items():
+                        if isinstance(v, str):
+                            value[k] = v.encode('utf-8').decode('utf-8')
                 pickle.dumps(value)
             except Exception as e:
                 output_history[key] = f"not serializable: {str(value)}"
-                continue
+
         session_data = {
             'user_ns': user_ns,
             'output_history': output_history
         }
+
         with open(session_file, 'wb') as f:
             pickle.dump(session_data, f)
 
+        # Save VFS state with UTF-8 encoding
+        vfs_state_file = self._session_dir / f"{name}_vfs.json"
+        with open(vfs_state_file, 'w', encoding='utf-8') as f:
+            json.dump(self.vfs.virtual_files, f, ensure_ascii=False)
+
     def load_session(self, name: str):
-        """Load session from file"""
+        """Load session with UTF-8 encoding"""
         session_file = self._session_dir / f"{name}.pkl"
         if session_file.exists():
             with open(session_file, 'rb') as f:
                 session_data = pickle.load(f)
                 self.user_ns.update(session_data['user_ns'])
                 self.output_history.update(session_data['output_history'])
+
+        # Load VFS state with UTF-8 encoding
+        vfs_state_file = self._session_dir / f"{name}_vfs.json"
+        if vfs_state_file.exists():
+            with open(vfs_state_file, 'r', encoding='utf-8') as f:
+                self.vfs.virtual_files = json.load(f)
 
     def __str__(self):
         """String representation of current session"""
@@ -365,6 +958,28 @@ class MockIPython:
                 output.append(f"Out[{count}]: {data['result']}")
         return "\n".join(output)
 
+
+def super_strip(s: str) -> str:
+    # Remove ANSI escape sequences (e.g. "\x1b[K", "\x1b[...m", etc.)
+    s = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', s)
+
+    # Remove any header text before the first "Episode"
+    episode_index = s.find("Episode")
+    if episode_index != -1:
+        s = s[episode_index:]
+
+    # Split the string into lines (split on newline characters)
+    lines = s.splitlines()
+    processed_lines = []
+    for line in lines:
+        # If the line contains carriage returns,
+        # only keep the text after the last one.
+        if "\r" in line:
+            line = line.split("\r")[-1]
+        processed_lines.append(line)
+
+    # Rejoin the processed lines with newline characters.
+    return "\n".join(processed_lines)
 
 class Pipeline:
     """
@@ -408,11 +1023,12 @@ class Pipeline:
         self,
         agent: Any,
         verbose: bool=False,
-        max_iter: int= 6,
+        max_iter: int= 12,
         variables: Optional[Union[Dict[str, Any], List[Any]]] = None,
         top_n: Optional[bool] = None,
         include_usage: Optional[bool] = None,
         max_think_after_think = None,
+        print_f=None,
     ):
         """
         Initialize the Pipeline.
@@ -425,29 +1041,36 @@ class Pipeline:
             top_n: Limit variable descriptions to top N most used
             include_usage: Include usage statistics in variable descriptions
         """
+
         self.include_usage = include_usage
         self.top_n = top_n
         self.max_iter = max_iter
         self.max_think_after_think = max_think_after_think or max_iter // 2
         self.agent = agent
+        self.agent.verbose = verbose
         self.task = None
-        self.verbose_output = EnhancedVerboseOutput(verbose=verbose)
+        self.verbose_output = EnhancedVerboseOutput(verbose=verbose, print_f=print_f)
         self.variables = self._process_variables(variables or {})
         self.execution_history = []
         self.session_name = None
 
-        _session_dir = Path(get_app().appdata) / 'ChatSession'
-        self.ipython = MockIPython(_session_dir)
-        self.chat_session = ChatSession(agent.memory, space_name=f"ChatSession/Pipeline_{agent.amd.name}", max_length=max_iter)
-        self.process_memory = ChatSession(agent.memory, space_name=f"ChatSession/Process_{agent.amd.name}")
+        _session_dir = Path(get_app().appdata) / 'ChatSession' / agent.amd.name
+        self.ipython = MockIPython(_session_dir, auto_remove=False)
+        self.chat_session = ChatSession(agent.memory, space_name=f"ChatSession/{agent.amd.name}/Pipeline.session", max_length=max_iter)
+        self.process_memory = ChatSession(agent.memory, space_name=f"ChatSession/{agent.amd.name}/Process.session", max_length=max_iter)
 
         # Initialize interpreter with variables
+
+        self.init_keys = list(self.ipython.user_ns.keys()).copy()
         self.ipython.user_ns.update(self.variables)
 
     def on_exit(self):
         self.chat_session.on_exit()
         self.process_memory.on_exit()
         self.save_session(f"Pipeline_Session_{self.agent.amd.name}")
+
+    def restore(self):
+        self.load_session(f"Pipeline_Session_{self.agent.amd.name}")
 
     def save_session(self, name: str):
         """Save current session"""
@@ -461,9 +1084,62 @@ class Pipeline:
 
     @staticmethod
     def _process_variables(variables: Union[Dict[str, Any], List[Any]]) -> Dict[str, Any]:
-        if isinstance(variables, list):
-            return {f"var_{i}": var for i, var in enumerate(variables)}
-        return variables
+        """
+        Process variables to generate meaningful names, using actual variable names where possible.
+        Instances get lowercase names based on their class names.
+
+        Args:
+            variables: Dictionary of variables or list of variables to process
+
+        Returns:
+            Dict[str, Any]: Processed variables with meaningful names
+        """
+        if isinstance(variables, dict):
+            return variables
+
+        processed = {}
+        name_counts = defaultdict(int)
+
+        # Get caller's frame to find variable names
+        caller_frame = currentframe().f_back
+        caller_locals = {**caller_frame.f_locals, **caller_frame.f_globals}
+
+        def find_var_name(obj: Any) -> str:
+            # Find original variable name if exists
+            var_names = [name for name, val in caller_locals.items()
+                         if val is obj and not name.startswith('_')]
+            if var_names:
+                return var_names[0]
+
+            # Special handling for functions
+            if isfunction(obj) or isclass(obj):
+                return obj.__name__
+            # Handle instances
+            elif hasattr(obj, '__class__'):
+                base_name = obj.__class__.__name__.lower()  # Lowercase for instances
+                count = name_counts[base_name]
+                name_counts[base_name] += 1
+                return f"{base_name}_{count + 1}" if count > 0 else base_name
+
+            return type(obj).__name__
+
+        # Process each variable
+        for var in variables:
+            name = find_var_name(var)
+            while name in processed:
+                if name.rpartition('_')[0]:
+                    base, _, num = name.rpartition('_')
+                    try:
+                        num = int(num) + 1
+                        name = f"{base}_{num}"
+                    except ValueError:
+                        name = f"{name}"
+                else:
+                    name = f"{name}"
+
+            processed[name] = var
+
+        return processed
 
     def _generate_variable_descriptions(
         self,
@@ -471,187 +1147,130 @@ class Pipeline:
         include_usage: bool = False
     ) -> str:
         """
-        Generate detailed descriptions of variables for the agent, including instance state.
+        Generate detailed descriptions of variables, showing args, kwargs, docstrings, and return values.
 
         Args:
             top_n: Optional limit to show only top N variables
             include_usage: Whether to include usage statistics
+
+        Returns:
+            str: Formatted variable descriptions in Markdown
         """
         if top_n is None:
             top_n = self.top_n
-        if include_usage is None:
-            include_usage = self.include_usage
 
-        def get_type_info(var: Any) -> str:
-            """Helper to get detailed type information"""
-            if isinstance(var, type):
-                return f"class '{var.__name__}'"
-            elif isinstance(var, BaseModel):
-                return f"Pydantic model '{var.__class__.__name__}'"
-            elif hasattr(var, '__class__'):
-                type_name = var.__class__.__name__
-                module_name = var.__class__.__module__
-                if module_name != 'builtins':
-                    return f"{module_name}.{type_name}"
-                return type_name
-            return type(var).__name__
-
-        def get_instance_state(var: Any) -> Dict[str, Any]:
-            """Helper to get current instance state"""
-            state = {}
-            if hasattr(var, '__dict__'):
-                for attr_name, attr_value in var.__dict__.items():
-                    # Skip private attributes and methods
-                    if not attr_name.startswith('_') and not callable(attr_value):
-                        try:
-                            # Handle basic types directly
-                            if isinstance(attr_value, (int, float, bool, str)):
-                                state[attr_name] = attr_value
-                            # Handle lists, tuples, sets with preview
-                            elif isinstance(attr_value, (list, tuple, set)):
-                                preview = str(list(attr_value)[:5])[:-1] + ", ...]"
-                                state[attr_name] = f"{len(attr_value)} items: {preview}"
-                            # Enhanced dictionary handling
-                            elif isinstance(attr_value, dict):
-                                preview_items = []
-                                for i, (k, v) in enumerate(attr_value.items()):
-                                    if i >= 5:  # Limit to first 5 items
-                                        preview_items.append("...")
-                                        break
-                                    # Format key and value, handling different types
-                                    key_repr = repr(k) if isinstance(k, (
-                                    str, int, float, bool)) else f"<{type(k).__name__}>"
-                                    if isinstance(v, (str, int, float, bool)):
-                                        val_repr = repr(v)
-                                    elif isinstance(v, (list, tuple, set)):
-                                        val_repr = f"<{type(v).__name__}[{len(v)} items]>"
-                                    elif isinstance(v, dict):
-                                        val_repr = f"<dict[{len(v)} items]>"
-                                    else:
-                                        val_repr = f"<{type(v).__name__}>"
-                                    preview_items.append(f"{key_repr}: {val_repr}")
-
-                                preview = ", ".join(preview_items)
-                                state[attr_name] = f"{len(attr_value)} pairs: {{{preview}}}"
-                            # Handle other objects with type info
-                            else:
-                                state[attr_name] = f"<{type(attr_value).__name__}> value: {attr_value}"
-                        except:
-                            state[attr_name] = "<error getting value>"
-            return state
-
-        def get_value_preview(var: Any) -> Optional[str]:
-            """Helper to get a preview of the value"""
+        def format_value_preview(var: Any) -> str:
+            """Format preview of variable contents"""
             try:
                 if isinstance(var, (int, float, bool, str)):
                     return f"`{repr(var)}`"
                 elif isinstance(var, (list, tuple, set)):
-                    items = len(var)
-                    sample = str(list(var)[:3])[:-1] + ", ...]"
-                    return f"{items} items: {sample}"
+                    preview = str(list(var)[:3])[:-1] + ", ...]"
+                    return f"{len(var)} items: {preview}"
                 elif isinstance(var, dict):
-                    items = len(var)
-                    return f"{items} key/value pairs"
-                return None
+                    preview_items = [f"{repr(k)}: {repr(v)}" for k, v in list(var.items())[:3]]
+                    return f"{len(var)} pairs: {{{', '.join(preview_items)}, ...}}"
+                return f"<{type(var).__name__}>"
             except:
-                return None
+                return "<error getting value>"
 
-        # Track usage if requested
+        def get_instance_state(var: Any) -> Dict[str, Any]:
+            """Get current instance state"""
+            state = {}
+            if hasattr(var, '__dict__'):
+                for name, value in var.__dict__.items():
+                    if not name.startswith('_') and not callable(value):
+                        state[name] = format_value_preview(value)
+            return state
+
+        # Process variables
         variables = self.variables.items()
-        if include_usage and hasattr(self, 'execution_history'):
-            usage_counter = Counter()
-            for record in self.execution_history:
-                try:
-                    tree = ast.parse(record.code)
-                    for node in ast.walk(tree):
-                        if isinstance(node, ast.Name):
-                            if node.id in self.variables:
-                                usage_counter[node.id] += 1
-                except:
-                    continue
-
-            if usage_counter:
-                variables = sorted(
-                    variables,
-                    key=lambda x: usage_counter.get(x[0], 0),
-                    reverse=True
-                )
-
-        # Limit to top N if specified
-        if top_n is not None:
+        if top_n:
             variables = list(variables)[:top_n]
 
         descriptions = []
         for name, var in variables:
+            if name in ["PYTHON_EXEC", "toolboxv2", "__name__", "__builtins__", "__file__","__path__", "asyncio"]:
+                continue
+
             desc_parts = [f"### {name}"]
 
-            # Type information
-            type_info = get_type_info(var)
-            desc_parts.append(f"**Type:** `{type_info}`")
+            # Handle different types
+            if isinstance(var, type):  # Class
+                desc_parts.append(f"**Type:** `class '{var.__name__}'`")
+                if var.__doc__:
+                    desc_parts.append(f"**Documentation:**\n{var.__doc__.strip()}")
 
-            # Value preview
-            preview = get_value_preview(var)
-            if preview:
-                desc_parts.append(f"**Value:** {preview}")
+                # Show methods
+                methods = []
+                for attr_name, attr in var.__dict__.items():
+                    if (not attr_name.startswith('_') or attr_name == "__init__") and (isfunction(attr) or ismethod(attr)):
+                        try:
+                            sig = signature(attr)
+                            is_a = asyncio.iscoroutinefunction(var)
+                            methods.append(f"- `{attr_name}{sig}` Async: `{is_a}")
+                            if attr.__doc__:
+                                r = attr.__doc__.split('\n')[0]
+                                methods.append(f"  {r}")
+                        except:
+                            methods.append(f"- `{attr_name}()`")
+                if methods:
+                    desc_parts.append("**Methods:**\n" + "\n".join(methods))
 
-            # Instance state (current values)
-            if not isinstance(var, type):  # Only for instances, not classes
-                instance_state = get_instance_state(var)
-                if instance_state:
-                    desc_parts.append("**Current Instance State:**")
-                    for attr_name, attr_value in instance_state.items():
-                        desc_parts.append(f"- `{attr_name}` = {attr_value}")
+            elif isfunction(var) or ismethod(var):  # Function
+                try:
+                    sig = signature(var)
+                    desc_parts.append(f"**Signature:** `{var.__name__}{sig}`")
+                    is_a = asyncio.iscoroutinefunction(var)
+                    desc_parts.append(f"**IS Async:** `{is_a}`")
+                    if var.__doc__:
+                        desc_parts.append(f"**Documentation:**\n{var.__doc__.strip()}")
+                    ret_anno = sig.return_annotation
+                    if ret_anno != Signature.empty:
+                        desc_parts.append(f"**Returns:** `{ret_anno}`")
+                except:
+                    desc_parts.append(f"**Function:** `{var.__name__}()`")
 
-            # Get docstring if available
-            if hasattr(var, '__doc__') and var.__doc__:
-                doc = var.__doc__.strip()
-                desc_parts.append(f"**Documentation:**\n{doc}")
-
-            # Handle class instances
-            if hasattr(var, '__class__'):
-                # Get class docstring if different from instance docstring
-                class_doc = getdoc(var.__class__)
-                instance_doc = getdoc(var)
-                if class_doc and class_doc != instance_doc:
-                    desc_parts.append(f"**Class Documentation:**\n{class_doc}")
-
-                # Get method information
-                if hasattr(var, '__dict__'):
-                    methods = []
-                    for attr_name, attr_value in var.__dict__.items():
-                        if isfunction(attr_value) or ismethod(attr_value):
-                            try:
-                                sig = signature(attr_value)
-                                methods.append(f"- `{attr_name}{sig}`")
-                                # Add method docstring if available
-                                if attr_value.__doc__:
-                                    doc = attr_value.__doc__.strip().split('\n')[0]  # First line only
-                                    methods.append(f"  {doc}")
-                            except ValueError:
-                                methods.append(f"- `{attr_name}()`")
-
-                    if methods:
-                        desc_parts.append("**Methods:**\n" + "\n".join(methods))
-
-            # Handle Pydantic models
-            if isinstance(var, BaseModel):
+            elif isinstance(var, BaseModel):  # Pydantic model
+                desc_parts.append(f"**Type:** Pydantic model '{var.__class__.__name__}'")
                 fields = []
                 for field_name, field in var.model_fields.items():
-                    field_type = field.annotation
-                    if hasattr(field_type, '__name__'):
-                        type_name = field_type.__name__
-                    else:
-                        type_name = str(field_type)
-
-                    # Add current value for the field
-                    current_value = getattr(var, field_name, None)
-                    field_desc = f"- `{field_name}: {type_name}` = {repr(current_value)}"
-                    if field.description:
-                        field_desc += f"\n  {field.description}"
-                    fields.append(field_desc)
-
+                    value = getattr(var, field_name, None)
+                    fields.append(f"- `{field_name}: {field.annotation.__name__}` = {repr(value)}")
                 if fields:
                     desc_parts.append("**Fields:**\n" + "\n".join(fields))
+
+            else:  # Instance
+                class_type = var.__class__
+                desc_parts.append(f"**Type:** `{class_type.__module__}.{class_type.__name__}`")
+
+                # Instance initialization details
+                try:
+                    init = class_type.__init__
+                    sig = signature(init)
+                    params = list(sig.parameters.items())[1:]  # Skip self
+                    if params:
+                        args = []
+                        for name, param in params:
+                            if param.default == param.empty:
+                                args.append(name)
+                            else:
+                                args.append(f"{name}={param.default}")
+                        desc_parts.append(f"**Init Args:** `{', '.join(args)}`")
+                except:
+                    pass
+
+                # Instance state
+                state = get_instance_state(var)
+                if state:
+                    desc_parts.append("**Current instance State:**")
+                    for attr_name, attr_value in state.items():
+                        desc_parts.append(f"- `{attr_name}` = {attr_value}")
+
+                # Documentation
+                doc = getdoc(var) or getdoc(class_type)
+                if doc:
+                    desc_parts.append(f"**Documentation:**\n{doc.strip()}")
 
             descriptions.append("\n".join(desc_parts))
 
@@ -706,12 +1325,18 @@ class Pipeline:
     async def _execute_code(self, code: str) -> ExecutionRecord:
         """Execute code and track results"""
         try:
-            result = self.ipython.run_cell(code)
 
+            result = await self.ipython.run_cell(code, not self.verbose_output.verbose)
+
+            all_keys = list(self.ipython.user_ns.keys())
+
+            new_keys = [key for key in all_keys if key not in self.init_keys]
             # Update pipeline variables from IPython namespace
-            for var_name in self.variables:
-                if var_name in self.ipython.user_ns:
-                    self.variables[var_name] = self.ipython.user_ns[var_name]
+
+            for var_name in new_keys:
+                if var_name.startswith('_'):
+                    continue
+                self.variables[var_name] = self.ipython.user_ns[var_name]
 
             record = ExecutionRecord(code=code, result=result, error=None)
             self.execution_history.append(record)
@@ -726,7 +1351,7 @@ class Pipeline:
         """String representation of pipeline session"""
         return str(self.ipython)
 
-    async def _process_think_result(self, think_result: ThinkResult) -> Tuple[ThinkState,  Optional[ExecutionRecord | str]]:
+    async def _process_think_result(self, think_result: ThinkResult, task:str) -> Tuple[ThinkState,  Optional[ExecutionRecord | str]]:
         """Process the result of agent thinking"""
         if think_result.action == 'brake':
             return ThinkState.BRAKE, think_result.content
@@ -736,7 +1361,7 @@ class Pipeline:
             method_name = think_result.context.get('method_name')
             result = None
             if class_name is not None and method_name is not None:
-                result = await self._handle_method_update(class_name, method_name, think_result.content)
+                result = await self.verbose_output.process(think_result.action, self._handle_method_update(class_name, method_name, think_result.content))
             return ThinkState.THINKING, result
 
         elif think_result.action == 'code':
@@ -751,31 +1376,162 @@ class Pipeline:
             return ThinkState.THINKING, infos
 
         elif think_result.action == 'guide':
-            details = await self.process_memory.get_reference(think_result.content, to_str=True, unified_retrieve=True)
-            plan = await self.agent.a_mini_task(f"Help Guide The next action, details {details}"+ think_result.content)
+            details = await self.process_memory.get_reference(think_result.content, to_str=True)
+            plan = await self.agent.a_mini_task(f"""You are an AI guidance system designed to help determine the next step in a task and provide instructions on how to proceed. Your role is to analyze the given information and offer clear, actionable guidance for the next steps.
+
+First, carefully read and understand the main task:
+<main_task>
+{task}
+</main_task>
+
+Next, review the last thought of the agent, if available:
+<last_thought>
+{think_result.content}
+{think_result.context}
+</last_thought>
+
+Then, examine the processing history, if provided:
+<processing_history>
+{details}
+</processing_history>
+
+To determine the next step and provide guidance, follow these instructions:
+
+1. Analyze the main task, breaking it down into smaller, manageable steps if necessary.
+2. Consider the last thought and processing history to understand the current progress and context.
+3. Identify any gaps, challenges, or areas that need further attention.
+4. Determine the most logical and efficient next step to move the task forward.
+5. Provide clear, concise instructions on how to complete this next step.
+
+When formulating your response, follow this structure:
+
+1. Begin with a brief summary of the current situation, referencing the main task and any relevant information from the last thought or processing history.
+2. Clearly state the next step that should be taken.
+3. Provide detailed instructions on how to complete this step, including any specific techniques, methods, or considerations to keep in mind.
+4. If applicable, mention any potential challenges or pitfalls to be aware of during this step.
+5. Conclude with a brief statement on how this step contributes to the overall progress of the main task.
+
+Format your response using the following sections:
+<summary>
+(Include your summary of the current situation here)
+</summary>
+
+<next_step>
+(State the next step to be taken here)
+</next_step>
+
+<instructions>
+(Provide detailed instructions for completing the next step here)
+</instructions>
+
+<challenges>
+(If applicable, mention potential challenges or pitfalls here)
+</challenges>
+
+<conclusion>
+(Briefly state how this step contributes to overall progress)
+</conclusion>
+
+Remember to be clear, concise, and specific in your guidance. Avoid vague or ambiguous instructions, and provide concrete examples or explanations where necessary.""")
             return ThinkState.THINKING, plan
 
         return ThinkState.THINKING, None
 
-    def execute(self, code:str):
-        return str(self._execute_code(code))
+    async def execute(self, code:str):
+        return str(await self._execute_code(code))
 
     def clear(self):
-        self.chat_session.mem.delete_memory(self.chat_session.space_name)
-        self.chat_session.mem.create_memory(self.chat_session.space_name)
         self.chat_session.history = []
-        self.process_memory.mem.delete_memory(self.chat_session.space_name)
-        self.process_memory.mem.create_memory(self.chat_session.space_name)
         self.process_memory.history = []
         self.execution_history = []
+        self.variables = {}
+        self.ipython.reset()
 
     async def get_process_hint(self, task):
-        return await self.process_memory.get_reference(task, to_str=True), await self.chat_session.get_reference(task, to_str=True, unified_retrieve=True)
+        return await self.process_memory.get_reference(task, to_str=True), await self.chat_session.get_reference(task, to_str=True)
 
-    async def run(self, task) -> PipelineResult:
+    def show_vars(self):
+        self.verbose_output.log_state("VARS", self.variables, override=True)
+
+    async def run(self, task, do_continue=False) -> PipelineResult:
         """Run the pipeline with separated thinking and processing phases"""
         state = ThinkState.THINKING
         result = None
+        if not do_continue:
+            task = self.agent.mini_task(task, "user", f"""You are an AI assistant tasked with refactoring a user-provided task description into a more structured format with context learning and examples. Your goal is to create a comprehensive and well-organized task description that incorporates model flows and potential code fixes.
+
+First, I will provide you with a task description and some example tasks. Please read them carefully:
+
+<existing_globals>
+{self._generate_variable_descriptions()}
+</existing_globals>
+
+<example_tasks>
+Task: Create a simple analysis of a list of numbers
+- Generate a list of 100 random numbers between 1-1000
+- Calculate the mean, median, and standard deviation
+- Create a histogram of the distribution
+- Print all results and display the plot
+
+Task: Create a reinforcement learning (RL) agent to play a simple game
+- Set up an OpenAI Gym environment (e.g., CartPole)
+- Implement a Q-learning or Deep Q-Network (DQN) agent
+- Train the model and optimize hyperparameters
+- Visualize learning progress with reward graphs
+- Save and reload trained models for inference
+- Provide an option to let the trained agent play in real time
+
+Task: Perform edge detection on an image
+- Load an image from a URL or local file
+- Convert the image to grayscale
+- Apply Gaussian blur to reduce noise
+- Use Canny edge detection to extract edges
+- Display the original and processed images side by side
+- Save the output image
+
+Task: Build a basic sentiment analysis system
+- Load a dataset of movie reviews (you can use a small sample)
+- Preprocess the text (remove punctuation, lowercase, etc.)
+- Create a TF-IDF vectorizer
+- Split data into training and testing sets
+- Train a classifier (e.g., Naive Bayes or LogisticRegression)
+- Evaluate performance with accuracy, precision, recall
+- Create a confusion matrix visualization
+- Make predictions on new sample texts
+</example_tasks>
+
+Now, please refactor the given task description using the following guidelines:
+
+1. Analyze the task description and identify the main components and objectives.
+
+2. Structure the refactored task in a similar format to the example tasks, including:
+   - A clear title that summarizes the task
+   - A difficulty level (Easy, Intermediate, Hard, or Super Hard)
+   - A brief introduction to the task's context and purpose
+   - A code block containing step-by-step instructions
+   - A list of required skills, libraries, or technologies
+
+3. Incorporate model flows by breaking down the task into logical steps and explaining the process flow.
+
+4. Include potential code fixes or common pitfalls that users might encounter while working on the task.
+
+5. Add context learning elements by providing brief explanations or resources for key concepts related to the task.
+
+6. Ensure that the refactored task is comprehensive and can stand alone as a learning exercise.
+
+Please provide your refactored task description within <refactored_task> tags. Use appropriate subheadings and formatting to make the description clear and easy to read.
+
+Additional tips:
+- Use markdown formatting for better readability (e.g., ## for subheadings, ``` for code blocks)
+- Include any necessary imports or setup steps
+- Mention any prerequisites or assumed knowledge
+- Suggest potential extensions or variations of the task for further learning
+
+Remember to maintain the original intent and complexity of the task while improving its structure and clarity.""")
+            if '<refactored_task>' in task:
+                task = task.split('<refactored_task>')[1]
+            if '</refactored_task>' in task:
+                task = task.split('</refactored_task>')[0]
         code_follow_up_prompt = f"""
 You are an AI assistant responsible for evaluating task completion and providing feedback on the execution process. Your goal is to determine if a given task has been completed based on the execution result, and to offer insights for future improvements.
 
@@ -804,80 +1560,162 @@ Regardless of task completion status, evaluate the procedure and effectiveness o
 3. Identify errors: Pinpoint any mistakes or inefficiencies in the execution.
 4. Provide recommendations: Suggest improvements for future task executions.
 
-Ensure that your evaluation is thorough, constructive, and provides actionable insights for improving future task executions."""
-        initial_prompt = """
-You are an AI agent designed to perform tasks that involve thinking before and after code iteration. Your goal is to complete the given task while demonstrating a clear thought process throughout the execution.
+tip: enclose mutil line strings property for python eval to function!
 
-Before you begin, here are the available variables for context:
-<available_variables>
+Ensure that your evaluation is thorough, constructive, and provides actionable insights for improving future task executions.
+Add guidance based on the the last execution result\n#RES#||###||#RES#"""
+        code_follow_up_prompt_ = [code_follow_up_prompt]
+        initial_prompt = """
+You are an AI coding agent specializing in iterative development and code refinement, designed to perform tasks that involve thinking. Your goal is to complete the given task while demonstrating a clear thought process throughout the execution.
+SYSTEM STATE:
+<current_state>
+Iteration: #ITER#
+Status: #STATE#
+Last EXECUTION: #EXECUTION#
+</current_state>
+
+ENVIRONMENT:
+<global_variables>
 #LOCALS#
-</available_variables>
+</global_variables>
+
+MEMORY:
+<process_memory>
+#PHINT#
+</process_memory>
+
+<chat_memory>
+#CHINT#
+</chat_memory>
+
+VALIDATION CHECKLIST (Must verify before each action):
+1. ✓ Check existing variables in ENVIRONMENT <global_variables>
+2. ✓ Verify existing functions and classes
+3. ✓ Review current imports
+4. ✓ Confirm method signatures
+5. ✓ Validate state preservation
+
+WORKFLOW STEPS:
+1. Analyze Current State:
+   - Review existing implementations
+   - Check variable values
+   - Verify import statements
+   - Document dependencies
+
+2. Plan Small Change:
+   - ONE modification per step
+   - NO example/simulation functions
+   - Use existing code when possible
+   - Prefer updates over rewrites
+
+3. Execute Change:
+   - Use appropriate action
+   - Maintain existing state
+   - Document modifications
+   - Verify results
 
 You will use a structure called ThinkResult to organize your thoughts and actions.
 For each step of your task, follow this process:
 
-1. Choose an action:
-   - 'code': Write code it will be executed, call functions and print or return vars! most Important action use to think evaluate and write code!
-   - 'method_update': Update a code snippet from the avalabel variables.
-   - 'infos': to get ref's infos form past chat
-   - 'guide': if current step is unclear use 'guide' to help you understand the next step
-   - 'brake': Pause and reassess the situation
-   - 'done': Indicate that the task is complete
+ACTIONS:
+1. 'code':
+   - MUST check #LOCALS# first
+   - NEVER create demo functions
+   - Include 'reason' (max 6 words)
+   - Required: python code in content
+   - Tip: use comments to reason with in the code
 
-2. Execute the action:
-   - If 'code', write the necessary code content must be valid python code (hint: its run in an ipy session as cell!). the context:dict context is a dict and must include only 'reason' as key and value is -> write your Reasoning one 6 words max!
-   - If 'method_update', explain the changes to your approach the context must include 'class_name' and 'method_name'
-   - If 'infos', write the necessary information you seek to content to receive a infos if avalabel
-   - If 'brake', explain why you're pausing and what you need to reassess
-   - If 'done', summarize the completed task and results
+2. 'method_update':
+   - For EXISTING class methods only
+   - Preserve method signature
+   - Required: {context: {'class_name':'class_name', 'method_name':'method_name'}, content: 'what to change!'}
 
-if their is missing of informations try running code to get the infos or break with a user question.
+3. 'infos': Request specific details
+4. 'guide': Get step clarification
+5. 'brake': Pause for assessment
+6. 'done': Summarize changes
 
-<code> example code : start
-x = 1
-y = 2
-x + y # so i can see the result
-x # so i can see x
-y # so i can see y end
-</code>
+CODE CONSTRAINTS:
+1. State Preservation:
+   - ALL variables must persist
+   - ALL functions must remain
+   - ALL classes must be maintained
 
-<process_memory_hints>
-#PHINT#
-</process_memory_hints>
+2. Import Management:
+   - Check #LOCALS# for modules
+   - Use absolute imports
+   - Document new dependencies
 
-<chat_memory_context>
-#CHINT#
-</chat_memory_context>
+3. Function Handling:
+   - NEVER overwrite existing
+   - Use method_update for changes
+   - Preserve signatures
 
-For each step, output your thoughts and actions using the format
-Use the context to begine or do the next step.
-Continue this process until the task is complete. When you've finished the task, use the 'done' action and provide a summary of the results.
+4. Variable Scope:
+   - Maintain existing scope
+   - Check for conflicts
+   - Document state changes
 
-Remember to demonstrate clear reasoning throughout the process and explain your decisions. If you encounter any difficulties or need to make assumptions, clearly state them in your thinking process.
+EXECUTION RULES:
+1. ONE change per step
+2. VERIFY before create
+3. UPDATE don't replace
+4. TEST after each change
+5. DOCUMENT modifications
 
-Begin the task now or to the next step!
-current iteration #ITER#
-current state : #STATE#
-!!DO NOT REPEAT UR ACTIONS!!"""
+Next Action Required:
+1. Review current state
+2. Check existing code
+3. Plan smallest possible change
+4. Execute with state preservation
+
+!!CRITICAL!!
+- NO demo functions
+- NO placeholder  functions
+- USE existing code
+- MUST RUN a Function or use if __name__ == '__main__'
+- THE CODE must call something or end the code with an value!
+- NO INFINIT LOOPS! none breakable while loops ar not allowed, exception ui (closed by user)
+- code is run using exec!
+- do not use !pip ...
+- instead use auto_save_import(package_name, install_method='pip', upgrade=False, quiet=False, version=None, extra_args=None)
+# Demonstrate flexible package import with safe error handling
+│ if __name__ == '__main__':
+│     result = auto_save_import('pandas', version='1.3.0')
+│     if result:
+│         print("Module imported successfully")
+│     else:
+│         print("Module import failed")
+!TIPS!
+- <global_variables> can contain instances and functions you can use in your python code
+- if the function is async you can use top level await
+- if their is missing of informations try running code to get the infos
+- if you got stuck or need assistance break with a question to the user.
+- run functions from <global_variables> using ```name(*args, **kwargs)``` or ```await name(*args, **kwargs)```
+- <global_variables> ar global accessible!
+- if an <global_variables> name is lower lists an redy to use instance
+"""
         p_hint, c_hint = await self.get_process_hint(task)
         initial_prompt = initial_prompt.replace('#PHINT#', p_hint)
         initial_prompt = initial_prompt.replace('#CHINT#', c_hint)
-        print(initial_prompt)
         iter_i = 0
         iter_p = 0
         iter_tat = 0
-        await self.chat_session.add_message({'role': 'user', 'content': task})
+        next_infos = ""
+        if not do_continue:
+            await self.chat_session.add_message({'role': 'user', 'content': task})
+        else:
+            self.restore()
+            await self.chat_session.add_message({'role': 'user', 'content': task})
         # await self.verbose_output.log_message('user', task)
         self.verbose_output.log_header(task)
         while state != ThinkState.DONE:
-            if iter_i > self.max_iter:
-                break
             iter_i += 1
-
+            t0 = time.process_time()
             prompt = initial_prompt.replace('#ITER#', f'{iter_i} max {self.max_iter}')
             prompt = prompt.replace('#STATE#', f'{state.name}')
+            prompt = prompt.replace('#EXECUTION#', f'{next_infos}')  if next_infos else prompt.replace('Last EXECUTION: #EXECUTION#', f'')
             prompt = prompt.replace('#LOCALS#', f'{self._generate_variable_descriptions()}')
-
             self.verbose_output.log_state(state.name, {})
             self.verbose_output.formatter.print_iteration(iter_i, self.max_iter)
             if state == ThinkState.THINKING:
@@ -889,18 +1727,22 @@ current state : #STATE#
 
             if state == ThinkState.THINKING:
                 # Get agent's thoughts
-                think_dict = await self.agent.a_format_class(
+                think_dict = await self.verbose_output.process(state.name, self.agent.a_format_class(
                     ThinkResult,
                     prompt,
-                    message=self.chat_session.get_past_x(self.max_iter*2).copy(),
-                )
+                    message=self.chat_session.get_past_x(self.max_iter*2).copy()+([self.process_memory.history[-1]] if self.process_memory.history else []) ,
+                ))
                 await self.verbose_output.log_think_result(think_dict)
                 think_result = ThinkResult(**think_dict)
-                state, result = await self.verbose_output.process(think_dict.get("action"), self._process_think_result(think_result))
-                await self.chat_session.add_message({'role': 'assistant', 'content': think_result.content})
-                if result and think_result.content[8:-8] != str(result).replace("Output -> ", ""):
+                state, result = await self.verbose_output.process(think_dict.get("action"), self._process_think_result(think_result, task=task))
+                await self.chat_session.add_message({'role': 'assistant', 'content': think_result.content + str(think_result.context)})
+                if result:
                     await self.chat_session.add_message({'role': 'system', 'content': 'Evaluation: '+str(result)})
                     await self.verbose_output.log_message('system', str(result))
+                    code_follow_up_prompt_[0] = code_follow_up_prompt.replace("#RES#", str(result))
+                else:
+                    code_follow_up_prompt_[0] = code_follow_up_prompt.replace("#RES#", str(think_result))
+
 
             elif state == ThinkState.PROCESSING:
                 # Get agent's thoughts
@@ -912,19 +1754,22 @@ current state : #STATE#
                     workflow: str
                     text: str
                 # Format the agent's thoughts into a structured response
-                next_dict = await self.agent.a_format_class(
+                next_dict = await self.verbose_output.process(state.name, self.agent.a_format_class(
                     Next,
-                    code_follow_up_prompt,
+                    code_follow_up_prompt_[0],
                     message=self.chat_session.get_past_x(self.max_iter*2).copy(),
-                )
-                next_infos = json.dumps(next_dict, indent=2)
+                ))
+                next_infos = json.dumps(next_dict)
                 await self.verbose_output.log_process_result(next_dict)
                 await self.process_memory.add_message({'role': 'assistant', 'content': next_infos})
                 iter_p += 1
+                code_follow_up_prompt_[0] = code_follow_up_prompt
                 if not next_dict.get('is_completed', True):
                     state = ThinkState.THINKING
+                    initial_prompt = initial_prompt.replace('#ITER#',f'#ITER#\nresult: {next_dict.get("text", "")}')
                     continue
                 elif next_dict.get('is_completed', False):
+                    result = next_dict.get('text', '')
                     state = ThinkState.DONE
                     continue
                 else:
@@ -932,6 +1777,20 @@ current state : #STATE#
                     break
 
             elif state == ThinkState.BRAKE:
+                break
+
+            if iter_i < self.max_iter:
+                if time.process_time() -t0 < 55:
+                    with Spinner("Prevent rate limit posing for 25s", symbols='+', time_in_s=25, count_down=True):
+                        await asyncio.sleep(25)
+            else:
+                state = ThinkState.BRAKE
+                if isinstance(result, ExecutionRecord):
+                    result = result.result
+                elif isinstance(result, str):
+                    pass
+                else:
+                    result = "Max iterations"
                 break
 
         self.verbose_output.log_state(state.name, {})
@@ -1092,23 +1951,156 @@ report = sync_globals_to_vars(
 
 
 if __name__ == '__main__':
-    agent = get_free_agent("demo", "anthropic/claude-3-haiku-20240307")
+    # agent = get_free_agent("demo", "anthropic/claude-3-haiku-20240307")
+    async def run_code():
+        mock_ipy = MockIPython()
+        mock_ipy.user_ns['VirtualFileSystem'] = VirtualFileSystem
+        # Run async code with top-level await
+        result = await mock_ipy.run_cell("""
+if __name__ == '__main__':
+    x = 1
+        """, live_output=True)
+        result = await mock_ipy.run_cell('''
+import git
+import os
+import pathlib
+from typing import Union, Optional
 
-    __pipeline = Pipeline(
-        agent=agent,
-        task="Enahnce the promt ahnd gud the resoning and refaction mor",
-        variables=[]
-    )
-    # print(str(sync_globals_to_vars(__pipeline, namespace={"Any": Any, "sync_globals_to_vars": sync_globals_to_vars})))
-    final_result = __pipeline.run(True)
-    print(str(__pipeline))
-    print(f"Final variables: {final_result.variables}")
-    print(f"Result: {final_result.result}")
-    print(f"Result: {final_result.message}")
-    for record in final_result.execution_history:
-        print(f"\nCode: {record.code}")
-        print(f"Result: {record.result}")
-        if record.error:
-            print(f"Error: {record.error}")
+class GitVirtualFileSystemAdapter:
+    def __init__(self, virtual_fs):
+        """
+        Initialize GitVirtualFileSystemAdapter with a VirtualFileSystem instance
 
+        Args:
+            virtual_fs (VirtualFileSystem): The virtual file system to extend
+        """
+        self.virtual_fs = virtual_fs
+        self.repo = None
+
+    def clone_remote_repo(self, remote_url: str, local_path: Union[str, pathlib.Path] = None, branch: str = 'main'):
+        """
+        Clone a remote Git repository into the virtual file system
+
+        Args:
+            remote_url (str): URL of the remote Git repository
+            local_path (Union[str, pathlib.Path], optional): Local path to clone into. Defaults to repo name.
+            branch (str, optional): Branch to checkout. Defaults to 'main'.
+
+        Returns:
+            pathlib.Path: Path to the cloned repository
+        """
+        if local_path is None:
+            local_path = os.path.basename(remote_url).replace('.git', '')
+
+        # Ensure directory exists in virtual file system
+        self.virtual_fs.create_directory(local_path)
+
+        # Clone the repository
+        self.repo = git.Repo.clone_from(remote_url, local_path)
+
+        # Checkout specific branch if needed
+        if branch != 'main':
+            self.repo.git.checkout(branch)
+
+        return pathlib.Path(local_path)
+
+    def commit_changes(self, message: str, force: bool = False):
+        """
+        Commit changes to the local repository
+
+        Args:
+            message (str): Commit message
+            force (bool, optional): Force commit even with untracked files. Defaults to False.
+        """
+        if not self.repo:
+            raise ValueError("No repository initialized. Clone a repo first.")
+
+        # Stage all changes
+        if force:
+            self.repo.git.add(A=True)
+        else:
+            self.repo.git.add(update=True)
+
+        # Commit changes
+        self.repo.index.commit(message)
+
+    def push_changes(self, remote: str = 'origin', branch: str = None, force: bool = False):
+        """
+        Push local changes to remote repository
+
+        Args:
+            remote (str, optional): Remote name. Defaults to 'origin'.
+            branch (str, optional): Branch to push. Uses current branch if not specified.
+            force (bool, optional): Force push. Defaults to False.
+        """
+        if not self.repo:
+            raise ValueError("No repository initialized. Clone a repo first.")
+
+        if branch is None:
+            branch = self.repo.active_branch.name
+
+        if force:
+            self.repo.git.push(remote, branch, force=True)
+        else:
+            self.repo.git.push(remote, branch)
+
+    def pull_changes(self, remote: str = 'origin', branch: str = None, force: bool = False):
+        """
+        Pull changes from remote repository
+
+        Args:
+            remote (str, optional): Remote name. Defaults to 'origin'.
+            branch (str, optional): Branch to pull. Uses current branch if not specified.
+            force (bool, optional): Force pull, discarding local changes. Defaults to False.
+        """
+        if not self.repo:
+            raise ValueError("No repository initialized. Clone a repo first.")
+
+        if branch is None:
+            branch = self.repo.active_branch.name
+
+        if force:
+            self.repo.git.fetch(remote)
+            self.repo.git.reset(f'{remote}/{branch}', hard=True)
+        else:
+            self.repo.git.pull(remote, branch)
+
+    def get_repo_overview(self) -> dict:
+        """
+        Provide an overview of the current repository for LLM context
+
+        Returns:
+            dict: Repository overview with key details
+        """
+        if not self.repo:
+            return {"status": "No repository initialized"}
+
+        return {
+            "active_branch": self.repo.active_branch.name,
+            "remote_urls": {rem.name: rem.url for rem in self.repo.remotes},
+            "uncommitted_changes": len(self.repo.index.diff(self.repo.head.commit)) if self.repo.head.is_valid() else 0,
+            "untracked_files": len(self.repo.untracked_files)
+        }
+
+# Optionally demonstrate basic usage
+if __name__ == '__main__':
+    vfs = VirtualFileSystem('.')
+    git_adapter = GitVirtualFileSystemAdapter(vfs)
+
+    # Example workflow (uncomment and modify as needed)
+    # repo_path = git_adapter.clone_remote_repo('https://github.com/example/repo.git')
+    # git_adapter.commit_changes('Initial commit')
+    # git_adapter.push_changes()
+''', live_output=False)
+
+        print("Result:", result)
+
+
+    # Run the async function
+    asyncio.run(run_code())
+
+    #asd = "Evaluation: Output -> \nstdout:Episode 0: Total Reward = 35.0, Epsilon = 0.98\n\r⣾ code | 0.04\x1b[K\r⣽ code | 0.15\x1b[K\r⣻ code | 0.26\x1b[K\r⢿ code | 0.37\x1b[KEpisode 50: Total Reward = 10.0, Epsilon = 0.06\n\r⡿ code | 0.48\x1b[K\r⣟ code | 0.59\x1b[K\r⣯ code | 0.70\x1b[K\r⣷ code | 0.81\x1b[K\r⣾ code | 0.92\x1b[K\r⣽ code | 1.03\x1b[K\r⣻ code | 1.14\x1b[K\r⢿ code | 1.25\x1b[K\r⡿ code | 1.37\x1b[K\r⣟ code | 1.47\x1b[K\r⣯ code | 1.58\x1b[K\r⣷ code | 1.70\x1b[K\r⣾ code | 1.81\x1b[K\r⣽ code | 1.92\x1b[K\r⣻ code | 2.03\x1b[KEpisode 100: Total Reward = 58.0, Epsilon = 0.01\n\r⢿ code | 2.14\x1b[K\r⡿ code | 2.25\x1b[K\r⣟ code | 2.36\x1b[K\r⣯ code | 2.47\x1b[K\r⣷ code | 2.58\x1b[K\r⣾ code | 2.69\x1b[K\r⣽ code | 2.80\x1b[K\r⣻ code | 2.91\x1b[K\r⢿ code | 3.02\x1b[K\r⡿ code | 3.13\x1b[K\r⣟ code | 3.24\x1b[K\r⣯ code | 3.35\x1b[K\r⣷ code | 3.46\x1b[K\r⣾ code | 3.57\x1b[K\r⣽ code | 3.68\x1b[K\r⣻ code | 3.79\x1b[K\r⢿ code | 3.90\x1b[K\r⡿ code | 4.01\x1b[K\r⣟ code | 4.12\x1b[K\r⣯ code | 4.23\x1b[K\r⣷ code | 4.34\x1b[K\r⣾ code | 4.45\x1b[K\r⣽ code | 4.56\x1b[K\r⣻ code | 4.67\x1b[K\r⢿ code | 4.79\x1b[K\r⡿ code | 4.90\x1b[K\r⣟ code | 5.01\x1b[K\r⣯ code | 5.12\x1b[K\r⣷ code | 5.23\x1b[K\r⣾ code | 5.34\x1b[K\r⣽ code | 5.45\x1b[K\r⣻ code | 5.56\x1b[K\r⢿ code | 5.67\x1b[K\r⡿ code | 5.78\x1b[K\r⣟ code | 5.89\x1b[K\r⣯ code | 6.00\x1b[K\r⣷ code | 6.11\x1b[K\r⣾ code | 6.22\x1b[K\r⣽ code | 6.32\x1b[K\r⣻ code | 6.42\x1b[K\r⢿ code | 6.53\x1b[K\r⡿ code | 6.64\x1b[K\r⣟ code | 6.75\x1b[K\r⣯ code | 6.86\x1b[K\r⣷ code | 6.97\x1b[K\r⣾ code | 7.08\x1b[K\r⣽ code | 7.19\x1b[K\r⣻ code | 7.30\x1b[K\r⢿ code | 7.41\x1b[K\r⡿ code | 7.52\x1b[K\r⣟ code | 7.63\x1b[K\r⣯ code | 7.74\x1b[K\r⣷ code | 7.85\x1b[KEpisode 150: Total Reward = 200.0, Epsilon = 0.01\n\r⣾ code | 7.96\x1b[K\r⣽ code | 8.07\x1b[K\r⣻ code | 8.18\x1b[K\r⢿ code | 8.29\x1b[K\r⡿ code | 8.40\x1b[K\r⣟ code | 8.51\x1b[K\r⣯ code | 8.62\x1b[K\r⣷ code | 8.73\x1b[K\r⣾ code | 8.84\x1b[K\r⣽ code | 8.95\x1b[K\r⣻ code | 9.07\x1b[K\r⢿ code | 9.18\x1b[K\r⡿ code | 9.29\x1b[K\r⣟ code | 9.40\x1b[K\r⣯ code | 9.51\x1b[K\r⣷ code | 9.61\x1b[K\r⣾ code | 9.72\x1b[K\r⣽ code | 9.84\x1b[K\r⣻ code | 9.94\x1b[K\r⢿ code | 10.04\x1b[K\r⡿ code | 10.15\x1b[K\r⣟ code | 10.26\x1b[K\r⣯ code | 10.37\x1b[K\r⣷ code | 10.48\x1b[K\r⣾ code | 10.59\x1b[K\r⣽ code | 10.71\x1b[K\r⣻ code | 10.81\x1b[K\r⢿ code | 10.92\x1b[K\r⡿ code | 11.03\x1b[K\r⣟ code | 11.15\x1b[K\r⣯ code | 11.26\x1b[K\r⣷ code | 11.37\x1b[K\r⣾ code | 11.48\x1b[K\r⣽ code | 11.59\x1b[K\r⣻ code | 11.70\x1b[K\r⢿ code | 11.81\x1b[K\r⡿ code | 11.92\x1b[K\r⣟ code | 12.03\x1b[K\r⣯ code | 12.14\x1b[K\r⣷ code | 12.25\x1b[K\r⣾ code | 12.36\x1b[K\r⣽ code | 12.47\x1b[K\r⣻ code | 12.57\x1b[K\r⢿ code | 12.67\x1b[K\r⡿ code | 12.77\x1b[K\r⣟ code | 12.87\x1b[K\r⣯ code | 12.98\x1b[K\r⣷ code | 13.08\x1b[K\r⣾ code | 13.19\x1b[K\r⣽ code | 13.29\x1b[K\r⣻ code | 13.39\x1b[K\r⢿ code | 13.51\x1b[K\r⡿ code | 13.61\x1b[K\r⣟ code | 13.71\x1b[K\r⣯ code | 13.83\x1b[K\r⣷ code | 13.93\x1b[K\r⣾ code | 14.04\x1b[K\r⣽ code | 14.14\x1b[K\r⣻ code | 14.24\x1b[K\r⢿ code | 14.36\x1b[K\r⡿ code | 14.46\x1b[K\r⣟ code | 14.56\x1b[K\r⣯ code | 14.66\x1b[K\r⣷ code | 14.78\x1b[K\r⣾ code | 14.88\x1b[K\r⣽ code | 14.98\x1b[K\r⣻ code | 15.08\x1b[K\r⢿ code | 15.18\x1b[K\r⡿ code | 15.28\x1b[K\r⣟ code | 15.39\x1b[K\r⣯ code | 15.50\x1b[K\r⣷ code | 15.60\x1b[K\r⣾ code | 15.70\x1b[K\r⣽ code | 15.80\x1b[K\r⣻ code | 15.90\x1b[K\r⢿ code | 16.01\x1b[K\r⡿ code | 16.11\x1b[K\r⣟ code | 16.21\x1b[K\r⣯ code | 16.33\x1b[K\r⣷ code | 16.43\x1b[K\r⣾ code | 16.53\x1b[K\r⣽ code | 16.65\x1b[K\r⣻ code | 16.75\x1b[KEpisode 200: Total Reward = 200.0, Epsilon = 0.01\n\r⢿ code | 16.86\x1b[K\r⡿ code | 16.96\x1b[K\r⣟ code | 17.06\x1b[K\r⣯ code | 17.16\x1b[K\r⣷ code | 17.28\x1b[K\r⣾ code | 17.38\x1b[K\r⣽ code | 17.50\x1b[K\r⣻ code | 17.60\x1b[K\r⢿ code | 17.70\x1b[K\r⡿ code | 17.80\x1b[K\r⣟ code | 17.90\x1b[K\r⣯ code | 18.01\x1b[K\r⣷ code | 18.11\x1b[K\r⣾ code | 18.21\x1b[K\r⣽ code | 18.33\x1b[K\r⣻ code | 18.43\x1b[K\r⢿ code | 18.53\x1b[K\r⡿ code | 18.63\x1b[K\r⣟ code | 18.73\x1b[K\r⣯ code | 18.85\x1b[K\r⣷ code | 18.95\x1b[K\r⣾ code | 19.06\x1b[K\r⣽ code | 19.16\x1b[K\r⣻ code | 19.27\x1b[K\r⢿ code | 19.38\x1b[K\r⡿ code | 19.48\x1b[K\r⣟ code | 19.58\x1b[K\r⣯ code | 19.70\x1b[K\r⣷ code | 19.80\x1b[K\r⣾ code | 19.90\x1b[K\r⣽ code | 20.00\x1b[K\r⣻ code | 20.12\x1b[K\r⢿ code | 20.22\x1b[K\r⡿ code | 20.32\x1b[K\r⣟ code | 20.42\x1b[K\r⣯ code | 20.53\x1b[K\r⣷ code | 20.63\x1b[K\r⣾ code | 20.75\x1b[K\r⣽ code | 20.85\x1b[K\r⣻ code | 20.95\x1b[K\r⢿ code | 21.07\x1b[K\r⡿ code | 21.17\x1b[K\r⣟ code | 21.27\x1b[K\r⣯ code | 21.38\x1b[K\r⣷ code | 21.48\x1b[K\r⣾ code | 21.59\x1b[K\r⣽ code | 21.70\x1b[K\r⣻ code | 21.80\x1b[K\r⢿ code | 21.90\x1b[K\r⡿ code | 22.00\x1b[K\r⣟ code | 22.12\x1b[K\r⣯ code | 22.22\x1b[K\r⣷ code | 22.32\x1b[K\r⣾ code | 22.43\x1b[K\r⣽ code | 22.53\x1b[K\r⣻ code | 22.64\x1b[K\r⢿ code | 22.74\x1b[K\r⡿ code | 22.84\x1b[K\r⣟ code | 22.95\x1b[K\r⣯ code | 23.05\x1b[K\r⣷ code | 23.15\x1b[K\r⣾ code | 23.25\x1b[K\r⣽ code | 23.37\x1b[K\r⣻ code | 23.47\x1b[K\r⢿ code | 23.57\x1b[K\r⡿ code | 23.67\x1b[K\r⣟ code | 23.79\x1b[K\r⣯ code | 23.89\x1b[K\r⣷ code | 24.00\x1b[K\r⣾ code | 24.10\x1b[K\r⣽ code | 24.20\x1b[K\r⣻ code | 24.32\x1b[K\r⢿ code | 24.42\x1b[K\r⡿ code | 24.54\x1b[K\r⣟ code | 24.64\x1b[K\r⣯ code | 24.74\x1b[K\r⣷ code | 24.85\x1b[K\r⣾ code | 24.97\x1b[K\r⣽ code | 25.07\x1b[K\r⣻ code | 25.17\x1b[K\r⢿ code | 25.29\x1b[K\r⡿ code | 25.39\x1b[K\r⣟ code | 25.49\x1b[K\r⣯ code | 25.60\x1b[K\r⣷ code | 25.71\x1b[K\r⣾ code | 25.81\x1b[K\r⣽ code | 25.91\x1b[K\r⣻ code | 26.02\x1b[K\r⢿ code | 26.12\x1b[K\r⡿ code | 26.24\x1b[K\r⣟ code | 26.34\x1b[K\r⣯ code | 26.44\x1b[K\r⣷ code | 26.54\x1b[K\r⣾ code | 26.66\x1b[KEpisode 250: Total Reward = 200.0, Epsilon = 0.01\n\r⣽ code | 26.76\x1b[K\r⣻ code | 26.87\x1b[K\r⢿ code | 26.97\x1b[K\r⡿ code | 27.07\x1b[K\r⣟ code | 27.17\x1b[K\r⣯ code | 27.27\x1b[K\r⣷ code | 27.37\x1b[K\r⣾ code | 27.49\x1b[K\r⣽ code | 27.59\x1b[K\r⣻ code | 27.71\x1b[K\r⢿ code | 27.81\x1b[K\r⡿ code | 27.92\x1b[K\r⣟ code | 28.02\x1b[K\r⣯ code | 28.12\x1b[K\r⣷ code | 28.22\x1b[K\r⣾ code | 28.32\x1b[K\r⣽ code | 28.42\x1b[K\r⣻ code | 28.53\x1b[K\r⢿ code | 28.64\x1b[K\r⡿ code | 28.74\x1b[K\r⣟ code | 28.86\x1b[K\r⣯ code | 28.96\x1b[K\r⣷ code | 29.06\x1b[K\r⣾ code | 29.17\x1b[K\r⣽ code | 29.28\x1b[K\r⣻ code | 29.38\x1b[K\r⢿ code | 29.48\x1b[K\r⡿ code | 29.58\x1b[K\r⣟ code | 29.69\x1b[K\r⣯ code | 29.79\x1b[K\r⣷ code | 29.91\x1b[K\r⣾ code | 30.01\x1b[K\r⣽ code | 30.11\x1b[K\r⣻ code | 30.22\x1b[K\r⢿ code | 30.33\x1b[K\r⡿ code | 30.44\x1b[K\r⣟ code | 30.54\x1b[K\r⣯ code | 30.64\x1b[K\r⣷ code | 30.76\x1b[K\r⣾ code | 30.86\x1b[K\r⣽ code | 30.96\x1b[K\r⣻ code | 31.06\x1b[K\r⢿ code | 31.16\x1b[K\r⡿ code | 31.28\x1b[K\r⣟ code | 31.39\x1b[K\r⣯ code | 31.49\x1b[K\r⣷ code | 31.60\x1b[K\r⣾ code | 31.70\x1b[K\r⣽ code | 31.80\x1b[K\r⣻ code | 31.90\x1b[K\r⢿ code | 32.01\x1b[K\r⡿ code | 32.13\x1b[K\r⣟ code | 32.24\x1b[K\r⣯ code | 32.34\x1b[K\r⣷ code | 32.44\x1b[K\r⣾ code | 32.55\x1b[K\r⣽ code | 32.66\x1b[K\r⣻ code | 32.77\x1b[K\r⢿ code | 32.88\x1b[K\r⡿ code | 32.99\x1b[K\r⣟ code | 33.10\x1b[K\r⣯ code | 33.21\x1b[K\r⣷ code | 33.32\x1b[K\r⣾ code | 33.43\x1b[K\r⣽ code | 33.54\x1b[K\r⣻ code | 33.65\x1b[K\r⢿ code | 33.75\x1b[K\r⡿ code | 33.86\x1b[K\r⣟ code | 33.96\x1b[K\r⣯ code | 34.06\x1b[K\r⣷ code | 34.18\x1b[K\r⣾ code | 34.28\x1b[K\r⣽ code | 34.40\x1b[K\r⣻ code | 34.51\x1b[K\r⢿ code | 34.61\x1b[K\r⡿ code | 34.71\x1b[K\r⣟ code | 34.82\x1b[K\r⣯ code | 34.92\x1b[K\r⣷ code | 35.03\x1b[K\r⣾ code | 35.14\x1b[K\r⣽ code | 35.25\x1b[K\r⣻ code | 35.36\x1b[K\r⢿ code | 35.47\x1b[K\r⡿ code | 35.58\x1b[K\r⣟ code | 35.69\x1b[K\r⣯ code | 35.80\x1b[K\r⣷ code | 35.90\x1b[K\r⣾ code | 36.01\x1b[K\r⣽ code | 36.12\x1b[K\r⣻ code | 36.22\x1b[K\r⢿ code | 36.33\x1b[K\r⡿ code | 36.43\x1b[K\r⣟ code | 36.53\x1b[K\r⣯ code | 36.65\x1b[K\r⣷ code | 36.75\x1b[K\r⣾ code | 36.85\x1b[K\r⣽ code | 36.95\x1b[K\r⣻ code | 37.07\x1b[K\r⢿ code | 37.18\x1b[K\r⡿ code | 37.28\x1b[K\r⣟ code | 37.38\x1b[K\r⣯ code | 37.50\x1b[K\r⣷ code | 37.60\x1b[K\r⣾ code | 37.72\x1b[KEpisode 300: Total Reward = 200.0, Epsilon = 0.01\n\r⣽ code | 37.82\x1b[K\r⣻ code | 37.93\x1b[K\r⢿ code | 38.05\x1b[K\r⡿ code | 38.15\x1b[K\r⣟ code | 38.27\x1b[K\r⣯ code | 38.37\x1b[K\r⣷ code | 38.47\x1b[K\r⣾ code | 38.57\x1b[K\r⣽ code | 38.67\x1b[K\r⣻ code | 38.77\x1b[K\r⢿ code | 38.87\x1b[K\r⡿ code | 38.98\x1b[K\r⣟ code | 39.09\x1b[K\r⣯ code | 39.20\x1b[K\r⣷ code | 39.32\x1b[K\r⣾ code | 39.42\x1b[K\r⣽ code | 39.52\x1b[K\r⣻ code | 39.64\x1b[K\r⢿ code | 39.74\x1b[K\r⡿ code | 39.84\x1b[K\r⣟ code | 39.94\x1b[K\r⣯ code | 40.04\x1b[K\r⣷ code | 40.14\x1b[K\r⣾ code | 40.24\x1b[K\r⣽ code | 40.35\x1b[K\r⣻ code | 40.45\x1b[K\r⢿ code | 40.55\x1b[K\r⡿ code | 40.65\x1b[K\r⣟ code | 40.77\x1b[K\r⣯ code | 40.87\x1b[K\r⣷ code | 40.99\x1b[K\r⣾ code | 41.09\x1b[K\r⣽ code | 41.19\x1b[K\r⣻ code | 41.30\x1b[K\r⢿ code | 41.41\x1b[K\r⡿ code | 41.52\x1b[K\r⣟ code | 41.62\x1b[K\r⣯ code | 41.72\x1b[K\r⣷ code | 41.84\x1b[K\r⣾ code | 41.94\x1b[K\r⣽ code | 42.04\x1b[K\r⣻ code | 42.15\x1b[K\r⢿ code | 42.26\x1b[K\r⡿ code | 42.36\x1b[K\r⣟ code | 42.47\x1b[K\r⣯ code | 42.57\x1b[K\r⣷ code | 42.67\x1b[K\r⣾ code | 42.77\x1b[K\r⣽ code | 42.89\x1b[K\r⣻ code | 42.99\x1b[K\r⢿ code | 43.09\x1b[K\r⡿ code | 43.21\x1b[K\r⣟ code | 43.31\x1b[K\r⣯ code | 43.41\x1b[K\r⣷ code | 43.52\x1b[K\r⣾ code | 43.62\x1b[K\r⣽ code | 43.74\x1b[K\r⣻ code | 43.84\x1b[K\r⢿ code | 43.95\x1b[K\r⡿ code | 44.06\x1b[K\r⣟ code | 44.16\x1b[K\r⣯ code | 44.27\x1b[K\r⣷ code | 44.37\x1b[K\r⣾ code | 44.49\x1b[K\r⣽ code | 44.59\x1b[K\r⣻ code | 44.69\x1b[K\r⢿ code | 44.81\x1b[K\r⡿ code | 44.91\x1b[K\r⣟ code | 45.02\x1b[K\r⣯ code | 45.13\x1b[K\r⣷ code | 45.24\x1b[K\r⣾ code | 45.36\x1b[K\r⣽ code | 45.47\x1b[K\r⣻ code | 45.58\x1b[K\r⢿ code | 45.69\x1b[K\r⡿ code | 45.80\x1b[K\r⣟ code | 45.91\x1b[K\r⣯ code | 46.01\x1b[K\r⣷ code | 46.11\x1b[K\r⣾ code | 46.23\x1b[K\r⣽ code | 46.33\x1b[K\r⣻ code | 46.44\x1b[K\r⢿ code | 46.56\x1b[K\r⡿ code | 46.66\x1b[K\r⣟ code | 46.76\x1b[K\r⣯ code | 46.88\x1b[K\r⣷ code | 46.98\x1b[K\r⣾ code | 47.09\x1b[K\r⣽ code | 47.21\x1b[K\r⣻ code | 47.31\x1b[K\r⢿ code | 47.41\x1b[K\r⡿ code | 47.53\x1b[K\r⣟ code | 47.63\x1b[K\r⣯ code | 47.74\x1b[K\r⣷ code | 47.85\x1b[K\r⣾ code | 47.96\x1b[K\r⣽ code | 48.06\x1b[K\r⣻ code | 48.16\x1b[K\r⢿ code | 48.26\x1b[K\r⡿ code | 48.37\x1b[K\r⣟ code | 48.48\x1b[K\r⣯ code | 48.59\x1b[K\r⣷ code | 48.70\x1b[K\r⣾ code | 48.81\x1b[K\r⣽ code | 48.92\x1b[K\r⣻ code | 49.03\x1b[K\r⢿ code | 49.13\x1b[K\r⡿ code | 49.24\x1b[K\r⣟ code | 49.35\x1b[K\r⣯ code | 49.45\x1b[K\r⣷ code | 49.56\x1b[K\r⣾ code | 49.66\x1b[K\r⣽ code | 49.76\x1b[K\r⣻ code | 49.88\x1b[K\r⢿ code | 49.99\x1b[K\r⡿ code | 50.09\x1b[K\r⣟ code | 50.21\x1b[K\r⣯ code | 50.32\x1b[KEpisode 350: Total Reward = 200.0, Epsilon = 0.01\n\r⣷ code | 50.43\x1b[K\r⣾ code | 50.54\x1b[K\r⣽ code | 50.65\x1b[K\r⣻ code | 50.75\x1b[K\r⢿ code | 50.86\x1b[K\r⡿ code | 50.96\x1b[K\r⣟ code | 51.08\x1b[K\r⣯ code | 51.18\x1b[K\r⣷ code | 51.28\x1b[K\r⣾ code | 51.38\x1b[K\r⣽ code | 51.50\x1b[K\r⣻ code | 51.60\x1b[K\r⢿ code | 51.71\x1b[K\r⡿ code | 51.81\x1b[K\r⣟ code | 51.92\x1b[K\r⣯ code | 52.02\x1b[K\r⣷ code | 52.13\x1b[K\r⣾ code | 52.23\x1b[K\r⣽ code | 52.33\x1b[K\r⣻ code | 52.43\x1b[K\r⢿ code | 52.53\x1b[K\r⡿ code | 52.65\x1b[K\r⣟ code | 52.75\x1b[K\r⣯ code | 52.85\x1b[K\r⣷ code | 52.97\x1b[K\r⣾ code | 53.07\x1b[K\r⣽ code | 53.18\x1b[K\r⣻ code | 53.29\x1b[K\r⢿ code | 53.40\x1b[K\r⡿ code | 53.51\x1b[K\r⣟ code | 53.62\x1b[K\r⣯ code | 53.73\x1b[K\r⣷ code | 53.84\x1b[K\r⣾ code | 53.95\x1b[K\r⣽ code | 54.05\x1b[K\r⣻ code | 54.15\x1b[K\r⢿ code | 54.27\x1b[K\r⡿ code | 54.37\x1b[K\r⣟ code | 54.48\x1b[K\r⣯ code | 54.58\x1b[K\r⣷ code | 54.69\x1b[K\r⣾ code | 54.80\x1b[K\r⣽ code | 54.90\x1b[K\r⣻ code | 55.02\x1b[K\r⢿ code | 55.12\x1b[K\r⡿ code | 55.22\x1b[K\r⣟ code | 55.33\x1b[K\r⣯ code | 55.44\x1b[K\r⣷ code | 55.54\x1b[K\r⣾ code | 55.64\x1b[K\r⣽ code | 55.74\x1b[K\r⣻ code | 55.84\x1b[K\r⢿ code | 55.94\x1b[K\r⡿ code | 56.04\x1b[K\r⣟ code | 56.15\x1b[K\r⣯ code | 56.25\x1b[K\r⣷ code | 56.35\x1b[K\r⣾ code | 56.47\x1b[K\r⣽ code | 56.57\x1b[K\r⣻ code | 56.67\x1b[K\r⢿ code | 56.79\x1b[K\r⡿ code | 56.89\x1b[K\r⣟ code | 56.99\x1b[K\r⣯ code | 57.09\x1b[K\r⣷ code | 57.20\x1b[K\r⣾ code | 57.30\x1b[K\r⣽ code | 57.42\x1b[K\r⣻ code | 57.52\x1b[K\r⢿ code | 57.64\x1b[K\r⡿ code | 57.74\x1b[K\r⣟ code | 57.84\x1b[K\r⣯ code | 57.95\x1b[K\r⣷ code | 58.05\x1b[K\r⣾ code | 58.16\x1b[K\r⣽ code | 58.27\x1b[K\r⣻ code | 58.37\x1b[K\r⢿ code | 58.47\x1b[K\r⡿ code | 58.57\x1b[K\r⣟ code | 58.67\x1b[K\r⣯ code | 58.79\x1b[K\r⣷ code | 58.89\x1b[K\r⣾ code | 59.01\x1b[K\r⣽ code | 59.11\x1b[K\r⣻ code | 59.21\x1b[K\r⢿ code | 59.36\x1b[K\r⡿ code | 59.48\x1b[K\r⣟ code | 59.59\x1b[K\r⣯ code | 59.69\x1b[K\r⣷ code | 59.81\x1b[K\r⣾ code | 59.91\x1b[K\r⣽ code | 60.02\x1b[K\r⣻ code | 60.14\x1b[K\r⢿ code | 60.24\x1b[K\r⡿ code | 60.36\x1b[K\r⣟ code | 60.46\x1b[K\r⣯ code | 60.56\x1b[K\r⣷ code | 60.67\x1b[K\r⣾ code | 60.78\x1b[K\r⣽ code | 60.89\x1b[K\r⣻ code | 60.99\x1b[K\r⢿ code | 61.11\x1b[K\r⡿ code | 61.22\x1b[K\r⣟ code | 61.33\x1b[K\r⣯ code | 61.44\x1b[K\r⣷ code | 61.54\x1b[K\r⣾ code | 61.66\x1b[K\r⣽ code | 61.76\x1b[K\r⣻ code | 61.86\x1b[K\r⢿ code | 61.98\x1b[K\r⡿ code | 62.08\x1b[K\r⣟ code | 62.19\x1b[K\r⣯ code | 62.31\x1b[K\r⣷ code | 62.41\x1b[K\r⣾ code | 62.51\x1b[K\r⣽ code | 62.63\x1b[K\r⣻ code | 62.74\x1b[K\r⢿ code | 62.86\x1b[K\r⡿ code | 62.96\x1b[K\r⣟ code | 63.07\x1b[K\r⣯ code | 63.18\x1b[K\r⣷ code | 63.29\x1b[K\r⣾ code | 63.41\x1b[K\r⣽ code | 63.51\x1b[K\r⣻ code | 63.63\x1b[K\r⢿ code | 63.73\x1b[K\r⡿ code | 63.83\x1b[K\r⣟ code | 63.93\x1b[K\r⣯ code | 64.04\x1b[K\r⣷ code | 64.15\x1b[K\r⣾ code | 64.26\x1b[K\r⣽ code | 64.36\x1b[K\r⣻ code | 64.48\x1b[K\r⢿ code | 64.58\x1b[K\r⡿ code | 64.68\x1b[K\r⣟ code | 64.80\x1b[K\r⣯ code | 64.91\x1b[K\r⣷ code | 65.01\x1b[K\r⣾ code | 65.11\x1b[KEpisode 400: Total Reward = 200.0, Epsilon = 0.01\n\r⣽ code | 65.21\x1b[K\r⣻ code | 65.34\x1b[K\r⢿ code | 65.45\x1b[K\r⡿ code | 65.57\x1b[K\r⣟ code | 65.68\x1b[K\r⣯ code | 65.80\x1b[K\r⣷ code | 65.90\x1b[K\r⣾ code | 66.00\x1b[K\r⣽ code | 66.10\x1b[K\r⣻ code | 66.23\x1b[K\r⢿ code | 66.33\x1b[K\r⡿ code | 66.45\x1b[K\r⣟ code | 66.55\x1b[K\r⣯ code | 66.65\x1b[K\r⣷ code | 66.76\x1b[K\r⣾ code | 66.88\x1b[K\r⣽ code | 66.98\x1b[K\r⣻ code | 67.08\x1b[K\r⢿ code | 67.20\x1b[K\r⡿ code | 67.30\x1b[K\r⣟ code | 67.41\x1b[K\r⣯ code | 67.52\x1b[K\r⣷ code | 67.63\x1b[K\r⣾ code | 67.73\x1b[K\r⣽ code | 67.83\x1b[K\r⣻ code | 67.95\x1b[K\r⢿ code | 68.05\x1b[K\r⡿ code | 68.16\x1b[K\r⣟ code | 68.27\x1b[K\r⣯ code | 68.38\x1b[K\r⣷ code | 68.48\x1b[K\r⣾ code | 68.60\x1b[K\r⣽ code | 68.70\x1b[K\r⣻ code | 68.82\x1b[K\r⢿ code | 68.92\x1b[K\r⡿ code | 69.03\x1b[K\r⣟ code | 69.13\x1b[K\r⣯ code | 69.23\x1b[K\r⣷ code | 69.34\x1b[K\r⣾ code | 69.46\x1b[K\r⣽ code | 69.60\x1b[K\r⣻ code | 69.70\x1b[K\r⢿ code | 69.82\x1b[K\r⡿ code | 69.93\x1b[K\r⣟ code | 70.03\x1b[K\r⣯ code | 70.13\x1b[K\r⣷ code | 70.23\x1b[K\r⣾ code | 70.35\x1b[K\r⣽ code | 70.45\x1b[K\r⣻ code | 70.57\x1b[K\r⢿ code | 70.67\x1b[K\r⡿ code | 70.77\x1b[K\r⣟ code | 70.87\x1b[K\r⣯ code | 70.98\x1b[K\r⣷ code | 71.09\x1b[K\r⣾ code | 71.23\x1b[K\r⣽ code | 71.33\x1b[K\r⣻ code | 71.44\x1b[K\r⢿ code | 71.55\x1b[K\r⡿ code | 71.65\x1b[K\r⣟ code | 71.77\x1b[K\r⣯ code | 71.89\x1b[K\r⣷ code | 72.05\x1b[K\r⣾ code | 72.15\x1b[K\r⣽ code | 72.27\x1b[K\r⣻ code | 72.37\x1b[K\r⢿ code | 72.49\x1b[K\r⡿ code | 72.59\x1b[K\r⣟ code | 72.70\x1b[K\r⣯ code | 72.80\x1b[K\r⣷ code | 72.92\x1b[K\r⣾ code | 73.02\x1b[K\r⣽ code | 73.14\x1b[K\r⣻ code | 73.24\x1b[K\r⢿ code | 73.34\x1b[K\r⡿ code | 73.45\x1b[K\r⣟ code | 73.55\x1b[K\r⣯ code | 73.66\x1b[K\r⣷ code | 73.77\x1b[K\r⣾ code | 73.87\x1b[K\r⣽ code | 73.99\x1b[K\r⣻ code | 74.09\x1b[K\r⢿ code | 74.19\x1b[K\r⡿ code | 74.30\x1b[K\r⣟ code | 74.40\x1b[K\r⣯ code | 74.51\x1b[K\r⣷ code | 74.62\x1b[K\r⣾ code | 74.72\x1b[K\r⣽ code | 74.86\x1b[K\r⣻ code | 74.98\x1b[K\r⢿ code | 75.09\x1b[K\r⡿ code | 75.19\x1b[K\r⣟ code | 75.29\x1b[K\r⣯ code | 75.40\x1b[K\r⣷ code | 75.50\x1b[K\r⣾ code | 75.61\x1b[K\r⣽ code | 75.72\x1b[K\r⣻ code | 75.84\x1b[K\r⢿ code | 75.95\x1b[K\r⡿ code | 76.08\x1b[K\r⣟ code | 76.19\x1b[K\r⣯ code | 76.30\x1b[K\r⣷ code | 76.41\x1b[K\r⣾ code | 76.52\x1b[K\r⣽ code | 76.64\x1b[K\r⣻ code | 76.75\x1b[K\r⢿ code | 76.86\x1b[K\r⡿ code | 76.97\x1b[K\r⣟ code | 77.08\x1b[K\r⣯ code | 77.19\x1b[K\r⣷ code | 77.31\x1b[K\r⣾ code | 77.43\x1b[K\r⣽ code | 77.54\x1b[K\r⣻ code | 77.65\x1b[K\r⢿ code | 77.76\x1b[K\r⡿ code | 77.87\x1b[K\r⣟ code | 77.98\x1b[K\r⣯ code | 78.09\x1b[K\r⣷ code | 78.20\x1b[K\r⣾ code | 78.31\x1b[K\r⣽ code | 78.42\x1b[K\r⣻ code | 78.53\x1b[K\r⢿ code | 78.64\x1b[K\r⡿ code | 78.75\x1b[K\r⣟ code | 78.86\x1b[K\r⣯ code | 78.97\x1b[K\r⣷ code | 79.08\x1b[K\r⣾ code | 79.19\x1b[K\r⣽ code | 79.30\x1b[K\r⣻ code | 79.41\x1b[K\r⢿ code | 79.52\x1b[K\r⡿ code | 79.63\x1b[K\r⣟ code | 79.75\x1b[K\r⣯ code | 79.88\x1b[K\r⣷ code | 79.98\x1b[K\r⣾ code | 80.09\x1b[K\r⣽ code | 80.20\x1b[K\r⣻ code | 80.31\x1b[K\r⢿ code | 80.44\x1b[K\r⡿ code | 80.56\x1b[K\r⣟ code | 80.66\x1b[K\r⣯ code | 80.77\x1b[K\r⣷ code | 80.88\x1b[K\r⣾ code | 80.99\x1b[K\r⣽ code | 81.10\x1b[K\r⣻ code | 81.21\x1b[K\r⢿ code | 81.32\x1b[K\r⡿ code | 81.43\x1b[K\r⣟ code | 81.54\x1b[K\r⣯ code | 81.65\x1b[K\r⣷ code | 81.76\x1b[K\r⣾ code | 81.87\x1b[K\r⣽ code | 81.98\x1b[K\r⣻ code | 82.09\x1b[K\r⢿ code | 82.20\x1b[K\r⡿ code | 82.31\x1b[K\r⣟ code | 82.42\x1b[K\r⣯ code | 82.53\x1b[K\r⣷ code | 82.65\x1b[KEpisode 450: Total Reward = 200.0, Epsilon = 0.01\n\r⣾ code | 82.78\x1b[K\r⣽ code | 82.90\x1b[K\r⣻ code | 83.01\x1b[K\r⢿ code | 83.12\x1b[K\r⡿ code | 83.23\x1b[K\r⣟ code | 83.34\x1b[K\r⣯ code | 83.45\x1b[K\r⣷ code | 83.56\x1b[K\r⣾ code | 83.72\x1b[K\r⣽ code | 83.83\x1b[K\r⣻ code | 83.94\x1b[K\r⢿ code | 84.05\x1b[K\r⡿ code | 84.16\x1b[K\r⣟ code | 84.27\x1b[K\r⣯ code | 84.38\x1b[K\r⣷ code | 84.49\x1b[K\r⣾ code | 84.60\x1b[K\r⣽ code | 84.71\x1b[K\r⣻ code | 84.82\x1b[K\r⢿ code | 84.93\x1b[K\r⡿ code | 85.08\x1b[K\r⣟ code | 85.19\x1b[K\r⣯ code | 85.34\x1b[K\r⣷ code | 85.45\x1b[K\r⣾ code | 85.56\x1b[K\r⣽ code | 85.67\x1b[K\r⣻ code | 85.78\x1b[K\r⢿ code | 85.89\x1b[K\r⡿ code | 86.00\x1b[K\r⣟ code | 86.10\x1b[K\r⣯ code | 86.20\x1b[K\r⣷ code | 86.30\x1b[K\r⣾ code | 86.40\x1b[K\r⣽ code | 86.52\x1b[K\r⣻ code | 86.62\x1b[K\r⢿ code | 86.72\x1b[K\r⡿ code | 86.83\x1b[K\r⣟ code | 86.93\x1b[K\r⣯ code | 87.04\x1b[K\r⣷ code | 87.15\x1b[K\r⣾ code | 87.25\x1b[K\r⣽ code | 87.35\x1b[K\r⣻ code | 87.47\x1b[K\r⢿ code | 87.57\x1b[K\r⡿ code | 87.68\x1b[K\r⣟ code | 87.79\x1b[K\r⣯ code | 87.90\x1b[K\r⣷ code | 88.00\x1b[K\r⣾ code | 88.12\x1b[K\r⣽ code | 88.22\x1b[K\r⣻ code | 88.34\x1b[K\r⢿ code | 88.44\x1b[K\r⡿ code | 88.55\x1b[K\r⣟ code | 88.65\x1b[K\r⣯ code | 88.77\x1b[K\r⣷ code | 88.87\x1b[K\r⣾ code | 88.99\x1b[K\r⣽ code | 89.09\x1b[K\r⣻ code | 89.19\x1b[K\r⢿ code | 89.29\x1b[K\r⡿ code | 89.40\x1b[K\r⣟ code | 89.52\x1b[K\r⣯ code | 89.62\x1b[K\r⣷ code | 89.74\x1b[K\r⣾ code | 89.84\x1b[K\r⣽ code | 89.95\x1b[K\r⣻ code | 90.06\x1b[K\r⢿ code | 90.16\x1b[K\r⡿ code | 90.27\x1b[K\r⣟ code | 90.37\x1b[K\r⣯ code | 90.48\x1b[K\r⣷ code | 90.60\x1b[K\r⣾ code | 90.71\x1b[K\r⣽ code | 90.82\x1b[K\r⣻ code | 90.92\x1b[K\r⢿ code | 91.04\x1b[K\r⡿ code | 91.14\x1b[K\r⣟ code | 91.24\x1b[K\r⣯ code | 91.36\x1b[K\r⣷ code | 91.46\x1b[K\r⣾ code | 91.56\x1b[K\r⣽ code | 91.67\x1b[K\r⣻ code | 91.77\x1b[K\r⢿ code | 91.87\x1b[K\r⡿ code | 91.97\x1b[K\r⣟ code | 92.09\x1b[K\r⣯ code | 92.19\x1b[K\r⣷ code | 92.29\x1b[K\r⣾ code | 92.41\x1b[K\r⣽ code | 92.51\x1b[K\r⣻ code | 92.61\x1b[K\r⢿ code | 92.71\x1b[K\r⡿ code | 92.82\x1b[K\r⣟ code | 92.92\x1b[K\r⣯ code | 93.05\x1b[K\r⣷ code | 93.16\x1b[K\r⣾ code | 93.28\x1b[K\r⣽ code | 93.39\x1b[K\r⣻ code | 93.51\x1b[K\r⢿ code | 93.61\x1b[K\r⡿ code | 93.71\x1b[K\r⣟ code | 93.82\x1b[K\r⣯ code | 93.93\x1b[K\r⣷ code | 94.03\x1b[K\r⣾ code | 94.13\x1b[K\r⣽ code | 94.24\x1b[K\r⣻ code | 94.34\x1b[K\r⢿ code | 94.46\x1b[K\r⡿ code | 94.56\x1b[K\r⣟ code | 94.68\x1b[K\r⣯ code | 94.78\x1b[K\r⣷ code | 94.89\x1b[K\r⣾ code | 94.99\x1b[K\r⣽ code | 95.11\x1b[K\r⣻ code | 95.21\x1b[K\r⢿ code | 95.31\x1b[K\r⡿ code | 95.43\x1b[K\r⣟ code | 95.53\x1b[K\r⣯ code | 95.63\x1b[K\r⣷ code | 95.74\x1b[K\r⣾ code | 95.84\x1b[K\r⣽ code | 95.94\x1b[K\r⣻ code | 96.04\x1b[K\r⢿ code | 96.16\x1b[K\r⡿ code | 96.26\x1b[K\r⣟ code | 96.36\x1b[K\r⣯ code | 96.46\x1b[K\r⣷ code | 96.58\x1b[K\r⣾ code | 96.68\x1b[K\r⣽ code | 96.78\x1b[K\r⣻ code | 96.88\x1b[K\r⢿ code | 96.99\x1b[K\r⡿ code | 97.10\x1b[K\r⣟ code | 97.20\x1b[K\r⣯ code | 97.31\x1b[K\r⣷ code | 97.41\x1b[K\r⣾ code | 97.51\x1b[K\r⣽ code | 97.63\x1b[K\r⣻ code | 97.73\x1b[K\r⢿ code | 97.85\x1b[K\r⡿ code | 97.95\x1b[K\r⣟ code | 98.06\x1b[K\r⣯ code | 98.16\x1b[K\r⣷ code | 98.28\x1b[K\r⣾ code | 98.38\x1b[K\r⣽ code | 98.48\x1b[K\r⣻ code | 98.60\x1b[K\r⢿ code | 98.70\x1b[K\r⡿ code | 98.80\x1b[K\r⣟ code | 98.90\x1b[K\r⣯ code | 99.01\x1b[K\r⣷ code | 99.11\x1b[K\r⣾ code | 99.23\x1b[K\r⣽ code | 99.33\x1b[K\r⣻ code | 99.45\x1b[K\r⢿ code | 99.55\x1b[K\r⡿ code | 99.65\x1b[K\r⣟ code | 99.76\x1b[K\r⣯ code | 99.87\x1b[K\r⣷ code | 99.98\x1b[K\r⣾ code | 100.08\x1b[K\r⣽ code | 100.18\x1b[K\r⣻ code | 100.30\x1b[K\r⢿ code | 100.40\x1b[K\r⡿ code | 100.50\x1b[K\r⣟ code | 100.60\x1b[K\r⣯ code | 100.72\x1b[K\r⣷ code | 100.82\x1b[K\r⣾ code | 100.92\x1b[K\r⣽ code | 101.03\x1b[K\r⣻ code | 101.13\x1b[K\r⢿ code | 101.23\x1b[K\r⡿ code | 101.33\x1b[K\r⣟ code | 101.45\x1b[K\r⣯ code | 101.55\x1b[K\r⣷ code | 101.65\x1b[K\r⣾ code | 101.76\x1b[K\r⣽ code | 101.87\x1b[K\r⣻ code | 101.98\x1b[K\r⢿ code | 102.08\x1b[K\r⡿ code | 102.18\x1b[K\r⣟ code | 102.30\x1b[K\r⣯ code | 102.40\x1b[K\r⣷ code | 102.50\x1b[K\r⣾ code | 102.62\x1b[K\r⣽ code | 102.72\x1b[K\r⣻ code | 102.83\x1b[K\r⢿ code | 102.93\x1b[K\r⡿ code | 103.04\x1b[K\r⣟ code | 103.15\x1b[K\r⣯ code | 103.25\x1b[K\r⣷ code | 103.35\x1b[K\r⣾ code | 103.47\x1b[K\r⣽ code | 103.57\x1b[K\r⣻ code | 103.67\x1b[K\r⢿ code | 103.78\x1b[K\r⡿ code | 103.89\x1b[K\r⣟ code | 103.99\x1b[K\r⣯ code | 104.10\x1b[K\r⣷ code | 104.20\x1b[K\r⣾ code | 104.30\x1b[K\r⣽ code | 104.40\x1b[K\r⣻ code | 104.50\x1b[K\r⢿ code | 104.62\x1b[K\r⡿ code | 104.72\x1b[K\r⣟ code | 104.82\x1b[K\r⣯ code | 104.92\x1b[K\r⣷ code | 105.02\x1b[K\r⣾ code | 105.13\x1b[K\r⣽ code | 105.24\x1b[K\r⣻ code | 105.35\x1b[K\r⢿ code | 105.45\x1b[K\r⡿ code | 105.55\x1b[K\r⣟ code | 105.65\x1b[K\r⣯ code | 105.75\x1b[K\r⣷ code | 105.85\x1b[K\r⣾ code | 105.95\x1b[K\r⣽ code | 106.05\x1b[K\r⣻ code | 106.17\x1b[K\r⢿ code | 106.27\x1b[K\r⡿ code | 106.39\x1b[K\r⣟ code | 106.49\x1b[K\r⣯ code | 106.59\x1b[K\r⣷ code | 106.69\x1b[K\r⣾ code | 106.80\x1b[K\r⣽ code | 106.90\x1b[K\r⣻ code | 107.01\x1b[K\r⢿ code | 107.11\x1b[K\r⡿ code | 107.22\x1b[K\r⣟ code | 107.32\x1b[K\r⣯ code | 107.42\x1b[K\r⣷ code | 107.52\x1b[K\r⣾ code | 107.64\x1b[K\r⣽ code | 107.74\x1b[K\r⣻ code | 107.85\x1b[K\r⢿ code | 107.96\x1b[K\r⡿ code | 108.06\x1b[K\r⣟ code | 108.17\x1b[K\r⣯ code | 108.27\x1b[K\r⣷ code | 108.37\x1b[K\r⣾ code | 108.49\x1b[K\r⣽ code | 108.59\x1b[K\r⣻ code | 108.69\x1b[K\r⢿ code | 108.79\x1b[K\r⡿ code | 108.91\x1b[K\r⣟ code | 109.01\x1b[K\r⣯ code | 109.11\x1b[K\r⣷ code | 109.22\x1b[K\r⣾ code | 109.33\x1b[K\r⣽ code | 109.44\x1b[K\r⣻ code | 109.54\x1b[K\r⢿ code | 109.64\x1b[K\r⡿ code | 109.74\x1b[K\r⣟ code | 109.84\x1b[K\r⣯ code | 109.94\x1b[K\r⣷ code | 110.06\x1b[K\r⣾ code | 110.16\x1b[K\r⣽ code | 110.27\x1b[K\r⣻ code | 110.38\x1b[K\r⢿ code | 110.48\x1b[K\r⡿ code | 110.58\x1b[K\r⣟ code | 110.69\x1b[K\nstderr:<string>:51: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at C:\\actions-runner\\_work\\pytorch\\pytorch\\builder\\windows\\pytorch\\torch\\csrc\\utils\\tensor_new.cpp:281.)\n"
+    #cleaned_result = super_strip(asd)
+    #print(type(cleaned_result), len(asd), len(cleaned_result))
+    #print(cleaned_result)
 

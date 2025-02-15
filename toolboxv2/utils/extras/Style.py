@@ -434,9 +434,16 @@ import threading
 import os
 
 
+import sys
+import time
+import threading
+import signal
+import itertools
+
 class SpinnerManager:
     """
-    Manages multiple spinners to ensure tqdm-like line rendering
+    Manages multiple spinners to ensure tqdm-like line rendering.
+    Automatically captures SIGINT (Ctrl+C) to stop all spinners.
     """
     _instance = None
 
@@ -447,22 +454,32 @@ class SpinnerManager:
         return cls._instance
 
     def _init_manager(self):
-        """Initialize spinner management resources"""
+        """Initialize spinner management resources and register SIGINT handler."""
         self._spinners = []
         self._lock = threading.Lock()
         self._render_thread = None
         self._should_run = False
+        signal.signal(signal.SIGINT, self._signal_handler)
+
+    def _signal_handler(self, signum, frame):
+        """Handle SIGINT by stopping all spinners gracefully."""
+        with self._lock:
+            for spinner in self._spinners:
+                spinner.running = False
+            self._spinners.clear()
+        self._should_run = False
+        sys.stdout.write("\r\033[K")  # Clear the spinner's line.
+        sys.stdout.flush()
+        sys.exit(0)
 
     def register_spinner(self, spinner):
-        """Register a new spinner"""
+        """Register a new spinner."""
         with self._lock:
-            # First spinner defines the rendering line
+            # First spinner defines the rendering line.
             if not self._spinners:
                 spinner._is_primary = True
-
             self._spinners.append(spinner)
-
-            # Start rendering if not already running
+            # Start rendering if not already running.
             if not self._should_run:
                 self._should_run = True
                 self._render_thread = threading.Thread(
@@ -472,27 +489,27 @@ class SpinnerManager:
                 self._render_thread.start()
 
     def unregister_spinner(self, spinner):
-        """Unregister a completed spinner"""
+        """Unregister a completed spinner."""
         with self._lock:
             if spinner in self._spinners:
                 self._spinners.remove(spinner)
 
     def _render_loop(self):
-        """Continuous rendering loop for all active spinners"""
+        """Continuous rendering loop for all active spinners."""
         while self._should_run:
             if not self._spinners:
                 self._should_run = False
                 break
 
             with self._lock:
-                # Find primary spinner (first registered)
+                # Find primary spinner (first registered).
                 primary_spinner = next((s for s in self._spinners if s._is_primary), None)
 
                 if primary_spinner and primary_spinner.running:
-                    # Render in the same line
+                    # Render in the same line.
                     render_line = primary_spinner._generate_render_line()
 
-                    # Append additional spinner info if multiple exist
+                    # Append additional spinner info if multiple exist.
                     if len(self._spinners) > 1:
                         secondary_info = " | ".join(
                             s._generate_secondary_info()
@@ -501,16 +518,15 @@ class SpinnerManager:
                         )
                         render_line += f" [{secondary_info}]"
 
-                    # Clear line and write
+                    # Clear line and write.
                     sys.stdout.write("\r" + render_line + "\033[K")
                     sys.stdout.flush()
 
-            time.sleep(0.1)  # Render interval
-
+            time.sleep(0.1)  # Render interval.
 
 class Spinner:
     """
-    Enhanced Spinner with tqdm-like line rendering
+    Enhanced Spinner with tqdm-like line rendering.
     """
     SYMBOL_SETS = {
         "c": ["◐", "◓", "◑", "◒"],
@@ -530,16 +546,16 @@ class Spinner:
         count_down: bool = False,
         time_in_s: float = 0
     ):
-        """Initialize spinner with flexible configuration"""
-        # Resolve symbol set
+        """Initialize spinner with flexible configuration."""
+        # Resolve symbol set.
         if isinstance(symbols, str):
             symbols = self.SYMBOL_SETS.get(symbols, None)
 
-        # Default symbols if not provided
+        # Default symbols if not provided.
         if symbols is None:
             symbols = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
-        # Test mode symbol set
+        # Test mode symbol set.
         if 'unittest' in sys.argv[0]:
             symbols = ['#', '=', '-']
 
@@ -551,16 +567,15 @@ class Spinner:
         self.max_t = time_in_s
         self.contd = count_down
 
-        # Rendering management
+        # Rendering management.
         self._is_primary = False
         self._start_time = 0
 
-        # Central manager
+        # Central manager.
         self.manager = SpinnerManager()
 
     def _generate_render_line(self):
-        """Generate the primary render line"""
-        # Calculate time
+        """Generate the primary render line."""
         current_time = time.time()
         if self.contd:
             remaining = max(0, self.max_t - (current_time - self._start_time))
@@ -568,28 +583,25 @@ class Spinner:
         else:
             time_display = f"{current_time - self._start_time:.2f}"
 
-        # Generate spinner symbol
         symbol = next(self.spinner)
-
         return f"{symbol} {self.message} | {time_display}"
 
     def _generate_secondary_info(self):
-        """Generate secondary spinner info for additional spinners"""
+        """Generate secondary spinner info for additional spinners."""
         return f"{self.message}"
 
     def __enter__(self):
-        """Start the spinner"""
+        """Start the spinner."""
         self.running = True
         self._start_time = time.time()
         self.manager.register_spinner(self)
         return self
 
     def __exit__(self, exc_type, exc_value, exc_traceback):
-        """Stop the spinner"""
+        """Stop the spinner."""
         self.running = False
         self.manager.unregister_spinner(self)
-
-        # Clear the spinner's line if it was the primary spinner
+        # Clear the spinner's line if it was the primary spinner.
         if self._is_primary:
             sys.stdout.write("\r\033[K")
             sys.stdout.flush()
