@@ -131,6 +131,7 @@ class Tools(MainTool, FileHandler):
                        "DEFAULTMODEL0": "ollama/llama3.1",
                        "DEFAULT_AUDIO_MODEL": "groq/whisper-large-v3-turbo",
                        "DEFAULTMODEL1": "ollama/llama3.1",
+                       "DEFAULTMODELST": "ollama/llama3.1",
                        "DEFAULTMODEL2": "ollama/llama3.1",
                        "DEFAULTMODELCODE": "ollama/llama3.1",
                        "DEFAULTMODELSUMMERY": "ollama/llama3.1",
@@ -466,6 +467,7 @@ class Tools(MainTool, FileHandler):
         self.config['PINECONE_API_ENV'] = os.getenv('PINECONE_API_ENV')
 
     def load_keys_from_env(self):
+        self.config['DEFAULTMODELST'] = os.getenv("DEFAULTMODELST", "ollama/llama3.1")
         self.config['DEFAULTMODEL0'] = os.getenv("DEFAULTMODEL0", "ollama/llama3.1")
         self.config['DEFAULTMODEL1'] = os.getenv("DEFAULTMODEL1", "ollama/llama3.1")
         self.config['DEFAULTMODEL2'] = os.getenv("DEFAULTMODEL2", "ollama/llama3.1")
@@ -654,8 +656,6 @@ class Tools(MainTool, FileHandler):
         mem = self.get_memory()
         tools = {}
 
-        agent_builder.set_amd_model(self.config['DEFAULTMODEL1'])
-
         agent_builder.set_memory(mem).set_amd_stop_sequence(["QUERY:", "...\n"])  # .set_trim(Trims.isaa)
 
         if self.default_setter is not None:
@@ -803,7 +803,7 @@ class Tools(MainTool, FileHandler):
                                                                          " and accurate as possible."}
 
         if name == "think":
-            agent_builder.set_amd_model(self.config['DEFAULTMODEL0'])
+            agent_builder.set_amd_model(self.config['DEFAULTMODELST'])
             # .stop_sequence = ["\n\n\n"]
 
         if "shell" in name:
@@ -846,6 +846,8 @@ class Tools(MainTool, FileHandler):
             "memorySearch": {"func": lambda x: memory_search(x),
                              "description": "Search for similar memory input <context>"}, }}
 
+        if agent_builder.amd_attributes.get('model') is None:
+            agent_builder.set_amd_model(self.config['DEFAULTMODEL2'])
         llm_functions = self.tools_to_llm_functions(tools)
         agent_builder.set_functions(llm_functions)
         os.makedirs(f".data/{get_app('isaa-get-agent').id}/Agents/", exist_ok=True)
@@ -977,7 +979,7 @@ class Tools(MainTool, FileHandler):
 
     def short_prompt_messages(self, messages, get_tokens, max_tokens, prompt_token_margin=20):
         prompt_len = get_tokens(messages)
-        max_tokens = int(max_tokens * 1.2)
+        max_tokens *= 0.985
         if prompt_len <= max_tokens - prompt_token_margin:
             return messages
 
@@ -985,45 +987,49 @@ class Tools(MainTool, FileHandler):
 
         # Pre-process first and last messages if they're too long
         first_message = messages[0]
+        if len(messages) == 1:
+            first_message['content'] = self.mas_text_summaries(first_message['content'])
+            return [first_message]
+
         last_message = messages[-1]
 
         first_message_tokens = get_tokens([first_message])
         last_message_tokens = get_tokens([last_message])
 
-        if len(messages) == 1 and first_message_tokens > max_tokens:
+        if first_message_tokens > max_tokens // 2:
             first_message['content'] = self.mas_text_summaries(first_message['content'])
 
         if last_message_tokens > max_tokens // 2:
             last_message['content'] = self.mas_text_summaries(last_message['content'],
                                                               ref=first_message['content'][:260])
+        if len(messages) == 2:
+            return [first_message] + [last_message]
 
         # Keep first and last messages intact
-        shortened_messages = [first_message]
         middle_messages = messages[1:-1]
 
         all_content = "\n".join([msg['content'] for msg in middle_messages])
 
-        dilated_content = self.mas_text_summaries(all_content, ref=first_message+last_message)
-        shortened_messages.append({'role': "system", 'content': "History -> "+dilated_content})
+        dilated_content = self.mas_text_summaries(all_content, ref=first_message.get('content', '')+last_message.get('content', ''))
+        new_middle_messages = {'role': "system", 'content': "History -> "+dilated_content}
 
         # Check if we're within token limit
-        if get_tokens(shortened_messages + [last_message]) <= max_tokens - prompt_token_margin:
-            return shortened_messages + [last_message]
+        if get_tokens([first_message]+ [new_middle_messages] + [last_message]) <= max_tokens - prompt_token_margin:
+            return [first_message]+ [new_middle_messages] + [last_message]
 
-        middle_message = shortened_messages.pop(-1)
         # Final attempt: Use summarization
-        middle_message['content'] = dilate_string(middle_message['content'], "\n", 2, 1)
-        shortened_messages.append(middle_message)
+        new_middle_messages['content'] = dilate_string(new_middle_messages['content'], "\n", 2, 1)
 
         # Ensure we're within token limit
-        final_messages = [first_message] + [middle_message] + [last_message]
+        final_messages = [first_message] + [new_middle_messages] + [last_message]
         if get_tokens(final_messages) > max_tokens - prompt_token_margin:
             # If still too long, truncate the summary
             allowed_length = max_tokens - prompt_token_margin - get_tokens([first_message, last_message])
-            if allowed_length > 0:
+            if 0 < allowed_length < max_tokens // 10:
                 final_messages[1]['content'] = final_messages[1]['content'][:allowed_length]
-            else:
+            elif allowed_length < 0:
                 allowed_length *= -.5
+                allowed_length = int(allowed_length)
                 final_messages[0]['content'] = final_messages[0]['content'][:allowed_length]
                 final_messages[-1]['content'] = final_messages[-1]['content'][allowed_length:]
 

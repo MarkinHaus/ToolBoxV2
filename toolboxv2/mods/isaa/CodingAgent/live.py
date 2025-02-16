@@ -1,3 +1,4 @@
+import fnmatch
 import json
 import pickle
 import shutil
@@ -5,10 +6,12 @@ import sys
 import time
 
 import git
+from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
 
 import toolboxv2
 from toolboxv2 import Style, Spinner, get_app, get_logger
+from toolboxv2.mods.isaa.CodingAgent.web import JSExecutionRecord, BrowserSession, Extractor, BrowserContext, js_prompt
 from toolboxv2.mods.isaa.extras.modes import get_free_agent
 
 from inspect import getdoc, signature, isfunction, ismethod, currentframe, Signature, isclass
@@ -27,7 +30,7 @@ from toolboxv2.mods.isaa.extras.session import ChatSession
 ### ---- Styles ------- ###
 
 from enum import Enum, auto
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 import asyncio
 import nest_asyncio
 import ast
@@ -218,7 +221,7 @@ class MethodUpdate(BaseModel):
 class ThinkResult(BaseModel):
     action: str = Field(..., description="Next action to take: 'code', 'method_update'', 'brake', 'done'")
     content: str = Field(..., description="Content related to the action")
-    context: Optional[Dict] = Field(default_factory=dict, description="Additional context for the action")
+    context: Optional[Dict[str, str | int | float | bool | Dict[str, str | int | float | bool ]]] = Field(default_factory=dict, description="Additional context for the action")
 
 
 @dataclass
@@ -296,6 +299,8 @@ class VirtualFileSystem:
         """Create a new directory"""
         abs_path = self._resolve_path(dirpath)
         abs_path.mkdir(parents=True, exist_ok=True)
+        return abs_path
+
 
     def list_directory(self, dirpath: Union[str, Path] = '.') -> list:
         """List contents of a directory"""
@@ -619,8 +624,22 @@ def auto_save_import(package_name, install_method='pip', upgrade=False, quiet=Fa
         # Package not found, prepare for installation
         print(f"Package '{package_name}' not found. Attempting to install...")
         try:
+            # Determine Python executable based on virtual environment
+            venv_path = os.environ.get('VIRTUAL_ENV')
+            if venv_path:
+                venv_path = Path(venv_path)
+                if sys.platform == 'win32':
+                    python_exec = str(venv_path / 'Scripts' / 'python.exe')
+                else:
+                    python_exec = str(venv_path / 'bin' / 'python')
+                # Check if the Python executable exists
+                if not Path(python_exec).exists():
+                    python_exec = sys.executable
+            else:
+                python_exec = sys.executable
+
             # Construct installation command with more flexibility
-            install_cmd = [sys.executable, "-m", install_method, "install"]
+            install_cmd = [python_exec, "-m", install_method, "install"]
             if upgrade:
                 install_cmd.append("--upgrade")
             # Support specific version installation
@@ -709,6 +728,7 @@ class MockIPython:
             '__path__': [str(self.vfs.current_dir)],
             'open': self._virtual_open,
             'auto_save_import': auto_save_import,
+            'modify_code': self.modify_code,
         }
         self.output_history.clear()
         self._execution_count = 0
@@ -739,9 +759,15 @@ class MockIPython:
                 # Wrap code in async function
                 wrapped_code = "async def __wrapper():\n"
                 wrapped_code += "    global result\n"  # Allow writing to global scope
+                # add try:
+                wrapped_code +="    try:"
                 # Indent the original code
-                wrapped_code += "\n".join(f"    {line}" for line in code.splitlines())
+                wrapped_code += "\n".join(f"        {line}" for line in code.splitlines())
                 # Add return statement for last expression
+                wrapped_code +="    except Exception as e:"
+                wrapped_code +="        import traceback"
+                wrapped_code +="        print(traceback.format_exc())"
+                wrapped_code +="        raise e"
                 if isinstance(tree.body[-1], ast.Expr):
                     wrapped_code += "\n    return result"
 
@@ -809,16 +835,29 @@ class MockIPython:
             stderr = io.StringIO()
 
         try:
-            temp_file = self.vfs.write_file(
-                f'.temp/_temp_{self._execution_count}.py',
-                code
-            )
-            work_ns = self.user_ns.copy()
-            work_ns['__file__'] = str(temp_file)
+            # Check if a file is already specified
+            original_file = self.user_ns.get('__file__')
+            if original_file is None:
+                # Create temp file if no file specified
+                temp_file = self.vfs.write_file(
+                    f'.src/temp/_temp_{self._execution_count}.py',
+                    code
+                )
+                work_ns = self.user_ns.copy()
+                work_ns['__file__'] = str(temp_file)
+            else:
+                # Use existing file
+                temp_file = Path(original_file)
+                # Write code to the existing file
+                self.vfs.write_file(temp_file, code)
+                work_ns = self.user_ns.copy()
+
             work_ns['__builtins__'] = __builtins__
             with VirtualEnvContext(self._venv_path) as python_exec:
                 try:
-                    exec_code, eval_code, is_async, has_top_level_await = self._parse_code(code.encode('utf-8', errors='replace').decode('utf-8'))
+                    exec_code, eval_code, is_async, has_top_level_await = self._parse_code(
+                        code.encode('utf-8', errors='replace').decode('utf-8')
+                    )
                     if exec_code is None:
                         return "No executable code"
 
@@ -832,8 +871,7 @@ class MockIPython:
                                 exec(exec_code, work_ns)
                                 result = await work_ns['__wrapper']()
                             finally:
-                                # Use a safer way to clean up
-                                work_ns.pop('__wrapper', None)  # Using pop with default value
+                                work_ns.pop('__wrapper', None)
                         elif is_async:
                             # Execute async code
                             exec(exec_code, work_ns)
@@ -881,7 +919,8 @@ class MockIPython:
                     if output['stderr']:
                         result = f"{result}\nstderr:{output['stderr']}"
 
-                    if self.auto_remove:
+                    if self.auto_remove and original_file is None:
+                        # Only remove temp files, not user-specified files
                         self.vfs.delete_file(temp_file)
 
                     return result
@@ -891,6 +930,160 @@ class MockIPython:
             if live_output:
                 sys.__stderr__.write(error_msg)
             return error_msg
+
+    async def modify_code(self, file_pattern: str = None, modifications: Dict[str, Any] = None,
+                          code: str = None) -> str:
+        """
+        Modify existing code in the virtual filesystem or add new code.
+
+        Args:
+            file_pattern: Glob pattern to match files (e.g., "*.py", "src/*.py")
+            modifications: Dictionary of modifications to apply {pattern: replacement}
+            code: New code to append or insert at specific positions
+
+        Returns:
+            Modified code as string
+        Examples:
+
+# 1. Simple text replacement
+await ipython.modify_code(
+    "example.py",
+    modifications={
+        "old_function": "new_function",
+        "class OldName:": "class NewName:"
+    }
+)
+
+# 2. Using regex patterns
+await ipython.modify_code(
+    "*.py",  # Modify all Python files
+    modifications={
+        r"def \w+\(": lambda m: m.group(0).replace("def ", "async def "),  # Convert functions to async
+        r"print\((.*?)\)": r"logger.info(\1)"  # Replace print with logger
+    }
+)
+
+# 3. Adding new code
+await ipython.modify_code(
+    "models.py",
+    code='''
+def new_function():
+    return "Hello World"
+'''
+)
+
+# 4. Combining modifications and additions
+await ipython.modify_code(
+    "views.py",
+    modifications={
+        "class OldView": "class NewView",
+    },
+    code='''
+@router.get("/new-endpoint")
+async def new_endpoint():
+    return {"message": "New endpoint added"}
+'''
+)
+
+# 5. Working with current file
+# This will modify the current file being executed
+await ipython.modify_code(
+    modifications={"TODO": "DONE"},
+    code="# New code added automatically"
+)
+"""
+        try:
+            # Initialize variables
+            modified_files = []
+            result_output = []
+
+            # If no pattern specified, use current file
+            if not file_pattern and '__file__' in self.user_ns:
+                file_pattern = self.user_ns['__file__']
+            elif not file_pattern:
+                raise ValueError("No file pattern or current file specified")
+
+            # Resolve file paths
+            if isinstance(file_pattern, (str, Path)):
+                file_pattern = str(file_pattern)
+                if '*' in file_pattern:
+                    # Handle glob patterns
+                    matched_files = []
+                    for f in Path(self.vfs.current_dir).rglob(file_pattern.split('/')[-1]):
+                        if fnmatch.fnmatch(str(f), file_pattern):
+                            matched_files.append(f)
+                else:
+                    # Handle single file
+                    matched_files = [self.vfs._resolve_path(file_pattern)]
+            else:
+                raise ValueError("Invalid file pattern type")
+
+            if not matched_files:
+                return f"No files matched pattern: {file_pattern}"
+
+            # Process each matched file
+            for file_path in matched_files:
+                try:
+                    # Read original code
+                    original_code = self.vfs.read_file(file_path)
+                    modified_code = original_code
+
+                    # Apply text replacements if specified
+                    if modifications:
+                        for pattern, replacement in modifications.items():
+                            if callable(replacement):
+                                # Handle function-based replacements
+                                def replace_func(match):
+                                    return str(replacement(match.group(0)))
+
+                                modified_code = re.sub(pattern, replace_func, modified_code)
+                            else:
+                                # Handle direct string replacements
+                                modified_code = re.sub(pattern, str(replacement), modified_code)
+
+                    # Handle new code additions
+                    if code:
+                        # Parse the original code to handle insertions properly
+                        try:
+                            tree = ast.parse(modified_code)
+
+                            # Determine insertion point
+                            if isinstance(tree.body[-1], ast.ClassDef):
+                                # Insert inside last class
+                                indent = "    "
+                                ex_cont = code.replace('\n', f'\n{indent}')
+                                modified_code = modified_code.rstrip() + f"\n{indent}{ex_cont}\n"
+                            else:
+                                # Append to file
+                                modified_code = modified_code.rstrip() + f"\n\n{code}\n"
+
+                        except SyntaxError:
+                            # Fallback to simple append if parsing fails
+                            modified_code = modified_code.rstrip() + f"\n\n{code}\n"
+
+                    # Write modified code back
+                    self.vfs.write_file(file_path, modified_code)
+                    modified_files.append(file_path)
+
+                    # Add to output
+                    result_output.append(f"Modified {file_path}:")
+                    result_output.append("```python")
+                    result_output.append(modified_code)
+                    result_output.append("```")
+                    result_output.append("")
+
+                except Exception as e:
+                    result_output.append(f"Error processing {file_path}: {str(e)}")
+
+            # Execute modified code if it's the current file
+            if '__file__' in self.user_ns and any(Path(self.user_ns['__file__']) == f for f in modified_files):
+                await self.run_cell(modified_code)
+
+            return "\n".join(result_output)
+
+        except Exception as e:
+            return f"Error during code modification: {str(e)}\n{traceback.format_exc()}"
+
 
     def save_session(self, name: str):
         """Save session with UTF-8 encoding"""
@@ -917,9 +1110,11 @@ class MockIPython:
             except Exception as e:
                 output_history[key] = f"not serializable: {str(value)}"
 
+
         session_data = {
             'user_ns': user_ns,
-            'output_history': output_history
+            'output_history': output_history,
+
         }
 
         with open(session_file, 'wb') as f:
@@ -998,7 +1193,6 @@ class Pipeline:
             mas_iter (int): Maximum number of iterations allowed (default: 12)
             variables (Dict[str, Any]): Dictionary of variables available to the pipeline
             top_n (Optional[int]): Limit variable descriptions to top N most used
-            include_usage (bool): Include usage statistics in variable descriptions
             execution_history (List[ExecutionRecord]): History of executed code and results
             session_name (Optional[str]): Name of the current session if saved
             ipython: IPython or MockIPython instance for code execution
@@ -1026,9 +1220,11 @@ class Pipeline:
         max_iter: int= 12,
         variables: Optional[Union[Dict[str, Any], List[Any]]] = None,
         top_n: Optional[bool] = None,
-        include_usage: Optional[bool] = None,
+        restore: Optional[bool] = None,
         max_think_after_think = None,
         print_f=None,
+        web_js=False,
+        timeout_timer=25
     ):
         """
         Initialize the Pipeline.
@@ -1039,20 +1235,25 @@ class Pipeline:
             max_iter: Maximum number of iterations (default: 12)
             variables: Dictionary or list of variables to make available
             top_n: Limit variable descriptions to top N most used
-            include_usage: Include usage statistics in variable descriptions
+            web_js: if the agent is allow to use the web
         """
 
-        self.include_usage = include_usage
+        self.timeout_timer = timeout_timer
         self.top_n = top_n
         self.max_iter = max_iter
         self.max_think_after_think = max_think_after_think or max_iter // 2
         self.agent = agent
         self.agent.verbose = verbose
         self.task = None
+        self.web_js = web_js
         self.verbose_output = EnhancedVerboseOutput(verbose=verbose, print_f=print_f)
         self.variables = self._process_variables(variables or {})
+        self.variables['auto_save_import'] = auto_save_import
         self.execution_history = []
         self.session_name = None
+
+        self.browser_session: Optional[BrowserSession] = BrowserSession(verbose)
+        self.js_history: List[JSExecutionRecord] = []
 
         _session_dir = Path(get_app().appdata) / 'ChatSession' / agent.amd.name
         self.ipython = MockIPython(_session_dir, auto_remove=False)
@@ -1060,9 +1261,26 @@ class Pipeline:
         self.process_memory = ChatSession(agent.memory, space_name=f"ChatSession/{agent.amd.name}/Process.session", max_length=max_iter)
 
         # Initialize interpreter with variables
-
         self.init_keys = list(self.ipython.user_ns.keys()).copy()
         self.ipython.user_ns.update(self.variables)
+
+        self.restore_var = restore
+
+        if restore:
+            self.restore()
+
+    async def start_web(self):
+        """Initialize pipeline including browser session"""
+        await self.browser_session.initialize()
+        # Set default timeout
+        self.browser_session.page.set_default_timeout(30000)  # 30 seconds
+        # Enable JavaScript
+        await self.browser_session.context.add_init_script("""
+            window.onError = function(message, source, lineno, colno, error) {
+                console.error('JavaScript Error:', error);
+                return false;
+            };
+        """)
 
     def on_exit(self):
         self.chat_session.on_exit()
@@ -1077,10 +1295,39 @@ class Pipeline:
         self.session_name = name
         self.ipython.save_session(name)
 
+    async def save_web(self, name:str="main"):
+        context = await self.browser_session.get_context_state()
+        self.ipython.vfs.write_file(f"browser/context_{name}.json", json.dumps(asdict(context)))
+
+    async def restore_web(self, name:str="main"):
+        context = self.ipython.vfs.read_file(f"browser/context_{name}.json")
+        await self.browser_session.restore_context(BrowserContext(**json.loads(context)))
+
     def load_session(self, name: str):
         """Load saved session"""
         self.ipython.load_session(name)
         self.variables.update(self.ipython.user_ns)
+
+
+    def show_graph_html(self, output_file=None, get_output_html=False, get_output_net=False):
+
+        if output_file is None:
+            chat_graph = self.ipython._session_dir / 'chat_graph.html'
+            process_graph = self.ipython._session_dir / 'process_graph.html'
+            output_file = str(chat_graph.absolute())
+            p_output_file = str(process_graph.absolute())
+        else:
+            output_file = output_file + '_chat_graph.html'
+            p_output_file = output_file + '_process_graph.html'
+
+        return (self.chat_session.mem.memories.get(
+            self.chat_session.mem._sanitize_name(
+                self.chat_session.space_name)).vis(output_file=output_file,
+        get_output_html=get_output_html, get_output_net=get_output_net)  ,
+                self.process_memory.mem.memories.get(
+            self.process_memory.mem._sanitize_name(
+                self.process_memory.space_name)).vis(output_file=p_output_file,
+        get_output_html=get_output_html, get_output_net=get_output_net))
 
     @staticmethod
     def _process_variables(variables: Union[Dict[str, Any], List[Any]]) -> Dict[str, Any]:
@@ -1143,15 +1390,13 @@ class Pipeline:
 
     def _generate_variable_descriptions(
         self,
-        top_n: Optional[int] = None,
-        include_usage: bool = False
+        top_n: Optional[int] = None
     ) -> str:
         """
         Generate detailed descriptions of variables, showing args, kwargs, docstrings, and return values.
 
         Args:
             top_n: Optional limit to show only top N variables
-            include_usage: Whether to include usage statistics
 
         Returns:
             str: Formatted variable descriptions in Markdown
@@ -1190,7 +1435,7 @@ class Pipeline:
 
         descriptions = []
         for name, var in variables:
-            if name in ["PYTHON_EXEC", "toolboxv2", "__name__", "__builtins__", "__file__","__path__", "asyncio"]:
+            if name in ["PYTHON_EXEC", "__name__", "__builtins__", "__path__", "asyncio"]:
                 continue
 
             desc_parts = [f"### {name}"]
@@ -1276,76 +1521,198 @@ class Pipeline:
 
         return "\n\n".join(descriptions)
 
-    async def _handle_method_update(self, class_name: str, method_name: str, content: str) -> Optional[ExecutionRecord]:
-        """Handle method updates using a BaseModel to structure the update"""
-        prompt = f"""Generate method update for:
-        content: {content}
-        Class: {class_name}
-        Method: {method_name}
-        Current variables: {self._generate_variable_descriptions()}
-
-        Provide the method implementation following the MethodUpdate model structure.
-        """
-
-        try:
-            # Get method update using format_class
-            update_dict = await self.agent.a_format_class(
-                MethodUpdate,
-                prompt
-            )
-            await self.verbose_output.log_method_update(update_dict)
-            method_update = MethodUpdate(**update_dict)
-
-            # Execute the code
-            result = await self._execute_code(method_update.code)
-
-            # If there's an error, try to fix it
-            if isinstance(result.error, SyntaxError):
-                fix_prompt = f"""Fix syntax error in code:
-                Original code: {method_update.code}
-                Error: {result.error}
-                """
-
-                fixed_dict = await self.agent.a_format_class(
-                    MethodUpdate,
-                    fix_prompt
-                )
-                fixed_update = MethodUpdate(**fixed_dict)
-                result = await self._execute_code(fixed_update.code)
-
-            return result
-
-        except Exception as e:
-            return ExecutionRecord(
-                code=f"Failed to update method {method_name}",
-                result=None,
-                error=str(e)
-            )
-
-    async def _execute_code(self, code: str) -> ExecutionRecord:
+    async def _execute_code(self, code: str, context:dict) -> ExecutionRecord:
         """Execute code and track results"""
+        lang = context.get('lang', 'py')
         try:
 
-            result = await self.ipython.run_cell(code, not self.verbose_output.verbose)
+            if'py' in lang:
 
-            all_keys = list(self.ipython.user_ns.keys())
+                return await self._execute_py(code)
 
-            new_keys = [key for key in all_keys if key not in self.init_keys]
-            # Update pipeline variables from IPython namespace
-
-            for var_name in new_keys:
-                if var_name.startswith('_'):
-                    continue
-                self.variables[var_name] = self.ipython.user_ns[var_name]
-
-            record = ExecutionRecord(code=code, result=result, error=None)
-            self.execution_history.append(record)
-            return record
+            elif self.web_js and 'js' in lang:
+                return await self._execute_js(code, context)
 
         except Exception as e:
             record = ExecutionRecord(code=code, result=None, error=str(e))
             self.execution_history.append(record)
             return record
+        record = ExecutionRecord(code=code, result=None, error=f"Invalid lang {lang} valid is, {'js' if self.web_js else 'py'}]")
+        self.execution_history.append(record)
+        return record
+
+    async def _execute_py(self, code) -> ExecutionRecord:
+        show = len(code) > 450 and code.count('while') > 1 and code.count('print') >= 1
+        result = await self.ipython.run_cell(code, show)
+
+        all_keys = list(self.ipython.user_ns.keys())
+
+        new_keys = [key for key in all_keys if key not in self.init_keys]
+        # Update pipeline variables from IPython namespace
+
+        for var_name in new_keys:
+            if var_name.startswith('_'):
+                continue
+            self.variables[var_name] = self.ipython.user_ns[var_name]
+
+        record = ExecutionRecord(code=code, result=result, error=None)
+        self.execution_history.append(record)
+        return record
+
+    async def _execute_js(self, code: str, context: dict) -> ExecutionRecord:
+        """Execute JavaScript code in browser context"""
+
+        if '<script>' in code:
+            code = code.split('<script>')[1]
+        if '</script>' in code:
+            code = code.split('</script>')[0]
+        def _format_error_markdown(error: str) -> str:
+            """Format error as Markdown"""
+            return f"""
+# Execution Error
+{error}
+"""
+
+        def _format_result_markdown(result_: dict) -> str:
+            """Format execution result as Markdown"""
+
+            def _clean_html_content(html: str) -> str:
+                """Clean HTML content and convert to Markdown-like format"""
+                soup = BeautifulSoup(html, 'html.parser')
+
+                # Remove scripts and styles
+                for script in soup(["script", "style"]):
+                    script.decompose()
+
+                # Extract text
+                text = soup.get_text()
+
+                # Clean up whitespace
+                lines = (line.strip() for line in text.splitlines())
+                chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+                text = '\n'.join(chunk for chunk in chunks if chunk)
+
+                # Add Markdown formatting
+                text = re.sub(r'^(.+)$', r'> \1', text, flags=re.MULTILINE)
+
+                return text
+
+            md_parts = []
+
+            # Add title
+            md_parts.append("# Page Analysis Results\n")
+
+            # Format JavaScript result
+            if result_.get('js_result'):
+                md_parts.append("## JavaScript Execution Result")
+                md_parts.append("```")
+                md_parts.append(str(result_['js_result']))
+                md_parts.append("```\n")
+
+            # Format page state
+            if 'page_state' in result_:
+                md_parts.append("## Page Information")
+                md_parts.append(f"- **URL**: {result_['page_state']['url']}")
+                md_parts.append(f"- **Title**: {result_['page_state']['title']}\n")
+
+                # Clean and format content
+                if 'content' in result_['page_state']:
+                    content = _clean_html_content(result_['page_state']['content'])
+                    if content:
+                        md_parts.append("### Page Content")
+                        md_parts.append(content + "\n")
+
+            # Format extracted data
+            if result_.get('extracted_data'):
+                md_parts.append("## Extracted Data")
+                for key, value in result_['extracted_data'].items():
+                    if value:
+                        md_parts.append(f"### {key.replace('_', ' ').title()}")
+                        if isinstance(value, list):
+                            for item in value:
+                                md_parts.append(f"- {item}")
+                        else:
+                            md_parts.append(str(value))
+                        md_parts.append("")
+
+            return "\n".join(md_parts)
+
+        try:
+            # Prepare execution context
+            url = context.get('url')
+            if url:
+                await self.browser_session.page.goto(url, wait_until='networkidle')
+
+            self.ipython.vfs.write_file(f'.src/temp_js/_temp_{len(self.js_history)}.js', code)
+
+            # Modified JavaScript execution to use DOM methods instead of Playwright API
+            # Wrap the code in an async function for proper execution
+            if 'async' not in code and 'await' in code:
+                # If code contains await but isn't marked async, wrap it
+                code = f"async () => {{\n{code}\n}}"
+
+            # await self.browser_session.page.screenshot(path=self._session / "..")
+            # Execute JavaScript
+            result = await self.browser_session.page.evaluate("""
+                    async () => {
+                        try {
+                            const result = await (async () => {
+                                %s
+                            })();
+                            return { success: true, result };
+                        } catch (error) {
+                            return {
+                                success: false,
+                                error: error.toString(),
+                                stack: error.stack
+                            };
+                        }
+                    }
+                    """ % code)
+
+            if isinstance(result, dict) and 'success' in result:
+                if not result['success']:
+                    raise Exception(f"JavaScript Error: {result.get('error')}\nStack: {result.get('stack')}")
+                result = result.get('result')
+
+            # Capture page state after execution
+            page_state = {
+                'url': self.browser_session.page.url,
+                'title': await self.browser_session.page.title(),
+                'content': await self.browser_session.page.content(),
+            }
+
+            # Extract data using patterns if specified
+            extracted_data = None
+            if 'patterns' in context:
+                extractor = Extractor(self.browser_session.page)
+                extracted_data = await extractor.extract(context['patterns'])
+
+            # Create execution record
+            record = JSExecutionRecord(
+                code=code,
+                result=result,
+                page_state=page_state,
+                extracted_data=extracted_data
+            )
+
+            self.js_history.append(record)
+
+            # Convert to standard ExecutionRecord for pipeline
+            return ExecutionRecord(
+                code=code,
+                result=_format_result_markdown({
+                    'js_result': result,
+                    'page_state': page_state,
+                    'extracted_data': extracted_data
+                }),
+                error=None
+            )
+
+        except Exception as e:
+            error_md = _format_error_markdown(str(e))
+            return ExecutionRecord(code=code, result=None, error=error_md)
+
 
     def __str__(self):
         """String representation of pipeline session"""
@@ -1357,15 +1724,15 @@ class Pipeline:
             return ThinkState.BRAKE, think_result.content
 
         elif think_result.action == 'method_update':
-            class_name = think_result.context.get('class_name')
-            method_name = think_result.context.get('method_name')
-            result = None
-            if class_name is not None and method_name is not None:
-                result = await self.verbose_output.process(think_result.action, self._handle_method_update(class_name, method_name, think_result.content))
+
+            result = await self.verbose_output.process(think_result.action,
+                                                       self.ipython.modify_code(code=think_result.content,
+                                                        modifications=think_result.context.get('modifications'),
+                                                        file_pattern=think_result.context.get('file_pattern')))
             return ThinkState.THINKING, result
 
         elif think_result.action == 'code':
-            result = await self._execute_code(think_result.content)
+            result = await self._execute_code(think_result.content, think_result.context)
             return ThinkState.PROCESSING, result
 
         elif think_result.action == 'done':
@@ -1446,6 +1813,7 @@ Remember to be clear, concise, and specific in your guidance. Avoid vague or amb
         self.execution_history = []
         self.variables = {}
         self.ipython.reset()
+        self.js_history = []
 
     async def get_process_hint(self, task):
         return await self.process_memory.get_reference(task, to_str=True), await self.chat_session.get_reference(task, to_str=True)
@@ -1453,10 +1821,17 @@ Remember to be clear, concise, and specific in your guidance. Avoid vague or amb
     def show_vars(self):
         self.verbose_output.log_state("VARS", self.variables, override=True)
 
+    def set_file(self, full_file_path_and_name):
+        if not os.path.exists(full_file_path_and_name):
+            print("Invalid file")
+            return
+        self.ipython.user_ns["__file__"] = full_file_path_and_name
+
     async def run(self, task, do_continue=False) -> PipelineResult:
         """Run the pipeline with separated thinking and processing phases"""
         state = ThinkState.THINKING
         result = None
+        original_task = task
         if not do_continue:
             task = self.agent.mini_task(task, "user", f"""You are an AI assistant tasked with refactoring a user-provided task description into a more structured format with context learning and examples. Your goal is to create a comprehensive and well-organized task description that incorporates model flows and potential code fixes.
 
@@ -1522,8 +1897,6 @@ Now, please refactor the given task description using the following guidelines:
 Please provide your refactored task description within <refactored_task> tags. Use appropriate subheadings and formatting to make the description clear and easy to read.
 
 Additional tips:
-- Use markdown formatting for better readability (e.g., ## for subheadings, ``` for code blocks)
-- Include any necessary imports or setup steps
 - Mention any prerequisites or assumed knowledge
 - Suggest potential extensions or variations of the task for further learning
 
@@ -1537,8 +1910,13 @@ You are an AI assistant responsible for evaluating task completion and providing
 
 You will be provided with two inputs:
 <task_description>
-{task}
+{original_task}
+{f'<refactored_task_description_from_ai>{task}</refactored_task_description_from_ai>' if not do_continue else ''}
 </task_description>
+
+<code>
+#CODE#
+</code>
 
 <execution_result>
 #EXECUTION_RESULT#
@@ -1560,13 +1938,93 @@ Regardless of task completion status, evaluate the procedure and effectiveness o
 3. Identify errors: Pinpoint any mistakes or inefficiencies in the execution.
 4. Provide recommendations: Suggest improvements for future task executions.
 
-tip: enclose mutil line strings property for python eval to function!
-
+tip: Enclose mutil line strings property for python eval to function!
+tip: Set is_completed True if all requirements are completed from <task_description>.
+tip: Help the Agent with your analyses to finalize the <task_description>.
+{f'tip: Prefer new informations from <execution_result> over <refactored_task_description_from_ai> based of <code>' if not do_continue else ''}
+note : for the final result only toke information from the <execution_result>. if the relevant informations is not avalabel try string withe tips in the recommendations. else set is_completed True and return the teh Task failed!
 Ensure that your evaluation is thorough, constructive, and provides actionable insights for improving future task executions.
 Add guidance based on the the last execution result\n#RES#||###||#RES#"""
         code_follow_up_prompt_ = [code_follow_up_prompt]
-        initial_prompt = """
-You are an AI coding agent specializing in iterative development and code refinement, designed to perform tasks that involve thinking. Your goal is to complete the given task while demonstrating a clear thought process throughout the execution.
+        py_chane_prompt = """2. 'method_update':
+    - For EXISTING class methods only
+    - Preserve method signature
+    - Required: code in content
+    - Required: {'context': {
+             'file_pattern': "Glob pattern to match files (e.g., "*.py", "src/*.py")",
+             'modifications': {Dictionary of modifications to apply {pattern: replacement} }
+         },
+         'content': 'New code to append or insert at specific positions!',
+         'action': 'code'
+         }
+    - Examples
+        # 1. Simple text replacement
+        {'
+            context': {
+            'file_pattern': "example.py",
+            'modifications': {
+                "old_function": "new_function",
+                "class OldName:": "class NewName:"
+                }
+            },
+            'content': '',
+            'action': 'code'
+        }
+
+
+        # 2. Using regex patterns
+        {
+            'context': {
+            'file_pattern': "*.py",  # Modify all Python files
+            'modifications': {
+                r"def \w+\(": lambda m: m.group(0).replace("def ", "async def "),  # Convert functions to async
+                r"print\((.*?)\)": r"logger.info(\\1)"  # Replace print with logger
+                }
+            },
+            'content': '',
+            'action': 'code'
+        }
+
+        # 3. Adding new code to permanent file
+        {
+            'context': {
+            'file_pattern': "models.py"
+            },
+            'content': '''
+def new_function():
+    return "Hello World"
+''',
+         'action': 'code'
+        }
+
+
+        # 4. Combining modifications and additions
+        {
+            'context': {
+                'file_pattern': "views.py",
+                modifications{
+                    "class OldView": "class NewView",
+                }
+            },
+            'content'='''
+@router.get("/new-endpoint")
+async def new_endpoint():
+    return {"message": "New endpoint added"}
+'''',
+            action': 'code'
+        }
+
+        # 5. Working with current file
+        # This will modify the current file being executed
+        {
+            'context': {
+                modifications : {"TODO": "DONE"}
+            },
+            content="# New code added automatically"
+            action': 'code'
+        }"""
+        initial_prompt = f"""
+You are an AI {'js running (in playwright browser)' if self.web_js else 'py'} coding agent specializing in iterative development and code refinement, designed to perform tasks that involve thinking. Your goal is to complete the given task while demonstrating a clear thought process throughout the execution.
 SYSTEM STATE:
 <current_state>
 Iteration: #ITER#
@@ -1574,10 +2032,11 @@ Status: #STATE#
 Last EXECUTION: #EXECUTION#
 </current_state>
 
-ENVIRONMENT:
-<global_variables>
+ENVIRONMENT: {'current file :'+self.ipython.user_ns.get("__file__")  if self.ipython.user_ns.get("__file__") is not None else ''}
+
+{'''<global_variables>
 #LOCALS#
-</global_variables>
+</global_variables>''' if not self.web_js else ''}
 
 MEMORY:
 <process_memory>
@@ -1602,9 +2061,8 @@ WORKFLOW STEPS:
    - Verify import statements
    - Document dependencies
 
-2. Plan Small Change:
-   - ONE modification per step
-   - NO example/simulation functions
+2. Plan Change:
+   - NO example/simulation/simulate
    - Use existing code when possible
    - Prefer updates over rewrites
 
@@ -1619,16 +2077,16 @@ For each step of your task, follow this process:
 
 ACTIONS:
 1. 'code':
-   - MUST check #LOCALS# first
-   - NEVER create demo functions
-   - Include 'reason' (max 6 words)
-   - Required: python code in content
-   - Tip: use comments to reason with in the code
+    - MUST check #LOCALS# first
+    - NEVER create demo functions
+    - Include 'reason' (max 6 words)
+    - lang default {'js' if self.web_js else 'py'}
+    - Required: code in content
+    - Required: {{'context':{{'lang':{'js' if self.web_js else 'py'},  'reason': ... }}...}}
+    - Tip: use comments to reason with in the code
 
-2. 'method_update':
-   - For EXISTING class methods only
-   - Preserve method signature
-   - Required: {context: {'class_name':'class_name', 'method_name':'method_name'}, content: 'what to change!'}
+    { js_prompt if self.web_js else py_chane_prompt}
+
 
 3. 'infos': Request specific details
 4. 'guide': Get step clarification
@@ -1657,47 +2115,43 @@ CODE CONSTRAINTS:
    - Document state changes
 
 EXECUTION RULES:
-1. ONE change per step
-2. VERIFY before create
-3. UPDATE don't replace
-4. TEST after each change
-5. DOCUMENT modifications
+1. VERIFY before create
+2. UPDATE don't replace
+3. TEST after each change
 
 Next Action Required:
 1. Review current state
 2. Check existing code
-3. Plan smallest possible change
-4. Execute with state preservation
+3. Execute with state preservation
 
 !!CRITICAL!!
 - NO demo functions
-- NO placeholder  functions
+- NO placeholder functions
 - USE existing code
-- MUST RUN a Function or use if __name__ == '__main__'
+- FOR Implementations prefer writing large production redy code chunks.
+- FOR reasoning and validation write small code blocks.
 - THE CODE must call something or end the code with an value!
 - NO INFINIT LOOPS! none breakable while loops ar not allowed, exception ui (closed by user)
-- code is run using exec!
-- do not use !pip ...
-- instead use auto_save_import(package_name, install_method='pip', upgrade=False, quiet=False, version=None, extra_args=None)
+- {'code is run using exec! do not use !pip ...' if not self.web_js else 'session is persistent'}
+- no {'python' if not self.web_js else 'javascript'} top level return , only write the variabel itself!
+{'- instead use auto_save_import(package_name, install_method="pip", upgrade=False, quiet=False, version=None, extra_args=None)' if not self.web_js else '- The js code is NOT run as an module! no imports not script tags'}
 # Demonstrate flexible package import with safe error handling
-│ if __name__ == '__main__':
-│     result = auto_save_import('pandas', version='1.3.0')
-│     if result:
-│         print("Module imported successfully")
-│     else:
-│         print("Module import failed")
+│ pandas = auto_save_import('pandas', version='1.3.0')
+│ pygame = auto_save_import('pygame')
+│ np = auto_save_import('numpy') # same as 'import numpy as np'
 !TIPS!
-- <global_variables> can contain instances and functions you can use in your python code
+- {'<global_variables> can contain instances and functions you can use in your python' if not self.web_js else 'write javascript'} code
 - if the function is async you can use top level await
 - if their is missing of informations try running code to get the infos
 - if you got stuck or need assistance break with a question to the user.
-- run functions from <global_variables> using ```name(*args, **kwargs)``` or ```await name(*args, **kwargs)```
-- <global_variables> ar global accessible!
-- if an <global_variables> name is lower lists an redy to use instance
+{'- run functions from <global_variables> using name(*args, **kwargs)or await name(*args, **kwargs)' if not self.web_js else '- the js code is run async top level with in playwright'}
+{'- <global_variables> ar global accessible!' if not self.web_js else '- include elements for retrival from a web page'}
+{'- if an <global_variables> name is lower lists an redy to use instance' if not self.web_js else '- use {{"context" : {{"url": page }}}} to navigate to a web page '}
 """
         p_hint, c_hint = await self.get_process_hint(task)
         initial_prompt = initial_prompt.replace('#PHINT#', p_hint)
         initial_prompt = initial_prompt.replace('#CHINT#', c_hint)
+        initial_prompt_ = initial_prompt
         iter_i = 0
         iter_p = 0
         iter_tat = 0
@@ -1707,6 +2161,12 @@ Next Action Required:
         else:
             self.restore()
             await self.chat_session.add_message({'role': 'user', 'content': task})
+
+        if self.web_js and self.browser_session.browser is None:
+            await self.start_web()
+            if self.restore_var:
+                await self.restore_web()
+
         # await self.verbose_output.log_message('user', task)
         self.verbose_output.log_header(task)
         while state != ThinkState.DONE:
@@ -1730,9 +2190,11 @@ Next Action Required:
                 think_dict = await self.verbose_output.process(state.name, self.agent.a_format_class(
                     ThinkResult,
                     prompt,
-                    message=self.chat_session.get_past_x(self.max_iter*2).copy()+([self.process_memory.history[-1]] if self.process_memory.history else []) ,
+                    message=self.chat_session.get_past_x(self.max_iter*2, last_u=not do_continue).copy()+([self.process_memory.history[-1]] if self.process_memory.history else []) ,
                 ))
                 await self.verbose_output.log_think_result(think_dict)
+                if not isinstance(think_dict.get('context'), dict):
+                    think_dict['context'] = {'context': think_dict.get('context')}
                 think_result = ThinkResult(**think_dict)
                 state, result = await self.verbose_output.process(think_dict.get("action"), self._process_think_result(think_result, task=task))
                 await self.chat_session.add_message({'role': 'assistant', 'content': think_result.content + str(think_result.context)})
@@ -1740,8 +2202,16 @@ Next Action Required:
                     await self.chat_session.add_message({'role': 'system', 'content': 'Evaluation: '+str(result)})
                     await self.verbose_output.log_message('system', str(result))
                     code_follow_up_prompt_[0] = code_follow_up_prompt.replace("#RES#", str(result))
+                    if not self.web_js and isinstance(result ,ExecutionRecord):
+                        code_follow_up_prompt_[0] = code_follow_up_prompt_[0].replace("#CODE#", result.code)
+                    elif not self.web_js:
+                        code_follow_up_prompt_[0] = code_follow_up_prompt_[0].replace("#CODE#", self._generate_variable_descriptions())
+                    else:
+                        code_follow_up_prompt_[0] = code_follow_up_prompt_[0].replace("#CODE#", "Focus on the result!")
                 else:
                     code_follow_up_prompt_[0] = code_follow_up_prompt.replace("#RES#", str(think_result))
+                    code_follow_up_prompt_[0] = code_follow_up_prompt_[0].replace("#CODE#",
+                                                                              self._generate_variable_descriptions())
 
 
             elif state == ThinkState.PROCESSING:
@@ -1757,16 +2227,16 @@ Next Action Required:
                 next_dict = await self.verbose_output.process(state.name, self.agent.a_format_class(
                     Next,
                     code_follow_up_prompt_[0],
-                    message=self.chat_session.get_past_x(self.max_iter*2).copy(),
+                    message=self.chat_session.get_past_x(self.max_iter*2, last_u=not do_continue).copy(),
                 ))
                 next_infos = json.dumps(next_dict)
                 await self.verbose_output.log_process_result(next_dict)
-                await self.process_memory.add_message({'role': 'assistant', 'content': next_infos})
+                await self.process_memory.add_message({'role': 'assistant', 'content': next_infos.replace('workflow:', 'past-workflow:')})
                 iter_p += 1
                 code_follow_up_prompt_[0] = code_follow_up_prompt
                 if not next_dict.get('is_completed', True):
                     state = ThinkState.THINKING
-                    initial_prompt = initial_prompt.replace('#ITER#',f'#ITER#\nresult: {next_dict.get("text", "")}')
+                    initial_prompt = initial_prompt_.replace('#ITER#',f'#ITER#\nresult: {next_dict.get("text", "")}')
                     continue
                 elif next_dict.get('is_completed', False):
                     result = next_dict.get('text', '')
@@ -1780,9 +2250,9 @@ Next Action Required:
                 break
 
             if iter_i < self.max_iter:
-                if time.process_time() -t0 < 55:
-                    with Spinner("Prevent rate limit posing for 25s", symbols='+', time_in_s=25, count_down=True):
-                        await asyncio.sleep(25)
+                if time.process_time() -t0 < self.timeout_timer*2.5:
+                    with Spinner(f"Prevent rate limit posing for {self.timeout_timer}s", symbols='+', time_in_s=self.timeout_timer, count_down=True):
+                        await asyncio.sleep(self.timeout_timer)
             else:
                 state = ThinkState.BRAKE
                 if isinstance(result, ExecutionRecord):
@@ -1799,8 +2269,48 @@ Next Action Required:
             variables=self.variables,
             result=result,
             execution_history=self.execution_history,
-            message=self.chat_session.get_past_x(iter_i*2)+self.process_memory.get_past_x(iter_p),
+            message=self.chat_session.get_past_x(iter_i*2, last_u=not do_continue),
         )
+
+    async def __aenter__(self):
+        self.clear()
+        return self
+
+    async def configure(self, verbose=None, print_function=None, with_js=False, agent=None, variables=None):
+        if verbose is not None and (print_function is not None or verbose != self.verbose_output.verbose):
+            if agent is None:
+                agent = self.agent
+            else:
+                self.agent = agent
+            agent.verbose = verbose
+            self.verbose_output = EnhancedVerboseOutput(verbose=verbose, print_f=print_function)
+            if with_js:
+                self.browser_session: Optional[BrowserSession] = BrowserSession(verbose)
+            if print_function is not None:
+                agent.print_verbose = print_function
+        if variables:
+            self.variables = {**self.variables, **self._process_variables(variables)}
+        if with_js:
+            self.browser_session: Optional[BrowserSession] = BrowserSession(verbose)
+            await self.start_web()
+            if self.restore_var:
+                await self.restore_web()
+            self.web_js = with_js
+        if self.restore_var:
+            self.restore()
+
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        if self.web_js:
+            await self.browser_session.close()
+            if self.restore_var:
+                await self.save_web()
+                self.save_session(f"Pipeline_Session_{self.agent.amd.name}")
+        if exc_type is not None:
+            print(f"Exception occurred: {exc_value}")
+        else:
+            print("Pipe Exit")
 
 ### -- extra -- ###
 

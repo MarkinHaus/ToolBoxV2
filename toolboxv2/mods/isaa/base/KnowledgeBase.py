@@ -180,9 +180,9 @@ class ConceptGraph:
 
     def add_concept(self, concept: Concept):
         """Add or update a concept in the graph"""
-        if concept.name in self.concepts:
+        if concept.name.lower() in self.concepts:
             # Merge relationships and context
-            existing = self.concepts[concept.name]
+            existing = self.concepts[concept.name.lower()]
             for rel_type, related in concept.relationships.items():
                 if rel_type not in existing.relationships:
                     existing.relationships[rel_type] = set()
@@ -191,14 +191,14 @@ class ConceptGraph:
             # Update importance score with rolling average
             existing.importance_score = (existing.importance_score + concept.importance_score) / 2
         else:
-            self.concepts[concept.name] = concept
+            self.concepts[concept.name.lower()] = concept
 
     def get_related_concepts(self, concept_name: str, relationship_type: Optional[str] = None) -> Set[str]:
         """Get related concepts, optionally filtered by relationship type"""
         if concept_name not in self.concepts:
             return set()
 
-        concept = self.concepts[concept_name]
+        concept = self.concepts[concept_name.lower()]
         if relationship_type:
             return concept.relationships.get(relationship_type, set())
 
@@ -210,7 +210,12 @@ class ConceptGraph:
 
     def convert_to_networkx(self) -> nx.DiGraph:
         """Convert ConceptGraph to NetworkX graph with layout"""
+        print(f"Converting to NetworkX graph with {len(self.concepts.values())} concepts")
+
         G = nx.DiGraph()
+
+        if len(self.concepts.values()) == 0:
+            return G
 
         for concept in self.concepts.values():
             cks = '\n - '.join(concept.context_snippets[:4])
@@ -249,7 +254,7 @@ class GraphVisualizer:
         net.from_nx(nx_graph)
 
         net.save_graph(output_file)
-        print(f"Graph saved to {output_file}. Open in browser to view.")
+        print(f"Graph saved to {output_file} Open in browser to view.", len(nx_graph))
         if get_output:
             c = open(output_file, "r", encoding="utf-8").read()
             os.remove(output_file)
@@ -258,9 +263,10 @@ class GraphVisualizer:
 class ConceptExtractor:
     """Handles extraction of concepts and relationships from text"""
 
-    def __init__(self, knowledge_base):
+    def __init__(self, knowledge_base, wait_time = 85):
         self.kb = knowledge_base
         self.concept_graph = ConceptGraph()
+        self.wait_time = wait_time
 
     async def extract_concepts(self, texts: List[str], metadatas: List[Dict[str, str | int | float | bool]]) -> List[List[Concept]]:
         """
@@ -317,9 +323,10 @@ class ConceptExtractor:
                 batch = messages_list[messages_batch_id:messages_batch_id+batch_size]
                 # Call batch_completion once for all texts.
                 if do_wait:
-                    d = 85-(time.process_time()-t0)
-                    with Spinner(f"Waiting to prevent time out {messages_batch_id} of {len(messages_list)}",count_down=True,time_in_s=d,delay=d/batch_size):
-                        await asyncio.sleep(d)
+                    d = self.wait_time-(time.process_time()-t0)
+                    if d > 0:
+                        with Spinner(f"Waiting to prevent rait limit {messages_batch_id} of {len(messages_list)}",count_down=True,time_in_s=d,delay=d/batch_size):
+                            await asyncio.sleep(d)
                 else:
                     do_wait = True
 
@@ -338,16 +345,25 @@ class ConceptExtractor:
 
 
             all_concepts = []  # This will be a list (per text) of lists of Concept objects
+            if len(metadatas) < len(responses):
+                metadatas = metadatas + [{}] * (1+len(responses)-len(metadatas))
+
             for metadata, response in zip(metadatas, responses):
-                if not isinstance(response, ModelResponse):
-                    continue
-                c: str = response.choices[0].message.content
-                if c is None:
-                    c: str = response.choices[0].message.tool_calls[0].function.arguments
-                if c is None:
+                if hasattr(response, 'choices'):
+                    print("Reading1")
+                    c: str = response.choices[0].message.content
+                    if c is None:
+                        c: str = response.choices[0].message.tool_calls[0].function.arguments
+                    print("Reading3")
+                    if c is None:
+                        continue
+                elif isinstance(response, str):
+                    c = response
+                else:
+                    print(type(response), responses)
                     continue
                 concept_data = json.loads(c)
-                # print(concept_data)
+                print(concept_data)
                 concepts = []
                 for concept_info in concept_data.get("concepts", []):
                     concept = Concept(
@@ -550,7 +566,8 @@ class KnowledgeBase:
                  n_clusters: int = 4, deduplication_threshold: float = 0.85, model_name=os.getenv("DEFAULTMODELSUMMERY"),
                  embedding_model=os.getenv("DEFAULTMODELEMBEDDING"),
                  vis_class:Optional[str] = "FastVectorStoreO",
-                 vis_kwargs:Optional[Dict[str, Any]]=None):
+                 vis_kwargs:Optional[Dict[str, Any]]=None,
+                 wait_time=85):
         """Initialize the knowledge base with given parameters"""
 
         self.existing_hashes: Set[str] = set()
@@ -565,7 +582,7 @@ class KnowledgeBase:
 
         self.text_splitter = TextSplitter()
         self.similarity_graph = {}
-        self.concept_extractor = ConceptExtractor(self)
+        self.concept_extractor = ConceptExtractor(self, wait_time)
 
         self.vis_class = None
         self.vis_kwargs = None
@@ -599,7 +616,7 @@ class KnowledgeBase:
     @staticmethod
     def compute_hash(text: str) -> str:
         """Compute SHA-256 hash of text"""
-        return hashlib.sha256(text.encode()).hexdigest()
+        return hashlib.sha256(text.encode('utf-8', errors='ignore')).hexdigest()
 
     async def _get_embeddings(self, texts: List[str]) -> np.ndarray:
         """Get normalized embeddings in batches"""
@@ -825,6 +842,9 @@ class KnowledgeBase:
         """Enhanced retrieval with connected information"""
         if query_embedding is None:
             query_embedding = (await self._get_embeddings([query]))[0]
+        k = min(k, len(self.vdb.chunks)-1)
+        if k <= 0:
+            return []
         initial_results = self.vdb.search(query_embedding, k, min_similarity)
 
         if not include_connected or not initial_results:
@@ -1601,7 +1621,7 @@ class KnowledgeBase:
             # Save to disk using pickle
             with open(path, 'wb') as f:
                 pickle.dump(data, f)
-            print(f"Knowledge base successfully saved to {path}")
+            print(f"Knowledge base successfully saved to {path} with {len(self.concept_extractor.concept_graph.concepts.items())} concepts")
 
         except Exception as e:
             print(f"Error saving knowledge base: {str(e)}")
@@ -1641,7 +1661,7 @@ class KnowledgeBase:
             )
 
             # Restore core components
-            kb.init_vis(data['vis_class'], data['vis_kwargs'])
+            kb.init_vis(data.get('vis_class'), data.get('vis_kwargs'))
             kb.existing_hashes = data['existing_hashes']
 
             # Restore cache and graph data
@@ -1669,7 +1689,7 @@ class KnowledgeBase:
                 )
                 kb.concept_extractor.concept_graph.add_concept(concept)
 
-            print(f"Knowledge base successfully loaded from {path}")
+            print(f"Knowledge base successfully loaded from {path} with {len(concept_data)} concepts")
             return kb
 
         except Exception as e:
@@ -1677,7 +1697,7 @@ class KnowledgeBase:
             raise
 
     def vis(self,output_file: str = "concept_graph.html", get_output_html=False, get_output_net=False):
-        if self.concept_extractor.concept_graph.concepts:
+        if not self.concept_extractor.concept_graph.concepts:
             print("NO Concepts defined")
             return None
         net = self.concept_extractor.concept_graph.convert_to_networkx()
@@ -1790,15 +1810,17 @@ async def main():
 
 async def rgen():
     kb = KnowledgeBase.load("mem.plk")
-    #print(await kb.forget_irrelevant(["lazy dog", "unimportant"], 0.51))
+    #res =await kb.concept_extractor.extract_concepts(["hallo das ist ein test", "wie geht es dir", "nicht", "Phiskik ist sehr wichtig"], [{}]*4)
+    #print(res)
+    print(await kb.forget_irrelevant(["lazy dog", "unimportant"], 0.51))
     print(await kb.query_concepts("AI"))
     print(await kb.retrieve("Evaluation metrics for assessing AI Agent performance"))
     print(kb.concept_extractor.concept_graph.concepts.keys())
-    GraphVisualizer.visualize(kb.concept_extractor.concept_graph.convert_to_networkx(), output_file="concept_graph2.html")
+    #GraphVisualizer.visualize(kb.concept_extractor.concept_graph.convert_to_networkx(), output_file="concept_graph2.html")
 
 
 if __name__ == "__main__":
     get_app(name="main2")
 
-    asyncio.run(main())
+    asyncio.run(rgen())
 

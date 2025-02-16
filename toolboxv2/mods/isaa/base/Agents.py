@@ -1,4 +1,6 @@
+import ast
 import os
+import re
 import uuid
 import queue
 import threading
@@ -38,7 +40,7 @@ except Exception as e:
     gpt4all = lambda : None
     gpt4all.GPT4All = None
 
-from toolboxv2 import get_logger, Style, Spinner, Singleton
+from toolboxv2 import get_logger, Style, Spinner, Singleton, get_app
 import json
 from dataclasses import asdict
 from typing import Type
@@ -862,11 +864,66 @@ class Agent:
         return self.after_format(c)
 
     @staticmethod
-    def after_format(d:str)->dict:
-        # try:
-        #     return eval(eval(d))
-        # except Exception as e:
-        #     pass
+    def after_format_(d: str) -> dict:
+        def clean(text):
+            # Remove any leading/trailing whitespace
+            text = text.strip()
+
+            # Ensure the text starts and ends with curly braces
+            if not text.startswith('{'): text = '{' + text
+            if not text.endswith('}'): text = text + '}'
+
+            # Replace JavaScript-style true/false/null with Python equivalents
+            text = re.sub(r'\b(true|false|null)\b', lambda m: m.group(0).capitalize(), text)
+
+            # Handle multi-line strings
+            text = re.sub(r'`([^`]*)`', lambda m: f"'''{m.group(1)}'''", text)
+            text = re.sub(r'"""([^"]*)"""', lambda m: f"'''{m.group(1)}'''", text)
+
+            # Replace escaped quotes with single quotes
+            text = text.replace('\\"', "'")
+
+            # Ensure all keys are properly quoted
+            text = re.sub(r'(\w+)(?=\s*:)', r'"\1"', text)
+
+            return text
+
+        def parse_json(text):
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return None
+
+        def parse_ast(text):
+            try:
+                return ast.literal_eval(text)
+            except (ValueError, SyntaxError):
+                return None
+
+        # First, try to clean and parse as JSON
+        cleaned = clean(d)
+        result = parse_json(cleaned)
+
+        if result is None:
+            # If JSON parsing fails, try AST parsing
+            result = parse_ast(cleaned)
+
+        if result is None:
+            # If both parsing methods fail, raise an exception
+            raise ValueError(f"Unable to parse the input string: {d}")
+
+        # Handle nested single-key dictionaries
+        while isinstance(result, dict) and len(result) == 1:
+            key = next(iter(result))
+            if isinstance(result[key], dict):
+                result = result[key]
+            else:
+                break
+
+        return result
+
+    def after_format(self, d:str)->dict:
+        d1 = d
         def clean(_d, ex=False):
             if ex:
                 while _d and _d[0] != '{':
@@ -877,17 +934,21 @@ class Agent:
                     _d = _d[:-1]
                 if d.count('{') < _d.count('}'):
                     _d = _d[1:]
-            _d = _d.replace(': false,', ': False,')
-            _d = _d.replace(': true,', ':  True,')
+            if '`,' in _d and ': `' in _d:
+                _d = _d.replace('`,', "''',").replace(': `', ": '''")
+            _d = _d.replace(': false', ': False')
+            _d = _d.replace(': true', ': True')
+            _d = _d.replace(': null', ': None')
             _d = _d.replace(': \\"\\"\\"', ": '''").replace('\\"\\"\\",', "''',")
+            if _d.count("'''") % 2 != 0 and( _d.count('"""\n}') == 1 or  _d.count('\\"\\"\\"\n}') == 1):
+                _d = _d.replace('\\"\\"\\"\n}', "'''\n}").replace('\\"\\"\\"\\n}', "'''\\n}")
             return _d
         d = eval(clean(d))
         if isinstance(d, str):
             try:
                 d = eval(clean(d, ex=True))
             except Exception as e:
-                print("Error", d, type(d))
-                raise e
+                d = self.after_format_(d1)
         if len(d.keys()) == 1 and isinstance(d[list(d.keys())[0]], dict) and len(d[list(d.keys())[0]]) > 1:
             d = d[list(d.keys())[0]]
         return d
@@ -1066,7 +1127,7 @@ class Agent:
     def trim_msg(self, llm_message=None, isaa=None):
 
         if self.trim == 'IsaaTrim' and isaa:
-            self.print_verbose("Timing with IsaaTrim")
+
 
             # print("================================\n", self.prompt_str(llm_message),
             # "\n================================\n")
@@ -1080,8 +1141,14 @@ class Agent:
                         tokens = int(len(text) * (3 / 4))
                 return tokens
 
-            new_msg = isaa.short_prompt_messages(llm_message, get_tokens_estimation,
+            new_msg = isaa.short_prompt_messages(llm_message.copy(), get_tokens_estimation,
                                                  get_max_token_fom_model_name(self.amd.model))
+            om = ''.join([c['content'] for c in llm_message])
+            nm = ''.join([c['content'] for c in new_msg])
+            nt = get_tokens_estimation(nm, True)
+            self.print_verbose(f"Timing with IsaaTrim from {len(om)} to {len(nm)}")
+            self.print_verbose(f"Timing with IsaaTrim place {get_max_token_fom_model_name(self.amd.model)-nt}")
+            self.print_verbose(f" tokens {get_tokens_estimation(om, True)} to {nt} max {get_max_token_fom_model_name(self.amd.model)} ")
             if new_msg:
                 llm_message = new_msg
 
@@ -1539,7 +1606,7 @@ class Agent:
         if self.amd.budget_manager:
             self.amd.budget_manager.update_cost(user=self.amd.user_id, model=self.amd.model, completion_obj=result)
 
-        self.save_to_memory(llm_response, persist_local, persist_mem)
+        await self.save_to_memory(llm_response, persist_local, persist_mem)
 
         if self.mode is not None:
             if isinstance(llm_message[-1], dict):
@@ -1563,7 +1630,7 @@ class Agent:
         if self.amd.budget_manager:
             self.amd.budget_manager.update_cost(user=self.amd.user_id, model=self.amd.model, completion_obj=result)
 
-        self.save_to_memory(llm_response, persist_local, persist_mem)
+        get_app().run_a_from_sync(self.save_to_memory,llm_response, persist_local, persist_mem)
 
         if self.mode is not None:
             if isinstance(llm_message[-1], dict):
@@ -1581,14 +1648,14 @@ class Agent:
             self.post_callback(llm_response)
         return llm_response
 
-    def save_to_memory(self, llm_response: str, persist_local=False, persist_mem=False):
+    async def save_to_memory(self, llm_response: str, persist_local=False, persist_mem=False):
 
         if isinstance(llm_response, list) and len(llm_response) > 0 and isinstance(llm_response[0], str):
             llm_response = '\n'.join(llm_response)
         elif isinstance(llm_response, list) and len(llm_response) == 0:
             return
 
-        def helper():
+        async def helper():
             if persist_local:
                 self.messages.append({'content': llm_response, 'role': 'assistant'})
 
@@ -1596,13 +1663,13 @@ class Agent:
                 return
             if persist_mem and self.memory is not None:
                 self.print_verbose("persist response to persistent_memory")
-                self.memory.add_data(self.amd.name,  'CHAT - HISTORY\n'+self.user_input + '\n:\n' + str(llm_response))
+                await self.memory.add_data(self.amd.name,  'CHAT - HISTORY\n'+self.user_input + '\n:\n' + str(llm_response))
 
             if persist_mem and self.content_memory is not None:
                 self.print_verbose("persist response to content_memory")
                 self.content_memory.text += llm_response
 
-        helper()
+        await helper()
         # threading.Thread(target=helper, daemon=True).start()
 
     def if_for_fuction_use(self, llm_response):

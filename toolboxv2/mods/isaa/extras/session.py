@@ -38,9 +38,20 @@ class ChatSession:
     async def get_reference(self, text, **kwargs):
         return "\n".join([str(x) for x in await self.mem.query(text, self.space_name, **kwargs)])
 
-    def get_past_x(self, x):
+    def get_past_x(self, x, last_u=False):
+        if last_u:
+            return self.get_start_with_last_user()
         return self.history[-x:]
 
+    def get_start_with_last_user(self, x=None):
+        if x is None:
+            x = len(self.history)
+        history = []
+        for h in self.get_past_x(x, last_u=False)[::-1]:
+            history.append(h)
+            if h.get('role') == 'user':
+                break
+        return history[::-1]
     def on_exit(self):
         self.mem.save_memory(self.space_name, f'{get_app().appdata}/{self.space_name}.mem')
 
