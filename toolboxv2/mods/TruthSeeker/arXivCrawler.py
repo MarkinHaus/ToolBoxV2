@@ -430,7 +430,7 @@ class ArXivPDFProcessor:
         class UniqueMemoryName(BaseModel):
             """unique memory name based on the user query"""
             name: str
-        return self.tools.get_agent_class("thinkm").format_class(UniqueMemoryName, self.query).get('name', '_'.join(self.query.split(" ")[:3]))
+        return self.tools.get_agent("thinkm").format_class(UniqueMemoryName, self.query).get('name', '_'.join(self.query.split(" ")[:3]))
 
     def initialize(self, session_id, second=False):
         self.current_session = session_id

@@ -398,7 +398,7 @@ class ISAA(Enum):
     LIST_TASK: str = 'list_task'  # Input: ([]), Output: <class 'inspect._empty'>
     SAVE_TO_MEM: str = 'save_to_mem'  # Input: ([]), Output: <class 'inspect._empty'>
     MINI_TASK: str = 'mini_task'  # Input: (['mini_task', 'mode', 'fetch_memory', 'all_mem', 'max_tokens']), Output: <class 'inspect._empty'>
-    GET_AGENT_CLASS: str = 'get_agent_class'  # Input: (['agent_name']), Output: <class 'toolboxv2.mods.isaa.Agents.Agent'>
+    GET_AGENT_CLASS: str = 'get_agent'  # Input: (['agent_name']), Output: <class 'toolboxv2.mods.isaa.Agents.Agent'>
     RUN_AGENT: str = 'run_agent'  # Input: (['name', 'text', 'max_iterations', 'running_mode', 'persist', 'persist_x', 'fetch_memory', 'persist_mem', 'persist_mem_x', 'task_from', 'all_mem', 'kwargs']), Output: <class 'inspect._empty'>
     RGET_MODE: str = 'rget_mode'  # Input: (['mode']), Output: <class 'inspect._empty'>
     SET_LOCAL_FILES_TOOLS: str = 'set_local_files_tools'  # Input: (['local_files_tools']), Output: <class 'inspect._empty'>

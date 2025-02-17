@@ -1,4 +1,7 @@
 # Import fuzzy matching library:
+import ast
+import json
+import re
 from typing import List
 
 from rapidfuzz import fuzz
@@ -45,3 +48,94 @@ def filter_relevant_texts(query: str,
             if similarity >= semantic_threshold:
                 relevant_texts.append(text)
     return relevant_texts
+
+
+
+def after_format_(d: str) -> dict:
+    def clean(text):
+        # Remove any leading/trailing whitespace
+        text = text.strip()
+
+        # Ensure the text starts and ends with curly braces
+        if not text.startswith('{'): text = '{' + text
+        if not text.endswith('}'): text = text + '}'
+
+        # Replace JavaScript-style true/false/null with Python equivalents
+        text = re.sub(r'\b(true|false|null)\b', lambda m: m.group(0).capitalize(), text)
+
+        # Handle multi-line strings
+        text = re.sub(r'`([^`]*)`', lambda m: f"'''{m.group(1)}'''", text)
+        text = re.sub(r'"""([^"]*)"""', lambda m: f"'''{m.group(1)}'''", text)
+
+        # Replace escaped quotes with single quotes
+        text = text.replace('\\"', "'")
+
+        # Ensure all keys are properly quoted
+        text = re.sub(r'(\w+)(?=\s*:)', r'"\1"', text)
+
+        return text
+
+    def parse_json(text):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return None
+
+    def parse_ast(text):
+        try:
+            return ast.literal_eval(text)
+        except (ValueError, SyntaxError):
+            return None
+
+    # First, try to clean and parse as JSON
+    cleaned = clean(d)
+    result = parse_json(cleaned)
+
+    if result is None:
+        # If JSON parsing fails, try AST parsing
+        result = parse_ast(cleaned)
+
+    if result is None:
+        # If both parsing methods fail, raise an exception
+        raise ValueError(f"Unable to parse the input string: {d}")
+
+    # Handle nested single-key dictionaries
+    while isinstance(result, dict) and len(result) == 1:
+        key = next(iter(result))
+        if isinstance(result[key], dict):
+            result = result[key]
+        else:
+            break
+
+    return result
+
+def after_format(d:str)->dict:
+    d1 = d
+    def clean(_d, ex=False):
+        if ex:
+            while _d and _d[0] != '{':
+                _d = _d[1:]
+            while d and _d[-1] != '}':
+                _d = _d[:-1]
+            if _d.count('{') > _d.count('}'):
+                _d = _d[:-1]
+            if d.count('{') < _d.count('}'):
+                _d = _d[1:]
+        if '`,' in _d and ': `' in _d:
+            _d = _d.replace('`,', "''',").replace(': `', ": '''")
+        _d = _d.replace(': false', ': False')
+        _d = _d.replace(': true', ': True')
+        _d = _d.replace(': null', ': None')
+        _d = _d.replace(': \\"\\"\\"', ": '''").replace('\\"\\"\\",', "''',")
+        if _d.count("'''") % 2 != 0 and( _d.count('"""\n}') == 1 or  _d.count('\\"\\"\\"\n}') == 1):
+            _d = _d.replace('\\"\\"\\"\n}', "'''\n}").replace('\\"\\"\\"\\n}', "'''\\n}")
+        return _d
+    d = eval(clean(d))
+    if isinstance(d, str):
+        try:
+            d = eval(clean(d, ex=True))
+        except Exception as e:
+            d = after_format_(d1)
+    if len(d.keys()) == 1 and isinstance(d[list(d.keys())[0]], dict) and len(d[list(d.keys())[0]]) > 1:
+        d = d[list(d.keys())[0]]
+    return d

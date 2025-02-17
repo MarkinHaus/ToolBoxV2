@@ -102,6 +102,7 @@ async def litellm_complete_if_cache(
     messages.append({"role": "user", "content": prompt})
 
     # Log query details for debugging purposes
+    print("query", model)
     try:
         # Depending on the response format, choose the appropriate API call
         if "response_format" in kwargs:
@@ -135,6 +136,7 @@ async def litellm_complete_if_cache(
         return inner()
     else:
         # Non-streaming: extract and return the full content string
+
         content = response.choices[0].message.content
         if content is None:
             content = response.choices[0].message.tool_calls[0].function.arguments
@@ -142,7 +144,7 @@ async def litellm_complete_if_cache(
 
 
 async def litellm_complete(
-    prompt, system_prompt=None, history_messages=None, keyword_extraction=False,model_name = "groq/gemma2-9b-it", **kwargs
+    prompt, system_prompt=None, history_messages=None, keyword_extraction=False, model_name = "groq/gemma2-9b-it", **kwargs
 ) -> Union[str, AsyncIterator[str]]:
     """
     Public completion interface using the model name specified in the global configuration.

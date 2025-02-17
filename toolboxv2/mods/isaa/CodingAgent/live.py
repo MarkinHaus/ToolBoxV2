@@ -78,7 +78,7 @@ class VerboseFormatter:
     def print_state(self, state: str, details: Optional[Dict[str, Any]] = None):
         """Print current state with optional details"""
         state_color = {
-            'THINKING': self.style.GREEN2,
+            'ACTION': self.style.GREEN2,
             'PROCESSING': self.style.YELLOW2,
             'BRAKE': self.style.RED2,
             'DONE': self.style.BLUE2
@@ -155,7 +155,7 @@ class EnhancedVerboseOutput:
             return
 
         self.formatter.print_section(
-            "Thinking Result",
+            "Action Result",
             f"Action: {result.get('action', 'N/A')}\n"
             f"context: {result.get('context', 'N/A')}\n"
             f"Content: {result.get('content', '')}"
@@ -175,11 +175,6 @@ class EnhancedVerboseOutput:
             f"errors: {result.get('errors', 'None')}\n"
             f"text: {result.get('text', 'None')}"
         )
-
-    async def log_method_update(self, method_update: 'MethodUpdate'):
-        """Log method update with structured formatting"""
-        if not self.verbose:
-            return
 
     def log_header(self, text: str):
         """Log method update with structured formatting"""
@@ -205,7 +200,7 @@ class EnhancedVerboseOutput:
 ### -- TYPESs --- ###
 
 class ThinkState(Enum):
-    THINKING = auto()
+    ACTION = auto()
     PROCESSING = auto()
     BRAKE = auto()
     DONE = auto()
@@ -219,7 +214,7 @@ class MethodUpdate(BaseModel):
 
 
 class ThinkResult(BaseModel):
-    action: str = Field(..., description="Next action to take: 'code', 'method_update'', 'brake', 'done'")
+    action: str = Field(..., description="Next action to take: 'code', 'update'', 'brake', 'done'")
     content: str = Field(..., description="Content related to the action")
     context: Optional[Dict[str, str | int | float | bool | Dict[str, str | int | float | bool ]]] = Field(default_factory=dict, description="Additional context for the action")
 
@@ -613,7 +608,7 @@ class AsyncCodeDetector(ast.NodeVisitor):
             self.has_top_level_await = True
         self.generic_visit(node)
 
-def auto_save_import(package_name, install_method='pip', upgrade=False, quiet=False, version=None, extra_args=None):
+def auto_install(package_name, install_method='pip', upgrade=False, quiet=False, version=None, extra_args=None):
     '''
     Enhanced auto-save import with version and extra arguments support
     '''
@@ -722,12 +717,11 @@ class MockIPython:
             '__name__': '__main__',
             '__builtins__': __builtins__,
             'toolboxv2': toolboxv2,
-            'git': EnhancedVirtualFileSystem(self._session_dir / 'src'),
-            'git_files': VirtualFileSystem(self._session_dir / 'src'),
+            # 'git': EnhancedVirtualFileSystem(str(self.vfs.base_dir / 'src')),
+            # 'git_files': VirtualFileSystem(self.vfs.base_dir / 'src'),
             '__file__': None,
             '__path__': [str(self.vfs.current_dir)],
-            'open': self._virtual_open,
-            'auto_save_import': auto_save_import,
+            'auto_install': auto_install,
             'modify_code': self.modify_code,
         }
         self.output_history.clear()
@@ -840,19 +834,19 @@ class MockIPython:
             if original_file is None:
                 # Create temp file if no file specified
                 temp_file = self.vfs.write_file(
-                    f'.src/temp/_temp_{self._execution_count}.py',
+                    f'src/temp/_temp_{self._execution_count}.py',
                     code
                 )
-                work_ns = self.user_ns.copy()
-                work_ns['__file__'] = str(temp_file)
+                # work_ns = self.user_ns.copy()
+                self.user_ns['__file__'] = str(temp_file)
             else:
                 # Use existing file
                 temp_file = Path(original_file)
                 # Write code to the existing file
                 self.vfs.write_file(temp_file, code)
-                work_ns = self.user_ns.copy()
+                #work_ns = self.user_ns.copy()
 
-            work_ns['__builtins__'] = __builtins__
+            self.user_ns['__builtins__'] = __builtins__
             with VirtualEnvContext(self._venv_path) as python_exec:
                 try:
                     exec_code, eval_code, is_async, has_top_level_await = self._parse_code(
@@ -862,29 +856,29 @@ class MockIPython:
                         return "No executable code"
 
                     os.chdir(str(temp_file.parent))
-                    work_ns['PYTHON_EXEC'] = python_exec
+                    self.user_ns['PYTHON_EXEC'] = python_exec
 
                     with redirect_stdout(stdout), redirect_stderr(stderr):
                         if has_top_level_await:
                             try:
                                 # Execute wrapped code and await it
-                                exec(exec_code, work_ns)
-                                result = await work_ns['__wrapper']()
+                                exec(exec_code, self.user_ns)
+                                result = await self.user_ns['__wrapper']()
                             finally:
-                                work_ns.pop('__wrapper', None)
+                                self.user_ns.pop('__wrapper', None)
                         elif is_async:
                             # Execute async code
-                            exec(exec_code, work_ns)
+                            exec(exec_code, self.user_ns)
                             if eval_code:
-                                result = await eval(eval_code, work_ns)
+                                result = await eval(eval_code, self.user_ns)
                         else:
                             # Execute sync code
-                            exec(exec_code, work_ns)
+                            exec(exec_code, self.user_ns)
                             if eval_code:
-                                result = eval(eval_code, work_ns)
+                                result = eval(eval_code, self.user_ns)
 
                         if result is not None:
-                            work_ns['_'] = result
+                            self.user_ns['_'] = result
 
                 except Exception as e:
                     error = str(e)
@@ -896,7 +890,7 @@ class MockIPython:
                 finally:
                     os.chdir(original_dir)
                     self._execution_count += 1
-                    self.user_ns = work_ns.copy()
+                    # self.user_ns = work_ns.copy()
                     if live_output:
                         stdout_value = stdout_buffer.getvalue()
                         stderr_value = stderr_buffer.getvalue()
@@ -1020,7 +1014,7 @@ await ipython.modify_code(
 
             if not matched_files:
                 return f"No files matched pattern: {file_pattern}"
-
+            modified_code = ""
             # Process each matched file
             for file_path in matched_files:
                 try:
@@ -1067,9 +1061,7 @@ await ipython.modify_code(
 
                     # Add to output
                     result_output.append(f"Modified {file_path}:")
-                    result_output.append("```python")
                     result_output.append(modified_code)
-                    result_output.append("```")
                     result_output.append("")
 
                 except Exception as e:
@@ -1224,7 +1216,8 @@ class Pipeline:
         max_think_after_think = None,
         print_f=None,
         web_js=False,
-        timeout_timer=25
+        timeout_timer=25,
+        v_agent=None,
     ):
         """
         Initialize the Pipeline.
@@ -1243,12 +1236,13 @@ class Pipeline:
         self.max_iter = max_iter
         self.max_think_after_think = max_think_after_think or max_iter // 2
         self.agent = agent
+        self.v_agent = v_agent or agent
         self.agent.verbose = verbose
         self.task = None
         self.web_js = web_js
         self.verbose_output = EnhancedVerboseOutput(verbose=verbose, print_f=print_f)
         self.variables = self._process_variables(variables or {})
-        self.variables['auto_save_import'] = auto_save_import
+        self.variables['auto_install'] = auto_install
         self.execution_history = []
         self.session_name = None
 
@@ -1643,7 +1637,7 @@ class Pipeline:
             if url:
                 await self.browser_session.page.goto(url, wait_until='networkidle')
 
-            self.ipython.vfs.write_file(f'.src/temp_js/_temp_{len(self.js_history)}.js', code)
+            self.ipython.vfs.write_file(f'src/temp_js/_temp_{len(self.js_history)}.js', code)
 
             # Modified JavaScript execution to use DOM methods instead of Playwright API
             # Wrap the code in an async function for proper execution
@@ -1723,13 +1717,13 @@ class Pipeline:
         if think_result.action == 'brake':
             return ThinkState.BRAKE, think_result.content
 
-        elif think_result.action == 'method_update':
+        elif think_result.action == 'update':
 
             result = await self.verbose_output.process(think_result.action,
                                                        self.ipython.modify_code(code=think_result.content,
                                                         modifications=think_result.context.get('modifications'),
                                                         file_pattern=think_result.context.get('file_pattern')))
-            return ThinkState.THINKING, result
+            return ThinkState.ACTION, result
 
         elif think_result.action == 'code':
             result = await self._execute_code(think_result.content, think_result.context)
@@ -1740,7 +1734,7 @@ class Pipeline:
 
         elif think_result.action == 'infos':
             infos = await self.chat_session.get_reference(think_result.content, to_str=True)
-            return ThinkState.THINKING, infos
+            return ThinkState.ACTION, infos
 
         elif think_result.action == 'guide':
             details = await self.process_memory.get_reference(think_result.content, to_str=True)
@@ -1800,9 +1794,9 @@ Format your response using the following sections:
 </conclusion>
 
 Remember to be clear, concise, and specific in your guidance. Avoid vague or ambiguous instructions, and provide concrete examples or explanations where necessary.""")
-            return ThinkState.THINKING, plan
+            return ThinkState.ACTION, plan
 
-        return ThinkState.THINKING, None
+        return ThinkState.ACTION, None
 
     async def execute(self, code:str):
         return str(await self._execute_code(code))
@@ -1829,7 +1823,7 @@ Remember to be clear, concise, and specific in your guidance. Avoid vague or amb
 
     async def run(self, task, do_continue=False) -> PipelineResult:
         """Run the pipeline with separated thinking and processing phases"""
-        state = ThinkState.THINKING
+        state = ThinkState.ACTION
         result = None
         original_task = task
         if not do_continue:
@@ -1944,9 +1938,9 @@ tip: Help the Agent with your analyses to finalize the <task_description>.
 {f'tip: Prefer new informations from <execution_result> over <refactored_task_description_from_ai> based of <code>' if not do_continue else ''}
 note : for the final result only toke information from the <execution_result>. if the relevant informations is not avalabel try string withe tips in the recommendations. else set is_completed True and return the teh Task failed!
 Ensure that your evaluation is thorough, constructive, and provides actionable insights for improving future task executions.
-Add guidance based on the the last execution result\n#RES#||###||#RES#"""
+Add guidance based on the the last execution result"""
         code_follow_up_prompt_ = [code_follow_up_prompt]
-        py_chane_prompt = """2. 'method_update':
+        py_chane_prompt = """2. 'update':
     - For EXISTING class methods only
     - Preserve method signature
     - Required: code in content
@@ -1955,7 +1949,7 @@ Add guidance based on the the last execution result\n#RES#||###||#RES#"""
              'modifications': {Dictionary of modifications to apply {pattern: replacement} }
          },
          'content': 'New code to append or insert at specific positions!',
-         'action': 'code'
+         'action': 'update'
          }
     - Examples
         # 1. Simple text replacement
@@ -1968,7 +1962,7 @@ Add guidance based on the the last execution result\n#RES#||###||#RES#"""
                 }
             },
             'content': '',
-            'action': 'code'
+            'action': 'update'
         }
 
 
@@ -1982,7 +1976,7 @@ Add guidance based on the the last execution result\n#RES#||###||#RES#"""
                 }
             },
             'content': '',
-            'action': 'code'
+            'action': 'update'
         }
 
         # 3. Adding new code to permanent file
@@ -1994,7 +1988,7 @@ Add guidance based on the the last execution result\n#RES#||###||#RES#"""
 def new_function():
     return "Hello World"
 ''',
-         'action': 'code'
+         'action': 'update'
         }
 
 
@@ -2011,7 +2005,7 @@ def new_function():
 async def new_endpoint():
     return {"message": "New endpoint added"}
 '''',
-            action': 'code'
+            action': 'update'
         }
 
         # 5. Working with current file
@@ -2021,7 +2015,7 @@ async def new_endpoint():
                 modifications : {"TODO": "DONE"}
             },
             content="# New code added automatically"
-            action': 'code'
+            action': 'update'
         }"""
         initial_prompt = f"""
 You are an AI {'js running (in playwright browser)' if self.web_js else 'py'} coding agent specializing in iterative development and code refinement, designed to perform tasks that involve thinking. Your goal is to complete the given task while demonstrating a clear thought process throughout the execution.
@@ -2077,11 +2071,12 @@ For each step of your task, follow this process:
 
 ACTIONS:
 1. 'code':
-    - MUST check #LOCALS# first
+    - MUST check <global_variables> first
     - NEVER create demo functions
     - Include 'reason' (max 6 words)
     - lang default {'js' if self.web_js else 'py'}
     - Required: code in content
+    - code MUST call a function or display the row variabel / value at the end!
     - Required: {{'context':{{'lang':{'js' if self.web_js else 'py'},  'reason': ... }}...}}
     - Tip: use comments to reason with in the code
 
@@ -2100,13 +2095,13 @@ CODE CONSTRAINTS:
    - ALL classes must be maintained
 
 2. Import Management:
-   - Check #LOCALS# for modules
+   - Check <global_variables> for modules
    - Use absolute imports
    - Document new dependencies
 
 3. Function Handling:
    - NEVER overwrite existing
-   - Use method_update for changes
+   - Use update for changes
    - Preserve signatures
 
 4. Variable Scope:
@@ -2132,19 +2127,22 @@ Next Action Required:
 - FOR reasoning and validation write small code blocks.
 - THE CODE must call something or end the code with an value!
 - NO INFINIT LOOPS! none breakable while loops ar not allowed, exception ui (closed by user)
+- NO {'python' if not self.web_js else 'javascript'} top level return, only write the variabel or value itself!
 - {'code is run using exec! do not use !pip ...' if not self.web_js else 'session is persistent'}
-- no {'python' if not self.web_js else 'javascript'} top level return , only write the variabel itself!
-{'- instead use auto_save_import(package_name, install_method="pip", upgrade=False, quiet=False, version=None, extra_args=None)' if not self.web_js else '- The js code is NOT run as an module! no imports not script tags'}
-# Demonstrate flexible package import with safe error handling
-│ pandas = auto_save_import('pandas', version='1.3.0')
-│ pygame = auto_save_import('pygame')
-│ np = auto_save_import('numpy') # same as 'import numpy as np'
+{'- instead use auto_install(package_name, install_method="pip", upgrade=False, quiet=False, version=None, extra_args=None)' if not self.web_js else '- The js code is NOT run as an module! no imports not script tags'}
+# Example usage first time
+│ auto_install('pandas', version='1.3.0')
+│ import pandas
+│ auto_install('pygame')
+│ import pygame
+│ auto_install('numpy')
+│ import numpy as np
 !TIPS!
 - {'<global_variables> can contain instances and functions you can use in your python' if not self.web_js else 'write javascript'} code
 - if the function is async you can use top level await
 - if their is missing of informations try running code to get the infos
 - if you got stuck or need assistance break with a question to the user.
-{'- run functions from <global_variables> using name(*args, **kwargs)or await name(*args, **kwargs)' if not self.web_js else '- the js code is run async top level with in playwright'}
+{'- run functions from <global_variables> using name(*args, **kwargs) or await name(*args, **kwargs)' if not self.web_js else '- the js code is run async top level with in playwright'}
 {'- <global_variables> ar global accessible!' if not self.web_js else '- include elements for retrival from a web page'}
 {'- if an <global_variables> name is lower lists an redy to use instance' if not self.web_js else '- use {{"context" : {{"url": page }}}} to navigate to a web page '}
 """
@@ -2178,14 +2176,14 @@ Next Action Required:
             prompt = prompt.replace('#LOCALS#', f'{self._generate_variable_descriptions()}')
             self.verbose_output.log_state(state.name, {})
             self.verbose_output.formatter.print_iteration(iter_i, self.max_iter)
-            if state == ThinkState.THINKING:
+            if state == ThinkState.ACTION:
                 iter_tat +=1
                 if iter_tat > self.max_think_after_think:
                     state = ThinkState.BRAKE
             else:
                 iter_tat = 0
 
-            if state == ThinkState.THINKING:
+            if state == ThinkState.ACTION:
                 # Get agent's thoughts
                 think_dict = await self.verbose_output.process(state.name, self.agent.a_format_class(
                     ThinkResult,
@@ -2193,6 +2191,8 @@ Next Action Required:
                     message=self.chat_session.get_past_x(self.max_iter*2, last_u=not do_continue).copy()+([self.process_memory.history[-1]] if self.process_memory.history else []) ,
                 ))
                 await self.verbose_output.log_think_result(think_dict)
+                if think_dict.get('context') is None:
+                    think_dict['context'] = {'context': 'N/A'}
                 if not isinstance(think_dict.get('context'), dict):
                     think_dict['context'] = {'context': think_dict.get('context')}
                 think_result = ThinkResult(**think_dict)
@@ -2201,7 +2201,7 @@ Next Action Required:
                 if result:
                     await self.chat_session.add_message({'role': 'system', 'content': 'Evaluation: '+str(result)})
                     await self.verbose_output.log_message('system', str(result))
-                    code_follow_up_prompt_[0] = code_follow_up_prompt.replace("#RES#", str(result))
+                    code_follow_up_prompt_[0] = code_follow_up_prompt.replace("#EXECUTION_RESULT#", str(result))
                     if not self.web_js and isinstance(result ,ExecutionRecord):
                         code_follow_up_prompt_[0] = code_follow_up_prompt_[0].replace("#CODE#", result.code)
                     elif not self.web_js:
@@ -2209,7 +2209,7 @@ Next Action Required:
                     else:
                         code_follow_up_prompt_[0] = code_follow_up_prompt_[0].replace("#CODE#", "Focus on the result!")
                 else:
-                    code_follow_up_prompt_[0] = code_follow_up_prompt.replace("#RES#", str(think_result))
+                    code_follow_up_prompt_[0] = code_follow_up_prompt.replace("#EXECUTION_RESULT#", str(think_result))
                     code_follow_up_prompt_[0] = code_follow_up_prompt_[0].replace("#CODE#",
                                                                               self._generate_variable_descriptions())
 
@@ -2224,7 +2224,11 @@ Next Action Required:
                     workflow: str
                     text: str
                 # Format the agent's thoughts into a structured response
-                next_dict = await self.verbose_output.process(state.name, self.agent.a_format_class(
+                if self.v_agent is not None:
+                    _agent = self.v_agent
+                else:
+                    _agent = self.agent
+                next_dict = await self.verbose_output.process(state.name, _agent.a_format_class(
                     Next,
                     code_follow_up_prompt_[0],
                     message=self.chat_session.get_past_x(self.max_iter*2, last_u=not do_continue).copy(),
@@ -2235,7 +2239,7 @@ Next Action Required:
                 iter_p += 1
                 code_follow_up_prompt_[0] = code_follow_up_prompt
                 if not next_dict.get('is_completed', True):
-                    state = ThinkState.THINKING
+                    state = ThinkState.ACTION
                     initial_prompt = initial_prompt_.replace('#ITER#',f'#ITER#\nresult: {next_dict.get("text", "")}')
                     continue
                 elif next_dict.get('is_completed', False):

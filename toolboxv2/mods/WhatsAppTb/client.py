@@ -1616,7 +1616,7 @@ def runner(app, phone_number_id, to):
     # setup
     isaa = app.get_mod("isaa")
 
-    self_agent = isaa.get_agent_class("self")
+    self_agent = isaa.get_agent("self")
 
     waa = WhatsAppAssistant(whc=whc, isaa=isaa, agent=self_agent, credentials=None)
     whc.s_callbacks(waa.handle_message, print)

@@ -128,7 +128,7 @@ class IsaaWebSocketUI(metaclass=Singleton):
 
             # self.isaa.run_callback = get_callback(agent_name)
 
-            for agent, name in zip([self.isaa.get_agent_class(name_) for name_ in self.isaa.config['agents-name-list']],
+            for agent, name in zip([self.isaa.get_agent(name_) for name_ in self.isaa.config['agents-name-list']],
                                    self.isaa.config['agents-name-list']):
                 agent.post_callback = get_callback(name)
                 self._setup_verbose_override(agent, get_callback(name + "-internal"))

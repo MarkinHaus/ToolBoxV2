@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 import pickle
@@ -1279,6 +1280,7 @@ def _get_all_model_dict_price_token_limit_approximation():
         '32000': [0.15 / 1_000_000, 0.55 / 1_000_000],
 
         # concrete :
+        'o3-mini': 200000,
         'gpt-4': 8192,
         'gpt-4-0613': 8192,
         'gpt-4-32k': 32768,
@@ -1711,3 +1713,4 @@ def _extract_from_string_de(agent_text, all_actions):
             return action.strip(), ''
 
     return None, ''
+

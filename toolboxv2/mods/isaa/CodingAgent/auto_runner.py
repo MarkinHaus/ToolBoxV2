@@ -449,7 +449,7 @@ Test Analysis:""", f"""
 Test Analysis:
                     {analysis}""")
 
-        self.isaa.get_agent_class("code").mode = self.isaa.controller.rget(CoderMode)
+        self.isaa.get_agent("code").mode = self.isaa.controller.rget(CoderMode)
         # Run implementation
         result, self.metadata.work_code = await self.isaa.run_agent_in_environment(
             instruction_prompt,
@@ -462,7 +462,7 @@ Test Analysis:
         )
         await self.chat_history.add_message({'role': 'user', 'content':task})
         await self.chat_history.add_message({'role': 'user', 'content':result})
-        self.isaa.get_agent_class("code").mode = None
+        self.isaa.get_agent("code").mode = None
         self.save_metadata()
         # Process and save files
         updated_files = extract_code_blocks(result, str(self.project_path))

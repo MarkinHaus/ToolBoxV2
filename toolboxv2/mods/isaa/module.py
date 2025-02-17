@@ -161,7 +161,7 @@ class Tools(MainTool, FileHandler):
             "list_task": self.list_task,
             "save_to_mem": self.save_to_mem,
             "mini_task": self.mini_task_completion,
-            "get_agent_class": self.get_agent_class,
+            "get_agent": self.get_agent,
             "run_agent": self.run_agent,
             "run_task": self.run_task,
             "crate_task_chain": self.crate_task_chain,
@@ -180,7 +180,7 @@ class Tools(MainTool, FileHandler):
         self.lang_chain_tools_dict: Dict[str, str] = {}
         self.agent_chain = AgentChain(directory=f".data/{app.id}{extra_path}/chains")
         self.agent_chain_executor = ChainTreeExecutor()
-        self.agent_chain_executor.function_runner = lambda name, **b: self.get_agent_class("self").function_invoke(name,
+        self.agent_chain_executor.function_runner = lambda name, **b: self.get_agent("self").function_invoke(name,
                                                                                                                    **b)
         self.agent_chain_executor.agent_runner = lambda name, task, **k: self.run_agent(name, task, **k)
         self.agent_memory: AISemanticMemory = f"{app.id}{extra_path}/Memory"
@@ -241,7 +241,7 @@ class Tools(MainTool, FileHandler):
     def crate_task_chain(self, prompt):
 
         prompt += f"\n\nAvalabel Agents: {self.config.get('agents-name-list', ['self', 'isaa'])}"
-        prompt += f"\n\nAvalabel Tools: {[f.function for f in self.get_agent_class('self').functions]}"
+        prompt += f"\n\nAvalabel Tools: {[f.function for f in self.get_agent('self').functions]}"
         prompt += f"\n\nAvalabel Chains: {self.list_task()}"
 
         if 'TaskChainAgent' not in self.config['agents-name-list']:
@@ -271,7 +271,7 @@ class Tools(MainTool, FileHandler):
 
     def init_from_augment(self, augment, agent_name: str or AgentBuilder = 'self', exclude=None):
         if isinstance(agent_name, str):
-            agent = self.get_agent_class(agent_name)
+            agent = self.get_agent(agent_name)
         elif isinstance(agent_name, AgentBuilder):
             agent = agent_name
         else:
@@ -353,7 +353,7 @@ class Tools(MainTool, FileHandler):
         # }
 
         if agent is None:
-            agent = self.get_agent_class("self")
+            agent = self.get_agent("self")
 
         if 'Plugins' not in tools.keys():
             tools['Plugins'] = []
@@ -402,14 +402,14 @@ class Tools(MainTool, FileHandler):
 
     def deserialize_all(self, data):
         for key, agent_data in data.items():
-            _ = self.get_agent_class(key)
+            _ = self.get_agent(key)
 
     def init_isaa(self, name='self', build=False, only_v=False, **kwargs):
         if self.initialized:
             self.print(f"Already initialized returning agent / builder name : {name}")
             if build:
                 return self.get_default_agent_builder(name)
-            return self.get_agent_class(name)
+            return self.get_agent(name)
 
         self.initialized = True
         sys.setrecursionlimit(1500)
@@ -428,7 +428,7 @@ class Tools(MainTool, FileHandler):
             self.controller.init(self.config['controller_file'])
 
         if build:
-            return self.get_agent_class(name)
+            return self.get_agent(name)
 
         with Spinner(message=f"Preparing default config for Agent {name}", symbols='c'):
             return self.get_default_agent_builder(name)
@@ -860,7 +860,7 @@ class Tools(MainTool, FileHandler):
         del self.config[f'agent-config-{name}']
         self.config["agents-name-list"].remove(name)
 
-    def get_agent_class(self, agent_name="Normal") -> Agent:
+    def get_agent(self, agent_name="Normal", model=None) -> Agent:
 
         if "agents-name-list" not in self.config.keys():
             self.config["agents-name-list"] = []
@@ -868,13 +868,17 @@ class Tools(MainTool, FileHandler):
         # self.config["agents-name-list"] = [k.replace('agent-config-', '') for k in self.config.keys() if k.startswith('agent-config-')])
         if f'agent-config-{agent_name}' in self.config.keys():
             agent = self.config[f'agent-config-{agent_name}']
+            if model:
+                agent.amd.model = model
             self.print(f"collecting AGENT: {agent_name} "
                        f"{'Mode:' + str(agent.mode) if agent.mode is not None else ''} "
                        f"{'Cape:' + agent.capabilities.name if agent.capabilities is not None else ''}")
         else:
             with Spinner(message=f"Building Agent {agent_name}", symbols='c'):
                 agent_builder = self.get_default_agent_builder(agent_name)
-                if agent_builder.amd_attributes.get('model').startswith('ollama'):
+                if model:
+                    agent_builder.set_amd_model(model)
+                if agent_builder.amd_attributes.get('model', '').startswith('ollama'):
                     try:
                         agent = agent_builder.build()
                     except Exception:
@@ -897,7 +901,7 @@ class Tools(MainTool, FileHandler):
         if mini_task is None:
             return None
         self.print(f"running mini task Volumen {len(mini_task)}")
-        agent: Agent = self.get_agent_class("TaskCompletion")
+        agent: Agent = self.get_agent("TaskCompletion")
         agent.mode = mode
         _stream_function = agent.stream_function
         if stream_function is not None:
@@ -926,7 +930,7 @@ class Tools(MainTool, FileHandler):
         if mini_task is None:
             return None
         self.print(f"running f mini task Volumen {len(mini_task)}, format Volumen {len(mini_task)}")
-        agent: Agent = self.get_agent_class(agent_name)
+        agent: Agent = self.get_agent(agent_name)
         if mode_overload is None:
             mode_overload = self.controller.rget(StrictFormatResponder)
         # if not isinstance(format_, dict):
@@ -954,7 +958,7 @@ class Tools(MainTool, FileHandler):
     def format_class(self, format_class, task, agent_name="TaskCompletion"):
 
         if isinstance(agent_name, str):
-            agent: Agent = self.get_agent_class(agent_name)
+            agent: Agent = self.get_agent(agent_name)
         else:
             agent = agent_name
 
@@ -962,7 +966,7 @@ class Tools(MainTool, FileHandler):
 
     def get_pipe(self, agent_name, *args, **kwargs) -> Pipeline:
         if isinstance(agent_name, str):
-            agent: Agent = self.get_agent_class(agent_name)
+            agent: Agent = self.get_agent(agent_name)
         else:
             agent = agent_name
 
@@ -1069,14 +1073,14 @@ class Tools(MainTool, FileHandler):
                                  get_final_code=False):
 
         if isinstance(agent_or_name, str):
-            agent = self.get_agent_class(agent_or_name)
+            agent = self.get_agent(agent_or_name)
         elif isinstance(agent_or_name, Agent):
             agent = agent_or_name
             name = agent.amd.name
             if name not in self.config["agents-name-list"]:
                 self.config[f'agent-config-{name}'] = agent
         else:
-            agent = self.get_agent_class("self")
+            agent = self.get_agent("self")
 
         def default_env():
             env = AgentVirtualEnv()
@@ -1165,7 +1169,7 @@ class Tools(MainTool, FileHandler):
         agent = None
         if isinstance(name, str):
             # self.load_keys_from_env()
-            agent = self.get_agent_class(name)
+            agent = self.get_agent(name)
 
         elif isinstance(name, Agent):
             agent = name
@@ -1324,7 +1328,7 @@ class Tools(MainTool, FileHandler):
         - Use clear section headings
         - Highlight relationships between concepts"""
 
-        return self.get_agent_class("self").mini_task(summary_prompt)
+        return self.get_agent("self").mini_task(summary_prompt)
 
 
     def get_memory(self, name: Optional[str]=None) -> AISemanticMemory:
@@ -1344,7 +1348,7 @@ class Tools(MainTool, FileHandler):
 
     def save_to_mem(self):
         for name in self.config['agents-name-list']:
-            self.get_agent_class(agent_name=name).save_memory()
+            self.get_agent(agent_name=name).save_memory()
 
     def set_local_files_tools(self, local_files_tools):
         try:

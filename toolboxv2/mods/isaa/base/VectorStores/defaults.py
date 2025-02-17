@@ -991,7 +991,7 @@ class FastVectorStoreO(AbstractVectorStore):
             top_k = min(k, len(similarities))
             if top_k <= 0:
                 return []
-            top_indices = np.argpartition(-similarities, top_k)[:top_k]
+            top_indices = np.argpartition(-similarities, top_k-1)[:top_k]
             top_indices = top_indices[np.argsort(-similarities[top_indices])]
 
             # Filter by similarity threshold
