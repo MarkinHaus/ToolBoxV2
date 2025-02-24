@@ -7,8 +7,8 @@ import TerserPlugin from 'terser-webpack-plugin';
 import CssMinimizerPlugin from 'css-minimizer-webpack-plugin';
 import CompressionPlugin from 'compression-webpack-plugin';
 import webpack from 'webpack';
-
 const isProduction = process.env.NODE_ENV === 'production';
+import BomPlugin from 'webpack-utf8-bom';
 
 export default {
   mode: isProduction ? 'production' : 'development',
@@ -20,7 +20,7 @@ export default {
     path: path.resolve(process.cwd(), 'dist'),
     publicPath: '/',
   },
-  devtool: isProduction ? 'eval-source-map' : 'eval-source-map',
+  devtool: isProduction ? 'source-map' : 'eval-source-map',
   devServer: {
     static: {
       directory: path.join(process.cwd(), 'web'),
@@ -37,12 +37,17 @@ export default {
         target: 'http://0.0.0.0:5000',
       },
     ],
+      setupMiddlewares: (middlewares, devServer) => {
+      devServer.app.get('/favicon.ico', (req, res) => {
+        res.redirect('/web/favicon.ico');
+      });
+      return middlewares;
+    }
   },
   module: {
     rules: [
-      {
+        {
         test: /\.js$/,
-        exclude: /node_modules/,
         use: {
           loader: 'babel-loader',
           options: {
@@ -64,6 +69,7 @@ export default {
     ],
   },
   plugins: [
+    new BomPlugin(false),
     new CleanWebpackPlugin(),
     new HtmlWebpackPlugin({
       template: './index.html',
@@ -188,6 +194,14 @@ export default {
           },
         },
       ],
+    }),
+    new CopyWebpackPlugin({
+      patterns: [
+        {
+          from: 'web/favicon.ico',
+          to: 'favicon.ico'
+        }
+      ]
     }),
     new CompressionPlugin({
       test: /\.(js|css|html|svg)$/,

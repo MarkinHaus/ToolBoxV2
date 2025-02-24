@@ -3,6 +3,8 @@ import json
 import pickle
 import shutil
 import sys
+import tempfile
+import textwrap
 import time
 
 import git
@@ -158,7 +160,7 @@ class EnhancedVerboseOutput:
             "Action Result",
             f"Action: {result.get('action', 'N/A')}\n"
             f"context: {result.get('context', 'N/A')}\n"
-            f"Content: {result.get('content', '')}"
+            f"Content:\n{result.get('content', '')}"
         )
 
     async def log_process_result(self, result: Dict[str, Any]):
@@ -218,6 +220,8 @@ class ThinkResult(BaseModel):
     content: str = Field(..., description="Content related to the action")
     context: Optional[Dict[str, str | int | float | bool | Dict[str, str | int | float | bool ]]] = Field(default_factory=dict, description="Additional context for the action")
 
+class ThinkResults(BaseModel):
+    actions:List[ThinkResult]
 
 @dataclass
 class ExecutionRecord:
@@ -237,6 +241,249 @@ class PipelineResult:
     message: List[Dict[str, str]]
 
 
+import subprocess
+import os
+from pathlib import Path
+import shutil
+import json
+import re
+from typing import Dict, Any, Optional, Tuple
+import io
+from contextlib import redirect_stdout, redirect_stderr
+
+
+class CargoRustInterface:
+    '''Usage :
+# Create interface
+cargo_interface = CargoRustInterface()
+
+# Set up new project
+await cargo_interface.setup_project("hello_rust")
+
+# Add a dependency
+await cargo_interface.add_dependency("serde", "1.0")
+
+# Write and run some code
+code = """
+fn main() {
+    println!("Hello, Rust!");
+}
+"""
+result = await cargo_interface.run_code(code)
+
+# Modify code
+new_function = """
+fn main() {
+    println!("Modified Hello, Rust!");
+}
+"""
+await cargo_interface.modify_code(new_function, "main()")
+
+# Build and test
+await cargo_interface.build()
+await cargo_interface.test()
+
+    '''
+    def __init__(self, session_dir=None, auto_remove=True):
+        """Initialize the Rust/Cargo interface"""
+        self.auto_remove = auto_remove
+        self._session_dir = session_dir or Path.home() / '.cargo_sessions'
+        self._session_dir.mkdir(exist_ok=True)
+        self.vfs = VirtualFileSystem(self._session_dir / 'virtual_fs')
+        self.output_history = {}
+        self._execution_count = 0
+        self.current_project = None
+
+    def reset(self):
+        """Reset the interface state"""
+        if self.auto_remove and self.current_project:
+            shutil.rmtree(self.current_project, ignore_errors=True)
+        self.output_history.clear()
+        self._execution_count = 0
+        self.current_project = None
+
+    async def setup_project(self, name: str) -> str:
+        """Set up a new Cargo project"""
+        try:
+            project_path = self.vfs.base_dir / name
+            if project_path.exists():
+                shutil.rmtree(project_path)
+
+            result = subprocess.run(
+                ['cargo', 'new', str(project_path)],
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode != 0:
+                return f"Error creating project: {result.stderr}"
+
+            self.current_project = project_path
+            return f"Created new project at {project_path}"
+
+        except Exception as e:
+            return f"Failed to create project: {str(e)}"
+
+    async def add_dependency(self, name: str, version: Optional[str] = None) -> str:
+        """Add a dependency to Cargo.toml"""
+        if not self.current_project:
+            return "No active project"
+
+        try:
+            cargo_toml = self.current_project / "Cargo.toml"
+            if not cargo_toml.exists():
+                return "Cargo.toml not found"
+
+            cmd = ['cargo', 'add', name]
+            if version:
+                cmd.extend(['--vers', version])
+
+            result = subprocess.run(
+                cmd,
+                cwd=self.current_project,
+                capture_output=True,
+                text=True
+            )
+
+            return result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
+
+        except Exception as e:
+            return f"Failed to add dependency: {str(e)}"
+
+    async def build(self, release: bool = False) -> str:
+        """Build the project"""
+        if not self.current_project:
+            return "No active project"
+
+        try:
+            cmd = ['cargo', 'build']
+            if release:
+                cmd.append('--release')
+
+            result = subprocess.run(
+                cmd,
+                cwd=self.current_project,
+                capture_output=True,
+                text=True
+            )
+
+            return result.stdout if result.returncode == 0 else f"Build error: {result.stderr}"
+
+        except Exception as e:
+            return f"Build failed: {str(e)}"
+
+    async def test(self) -> str:
+        """Run project tests"""
+        if not self.current_project:
+            return "No active project"
+
+        try:
+            result = subprocess.run(
+                ['cargo', 'test'],
+                cwd=self.current_project,
+                capture_output=True,
+                text=True
+            )
+
+            return result.stdout if result.returncode == 0 else f"Test error: {result.stderr}"
+
+        except Exception as e:
+            return f"Tests failed: {str(e)}"
+
+    async def run_code(self, code: str) -> str:
+        """Run Rust code"""
+        if not self.current_project:
+            return "No active project"
+
+        try:
+            # Write code to main.rs
+            main_rs = self.current_project / "src" / "main.rs"
+            with open(main_rs, 'w') as f:
+                f.write(code)
+
+            # Build and run
+            build_result = subprocess.run(
+                ['cargo', 'build'],
+                cwd=self.current_project,
+                capture_output=True,
+                text=True
+            )
+
+            if build_result.returncode != 0:
+                return f"Compilation error: {build_result.stderr}"
+
+            run_result = subprocess.run(
+                ['cargo', 'run'],
+                cwd=self.current_project,
+                capture_output=True,
+                text=True
+            )
+
+            self._execution_count += 1
+            output = {
+                'code': code,
+                'stdout': run_result.stdout,
+                'stderr': run_result.stderr,
+                'result': run_result.returncode == 0
+            }
+            self.output_history[self._execution_count] = output
+
+            return run_result.stdout if run_result.returncode == 0 else f"Runtime error: {run_result.stderr}"
+
+        except Exception as e:
+            return f"Execution failed: {str(e)}"
+
+    async def modify_code(self, code: str, object_name: str, file: str = "src/main.rs") -> str:
+        """Modify existing Rust code"""
+        if not self.current_project:
+            return "No active project"
+
+        try:
+            file_path = self.current_project / file
+            if not file_path.exists():
+                return f"File {file} not found"
+
+            with open(file_path, 'r') as f:
+                content = f.read()
+
+            # Handle function modification
+            if object_name.endswith("()"):
+                func_name = object_name[:-2]
+                # Find and replace function definition
+                pattern = f"fn {func_name}.*?}}(?=\n|$)"
+                updated_content = re.sub(pattern, code.strip(), content, flags=re.DOTALL)
+            else:
+                # Handle other modifications (structs, constants, etc.)
+                pattern = f"{object_name}.*?(?=\n|$)"
+                updated_content = re.sub(pattern, code.strip(), content)
+
+            with open(file_path, 'w') as f:
+                f.write(updated_content)
+
+            return f"Modified {object_name} in {file}"
+
+        except Exception as e:
+            return f"Modification failed: {str(e)}"
+
+    def save_session(self, name: str):
+        """Save current session state"""
+        session_file = self._session_dir / f"{name}.json"
+        state = {
+            'output_history': self.output_history,
+            'current_project': str(self.current_project) if self.current_project else None
+        }
+
+        with open(session_file, 'w') as f:
+            json.dump(state, f)
+
+    def load_session(self, name: str):
+        """Load saved session state"""
+        session_file = self._session_dir / f"{name}.json"
+        if session_file.exists():
+            with open(session_file, 'r') as f:
+                state = json.load(f)
+                self.output_history = state['output_history']
+                self.current_project = Path(state['current_project']) if state['current_project'] else None
 ### ---- logic ---- ###
 
 class VirtualFileSystem:
@@ -338,6 +585,21 @@ class VirtualFileSystem:
             state = json.load(f)
             self.current_dir = self.base_dir / state['current_dir']
             self.virtual_files = state['virtual_files']
+
+    def print_file_structure(self, start_path: Union[str, Path] = '.', indent: str = ''):
+        """Print the file structure starting from the given path"""
+        start_path = self._resolve_path(start_path)
+        if not start_path.exists():
+            s = f"Path not found: {start_path}"
+            return s
+
+        s = f"{indent}{start_path.name}/"
+        for item in sorted(start_path.iterdir()):
+            if item.is_dir():
+               s+= self.print_file_structure(item, indent + '  ')
+            else:
+                s = f"{indent}  {item.name}"
+        return s
 
 
 class EnhancedVirtualFileSystem:
@@ -925,153 +1187,187 @@ class MockIPython:
                 sys.__stderr__.write(error_msg)
             return error_msg
 
-    async def modify_code(self, file_pattern: str = None, modifications: Dict[str, Any] = None,
-                          code: str = None) -> str:
-        """
-        Modify existing code in the virtual filesystem or add new code.
+    async def modify_code(self, code: str = None, object_name: str = None, file: str = None) -> str:
+        '''
+        Modify existing code in memory (user namespace) and optionally in the corresponding file.
+
+        This method updates variables, functions, or methods in the current Python session and can
+        also update the corresponding source file if specified.
 
         Args:
-            file_pattern: Glob pattern to match files (e.g., "*.py", "src/*.py")
-            modifications: Dictionary of modifications to apply {pattern: replacement}
-            code: New code to append or insert at specific positions
+            code: New value or implementation for the object
+            object_name: Name of the object to modify (variable, function, or method)
+            file: Path to the file to update (if None, only updates in memory)
 
         Returns:
-            Modified code as string
+            String describing the modification result
+
         Examples:
 
-# 1. Simple text replacement
-await ipython.modify_code(
-    "example.py",
-    modifications={
-        "old_function": "new_function",
-        "class OldName:": "class NewName:"
-    }
-)
+        # 1. Update a variable in memory
+        await ipython.modify_code(code="5", object_name="x")
 
-# 2. Using regex patterns
-await ipython.modify_code(
-    "*.py",  # Modify all Python files
-    modifications={
-        r"def \w+\(": lambda m: m.group(0).replace("def ", "async def "),  # Convert functions to async
-        r"print\((.*?)\)": r"logger.info(\1)"  # Replace print with logger
-    }
-)
+    # 2. Change a method implementation
+    await ipython.modify_code(
+        code='"""def sound(self):\n        return "Woof""""',
+        object_name="Dog.sound"
+    )
 
-# 3. Adding new code
-await ipython.modify_code(
-    "models.py",
-    code='''
-def new_function():
-    return "Hello World"
-'''
-)
+    # 3. Modify a function
+    await ipython.modify_code(
+        code='"""def calculate_age():\n    return 25"""',
+        object_name="calculate_age"
+    )
 
-# 4. Combining modifications and additions
-await ipython.modify_code(
-    "views.py",
-    modifications={
-        "class OldView": "class NewView",
-    },
-    code='''
-@router.get("/new-endpoint")
-async def new_endpoint():
-    return {"message": "New endpoint added"}
-'''
-)
+    # 4. Update variable in memory and file
+    await ipython.modify_code(
+        code="100",
+        object_name="MAX_SIZE",
+        file="config.py"
+    )
 
-# 5. Working with current file
-# This will modify the current file being executed
-await ipython.modify_code(
-    modifications={"TODO": "DONE"},
-    code="# New code added automatically"
-)
-"""
+    # 5. Modifying an attribute in __init__
+    await ipython.modify_code(
+        code='"""def __init__(self):\n        self.name = "Buddy""""',
+        object_name="Dog.__init__"
+    )
+        '''
         try:
-            # Initialize variables
-            modified_files = []
-            result_output = []
+            if not object_name:
+                raise ValueError("Object name must be specified")
+            if code is None:
+                raise ValueError("New code or value must be provided")
 
-            # If no pattern specified, use current file
-            if not file_pattern and '__file__' in self.user_ns:
-                file_pattern = self.user_ns['__file__']
-            elif not file_pattern:
-                raise ValueError("No file pattern or current file specified")
+            # Process object name (handle methods with parentheses)
+            clean_object_name = object_name.replace("()", "")
 
-            # Resolve file paths
-            if isinstance(file_pattern, (str, Path)):
-                file_pattern = str(file_pattern)
-                if '*' in file_pattern:
-                    # Handle glob patterns
-                    matched_files = []
-                    for f in Path(self.vfs.current_dir).rglob(file_pattern.split('/')[-1]):
-                        if fnmatch.fnmatch(str(f), file_pattern):
-                            matched_files.append(f)
+            # Step 1: Update in memory (user namespace)
+            result_message = []
+
+            # Handle different types of objects
+            if "." in clean_object_name:
+                # For methods or class attributes
+                parts = clean_object_name.split(".")
+                base_obj_name = parts[0]
+                attr_name = parts[1]
+
+                if base_obj_name not in self.user_ns:
+                    raise ValueError(f"Object '{base_obj_name}' not found in namespace")
+
+                base_obj = self.user_ns[base_obj_name]
+
+                # Handle method definitions which are passed as docstrings
+                if code.split('\n'):
+                    method_code = code
+
+                    # Parse the method code to extract its body
+                    method_ast = ast.parse(method_code).body[0]
+                    method_name = method_ast.name
+
+                    # Create a new function object from the code
+                    method_locals = {}
+                    exec(
+                        f"def _temp_func{signature(getattr(base_obj.__class__, attr_name, None))}: {method_ast.body[0].value.s}",
+                        globals(), method_locals)
+                    new_method = method_locals['_temp_func']
+
+                    # Set the method on the class
+                    setattr(base_obj.__class__, attr_name, new_method)
+                    result_message.append(f"Updated method '{clean_object_name}' in memory")
                 else:
-                    # Handle single file
-                    matched_files = [self.vfs._resolve_path(file_pattern)]
+                    # For simple attributes
+                    setattr(base_obj, attr_name, eval(code, self.user_ns))
+                    result_message.append(f"Updated attribute '{clean_object_name}' in memory")
             else:
-                raise ValueError("Invalid file pattern type")
+                # For variables and functions
+                if code.startswith('"""') and code.endswith('"""'):
+                    # Handle function definitions
+                    func_code = code.strip('"""')
+                    func_ast = ast.parse(func_code).body[0]
+                    func_name = func_ast.name
 
-            if not matched_files:
-                return f"No files matched pattern: {file_pattern}"
-            modified_code = ""
-            # Process each matched file
-            for file_path in matched_files:
-                try:
-                    # Read original code
-                    original_code = self.vfs.read_file(file_path)
-                    modified_code = original_code
+                    # Create a new function object from the code
+                    func_locals = {}
+                    exec(f"{func_code}", globals(), func_locals)
+                    self.user_ns[clean_object_name] = func_locals[func_name]
+                    result_message.append(f"Updated function '{clean_object_name}' in memory")
+                else:
+                    # Simple variable assignment
+                    self.user_ns[clean_object_name] = eval(code, self.user_ns)
+                    result_message.append(f"Updated variable '{clean_object_name}' in memory")
 
-                    # Apply text replacements if specified
-                    if modifications:
-                        for pattern, replacement in modifications.items():
-                            if callable(replacement):
-                                # Handle function-based replacements
-                                def replace_func(match):
-                                    return str(replacement(match.group(0)))
+            # Step 2: Update in file if specified
+            if file is not None:
+                file_path = self.vfs._resolve_path(file)
 
-                                modified_code = re.sub(pattern, replace_func, modified_code)
-                            else:
-                                # Handle direct string replacements
-                                modified_code = re.sub(pattern, str(replacement), modified_code)
+                if not file_path.exists():
+                    self.user_ns['__file__'] = str(file_path)
+                    return await self.run_cell(code)
 
-                    # Handle new code additions
-                    if code:
-                        # Parse the original code to handle insertions properly
-                        try:
-                            tree = ast.parse(modified_code)
+                # Read original content
+                original_content = self.vfs.read_file(file_path)
+                updated_content = original_content
 
-                            # Determine insertion point
-                            if isinstance(tree.body[-1], ast.ClassDef):
-                                # Insert inside last class
-                                indent = "    "
-                                ex_cont = code.replace('\n', f'\n{indent}')
-                                modified_code = modified_code.rstrip() + f"\n{indent}{ex_cont}\n"
-                            else:
-                                # Append to file
-                                modified_code = modified_code.rstrip() + f"\n\n{code}\n"
+                # Handle different object types for file updates
+                if "." in clean_object_name:
+                    # For methods
+                    parts = clean_object_name.split(".")
+                    class_name = parts[0]
+                    method_name = parts[1]
 
-                        except SyntaxError:
-                            # Fallback to simple append if parsing fails
-                            modified_code = modified_code.rstrip() + f"\n\n{code}\n"
+                    if code.startswith('"""') and code.endswith('"""'):
+                        method_code = code.strip('"""')
 
-                    # Write modified code back
-                    self.vfs.write_file(file_path, modified_code)
-                    modified_files.append(file_path)
+                        # Use ast to parse the file and find the method to replace
+                        file_ast = ast.parse(original_content)
+                        for node in ast.walk(file_ast):
+                            if isinstance(node, ast.ClassDef) and node.name == class_name:
+                                for method in node.body:
+                                    if isinstance(method, ast.FunctionDef) and method.name == method_name:
+                                        # Find the method in the source code
+                                        method_pattern = f"def {method_name}.*?:(.*?)(?=\n    \w|\n\w|\Z)"
+                                        method_match = re.search(method_pattern, original_content, re.DOTALL)
 
-                    # Add to output
-                    result_output.append(f"Modified {file_path}:")
-                    result_output.append(modified_code)
-                    result_output.append("")
+                                        if method_match:
+                                            indentation = re.match(r"^(\s*)", method_match.group(0)).group(1)
+                                            method_indented = textwrap.indent(method_code, indentation)
+                                            updated_content = original_content.replace(
+                                                method_match.group(0),
+                                                method_indented
+                                            )
+                                            self.vfs.write_file(file_path, updated_content)
+                                            result_message.append(
+                                                f"Updated method '{clean_object_name}' in file '{file}'")
+                else:
+                    # For variables and functions
+                    if code.startswith('"""') and code.endswith('"""'):
+                        # Handle function updates
+                        func_code = code.strip('"""')
+                        func_pattern = f"def {clean_object_name}.*?:(.*?)(?=\n\w|\Z)"
+                        func_match = re.search(func_pattern, original_content, re.DOTALL)
 
-                except Exception as e:
-                    result_output.append(f"Error processing {file_path}: {str(e)}")
+                        if func_match:
+                            indentation = re.match(r"^(\s*)", func_match.group(0)).group(1)
+                            func_indented = textwrap.indent(func_code, indentation)
+                            updated_content = original_content.replace(
+                                func_match.group(0),
+                                func_indented
+                            )
+                            self.vfs.write_file(file_path, updated_content)
+                            result_message.append(f"Updated function '{clean_object_name}' in file '{file}'")
+                    else:
+                        # Handle variable updates
+                        var_pattern = f"{clean_object_name}\s*=.*"
+                        var_replacement = f"{clean_object_name} = {code}"
+                        updated_content = re.sub(var_pattern, var_replacement, original_content)
 
-            # Execute modified code if it's the current file
-            if '__file__' in self.user_ns and any(Path(self.user_ns['__file__']) == f for f in modified_files):
-                await self.run_cell(modified_code)
+                        if updated_content != original_content:
+                            self.vfs.write_file(file_path, updated_content)
+                            result_message.append(f"Updated variable '{clean_object_name}' in file '{file}'")
+                        else:
+                            result_message.append(f"Could not find variable '{clean_object_name}' in file '{file}'")
 
-            return "\n".join(result_output)
+            return "\n".join(result_message)
 
         except Exception as e:
             return f"Error during code modification: {str(e)}\n{traceback.format_exc()}"
@@ -1168,6 +1464,152 @@ def super_strip(s: str) -> str:
     # Rejoin the processed lines with newline characters.
     return "\n".join(processed_lines)
 
+async def default_python_execute_function(files):
+    # Create a temporary directory to store the files
+    temp_dir = Path("./temp_project")
+    temp_dir.mkdir(exist_ok=True)
+
+    try:
+        # Write files to the temporary directory
+        for file_path, content in files.items():
+            full_path = temp_dir / file_path
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+            full_path.write_text(content)
+
+        # Check if main.py exists
+        main_file = temp_dir / "main.py"
+        if main_file.exists():
+            # Run main.py
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, str(main_file),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await process.communicate()
+            return f"Main execution result:\nStdout:\n{stdout.decode()}\nStderr:\n{stderr.decode()}"
+
+        # If main.py doesn't exist, look for files with __main__ block
+        main_files = []
+        for file_path in temp_dir.glob("**/*.py"):
+            if "__main__" in file_path.read_text():
+                main_files.append(file_path)
+
+        if main_files:
+            results = []
+            for file in main_files:
+                process = await asyncio.create_subprocess_exec(
+                    sys.executable, str(file),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await process.communicate()
+                results.append(f"Execution of {file.name}:\nStdout:\n{stdout.decode()}\nStderr:\n{stderr.decode()}")
+            return "\n\n".join(results)
+
+        # If no main files found, run pytest
+        pytest_output = subprocess.run(
+            [sys.executable, "-m", "pytest", str(temp_dir)],
+            capture_output=True,
+            text=True
+        )
+        return f"Pytest execution result:\n{pytest_output.stdout}\n{pytest_output.stderr}"
+
+    finally:
+        # Clean up temporary directory
+        for file in temp_dir.glob("**/*"):
+            if file.is_file():
+                file.unlink()
+        for dir in reversed(list(temp_dir.glob("**/*"))):
+            if dir.is_dir():
+                dir.rmdir()
+        temp_dir.rmdir()
+
+
+async def default_rust_execute_function(files):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Write files to the temporary directory
+        for file_path, content in files.items():
+            full_path = os.path.join(temp_dir, file_path)
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            with open(full_path, 'w') as f:
+                f.write(content)
+
+        # Check if there's a Cargo.toml file
+        if "Cargo.toml" in files:
+            # Run cargo check for syntax and compiler errors
+            process = await asyncio.create_subprocess_exec(
+                "cargo", "check",
+                cwd=temp_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            check_stdout, check_stderr = await process.communicate()
+
+            # Run cargo run for execution
+            process = await asyncio.create_subprocess_exec(
+                "cargo", "run",
+                cwd=temp_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            run_stdout, run_stderr = await process.communicate()
+
+            return f"""Rust project execution result:
+
+Cargo check (syntax and compiler hints):
+{check_stdout.decode()}
+{check_stderr.decode()}
+
+Cargo run (execution result):
+{run_stdout.decode()}
+{run_stderr.decode()}
+"""
+        else:
+            # Assume it's a single file project
+            main_file = next((f for f in files.keys() if f.endswith('.rs')), None)
+            if main_file:
+                file_path = os.path.join(temp_dir, main_file)
+
+                # Run rustc for compilation and syntax check
+                process = await asyncio.create_subprocess_exec(
+                    "rustc", file_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                compile_stdout, compile_stderr = await process.communicate()
+
+                if process.returncode == 0:
+                    # Run the compiled executable
+                    executable = os.path.join(temp_dir, os.path.splitext(main_file)[0])
+                    process = await asyncio.create_subprocess_exec(
+                        executable,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    run_stdout, run_stderr = await process.communicate()
+
+                    return f"""Rust file execution result:
+
+Compilation:
+{compile_stdout.decode()}
+{compile_stderr.decode()}
+
+Execution:
+{run_stdout.decode()}
+{run_stderr.decode()}
+"""
+                else:
+                    return f"""Rust file compilation failed:
+
+{compile_stdout.decode()}
+{compile_stderr.decode()}
+"""
+            else:
+                return "No Rust files found in the project."
+
+# Usage in run_project function:
+# execute_function = default_rust_execute_function
+
 class Pipeline:
     """
         A pipeline for executing AI agent-driven tasks with interactive code execution and variable management.
@@ -1249,8 +1691,8 @@ class Pipeline:
         self.browser_session: Optional[BrowserSession] = BrowserSession(verbose)
         self.js_history: List[JSExecutionRecord] = []
 
-        _session_dir = Path(get_app().appdata) / 'ChatSession' / agent.amd.name
-        self.ipython = MockIPython(_session_dir, auto_remove=False)
+        self._session_dir = Path(get_app().appdata) / 'ChatSession' / agent.amd.name
+        self.ipython = MockIPython(self._session_dir, auto_remove=False)
         self.chat_session = ChatSession(agent.memory, space_name=f"ChatSession/{agent.amd.name}/Pipeline.session", max_length=max_iter)
         self.process_memory = ChatSession(agent.memory, space_name=f"ChatSession/{agent.amd.name}/Process.session", max_length=max_iter)
 
@@ -1718,14 +2160,18 @@ class Pipeline:
             return ThinkState.BRAKE, think_result.content
 
         elif think_result.action == 'update':
-
+            if think_result.context.get('object_name') is None:
+                return ThinkState.ACTION, "no object_name specified in context!"
+            if think_result.context.get('file') is not None:
+                self.ipython.user_ns['__file__'] = think_result.context.get('file')
             result = await self.verbose_output.process(think_result.action,
                                                        self.ipython.modify_code(code=think_result.content,
-                                                        modifications=think_result.context.get('modifications'),
-                                                        file_pattern=think_result.context.get('file_pattern')))
-            return ThinkState.ACTION, result
+                                                    object_name=think_result.context.get('object_name'),))
+            return ThinkState.PROCESSING, result
 
         elif think_result.action == 'code':
+            if think_result.context.get('file') is not None:
+                self.ipython.user_ns['__file__'] = think_result.context.get('file')
             result = await self._execute_code(think_result.content, think_result.context)
             return ThinkState.PROCESSING, result
 
@@ -1940,83 +2386,89 @@ note : for the final result only toke information from the <execution_result>. i
 Ensure that your evaluation is thorough, constructive, and provides actionable insights for improving future task executions.
 Add guidance based on the the last execution result"""
         code_follow_up_prompt_ = [code_follow_up_prompt]
-        py_chane_prompt = """2. 'update':
-    - For EXISTING class methods only
-    - Preserve method signature
+        py_chane_prompt = '''2. 'update':
+    - For updating variables, functions, and methods in memory and optionally in files
     - Required: code in content
-    - Required: {'context': {
-             'file_pattern': "Glob pattern to match files (e.g., "*.py", "src/*.py")",
-             'modifications': {Dictionary of modifications to apply {pattern: replacement} }
+    - Required: object_name in context
+    - Optional: file in context for file updates
+    - Preserves method signatures and indentation
+    - Required structure: {
+         'context': {
+             'object_name': "Name of variable, function, or method to update",
+             'file': "Optional: Path to file to update (if none, updates only in memory)"
          },
-         'content': 'New code to append or insert at specific positions!',
+         'content': 'New code, value, or implementation',
          'action': 'update'
-         }
-    - Examples
-        # 1. Simple text replacement
-        {'
-            context': {
-            'file_pattern': "example.py",
-            'modifications': {
-                "old_function": "new_function",
-                "class OldName:": "class NewName:"
-                }
+    }
+
+    - Examples:
+
+        # 1. Update a variable in memory
+        {
+            'context': {
+                'object_name': "x"
             },
-            'content': '',
+            'content': "5",
             'action': 'update'
         }
 
-
-        # 2. Using regex patterns
+        # 2. Change a method implementation
         {
             'context': {
-            'file_pattern': "*.py",  # Modify all Python files
-            'modifications': {
-                r"def \w+\(": lambda m: m.group(0).replace("def ", "async def "),  # Convert functions to async
-                r"print\((.*?)\)": r"logger.info(\\1)"  # Replace print with logger
-                }
+                'object_name': "Dog.sound",
+                'file': "animals.py"  # Optional: updates both in memory and file
             },
-            'content': '',
+            'content': '"""def sound(self):\n        return "Woof""""',
             'action': 'update'
         }
 
-        # 3. Adding new code to permanent file
+        # 3. Modify a function with memory-only update
         {
             'context': {
-            'file_pattern': "models.py"
+                'object_name': "calculate_age"
             },
-            'content': '''
-def new_function():
-    return "Hello World"
-''',
-         'action': 'update'
+            'content': '"""def calculate_age():\n    return 25"""',
+            'action': 'update'
         }
 
-
-        # 4. Combining modifications and additions
+        # 4. Update class method with file persistence
         {
             'context': {
-                'file_pattern': "views.py",
-                modifications{
-                    "class OldView": "class NewView",
-                }
+                'object_name': "User.__init__",
+                'file': "models.py"
             },
-            'content'='''
-@router.get("/new-endpoint")
-async def new_endpoint():
-    return {"message": "New endpoint added"}
-'''',
-            action': 'update'
+            'content': '"""def __init__(self, name="Default"):\n        self.name = name\n        self.created_at = datetime.now()"""',
+            'action': 'update'
         }
 
-        # 5. Working with current file
-        # This will modify the current file being executed
+        # 5. Update global configuration variable
         {
             'context': {
-                modifications : {"TODO": "DONE"}
+                'object_name': "MAX_CONNECTIONS",
+                'file': "config.py"
             },
-            content="# New code added automatically"
-            action': 'update'
-        }"""
+            'content': "100",
+            'action': 'update'
+        }
+
+        # 6. Modify class property
+        {
+            'context': {
+                'object_name': "Product.price"
+            },
+            'content': "@property\ndef price(self):\n    return self._price * (1 + self.tax_rate)",
+            'action': 'update'
+        }
+
+        # 7. Update function with complex logic
+        {
+            'context': {
+                'object_name': "process_data",
+                'file': "utils.py"
+            },
+            'content': '"""def process_data(data):\n    result = {}\n    for key, value in data.items():\n        result[key.lower()] = value.upper()\n    return result"""',
+            'action': 'update'
+        }'''
         initial_prompt = f"""
 You are an AI {'js running (in playwright browser)' if self.web_js else 'py'} coding agent specializing in iterative development and code refinement, designed to perform tasks that involve thinking. Your goal is to complete the given task while demonstrating a clear thought process throughout the execution.
 SYSTEM STATE:
@@ -2050,6 +2502,8 @@ VALIDATION CHECKLIST (Must verify before each action):
 
 WORKFLOW STEPS:
 1. Analyze Current State:
+   - Reason and use all avalabel context
+   - Do not repeat the same errors
    - Review existing implementations
    - Check variable values
    - Verify import statements
@@ -2073,11 +2527,12 @@ ACTIONS:
 1. 'code':
     - MUST check <global_variables> first
     - NEVER create demo functions
-    - Include 'reason' (max 6 words)
+    - Include 'reason'
     - lang default {'js' if self.web_js else 'py'}
     - Required: code in content
     - code MUST call a function or display the row variabel / value at the end!
     - Required: {{'context':{{'lang':{'js' if self.web_js else 'py'},  'reason': ... }}...}}
+    - Optional file key in context example  {{'context':{{'lang':{'js' if self.web_js else 'py'},  'file': 'main.py' ,  'reason': ... }}...}}
     - Tip: use comments to reason with in the code
 
     { js_prompt if self.web_js else py_chane_prompt}
@@ -2090,9 +2545,9 @@ ACTIONS:
 
 CODE CONSTRAINTS:
 1. State Preservation:
-   - ALL variables must persist
-   - ALL functions must remain
-   - ALL classes must be maintained
+   - ALL variables ar persist
+   - ALL functions remain
+   - ALL classes ar maintained
 
 2. Import Management:
    - Check <global_variables> for modules
@@ -2185,11 +2640,38 @@ Next Action Required:
 
             if state == ThinkState.ACTION:
                 # Get agent's thoughts
-                think_dict = await self.verbose_output.process(state.name, self.agent.a_format_class(
-                    ThinkResult,
+                think_dicts = await self.verbose_output.process(state.name, self.agent.a_format_class(
+                    ThinkResults,
                     prompt,
                     message=self.chat_session.get_past_x(self.max_iter*2, last_u=not do_continue).copy()+([self.process_memory.history[-1]] if self.process_memory.history else []) ,
                 ))
+                think_dicts = think_dicts.get("actions")
+                if think_dicts is None:
+                    think_dict = await self.verbose_output.process(state.name, self.agent.a_format_class(
+                        ThinkResult,
+                        prompt,
+                        message=self.chat_session.get_past_x(self.max_iter * 2, last_u=not do_continue).copy() + (
+                            [self.process_memory.history[-1]] if self.process_memory.history else []),
+                    ))
+                if len(think_dicts) == 1:
+                    think_dict = think_dicts[0]
+                else:
+                    for think_dict in think_dicts[:-1]:
+                        if think_dict.get('context') is None:
+                            think_dict['context'] = {'context': 'N/A'}
+                        if not isinstance(think_dict.get('context'), dict):
+                            think_dict['context'] = {'context': think_dict.get('context')}
+                        think_result = ThinkResult(**think_dict)
+                        await self.chat_session.add_message(
+                            {'role': 'assistant', 'content': think_result.content + str(think_result.context)})
+                        state, result = await self.verbose_output.process(think_dict.get("action"),
+                                                                          self._process_think_result(think_result,
+                                                                                                     task=task))
+                        if result:
+                            await self.chat_session.add_message(
+                                {'role': 'system', 'content': 'Evaluation: ' + str(result)})
+                            await self.verbose_output.log_message('system', str(result))
+                    think_dict = think_dicts[-1]
                 await self.verbose_output.log_think_result(think_dict)
                 if think_dict.get('context') is None:
                     think_dict['context'] = {'context': 'N/A'}
@@ -2240,7 +2722,7 @@ Next Action Required:
                 code_follow_up_prompt_[0] = code_follow_up_prompt
                 if not next_dict.get('is_completed', True):
                     state = ThinkState.ACTION
-                    initial_prompt = initial_prompt_.replace('#ITER#',f'#ITER#\nresult: {next_dict.get("text", "")}')
+                    initial_prompt = initial_prompt_.replace('#ITER#',f'#ITER#\nReasoning assist result: {next_dict}')
                     continue
                 elif next_dict.get('is_completed', False):
                     result = next_dict.get('text', '')
@@ -2274,6 +2756,148 @@ Next Action Required:
             result=result,
             execution_history=self.execution_history,
             message=self.chat_session.get_past_x(iter_i*2, last_u=not do_continue),
+        )
+
+    async def run_project(self, task, lang='py', execute_function=None):
+        if execute_function is None:
+            if lang == 'py':
+                execute_function = default_python_execute_function
+            elif lang == 'rust':
+                execute_function = default_rust_execute_function
+            else:
+                raise ValueError(f"Unsupported language: {lang}")
+        class FileAction(BaseModel):
+            action: str
+            path: str
+            content: Optional[str] = None
+
+        class ProjectThinkResult(BaseModel):
+            action: str
+            file_actions: List[FileAction]
+            reasoning: str
+
+        class ProjectPipelineResult(BaseModel):
+            result: str
+            execution_history: List[str]
+            files: Dict[str, str]
+        state = ThinkState.ACTION
+        result = None
+        original_task = task
+        vfs = VirtualFileSystem(self._session_dir / f"project_{lang}")
+
+        project_prompt = f"""
+    You are an AI coding agent specializing in {lang} project development. Your task is to create, modify, and manage files within a project structure to complete the given task. Use the VirtualFileSystem to interact with files.
+
+    TASK DESCRIPTION:
+    {task}
+    CURRENT FILES:
+    #files#
+
+    WORKFLOW STEPS:
+    1. Analyze the current project state
+    2. Plan necessary changes or additions
+    3. Execute changes using file actions
+    4. Evaluate the project's progress
+
+    Use the ProjectThinkResult structure to organize your thoughts and actions:
+
+    class ProjectThinkResult(BaseModel):
+        action: str  # 'code', 'evaluate', 'done'
+        file_actions: List[FileAction]
+        reasoning: str
+
+    class FileAction(BaseModel):
+        action: str  # 'write', 'read', 'delete', 'list'
+        path: str
+        content: Optional[str] = None
+
+    EXECUTION RULES:
+    1. Use absolute paths for all file operations
+    2. Maintain a clear project structure
+    3. Document your code and reasoning
+    4. Ensure all necessary files are created and properly linked
+    5. Use the appropriate language syntax and best practices for {lang}
+
+    Next Action Required:
+    1. Review the current project state
+    2. Plan the next step in project development
+    3. Execute file actions to implement changes
+    """
+
+        execution_history = []
+        files = {}
+
+        iter_i = 0
+        self.verbose_output.log_header(task)
+
+        while state != ThinkState.DONE:
+            iter_i += 1
+            self.verbose_output.formatter.print_iteration(iter_i, self.max_iter)
+            if iter_i>self.max_iter:
+                break
+            if state == ThinkState.ACTION:
+                think_result = await self.agent.a_format_class(
+                    ProjectThinkResult,
+                    project_prompt.replace('#files#', vfs.print_file_structure()),
+                    message=execution_history
+                )
+                self.verbose_output.log_state(state.name, think_result)
+                think_result = ProjectThinkResult(**think_result)
+                for file_action in think_result.file_actions:
+                    path = str(Path(file_action.path).relative_to(vfs.base_dir))
+                    if file_action.action == 'write':
+                        vfs.write_file(path, file_action.content)
+                        files[path] = file_action.content
+                    elif file_action.action == 'read':
+                        content = vfs.read_file(path)
+                        files[path] = content
+                    elif file_action.action == 'delete':
+                        vfs.delete_file(path)
+                        files.pop(path, None)
+                    elif file_action.action == 'list':
+                        dir_contents = vfs.list_directory(path)
+                        files[path] = str(dir_contents)
+
+                if think_result.action == 'evaluate':
+                    state = ThinkState.PROCESSING
+                elif think_result.action == 'done':
+                    state = ThinkState.DONE
+
+                execution_history.append(f"Action: {think_result.action}\nReasoning: {think_result.reasoning}")
+
+            elif state == ThinkState.PROCESSING:
+                if execute_function:
+                    execution_result = await execute_function(files)
+                    execution_history.append(f"Execution Result: {execution_result}")
+
+                    evaluation_prompt = f"""
+    Evaluate the current state of the project based on the execution result:
+
+    {execution_result}
+
+    Determine if the project is complete or if further modifications are needed.
+    """
+                    evaluation = await self.agent.a_format_class(
+                        ProjectThinkResult,
+                        evaluation_prompt,
+                        message=execution_history
+                    )
+                    self.verbose_output.log_state(state.name, evaluation)
+                    evaluation = ProjectThinkResult(**evaluation)
+                    if evaluation.action == 'done':
+                        state = ThinkState.DONE
+                        result = execution_result
+                    else:
+                        state = ThinkState.ACTION
+                else:
+                    state = ThinkState.ACTION
+            else:
+                break
+
+        return ProjectPipelineResult(
+            result=result,
+            execution_history=execution_history,
+            files=files
         )
 
     async def __aenter__(self):

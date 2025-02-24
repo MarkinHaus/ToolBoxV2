@@ -433,7 +433,6 @@ class ConceptExtractor:
 
         except Exception as e:
             i__[2] +=1
-            print(f"Error processing response: {str(e)}")
             return []
 
     async def process_chunks(self, chunks: List[Chunk]) -> None:

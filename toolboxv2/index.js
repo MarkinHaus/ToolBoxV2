@@ -4,7 +4,6 @@ import {addRenderer, EndBgInteract, Set_animation_xyz,Set_zoom, StartBgInteract,
 import {autocomplete} from "/web/scripts/util.js";
 import htmx from "./web/node_modules/htmx.org/dist/htmx.esm.js";
 window.htmx = htmx;
-/*import "/main.js";*/
 
 const rpIdUrl_f = ()=> {
     if (window.location.href.match("localhost")) {
