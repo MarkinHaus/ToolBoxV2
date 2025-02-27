@@ -124,3 +124,4 @@ ENV/
 /toolboxv2/mods_sto
 .aider*
 /toolboxv2/simple-core/src-tauri/gen/android/keystore.properties
+/toolboxv2/src-core/config.toml

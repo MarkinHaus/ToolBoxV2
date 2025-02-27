@@ -592,8 +592,6 @@ async def setup_app():
 
     if args.background_application_runner:
         daemon_app = await DaemonApp(tb_app, args.host, args.port if args.port != 5000 else 6587, t=False)
-        if not args.debug:
-            show_console(False)
         tb_app.daemon_app = daemon_app
         args.live_application = False
     elif args.background_application:
@@ -615,8 +613,6 @@ async def setup_app():
             tb_app = await a_get_proxy_app(tb_app, host=args.host if args.host != "0.0.0.0" else "localhost",
                                            port=args.port if args.port != 5000 else 6587,
                                            key=os.getenv("TB_R_KEY", "user@phfrase"))
-            if args.debug:
-                await tb_app.show_console()
         except:
             print("Auto starting Starting Local if u know ther is no bg instance use -fg to run in the frond ground")
 

@@ -608,8 +608,9 @@ class Tools(MainTool, FileHandler):
         self.logger.info(f"{name} -- received bytes --")
         return {'bytes': row_data, 'identifier': identifier}
 
-    async def compute_json(self, name, row_data, identifier="main"):
+    async def compute_json(self, name, row_data:bytes, identifier="main"):
         try:
+            print(row_data)
             msg = json.loads(row_data)
             msg['identifier'] = identifier
             self.logger.info(f"{name} -- received JSON -- {msg['identifier']}")
@@ -697,11 +698,8 @@ class Tools(MainTool, FileHandler):
             r_socket_ = receiver
         self.print(f"Receiver running for {name} to {identifier}")
         while (not self.sockets[name]["running_dict"]["receive"][identifier].is_set()) and self.sockets[name]["alive"]:
-            # t0 = time.perf_counter()
             chunk_result = await self.chunk_receive(name, r_socket_, identifier=identifier)
-
             # chunk_result.print()
-
             if chunk_result.is_error():
                 return chunk_result
 
@@ -712,10 +710,13 @@ class Tools(MainTool, FileHandler):
                 self.logger.info(f"{name} -- received keepalive signal--")
                 continue
 
-            if data_type is None:
-                data_type = chunk[:1]  # Erstes Byte ist der Datentyp
-                chunk = chunk[1:]  # Rest der Daten
-                self.print(f"Register date type : {data_type} :{name}-{identifier}")
+            # Process the first byte if data_type is None
+            if data_type is None and chunk:
+                data_type = chunk[:1]  # First byte is data type
+                chunk = chunk[1:]  # Rest of the data
+                self.print(f"Register data type: {data_type} :{name}-{identifier}")
+
+            # Check for exit signal
             if data_type == b'e':
                 if isinstance(self.sockets[name]["running_dict"]["receive"][identifier], asyncio.Event):
                     self.sockets[name]["running_dict"]["receive"][identifier].set()
@@ -728,43 +729,84 @@ class Tools(MainTool, FileHandler):
                 self.logger.info(f"{name} -- received exit signal --")
                 print(f"{name} -- received exit signal --")
                 break
-            if not (chunk[0] == b'E'[0] and chunk[-1] == b'E'[0]):
-                # Check if adding this chunk would exceed the max size limit
-                if max_size != -1 and ac_size + len(chunk) > max_size:
-                    # If the chunk would exceed the max size, add only the necessary part of it
-                    chunk = chunk[:(max_size - ac_size) + 1]
-                    data_buffer.write(chunk)
-                else:
-                    data_buffer.write(chunk)
+
+            # Append chunk to buffer
+            if max_size != -1 and ac_size + len(chunk) > max_size:
+                # If the chunk would exceed the max size, add only the necessary part
+                data_buffer.write(chunk[:(max_size - ac_size)])
+                ac_size = max_size
+            else:
+                data_buffer.write(chunk)
                 ac_size += len(chunk)
 
             if max_size > -1 and ac_size > 0 and data_type == b'b':
-                print(
-                    f"don {chunk[0] == b'E'[0] and chunk[-1] == b'E'[0]} {(ac_size / max_size) * 100:.2f}% total byts: {ac_size} von {max_size}",
-                    end='\r')
+                print(f"Progress: {(ac_size / max_size) * 100:.2f}% total bytes: {ac_size} of {max_size}", end='\r')
 
-            elif chunk[0] == b'E'[0] and chunk[-1] == b'E'[0] and ac_size > 0 and (
-                ac_size == max_size or max_size == -1):
-                max_size = -1
-                ac_size = 0
-                # Letzter Teil des Datensatzes
-                data = await self.compute_data(name, data_buffer.getvalue(), data_type, identifier=identifier)
+            # Check for message completion markers
+            buffer_data = data_buffer.getvalue()
 
-                if data:
-                    self.print(f"Daten wurden empfangen {name} {identifier}")
-                    if max_size == -1 and isinstance(data, dict) and "max_size" in data:
-                        max_size = data.get("max_size")
-                    if self.sockets[name]["type_id"] == SocketType.client.name and 'identifier' in data and data.get(
-                        "identifier") == 'main':
-                        del data['identifier']
-                    if self.sockets[name]["do_async"]:
-                        await self.sockets[name]["a_receiver_queue"].put(data)
+            # Find all message boundaries (sequences of 'E')
+            start_pos = 0
+            while True:
+                # Find the next 'E' character
+                e_pos = buffer_data.find(b'E', start_pos)
+                if e_pos == -1:
+                    break  # No more 'E' found
+
+                # Check if it's the start of an 'E' sequence
+                end_pos = e_pos
+                while end_pos < len(buffer_data) and buffer_data[end_pos:end_pos + 1] == b'E':
+                    end_pos += 1
+
+                # If we have enough 'E's (for example, at least 5), consider it a message boundary
+                if end_pos - e_pos >= 5:
+                    # We found a message boundary, process the data up to this point
+                    message_data = buffer_data[:e_pos]
+
+                    if message_data:  # Make sure we have data to process
+                        data = await self.compute_data(name, message_data, data_type, identifier=identifier)
+
+                        if data:
+                            self.print(f"Daten wurden empfangen {name} {identifier}")
+                            if max_size == -1 and isinstance(data, dict) and "max_size" in data:
+                                max_size = data.get("max_size")
+                            if self.sockets[name][
+                                "type_id"] == SocketType.client.name and 'identifier' in data and data.get(
+                                "identifier") == 'main':
+                                del data['identifier']
+                            if self.sockets[name]["do_async"]:
+                                await self.sockets[name]["a_receiver_queue"].put(data)
+                            else:
+                                self.sockets[name]["receiver_queue"].put(data)
+
+                    # Check if there's more data after this message
+                    if end_pos < len(buffer_data):
+                        # There might be a new data type after the 'E' sequence
+                        remaining_data = buffer_data[end_pos:]
+                        if remaining_data and remaining_data[0:1] in [b'j', b'b', b'e']:
+                            # New message with a data type
+                            data_type = remaining_data[0:1]
+                            new_buffer = io.BytesIO()
+                            new_buffer.write(remaining_data[1:])  # Skip the data type byte
+                            data_buffer = new_buffer
+                            ac_size = len(remaining_data) - 1
+                            self.print(f"Found new data type: {data_type} :{name}-{identifier}")
+                        else:
+                            # Reset buffer but keep same data type
+                            data_buffer = io.BytesIO()
+                            ac_size = 0
                     else:
-                        self.sockets[name]["receiver_queue"].put(data)
-                # Zurücksetzen für den nächsten Datensatz
-                del data_buffer
-                data_buffer = io.BytesIO()
-                data_type = None
+                        # No more data, reset everything
+                        data_buffer = io.BytesIO()
+                        data_type = None
+                        ac_size = 0
+                        max_size = -1
+
+                    # We've processed a message, so exit this loop and get the next chunk
+                    break
+
+                # Move past this 'E' to look for more
+                start_pos = e_pos + 1
 
         data_buffer.close()
         self.print(f"{name} :closing connection to {self.sockets[name]['host']}")

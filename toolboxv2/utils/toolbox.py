@@ -114,7 +114,7 @@ class App(AppType, metaclass=Singleton):
         if not os.path.exists(self.info_dir):
             os.makedirs(self.info_dir, exist_ok=True)
 
-        print(f"Starting ToolBox as {prefix} from :", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
+        print(f"Starting ToolBox as {prefix} from :", Style.Bold(Style.CYAN(f"{os.getcwd()}")), sys.argv)
 
         logger_info_str, self.logger, self.logging_filename = self.set_logger(args.debug)
 

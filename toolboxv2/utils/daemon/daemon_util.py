@@ -153,8 +153,10 @@ class DaemonUtil:
                         await client_to_receiver_thread(client, str(address))
 
                         await self.runner_co(self._on_register, identifier, address)
+                        # identifier = str(address)
+                        # await sender({'ok': 0}, identifier)
 
-                    # print("Receiver queue", identifier, identifier in known_clients, identifier in valid_clients)
+                    print("Receiver queue", identifier, identifier in known_clients, identifier in valid_clients)
                     # validation
                     if identifier in known_clients:
                         get_logger().info(identifier)
