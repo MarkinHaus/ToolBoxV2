@@ -1541,18 +1541,22 @@ async fn is_valid_session_handler(
 async fn logout_handler(
     manager: web::Data<SessionManager>,
     session: Session,
-    client: web::Data<Arc<ToolboxClient>>,
 ) -> HttpResponse {
     let valid = match session.get::<bool>("valid") {
         Ok(Some(true)) => true,
         _ => false,
     };
-
+    let client = match get_toolbox_client() {
+        Ok(client) => Arc::new(client),
+        Err(e) => {
+            panic!("{}", e)
+        }
+    };
     if valid {
         if let Ok(Some(live_data)) = session.get::<HashMap<String, String>>("live_data") {
             if let Some(si_id) = live_data.get("SiID") {
                 // Get instance UID
-                let instance_result = match client.run_function(
+                let instance_result = client.run_function(
                     "CloudM.UserInstances",
                     "get_instance_si_id",
                     live_data.get("spec").unwrap_or(&String::new()),
@@ -1562,13 +1566,10 @@ async fn logout_handler(
                         map.insert("si_id".to_string(), serde_json::json!(si_id));
                         map
                     },
-                ).await {
-                    Ok(response) => response,
-                    Err(e) => {
-                        log::error!("Error getting instance by si_id: {}", e);
-                        serde_json::json!({})
-                    }
-                };
+                ).await.unwrap_or_else(|e| {
+                    log::error!("Error getting instance by si_id: {}", e);
+                    serde_json::json!({})
+                });
 
                 if let Some(uid) = instance_result.get("result")
                     .and_then(|r| r.get("save"))
@@ -1622,8 +1623,7 @@ async fn logout_handler(
 async fn api_handler(
     path: web::Path<(String, String)>,
     query: web::Query<HashMap<String, String>>,
-    session: Session,
-    client: web::Data<Arc<ToolboxClient>>,
+    session: Session
 ) -> HttpResponse {
 
     let (module_name, function_name) = path.into_inner();
@@ -1666,6 +1666,12 @@ async fn api_handler(
         .map(|(k, v)| (k, serde_json::json!(v)))
         .collect();
 
+    let client = match get_toolbox_client() {
+        Ok(client) => Arc::new(client),
+        Err(e) => {
+            panic!("{}", e)
+        }
+    };
     // Run function via toolbox client
     match client.run_function(&module_name, &function_name, &spec, args, kwargs).await {
         Ok(response) => {
@@ -1733,12 +1739,10 @@ async fn main() -> std::io::Result<()> {
 
     // Start server
     info!("Starting server on {}:{}", config.server.ip, config.server.port);
-    let client_data = web::Data::new(client.clone());
     let dist_path = config.server.dist_path.clone(); // Clone the dist_path here
 
     HttpServer::new(move || {
         let dist_path = dist_path.clone(); // Move the cloned dist_path into the closure
-        let client_data = client_data.clone();
         App::new()
             .wrap(middleware::Logger::default())
             .wrap(middleware::Compress::default())
@@ -1747,7 +1751,6 @@ async fn main() -> std::io::Result<()> {
                 key.clone(),
             ))
             .app_data(web::Data::clone(&session_manager))
-            .app_data(client_data)
             // API routes
             .service(
                 web::scope("/api")
@@ -1759,9 +1762,9 @@ async fn main() -> std::io::Result<()> {
                         .route(web::post().to(logout_handler)))
                     .service(
                     web::resource("/{module_name}/{function_name}")
-                        .route(web::get().to(|path, query, session, client| {
+                        .route(web::get().to(|path, query, session| {
                             info!("Handling request for: {:?}", path);
-                            api_handler(path, query, session, client)
+                            api_handler(path, query, session)
                         }))
                 )
             )
