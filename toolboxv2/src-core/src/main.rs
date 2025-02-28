@@ -1447,7 +1447,6 @@ async fn api_handler(
 
     // Check if the request is for a protected module or function
     let is_protected = match module_name.as_str() {
-        "CloudM" => false,
         "CloudM.AuthManager" => false, // Example: Allow all functions in this module without validation
         _ => !function_name.starts_with("open"), // Allow functions starting with "open" without validation
     };
