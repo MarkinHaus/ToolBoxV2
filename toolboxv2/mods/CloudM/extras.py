@@ -311,6 +311,10 @@ def show_version(self):
     return self.version
 
 
+@export(mod_name=Name, version=version, state=False, request_as_kwarg=True)
+async def get_eco(app: Optional[App] = None,request=None):
+    return str(request)
+
 @export(mod_name=Name, version=version, state=False)
 async def login(m_link: str, app: Optional[App] = None):
     if app is None:

@@ -1,6 +1,6 @@
 import {rendererPipeline} from "/web/scripts/WorkerSocketRenderer.js";
 import {AuthHttpPostData, httpPostData, httpPostUrl, ToolBoxError, wrapInResult} from "/web/scripts/httpSender.js";
-import {addRenderer, EndBgInteract, Set_animation_xyz,Set_zoom, StartBgInteract, toggleDarkMode} from "/web/scripts/scripts.js";
+import {addRenderer,EndBgInteract, Set_animation_xyz,Set_zoom, toggleDarkMode} from "/web/scripts/scripts.js";
 import {autocomplete} from "/web/scripts/util.js";
 import htmx from "./web/node_modules/htmx.org/dist/htmx.esm.js";
 window.htmx = htmx;
@@ -325,12 +325,6 @@ light_mode
         toggleDarkMode()
     });
 
-
-    document.body.addEventListener('mousedown', () => {StartBgInteract()});
-    document.body.addEventListener('mouseup', () => {EndBgInteract()});
-
-    document.body.addEventListener("touchstart", () => {StartBgInteract()});
-    document.body.addEventListener("touchend", () => {EndBgInteract()});
 
     const stored_mode = sessionStorage.getItem('darkModeStatus')? sessionStorage.getItem('darkModeStatus') : "dark";
     if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches && stored_mode==="dark") {
@@ -1094,8 +1088,8 @@ function linksInit(){
                 <li><a href="/">Home</a></li>
                 <li><a href="/web/mainContent.html">Apps</a></li>
                 <hr style="margin: -0.25vh 0"/>
-                <li><a href="/web/login">Login</a></li>
-                <li><a href="/web/signup">Sign Up</a></li>
+                <li><a href="/web/assets/login.html">Login</a></li>
+                <li><a href="/web/assets/signup.html">Sign Up</a></li>
                 <li><a href="/web/core0/Poffer/PublicDashboard.html">Offer</a></li>
                 <hr style="margin: -0.25vh 0"/>
                 <li><a href="/web/assets/terms.html">Terms and Conditions</a></li>

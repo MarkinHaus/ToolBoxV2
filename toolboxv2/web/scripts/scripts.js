@@ -218,12 +218,6 @@ function createSierpinskiTriangle(depth, size) {
     return group;
 }
 
-export function StartBgInteract() {
-    animantionFactor = animantionFactorKlick;
-    animationX = 0.02*Math.random();
-    animationY = 0.02*Math.random();
-    animationZ = 0.02*Math.random();
-}
 
 function endBgInteract() {
     animantionFactor = animantionFactorIdeal;
@@ -231,12 +225,7 @@ function endBgInteract() {
     animationY = 0.002;
     animationZ = 0.002;
 }
-export function EndBgInteract() {
-    animantionFactor = animantionFactorIdeal;
-    animationX = 0.002;
-    animationY = 0.002;
-    animationZ = 0.002;
-}
+
 
 export function Set_animation_xyz(x,y,z,s=animantionFactorKlick+2){
     animantionFactor = s
@@ -366,23 +355,95 @@ setTimeout(()=>{
 const s = document.getElementsByClassName('loaderCenter')
     if (s){if(s[0]){s[0].classList.add("none")}}}, 122)
 
+let isMouseDown = false;
+let startX = 0;
+let startY = 0;
+let currentX = 0;
+let currentY = 0;
 
-// document.addEventListener('mousemove', (event) => {
-//     if (isMouseDown) {
-//         mouseX = event.clientX / window.innerWidth * 2 - 1;
-//         mouseY = -(event.clientY / window.innerHeight) * 2 + 1;
-//
-//         animationX = (mouseX* Math.PI)/100;
-//         animationY = (mouseY* Math.PI)/100;
-//         animationZ = ((mouseX+mouseY)* Math.PI)/100
-//
-//
-//         //animationX
-//         //animationX += (mouseX* Math.PI);
-//         //animationY += (mouseY* Math.PI);
-//     }
-// });
+export function StartBgInteract(event) {
+    isMouseDown = true;
+    animantionFactor = animantionFactorKlick;
 
+    // Capture the starting position
+    if (event) {
+        if (event.type.includes('mouse')) {
+            startX = event.clientX;
+            startY = event.clientY;
+        } else if (event.type.includes('touch')) {
+            startX = event.touches[0].clientX;
+            startY = event.touches[0].clientY;
+        }
+
+        // Normalize coordinates (-1 to 1)
+        const normalizedX = (startX / window.innerWidth) * 2 - 1;
+        const normalizedY = -((startY / window.innerHeight) * 2 - 1);
+
+        // Initial rotation based on click/touch position
+        animationX = normalizedY * 0.02;
+        animationY = normalizedX * 0.02;
+        animationZ = (normalizedX + normalizedY) * 0.01;
+    }
+}
+
+function handleBgMove(event) {
+    if (!isMouseDown) return;
+
+    // Get current position
+    if (event.type.includes('mouse')) {
+        currentX = event.clientX;
+        currentY = event.clientY;
+    } else if (event.type.includes('touch')) {
+        currentX = event.touches[0].clientX;
+        currentY = event.touches[0].clientY;
+    }
+
+    // Calculate movement delta from starting position
+    const deltaX = currentX - startX;
+    const deltaY = currentY - startY;
+
+    // Convert delta to rotation values (scaled appropriately)
+    // Vertical movement affects X rotation, horizontal affects Y rotation
+    animationX = (deltaY / window.innerHeight) * Math.PI / 25;
+    animationY = (deltaX / window.innerWidth) * Math.PI / 25;
+    animationZ = ((deltaX + deltaY) / (window.innerWidth + window.innerHeight)) * Math.PI / 25;
+}
+
+export function EndBgInteract() {
+    isMouseDown = false;
+    animantionFactor = animantionFactorIdeal;
+
+    // Reset to small default animation values
+    animationX = 0.002;
+    animationY = 0.002;
+    animationZ = 0.002;
+}
+
+// Mouse event listeners
+document.body.addEventListener('mousedown', (event) => {
+    StartBgInteract(event);
+});
+
+document.body.addEventListener('mousemove', (event) => {
+    handleBgMove(event);
+});
+
+document.body.addEventListener('mouseup', () => {
+    EndBgInteract();
+});
+
+// Touch event listeners
+document.body.addEventListener('touchstart', (event) => {
+    StartBgInteract(event);
+});
+
+document.body.addEventListener('touchmove', (event) => {
+    handleBgMove(event);
+});
+
+document.body.addEventListener('touchend', () => {
+    EndBgInteract();
+});
 
 animateBD();
 

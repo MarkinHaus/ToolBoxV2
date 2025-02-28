@@ -16,6 +16,7 @@ from toolboxv2 import MainTool, FileHandler, Style
 from toolboxv2 import Result, get_app
 from toolboxv2.utils.system.types import ApiOb
 from fastapi import WebSocket, HTTPException
+from websockets import serve
 
 
 async def valid_id(ws_id, id_v, websocket=None):
@@ -468,6 +469,20 @@ class Tools(MainTool, FileHandler):
 
         if data_type == "str":
             await self.send_message(data, websocket, websocket_id)
+
+    async def start_server(self, host="localhost", port=8765, non_block=False):
+        async def handle_websocket(websocket):
+            websocket_id = await websocket.recv()
+            self.active_connections[websocket_id] = websocket
+            async for message in websocket:
+                response = await self.manage_data_flow(websocket, websocket_id, message)
+                if response:
+                    await websocket.send(response)
+        async with serve(handle_websocket, host, port):
+            self.print(f"{self.name} Service Online.")
+            if non_block:
+                return
+            await asyncio.Future()  # Run forever
 
     def construct_render(self, content: str, element_id: str, externals: List[str] or None = None,
                          placeholder_content: str or None = None, from_file=False, to_str=True):

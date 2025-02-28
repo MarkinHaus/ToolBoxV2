@@ -51,7 +51,7 @@ class ProxyUtil:
         self.unix_socket = unix_socket
         if remote_functions is None:
             remote_functions = ["run_any", "a_run_any", "remove_mod", "save_load", "exit_main", "show_console", "hide_console",
-                                "rrun_runnable",
+                                "rrun_flow",
                                 "get_autocompletion_dict",
                                 "exit_main", "watch_mod"]
         self.remote_functions = remote_functions

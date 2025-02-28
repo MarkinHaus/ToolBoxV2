@@ -201,9 +201,9 @@ class DaemonUtil:
                             await sender({'ok': 0}, identifier)
                             continue
 
-                        if name == 'rrun_runnable':
+                        if name == 'rrun_flow':
                             show_console(True)
-                            runnner = getattr(self.class_instance, "run_runnable")
+                            runnner = getattr(self.class_instance, "run_flow")
                             threading.Thread(target=runnner, args=args, kwargs=kwargs, daemon=True).start()
                             await sender({'ok': 0}, identifier)
                             show_console(False)
