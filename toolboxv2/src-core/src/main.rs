@@ -17,12 +17,10 @@ use serde_json::json;
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::{timeout, sleep};
-
 use uuid::Uuid;
 use tracing::{info, warn, error, debug};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::cell::RefCell;
-
 use std::io::{self, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Mutex};
@@ -32,146 +30,534 @@ use serde_json::Value;
 use serde_json;
 use std::future::Future;
 use std::pin::Pin;
+use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyTuple, PyList};
+use tokio::task;
+use pyo3::PyResult;
+use std::env;
+use std::path::PathBuf;
+use pyo3_asyncio::{tokio::future_into_py, tokio::into_future}; // Added for async support
 
 lazy_static! {
     static ref TOOLBOX_CLIENT: Mutex<Option<ToolboxClient>> = Mutex::new(None);
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolboxRequest {
-    pub name: String,
-    pub args: Vec<serde_json::Value>,
-    pub kwargs: HashMap<String, serde_json::Value>,
-    pub identifier: Option<String>,
-    pub claim: Option<String>,
-    pub key: Option<String>,
-}
-
+/// A Python toolbox instance that runs within the process
 #[derive(Debug, Clone)]
-struct Connection {
-    stream: Arc<Mutex<Option<tokio::net::TcpStream>>>,
-    last_used: Instant,
-    is_validated: bool,
-    in_use: bool,  // Track if connection is currently being used
-}
-
-#[derive(Debug, Clone)]
-struct ToolboxInstance {
+struct PyToolboxInstance {
     id: String,
-    host: String,
-    port: u16,
-    process: Option<Arc<Mutex<std::process::Child>>>,
+    module_cache: HashMap<String, bool>,
+    py_app: PyObject,
     last_used: Instant,
-    is_alive: bool,
-    active_connections: usize,
+    active_requests: usize,
 }
 
+/// Client for interacting with Python toolbox instances
 #[derive(Debug, Clone)]
 pub struct ToolboxClient {
-    instances: Arc<Mutex<Vec<ToolboxInstance>>>,
-    connection_pool: Arc<Mutex<HashMap<String, Connection>>>,
-    auth_key: Option<String>,
-    default_host: String,
-    default_port_range: (u16, u16),
+    instances: Arc<Mutex<Vec<PyToolboxInstance>>>,
+    max_instances: usize,
     timeout: Duration,
-    max_instances: usize,
-    heartbeat_interval: Duration,
-    used_ports: Arc<Mutex<HashSet<u16>>>,
-    package_size: usize,
     maintenance_last_run: Arc<Mutex<Instant>>,
+    pub client_prifix: String,
 }
 
-// A wrapper for a connection that returns itself to the pool when dropped
-struct PooledConnection {
-    stream: tokio::net::TcpStream,
-    key: String,
-    client: ToolboxClient,
-    instance_id: String,
+/// Errors that can occur when using the toolbox
+#[derive(Debug, thiserror::Error)]
+pub enum ToolboxError {
+    #[error("Python error: {0}")]
+    PyError(String),
+    #[error("JSON error: {0}")]
+    JsonError(#[from] serde_json::Error),
+    #[error("Operation timeout")]
+    Timeout,
+    #[error("No available instances")]
+    NoAvailableInstances,
+    #[error("Instance not found: {0}")]
+    InstanceNotFound(String),
+    #[error("Maximum instances reached")]
+    MaxInstancesReached,
+    #[error("Module not found: {0}")]
+    ModuleNotFound(String),
+    #[error("Python initialization error: {0}")]
+    PythonInitError(String),
+    #[error("Unknown error: {0}")]
+    Unknown(String),
 }
 
-impl Drop for PooledConnection {
-    fn drop(&mut self) {
-        // Mark the connection as available when dropped
-        self.client.mark_connection_available(&self.key, &self.instance_id);
+impl From<PyErr> for ToolboxError {
+    fn from(err: PyErr) -> Self {
+        ToolboxError::PyError(err.to_string())
     }
 }
 
-impl std::ops::Deref for PooledConnection {
-    type Target = tokio::net::TcpStream;
+/// Initialize Python properly in the current process
+pub fn initialize_python_environment() -> Result<(), ToolboxError> {
+    // First try to detect Python from conda environment
+    if let Ok(conda_prefix) = env::var("CONDA_PREFIX") {
+        let conda_path = PathBuf::from(&conda_prefix);
 
-    fn deref(&self) -> &Self::Target {
-        &self.stream
+        // Set PYTHONHOME to conda environment
+        env::set_var("PYTHONHOME", &conda_prefix);
+
+        // Create proper PYTHONPATH for Windows
+        let lib_path = format!(
+            "{0}\\Lib;{0}\\Lib\\site-packages;{0}\\DLLs",
+            conda_prefix.replace("\\", "\\\\")
+        );
+        env::set_var("PYTHONPATH", &lib_path);
+
+        info!("Using conda environment at: {}", conda_prefix);
+        debug!("Set PYTHONHOME={}", conda_prefix);
+        debug!("Set PYTHONPATH={}", lib_path);
+
+        return Ok(());
     }
+
+    // If conda not found, try to detect Python using the sys.executable
+    // We need to run a Python process to discover this information
+    let output = std::process::Command::new("python")
+        .args(&["-c", r#"
+import sys, json, os
+print(json.dumps({
+    "executable": sys.executable,
+    "prefix": sys.prefix,
+    "sys_path": sys.path,
+    "platform": sys.platform
+}))
+        "#])
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            match serde_json::from_str::<serde_json::Value>(&stdout.trim()) {
+                Ok(info) => {
+                    if let Some(prefix) = info.get("prefix").and_then(|v| v.as_str()) {
+                        let prefix_path = PathBuf::from(prefix);
+
+                        // Set PYTHONHOME to the detected prefix
+                        env::set_var("PYTHONHOME", prefix);
+
+                        // Create PYTHONPATH based on platform
+                        let is_windows = info.get("platform")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.contains("win"))
+                            .unwrap_or(false);
+
+                        let python_path = if is_windows {
+                            format!("{0}\\Lib;{0}\\Lib\\site-packages;{0}\\DLLs",
+                                    prefix.replace("\\", "\\\\"))
+                        } else {
+                            format!("{0}/lib/python3.10:{0}/lib/python3.10/site-packages", prefix)
+                        };
+
+                        env::set_var("PYTHONPATH", &python_path);
+
+                        info!("Using Python at: {}", prefix);
+                        debug!("Set PYTHONHOME={}", prefix);
+                        debug!("Set PYTHONPATH={}", python_path);
+
+                        return Ok(());
+                    }
+                },
+                Err(e) => {
+                    warn!("Failed to parse Python environment info: {}", e);
+                }
+            }
+        },
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!("Python detection script failed: {}", stderr);
+        },
+        Err(e) => {
+            warn!("Failed to execute Python detection script: {}", e);
+        }
+    }
+
+    // As a last resort, try to use pyo3's auto-detection
+    warn!("Falling back to PyO3 auto-detection for Python environment");
+
+    Ok(())
 }
 
-impl std::ops::DerefMut for PooledConnection {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.stream
-    }
-}
-
-pub fn initialize_toolbox_client(
-    host: String,
-    port_range: (u16, u16),
-    timeout_seconds: u64,
+/// Initialize the toolbox client and immediately create an instance
+pub async fn initialize_toolbox_client(
     max_instances: usize,
-    auth_key: Option<String>,
-) {
-    let mut client = TOOLBOX_CLIENT.lock().unwrap();
-    *client = Some(ToolboxClient::new(host, port_range, timeout_seconds, max_instances, auth_key));
+    timeout_seconds: u64,
+    client_prifix: String,
+) -> Result<(), ToolboxError> {
+    // Set up Python environment before creating the client
+    initialize_python_environment()?;
+
+    // Create the client
+    let client = ToolboxClient::new(max_instances, timeout_seconds, client_prifix);
+
+    // Immediately create a Python instance (don't wait for first request)
+    client.create_python_instance().await?;
+
+    // Store the client
+    let mut client_mutex = TOOLBOX_CLIENT.lock().unwrap();
+    *client_mutex = Some(client);
+
+    info!("ToolboxClient initialized with initial instance created");
+    Ok(())
 }
 
+/// Get the global toolbox client
 pub fn get_toolbox_client() -> Result<ToolboxClient, ToolboxError> {
     let client = TOOLBOX_CLIENT.lock().unwrap();
     client.clone().ok_or_else(|| ToolboxError::Unknown("ToolboxClient not initialized".to_string()))
 }
 
 impl ToolboxClient {
-    pub fn new(
-        host: String,
-        port_range: (u16, u16),
-        timeout_seconds: u64,
-        max_instances: usize,
-        auth_key: Option<String>,
-    ) -> Self {
+    /// Create a new ToolboxClient
+    pub fn new(max_instances: usize, timeout_seconds: u64, client_prifix: String) -> Self {
         ToolboxClient {
             instances: Arc::new(Mutex::new(Vec::new())),
-            connection_pool: Arc::new(Mutex::new(HashMap::new())),
-            auth_key,
-            default_host: host,
-            default_port_range: port_range,
-            timeout: Duration::from_secs(timeout_seconds),
             max_instances,
-            heartbeat_interval: Duration::from_secs(30),
-            used_ports: Arc::new(Mutex::new(HashSet::new())),
-            package_size: 8192,
+            timeout: Duration::from_secs(timeout_seconds),
             maintenance_last_run: Arc::new(Mutex::new(Instant::now())),
+            client_prifix,
         }
     }
 
-    // Mark a connection as available in the pool
-    fn mark_connection_available(&self, key: &str, instance_id: &str) {
-        // Update the connection in the pool
-        {
-            let mut pool = self.connection_pool.lock().unwrap();
-            if let Some(conn) = pool.get_mut(key) {
-                conn.in_use = false;
-                conn.last_used = Instant::now();
+    /// Initialize Python instances and preload common modules
+    pub async fn initialize(&self, modules: Vec<String>, attr_name: Option<&str>) -> Result<(), ToolboxError> {
+        info!("Initializing ToolboxClient with modules: {:?}", modules);
+
+        // Get or create an instance
+        let instance_id = if self.instances.lock().unwrap().is_empty() {
+            self.create_python_instance().await?
+        } else {
+            self.instances.lock().unwrap()[0].id.clone()
+        };
+
+        // Load each module
+        for module in modules {
+            info!("Preloading module: {}", module);
+            if let Err(e) = self.load_module_into_instance(&instance_id, &module, attr_name).await {
+                error!("Failed to preload module {}: {}", module, e);
+                // Continue loading other modules even if one fails
             }
+        }
+
+        Ok(())
+    }
+
+    /// Create a new Python instance
+    /// Create a new Python instance
+    async fn create_python_instance(&self) -> Result<String, ToolboxError> {
+        debug!("Creating new Python instance");
+
+        // Check if we've reached max instances
+        {
+            let instances = self.instances.lock().unwrap();
+            if instances.len() >= self.max_instances {
+                return Err(ToolboxError::MaxInstancesReached);
+            }
+        }
+        let cp = self.client_prifix.clone();
+        // This needs to run in a separate thread because Python code might block
+        let result = task::spawn_blocking(move || {
+
+            Python::with_gil(|py| -> Result<(String, PyObject), ToolboxError> {
+                // Import the toolboxv2 module
+                let toolbox = match PyModule::import(py, "toolboxv2.__main__") {
+                    Ok(module) => module,
+                    Err(e) => {
+                        error!("Failed to import toolboxv2: {}", e);
+                        return Err(ToolboxError::PyError(format!("Failed to import toolboxv2: {}", e)));
+                    }
+                };
+
+                // Get the server_helper function
+                let server_helper = match toolbox.getattr("server_helper") {
+                    Ok(func) => func,
+                    Err(e) => {
+                        error!("Failed to get server_helper function: {}", e);
+                        return Err(ToolboxError::PyError(format!("Failed to get server_helper function: {}", e)));
+                    }
+                };
+
+                // Call get_app to initialize the app
+                let kwargs = PyDict::new(py);
+
+                // Generate a unique ID for this instance
+                let instance_id = format!("{}_{}", cp, Uuid::new_v4());
+                kwargs.set_item("instance_id", instance_id.clone()).unwrap();
+
+                let app = match server_helper.call((), Some(kwargs)) {
+                    Ok(app) => app,
+                    Err(e) => {
+                        error!("Failed to call get_app: {}", e);
+                        return Err(ToolboxError::PyError(format!("Failed to call get_app: {}", e)));
+                    }
+                };
+
+
+                Ok((instance_id, app.into_py(py)))
+            })
+        }).await.map_err(|e| ToolboxError::Unknown(format!("Task join error: {}", e)))?;
+
+        // Store the instance
+        let clone_res = result?.clone();
+        {
+            let mut instances = self.instances.lock().unwrap();
+            instances.push(PyToolboxInstance {
+                id: clone_res.0.clone(),
+                module_cache: HashMap::new(),
+                py_app: clone_res.1,
+                last_used: Instant::now(),
+                active_requests: 0,
+            });
+        }
+
+        info!("Created new Python instance: {}", clone_res.0);
+        Ok(clone_res.0)
+    }
+
+
+    /// Load a module into an instance
+    async fn load_module_into_instance(&self, instance_id: &str, module_name: &str, attr_name: Option<&str>) -> Result<(), ToolboxError> {
+        debug!("Loading module {} into instance {}", module_name, instance_id);
+
+        // Clone for async task
+        let instance_id = instance_id.to_string();
+        let module_name = module_name.to_string();
+        let c_attr_name = attr_name.clone().map(String::from).unwrap_or_else(|| "init_mod".to_string());
+        let instances = Arc::clone(&self.instances);
+
+        // This needs to run in a separate thread because Python code might block
+        task::spawn_blocking(move || {
+            Python::with_gil(|py| -> Result<(), ToolboxError> {
+                // Get the instance from the list
+                let mut instance_opt = None;
+                {
+                    let instances_guard = instances.lock().unwrap();
+                    for inst in instances_guard.iter() {
+                        if inst.id == instance_id {
+                            instance_opt = Some(inst.clone());
+                            break;
+                        }
+                    }
+                }
+
+                let instance = instance_opt.ok_or_else(|| {
+                    ToolboxError::InstanceNotFound(format!("Instance not found: {}", instance_id))
+                })?;
+
+                // Get the Python app object
+                let app = instance.py_app.as_ref(py);
+
+                // Call the init_mod method to load the module
+                let init_mod = app.getattr(c_attr_name.as_str())?;
+                init_mod.call1((module_name.clone(),))?;
+                // Update module cache in the instance
+                {
+                    let mut instances_guard = instances.lock().unwrap();
+                    for inst in instances_guard.iter_mut() {
+                        if inst.id == instance_id {
+                            inst.module_cache.insert(module_name.clone(), true);
+                            break;
+                        }
+                    }
+                }
+
+                Ok(())
+            })
+        }).await.map_err(|e| ToolboxError::Unknown(format!("Task join error: {}", e)))?
+    }
+
+    /// Convert Rust value to Python
+    fn value_to_py(&self, py: Python, value: &Value) -> PyResult<PyObject> {
+        match value {
+            Value::Null => Ok(py.None()),
+            Value::Bool(b) => Ok(b.into_py(py)),
+            Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    Ok(i.into_py(py))
+                } else if let Some(f) = n.as_f64() {
+                    Ok(f.into_py(py))
+                } else {
+                    // Fallback to string if number can't be represented
+                    Ok(n.to_string().into_py(py))
+                }
+            },
+            Value::String(s) => Ok(s.into_py(py)),
+            Value::Array(arr) => {
+                let py_list = PyList::empty(py);
+                for item in arr {
+                    // Append each converted value to the list
+                    py_list.append(self.value_to_py(py, item)?)?;
+                }
+                Ok(py_list.to_object(py))
+            },
+            Value::Object(obj) => {
+                let py_dict = PyDict::new(py);
+                for (key, val) in obj {
+                    py_dict.set_item(key, self.value_to_py(py, val)?)?;
+                }
+                Ok(py_dict.to_object(py))
+            }
+        }
+    }
+
+    /// Convert Python value to Rust
+    fn py_to_value<'a>(&self, py: Python<'a>, value: &'a PyAny) -> PyResult<serde_json::Value> {
+        if value.is_none() {
+            return Ok(serde_json::Value::Null);
+        }
+
+        if let Ok(b) = value.extract::<bool>() {
+            return Ok(serde_json::Value::Bool(b));
+        }
+
+        if let Ok(i) = value.extract::<i64>() {
+            return Ok(serde_json::Value::Number(i.into()));
+        }
+
+        if let Ok(f) = value.extract::<f64>() {
+            return Ok(serde_json::json!(f));
+        }
+
+        if let Ok(s) = value.extract::<String>() {
+            return Ok(serde_json::Value::String(s));
+        }
+
+        // Check if it's a list/tuple
+        if let Ok(seq) = value.downcast::<PyList>() {
+            let mut arr = Vec::new();
+            for item in seq.iter() {
+                arr.push(self.py_to_value(py, item)?);
+            }
+            return Ok(serde_json::Value::Array(arr));
+        }
+
+        if let Ok(tup) = value.downcast::<PyTuple>() {
+            let mut arr = Vec::new();
+            for item in tup.iter() {
+                arr.push(self.py_to_value(py, item)?);
+            }
+            return Ok(serde_json::Value::Array(arr));
+        }
+
+        // Check if it's a dict
+        if let Ok(dict) = value.downcast::<PyDict>() {
+            let mut map = serde_json::Map::new();
+            for (key, val) in dict.iter() {
+                let key_str = key.extract::<String>()?;
+                map.insert(key_str, self.py_to_value(py, val)?);
+            }
+            return Ok(serde_json::Value::Object(map));
+        }
+
+        // Try to convert complex objects to string as fallback
+        if let Ok(s) = value.str()?.extract::<String>() {
+            return Ok(serde_json::Value::String(s));
+        }
+
+        // Default to null if we can't convert
+        Ok(serde_json::Value::Null)
+    }
+
+    /// Make sure a module is loaded and get an instance that has it
+    async fn ensure_module_loaded(&self, module_name: String) -> Result<String, ToolboxError> {
+        debug!("Ensuring module {} is loaded", module_name);
+
+        // Check if module is already loaded in an instance
+        let instance_with_module = {
+            let instances = self.instances.lock().unwrap();
+            instances.iter()
+                .filter(|i| i.module_cache.get(&module_name).copied().unwrap_or(false))
+                .min_by_key(|i| i.active_requests)
+                .map(|i| i.id.clone())
+        };
+
+        if let Some(instance_id) = instance_with_module {
+            return Ok(instance_id);
+        }
+
+        // If no instance has this module, find an instance to load it into
+        // or create a new instance if needed
+        let instance_id = {
+            let instances = self.instances.lock().unwrap();
+            if instances.is_empty() {
+                // No instances, need to create one
+                None
+            } else {
+                // Find least loaded instance
+                instances.iter()
+                    .min_by_key(|i| i.active_requests)
+                    .map(|i| i.id.clone())
+            }
+        };
+
+        // Create new instance if needed
+        let instance_id = if let Some(id) = instance_id {
+            id
+        } else {
+            self.create_python_instance().await?
+        };
+        let instances = self.instances.lock().unwrap().clone();
+        // Load the module into the instance
+        if let Some(inst) = instances.iter().find(|inst| inst.id == instance_id) {
+            // If the module is already loaded, return early
+            if inst.module_cache.contains_key(&module_name) {
+                return Ok(instance_id); // Module is already loaded, no need to load again
+            }
+
+            // Otherwise, load the module
+            self.load_module_into_instance(&instance_id, &module_name, Option::from("init_mod")).await?;
+        }
+
+        Ok(instance_id)
+    }
+
+    /// Get a valid instance for a specific module
+    async fn get_instance_for_module(&self, module_name: &str) -> Result<String, ToolboxError> {
+        // Run maintenance if needed
+        self.run_maintenance_if_needed().await;
+
+        // Ensure module is loaded and get an instance
+        let instance_id = self.ensure_module_loaded(module_name.to_string()).await?;
+
+        // Check if instance is overloaded
+        let needs_new_instance = {
+            let instances = self.instances.lock().unwrap();
+            let total_instances = instances.len();
+
+            if let Some(instance) = instances.iter().find(|i| i.id == instance_id) {
+                instance.active_requests > 5 && total_instances < self.max_instances
+            } else {
+                false
+            }
+        };
+
+        // Create new instance if needed, but don't wait for it
+        if needs_new_instance {
+            let client_clone = self.clone();
+            let module_name = module_name.to_string();
+            tokio::spawn(async move {
+                if let Err(e) = client_clone.ensure_module_loaded(module_name).await {
+                    warn!("Failed to initialize additional instance: {}", e);
+                }
+            });
         }
 
         // Update instance stats
         {
             let mut instances = self.instances.lock().unwrap();
             if let Some(instance) = instances.iter_mut().find(|i| i.id == instance_id) {
-                if instance.active_connections > 0 {
-                    instance.active_connections -= 1;
-                }
+                instance.active_requests += 1;
+                instance.last_used = Instant::now();
             }
         }
+
+        Ok(instance_id)
     }
 
-    // On-demand maintenance - called periodically during regular operations
+    /// Run maintenance tasks
     async fn run_maintenance_if_needed(&self) {
         let should_run = {
             let mut last_run = self.maintenance_last_run.lock().unwrap();
@@ -184,721 +570,137 @@ impl ToolboxClient {
         };
 
         if should_run {
-            // Run maintenance tasks
-            self.check_instance_health().await;
-            self.ensure_minimum_instances(1).await;
-            self.cleanup_connection_pool().await;
+            self.cleanup_unused_instances().await;
         }
     }
 
-    // Clean up unused connections
-    async fn cleanup_connection_pool(&self) {
+    /// Clean up unused instances
+    async fn cleanup_unused_instances(&self) {
         let mut to_remove = Vec::new();
 
-        // Safely get keys from connection pool
-        let keys = {
-            let connection_pool = self.connection_pool.lock().unwrap();
-            connection_pool.keys().cloned().collect::<Vec<_>>()
-        };
-
-        for key in keys {
-            let should_remove = {
-                let connection_pool = self.connection_pool.lock().unwrap();
-                if let Some(conn) = connection_pool.get(&key) {
-                    if conn.in_use {
-                        false // Don't remove connections in use
-                    } else if conn.last_used.elapsed() > Duration::from_secs(300) {
-                        true  // Remove if unused for 5 minutes
-                    } else {
-                        // Check if the connection is actually valid
-                        let is_valid = if let Some(stream) = &*conn.stream.lock().unwrap() {
-                            stream.peer_addr().is_ok()
-                        } else {
-                            false
-                        };
-
-                        !is_valid
-                    }
-                } else {
-                    false
+        // Identify instances to remove
+        {
+            let instances = self.instances.lock().unwrap();
+            for (idx, instance) in instances.iter().enumerate() {
+                if instance.last_used.elapsed() > Duration::from_secs(600) && instance.active_requests == 0 {
+                    to_remove.push(idx);
                 }
-            };
-
-            if should_remove {
-                to_remove.push(key);
             }
         }
 
-        // Remove dead connections
+        // Don't remove the last instance
+        {
+            let instances = self.instances.lock().unwrap();
+            if instances.len() <= 1 && !to_remove.is_empty() {
+                debug!("Not removing the last Python instance");
+                to_remove.clear();
+            }
+        }
+
+        // Remove instances (in reverse order to maintain indices)
         if !to_remove.is_empty() {
-            let mut connection_pool = self.connection_pool.lock().unwrap();
-            for key in to_remove {
-                connection_pool.remove(&key);
-                debug!("Removed dead connection: {}", key);
-            }
-        }
-    }
-
-    // Check health of instances and remove dead ones
-    async fn check_instance_health(&self) {
-        // Get a snapshot of all instances to check
-        let instances_to_check = {
-            let instances = self.instances.lock().unwrap();
-            instances.clone()
-        };
-
-        let mut dead_instances = Vec::new();
-
-        for instance in &instances_to_check {
-            let mut is_alive = true;
-
-            // Check if process is running
-            if let Some(process) = &instance.process {
-                let process_running = {
-                    let mut process_guard = process.lock().unwrap();
-                    match process_guard.try_wait() {
-                        Ok(Some(_)) => false,
-                        Ok(None) => true,
-                        Err(_) => false,
-                    }
-                };
-
-                if !process_running {
-                    is_alive = false;
-                }
-            }
-
-            // Check connection via socket if it's been a while since last check
-            if is_alive && instance.last_used.elapsed() > self.heartbeat_interval {
-                let conn_key = format!("{}:{}", instance.host, instance.port);
-                is_alive = self.check_connection(&conn_key).await;
-            }
-
-            // Mark for removal if dead
-            if !is_alive {
-                dead_instances.push(instance.id.clone());
-            }
-        }
-
-        // Remove dead instances
-        if !dead_instances.is_empty() {
             let mut instances = self.instances.lock().unwrap();
-            let mut used_ports = self.used_ports.lock().unwrap();
-            let mut connection_pool = self.connection_pool.lock().unwrap();
-
-            for id in &dead_instances {
-                if let Some(instance) = instances.iter().find(|i| &i.id == id) {
-                    // Remove connections for this instance
-                    let conn_key = format!("{}:{}", instance.host, instance.port);
-                    connection_pool.remove(&conn_key);
-
-                    // Free up the port
-                    used_ports.remove(&instance.port);
-                    debug!("Removed dead instance {} on port {}", instance.id, instance.port);
-                }
-            }
-
-            instances.retain(|i| !dead_instances.contains(&i.id));
-        }
-    }
-
-    // Verify if a connection is alive
-    async fn check_connection(&self, conn_key: &str) -> bool {
-        // First check if we have a connection in the pool
-        let conn_exists = {
-            let pool = self.connection_pool.lock().unwrap();
-            if let Some(conn) = pool.get(conn_key) {
-                if let Some(stream) = &*conn.stream.lock().unwrap() {
-                    stream.peer_addr().is_ok()
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        };
-
-        if conn_exists {
-            return true;
-        }
-
-        // Otherwise try to connect
-        tokio::net::TcpStream::connect(conn_key).await.is_ok()
-    }
-
-    // Ensure we have at least min_instances running
-    async fn ensure_minimum_instances(&self, min_instances: usize) {
-        let instances_count = {
-            let instances = self.instances.lock().unwrap();
-            instances.len()
-        };
-
-        if instances_count < min_instances {
-            for _ in instances_count..min_instances {
-                if let Err(e) = self.start_new_instance().await {
-                    warn!("Failed to start new instance: {}", e);
-                    sleep(Duration::from_secs(2)).await;
+            for idx in to_remove.iter().rev() {
+                if *idx < instances.len() {
+                    let instance = instances.remove(*idx);
+                    debug!("Removed unused Python instance: {}", instance.id);
                 }
             }
         }
     }
 
-    // Checkout a connection from the pool or create a new one
-    async fn checkout_connection(&self, instance_id: &str) -> Result<PooledConnection, ToolboxError> {
-        // Get instance details
-        let (host, port) = {
-            let instances = self.instances.lock().unwrap();
-            let instance = instances.iter()
-                .find(|i| i.id == instance_id)
-                .ok_or_else(|| ToolboxError::InstanceNotFound(instance_id.to_string()))?;
-
-            (instance.host.clone(), instance.port)
-        };
-
-        let conn_key = format!("{}:{}", host, port);
-
-        // Try to get an existing idle connection
-        let mut stream_available = false;
-        let mut need_validation = false;
-
-        {
-            let mut pool = self.connection_pool.lock().unwrap();
-            if let Some(conn) = pool.get_mut(&conn_key) {
-                if !conn.in_use && conn.is_validated {
-                    // We have a valid idle connection, check if it's still good
-                    if let Some(ref mut stream) = *conn.stream.lock().unwrap() {
-                        if stream.peer_addr().is_ok() {
-                            // Mark connection as in-use
-                            conn.in_use = true;
-                            conn.last_used = Instant::now();
-                            stream_available = true;
-                        }
-                    }
-                }
-
-                // If this instance hasn't been validated yet
-                need_validation = !conn.is_validated;
+    /// Mark an instance as done with its current task
+    fn mark_instance_done(&self, instance_id: &str) {
+        let mut instances = self.instances.lock().unwrap();
+        if let Some(instance) = instances.iter_mut().find(|i| i.id == instance_id) {
+            if instance.active_requests > 0 {
+                instance.active_requests -= 1;
             }
-        }
-
-        // Update instance stats
-        {
-            let mut instances = self.instances.lock().unwrap();
-            if let Some(instance) = instances.iter_mut().find(|i| i.id == instance_id) {
-                instance.active_connections += 1;
-                instance.last_used = Instant::now();
-            }
-        }
-
-        // Connect to the instance
-        let addr = format!("{}:{}", host, port);
-        let stream = tokio::net::TcpStream::connect(&addr).await
-            .map_err(|e| ToolboxError::IoError(e))?;
-
-        stream.set_nodelay(true)
-            .map_err(|e| ToolboxError::IoError(e))?;
-
-        // If we don't have a connection in the pool yet, or need to replace it
-        if !stream_available {
-            // Store this connection in the pool for future use
-            let mut pool = self.connection_pool.lock().unwrap();
-
-            // Create a new stream for the pool
-            let pool_stream = tokio::net::TcpStream::connect(&addr).await
-                .map_err(|e| ToolboxError::IoError(e))?;
-
-            pool_stream.set_nodelay(true)
-                .map_err(|e| ToolboxError::IoError(e))?;
-
-            // Update or create pool entry
-            pool.insert(conn_key.clone(), Connection {
-                stream: Arc::new(Mutex::new(Some(pool_stream))),
-                last_used: Instant::now(),
-                is_validated: !need_validation,  // Only set to true if it's already validated
-                in_use: true,
-            });
-        }
-
-        // If this instance needs validation
-        if need_validation {
-            // Validate connection with a new stream
-            self.validate_with_new_stream(instance_id, &host, port).await?;
-
-            // Mark as validated in the pool
-            let mut pool = self.connection_pool.lock().unwrap();
-            if let Some(conn) = pool.get_mut(&conn_key) {
-                conn.is_validated = true;
-            }
-        }
-
-        Ok(PooledConnection {
-            stream,
-            key: conn_key,
-            client: self.clone(),
-            instance_id: instance_id.to_string(),
-        })
-    }
-
-    // Check if an instance has been validated already
-    async fn is_instance_validated(&self, instance_id: &str) -> bool {
-        let instances = self.instances.lock().unwrap();
-        if let Some(_) = instances.iter().find(|i| i.id == instance_id) {
-            return true;
-        }
-        false
-    }
-
-    // Start a new toolbox instance
-    pub async fn start_new_instance(&self) -> Result<(), ToolboxError> {
-        // Find available port
-        let available_port = {
-            let instances = self.instances.lock().unwrap();
-            let used_ports = self.used_ports.lock().unwrap();
-
-            if instances.len() >= self.max_instances {
-                return Err(ToolboxError::MaxInstancesReached);
-            }
-
-            (self.default_port_range.0..=self.default_port_range.1)
-                .find(|&port| !used_ports.contains(&port))
-                .ok_or(ToolboxError::NoAvailablePorts)?
-        };
-
-        // Check if something is already running on this port
-        let result = tokio::net::TcpStream::connect(
-            format!("{}:{}", self.default_host, available_port)
-        ).await;
-
-        if result.is_ok() {
-            // Mark port as used
-            {
-                let mut used_ports = self.used_ports.lock().unwrap();
-                used_ports.insert(available_port);
-            }
-
-            // Try to use existing service
-            let instance_id = format!("found_instance_{}", Uuid::new_v4());
-            let new_instance = ToolboxInstance {
-                id: instance_id.clone(),
-                host: self.default_host.clone(),
-                port: available_port,
-                process: None,
-                last_used: Instant::now(),
-                is_alive: true,
-                active_connections: 0,
-            };
-
-            // Add to instances
-            {
-                let mut instances = self.instances.lock().unwrap();
-                instances.push(new_instance);
-            }
-
-            // Validate this instance
-            if self.validate_instance(&instance_id).await.is_ok() {
-                info!("Using existing service on port {}", available_port);
-                return Ok(());
-            } else {
-                // Remove invalid instance
-                let mut instances = self.instances.lock().unwrap();
-                instances.retain(|i| i.id != instance_id);
-                return Err(ToolboxError::InvalidInstance(available_port));
-            }
-        }
-
-        // Mark port as used
-        {
-            let mut used_ports = self.used_ports.lock().unwrap();
-            used_ports.insert(available_port);
-        }
-
-        // Start the toolbox process
-        let child = Command::new("tb")
-            .arg("-bgr")
-            .arg("--sysPrint")
-            .arg("-m")
-            .arg("bgws")
-            .arg("-p")
-            .arg(available_port.to_string())
-            .spawn()
-            .map_err(|e| ToolboxError::IoError(e))?;
-
-        let instance_id = format!("instance_{}", Uuid::new_v4());
-
-        // Create instance
-        let new_instance = ToolboxInstance {
-            id: instance_id.clone(),
-            host: self.default_host.clone(),
-            port: available_port,
-            process: Some(Arc::new(Mutex::new(child))),
-            last_used: Instant::now(),
-            is_alive: true,
-            active_connections: 0,
-        };
-
-        // Add to instances
-        {
-            let mut instances = self.instances.lock().unwrap();
-            instances.push(new_instance);
-        }
-
-        // Wait for server with exponential backoff
-        let mut backoff = 500; // Start with 500ms
-        let mut attempts = 0;
-        let max_attempts = 5;
-
-        while attempts < max_attempts {
-            sleep(Duration::from_millis(backoff)).await;
-            attempts += 1;
-
-            // Try to connect
-            if tokio::net::TcpStream::connect(
-                format!("{}:{}", self.default_host, available_port)
-            ).await.is_ok() {
-                // Validate the instance
-                match self.validate_instance(&instance_id).await {
-                    Ok(_) => {
-                        info!("Started and validated new instance on port {}", available_port);
-                        return Ok(());
-                    },
-                    Err(e) => {
-                        self.stop_instance(&instance_id).await.ok();
-                        return Err(e);
-                    }
-                }
-            }
-
-            backoff *= 2; // Exponential backoff
-        }
-
-        // Failed after all attempts
-        self.stop_instance(&instance_id).await.ok();
-        Err(ToolboxError::Timeout)
-    }
-
-    // Stop a toolbox instance
-    pub async fn stop_instance(&self, instance_id: &str) -> Result<(), ToolboxError> {
-        // Find and remove the instance
-        let instance = {
-            let mut instances = self.instances.lock().unwrap();
-            let instance_pos = instances.iter().position(|i| i.id == instance_id)
-                .ok_or_else(|| ToolboxError::InstanceNotFound(instance_id.to_string()))?;
-
-            let instance = instances.remove(instance_pos);
-
-            let mut used_ports = self.used_ports.lock().unwrap();
-            used_ports.remove(&instance.port);
-
-            instance
-        };
-
-        // Send exit signal
-        if let Ok(mut stream) = tokio::net::TcpStream::connect(
-            format!("{}:{}", instance.host, instance.port)
-        ).await {
-            let _ = stream.write_all(b"e").await;
-            let _ = stream.flush().await;
-        }
-
-        // Kill the process
-        if let Some(process) = instance.process {
-            let _ = process.lock().unwrap().kill();
-        }
-
-        // Also try the kill command
-        let _ = Command::new("tb")
-            .arg("-kill")
-            .arg("-p")
-            .arg(instance.port.to_string())
-            .spawn();
-
-        // Remove from connection pool
-        let conn_key = format!("{}:{}", instance.host, instance.port);
-        {
-            let mut pool = self.connection_pool.lock().unwrap();
-            pool.remove(&conn_key);
-        }
-
-        info!("Stopped instance {} on port {}", instance_id, instance.port);
-        Ok(())
-    }
-
-    // Validate an instance
-    async fn validate_instance(&self, instance_id: &str) -> Result<(), ToolboxError> {
-        // Get instance details
-        let (host, port) = {
-            let instances = self.instances.lock().unwrap();
-            let instance = instances.iter()
-                .find(|i| i.id == instance_id)
-                .ok_or_else(|| ToolboxError::InstanceNotFound(instance_id.to_string()))?;
-
-            (instance.host.clone(), instance.port)
-        };
-
-        // Validate with a new stream
-        self.validate_with_new_stream(instance_id, &host, port).await
-    }
-
-    // Validate an instance with a fresh connection
-    async fn validate_with_new_stream(&self, instance_id: &str, host: &str, port: u16) -> Result<(), ToolboxError> {
-        // Create a new connection for validation
-        let addr = format!("{}:{}", host, port);
-        let mut stream = tokio::net::TcpStream::connect(&addr).await
-            .map_err(|e| ToolboxError::IoError(e))?;
-
-        stream.set_nodelay(true).map_err(|e| ToolboxError::IoError(e))?;
-
-        // Send initial connection notification with 'j' prefix
-        let initial_request = serde_json::json!({
-            "identifier": "new_con",
-            "data": [null, null]
-        });
-        let json_str = serde_json::to_string(&initial_request)
-            .map_err(|e| ToolboxError::JsonError(e))?;
-
-        let mut data_to_send = vec![b'j'];
-        data_to_send.extend_from_slice(json_str.as_bytes());
-
-        self.send_data(&mut stream, &data_to_send).await?;
-
-        // Wait briefly
-        sleep(Duration::from_millis(500)).await;
-
-        // Send validation with auth key
-        let peer_addr = stream.peer_addr().map_err(|e| ToolboxError::IoError(e))?;
-        let formatted_addr = format!("('127.0.0.1', {})", peer_addr.port());
-
-        let validation_request = serde_json::json!({
-            "identifier": formatted_addr,
-            "key": self.auth_key.clone()
-        });
-        let json_str = serde_json::to_string(&validation_request)
-            .map_err(|e| ToolboxError::JsonError(e))?;
-
-        let mut data_to_send = vec![b'j'];
-        data_to_send.extend_from_slice(json_str.as_bytes());
-
-        self.send_data(&mut stream, &data_to_send).await?;
-
-        // Mark instance as validated
-        {
-            let mut instances = self.instances.lock().unwrap();
-            if let Some(instance) = instances.iter_mut().find(|i| i.id == instance_id) {
-                instance.last_used = Instant::now();
-                instance.is_alive = true;
-            }
-        }
-
-        Ok(())
-    }
-
-    // Simplified data sending with end marker
-    async fn send_data(&self, stream: &mut tokio::net::TcpStream, data: &[u8]) -> Result<(), ToolboxError> {
-        // Send data in one go if possible
-        stream.write_all(data).await.map_err(|e| ToolboxError::IoError(e))?;
-
-        // Send end marker
-        let end_marker = vec![b'E'; 10]; // Smaller end marker for efficiency
-        stream.write_all(&end_marker).await.map_err(|e| ToolboxError::IoError(e))?;
-        stream.flush().await.map_err(|e| ToolboxError::IoError(e))?;
-
-        Ok(())
-    }
-
-    // Receive data with optimized buffer handling
-    async fn receive_data(&self, stream: &mut tokio::net::TcpStream) -> Result<serde_json::Value, ToolboxError> {
-        let mut buffer = Vec::with_capacity(self.package_size);
-        let mut data_type = None;
-
-        // First read to get data type and initial data
-        let mut chunk = vec![0u8; self.package_size];
-        let n = stream.read(&mut chunk).await.map_err(|e| ToolboxError::IoError(e))?;
-
-        if n == 0 {
-            return Err(ToolboxError::ConnectionClosed);
-        }
-
-        // Set data type from first byte
-        data_type = Some(chunk[0]);
-
-        // Process rest of chunk
-        let mut end_marker_count = 0;
-        for &byte in &chunk[1..n] {
-            if byte == b'E' {
-                end_marker_count += 1;
-                if end_marker_count >= 5 {
-                    break;
-                }
-            } else {
-                // If we saw Es but then a non-E, they were part of the data
-                for _ in 0..end_marker_count {
-                    buffer.push(b'E');
-                }
-                end_marker_count = 0;
-                buffer.push(byte);
-            }
-        }
-
-        // If we haven't found the end marker yet, read more
-        if end_marker_count < 5 {
-            let mut more_data = vec![0u8; 1024];
-            loop {
-                match stream.read(&mut more_data).await {
-                    Ok(0) => break, // EOF
-                    Ok(n) => {
-                        for &byte in &more_data[..n] {
-                            if byte == b'E' {
-                                end_marker_count += 1;
-                                if end_marker_count >= 5 {
-                                    break;
-                                }
-                            } else {
-                                for _ in 0..end_marker_count {
-                                    buffer.push(b'E');
-                                }
-                                end_marker_count = 0;
-                                buffer.push(byte);
-                            }
-                        }
-                        if end_marker_count >= 5 {
-                            break;
-                        }
-                    },
-                    Err(e) => return Err(ToolboxError::IoError(e)),
-                }
-            }
-        }
-
-        // Process the data based on type
-        match data_type {
-            Some(b'j') => {
-                // JSON data
-                let json_str = String::from_utf8_lossy(&buffer).to_string();
-                serde_json::from_str(&json_str).map_err(|e| ToolboxError::JsonError(e))
-            },
-            Some(b'b') => {
-                // Binary data
-                Ok(serde_json::json!({
-                    "binary_data": true,
-                    "data": base64::engine::general_purpose::STANDARD.encode(&buffer),
-                    "size": buffer.len(),
-                }))
-            },
-            Some(b'e') => Err(ToolboxError::ConnectionClosed),
-            Some(b'k') => Ok(serde_json::json!({"keepalive": true})),
-            _ => Err(ToolboxError::UnknownDataType),
+            instance.last_used = Instant::now();
         }
     }
 
-    // Get a valid instance with intelligent load balancing
-    fn get_valid_instance(&self) -> Pin<Box<dyn Future<Output = Result<String, ToolboxError>> + Send + '_>> {
-        Box::pin(async move {
-            // Run maintenance if needed
-            self.run_maintenance_if_needed().await;
-
-            // Get all alive instances
-            let instances = {
-                let instances = self.instances.lock().unwrap();
-                instances.iter()
-                    .filter(|i| i.is_alive)
-                    .map(|i| (i.id.clone(), i.active_connections))
-                    .collect::<Vec<_>>()
-            };
-
-            if instances.is_empty() {
-                // No instances, start a new one
-                self.start_new_instance().await?;
-                return self.get_valid_instance().await; // Boxed recursive call
-            }
-
-            // Load balancing: choose instance with least active connections
-            let instance_id = instances.iter()
-                .min_by_key(|(_, active_conns)| *active_conns)
-                .map(|(id, _)| id.clone())
-                .unwrap();
-
-            // Check if instance is overloaded
-            let needs_new_instance = {
-                let instances = self.instances.lock().unwrap();
-                let total_instances = instances.len();
-
-                if let Some(instance) = instances.iter().find(|i| i.id == instance_id) {
-                    instance.active_connections > 5 && total_instances < self.max_instances
-                } else {
-                    false
-                }
-            };
-
-            // Start new instance if needed, but don't wait for it
-            if needs_new_instance {
-                let client_clone = self.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = client_clone.start_new_instance().await {
-                        warn!("Failed to start additional instance: {}", e);
-                    }
-                });
-            }
-
-            Ok(instance_id)
-        })
-    }
-
-    // Run a function on a toolbox instance with connection pooling
+    /// Main function to run Python code - now properly handling Python's async nature
     pub async fn run_function(
         &self,
         module_name: &str,
         function_name: &str,
         spec: &str,
         args: Vec<String>,
-        kwargs: HashMap<String, serde_json::Value>
+        kwargs: HashMap<String, serde_json::Value>,
     ) -> Result<serde_json::Value, ToolboxError> {
-        // Convert args to JSON values
-        let args_json: Vec<serde_json::Value> = args.into_iter()
-            .map(|arg| serde_json::Value::String(arg))
-            .collect();
+        // Get a valid instance for this module.
+        let instance_id = self.get_instance_for_module(module_name).await?;
 
-        // Prepare run_any arguments
-        let run_args = vec![
-            serde_json::json!([module_name, function_name]),
-            serde_json::json!(args_json),
-        ];
+        // Clone needed values.
+        let instance_id_clone = instance_id.clone();
+        let self_clone = self.clone();
+        let module_name = module_name.to_string();
+        let function_name = function_name.to_string();
+        let spec = spec.to_string();
+        let args_clone = args;
+        let kwargs_clone = kwargs;
 
-        // Prepare kwargs with specification
-        let mut run_kwargs = kwargs;
-        run_kwargs.insert("tb_run_with_specification".to_string(), serde_json::json!(spec));
-        run_kwargs.insert("get_results".to_string(), serde_json::json!(true));
+        // Prepare the Python coroutine and convert it into a Rust future.
+        // (Do only the blocking work inside spawn_blocking.)
+        let py_res = task::spawn_blocking(move || {
+            Python::with_gil(|py| -> Result<_, ToolboxError> {
+                // Get the instance.
+                let instance = {
+                    let instances = self_clone.instances.lock().unwrap();
+                    instances
+                        .iter()
+                        .find(|i| i.id == instance_id_clone)
+                        .cloned()
+                        .ok_or_else(|| ToolboxError::InstanceNotFound(instance_id_clone.clone()))?
+                };
 
-        // Get a valid instance with load balancing
-        let instance_id = self.get_valid_instance().await?;
+                // Get the app object.
+                let app = instance.py_app.as_ref(py);
 
-        // Checkout a connection from the pool
-        let mut conn = self.checkout_connection(&instance_id).await?;
+                // Convert args to a Python list.
+                let py_args = PyList::empty(py);
+                for arg in args_clone {
+                    py_args.append(arg.into_py(py))?;
+                }
 
-        // Prepare the request
-        let request = ToolboxRequest {
-            name: "a_run_any".to_string(),
-            args: run_args,
-            kwargs: run_kwargs,
-            identifier: Some(instance_id.clone()),
-            claim: None,
-            key: self.auth_key.clone(),
-        };
+                // Convert kwargs to a Python dict.
+                let py_kwargs = PyDict::new(py);
+                for (key, value) in kwargs_clone {
+                    py_kwargs.set_item(key, self_clone.value_to_py(py, &value)?)?;
+                }
 
-        // Serialize the request
-        let json_str = serde_json::to_string(&request)
-            .map_err(|e| ToolboxError::JsonError(e))?;
+                // Add additional kwargs.
+                py_kwargs.set_item("tb_run_with_specification", spec)?;
+                py_kwargs.set_item("get_results", true)?;
 
-        // Send the request
-        let mut data_to_send = vec![b'j'];
-        data_to_send.extend_from_slice(json_str.as_bytes());
+                // Call a_run_function (an async Python method) on the app object.
+                let run = app.getattr("run")?;
 
-        self.send_data(&mut conn, &data_to_send).await?;
+                // Prepare the function tuple ([module_name, function_name]).
+                let function_tuple =
+                    PyTuple::new(py, &[module_name.into_py(py), function_name.into_py(py)]);
 
-        // Receive the response
-        self.receive_data(&mut conn).await
+                // Call the async function to get its coroutine.
+                let py_result = run.call((function_tuple, py_args), Some(py_kwargs))?;
+
+                let result = Python::with_gil(|py| self_clone.py_to_value(py, py_result))?;
+
+                Ok(result)
+            })
+        }).await
+            .map_err(|e| ToolboxError::Unknown(format!("Task join error: {}", e)))??;
+
+        // Mark instance as done with this task.
+        self.mark_instance_done(&instance_id);
+
+        Ok(py_res)
+
     }
 
-    // Get information about all current instances
+
+
+    /// Get information about all current instances
     pub fn get_instances_info(&self) -> Vec<HashMap<String, String>> {
         let instances = self.instances.lock().unwrap();
 
@@ -906,10 +708,9 @@ impl ToolboxClient {
         for instance in instances.iter() {
             let mut info = HashMap::new();
             info.insert("id".to_string(), instance.id.clone());
-            info.insert("host".to_string(), instance.host.clone());
-            info.insert("port".to_string(), instance.port.to_string());
-            info.insert("alive".to_string(), instance.is_alive.to_string());
-            info.insert("active_connections".to_string(), instance.active_connections.to_string());
+            info.insert("active_requests".to_string(), instance.active_requests.to_string());
+            info.insert("loaded_modules".to_string(),
+                        instance.module_cache.keys().cloned().collect::<Vec<_>>().join(", "));
             info.insert("last_used".to_string(), format!("{:?}", instance.last_used.elapsed()));
 
             result.push(info);
@@ -919,32 +720,6 @@ impl ToolboxClient {
     }
 }
 
-// A simplified error enum
-#[derive(Debug, thiserror::Error)]
-pub enum ToolboxError {
-    #[error("IO error: {0}")]
-    IoError(#[from] io::Error),
-    #[error("JSON error: {0}")]
-    JsonError(#[from] serde_json::Error),
-    #[error("Connection timeout")]
-    Timeout,
-    #[error("Connection closed")]
-    ConnectionClosed,
-    #[error("Unknown data type")]
-    UnknownDataType,
-    #[error("No available instances")]
-    NoAvailableInstances,
-    #[error("No available ports")]
-    NoAvailablePorts,
-    #[error("Instance not found: {0}")]
-    InstanceNotFound(String),
-    #[error("Invalid instance on port: {0}")]
-    InvalidInstance(u16),
-    #[error("Maximum instances reached")]
-    MaxInstancesReached,
-    #[error("Unknown error: {0}")]
-    Unknown(String),
-}
 // Configuration struct
 #[derive(Debug, Deserialize, Clone)]
 struct ServerConfig {
@@ -958,22 +733,23 @@ struct ServerSettings {
     ip: String,
     port: u16,
     dist_path: String,
+    open_modules: Vec<String>,
+    init_modules: Vec<String>,
+    watch_modules: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 struct ToolboxSettings {
-    host: String,
-    port: u16,
+    client_prifix: String,
     timeout_seconds: u64,
     max_instances: u16,
-    tb_r_key: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 struct SessionSettings {
     secret_key: String,
     duration_minutes: u64,
-    cookie_name: String,
+    cookie_name: String
 }
 
 // Session state
@@ -1440,16 +1216,15 @@ async fn logout_handler(
 async fn api_handler(
     path: web::Path<(String, String)>,
     query: web::Query<HashMap<String, String>>,
-    session: Session
+    session: Session,
+    open_modules: web::Data<Arc<Vec<String>>>,
 ) -> HttpResponse {
 
     let (module_name, function_name) = path.into_inner();
 
     // Check if the request is for a protected module or function
-    let is_protected = match module_name.as_str() {
-        "CloudM.AuthManager" => false, // Example: Allow all functions in this module without validation
-        _ => !function_name.starts_with("open"), // Allow functions starting with "open" without validation
-    };
+    // Check if the module is in the open modules list
+    let is_protected = !open_modules.contains(&module_name) && !function_name.starts_with("open");
 
     if is_protected {
         let valid = match session.get::<bool>("valid") {
@@ -1528,13 +1303,12 @@ async fn main() -> std::io::Result<()> {
 
     info!("Configuration loaded: {:?}", config);
 
-    initialize_toolbox_client(
-        config.toolbox.host.clone(),
-        (config.toolbox.port, config.toolbox.port+config.toolbox.max_instances),  // Port range to use
-        config.toolbox.timeout_seconds,            // Timeout in seconds
-        config.toolbox.max_instances as usize,             // Maximum number of instances
-        Option::from(config.toolbox.tb_r_key),
-    );
+    let _ = initialize_toolbox_client(config.toolbox.max_instances as usize,  // Port range to use
+                              config.toolbox.timeout_seconds,            // Timeout in seconds
+                              config.toolbox.client_prifix,            // Timeout in seconds
+
+    ).await;
+
 
     let client = match get_toolbox_client() {
         Ok(client) => Arc::new(client),
@@ -1543,6 +1317,9 @@ async fn main() -> std::io::Result<()> {
         }
     };
 
+    info!("init_modules loaded: {:?} - {:?}", config.server.init_modules, client.initialize(config.server.init_modules.clone(), Option::from("init_mod")).await.map_err(|e| ToolboxError::from(e)));
+
+    info!("watch_modules loaded: {:?} - {:?}", config.server.watch_modules, client.initialize(config.server.watch_modules.clone(), Option::from("watch_mod")).await.map_err(|e| ToolboxError::from(e)));
 
     // Create session manager
     let session_manager = web::Data::new(SessionManager::new(
@@ -1556,9 +1333,10 @@ async fn main() -> std::io::Result<()> {
     // Start server
     info!("Starting server on {}:{}", config.server.ip, config.server.port);
     let dist_path = config.server.dist_path.clone(); // Clone the dist_path here
-
+    let open_modules = Arc::new(config.server.open_modules.clone());
     HttpServer::new(move || {
         let dist_path = dist_path.clone(); // Move the cloned dist_path into the closure
+        let open_modules = Arc::clone(&open_modules);
         App::new()
             .wrap(middleware::Logger::default())
             .wrap(middleware::Compress::default())
@@ -1576,26 +1354,13 @@ async fn main() -> std::io::Result<()> {
                         .route(web::get().to(is_valid_session_handler)))
                     .service(web::resource("/web/logoutS")
                         .route(web::post().to(logout_handler)))
-                    .service(
-                    web::resource("/{module_name}/{function_name}")
-
-                        .route(web::get().to(|path, query, session| {
-                            info!("Handling GET request for: {:?}", path);
-                            api_handler(path, query, session)
-                        }))
-                        .route(web::post().to(|path, query, session| {
-                            info!("Handling POST request for: {:?}", path);
-                            api_handler(path, query, session)
-                        }))
-                        .route(web::delete().to(|path, query, session| {
-                            info!("Handling DEL request for: {:?}", path);
-                            api_handler(path, query, session)
-                        }))
-                        .route(web::put().to(|path, query, session| {
-                            info!("Handling PUT request for: {:?}", path);
-                            api_handler(path, query, session)
-                        }))
-                     )
+                    .app_data(web::Data::new(open_modules.clone()))
+                    .service(web::resource("/{module_name}/{function_name}")
+                        .route(web::get().to(api_handler))
+                        .route(web::post().to(api_handler))
+                        .route(web::delete().to(api_handler))
+                        .route(web::put().to(api_handler))
+                    )
             )
             // Serve static files
             .service(fs::Files::new("/", &dist_path) // Use the moved dist_path

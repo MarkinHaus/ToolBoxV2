@@ -3,6 +3,7 @@ import base64
 import datetime
 import json
 import os
+import time
 import uuid
 from dataclasses import asdict
 from urllib.parse import quote
@@ -518,6 +519,7 @@ async def local_login(app: App, username: str) -> Result:
 
 @export(mod_name=Name, api=True, test=False)
 async def get_to_sing_data(app: App, username, personal_key=False):
+    t0 = time.perf_counter()
     if app is None:
         app = get_app(from_=Name + '.get_to_sing_data')
 
@@ -533,6 +535,7 @@ async def get_to_sing_data(app: App, username, personal_key=False):
 
     if personal_key:
         data['rowId'] = user.user_pass_pub_persona.get("rawId")
+    app.print(f"END {time.perf_counter()-t0}",)
     return Result.ok(data=data)
 
 

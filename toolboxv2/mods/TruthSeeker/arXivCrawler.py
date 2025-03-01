@@ -445,7 +445,7 @@ class ArXivPDFProcessor:
         if query is not None:
             self.query = query
         self.send_status("Starting research process")
-        t0 = time.process_time()
+        t0 = time.perf_counter()
         self.initialize(self.s_id, query is not None)
 
         queries = self.generate_queries()
@@ -465,7 +465,7 @@ class ArXivPDFProcessor:
 
         insights = await self.generate_insights(queries)
 
-        elapsed_time = time.process_time() - t0
+        elapsed_time = time.perf_counter() - t0
         self.send_status("Process complete", progress=1.0,
                          additional_info=f"Total time: {elapsed_time:.2f}s, Papers analyzed: {len(papers)}/{self.all_ref_papers}")
 

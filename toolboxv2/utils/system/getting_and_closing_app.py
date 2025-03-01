@@ -23,6 +23,7 @@ def override_main_app(app):
     return registered_apps[0]
 
 
+
 def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None, sync=False) -> AppType:
     global registered_apps
     # name = None

@@ -418,6 +418,9 @@ def analyze_data(data):
             report.append(f"Total coverage:\n {_}")
             continue
         report.append(f"Modul: {mod_name}")
+        if not isinstance(mod_info, dict):
+            report.append(f"info: {mod_info}")
+            continue
         report.append(f"  Funktionen ausgeführt: {mod_info.get('functions_run', 0)}")
         report.append(f"  Funktionen mit Fatalen Fehler: {mod_info.get('functions_fatal_error', 0)}")
         report.append(f"  Funktionen mit Fehler: {mod_info.get('error', 0)}")
@@ -734,7 +737,7 @@ class AppType:
 
         """proxi attr"""
 
-    def fuction_runner(self, function, function_data: dict, args: list, kwargs: dict):
+    def fuction_runner(self, function, function_data: dict, args: list, kwargs: dict, t0=.0):
         """
         parameters = function_data.get('params')
         modular_name = function_data.get('module_name')

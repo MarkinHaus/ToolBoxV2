@@ -517,8 +517,10 @@ def run_tests(test_path):
         return False
 
 
-async def setup_app():
+async def setup_app(ov_name=None):
     args = parse_args()
+    if ov_name:
+        args.name = ov_name
 
     abspath = os.path.dirname(os.path.abspath(__file__))
 
@@ -946,6 +948,14 @@ def main_runner():
         loop = asyncio.new_event_loop()
         loop.run_until_complete(main())
 
+def server_helper(instance_id:str="main", db_mode="RR"):
+    loop = asyncio.new_event_loop()
+    app, _ = loop.run_until_complete(setup_app(instance_id))
+    app.loop = loop
+    db = get_app().get_mod("DB")
+    db.edit_cli(db_mode)
+    db.initialize_database()
+    return app
 
 if __name__ == "__main__":
     print("STARTED START FROM CLI")

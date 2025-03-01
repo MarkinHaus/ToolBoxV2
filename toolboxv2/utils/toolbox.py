@@ -269,7 +269,7 @@ class App(AppType, metaclass=Singleton):
         if name not in self.flows.keys():
             self.flows = {**self.flows, **flows_dict_func(s=name, remote=True)}
         if name in self.flows.keys():
-            if inspect.iscoroutinefunction(self.flows[name]):
+            if asyncio.iscoroutinefunction(self.flows[name]):
                 return await self.flows[name](get_app(from_="runner"), self.args_sto, **kwargs)
             else:
                 return self.flows[name](get_app(from_="runner"), self.args_sto, **kwargs)
@@ -568,6 +568,28 @@ class App(AppType, metaclass=Singleton):
         self.logger.info(f"save exiting saving data to {self.config_fh.file_handler_filename} states of {self.debug=}")
         self.config_fh.add_to_save_file_handler(self.keys["debug"], str(self.debug))
 
+    def init_mod(self, mod_name, spec='app'):
+        if '.' in mod_name:
+            mod_name = mod_name.split('.')[0]
+        return self.loop_gard().run_until_complete(self.a_init_mod(mod_name, spec))
+
+    def run(self, *args, **kwargs):
+        return self.loop_gard().run_until_complete(self.a_run_any(*args, **kwargs))
+
+    def loop_gard(self):
+        if self.loop is None:
+            self.loop = asyncio.get_event_loop()
+        if self.loop.is_closed():
+            self.loop = asyncio.get_event_loop()
+        return self.loop
+
+    async def a_init_mod(self, mod_name, spec='app'):
+        mod = self.save_load(mod_name, spec=spec)
+        if hasattr(mod, "__initobj") and not mod.async_initialized:
+            await mod
+        return mod
+
+
     def load_mod(self, mod_name: str, mlm='I', **kwargs):
 
         action_list_helper = ['I (inplace load dill on error python)',
@@ -709,7 +731,7 @@ class App(AppType, metaclass=Singleton):
         if on_exit is None and self.functions[mod_name].get(f"{spec}_instance_type", "").endswith("/BC"):
             instance = self.functions[mod_name].get(f"{spec}_instance", None)
             if instance is not None and hasattr(instance, 'on_exit'):
-                if inspect.iscoroutinefunction(instance.on_exit):
+                if asyncio.iscoroutinefunction(instance.on_exit):
                     self.exit_tasks.append(instance.on_exit)
                 else:
                     instance.on_exit()
@@ -728,7 +750,7 @@ class App(AppType, metaclass=Singleton):
                 f_, e = self.get_function((mod_name, f), state=True, specification=spec)
                 if e == 0:
                     self.logger.info(Style.GREY(f"Running On exit {f} {i}/{len(on_exit)}"))
-                    if inspect.iscoroutinefunction(f_):
+                    if asyncio.iscoroutinefunction(f_):
                         self.exit_tasks.append(f_)
                         o = None
                     else:
@@ -769,7 +791,7 @@ class App(AppType, metaclass=Singleton):
         if on_exit is None and self.functions[mod_name].get(f"{spec}_instance_type", "").endswith("/BC"):
             instance = self.functions[mod_name].get(f"{spec}_instance", None)
             if instance is not None and hasattr(instance, 'on_exit'):
-                if inspect.iscoroutinefunction(instance.on_exit):
+                if asyncio.iscoroutinefunction(instance.on_exit):
                     await instance.on_exit()
                 else:
                     instance.on_exit()
@@ -788,7 +810,7 @@ class App(AppType, metaclass=Singleton):
                 f_, e = self.get_function((mod_name, f), state=True, specification=spec)
                 if e == 0:
                     self.logger.info(Style.GREY(f"Running On exit {f} {i}/{len(on_exit)}"))
-                    if inspect.iscoroutinefunction(f_):
+                    if asyncio.iscoroutinefunction(f_):
                         o = await f_()
                     else:
                         o = f_()
@@ -847,7 +869,7 @@ class App(AppType, metaclass=Singleton):
     async def a_exit(self):
         await self.a_remove_all_modules()
         results = await asyncio.gather(
-            *[asyncio.create_task(f()) for f in self.exit_tasks if inspect.iscoroutinefunction(f)])
+            *[asyncio.create_task(f()) for f in self.exit_tasks if asyncio.iscoroutinefunction(f)])
         for result in results:
             self.print(f"Function On Exit result: {result}")
         self.exit(remove_all=False)
@@ -945,10 +967,11 @@ class App(AppType, metaclass=Singleton):
                                                  info=f"function not found function").set_origin(mod_function_name)
 
         self.logger.info(f"Profiling function")
-        if inspect.iscoroutinefunction(function):
-            return await self.a_fuction_runner(function, function_data, args, kwargs)
+        t0 = time.perf_counter()
+        if asyncio.iscoroutinefunction(function):
+            return await self.a_fuction_runner(function, function_data, args, kwargs, t0)
         else:
-            return self.fuction_runner(function, function_data, args, kwargs)
+            return self.fuction_runner(function, function_data, args, kwargs, t0)
 
     def run_function(self, mod_function_name: Enum or tuple,
                      tb_run_function_with_state=True,
@@ -1014,10 +1037,11 @@ class App(AppType, metaclass=Singleton):
                                                  info=f"function not found function").set_origin(mod_function_name)
 
         self.logger.info(f"Profiling function")
-        if inspect.iscoroutinefunction(function):
+        t0 = time.perf_counter()
+        if asyncio.iscoroutinefunction(function):
             raise ValueError(f"Fuction {function_name} is Async use a_run_any")
         else:
-            return self.fuction_runner(function, function_data, args, kwargs)
+            return self.fuction_runner(function, function_data, args, kwargs, t0)
 
     def run_a_from_sync(self, function, *args):
 
@@ -1033,7 +1057,7 @@ class App(AppType, metaclass=Singleton):
     #    return asyncio.ensure_future(function(*args))
     #except RuntimeError:
 
-    def fuction_runner(self, function, function_data: dict, args: list, kwargs: dict):
+    def fuction_runner(self, function, function_data: dict, args: list, kwargs: dict, t0=.0):
 
         parameters = function_data.get('params')
         modular_name = function_data.get('module_name')
@@ -1052,7 +1076,7 @@ class App(AppType, metaclass=Singleton):
                 res = function(**kwargs)
             else:
                 res = function(*args, **kwargs)
-            self.logger.info(f"Execution done")
+            self.logger.info(f"Execution done in {time.perf_counter()-t0:.4f}")
             if isinstance(res, Result):
                 formatted_result = res
                 if formatted_result.origin is None:
@@ -1098,7 +1122,7 @@ class App(AppType, metaclass=Singleton):
 
         return formatted_result
 
-    async def a_fuction_runner(self, function, function_data: dict, args: list, kwargs: dict):
+    async def a_fuction_runner(self, function, function_data: dict, args: list, kwargs: dict, t0=.0):
 
         parameters = function_data.get('params')
         modular_name = function_data.get('module_name')
@@ -1117,7 +1141,7 @@ class App(AppType, metaclass=Singleton):
                 res = await function(**kwargs)
             else:
                 res = await function(*args, **kwargs)
-            self.logger.info(f"Execution done")
+            self.logger.info(f"Execution done in {time.perf_counter()-t0:.4f}")
             if isinstance(res, Result):
                 formatted_result = res
                 if formatted_result.origin is None:
@@ -1430,7 +1454,7 @@ class App(AppType, metaclass=Singleton):
 
                 if pre_compute is not None:
                     args, kwargs = await pre_compute(*args, **kwargs)
-                if inspect.iscoroutinefunction(func):
+                if asyncio.iscoroutinefunction(func):
                     result = await func(*args, **kwargs)
                 else:
                     result = func(*args, **kwargs)
@@ -1482,7 +1506,7 @@ class App(AppType, metaclass=Singleton):
 
                 if pre_compute is not None:
                     args, kwargs = pre_compute(*args, **kwargs)
-                if inspect.iscoroutinefunction(func):
+                if asyncio.iscoroutinefunction(func):
                     result = func(*args, **kwargs)
                 else:
                     result = func(*args, **kwargs)
@@ -1538,7 +1562,7 @@ class App(AppType, metaclass=Singleton):
             if func_name == 'on_exit':
                 func_name = 'on_close'
             if api or pre_compute is not None or post_compute is not None or memory_cache or file_cache:
-                if inspect.iscoroutinefunction(func):
+                if asyncio.iscoroutinefunction(func):
                     func = a_additional_process(func)
                 else:
                     func = additional_process(func)

@@ -2624,7 +2624,7 @@ Next Action Required:
         self.verbose_output.log_header(task)
         while state != ThinkState.DONE:
             iter_i += 1
-            t0 = time.process_time()
+            t0 = time.perf_counter()
             prompt = initial_prompt.replace('#ITER#', f'{iter_i} max {self.max_iter}')
             prompt = prompt.replace('#STATE#', f'{state.name}')
             prompt = prompt.replace('#EXECUTION#', f'{next_infos}')  if next_infos else prompt.replace('Last EXECUTION: #EXECUTION#', f'')
@@ -2736,7 +2736,7 @@ Next Action Required:
                 break
 
             if iter_i < self.max_iter:
-                if time.process_time() -t0 < self.timeout_timer*2.5:
+                if time.perf_counter() -t0 < self.timeout_timer*2.5:
                     with Spinner(f"Prevent rate limit posing for {self.timeout_timer}s", symbols='+', time_in_s=self.timeout_timer, count_down=True):
                         await asyncio.sleep(self.timeout_timer)
             else:

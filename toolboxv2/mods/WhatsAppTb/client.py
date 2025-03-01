@@ -454,7 +454,7 @@ class WhatsAppAssistant:
             print("DUPLICATION P", message.data.get('entry', [{}])[0].get('changes', [{}])[0].get('value', {}).get('messages', [{}])[0].get('timestamp', 0) , last_ts)
             if float(message.data.get('entry', [{}])[0].get('changes', [{}])[0].get('value', {}).get('messages', [{}])[0].get('timestamp', 0)) < last_ts - 120:
                 return
-            self.processed_messages.add((message.id, time.process_time()))
+            self.processed_messages.add((message.id, time.perf_counter()))
 
         # Mark message as read
         message.mark_as_read()
