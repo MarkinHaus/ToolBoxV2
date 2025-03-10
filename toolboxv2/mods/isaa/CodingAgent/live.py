@@ -1116,8 +1116,8 @@ class MockIPython:
                     )
                     if exec_code is None:
                         return "No executable code"
-
-                    os.chdir(str(temp_file.parent))
+                    os.makedirs(str(temp_file.parent.absolute()), exist_ok=True)
+                    os.chdir(str(temp_file.parent.absolute()))
                     self.user_ns['PYTHON_EXEC'] = python_exec
 
                     with redirect_stdout(stdout), redirect_stderr(stderr):

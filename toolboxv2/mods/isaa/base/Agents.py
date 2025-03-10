@@ -22,6 +22,7 @@ from langchain_community.llms import HuggingFaceHub
 from litellm.utils import trim_messages, get_max_tokens
 
 from litellm import BudgetManager, batch_completion, acompletion
+from phonemizer.utils import chunks
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
@@ -486,7 +487,7 @@ class Agent:
             return "balnk"
         return "Key <> Value\n" + "\n".join([f"{k} <> {v}" for k, v in self.world_model.items()])
 
-    def flow_world_model(self, query):
+    async def flow_world_model(self, query):
 
         prompt = f"Determen if to change the current world model ##{self.show_word_model()}## basd on the new informaiton :" + query
 
@@ -498,7 +499,7 @@ class Agent:
             key: Optional[str] = field(default=None)
             informations: Optional[str] = field(default=None)
 
-        model_action = self.format_class(WorldModelAdaption, prompt)
+        model_action = await self.a_format_class(WorldModelAdaption, prompt)
         self.print_verbose(str(model_action))
         if model_action["action"] is None or model_action["key"] is None:
             return
@@ -597,7 +598,7 @@ class Agent:
                 self.progress_callback(status)
 
         await update_progress()
-        self.flow_world_model(user_input)
+        await self.flow_world_model(user_input)
         message = [{"role": "system", "content": f"World Model(read only): {self.show_word_model()}"}]
 
         if chat_session is not None:
@@ -681,7 +682,7 @@ class Agent:
                 f"""Deside if u need to call one function to perform this task {[f.name for f in self.functions] if self.functions is not None else ''}"""
                 use_function: bool = field(default=False)
 
-            with_functions = self.format_class(WithFunctions, user_input)["use_function"]
+            with_functions = self.format_class(WithFunctions, user_input).get("use_function", True)
             self.print_verbose(f'Auto {with_functions=}')
 
         await update_progress()
@@ -690,7 +691,7 @@ class Agent:
                 """Deside if u need to get memory data to perform this task"""
                 use_memory: bool = field(default=False)
 
-            with_memory = self.format_class(WithMemory, user_input)["use_memory"]
+            with_memory = self.format_class(WithMemory, user_input).get("use_memory", True)
             self.print_verbose(f'Auto {with_memory=}')
         # Stage 4: Function execution
         await update_progress()
@@ -726,15 +727,20 @@ class Agent:
             await update_progress()
 
             iterations = max_iterations
+            save_stream = self.stream
+            self.stream = False
             while out is None and iterations > 0:
                 iterations -= 1
                 out = await self.a_run_model(llm_message=llm_message, persist_local=persist, persist_mem=persist_mem, **kwargs)
             await update_progress()
+            self.stream = save_stream
 
             if self.if_for_fuction_use(out):
                 res = await self.execute_fuction(persist=persist, persist_mem=persist_mem)
-                out_ = f"(system tool '{self.llm_function_runner.llm_function.name if self.llm_function_runner is not None else '-#-'}' inputs : {self.llm_function_runner.args if self.llm_function_runner is not None else '-#-'} output): {res}"
-                out += await self.a_mini_task(out_, "system", "return a MD formatted Output of the function call and the context!", message=[x for x in llm_message if x.get('role') != "system"])
+                out += f"(system tool '{self.llm_function_runner.llm_function.name if self.llm_function_runner is not None else '-#-'}' inputs : {self.llm_function_runner.args if self.llm_function_runner is not None else '-#-'} output): {res}"
+                #out += await self.a_mini_task(out_, "system", """Return a Markdown-formatted output that includes both the function call and its context. Evaluate the result:
+                #If an error or failure occurs, simply indicate that an error occurred without attempting to fix it.
+                #Otherwise, format the function output neatly so it can be used directly.""", message=[x for x in llm_message if x.get('role') != "system"])
             await update_progress()
 
         else:
@@ -828,7 +834,7 @@ class Agent:
         elif isinstance(user_task, list):
             llm_message = self.get_batch_llm_messages(user_task, task_from=task_from, message=message.copy())
         else:
-            raise ValueError(f"Invalid mini_task type valid ar str or List[str] is {type(mini_task)}")
+            raise ValueError(f"Invalid mini_task type valid ar str or List[str] is {type(mini_task)} {mini_task}")
         return self.run_model(llm_message=llm_message, persist_local=persist, batch=isinstance(mini_task, list))
 
     async def a_mini_task(self, user_task, task_from="user", mini_task=None, message=None, persist=False):
@@ -852,18 +858,21 @@ class Agent:
         if 'claude' in self.amd.model and llm_message[0]['role'] != 'user':
             llm_message = [{'role':'user','content':'start :)'}] +llm_message
 
-        resp = self.completion(
-            llm_message=llm_message,
-            response_format=format_class,
-        )
+        try:
+            resp = self.completion(
+                llm_message=llm_message,
+                response_format=format_class,
+            )
+
+            c = self.format_helper(resp)
+        except litellm.exceptions.BadRequestError as e:
+            if 'failed_generation' not in str(e):
+                raise e
+            c = str(e).split('"failed_generation":')[-1][:-3]
+        res = after_format(c)
         self.stream = tstrem
-        # print(resp)
-        c = resp.choices[0].message.content
-        if c is None:
-            c = resp.choices[0].message.tool_calls[0].function.arguments
-        c = c.replace('</invoke>', '').rstrip()
-        self.last_result = c
-        return after_format(c)
+        print(res)
+        return res
 
     async def a_format_class(self, format_class, task, **kwargs):
         tstrem = self.stream
@@ -872,22 +881,26 @@ class Agent:
         if 'claude' in self.amd.model and llm_message[0]['role'] != 'user':
             llm_message = [{'role':'user','content':'start :)'}] +llm_message
 
-        resp = await self.acompletion(
-            llm_message=llm_message,
-            response_format=format_class,
-        )
-        self.stream = tstrem
+        try:
+            resp = await self.acompletion(
+                llm_message=llm_message,
+                response_format=format_class,
+            )
+
+            c = self.format_helper(resp)
+        except litellm.exceptions.BadRequestError as e:
+            if 'failed_generation' not in str(e):
+                raise e
+            c = str(e).split('"failed_generation":')[-1][:-3]
         # print(resp)
-        c = resp.choices[0].message.content
-        if c is None:
-            c = resp.choices[0].message.tool_calls[0].function.arguments
-        c = c.replace('</invoke>', '').rstrip()
         self.last_result = c
 
         try:
-            return after_format(c)
+            res = after_format(c)
+            self.stream = tstrem
+            return res
         except Exception as e:
-            self.print_verbose("Error formatting, Retrying...")
+            self.print_verbose(f"Error formatting, Retrying... {e}")
             llm_message = [{'role': 'system', 'content': f'retry error : {e}'}] + llm_message
             resp = await self.acompletion(
                 llm_message=llm_message,
@@ -895,12 +908,21 @@ class Agent:
             )
             self.stream = tstrem
             # print(resp)
-            c = resp.choices[0].message.content
-            if c is None:
+            c = self.format_helper(resp)
+            res = after_format(c)
+            self.stream = tstrem
+            return res
+
+    def format_helper(self, resp):
+        c = None
+        if not self.stream:
+            try:
                 c = resp.choices[0].message.tool_calls[0].function.arguments
-            c = c.replace('</invoke>', '').rstrip()
-            self.last_result = c
-            return after_format(c)
+            except:
+                pass
+        if c is None:
+            c = self.parse_completion(resp)
+        return c
 
     def function_invoke(self, name, **kwargs):
         if self.functions is None:
@@ -962,7 +984,7 @@ class Agent:
                                                          "'Action':str, 'Inputs':str or dict}\nWhere Action is equal to "
                                                          "the function name and Inputs to the function args. use str for "
                                                          "single input function and a kwarg dict for multiple inputs!! (in one line do not use line brakes or special enclosing!)"
-                                                         "USE THIS FORMAT\n" + f"Callable functions:\n{functions_infos}\n--+--\nAfter Calling a function type 3 '.' and new line ...\n"})
+                                                         "USE THIS FORMAT\n" + f"Callable functions:\n{functions_infos}\n--+--\nTemplate Call {{'Action':str, 'Inputs': {{function inputs args or kwargs}}}} all function calls must include 'Action' AND Inputs' as key!\nAfter Calling a function type 3 '.' and new line ...\n"})
 
         if llm_prompt:
             message.append({'role': 'system', 'content': llm_prompt})
@@ -1329,28 +1351,71 @@ class Agent:
         if default is None:
             default = ""
         else:
-            default +="\n"
-        if hasattr(result.choices[0].message, "tool_calls") and result.choices[0].message.tool_calls and self.functions is not None:
-            if len(result.choices[0].message.tool_calls) != 1:
-                default += f"taskstack addet {len(result.choices[0].message.tool_calls)}"
-                for fuc_call in result.choices[0].message.tool_calls:
-                    self.taskstack.add_task(self._to_task(f" Call this function '{fuc_call.function.name}'with "
-                                                          f"thies arguments: {fuc_call.function.arguments} "))
-            else:
-                callable_functions = [function_name.name.lower() for function_name in self.functions] if self.functions is not None else []
-                llm_function = self.functions[
-                    callable_functions.index(result.choices[0].message.tool_calls[0].function.name.lower())]
-                self.if_for_fuction_use_overrides = True
-                d = json.loads(result.choices[0].message.tool_calls[0].function.arguments)
-                if 'properties' in d and isinstance(d['properties'], dict):
-                    d = d['properties']
-                self.llm_function_runner = LLMFunctionRunner(
-                    llm_function=llm_function,
-                    args=(),
-                    kwargs=d,
-                )
-                default += "Calling "+result.choices[0].message.tool_calls[0].function.name+" with arguments "+ result.choices[0].message.tool_calls[0].function.arguments
+            default += "\n"
+
+        # Check if we are in streaming mode using the self.stram flag
+        if self.stream:
+            # Iterate over each streaming choice chunk
+            for choice in result.choices:
+                delta = getattr(choice, "delta", None)
+                if delta:
+                    # Accumulate text content if present
+                    if getattr(delta, "content", None):
+                        default = delta.content
+        else:
+            # Non-streaming mode handling
+            print(result.choices[0])
+            if hasattr(result.choices[0].message, "tool_calls") and result.choices[
+                0].message.tool_calls and self.functions is not None:
+                if len(result.choices[0].message.tool_calls) != 1:
+                    default += f"taskstack added {len(result.choices[0].message.tool_calls)}"
+                    for fuc_call in result.choices[0].message.tool_calls:
+                        self.taskstack.add_task(
+                            self._to_task(
+                                f"Call this function '{fuc_call.function.name}' with these arguments: {fuc_call.function.arguments}"
+                            )
+                        )
+                else:
+                    callable_functions = [func.name.lower() for func in
+                                          self.functions] if self.functions is not None else []
+                    function_name = result.choices[0].message.tool_calls[0].function.name.lower()
+                    if function_name in callable_functions:
+                        llm_function = self.functions[callable_functions.index(function_name)]
+                        self.if_for_fuction_use_overrides = True
+                        d = json.loads(result.choices[0].message.tool_calls[0].function.arguments)
+                        if 'properties' in d and isinstance(d['properties'], dict):
+                            d = d['properties']
+                        self.llm_function_runner = LLMFunctionRunner(
+                            llm_function=llm_function,
+                            args=(),
+                            kwargs=d,
+                        )
+                        default += f"Calling {result.choices[0].message.tool_calls[0].function.name} with arguments {result.choices[0].message.tool_calls[0].function.arguments}"
         return default
+
+    def parse_completion(self,result):
+        llm_response = ""
+        if not self.stream:
+            return get_str_response(chunk=result)
+
+        if self.stream:
+            self.print_verbose("Start streaming")
+
+            if self.stream_function is None:
+                self.stream_function = stram_print
+
+            chunks = []
+            for chunk in result:
+                chunks.append(chunk)
+                message = get_str_response(chunk=chunk)
+                message = self.model_function_result_passer(chunk, message)
+                llm_response += message
+                if self.stream_function(message):
+                    break
+            self.print_verbose("Done streaming")
+            result = litellm.stream_chunk_builder(chunks)
+        return self.model_function_result_passer(result, llm_response)
+
     def run_model(self, llm_message, persist_local=True, persist_mem=True, batch=False, **kwargs):
 
         if not llm_message:
@@ -1362,7 +1427,7 @@ class Agent:
 
         if len(llm_message) > 2:
             llm_message = [{'role': 'assistant',
-                            'content': f'Hello, I am an intelligent agent created to assist you. To provide the best possible response, I will first gather information about you and any relevant context. I will then analyze the requirements for a unified agent response and develop a multi-step reasoning process to address your needs. This process will involve distinct streams of thought and personality, culminating in a final, cohesive action. Please provide any additional details or instructions you may have, and I will do my best to deliver a helpful and personalized solution. [system time {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]'}] + llm_message
+                            'content': f'Hello, I am an intelligent agent created to assist you. To provide the best possible response, I will first gather information about you and any relevant context. I will then analyze the requirements for a unified agent response and develop a multi-step reasoning process to address your needs. This process will involve distinct streams of thought and personality, culminating in a final, cohesive action. Please provide any additional details or instructions you may have, and I will do my best to deliver a helpful and personalized solution. To anabel a sees of time i must allways remember the [system time {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]'}] + llm_message
 
         if len(llm_message) == 1 and llm_message[0]['role'] != 'user':
             llm_message = [{'role': 'user', 'content': 'Performe the system task!'}] + llm_message
@@ -1412,24 +1477,8 @@ class Agent:
         if result is None and last_error_ is not None:
             raise last_error_
 
-        if not self.stream:
-            llm_response += get_str_response(chunk=result)
+        llm_response = self.parse_completion(result)
 
-        if self.stream:
-            self.print_verbose("Start streaming")
-
-            if self.stream_function is None:
-                self.stream_function = stram_print
-
-            for chunk in result:
-                message = get_str_response(chunk=chunk)
-                message = self.model_function_result_passer(result, message)
-                llm_response += message
-                if self.stream_function(message):
-                    break
-            self.print_verbose("Done streaming")
-            print()
-        llm_response = self.model_function_result_passer(result, llm_response)
         if not batch:
             return self.compute_result(result, llm_message, llm_response, persist_local, persist_mem)
         return [self.compute_result(_result, llm_message, llm_response, persist_local, persist_mem) for _result in
@@ -1496,23 +1545,8 @@ class Agent:
         if result is None and last_error_ is not None:
             raise last_error_
 
-        if not self.stream:
-            llm_response += get_str_response(chunk=result)
-        if self.stream:
-            self.print_verbose("Start streaming")
+        llm_response = self.parse_completion(result)
 
-            if self.stream_function is None:
-                self.stream_function = stram_print
-
-            for chunk in result:
-                message = get_str_response(chunk=chunk)
-                message = self.model_function_result_passer(result, message)
-                llm_response += message
-                if await self.stream_function(message):
-                    break
-            self.print_verbose("Done streaming")
-            print()
-        llm_response = self.model_function_result_passer(result, llm_response)
         if not batch:
             return await self.acompute_result(result, llm_message, llm_response, persist_local, persist_mem)
         return [await self.acompute_result(_result, llm_message, llm_response, persist_local, persist_mem) for _result in
@@ -1548,7 +1582,7 @@ class Agent:
         if self.amd.budget_manager:
             self.amd.budget_manager.update_cost(user=self.amd.user_id, model=self.amd.model, completion_obj=result)
 
-        get_app().run_a_from_sync(self.save_to_memory,llm_response, persist_local, persist_mem)
+        # get_app().run_a_from_sync(self.save_to_memory,llm_response, persist_local, persist_mem)
 
         if self.mode is not None:
             if isinstance(llm_message[-1], dict):

@@ -110,8 +110,12 @@ def after_format_(d: str) -> dict:
     return result
 
 def after_format(d:str)->dict:
+    if isinstance(d, dict):
+        return d
     d1 = d
+
     def clean(_d, ex=False):
+        #  print(_d, "THE FIST")
         if ex:
             while _d and _d[0] != '{':
                 _d = _d[1:]
@@ -129,6 +133,7 @@ def after_format(d:str)->dict:
         _d = _d.replace(': \\"\\"\\"', ": '''").replace('\\"\\"\\",', "''',")
         if _d.count("'''") % 2 != 0 and( _d.count('"""\n}') == 1 or  _d.count('\\"\\"\\"\n}') == 1):
             _d = _d.replace('\\"\\"\\"\n}', "'''\n}").replace('\\"\\"\\"\\n}', "'''\\n}")
+        # print(_d, "THE END")
         return _d
     d = eval(clean(d))
     if isinstance(d, str):

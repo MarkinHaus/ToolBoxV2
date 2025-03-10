@@ -203,8 +203,28 @@ class Tools(MainTool, FileHandler):
         self.fc_generators = {}
         self.toolID = ""
         MainTool.toolID = ""
+        async def web_search_(query:str)->str:
+            return await web_search(query=query, mas_text_summaries=self.mas_text_summaries)
+        self.web_search = web_search_
 
-        self.web_search = lambda q: self.app.run_a_from_sync(partial(web_search, mas_text_summaries=self.mas_text_summaries), q)
+        self.print(f"Start {self.spec}.isaa")
+        IsaaWebSocketUI(self)
+        with Spinner(message=f"Starting module", symbols='c'):
+            self.load_file_handler()
+            config = self.get_file_handler(self.keys["Config"])
+            if config is not None:
+                if isinstance(config, str):
+                    config = json.loads(config)
+                if isinstance(config, dict):
+                    self.config = {**config, **self.config}
+
+            if self.spec == 'app':
+                self.load_keys_from_env()
+
+            if not os.path.exists(f".data/{get_app('isaa-initIsaa').id}/Agents/"):
+                os.mkdir(f".data/{get_app('isaa-initIsaa').id}/Agents/")
+            if not os.path.exists(f".data/{get_app().id}/Memory/"):
+                os.mkdir(f".data/{get_app('isaa-initIsaa').id}/Memory/")
 
     def add_task(self, name, task):
         self.agent_chain.add_task(name, task)
@@ -438,23 +458,7 @@ class Tools(MainTool, FileHandler):
         return self.version
 
     async def on_start(self):
-        self.print(f"Start {self.spec}.isaa")
-        IsaaWebSocketUI(self)
-        with Spinner(message=f"Starting module", symbols='c'):
-            self.load_file_handler()
-            config = self.get_file_handler(self.keys["Config"])
-            if config is not None:
-                if isinstance(config, str):
-                    config = json.loads(config)
-                if isinstance(config, dict):
-                    self.config = {**config, **self.config}
-
-            if self.spec == 'app':
-                self.load_keys_from_env()
-            if not os.path.exists(f".data/{get_app('isaa-initIsaa').id}/Agents/"):
-                os.mkdir(f".data/{get_app('isaa-initIsaa').id}/Agents/")
-            if not os.path.exists(f".data/{get_app().id}/Memory/"):
-                os.mkdir(f".data/{get_app('isaa-initIsaa').id}/Memory/")
+        pass
 
     def load_secrit_keys_from_env(self):
         self.config['WOLFRAM_ALPHA_APPID'] = os.getenv('WOLFRAM_ALPHA_APPID')
@@ -507,6 +511,8 @@ class Tools(MainTool, FileHandler):
             if key.endswith("-init"):
                 self.config[key] = False
             if key == 'agents-name-list':
+                for agent_name in self.config[key]:
+                    self.config[f"agent-world_model-{agent_name}"] = self.config[f'agent-config-{agent_name}'].world_model
                 self.config[key] = []
         # print(self.config)
         self.add_to_save_file_handler(self.keys["Config"], json.dumps(self.config))
@@ -684,24 +690,15 @@ class Tools(MainTool, FileHandler):
                 return self.run_agent(agent_name, text, **kwargs)
             return "Provide Information in The Action Input: fild or function call"
 
-        async def run_agent_env(agent_name: str, text: str, **kwargs):
-            text = text.replace("'", "").replace('"', '')
-            if agent_name:
-                return await self.run_agent_in_environment(text, agent_name, **kwargs)
-            return "Provide Information in The Action Input: fild or function call"
+        async def run_pipe(task: str, do_continue:bool=False):
+            task = task.replace("'", "").replace('"', '')
+            return await self.run_pipe(name, task, do_continue)
 
         def memory_search(query: str):
-            ress = self.get_memory().get_context_for(query, get_all=True)
+            ress = self.get_memory().query(query,to_str=True)
 
             if not ress:
                 return "no informations found for :" + query
-
-            task = f"Act as an summary expert your specialties are writing summary. you are known to think in small and " \
-                   f"detailed steps to get the right result. Your task : write a summary reladet to {query} only provide infromations form the context!"
-            res = self.mini_task_completion(task, user_task=ress)
-
-            if res:
-                return res
 
             return ress
 
@@ -710,7 +707,7 @@ class Tools(MainTool, FileHandler):
 
             return 'added to memory'
 
-        def get_agents():
+        def get_agents(*a,**k):
             agents_name_list = self.config['agents-name-list'].copy()
             if 'TaskCompletion' in agents_name_list:
                 agents_name_list.remove('TaskCompletion')
@@ -747,17 +744,9 @@ class Tools(MainTool, FileHandler):
             tools = {**tools, **{
                 "memorySearch": {"func": memory_search,
                                  "description": "must input reference context to search"},
-                "searchWeb": {"func": lambda x: self.web_search(x),
+                "searchWeb": {"func": self.web_search,
                               "description": "search the web (online) for information's input a query"
                     , "format": "search(<task>)"},
-                # "write-production-redy-code": {"func": lambda x: run_agent('think',
-                #                                                            f"Act as a Programming expert your specialties are coding."
-                #                                                            f" you are known to think in small and detailed steps to get"
-                #                                                            f" the right result.\n\nInformation's:"
-                #                                                            f" {config.edit_text.text}\n\n Your task : {x}\n\n"
-                #                                                            f"write an production redy code"),
-                #                                "description": "Run agent to generate code."
-                #     , "format": "write-production-redy-code(<task>)"},
                 "think": {"func": lambda x: run_agent('think', x),
                           "description": "Run agent to solve a text based problem"
                     , "format": "think(<task>)"},
@@ -768,8 +757,11 @@ class Tools(MainTool, FileHandler):
                              "description": "programmable pattern completion engin. use text args:str only"
                     , "format": "miniTask(<detaild_discription>)"},
                 "Coder": {"func": self.code,
-                          "description": "Fuction to write code basd from description"
+                          "description": "to write code basd from description"
                     , "format": "coding_step(task<detaild_discription>: str, project_name<data/$examplename>: str)"},
+                "run_pipe": {"func": run_pipe,
+                          "description": "to perform complex multi step task in an inactive coding env"
+                    , "format": "run_pipe(task<detaild_discription>: str, do_continue<if continue on last run or start fresh>: bool)"},
 
             }}
 
@@ -795,7 +787,7 @@ class Tools(MainTool, FileHandler):
             agent_builder.set_content_memory_max_length(3500)
             tools.update({"memorySearch": {"func": lambda context: memory_search(context),
                                            "description": "Search for memory  <context>"}})
-            tools.update({"WebSearch": {"func": lambda query: self.web_search(query),
+            tools.update({"WebSearch": {"func": self.web_search,
                                             "description": "Search the web"}})
 
             tools["saveDataToMemory"] = {"func": ad_data, "description": "tool to save data to memory,"
@@ -889,6 +881,7 @@ class Tools(MainTool, FileHandler):
                 else:
                     agent = agent_builder.build()
             del agent_builder
+            agent.world_model = self.config.get(f"agent-world_model-{agent_name}", {})
             self.config[f'agent-config-{agent_name}'] = agent
             self.print(f"Init:Agent::{agent_name}{' -' + str(agent.mode) if agent.mode is not None else ''}")
         if agent_name not in self.config["agents-name-list"]:
@@ -977,8 +970,8 @@ class Tools(MainTool, FileHandler):
             self.pipes[agent.amd.name] = Pipeline(agent, *args, **kwargs)
         return self.pipes[agent.amd.name]
 
-    async def run_pipe(self, agent_name, task):
-        return await self.get_pipe(agent_name).run(task)
+    async def run_pipe(self, agent_name, task,do_continue=False):
+        return await self.get_pipe(agent_name).run(task, do_continue=do_continue)
 
 
     def short_prompt_messages(self, messages, get_tokens, max_tokens, prompt_token_margin=20):

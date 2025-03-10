@@ -1044,18 +1044,36 @@ class App(AppType, metaclass=Singleton):
             return self.fuction_runner(function, function_data, args, kwargs, t0)
 
     def run_a_from_sync(self, function, *args):
-
+        # Initialize self.loop if not already set.
         if self.loop is None:
             try:
                 self.loop = asyncio.get_running_loop()
             except RuntimeError:
                 self.loop = asyncio.new_event_loop()
-        future = self.loop.create_task(function(*args))
-        return self.loop.run_until_complete(future)
 
-    #try:
-    #    return asyncio.ensure_future(function(*args))
-    #except RuntimeError:
+        # If the loop is running, offload the coroutine to a new thread.
+        if self.loop.is_running():
+            result_future = concurrent.futures.Future()
+
+            def run_in_new_loop():
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                try:
+                    result = new_loop.run_until_complete(function(*args))
+                    result_future.set_result(result)
+                except Exception as e:
+                    result_future.set_exception(e)
+                finally:
+                    new_loop.close()
+
+            thread = threading.Thread(target=run_in_new_loop)
+            thread.start()
+            thread.join()  # Block until the thread completes.
+            return result_future.result()
+        else:
+            # If the loop is not running, schedule and run the coroutine directly.
+            future = self.loop.create_task(function(*args))
+            return self.loop.run_until_complete(future)
 
     def fuction_runner(self, function, function_data: dict, args: list, kwargs: dict, t0=.0):
 
