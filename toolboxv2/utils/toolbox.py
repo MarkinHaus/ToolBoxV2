@@ -535,7 +535,7 @@ class App(AppType, metaclass=Singleton):
             instance = get_app(from_=f"fuction {specification}.{modular_id}.{function_id}")
 
         if instance is None and self.alive:
-            self.inplace_load_instance(modular_id)
+            self.inplace_load_instance(modular_id, spec=specification)
             instance = self.functions[modular_id].get(f"{specification}_instance")
 
         if instance is None:
@@ -573,8 +573,14 @@ class App(AppType, metaclass=Singleton):
             mod_name = mod_name.split('.')[0]
         return self.loop_gard().run_until_complete(self.a_init_mod(mod_name, spec))
 
-    def run(self, *args, **kwargs):
-        return self.loop_gard().run_until_complete(self.a_run_any(*args, **kwargs))
+    def run(self, *args, request=None, **kwargs):
+        mn, fn = args[0]
+        if self.functions.get(mn, {}).get(fn, {}).get('request_as_kwarg', False):
+            kwargs["request"] = request
+        res: Result = self.loop_gard().run_until_complete(self.a_run_any(*args, **kwargs))
+        if isinstance(res, Result):
+            res = res.to_api_result().model_dump(mode='json')
+        return res
 
     def loop_gard(self):
         if self.loop is None:

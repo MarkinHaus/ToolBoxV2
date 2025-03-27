@@ -39,7 +39,7 @@ class IsaaWebSocketUI(metaclass=Singleton):
         self.active_connections: Dict[str, WebSocket] = {}
         self.message_history: List[Dict] = []
         self.agent_states: Dict[str, AgentState] = {}
-        self.ping_interval = 60  # Increased to 60 seconds
+        self.ping_interval = 60
         self.max_reconnect_attempts = 5
 
     def _setup_verbose_override(self, agent, f=None):
@@ -133,21 +133,13 @@ class IsaaWebSocketUI(metaclass=Singleton):
                 agent.post_callback = get_callback(name)
                 self._setup_verbose_override(agent, get_callback(name + "-internal"))
 
-            if agent_name:
-                response = await asyncio.to_thread(
-                    self.isaa.run_agent,
-                    agent_name,
-                    message,
-                    running_mode="oncex",
-                    persist=True,
-                    verbose=True
-                )
-            else:
-                response = await asyncio.to_thread(
-                    self.isaa.run,
-                    message
-                )
-
+            response = await asyncio.to_thread(
+                self.isaa.run_agent,
+                agent_name,
+                message,
+                persist=True,
+                verbose=True
+            )
             # Save to network branch
             network = self.isaa.get_memory().cognitive_network.network
             branch_id = f"chat-{datetime.now().strftime('%Y%m%d-%H%M%S')}"

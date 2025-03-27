@@ -18,7 +18,19 @@ no_test = export(mod_name=Name, test=False, version=version)
 test_only = export(mod_name=Name, test=True, version=version, test_only=True)
 to_api = export(mod_name=Name, api=True, version=version)
 
+uis = {}
 
+@no_test
+def add_ui(name:str, titel:str, path:str, description:str, auth=False):
+    uis[name] = {"auth":auth,"path": path, "titel": titel, "description": description}
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
+def openui(app, request):
+    return [uis[name] for name in uis.keys() if uis[name]["auth"]]
+
+@export(mod_name=Name, api=True, version=version, row=True)
+def openVersion(self):
+    return self.version
 @no_test
 def new_module(self, mod_name: str,
                *options):  # updater wie AI Functional and class based hybrid , file / folder |<futüre>| rust py

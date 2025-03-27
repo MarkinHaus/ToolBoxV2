@@ -55,7 +55,7 @@ class NiceGUIManager(metaclass=Singleton):
         self._setup_endpoints_api()
 
     def _setup_endpoints_api(self):
-        @self.app.get("/api/ui-endpoints")
+        @self.app.get("/api/CloudM/openui")
         def get_ui_endpoints(request: Request) -> List[Dict]:
             def _(endpoint):
                 add_true = True

@@ -2,6 +2,7 @@ use actix_web::{web, App,HttpRequest, HttpServer, HttpResponse, middleware};
 use actix_files as fs;
 use actix_session::{Session, SessionMiddleware, storage::CookieSessionStore};
 use actix_web::cookie::{Key};
+use actix_web::http::Method;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use config::{Config, File, FileFormat};
@@ -804,15 +805,6 @@ struct ApiRequest {
     kwargs: HashMap<String, serde_json::Value>,
 }
 
-// Example API response structure for compatibility with your existing code
-#[derive(Serialize, Deserialize)]
-pub struct ApiResponse<T> {
-    pub message: String,
-    pub data: Option<T>,
-    pub valid: Option<bool>,
-}
-
-
 // Utility functions
 fn generate_session_id() -> String {
     let random_value: u64 = thread_rng().gen();
@@ -900,9 +892,11 @@ impl SessionManager {
     }
 
     async fn verify_session_id(&self, session_id: &str, username: &str, jwt_claim: &str) -> String {
+        info!("Verifying session ID: {}", session_id);
         let mut session = self.get_session(session_id);
 
         // Check JWT validity
+        info!("Checking JWT validity for user: {}", username);
         let jwt_valid = match self.client.run_function(
             "CloudM.AuthManager",
             "jwt_check_claim_server_side",
@@ -915,14 +909,23 @@ impl SessionManager {
                 map
             },
         ).await {
-            Ok(response) => response.as_bool().unwrap_or(false),
+            Ok(response) => {
+                let is_valid = response
+                    .get("result")
+                    .and_then(|res| res.get("data"))
+                    .and_then(|data| data.as_bool())
+                    .unwrap_or(false);
+                info!("JWT validation result: {}", is_valid);
+                is_valid
+            },
             Err(e) => {
-                log::error!("JWT validation error: {:?}", e);
+                error!("JWT validation error: {:?}", e);
                 false
             }
         };
 
         if !jwt_valid {
+            info!("JWT validation failed for user: {}", username);
             session.check = "failed".to_string();
             session.count += 1;
             self.save_session(session_id, session);
@@ -930,6 +933,7 @@ impl SessionManager {
         }
 
         // Get user by name
+        info!("Getting user information for: {}", username);
         let user_result = match self.client.run_function(
             "CloudM.AuthManager",
             "get_user_by_name",
@@ -943,96 +947,112 @@ impl SessionManager {
         ).await {
             Ok(response) => response,
             Err(e) => {
+                error!("Error getting user information: {}", e);
                 session.check = e.to_string();
                 session.count += 1;
                 self.save_session(session_id, session);
                 return "#0".to_string();
             }
         };
-
         // Ensure user is valid
-        if !user_result.get("error").map_or(true, |v| v.as_bool().unwrap_or(true) == false) {
+        if user_result.get("error")
+        .and_then(|err| err.as_str())
+        .map(|err| err != "none")
+        .unwrap_or(true) {
+            info!("Invalid user: {}", username);
             session.check = "Invalid user".to_string();
             session.count += 1;
             self.save_session(session_id, session);
             return "#0".to_string();
         }
+        let user = user_result.get("result").and_then(|res| res.get("data")).cloned().unwrap_or(serde_json::json!({}));
+        let uid = user.get("uid").and_then(Value::as_str).unwrap_or("");
+        info!("User UID: {}", uid);
 
-        let user_result_value = user_result.get("result").cloned().unwrap_or(serde_json::json!({}));
-        let user = &user_result_value;
-        let uid = user.get("uid").and_then(|v| v.as_str()).unwrap_or("");
-
-        // Get user instance - now using the spec if we have it
+        info!("Getting user instance for UID: {}", uid);
         let instance_result = match self.client.run_function(
-            "CloudM.UserInstances",
-            "get_user_instance",
-            "",  // Use default spec initially
-            vec![],
-            {
-                let mut map = HashMap::new();
-                map.insert("uid".to_string(), serde_json::json!(uid));
-                map.insert("hydrate".to_string(), serde_json::json!(false));
-                map
-            },
-        ).await {
-            Ok(response) => response,
-            Err(e) => {
-                log::error!("Error getting user instance: {}", e);
+                "CloudM.UserInstances",
+                "get_user_instance",
+                "",
+                vec![],
+                HashMap::from([
+                    ("uid".to_string(), serde_json::json!(uid)),
+                    ("hydrate".to_string(), serde_json::json!(false)),
+                ]),
+            ).await {
+                Ok(response) => response,
+                Err(e) => {
+                    error!("Error getting user instance: {}", e);
+                    return "#0".to_string();
+                }
+            };
+
+            if instance_result.get("error").and_then(Value::as_str).map_or(true, |err| err != "none") {
+                info!("Invalid user instance for UID: {}", uid);
                 return "#0".to_string();
             }
-        };
 
-        // Ensure instance is valid
-        if !instance_result.get("error").map_or(true, |v| v.as_bool().unwrap_or(true) == false) {
-            return "#0".to_string();
-        }
+            let instance = instance_result.get("result").and_then(|res| res.get("data")).cloned().unwrap_or(serde_json::json!({}));
+            let mut live_data = HashMap::new();
 
-        let instance_value = instance_result.get("result").cloned().unwrap_or(serde_json::json!({}));
-        let instance = &instance_value;
+            if let Some(si_id) = instance.get("SiID").and_then(Value::as_str) {
+                live_data.insert("SiID".to_string(), si_id.to_string());
+                info!("SiID for user instance: {}", si_id);
+            }
 
-        let mut live_data = HashMap::new();
-        if let Some(si_id) = instance.get("SiID").and_then(|v| v.as_str()) {
-            live_data.insert("SiID".to_string(), si_id.to_string());
-        }
+            if let Some(level) = user.get("level").and_then(Value::as_u64) {
+                let level = level.max(1);
+                live_data.insert("level".to_string(), level.to_string());
+                info!("User level: {}", level);
+            }
 
-        if let Some(level) = user.get("level").and_then(|v| v.as_u64()) {
-            let level = if level > 1 { level } else { 1 };
-            live_data.insert("level".to_string(), level.to_string());
-        }
+            if let Some(vt_id) = instance.get("VtID").and_then(Value::as_str) {
+                live_data.insert("spec".to_string(), vt_id.to_string());
+                info!("VtID for user instance: {}", vt_id);
+            }
 
-        if let Some(vt_id) = instance.get("VtID").and_then(|v| v.as_str()) {
-            live_data.insert("spec".to_string(), vt_id.to_string());
-        }
+            let encoded_username = format!("encoded:{}", username);
+            live_data.insert("user_name".to_string(), encoded_username.clone());
 
-        // Encode username (simplified for this implementation)
-        let encoded_username = format!("encoded:{}", username);
-        live_data.insert("user_name".to_string(), encoded_username.clone());
+            let updated_session = SessionData {
+                jwt_claim: Some(jwt_claim.to_string()),
+                validate: true,
+                exp: Utc::now(),
+                user_name: Some(encoded_username),
+                count: 0,
+                live_data,
+                ..session
+            };
 
-        let updated_session = SessionData {
-            jwt_claim: Some(jwt_claim.to_string()),
-            validate: true,
-            exp: Utc::now(),
-            user_name: Some(encoded_username),
-            count: 0,
-            live_data,
-            ..session
-        };
-
-        self.save_session(session_id, updated_session);
-        session_id.to_string()
+            info!("Session verified successfully for user: {}", username);
+            self.save_session(session_id, updated_session);
+            session_id.to_string()
     }
+
     async fn validate_session(&self, session_id: &str) -> bool {
+        info!("Validating session: {}", session_id);
+
         if session_id.is_empty() {
+            info!("Session ID is empty, validation failed");
             return false;
         }
 
         let session = self.get_session(session_id);
 
         if session.new || !session.validate {
-            return false;
+            info!("Session is new or not validated: new={}, validate={}", session.new, session.validate);
+            if let (Some(user_name), Some(jwt)) = (&session.user_name, &session.jwt_claim) {
+                // Extract username from encoded format
+                let username = user_name.strip_prefix("encoded:").unwrap_or(user_name);
+                info!("Verifying session ID for user: {}", username);
+                let result = self.verify_session_id(session_id, username, jwt).await != "#0";
+                info!("Session verification result: {}", result);
+                return result;
+            }
         }
 
         if session.user_name.is_none() || session.jwt_claim.is_none() {
+            info!("Session missing user_name or jwt_claim, validation failed");
             return false;
         }
 
@@ -1041,39 +1061,104 @@ impl SessionManager {
         let now = Utc::now();
         let session_age = now.signed_duration_since(session.exp);
 
+        info!("Session age: {} seconds, Session duration: {} seconds",
+              session_age.num_seconds(), session_duration.as_secs());
+
         if session_age.num_seconds() > session_duration.as_secs() as i64 {
+            info!("Session expired, attempting to re-verify");
             // Session expired, need to verify again
             if let (Some(user_name), Some(jwt)) = (&session.user_name, &session.jwt_claim) {
                 // Extract username from encoded format
                 let username = user_name.strip_prefix("encoded:").unwrap_or(user_name);
-                return self.verify_session_id(session_id, username, jwt).await != "#0";
+                info!("Re-verifying session ID for user: {}", username);
+                let result = self.verify_session_id(session_id, username, jwt).await != "#0";
+                info!("Session re-verification result: {}", result);
+                return result;
             }
+            info!("Session expired and missing user_name or jwt_claim, validation failed");
             return false;
         }
 
+        info!("Session validation successful");
         true
     }
 }
 
-// API route handlers
+// New structs to match Python ApiResult structure
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ToolBoxInfoBM {
+    pub exec_code: i32,
+    pub help_text: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ToolBoxResultBM {
+    pub data_to: String,
+    pub data_info: Option<String>,
+    pub data: Option<serde_json::Value>,
+    pub data_type: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ApiResult {
+    pub error: Option<String>,
+    pub origin: Option<serde_json::Value>,
+    pub result: Option<ToolBoxResultBM>,
+    pub info: Option<ToolBoxInfoBM>,
+}
 async fn validate_session_handler(
     manager: web::Data<SessionManager>,
     session: Session,
-    req: web::Json<ValidateSessionRequest>,
+    body: Option<web::Json<serde_json::Value>>,  // Changed from web::Json<ValidateSessionRequest>
     req_info: HttpRequest,
 ) -> HttpResponse {
-    let client_ip = req_info.connection_info().peer_addr()
-        .unwrap_or("unknown").split(':').next().unwrap_or("unknown").to_string();
+    // Extract client IP - try to get real IP even behind proxy
+    let client_ip = req_info.connection_info().realip_remote_addr()
+        .unwrap_or_else(|| {
+            req_info.headers()
+                .get("X-Forwarded-For")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.split(',').next())
+                .unwrap_or("unknown")
+        })
+        .split(':')
+        .next()
+        .unwrap_or("unknown")
+        .to_string();
+
+    // Extract client port
     let client_port = req_info.connection_info().peer_addr()
-        .unwrap_or("unknown").split(':').nth(1).unwrap_or("unknown").to_string();
+        .unwrap_or("unknown")
+        .split(':')
+        .nth(1)
+        .unwrap_or("unknown")
+        .to_string();
 
     let current_session_id = session.get::<String>("ID").unwrap_or_else(|_| None);
+
+    // Extract data from the request body
+    let (username, jwt_claim) = if let Some(body) = &body {
+        let username = body.get("Username").and_then(|u| u.as_str()).map(String::from);
+        let jwt_claim = body.get("Jwt_claim").and_then(|j| j.as_str()).map(String::from);
+        (username, jwt_claim)
+    } else {
+        (None, None)
+    };
+
+    info!(
+        "Validating session - IP: {}, Port: {}, Current Session ID: {:?}, Username: {:?}, JWT Claim: {}",
+        client_ip,
+        client_port,
+        current_session_id,
+        username,
+        jwt_claim.as_ref().map(|jwt| format!("{:.10}...", jwt)).unwrap_or_else(|| "None".to_string())
+    );
 
     let session_id = manager.create_new_session(
         client_ip,
         client_port,
-        req.jwt_claim.clone(),
-        req.username.clone(),
+        jwt_claim,
+        username,
         current_session_id,
     ).await;
 
@@ -1094,16 +1179,26 @@ async fn validate_session_handler(
             error!("Failed to update session live data: {}", e);
         }
 
-        HttpResponse::Ok().json(ApiResponse::<String> {
-            message: "Valid Session".to_string(),
-            data: None,
-            valid: Some(true),
+        HttpResponse::Ok().json(ApiResult {
+            error: Some("none".parse().unwrap()),
+            origin: None,
+            result: Some(ToolBoxResultBM {
+                data_to: "API".to_string(),
+                data_info: Some("Valid Session".to_string()),
+                data: None,
+                data_type: None,
+            }),
+            info: Some(ToolBoxInfoBM {
+                exec_code: 0,
+                help_text: "Valid Session".to_string(),
+            }),
         })
     } else {
-        HttpResponse::Unauthorized().json(ApiResponse::<String> {
-            message: "Invalid Auth data.".to_string(),
-            data: None,
-            valid: Some(false),
+        HttpResponse::Unauthorized().json(ApiResult {
+            error: Some("Invalid Auth data.".to_string()),
+            origin: None,
+            result: None,
+            info: None,
         })
     }
 }
@@ -1116,16 +1211,26 @@ async fn is_valid_session_handler(
         _ => false,
     };
     if valid {
-        HttpResponse::Ok().json(ApiResponse::<String> {
-            message: "Valid Session".to_string(),
-            data: None,
-            valid: Some(true),
+        HttpResponse::Ok().json(ApiResult {
+            error: Some("none".parse().unwrap()),
+            origin: None,
+            result: Some(ToolBoxResultBM {
+                data_to: "API".to_string(),
+                data_info: Some("Valid Session".to_string()),
+                data: None,
+                data_type: None,
+            }),
+            info: Some(ToolBoxInfoBM {
+                exec_code: 0,
+                help_text: "Valid Session".to_string(),
+            }),
         })
     } else {
-        HttpResponse::Unauthorized().json(ApiResponse::<String> {
-            message: "Invalid Auth data.".to_string(),
-            data: None,
-            valid: Some(false),
+        HttpResponse::Unauthorized().json(ApiResult {
+            error: Some("Invalid Auth data.".to_string()),
+            origin: None,
+            result: None,
+            info: None,
         })
     }
 }
@@ -1206,24 +1311,26 @@ async fn logout_handler(
         session.purge();
     }
 
-    HttpResponse::Forbidden().json(ApiResponse::<String> {
-        message: "Invalid Auth data.".to_string(),
-        data: None,
-        valid: None,
+    HttpResponse::Forbidden().json(ApiResult {
+        error: Some("Invalid Auth data.".to_string()),
+        origin: None,
+        result: None,
+        info: None,
     })
 }
 
+
 async fn api_handler(
+     req: HttpRequest,
     path: web::Path<(String, String)>,
     query: web::Query<HashMap<String, String>>,
+    body: Option<web::Json<serde_json::Value>>,
     session: Session,
     open_modules: web::Data<Arc<Vec<String>>>,
 ) -> HttpResponse {
-
     let (module_name, function_name) = path.into_inner();
 
     // Check if the request is for a protected module or function
-    // Check if the module is in the open modules list
     let is_protected = !open_modules.contains(&module_name) && !function_name.starts_with("open");
 
     if is_protected {
@@ -1232,16 +1339,19 @@ async fn api_handler(
             _ => false,
         };
         if !valid {
-            return HttpResponse::Unauthorized().json(ApiResponse::<String> {
-                message: "Unauthorized".to_string(),
-                data: None,
-                valid: None,
+            // Return unauthorized error with ApiResult format
+            return HttpResponse::Unauthorized().json(ApiResult {
+                error: Some("Unauthorized".to_string()),
+                origin: None,
+                result: None,
+                info: None,
             });
         }
     }
 
     let live_data = session.get::<HashMap<String, String>>("live_data").unwrap_or_else(|_| None);
     info!("API FOR: {:?} {:?}", live_data, session.get::<HashMap<String, String>>("ip").unwrap_or_else(|_| None));
+
     // Get specification from live_data
     let spec = live_data
         .as_ref()
@@ -1252,31 +1362,58 @@ async fn api_handler(
     // Convert query parameters
     let args: Vec<String> = Vec::new(); // Path params would go here if needed
 
-    let kwargs: HashMap<String, serde_json::Value> = query.into_inner()
+    let mut kwargs: HashMap<String, serde_json::Value> = query.into_inner()
         .into_iter()
         .map(|(k, v)| (k, serde_json::json!(v)))
         .collect();
 
+    // Check if this is a POST request and add data parameter only if it is
+    if req.method() == Method::POST {
+        // Extract the data from the request body (if it exists)
+        if let Some(body_data) = body {
+            let data = body_data.into_inner();
+            kwargs.insert("data".to_string(), data);
+        }
+    }
+
+   let request_metadata = serde_json::json!({
+        "session": live_data.unwrap_or_default(),
+        "request": {
+            "path": req.path(),
+            "headers": req.headers().iter().map(|(k, v)| (k.as_str(), v.to_str().unwrap_or(""))).collect::<HashMap<_, _>>(),
+            "method": req.method().as_str(),
+        }
+    });
+
+    info!("request_metadata: {:?}", request_metadata);
+
+    kwargs.insert("request".to_string(), request_metadata);
+
     let client = match get_toolbox_client() {
         Ok(client) => Arc::new(client),
         Err(e) => {
-            panic!("{:?}", e)
+            return HttpResponse::InternalServerError().json(ApiResult {
+                error: Some(format!("Error getting toolbox client: {:?}", e)),
+                origin: None,
+                result: None,
+                info: None,
+            });
         }
     };
+
     // Run function via toolbox client
     match client.run_function(&module_name, &function_name, &spec, args, kwargs).await {
         Ok(response) => {
-            HttpResponse::Ok().json(ApiResponse {
-                message: "Success".to_string(),
-                data: Some(response),
-                valid: None,
-            })
+            // The Python client.run_function already returns an ApiResult object
+            // which can be directly returned
+            HttpResponse::Ok().json(response)
         },
         Err(e) => {
-            HttpResponse::InternalServerError().json(ApiResponse::<String> {
-                message: format!("Error: {:?}", e),
-                data: None,
-                valid: None,
+            HttpResponse::InternalServerError().json(ApiResult {
+                error: Some(format!("Error: {:?}", e)),
+                origin: None,
+                result: None,
+                info: None,
             })
         }
     }
@@ -1348,12 +1485,6 @@ async fn main() -> std::io::Result<()> {
             // API routes
             .service(
                 web::scope("/api")
-                    .service(web::resource("/validateSession")
-                        .route(web::post().to(validate_session_handler)))
-                    .service(web::resource("/IsValiSession")
-                        .route(web::get().to(is_valid_session_handler)))
-                    .service(web::resource("/web/logoutS")
-                        .route(web::post().to(logout_handler)))
                     .app_data(web::Data::new(open_modules.clone()))
                     .service(web::resource("/{module_name}/{function_name}")
                         .route(web::get().to(api_handler))
@@ -1362,6 +1493,15 @@ async fn main() -> std::io::Result<()> {
                         .route(web::put().to(api_handler))
                     )
             )
+            .service(web::resource("/validateSession")
+                .route(web::post().to(validate_session_handler))
+                )
+            .service(web::resource("/IsValiSession")
+                .route(web::get().to(is_valid_session_handler))
+                )
+            .service(web::resource("/web/logoutS")
+                .route(web::post().to(logout_handler))
+                )
             // Serve static files
             .service(fs::Files::new("/", &dist_path) // Use the moved dist_path
                 .index_file("index.html"))

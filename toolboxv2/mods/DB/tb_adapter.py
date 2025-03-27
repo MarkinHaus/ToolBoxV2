@@ -33,7 +33,6 @@ def post_function(result: Result) -> Result:
         return result
     return result
 
-
 # decoded_data = []
 # if isinstance(result.get(), list):
 #     for data in result.get():

@@ -325,7 +325,7 @@ def parse_args():
                         action="store_true",  # Ändere zu store_true
                         default=False)
 
-    parser.add_argument("--docker", help="start the toolbox in docker Enables 4 modi [test,live,dev]\n\trun as "
+    parser.add_argument("--docker", help="start the toolbox in docker Enables 3 modi [test,live,dev]\n\trun as "
                                          "$ tb --docker -m [modi] optional -p -w\n\tvalid with -fg", default=False,
                         action="store_true")
     parser.add_argument("--build", help="build docker image from local source", default=False,

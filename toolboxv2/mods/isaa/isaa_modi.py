@@ -908,7 +908,6 @@ def show_image_in_internet(images_url, browser=BROWSER):
 
 
 ##########################################################################################################
-# @ gitHub Auto GPT
 def browse_website(url, question, summ):
     with Spinner(f"Processioning Web date for {url}"):
         summary = get_text_summary(url, question, summ)

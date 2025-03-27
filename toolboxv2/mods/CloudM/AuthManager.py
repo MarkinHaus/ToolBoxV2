@@ -247,6 +247,8 @@ def create_user(app: App, data: CreateUserObject = None, username: str = 'test-u
                       email: str = 'test@user.com',
                       pub_key: str = '',
                       invitation: str = '', web_data=False, as_base64=False) -> ApiResult:
+    if isinstance(data, dict):
+        data = CreateUserObject(**data)
     username = data.name if data is not None else username
     email = data.email if data is not None else email
     pub_key = data.pub_key if data is not None else pub_key
@@ -331,6 +333,9 @@ async def get_magic_link_email(app: App, username):
 def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 'test-user',
                           pub_key: str = '',
                           invitation: str = '', web_data=False, as_base64=False) -> ApiResult:
+    if isinstance(data, dict):
+        data = AddUserDeviceObject(**data)
+
     username = data.name if data is not None else username
     pub_key = data.pub_key if data is not None else pub_key
     invitation = data.invitation if data is not None else invitation
@@ -396,6 +401,8 @@ class PersonalData(BaseModel):
 
 @export(mod_name=Name, api=True, test=False)
 async def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
+    if isinstance(data, dict):
+        data = PersonalData(**data)
     if not db_helper_test_exist(app, data.username):
         return Result.default_user_error(info=f"Username '{data.username}' not known")
 
@@ -563,7 +570,8 @@ class VpUSER(VdUSER, BaseModel):
 async def validate_persona(app: App, data: VpUSER) -> ApiResult:
     if app is None:
         app = get_app(".validate_persona")
-
+    if isinstance(data, dict):
+        data = VpUSER(**data)
     user_result = get_user_by_name(app, data.username)
 
     if user_result.is_error() or not user_result.is_data():
@@ -608,6 +616,9 @@ async def validate_device(app: App, data: VdUSER) -> ApiResult:
     if app is None:
         app = get_app(".validate_device")
 
+    if isinstance(data, dict):
+        data = VdUSER(**data)
+
     user_result = get_user_by_name(app, data.username)
 
     if user_result.is_error() or not user_result.is_data():
@@ -641,6 +652,7 @@ async def validate_device(app: App, data: VdUSER) -> ApiResult:
     row_jwt_claim = crate_jwt(claim, user.user_pass_pri)
 
     encrypt_jwt_claim = Code.encrypt_asymmetric(row_jwt_claim, user.pub_key)
+    print(encrypt_jwt_claim, len(user.user_pass_pub_devices))
     if encrypt_jwt_claim != "Invalid":
         data = {'key': encrypt_jwt_claim, 'toPrivat': True}
     else:
@@ -764,6 +776,7 @@ async def jwt_check_claim_server_side(app: App, username: str, jwt_claim: str) -
     user: User = res.get()
 
     data = validate_jwt(jwt_claim, user.user_pass_pub)
+    print("data::::::::::::", username, data, type(data))
     # InvalidSignatureError
     if isinstance(data, str):
         return Result.custom_error(info="Invalid", data=False)

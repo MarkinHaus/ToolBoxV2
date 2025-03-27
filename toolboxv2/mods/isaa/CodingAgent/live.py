@@ -85,12 +85,14 @@ class VerboseFormatter:
             'BRAKE': self.style.RED2,
             'DONE': self.style.BLUE2
         }.get(state, self.style.WHITE2)
-
+        res_str = f"\nCurrent State: {state}"
         self.print(f"\n{self.style.Bold(f'Current State:')} {state_color(state)}")
 
         if details:
             for key, value in details.items():
                 self.print(f"  {self.style.GREY('├─')} {self.style.CYAN(key)}: {value}")
+                res_str += f"  ├─ {key}: {value}\n"
+        return res_str
 
     def print_method_update(self, method_update: 'MethodUpdate'):
         """Print a formatted view of a MethodUpdate structure"""
@@ -190,7 +192,7 @@ class EnhancedVerboseOutput:
         if not self.verbose and not not override:
             return
 
-        self.formatter.print_state(state, user_ns)
+        return self.formatter.print_state(state, user_ns)
 
     async def process(self, message: str, coroutine):
         if not self.verbose:
@@ -216,7 +218,7 @@ class MethodUpdate(BaseModel):
 
 
 class ThinkResult(BaseModel):
-    action: str = Field(..., description="Next action to take: 'code', 'update'', 'brake', 'done'")
+    action: str = Field(..., description="Next action to take: 'code', 'brake', 'done'")
     content: str = Field(..., description="Content related to the action")
     context: Optional[Dict[str, str | int | float | bool | Dict[str, str | int | float | bool ]]] = Field(default_factory=dict, description="Additional context for the action")
 
@@ -495,7 +497,12 @@ class VirtualFileSystem:
 
     def write_file(self, filepath: Union[str, Path], content: str) -> Path:
         """Write content to a virtual file and persist to disk using UTF-8"""
-        abs_path = self._resolve_path(filepath)
+        try:
+            abs_path = self._resolve_path(filepath)
+        except ValueError:
+            print("invalid :", filepath)
+            filepath = f"src/temp_js/_temp_fix.py"
+            abs_path = self._resolve_path(filepath)
         abs_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Store in virtual filesystem
@@ -1002,6 +1009,13 @@ class MockIPython:
     @staticmethod
     def _parse_code(code: str) -> Tuple[Any, Optional[Any], bool, bool]:
         """Parse code and handle top-level await"""
+        code_ = ""
+        for line in code.split('\n'):
+            if line.strip().startswith('#'):
+                continue
+            if line.strip().startswith('asyncio.run('):
+                line = (' ' *(len(line) - len(line.strip()))) + 'await ' + line.strip()[len('asyncio.run('):-1]
+            code_ += line + '\n'
         try:
             tree = ast.parse(code)
             # Add parent references
@@ -1015,15 +1029,16 @@ class MockIPython:
                 # Wrap code in async function
                 wrapped_code = "async def __wrapper():\n"
                 wrapped_code += "    global result\n"  # Allow writing to global scope
+                wrapped_code += "    result = None\n"
                 # add try:
-                wrapped_code +="    try:"
+                wrapped_code +="    try:\n"
                 # Indent the original code
                 wrapped_code += "\n".join(f"        {line}" for line in code.splitlines())
                 # Add return statement for last expression
-                wrapped_code +="    except Exception as e:"
-                wrapped_code +="        import traceback"
-                wrapped_code +="        print(traceback.format_exc())"
-                wrapped_code +="        raise e"
+                wrapped_code +="\n    except Exception as e:\n"
+                wrapped_code +="        import traceback\n"
+                wrapped_code +="        print(traceback.format_exc())\n"
+                wrapped_code +="        raise e\n"
                 if isinstance(tree.body[-1], ast.Expr):
                     wrapped_code += "\n    return result"
 
@@ -1072,9 +1087,12 @@ class MockIPython:
                 )
             else:
                 error_msg = str(e)
+
+            error_msg += traceback.format_exc()
+
             raise SyntaxError(error_msg) from e
 
-    async def run_cell(self, code: str, live_output: bool = False) -> Any:
+    async def run_cell(self, code: str, live_output: bool = True) -> Any:
         """Async version of run_cell that handles both sync and async code"""
         result = None
         error = None
@@ -1125,14 +1143,18 @@ class MockIPython:
                             try:
                                 # Execute wrapped code and await it
                                 exec(exec_code, self.user_ns)
-                                result = await self.user_ns['__wrapper']()
+                                result = self.user_ns['__wrapper']()
+                                if asyncio.iscoroutine(result):
+                                    result = await result
                             finally:
                                 self.user_ns.pop('__wrapper', None)
                         elif is_async:
                             # Execute async code
                             exec(exec_code, self.user_ns)
                             if eval_code:
-                                result = await eval(eval_code, self.user_ns)
+                                result = eval(eval_code, self.user_ns)
+                                if asyncio.iscoroutine(result):
+                                    result = await result
                         else:
                             # Execute sync code
                             exec(exec_code, self.user_ns)
@@ -1141,6 +1163,8 @@ class MockIPython:
 
                         if result is not None:
                             self.user_ns['_'] = result
+                except KeyboardInterrupt:
+                    print("Stop execution manuel!")
 
                 except Exception as e:
                     error = str(e)
@@ -1419,7 +1443,7 @@ class MockIPython:
         if session_file.exists():
             with open(session_file, 'rb') as f:
                 session_data = pickle.load(f)
-                self.user_ns.update(session_data['user_ns'])
+                # self.user_ns.update(session_data['user_ns'])
                 self.output_history.update(session_data['output_history'])
 
         # Load VFS state with UTF-8 encoding
@@ -1638,7 +1662,7 @@ class Pipeline:
             ...     task="Calculate fibonacci sequence",
             ...     variables={"n": 10}
             ... )
-            >>> result = pipeline.run()
+            >>> result = pipeline.run("...")
             >>> print(result.result)
 
         Notes:
@@ -1657,7 +1681,7 @@ class Pipeline:
         restore: Optional[bool] = None,
         max_think_after_think = None,
         print_f=None,
-        web_js=False,
+        web_js=True,
         timeout_timer=25,
         v_agent=None,
     ):
@@ -1679,7 +1703,7 @@ class Pipeline:
         self.max_think_after_think = max_think_after_think or max_iter // 2
         self.agent = agent
         self.v_agent = v_agent or agent
-        self.agent.verbose = verbose
+        # self.agent.verbose = verbose
         self.task = None
         self.web_js = web_js
         self.verbose_output = EnhancedVerboseOutput(verbose=verbose, print_f=print_f)
@@ -1978,7 +2002,7 @@ class Pipeline:
         return record
 
     async def _execute_py(self, code) -> ExecutionRecord:
-        show = len(code) > 450 and code.count('while') > 1 and code.count('print') >= 1
+        show = True #len(code) > 450 and code.count('while') > 1 and code.count('print') >= 1
         result = await self.ipython.run_cell(code, show)
 
         all_keys = list(self.ipython.user_ns.keys())
@@ -2259,7 +2283,7 @@ Remember to be clear, concise, and specific in your guidance. Avoid vague or amb
         return await self.process_memory.get_reference(task, to_str=True), await self.chat_session.get_reference(task, to_str=True)
 
     def show_vars(self):
-        self.verbose_output.log_state("VARS", self.variables, override=True)
+        return self.verbose_output.log_state("VARS", self.variables, override=True)
 
     def set_file(self, full_file_path_and_name):
         if not os.path.exists(full_file_path_and_name):
@@ -2469,6 +2493,7 @@ Add guidance based on the the last execution result"""
             'content': '"""def process_data(data):\n    result = {}\n    for key, value in data.items():\n        result[key.lower()] = value.upper()\n    return result"""',
             'action': 'update'
         }'''
+        py_chane_prompt = ""
         initial_prompt = f"""
 You are an AI {'js running (in playwright browser)' if self.web_js else 'py'} coding agent specializing in iterative development and code refinement, designed to perform tasks that involve thinking. Your goal is to complete the given task while demonstrating a clear thought process throughout the execution.
 SYSTEM STATE:
@@ -2480,9 +2505,9 @@ Last EXECUTION: #EXECUTION#
 
 ENVIRONMENT: {'current file :'+self.ipython.user_ns.get("__file__")  if self.ipython.user_ns.get("__file__") is not None else ''}
 
-{'''<global_variables>
+'''<global_variables>
 #LOCALS#
-</global_variables>''' if not self.web_js else ''}
+</global_variables>'''
 
 MEMORY:
 <process_memory>
@@ -2511,7 +2536,8 @@ WORKFLOW STEPS:
 
 2. Plan Change:
    - NO example/simulation/simulate
-   - Use existing code when possible
+   - No demo er moc Data no Simulations Allowed or u will die!!
+   - Use existing variables and code when possible
    - Prefer updates over rewrites
 
 3. Execute Change:
@@ -2528,18 +2554,23 @@ ACTIONS:
     - MUST check <global_variables> first
     - NEVER create demo functions
     - Include 'reason'
-    - lang default {'js' if self.web_js else 'py'}
+    - lang default {'py - js' if self.web_js else 'py'}
     - Required: code in content
     - code MUST call a function or display the row variabel / value at the end!
     - Required: {{'context':{{'lang':{'js' if self.web_js else 'py'},  'reason': ... }}...}}
-    - Optional file key in context example  {{'context':{{'lang':{'js' if self.web_js else 'py'},  'file': 'main.py' ,  'reason': ... }}...}}
+    - Optional file key in context example {{'context':{{'lang':{'py' if self.web_js else 'py'},  'file': 'main.py' ,  'reason': ... }}...}}
+    - py code allows for toplevel await !!! use it !!! like
+:file-start:
+print("using toplevel await")
+await abc()
+:file-end:
     - Tip: use comments to reason with in the code
 
     { js_prompt if self.web_js else py_chane_prompt}
 
 
 3. 'infos': Request specific details
-4. 'guide': Get step clarification
+4. 'guide': Get step clarification use on complex task!
 5. 'brake': Pause for assessment
 6. 'done': Summarize changes
 
@@ -2647,12 +2678,12 @@ Next Action Required:
                 ))
                 think_dicts = think_dicts.get("actions")
                 if think_dicts is None:
-                    think_dict = await self.verbose_output.process(state.name, self.agent.a_format_class(
+                    think_dicts = [await self.verbose_output.process(state.name, self.agent.a_format_class(
                         ThinkResult,
                         prompt,
                         message=self.chat_session.get_past_x(self.max_iter * 2, last_u=not do_continue).copy() + (
                             [self.process_memory.history[-1]] if self.process_memory.history else []),
-                    ))
+                    ))]
                 if len(think_dicts) == 1:
                     think_dict = think_dicts[0]
                 else:
@@ -2844,7 +2875,8 @@ Next Action Required:
                 self.verbose_output.log_state(state.name, think_result)
                 think_result = ProjectThinkResult(**think_result)
                 for file_action in think_result.file_actions:
-                    path = str(Path(file_action.path).relative_to(vfs.base_dir))
+                    path = file_action.path
+                    Path(file_action.path).mkdir(exist_ok=True)
                     if file_action.action == 'write':
                         vfs.write_file(path, file_action.content)
                         files[path] = file_action.content

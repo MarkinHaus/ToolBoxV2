@@ -843,7 +843,6 @@ class AISemanticMemory(metaclass=Singleton):
                 str_res = [
                     f"{x['memory']} - {json.dumps(x['result'].overview)}\n - {[c.text for c in x['result'].details]}\n - {[(k, [c.text for c in v]) for k, v in x['result'].cross_references.items()]}"
                     for x in results]
-                print(type(str_res), len(str_res), str_res)
                 # str_res =
             else:
                 str_res = json.dumps(results)
@@ -1310,6 +1309,10 @@ def _get_all_model_dict_price_token_limit_approximation():
         '3-5-haiku': 200001,
         '3-haiku': 199999,
 
+        # Googl
+        'gemini': 1000000,
+        'gemma': 128000,
+
         'llama-3.1': 128000,
         'mixtral-8x7b': 32000,
         'gemma2': 8192
@@ -1330,7 +1333,7 @@ def _get_all_model_dict_price_token_limit_approximation():
 
 def get_max_token_fom_model_name(model: str) -> int:
     model_dict = _get_all_model_dict_price_token_limit_approximation()
-    fit = 512
+    fit = 16000
 
     for model_name in model_dict.keys():
         if model_name in model:

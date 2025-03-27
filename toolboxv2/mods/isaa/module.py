@@ -206,6 +206,7 @@ class Tools(MainTool, FileHandler):
         async def web_search_(query:str)->str:
             return await web_search(query=query, mas_text_summaries=self.mas_text_summaries)
         self.web_search = web_search_
+        self.shell_tool_function = shell_tool_function
 
         self.print(f"Start {self.spec}.isaa")
         IsaaWebSocketUI(self)
@@ -668,19 +669,20 @@ class Tools(MainTool, FileHandler):
             agent_builder = self.default_setter(agent_builder)
 
         if self.local_files_tools:
-            #if name in ['liveInterpretation', 'tools']:
+            pass
+            # if name in ['liveInterpretation', 'tools']:
             #    toolkit = FileManagementToolkit(
             #        root_dir=str(self.working_directory)
             #    )  # If you don't provide a root_dir, operations will default to the current working directory
             #    for file_tool in toolkit.get_tools():
             #        # print("adding file tool", file_tool.name)
             #        tools[file_tool.name] = file_tool
-            if name in ['self', 'liveInterpretation'] or 'ide' in name:
-                isaa_ide_online = self.app.mod_online("isaa_ide", installed=True)
-                if isaa_ide_online:
-                    isaa_ide = self.app.get_mod("isaa_ide")
-                    isaa_ide.scope = self.working_directory
-                    isaa_ide.add_tools(tools)
+            # if name in ['self', 'liveInterpretation'] or 'ide' in name:
+            #     isaa_ide_online = self.app.mod_online("isaa_ide", installed=True)
+            #     if isaa_ide_online:
+            #         isaa_ide = self.app.get_mod("isaa_ide")
+            #         isaa_ide.scope = self.working_directory
+            #         isaa_ide.add_tools(tools)
 
         agent_builder.init_agent_memory(name)
 
@@ -980,7 +982,7 @@ class Tools(MainTool, FileHandler):
         if prompt_len <= max_tokens - prompt_token_margin:
             return messages
 
-        self.print(f"Context length exceeded. Original length: {prompt_len}, Max tokens: {max_tokens}")
+        self.print(f"Context length: {prompt_len}, Max tokens: {max_tokens} ")
 
         # Pre-process first and last messages if they're too long
         first_message = messages[0]
@@ -1192,7 +1194,7 @@ class Tools(MainTool, FileHandler):
         return await agent.run(text, **kwargs)
 
     def mas_text_summaries(self, text, min_length=3600, ref=None):
-
+        """text to summarises and ref is wit focus to summarise for, example text abut Plains, ref = Plains and Engines -> to gent a summary basd of text about Plain Engines"""
         len_text = len(text)
         if len_text < min_length:
             return text

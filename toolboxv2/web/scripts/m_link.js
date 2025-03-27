@@ -85,7 +85,7 @@ setTimeout(()=> {if(window.history.state && window.history.state.TB) {
         setTimeout(async () => {
             localStorage.setItem("local_ws.onopen:installMod-welcome", 'false');
             await AuthHttpPostData(username, get_handleLoginError("Session Error"), (_) => {
-                window.TBf.router("/web/dashboard");
+                window.TBf.router("/web/mainContent.html");
                 localStorage.removeItem("StartMLogIN")
             })
 

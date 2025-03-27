@@ -2,21 +2,20 @@ import os.path
 from typing import Optional
 
 from toolboxv2 import App
-from toolboxv2.mods.isaa.base.AgentUtils import AISemanticMemory
-from toolboxv2.mods.isaa.base.KnowledgeBase import KnowledgeBase
-from toolboxv2.mods.isaa.isaa_modi import get_multiline_input
-from toolboxv2.mods.isaa.subtools.file_loder import route_local_file_to_function
 
 NAME = "folderTGQ"
 
 
 def path_getter(path):
+    from toolboxv2.mods.isaa.subtools.file_loder import route_local_file_to_function
     loder, docs_loder = route_local_file_to_function(path)
     docs = docs_loder()
     return [doc.page_content for doc in docs], [doc.metadata if doc.metadata else {'doc-from': path} for doc in docs],
 
 async def run(app:App, __, mem_name=None, path=None):
-
+    from toolboxv2.mods.isaa.base.KnowledgeBase import KnowledgeBase
+    from toolboxv2.mods.isaa.base.AgentUtils import AISemanticMemory
+    from toolboxv2.mods.isaa.isaa_modi import get_multiline_input
 
     if mem_name is None:
         app.print("No mem_name arg")
@@ -24,7 +23,6 @@ async def run(app:App, __, mem_name=None, path=None):
 
     isaa = app.get_mod("isaa", spec=NAME)
     agent = isaa.init_isaa(build=True)
-
     memory : AISemanticMemory = isaa.get_memory()
     mem_instance: Optional[KnowledgeBase] = None
 

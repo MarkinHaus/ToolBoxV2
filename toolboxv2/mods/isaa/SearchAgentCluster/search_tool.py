@@ -123,16 +123,16 @@ async def web_search(query: str, mas_text_summaries=None):
         start_data = await crawl_sequential(start_urls)
 
         result = c_up('\n'.join(start_data))
-        if mas_text_summaries:
-               result = mas_text_summaries(result, ref=query)
+        #if mas_text_summaries:
+        #       result = mas_text_summaries(result, ref=query)
         return result
 
     data = await crawl_sequential(urls)
-    final_result = c_up('\n'.join(data))
-    if mas_text_summaries:
-        final_result = mas_text_summaries(final_result, ref=query)
+    final_result = c_up('\n\n'.join(data))
+    #if mas_text_summaries:
+    #    final_result = mas_text_summaries(final_result, ref=query)
     return final_result
 
 
 if __name__ == "__main__":
-    asyncio.run(web_search("Wer ist Lanna Idris"))
+    asyncio.run(web_search(""))

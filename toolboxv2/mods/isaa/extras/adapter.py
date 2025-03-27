@@ -102,7 +102,6 @@ async def litellm_complete_if_cache(
     messages.append({"role": "user", "content": prompt})
 
     # Log query details for debugging purposes
-    print("query", model)
     try:
         # Depending on the response format, choose the appropriate API call
         if "response_format" in kwargs:

@@ -12,11 +12,13 @@ def run(app: App, _: AppArgs):
 
     isaa: Tools = app.get_mod('isaa')
 
-    agent = isaa.init_isaa(name='self', build=True, v_name=app.id.split('-')[0])
+    agent = isaa.init_isaa(name='self', build=True)
     agent.verbose = True
 
     put, res_que = app.get_function(("audio", "transcript"))[0](rate=16000, chunk_duration=4.0, amplitude_min=0)
-    isaa.agent_memory.ai_content = True
+
+    def process_data(d):
+        print(d)
 
     def voice_dump():
 
@@ -32,7 +34,7 @@ def run(app: App, _: AppArgs):
             print(f"Transcribed text: {x}")
             time.sleep(4.75)
             if '\n' in transcription or '.' in transcription or len(transcription) > 250:
-                isaa.agent_memory.process_data(transcription)
+                process_data(transcription)
                 transcription = ""
         # Stop the transcription process
 

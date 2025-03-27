@@ -11,6 +11,48 @@ except ImportError:
 from toolboxv2 import Result, get_logger
 from .types import AuthenticationTypes
 
+def sync_redis_databases(source_url, target_url):
+    """Synchronize keys from the source Redis database to the target Redis database.
+    This function scans all keys in the source DB and uses DUMP/RESTORE to replicate data to the target.
+
+    Args:
+        source_url (str): The Redis URL of the source database.
+        target_url (str): The Redis URL of the target database.
+
+    Returns:
+        int: The number of keys successfully synchronized.
+    """
+    try:
+        src_client = redis.from_url(source_url)
+        tgt_client = redis.from_url(target_url)
+    except Exception as e:
+        print(f"Error connecting to one of the Redis instances: {e}")
+        return 0
+
+    total_synced = 0
+    cursor = 0
+    try:
+        while True:
+            cursor, keys = src_client.scan(cursor=cursor, count=100)
+            for key in keys:
+                try:
+                    serialized_value = src_client.dump(key)
+                    if serialized_value is None:
+                        continue
+                    # Restore key with TTL=0 and replace existing key
+                    tgt_client.restore(key, 0, serialized_value, replace=True)
+                    total_synced += 1
+                except Exception as e:
+                    print(f"Error syncing key {key}: {e}")
+            if cursor == 0:
+                break
+    except Exception as scan_error:
+        print(f"Error during scanning keys: {scan_error}")
+
+    print(f"Synced {total_synced} keys from {source_url} to {target_url}")
+    return total_synced
+
+
 
 class MiniRedis:
     auth_type = AuthenticationTypes.Uri

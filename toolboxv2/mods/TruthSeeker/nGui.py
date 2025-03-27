@@ -39,12 +39,12 @@ def create_landing_page():
     "items-center self-center mx-auto my-8"
     ):
         # Advanced styling for glass-morphism effect
-        ui.query(".nicegui-column").style(''''
+        ui.query(".nicegui-column").style("""
         background: rgba(255, 255, 255, 0.05);
         backdrop-filter: blur(12px);
         border: 1px solid rgba(255, 255, 255, 0.1);
         transition: all 0.3s ease-in-out;
-        ''')
+        """)
 
         # Animated logo/brand icon
         with ui.element("div").classes("animate-fadeIn"):
@@ -130,11 +130,11 @@ def create_about_page():
             'background: var(--background-color); color: var(--text-color); padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);'
         ):
             ui.label('Our Mission').classes('text-2xl font-semibold text-primary mb-4')
-            ui.markdown('''
+            ui.markdown("""
                 TruthSeeker aims to democratize access to scientific knowledge,
                 transforming complex academic research into comprehensible insights.
                 We bridge the gap between raw data and meaningful understanding.
-            ''').classes('text-lg').style('color: var(--text-color);')
+            """).classes('text-lg').style('color: var(--text-color);')
 
         # Core Technologies
         with ui.card().classes('w-full mb-6').style(
@@ -257,14 +257,14 @@ def create_graph_tab(processor_instance: Dict, graph_ui: ui.element, main_ui: ui
         graph_ui.clear()
 
         with graph_ui:
-            ui.html(f'''
+            ui.html(f"""
 
                 <iframe
                      src="/static/graph{processor_instance["instance"].mem_name}.html"
                     style="width: 100%; height: 800px; border: none; background: #1a1a1a;"
                     >
                 </iframe>
-            ''').classes('w-full h-full')
+            """).classes('w-full h-full')
 
 
 is_init = [False]

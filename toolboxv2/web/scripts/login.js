@@ -7,7 +7,7 @@ let checked = [false]
 let caunter = 0
 let username
 
-let next_url = "/web/dashboard"
+let next_url = "/web/mainContent.html"
 getKeyFromURL()
 
 function getKeyFromURL() {

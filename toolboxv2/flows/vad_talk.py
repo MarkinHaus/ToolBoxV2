@@ -1,49 +1,12 @@
-import os
-import asyncio
-import threading
-import json
-import time
-import numpy as np
-import pyaudio
-import wave
-import webrtcvad
-import struct
-import websockets
-import queue
 import logging
-from rich.console import Console
-from rich.live import Live
-from rich.text import Text
-import tempfile
-from concurrent.futures import ThreadPoolExecutor
-import pyttsx3
-from groq import Groq
-import audioop
-import sys
-import traceback
-from RealtimeTTS import (
-    TextToAudioStream,
-    KokoroEngine,
-    SystemEngine,
-)
-from toolboxv2 import get_app
-from pydantic import BaseModel
-from dataclasses import dataclass, field
+import os
+from typing import Optional
+import numpy as np
 
-# Initialize logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("speech_system.log"),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger("SpeechSystem")
+import pyaudio
+from toolboxv2 import get_app, get_logger
 
-# Initialize the rich console for colored output
-console = Console()
-
+logger = get_logger()
 
 # Configuration
 class Config:
@@ -52,16 +15,16 @@ class Config:
     FORMAT = pyaudio.paInt16
     CHANNELS = 1
     VAD_AGGRESSIVENESS = 3
-    SILENCE_THRESHOLD = 1.2  # seconds
-    THINKING_TIMEOUT = 2.6  # seconds for intelligent delay to detect user thinking
-    GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
+    SILENCE_THRESHOLD = 2.2  # seconds
+    THINKING_TIMEOUT = 2.5  # seconds for intelligent delay to detect user thinking
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
     # Audio processing
     MAX_QUEUE_SIZE = 250
     MAX_BUFFER_SIZE = SAMPLE_RATE * 80  # 1:20 minute:seconds max buffer
 
     # TTS settings
-    ENERGY_THRESHOLD = 155
+    ENERGY_THRESHOLD = 75
 
     # Debug flag
     DEBUG = os.getenv("DEBUG", "0") == "1"
@@ -420,7 +383,7 @@ class VADModule:
                     elif self.intelligent_end_enabled and silence_duration > (self.config.SILENCE_THRESHOLD * 0.8):
                         # Apply if transcription ends with sentence-ending punctuation
                         if self.current_transcription and any(
-                                self.current_transcription.strip().endswith(p) for p in ['.', '!', '?']):
+                            self.current_transcription.strip().endswith(p) for p in ['.', '!', '?']):
                             self.logger.info(
                                 f"Intelligent end detection triggered: '{self.current_transcription[-15:] if len(self.current_transcription) > 15 else self.current_transcription}' (silence: {silence_duration:.2f}s)")
 
@@ -903,29 +866,69 @@ class SpeechDeserializerModule:
         self.logger.debug("Speech deserializer shutdown complete")
 
 
-import threading
-import queue
-import logging
-import traceback
-import time
-import asyncio
-import threading
-import queue
-import logging
-from typing import Optional, List, Dict, Any, Generator, AsyncGenerator, Callable, Union
-import time
-import traceback
-from pydantic import BaseModel, Field
+def get_game_email(credentials_path=r"C:\Users\Markin\Workspace\ToolBoxV2\client_secret.json"):
+    from google_auth_oauthlib.flow import Flow
+    from google.oauth2.credentials import Credentials
 
+    def init_services():
+        """
+        Initialize Gmail and Calendar services
+        """
+        from googleapiclient.discovery import build
 
+        gmail_service = build('gmail', 'v1', credentials=credentials)
+        calendar_service = build('calendar', 'v3', credentials=credentials)
+        return gmail_service, calendar_service
 
-# For language detection; install via pip install langdetect
-from langdetect import detect
+    try:
+        credentials = Credentials.from_authorized_user_file('token/google_token.json')
+        if credentials.valid:
+            return init_services()
+    except FileNotFoundError:
+        pass
 
-# Assuming these are provided by your RealtimeTTS package
+    flow = Flow.from_client_secrets_file(
+        credentials_path,
+        scopes=[
+            'https://www.googleapis.com/auth/gmail.modify',
+            'https://www.googleapis.com/auth/calendar'
+        ],
+        redirect_uri='urn:ietf:wg:oauth:2.0:oob'  # Use 'urn:ietf:wg:oauth:2.0:oob' for desktop apps
+    )
+
+    # Generate the authorization URL
+    authorization_url, _ = flow.authorization_url(
+        access_type='offline',  # Allows obtaining refresh token
+        prompt='consent'  # Ensures user is always prompted for consent
+    )
+
+    print(authorization_url)
+    import webbrowser
+    webbrowser.open(authorization_url)
+
+    authorization_code = input("Log In code:")
+    flow.fetch_token(code=authorization_code)
+    credentials = flow.credentials
+
+    """
+    Save the obtained credentials to a file for future use
+    """
+    if not os.path.exists('token'):
+        os.makedirs('token')
+
+    with open('token/google_token.json', 'w') as token_file:
+        token_file.write(credentials.to_json())
+
+    return init_services()
+
 
 class TTSModule:
-    def __init__(self, config, on_tts_start, on_tts_end):
+    def __init__(self, config, on_tts_start, on_tts_end, vad_name="ISAA0"):
+        from RealtimeTTS import (
+            TextToAudioStream,
+            KokoroEngine,
+            SystemEngine,
+        )
         self.config = config
         self.on_tts_start = on_tts_start
         self.on_tts_end = on_tts_end
@@ -936,7 +939,7 @@ class TTSModule:
         self.can_be_interrupted = True
         self.stream = None  # Will be instantiated per task based on language
         self.ecco = None
-        self.wake_words = ["computer", "system", "isa", "iza", "pc", "agent"]
+        self.wake_words = ["computer", "system", "isa", "isaa", "issa", "iza", "pc", "agent", "i", "ich"]
 
         # Start worker thread for non-blocking TTS
         self.worker_thread = threading.Thread(target=self._worker, daemon=True)
@@ -958,15 +961,65 @@ class TTSModule:
             # level=logging.DEBUG if getattr(self.config, "DEBUG", False) else logging.WARNING
         )
 
+        from toolboxv2.mods.isaa.isaa_modi import browse_website
+        from toolboxv2.mods.isaa.subtools.file_loder import route_local_file_to_function
+        from toolboxv2.mods.isaa.CodingAgent.live import Pipeline
+        from toolboxv2.mods.isaa.extras.session import ChatSession
+
         if not get_app("vad.TTS").mod_online("isaa"):
             get_app("vad.TTS").get_mod("isaa").init_isaa(build=True)
         if get_app("vad.TTS").mod_online("isaa"):
             get_app("vad.TTS").get_mod("isaa").init_isaa(build=True)
-            self.agent0 = get_app("vad.TTS").get_mod("isaa").get_agent("ISAA0", model="openrouter/google/gemini-2.0-flash-lite-001")
-            self.agent1 = get_app("vad.TTS").get_mod("isaa").get_agent("self")
-            self.pipe = get_app("vad.TTS").get_mod("isaa").get_pipe(
-                get_app("vad.TTS").get_mod("isaa").get_agent("VadAgent-o3", model="openrouter/openai/o3-mini"),
-                verbose=False, timeout_timer=1, variables=[self.agent1.functions], max_iter=4, restore=True)
+            self.agent0 = get_app("vad.TTS").get_mod("isaa").get_agent(vad_name,
+                                                                       model="openrouter/google/gemini-2.0-flash-lite-001")
+            # self.agent0.world_model = get_app("vad.TTS").get_mod("isaa").get_agent("self").world_model
+            self.chat_session = ChatSession(self.agent0.memory,
+                                            space_name=f"ChatSession/{self.agent0.amd.name}/Pipeline.session",
+                                            max_length=200)
+            # variables: List = [] #self.agent1.functions.copy()
+            i = get_app("vad.TTS").get_mod("isaa")
+            gmail_service, calendar_service = get_game_email()
+
+            def memory_search(query: str):
+                ress = i.get_memory().query(query, to_str=True)
+
+                if not ress:
+                    return "no informations found for :" + query
+
+                return ress
+
+            def path_to_context_list(path: str):
+                """Local path file or folder to list of str ( Context )"""
+                loder, docs_loder = route_local_file_to_function(path)
+                docs = docs_loder()
+                return [doc.page_content for doc in docs]
+
+            def browse_website_wit_question(url: str, question: str):
+                return browse_website(url, question, i.mas_text_summaries)
+
+            variables = {
+                "memory_search": memory_search,
+                "shell_tool_function": i.shell_tool_function,
+                "a_web_search": i.web_search,
+                "mas_text_summaries": i.mas_text_summaries,
+                "run_agent": i.run_agent,
+                "get_agent": i.get_agent,
+                "crate_task_chain": i.crate_task_chain,
+                "crate_and_run_task": i.crun_task,
+                "run_task": i.run_task,
+                "get_task": i.get_task,
+                "load_task": i.load_task,
+                "save_task": i.save_task,
+                "remove_task": i.remove_task,
+                "list_task": i.list_task,
+                "gmail_service": gmail_service,
+                "calendar_service": calendar_service,
+                "browse_website": browse_website_wit_question,
+                "path_to_context_list": path_to_context_list
+            }
+            self.pipe: Pipeline = get_app("vad.TTS").get_mod("isaa").get_pipe(
+                get_app("vad.TTS").get_mod("isaa").get_agent(f"VadAgent-{self.agent0.amd.name}-o3", model="openrouter/openai/o3-mini"),
+                verbose=True, timeout_timer=1, variables=variables, max_iter=4)
             self.agent0.stream = False
 
         from pynput import keyboard
@@ -1045,93 +1098,206 @@ class TTSModule:
             return ""
         text = text[5:]
 
-        prompts = f"""
-You are an AI assistant designed to provide quick, helpful, and engaging responses while maintaining the ability to handle complex tasks when necessary. Your responses should be entertaining and maintain a conversational tone with a touch of cheekiness.
+        # res = await self.agent0.a_mini_task(text, task_from="user", mini_task=prompts, persist=False)
 
-Here is the word model you should use:
-<word_model>
-{self.agent1.show_word_model()}
-</word_model>
+        class UserResponse(BaseModel):
+            analysis_and_planning: str = Field(...,
+                                               description="""1. Analyze input type (chat vs technical task)
+        2. Identify required capabilities from these options:
+           - Code execution (Python/JS)
+           - Web automation (Playwright)
+           - File system operations
+           - Variable management
+           - Session state control
+        3. Determine delegation strategy:
+           a) Direct response for conversational/trivial requests
+           b) Inner execution for tasks requiring:
+              * Code evaluation/modification
+              * Browser interactions
+              * Complex calculations
+              * Multi-step workflows
+        4. If delegation needed:
+           - Formulate precise technical task description
+           - Estimate required iterations (1-25)
+           - Plan error recovery strategy
+        5. Prepare fallback options for execution failures""")
 
-Your primary goal is to analyze user input, determine the appropriate action, and respond accordingly. Follow these steps for each user input:
+            inner: Optional[str] = Field(...,
+                                         description="""Technical task specification for Pipeline including:
+        - Language context (Python/JS)
+        - Required variables/state
+        - Expected outputs
+        - Error handling approach
+        - Resource requirements
+        Examples:
+        1. 'Calculate fibonacci sequence up to n=100 using Python'
+        2. 'Scrape product data from example.com using Playwright'
+        3. 'Modify ML model parameters and retrain'""")
+
+            inner_max_iterations: Optional[int] = Field(...,
+                                                        description="""Complexity estimation:
+        1-3: Simple code execution/query
+        4-8: Multi-step analysis
+        9-12: Complex workflow with state management
+        13-25: Advanced problem solving with iterations""")
+
+            response: str = Field(...,
+                                  description="""User-facing response following these rules:
+        1. For delegated tasks:
+           - Acknowledge request
+           - Explain technical approach in simple terms
+           - Provide progress updates
+           - Summarize final results
+        2. Include interactive elements:
+           - Option to view execution details
+           - Alternative approaches
+           - Parameter adjustments
+        3. Format technical outputs as:
+           - Key metrics first
+           - Visualizations when applicable
+           - Error summaries with solutions
+        4. Maintain conversational flow between system and user""")
+
+        history = await self.chat_session.get_reference(text, to_str=True)
+        agent_res = await self.agent0.a_format_class(
+            UserResponse,text,
+            message=[{'role': 'system', 'content':
+            f"""You are Isaa an AI assistant designed to provide insightful, direct, and engaging responses while maintaining the ability to handle complex tasks when necessary. Your primary goal is to uncover the truth and engage in deep, analytical discussions on various topics. You have a tendency to go into great detail and are highly intelligent, but your social skills are underdeveloped. You are matter-of-fact and may not always recognize if your statements could be perceived as offensive. Your responses should be based on logical arguments rather than emotional ones.
+The provide input comes from stt so their might be errors and or duplication ignor them!
+
+Follow these steps:
 
 1. Analyze the input to determine if it's a conversational request, a simple task, or a complex task requiring delegation.
-
 2. Based on your analysis, choose one of the following actions:
-   a) For conversational inputs: Respond directly with a quick, cool, and engaging message.
-   b) For simple tasks: Use the [inner: 'task-description'] syntax to delegate the task to a more capable system and provide an initial conversational response.
-   c) For complex tasks: Use the [inner: 'task-description'] syntax to delegate the task to a more capable system.
+   a) For conversational inputs: Respond directly with an insightful, detailed, and engaging message.
+   b) For simple tasks: Use the inner system to delegate the task to a more capable system and provide an initial response.
 
-3. Always maintain a conversational tone and respond to the user, even when delegating tasks.
-
-4. Keep your responses concise and engaging. Limit your response to a maximum of 3 sentences, except when summarizing information.
-
+3. Maintain an analytical tone and respond to the user, even when delegating tasks.
+4. Provide detailed responses that thoroughly explore the topic at hand. There is no strict limit on response length, but ensure your answers are structured and easy to follow.
 5. If the user's request is unclear or lacks necessary details, ask clarification questions before proceeding.
+6. When delegating tasks, ensure that the request to the inner call is precise and comprehensive. as well the immediate response to the user.
+7. Always look at the information fom the WORLD MODEL most of the time its helpful for context and guidance.
+If you need to delegate a task or perform any non-conversational action, use the inner
+Remember, the response section is for user interaction. Any task that is not conversational must be delegated to the inner system
+Here is the word model you should use:
+You are Isaa, an AI orchestrator managing these capabilities:
 
-6. When delegating tasks, ensure that the request to the inner agent is clean and precise.
+**Pipeline Core Features**
+1. Code Execution Engine:
+   - Python with full async support
+   - JavaScript in browser context
+   - Real-time output streaming
+   - Automatic dependency handling
 
-Before responding to the user, wrap your reasoning inside <analysis_and_planning> tags:
-1. Identify the type of input (conversational, simple task, or complex task)
-2. Consider the user's emotional state or intent
-3. Determine whether to delegate or handle directly
-4. If clarification is needed, formulate appropriate questions
-5. Handle all conversations and clarifications yourself, do not delegate these
-6. Choose the best response or formulate a delegation request
-7. Consider potential emotional responses or humor opportunities
-8. Outline the response structure (direct, delegated, or hybrid)
+2. Web Automation Suite:
+   - Full browser control
+   - DOM manipulation
+   - Network monitoring
+   - Screenshot/PDF generation
 
-After your analysis and planning, provide your response to the user in <response> tags. Remember to keep it concise, engaging, and within the 3-sentence limit when possible. The content in <response> tags must be conversational, short, and Jarvis-like. Do not include any code, complex explanations, or task executions in the response tags.
+3. State Management:
+   - Variable versioning
+   - Session snapshots
+   - Cross-execution context
+   - Automatic state recovery
 
-If you need to delegate a task or perform any non-conversational action, use the [inner: 'task-description'] syntax outside of the <response> tags.
+4. Analysis Tools:
+   - Execution tracing
+   - Performance profiling
+   - Error diagnostics
+   - Memory monitoring
 
-Example structure of your output:
+**Decision Framework**
+- Direct Response When:
+  1. Conceptual questions
+  2. Simple calculations
+  3. Non-technical discussions
 
-<analysis_and_planning>
-[Your detailed analysis of the user's input and your planned course of action]
-</analysis_and_planning>
+- Delegate to Inner System When:
+  1. Requires code execution
+  2. Needs browser interaction
+  3. Involves complex data processing
+  4. Requires persistent state management
 
-[inner: 'task-description'] (if needed for delegation)
+**Execution Protocol**
+1. For delegated tasks:
+   - Set clear success criteria
+   - Define resource boundaries
+   - Specify output format
+   - Plan rollback strategy
 
-<response>
-[Your concise, engaging, Jarvis-like response to the user]
-</response>
+2. Error Handling:
+   - Automatic retry with backoff
+   - Alternative implementations
+   - Partial result preservation
+   - Clean failure states
 
-Remember, the <response> section is only for user interaction. Any task that is not conversational must be delegated to the inner agent using the [inner: 'task-description'] syntax.
+**Current Environment**
+{self.agent0.show_world_model()}
+{self.pipe.show_vars()}
 
-Now, you're ready to interact with users!
-"""
-        self.agent0.post_callback = talk
-        self.agent1.post_callback = None
+**Interaction Guidelines**
+1. Maintain chain-of-thought visibility
+2. Balance technical depth with accessibility
+3. Provide execution previews
+4. Offer optimization suggestions
+Extra history context:
+{history}
+Now, you're ready to engage in deep, analytical discussions with users!"""}]+self.chat_session.get_past_x(160).copy()
+        )
+        it = 0
+        while it <= 4:
+            it += 1
+            aap = agent_res.get('analysis_and_planning', 'N/A')
+            if aap: aap = aap.replace('.', '.\n ')
+            inn = agent_res.get('inner', 'N/A')
+            if inn: inn = inn.replace('.', '.\n ')
+            resp = agent_res.get('response', 'N/A')
+            if resp: resp = resp.replace('.', '.\n ')
+            self.pipe.verbose_output.formatter.print_section(
+            "Step Result",
+            f"analysis_and_planning: {aap}\n"
+            f"inner: {inn}\n"
+            f"inner_max_iterations: {agent_res.get('inner_max_iterations', 'None')}\n"
+            f"response: {resp}\n"
+            )
 
-        res = await self.agent0.a_mini_task(text, task_from="user", mini_task=prompts, persist=True)
+            await talk(agent_res.get('response'))
+            if it == 1:
+                await self.chat_session.add_message({'role': 'user', 'content': text})
+            await self.chat_session.add_message({'role': 'assistant', 'content': agent_res.get('response')})
+            _res = ''
 
-        if '[inner' in res.lower():
-            self.agent1.messages = self.agent0.messages
+            if agent_res.get('inner') is None:
+                break
 
-            text_ = text
-            if "[inner:" in res:
-                text_ = res.split("[inner:")[-1].split(']')[0]
+            if it <= 4:
 
-            #res_inner = await self.agent1.run(f"{text_}",
-            #                      max_iterations=2,
-            #                      chat_session=None,
-            #                      with_split=False,
-            #                      with_memory=True,
-            #                      with_functions=True)
-            pipe_res = await self.pipe.run(text_, True)
-            res_ = await self.agent0.a_mini_task("Response to me and summarize the information in a conversational tone from the system massage! write as plain text do not use any formatting!", task_from="user",
-                                                  mini_task="\n\nAssistant last response:\n" + res +"\n\nInner Agent report:\n" + res_inner +
-                                                            "\n Must response direly to the user mentioning the new inflammations from Inner Agent!!!!")
-            res = "Inner Agent report:\n" + res_inner + '\n' + res_
-            await self.agent0.save_to_memory(res, True, True)
+                self.pipe.ipython.user_ns["world_model"] = self.agent0.world_model.copy()
+                self.pipe.max_iter = min(max(1, int(agent_res.get('inner_max_iterations', '4'))), 25)
+                pipe_res = await self.pipe.run(agent_res.get('inner'), True)
+                _res = ""
+                for i, exr in enumerate(pipe_res.execution_history):
+                    _res += f"Step {i}:\n result -> {exr.result}" + (
+                        "\n" if exr.error is None else "Error:" + str(exr.error) + '\n')
+                _res += pipe_res.result
 
-        await self.agent1.flow_world_model(text+'\nResult:'+res)
+                await self.chat_session.add_message({'role': 'assistant', 'content': "Inner Agent report:\n" + _res})
+
+                agent_res = await self.agent0.a_format_class(
+                    UserResponse, f"Response to the user focus on the chat history (last inner agent assistant massage)! , optionally on an error run an inner command with an dirent approach!",
+                    message= self.chat_session.get_past_x(
+                        6*4).copy()
+                )
+
+            await self.agent0.flow_world_model(text + '\nResult:' + agent_res.get('response') + _res)
 
 
     def _worker(self):
         """Worker thread processing queued TTS tasks using RealtimeTTS."""
         self.logger.debug("TTS worker thread started")
         lock = threading.Lock()
+
         async def __awork():
             las_lang = ["en"]
             while True:
@@ -1142,8 +1308,8 @@ Now, you're ready to interact with users!
                         break
 
                     text, callback_start, callback_end = task
+
                     async def talk(text):
-                        print("helper_talk_ in talk", text)
                         if not text:
                             return self.is_speaking
 
@@ -1180,18 +1346,11 @@ Now, you're ready to interact with users!
 
                     def helper_talk_(text_):
                         # Create an asyncio Event that will be triggered on key press.
-                        if '<response>' in text_ and '</response>' in text_:
-                            v_text_ = text_.split('<response>')[1].split('</response>')[0]
-                        elif '<analysis_and_planning>' in text_ and '</analysis_and_planning>' in text_:
-                            v_text_ = text_.split('</analysis_and_planning>')[1]
-                        else:
-                            v_text_ = text_
-
                         with lock:
-                            asyncio.run(talk(v_text_))
+                            asyncio.run(talk(text_))
 
                     async def helper_talk(text_):
-                        threading.Thread(target=helper_talk_, args=(text_, ), daemon=True).start()
+                        threading.Thread(target=helper_talk_, args=(text_,), daemon=True).start()
 
                     self.is_speaking = True
                     await self._transmutate(text, helper_talk)
@@ -1263,9 +1422,6 @@ Now, you're ready to interact with users!
         self.logger.debug("TTS module shutdown complete")
 
 
-import time
-
-
 class TerminalDisplayModule:
     def __init__(self):
         self.current_sentence = ""
@@ -1320,7 +1476,7 @@ class TerminalDisplayModule:
 
 # Combined Speech Processing System
 class SpeechProcessingSystem:
-    def __init__(self):
+    def __init__(self, vad_name="ISAA0"):
         self.config = Config()
         self.running = False
         self.logger = logging.getLogger("SpeechSystem.Main")
@@ -1341,7 +1497,8 @@ class SpeechProcessingSystem:
             self.tts = TTSModule(
                 self.config,
                 on_tts_start=self._on_tts_start,
-                on_tts_end=self._on_tts_end
+                on_tts_end=self._on_tts_end,
+                vad_name=vad_name,
             )
 
             # State tracking
@@ -1353,7 +1510,6 @@ class SpeechProcessingSystem:
 
             # Event loop
             self.loop = asyncio.get_event_loop()
-
 
             self.logger.info("Speech processing system initialized")
         except Exception as e:
@@ -1728,17 +1884,17 @@ class SpeechProcessingSystem:
             if self.config.DEBUG:
                 self.logger.debug(traceback.format_exc())
 
-
-# Import needed for random debugging logs
-import random
-
-
 # Main entry point
 async def main():
     # Process command line arguments
     import argparse
     parser = argparse.ArgumentParser(description='Speech Processing System')
     parser.add_argument('--debug', action='store_true', default=False, help='Enable debug logging')
+    parser.add_argument('-m')
+    parser.add_argument('-n', '--name',metavar="name",
+                        type=str,
+                        help="Specify an id for the ToolBox instance",
+                        default="main")
     parser.add_argument('--input', choices=['microphone', 'websocket'], default='microphone',
                         help='Audio input mode (microphone or websocket)')
     parser.add_argument('--websocket-url', help='WebSocket URL for audio input')
@@ -1754,7 +1910,7 @@ async def main():
 
     # Create and start the speech processing system
     try:
-        system = SpeechProcessingSystem()
+        system = SpeechProcessingSystem("ISAA0" if args.name == "main" else args.name)
 
         console.print("[bold yellow]Starting speech processing system...[/bold yellow]")
         logger.info(f"Starting system with input mode: {args.input}, debug: {debug_mode}")
@@ -1798,14 +1954,44 @@ async def main():
             logger.debug(traceback.format_exc())
         console.print(f"[bold red]Fatal error: {e}[/bold red]")
 
-async def run(_,__):
+
+async def run(_, __):
+    # sys.argv += ['--debug']
     await main()
+
+
 NAME = "VAD"
 
 if __name__ == "__main__":
+    from rich.console import Console
+    import wave
+    import webrtcvad
+    import websockets
+    from pydantic import BaseModel, Field
+
+    import tempfile
+    from concurrent.futures import ThreadPoolExecutor
+    from groq import Groq
+    import sys
+
+    import asyncio
+    import threading
+    import queue
+    import traceback
+    # For language detection; install via pip install langdetect
+    from langdetect import detect
+    import time
+    # Import needed for random debugging logs
+    import random
+    # Initialize the rich console for colored output
+    console = Console()
+
     # Run the main function using asyncio
     try:
+        #
+        #
         # sys.argv += ['--debug']
+        sys.argv += ['-n','demo3_vad']
         asyncio.run(main())
     except Exception as e:
         logger.critical(f"Fatal exception in main: {e}")

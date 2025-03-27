@@ -262,7 +262,7 @@ async def run(app: App, args):
                 f'{app.id} \nCPU: {cpu_usage}% Memory: {memory_usage}% Disk :{disk_usage}%\nTime: {current_time}</b>')
 
         call = app.run_any(TBEF.CLI_FUNCTIONS.USER_INPUT, completer_dict=autocompletion_dict,
-                           get_rprompt=get_rprompt, bottom_toolbar=bottom_toolbar, active_modul=active_modular, fh=fh)
+                           get_rprompt=None, bottom_toolbar=bottom_toolbar, active_modul=active_modular, fh=fh)
 
         if asyncio.iscoroutine(call):
             call = await call

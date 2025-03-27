@@ -489,12 +489,12 @@ class Agent:
 
     async def flow_world_model(self, query):
 
-        prompt = f"Determen if to change the current world model ##{self.show_word_model()}## basd on the new informaiton :" + query
+        prompt = f"Determine if to change the current world model ##{self.show_word_model()}## basd on the new information :" + query
 
         class WorldModelAdaption(BaseModel):
-            """world model adaption action['remove' or 'add' or ' change' or None] ;
-            key from the existing word model or new one ;
-            informations changed or added"""
+            """world model adaption action['remove' or 'add' or 'change' or None] ;
+            key from the existing word model or new one ; key format xyz.abc like Person.Tom
+            information changed or added. informations must be in str relation graph format like 'Person:Name, Works:at, Startup:Complot'"""
             action: Optional[str] = field(default=None)
             key: Optional[str] = field(default=None)
             informations: Optional[str] = field(default=None)
@@ -880,7 +880,7 @@ class Agent:
         llm_message = self.get_llm_message(task, persist=False, **kwargs)
         if 'claude' in self.amd.model and llm_message[0]['role'] != 'user':
             llm_message = [{'role':'user','content':'start :)'}] +llm_message
-
+        # print_prompt(llm_message)
         try:
             resp = await self.acompletion(
                 llm_message=llm_message,

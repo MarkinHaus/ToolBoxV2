@@ -1,14 +1,13 @@
 import asyncio
 
-import requests
-
 from toolboxv2 import AppArgs, App
-from toolboxv2.utils.extras.blobs import BlobFile, BlobStorage
+
 
 NAME = 'bgws'
 
 
 async def run(app: App, app_args:AppArgs):
+    from toolboxv2.utils.extras.blobs import BlobFile, BlobStorage
     app.print("Running...")
 
 
