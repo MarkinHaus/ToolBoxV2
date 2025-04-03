@@ -49,7 +49,8 @@ from toolboxv2.mods.isaa.base.Agents import Agent, AgentBuilder, LLMFunction, Co
 from .SearchAgentCluster.search_tool import web_search
 
 from toolboxv2.mods.isaa.CodingAgent.live import Pipeline
-
+# from .CodingAgent.flowui.web_flow_ui import init_isaaflow_ui
+# from .CodingAgent.flowui.web_flow_ui2 import get_main_ui
 PIPLINE = None
 Name = 'isaa'
 version = "0.1.5"
@@ -203,13 +204,12 @@ class Tools(MainTool, FileHandler):
         self.fc_generators = {}
         self.toolID = ""
         MainTool.toolID = ""
-        async def web_search_(query:str)->str:
-            return await web_search(query=query, mas_text_summaries=self.mas_text_summaries)
-        self.web_search = web_search_
+        self.web_search = web_search
         self.shell_tool_function = shell_tool_function
 
         self.print(f"Start {self.spec}.isaa")
         IsaaWebSocketUI(self)
+        # init_isaaflow_ui(self.app)
         with Spinner(message=f"Starting module", symbols='c'):
             self.load_file_handler()
             config = self.get_file_handler(self.keys["Config"])
@@ -460,6 +460,7 @@ class Tools(MainTool, FileHandler):
 
     async def on_start(self):
         pass
+        # init_isaaflow_ui(self.app)
 
     def load_secrit_keys_from_env(self):
         self.config['WOLFRAM_ALPHA_APPID'] = os.getenv('WOLFRAM_ALPHA_APPID')

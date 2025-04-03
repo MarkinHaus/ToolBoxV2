@@ -134,8 +134,12 @@ def after_format(d:str)->dict:
         if _d.count("'''") % 2 != 0 and( _d.count('"""\n}') == 1 or  _d.count('\\"\\"\\"\n}') == 1):
             _d = _d.replace('\\"\\"\\"\n}', "'''\n}").replace('\\"\\"\\"\\n}', "'''\\n}")
         # print(_d, "THE END")
-        return _d
-    d = eval(clean(d))
+        return _d.encode("utf-8", errors='replace').decode("utf-8", errors='replace')
+    try:
+        d = eval(clean(d))
+    except SyntaxError:
+        print("Invalid syntax in input data")
+        # return d
     if isinstance(d, str):
         try:
             d = eval(clean(d, ex=True))

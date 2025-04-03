@@ -44,7 +44,7 @@ def run_script_in_conda_env(script_path: str, conda_env: str, script_args: List[
     return run_command(command, live)
 
 
-def create_conda_env(env_name: str, v='3.10') -> bool:
+def create_conda_env(env_name: str, v='3.11') -> bool:
     command = f"conda create -n {env_name} python={v} -y"
     return run_command(command)[0]
 

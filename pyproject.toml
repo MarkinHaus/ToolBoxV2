@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "toolboxv2"
+version = "0.1.20"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.11.13",
+    "cachetools>=5.5.2",
+    "cryptography>=44.0.1",
+    "fastapi>=0.115.9",
+    "fuzzywuzzy>=0.18.0",
+    "ipython>=8.32.0",
+    "networkx>=3.4.2",
+    "numpy>=2.2.3",
+    "packaging>=24.2",
+    "pyjwt>=2.10.1",
+    "python-dotenv>=1.0.1",
+    "pyyaml>=6.0.2",
+    "qrcode>=8.0",
+    "radon>=6.0.1",
+    "redis>=5.2.1",
+    "reedsolo>=1.7.0",
+    "requests>=2.32.3",
+    "scikit-learn>=1.6.1",
+    "toml>=0.10.2",
+    "tqdm>=4.67.1",
+    "transformers>=4.49.0",
+    "watchfiles>=1.0.4",
+    "webauthn>=2.5.1",
+    # "isaa @ file:///C:/Users/Markin/Workspace/ToolBoxV2/toolboxv2/mods/isaa"
+]
+
+[project.scripts]
+tb = "toolboxv2.__main__:main_runner"
+
+[tool.uv]
+package = true
+dev-dependencies = [
+    "webauthn",
+    "mailjet_rest",
+    "redis",
+    "watchfiles",
+    "SQLAlchemy",
+    "Faker",
+    "playwright",
+    "radon",
+    "setuptools"
+]
+
+
+[tool.uv.workspace]
+members = ["toolboxv2/mods/isaa"]
+
+[tool.uv.sources]
+isaa = { workspace = true }

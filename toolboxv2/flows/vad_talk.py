@@ -8,6 +8,27 @@ from toolboxv2 import get_app, get_logger
 
 logger = get_logger()
 
+
+import wave
+import webrtcvad
+import websockets
+from pydantic import BaseModel, Field
+
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from groq import Groq
+import sys
+
+import asyncio
+import threading
+import queue
+import traceback
+# For language detection; install via pip install langdetect
+from langdetect import detect
+import time
+# Import needed for random debugging logs
+import random
+
 # Configuration
 class Config:
     SAMPLE_RATE = 16000
@@ -997,7 +1018,42 @@ class TTSModule:
             def browse_website_wit_question(url: str, question: str):
                 return browse_website(url, question, i.mas_text_summaries)
 
+            import pyperclip
+
+            def get_clipboard():
+                """
+                Retrieve text data from the system clipboard.
+
+                Returns:
+                str: Text content currently stored in the clipboard
+                """
+                try:
+                    clipboard_content = pyperclip.paste()
+                    return clipboard_content
+                except Exception as e:
+                    print(f"Error retrieving clipboard data: {e}")
+                    return None
+
+            def to_clipboard(data):
+                """
+                Save text data to the system clipboard.
+
+                Args:
+                data (str): Text content to be saved to the clipboard
+
+                Returns:
+                bool: True if successful, False otherwise
+                """
+                try:
+                    pyperclip.copy(str(data))
+                    return True
+                except Exception as e:
+                    print(f"Error saving data to clipboard: {e}")
+                    return False
+
             variables = {
+                "get_clipboard": get_clipboard,
+                "to_clipboard": to_clipboard,
                 "memory_search": memory_search,
                 "shell_tool_function": i.shell_tool_function,
                 "a_web_search": i.web_search,
@@ -1104,8 +1160,8 @@ class TTSModule:
             analysis_and_planning: str = Field(...,
                                                description="""1. Analyze input type (chat vs technical task)
         2. Identify required capabilities from these options:
-           - Code execution (Python/JS)
-           - Web automation (Playwright)
+           - Code execution (Python)
+           - automation
            - File system operations
            - Variable management
            - Session state control
@@ -1113,7 +1169,6 @@ class TTSModule:
            a) Direct response for conversational/trivial requests
            b) Inner execution for tasks requiring:
               * Code evaluation/modification
-              * Browser interactions
               * Complex calculations
               * Multi-step workflows
         4. If delegation needed:
@@ -1124,14 +1179,14 @@ class TTSModule:
 
             inner: Optional[str] = Field(...,
                                          description="""Technical task specification for Pipeline including:
-        - Language context (Python/JS)
+        - Language context (Python)
         - Required variables/state
         - Expected outputs
         - Error handling approach
         - Resource requirements
         Examples:
-        1. 'Calculate fibonacci sequence up to n=100 using Python'
-        2. 'Scrape product data from example.com using Playwright'
+        1. 'Calculate fibonacci sequence up to n=100'
+        2. 'Scrape product data from example.com using a_web_search("example.com")'
         3. 'Modify ML model parameters and retrain'""")
 
             inner_max_iterations: Optional[int] = Field(...,
@@ -1185,23 +1240,16 @@ You are Isaa, an AI orchestrator managing these capabilities:
 **Pipeline Core Features**
 1. Code Execution Engine:
    - Python with full async support
-   - JavaScript in browser context
    - Real-time output streaming
    - Automatic dependency handling
 
-2. Web Automation Suite:
-   - Full browser control
-   - DOM manipulation
-   - Network monitoring
-   - Screenshot/PDF generation
-
-3. State Management:
+2. State Management:
    - Variable versioning
    - Session snapshots
    - Cross-execution context
    - Automatic state recovery
 
-4. Analysis Tools:
+3. Analysis Tools:
    - Execution tracing
    - Performance profiling
    - Error diagnostics
@@ -1956,6 +2004,11 @@ async def main():
 
 
 async def run(_, __):
+    global console
+
+    # Initialize the rich console for colored output
+    from rich.console import Console
+    console = Console()
     # sys.argv += ['--debug']
     await main()
 
@@ -1963,28 +2016,6 @@ async def run(_, __):
 NAME = "VAD"
 
 if __name__ == "__main__":
-    from rich.console import Console
-    import wave
-    import webrtcvad
-    import websockets
-    from pydantic import BaseModel, Field
-
-    import tempfile
-    from concurrent.futures import ThreadPoolExecutor
-    from groq import Groq
-    import sys
-
-    import asyncio
-    import threading
-    import queue
-    import traceback
-    # For language detection; install via pip install langdetect
-    from langdetect import detect
-    import time
-    # Import needed for random debugging logs
-    import random
-    # Initialize the rich console for colored output
-    console = Console()
 
     # Run the main function using asyncio
     try:

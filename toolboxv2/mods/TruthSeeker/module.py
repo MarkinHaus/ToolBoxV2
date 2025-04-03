@@ -5,7 +5,8 @@ import unittest
 from starlette.responses import HTMLResponse, FileResponse, RedirectResponse
 
 from toolboxv2 import get_app, App
-from toolboxv2.mods.TruthSeeker.nGui import create_ui
+from toolboxv2.mods.TruthSeeker.htmxui import MOD_NAME
+# from toolboxv2.mods.TruthSeeker.nGui import create_ui
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.system.session import RequestSession
 from toolboxv2.mods.TruthSeeker.arXivCrawler import ArXivPDFProcessor
@@ -41,6 +42,8 @@ def start(app=None):
     global talk_generate, talk_tts
     if app is None:
         app = get_app("Starting Talk interface")
+    app.run_any(("CloudM","add_ui" ), name="TruthSeeker", title="TruthSeeker Research", path=f"/api/{MOD_NAME}/get_main_ui",
+                             description="AI Research Assistant")
     app.get_mod("isaa").load_keys_from_env()# (build=False)
 
     app.get_mod("CodeVerification")
@@ -79,7 +82,14 @@ def start(app=None):
                         usage_type="one_time" if v is None else 'timed',
                         max_uses=1 if v is None or v == "PROCESS" else int(v/60*5),
                         valid_duration=v)
-    create_ui(ArXivPDFProcessor)
+    # create_ui(ArXivPDFProcessor)
+    #app.run_any(("CloudM","add_ui"),
+    #            name="TruthSeeker",
+    #            titel="TruthSeeker Research",
+    #            path=f"/api/{MOD_NAME}/get_main_ui",
+    #            description="AI Research Assistant"
+    #            )
+    print("DONE TruthSeeker")
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=-1, api=True,

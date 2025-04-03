@@ -1,4 +1,9 @@
-import numba
+try:
+    import numba
+except ImportError:
+    numba = lambda :None
+    numba.jit =lambda **_:lambda x:x
+    numba.njit =lambda **_:lambda x:x
 import numpy as np
 import os
 import threading
@@ -1085,7 +1090,7 @@ class FastVectorStore1(AbstractVectorStore):
             similarities[i] = dot_product
 
     @staticmethod
-    @numba.njit
+    @numba.njit()
     def _normalize_vector(vector):
         norm = np.sqrt(np.sum(vector * vector)) + 1e-8
         return vector / norm
@@ -1396,7 +1401,7 @@ class FastVectorStore2(AbstractVectorStore):
             similarities[i] = dot_product
 
     @staticmethod
-    @numba.njit
+    @numba.njit()
     def _normalize_vector(vector):
         norm = np.sqrt(np.sum(vector * vector)) + 1e-8
         return vector / norm

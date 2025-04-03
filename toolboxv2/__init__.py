@@ -5,7 +5,7 @@ from yaml import safe_load
 
 from .utils.toolbox import App
 from .utils.singelton_class import Singleton
-from .utils.system.main_tool import MainTool
+from .utils.system.main_tool import MainTool, get_version_from_pyproject
 from .utils.system.file_handler import FileHandler
 from .utils.extras.Style import Style
 from .utils.extras.Style import Spinner
@@ -15,7 +15,7 @@ from .utils.extras.show_and_hide_console import show_console
 from .utils.system.tb_logger import get_logger, setup_logging
 from .utils.system.getting_and_closing_app import get_app
 from .utils.system.types import Result
-from .utils.system.types import ApiResult
+from .utils.system.types import ApiResult, RequestData
 from .utils.security.cryp import Code
 from .utils.system import all_functions_enums as TBEF
 from .flows import flows_dict
@@ -33,10 +33,9 @@ except Exception as e:
 __author__ = """Markin Hausmanns"""
 __email__ = 'Markinhausmanns@gmail.com'
 
-with open(os.getenv('CONFIG_FILE', f'{os.path.abspath(__file__).replace("__init__.py", "")}toolbox.yaml'),
-          'r', encoding="utf8") as config_file:
-    _version = safe_load(config_file)
-    __version__ = _version.get('main', {}).get('version', '-.-.-')
+
+
+__version__ = get_version_from_pyproject("pyproject.toml")
 
 ToolBox_over: str = "root"
 __all__ = [

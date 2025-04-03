@@ -23,7 +23,7 @@ import re
 
 from toolboxv2.mods.isaa.extras.filter import after_format
 from toolboxv2.mods.isaa.base.VectorStores.defaults import AbstractVectorStore, FastVectorStoreO, FaissVectorStore, \
-    EnhancedVectorStore, FastVectorStore1
+    EnhancedVectorStore, FastVectorStore1, RedisVectorStore, NumpyVectorStore
 from toolboxv2.mods.isaa.extras.adapter import litellm_complete
 import numpy as np
 from typing import List
@@ -563,12 +563,12 @@ class TextSplitter:
 
         # Calculate based on overlap ratio
         overlap_ratio = self.chunk_overlap / self.chunk_size
-        base_chunks = math.ceil(text_len / self.chunk_size)
+        base_chunks = text_len / self.chunk_size
         estimated_chunks = base_chunks * 2 / (overlap_ratio if overlap_ratio > 0 else 1)
 
         # print('#',estimated_chunks, base_chunks, overlap_ratio)
         # Calculate average chunk size
-        avg_chunk_size = max(1, math.ceil(text_len / estimated_chunks))
+        avg_chunk_size = max(1, text_len / estimated_chunks)
 
         return estimated_chunks * avg_chunk_size
 
@@ -613,7 +613,7 @@ class KnowledgeBase:
     def __init__(self, embedding_dim: int = 768, similarity_threshold: float = 0.61, batch_size: int = 64,
                  n_clusters: int = 4, deduplication_threshold: float = 0.85, model_name=os.getenv("DEFAULTMODELSUMMERY"),
                  embedding_model=os.getenv("DEFAULTMODELEMBEDDING"),
-                 vis_class:Optional[str] = "FastVectorStoreO",
+                 vis_class:Optional[str] = "NumpyVectorStore",
                  vis_kwargs:Optional[Dict[str, Any]]=None,
                  requests_per_second=85.,
                  chunk_size: int = 3600,
@@ -646,7 +646,7 @@ class KnowledgeBase:
 
     def init_vis(self, vis_class, vis_kwargs):
         if vis_class is None:
-            vis_class = "FastVectorStoreO"
+            vis_class = "NumpyVectorStore"
         if vis_class == "FastVectorStoreO":
             if vis_kwargs is None:
                 vis_kwargs = {
@@ -663,6 +663,8 @@ class KnowledgeBase:
             self.vdb = EnhancedVectorStore(**vis_kwargs)
         if vis_class == "FastVectorStore1":
             self.vdb = FastVectorStore1()
+        if vis_class == "NumpyVectorStore":
+            self.vdb = NumpyVectorStore()
 
         self.vis_class = vis_class
         self.vis_kwargs = vis_kwargs

@@ -8,6 +8,7 @@ from urllib.parse import quote
 from toolboxv2 import Style, Result, TBEF, App
 from toolboxv2 import get_app, Code
 from .AuthManager import get_invitation
+from ...utils.extras.blobs import BlobFile
 from ...utils.extras.qr import print_qrcode_to_console
 from .types import User
 
@@ -19,14 +20,16 @@ test_only = export(mod_name=Name, test=True, version=version, test_only=True)
 to_api = export(mod_name=Name, api=True, version=version)
 
 uis = {}
-
 @no_test
-def add_ui(name:str, titel:str, path:str, description:str, auth=False):
-    uis[name] = {"auth":auth,"path": path, "titel": titel, "description": description}
+def add_ui(name:str, title:str, path:str, description:str, auth=False):
+    global uis
+    print("ADDING", name)
+    uis[name] = {"auth":auth,"path": path, "title": title, "description": description}
 
-@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
-def openui(app, request):
-    return [uis[name] for name in uis.keys() if uis[name]["auth"]]
+@export(mod_name=Name, api=True, version=version)
+def openui():
+    global uis
+    return [uis[name] for name in uis.keys()]
 
 @export(mod_name=Name, api=True, version=version, row=True)
 def openVersion(self):

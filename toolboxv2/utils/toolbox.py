@@ -3,10 +3,12 @@ import asyncio
 import inspect
 import os
 import pkgutil
+import queue
 import sys
 import threading
 import time
 from asyncio import Task
+from concurrent.futures import Future, ThreadPoolExecutor
 from enum import Enum
 from platform import node, system
 from importlib import import_module, reload
@@ -21,7 +23,7 @@ from .singelton_class import Singleton
 
 from .system.cache import FileCache, MemoryCache
 from .system.tb_logger import get_logger, setup_logging
-from .system.types import AppArgs, ToolBoxInterfaces, ApiResult, Result, AppType, MainToolType
+from .system.types import AppArgs, ToolBoxInterfaces, ApiResult, Result, AppType, MainToolType, RequestData
 from .system.getting_and_closing_app import get_app
 from .system.file_handler import FileHandler
 
@@ -30,6 +32,7 @@ from .extras.Style import Style, stram_print, Spinner
 import logging
 from dotenv import load_dotenv
 
+from ..utils.system.main_tool import get_version_from_pyproject
 from ..tests.a_util import async_test
 
 load_dotenv()
@@ -39,6 +42,7 @@ class App(AppType, metaclass=Singleton):
 
     def __init__(self, prefix: str = "", args=AppArgs().default()):
         super().__init__(prefix, args)
+        self._web_context = None
         t0 = time.perf_counter()
         abspath = os.path.abspath(__file__)
         self.system_flag = system()  # Linux: Linux Mac: Darwin Windows: Windows
@@ -53,6 +57,8 @@ class App(AppType, metaclass=Singleton):
 
         os.chdir(dir_name)
         self.start_dir = str(dir_name)
+
+        self.bg_tasks = []
 
         lapp = dir_name + '\\.data\\'
 
@@ -126,9 +132,8 @@ class App(AppType, metaclass=Singleton):
             if self.start_dir not in sys.path:
                 sys.path.append(self.start_dir)
 
-        with open(os.getenv('CONFIG_FILE', f'{dir_name}/toolbox.yaml'), 'r') as config_file:
-            _version = safe_load(config_file)
-            __version__ = _version.get('main', {}).get('version', '-.-.-')
+
+        __version__ = get_version_from_pyproject()
 
         self.version = __version__
 
@@ -573,14 +578,231 @@ class App(AppType, metaclass=Singleton):
             mod_name = mod_name.split('.')[0]
         return self.loop_gard().run_until_complete(self.a_init_mod(mod_name, spec))
 
-    def run(self, *args, request=None, **kwargs):
-        mn, fn = args[0]
-        if self.functions.get(mn, {}).get(fn, {}).get('request_as_kwarg', False):
-            kwargs["request"] = request
-        res: Result = self.loop_gard().run_until_complete(self.a_run_any(*args, **kwargs))
-        if isinstance(res, Result):
-            res = res.to_api_result().model_dump(mode='json')
-        return res
+    def run_bg_task(self, task):
+        """
+        Run a task in the background that will properly handle nested asyncio operations.
+        This implementation ensures that asyncio.create_task() and asyncio.gather() work
+        correctly within the background task.
+
+        Args:
+            task: A callable function that can be synchronous or asynchronous
+        """
+        if not callable(task):
+            self.logger.warning("Task is not callable!")
+            return None
+
+        # Function that will run in a separate thread with its own event loop
+        def thread_target(task_):
+            # Create a new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            try:
+                # Determine how to run the task based on its type
+                if asyncio.iscoroutinefunction(task_):
+                    # If it's an async function, run it directly
+                    loop.run_until_complete(task_())
+                elif asyncio.iscoroutine(task_):
+                    # If it's already a coroutine object
+                    loop.run_until_complete(task_)
+                else:
+                    # If it's a synchronous function that might create async tasks internally
+                    async def wrapper():
+                        # Run potentially blocking synchronous code in an executor
+                        return await loop.run_in_executor(None, task_)
+
+                    loop.run_until_complete(wrapper())
+
+                self.logger.debug("Background task completed successfully")
+            except Exception as e:
+                self.logger.error(f"Background task failed with error: {str(e)}")
+            finally:
+                # Clean up any pending tasks
+                pending = asyncio.all_tasks(loop)
+                if pending:
+                    # Cancel any remaining tasks
+                    for task_ in pending:
+                        task_.cancel()
+
+                    # Allow tasks to finish cancellation
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+
+                loop.close()
+
+        # Create and start a non-daemon thread that will run to completion
+        # Using non-daemon thread ensures the task completes even if main thread exits
+        t = threading.Thread(target=thread_target, args=(task,))
+        t.daemon = False  # Non-daemon thread will keep program alive until it completes
+        self.bg_tasks.append(t)
+        t.start()
+        return t
+
+    # Alternative implementation that may be needed if your function creates many nested tasks
+    def run_bg_task_advanced(self, task, *args, **kwargs):
+        """
+        Alternative implementation for complex async scenarios where the task creates
+        nested asyncio tasks using create_task() and gather().
+
+        This version ensures proper execution of nested tasks by maintaining the thread
+        and its event loop throughout the lifetime of all child tasks.
+
+        Args:
+            task: A callable function that can be synchronous or asynchronous
+            *args, **kwargs: Arguments to pass to the task
+        """
+        if not callable(task):
+            self.logger.warning("Task is not callable!")
+            return None
+
+        # Create a dedicated thread with its own event loop
+        async def async_wrapper():
+            try:
+                if asyncio.iscoroutinefunction(task):
+                    return await task(*args, **kwargs)
+                elif asyncio.iscoroutine(task):
+                    return await task
+                else:
+                    # Run in executor to avoid blocking
+                    loop = asyncio.get_event_loop()
+                    return await loop.run_in_executor(None, lambda: task(*args, **kwargs))
+            except Exception as e:
+                self.logger.error(f"Background task error: {str(e)}")
+                raise
+
+        def thread_target():
+            # Create new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            try:
+                # Run the task to completion with all its nested tasks
+                loop.run_until_complete(async_wrapper())
+            except Exception as e:
+                self.logger.error(f"Background task thread failed: {str(e)}")
+            finally:
+                # Clean up any pending tasks that might still be running
+                try:
+                    pending = asyncio.all_tasks(loop)
+                    if pending:
+                        # Allow tasks time to clean up
+                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                except Exception:
+                    pass
+
+                loop.close()
+
+        # Use a non-daemon thread so it will run to completion
+        t = threading.Thread(target=thread_target, daemon=True)
+        t.daemon = False
+        self.bg_tasks.append(t)
+        t.start()
+        return t
+
+    # Helper method to wait for background tasks to complete (optional)
+    def wait_for_bg_tasks(self, timeout=None):
+        """
+        Wait for all background tasks to complete.
+
+        Args:
+            timeout: Maximum time to wait (in seconds) for all tasks to complete.
+                     None means wait indefinitely.
+
+        Returns:
+            bool: True if all tasks completed, False if timeout occurred
+        """
+        active_tasks = [t for t in self.bg_tasks if t.is_alive()]
+
+        for task in active_tasks:
+            task.join(timeout=timeout)
+            if task.is_alive():
+                return False
+
+        return True
+
+    def run(self, *args, request=None, running_function_coro=None, **kwargs):
+        """
+        Run a function with support for SSE streaming in both
+        threaded and non-threaded contexts.
+        """
+        if running_function_coro is None:
+            mn, fn = args[0]
+            if self.functions.get(mn, {}).get(fn, {}).get('request_as_kwarg', False):
+                kwargs["request"] = request
+                if 'data' in kwargs and 'data' not in self.functions.get(mn, {}).get(fn, {}).get('params', []):
+                    kwargs["request"]['data'] = kwargs['data']
+                    del kwargs['data']
+                if 'form_data' in kwargs and 'form_data' not in self.functions.get(mn, {}).get(fn, {}).get('params',
+                                                                                                           []):
+                    kwargs["request"]['form_data'] = kwargs['form_data']
+                    del kwargs['form_data']
+                kwargs["request"] = RequestData.from_dict(request)
+
+        # Create the coroutine
+        coro = running_function_coro or self.a_run_any(*args, **kwargs)
+
+        # Get or create an event loop
+        try:
+            loop = asyncio.get_event_loop()
+            is_running = loop.is_running()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            is_running = False
+
+        # If the loop is already running, run in a separate thread
+        if is_running:
+            # Create thread pool executor as needed
+            if not hasattr(self.__class__, '_executor'):
+                self.__class__._executor = ThreadPoolExecutor(max_workers=4)
+
+            def run_in_new_thread():
+                # Set up a new loop in this thread
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+
+                try:
+                    # Run the coroutine
+                    return new_loop.run_until_complete(coro)
+                finally:
+                    new_loop.close()
+
+            # Run in thread and get result
+            thread_result = self.__class__._executor.submit(run_in_new_thread).result()
+
+            # Handle streaming results from thread
+            if isinstance(thread_result, dict) and thread_result.get("is_stream"):
+                # Create a new SSE stream in the main thread
+                async def stream_from_function():
+                    # Re-run the function with direct async access
+                    stream_result = await self.a_run_any(*args, **kwargs)
+
+                    if (isinstance(stream_result, Result) and
+                        getattr(stream_result.result, 'data_type', None) == "stream"):
+                        # Get and forward data from the original generator
+                        original_gen = stream_result.result.data.get("generator")
+                        if inspect.isasyncgen(original_gen):
+                            async for item in original_gen:
+                                yield item
+
+                # Return a new streaming Result
+                return Result.stream(
+                    stream_generator=stream_from_function(),
+                    headers=thread_result.get("headers", {})
+                )
+
+            result = thread_result
+        else:
+            # Direct execution when loop is not running
+            result = loop.run_until_complete(coro)
+
+        # Process the final result
+        if isinstance(result, Result):
+            result.print()
+            if getattr(result.result, 'data_type', None) == "stream":
+                return result
+            return result.to_api_result().model_dump(mode='json')
+
+        return result
 
     def loop_gard(self):
         if self.loop is None:
@@ -1059,7 +1281,7 @@ class App(AppType, metaclass=Singleton):
 
         # If the loop is running, offload the coroutine to a new thread.
         if self.loop.is_running():
-            result_future = concurrent.futures.Future()
+            result_future = Future()
 
             def run_in_new_loop():
                 new_loop = asyncio.new_event_loop()
@@ -1263,6 +1485,12 @@ class App(AppType, metaclass=Singleton):
                                         tb_run_function_with_state=tb_run_function_with_state,
                                         tb_run_with_specification=tb_run_with_specification,
                                         args_=args, kwargs_=kwargs).as_result()
+        if isinstance(res, ApiResult):
+            res = res.as_result()
+
+        if isinstance(res, Result) and res.bg_task is not None:
+            self.run_bg_task(res.bg_task)
+
         if self.debug:
             res.log(show_data=False)
         if not get_results and isinstance(res, Result):
@@ -1291,9 +1519,11 @@ class App(AppType, metaclass=Singleton):
                                                 tb_run_function_with_state=tb_run_function_with_state,
                                                 tb_run_with_specification=tb_run_with_specification,
                                                 args_=args, kwargs_=kwargs)
-
         if isinstance(res, ApiResult):
             res = res.as_result()
+
+        if isinstance(res, Result) and res.bg_task is not None:
+            self.run_bg_task(res.bg_task)
 
         if self.debug:
             res.log(show_data=False)
@@ -1301,6 +1531,12 @@ class App(AppType, metaclass=Singleton):
             return res.get()
 
         return res
+
+
+    def web_context(self):
+        if self._web_context is None:
+            self._web_context = open("./dist/helper.html", "r", encoding="utf-8").read()
+        return self._web_context
 
     def get_mod(self, name, spec='app') -> ModuleType or MainToolType:
         if spec != "app":

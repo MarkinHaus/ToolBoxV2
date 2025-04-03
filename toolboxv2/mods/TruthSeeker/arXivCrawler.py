@@ -291,11 +291,14 @@ class ArXivPDFProcessor:
         semaphore = asyncio.Semaphore(self.num_workers)
 
         async def process_query(i: int, query: str) -> List[Paper]:
+            self.send_status(f"Starting process_query {i}")
             async with semaphore:
+                self.send_status(f"in process_query semaphore{i}")
                 # --- Phase 1: Searching ---
                 # Wrap blocking search in asyncio.to_thread
                 papers = await asyncio.to_thread(search_papers, query, self.nsrpq)
                 with lock:
+                    self.send_status(f"in lock semaphore{i}")
                     self.all_ref_papers += len(papers)
                 # Mark search phase as 30% complete for this query.
                 self._query_progress[i] = 0.3
@@ -362,7 +365,7 @@ class ArXivPDFProcessor:
         # Launch all queries concurrently.
         tasks = [asyncio.create_task(process_query(i, query)) for i, query in enumerate(queries)]
         # Wait for all tasks to complete.
-        results = await asyncio.gather(*tasks, return_exceptions=False)
+        results = await asyncio.gather(*tasks)# , return_exceptions=False)
         # Flatten the list of lists of papers.
         for res in results:
             all_papers.extend(res)

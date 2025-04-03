@@ -15,7 +15,7 @@
         }
 
         .endpoint-title {
-            color: #2c3e50;
+            color: var(--text-color);
             font-size: 1.2rem;
             margin-bottom: 10px;
         }
@@ -26,7 +26,7 @@
         }
 
         .section-title {
-            color: #2c3e50;
+            color: var(--text-color);
             margin: 20px 0;
         }
 
@@ -38,11 +38,6 @@
     </style>
 
     <div class="main-content frosted-glass">
-        <h1>Welcome to Simple</h1>
-        <p>Simple website offers the best services for your need. Join us today and experience the difference.</p>
-        <button onclick="window.location='/web/login'">Login</button>
-        <hr/>
-
         <h2 class="section-title">Available Apps</h2>
         <div id="endpoints-container">
             <div class="loading">Loading Apps...</div>
@@ -69,7 +64,7 @@
         function createEndpointCard(endpoint) {
             const card = document.createElement('div');
             card.className = 'endpoint-card';
-            card.onclick = () => window.location.href = endpoint.path;
+            card.onclick = () => window.TBf.router(endpoint.path);
 
             const title = document.createElement('div');
             title.className = 'endpoint-title';

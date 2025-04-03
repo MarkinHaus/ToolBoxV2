@@ -43,8 +43,9 @@ class AppManager(metaclass=Singleton):
 
         # Set up signal handlers for graceful shutdown
         try:
-            signal.signal(signal.SIGINT, self.signal_handler)
-            signal.signal(signal.SIGTERM, self.signal_handler)
+            if threading.current_thread() is threading.main_thread():
+                signal.signal(signal.SIGINT, self.signal_handler)
+                signal.signal(signal.SIGTERM, self.signal_handler)
         except Exception:
             pass
 

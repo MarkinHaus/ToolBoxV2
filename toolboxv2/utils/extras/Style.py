@@ -9,6 +9,8 @@ import itertools
 import sys
 import threading
 
+from ..singelton_class import Singleton
+
 
 def stram_print(text):
     min_typing_speed, max_typing_speed = 0.0009, 0.0005
@@ -440,7 +442,7 @@ import threading
 import signal
 import itertools
 
-class SpinnerManager:
+class SpinnerManager(metaclass=Singleton):
     """
     Manages multiple spinners to ensure tqdm-like line rendering.
     Automatically captures SIGINT (Ctrl+C) to stop all spinners.

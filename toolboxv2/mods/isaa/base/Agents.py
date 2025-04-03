@@ -22,7 +22,6 @@ from langchain_community.llms import HuggingFaceHub
 from litellm.utils import trim_messages, get_max_tokens
 
 from litellm import BudgetManager, batch_completion, acompletion
-from phonemizer.utils import chunks
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
@@ -405,6 +404,9 @@ class TaskStack:
     def emtpy(self):
         return len(self.tasks) == 0
 
+    def __len__(self):
+        return len(self.tasks)
+
 
 # Define AgentState Enum
 class AgentState(Enum):
@@ -429,6 +431,8 @@ class StFilter(metaclass=Singleton):
 @dataclass
 class Agent:
     amd: AgentModelData = field(default_factory=AgentModelData)
+
+    main_run_model : Optional[str] = None
 
     stream: bool = field(default=False)
     messages: List[Dict[str, str]] = field(default_factory=list)
@@ -482,14 +486,14 @@ class Agent:
     if_for_fuction_use_overrides: bool = False
 
 
-    def show_word_model(self):
+    def show_world_model(self):
         if not self.world_model:
             return "balnk"
         return "Key <> Value\n" + "\n".join([f"{k} <> {v}" for k, v in self.world_model.items()])
 
     async def flow_world_model(self, query):
 
-        prompt = f"Determine if to change the current world model ##{self.show_word_model()}## basd on the new information :" + query
+        prompt = f"Determine if to change the current world model ##{self.show_world_model()}## basd on the new information :" + query
 
         class WorldModelAdaption(BaseModel):
             """world model adaption action['remove' or 'add' or 'change' or None] ;
@@ -501,7 +505,7 @@ class Agent:
 
         model_action = await self.a_format_class(WorldModelAdaption, prompt)
         self.print_verbose(str(model_action))
-        if model_action["action"] is None or model_action["key"] is None:
+        if model_action.get("action") is None or model_action.get("key") is None:
             return
 
         if ("remove" in model_action["action"] or "del" in model_action["action"]) and model_action["key"] in self.world_model:
@@ -599,7 +603,7 @@ class Agent:
 
         await update_progress()
         await self.flow_world_model(user_input)
-        message = [{"role": "system", "content": f"World Model(read only): {self.show_word_model()}"}]
+        message = [{"role": "system", "content": f"World Model(read only): {self.show_world_model()}"}]
 
         if chat_session is not None:
             history = " ==== CHAT HISTORY ===\n"+ "\n".join(f"{x['role'].upper()}: {x['content']}" for x in chat_session.get_past_x(self.max_history_length)) + " === HISTORY END ==="
@@ -647,30 +651,29 @@ class Agent:
             sub_tasks = self.format_class(TaskList, user_input)["sub_tasks"]
 
             self.print_verbose(f"Subtasks {len(sub_tasks)}")
-            st_d = '\n'.join([f'{i}) '+s["description"] + '\n' for i, s in enumerate(sub_tasks)])
+            st_d = '\n'.join([f'{i}) '+(s["description"] if isinstance(s, dict) else s)+ '\n' for i, s in enumerate(sub_tasks)])
             self.print_verbose(f"Subtasks\n {st_d}")
 
             if len(sub_tasks) > 1:
                 for subt in sub_tasks[1:][::-1]:
                     subt_ = Task(
                         id=str(uuid.uuid4())[:16],
-                        description=subt["description"],
-                        priority=subt["priority"],
-                        estimated_complexity=subt["estimated_complexity"],
-                        time_sensitivity=subt["time_sensitivity"],
+                        description=subt["description"] if isinstance(subt, dict) else subt,
+                        priority=subt["priority"] if isinstance(subt, dict) else 1,
+                        estimated_complexity=subt["estimated_complexity"] if isinstance(subt, dict) else 1,
+                        time_sensitivity=subt["time_sensitivity"] if isinstance(subt, dict) else 1,
                         created_at=datetime.now()
                     )
                     self.taskstack.add_task(subt_)
-
-            if len(sub_tasks) > 0 and sub_tasks[0]["description"] != "" and sub_tasks[
-                0]["description"] != "default description":
+            st = (sub_tasks[0]["description"] if isinstance(sub_tasks[0], dict) else sub_tasks[0])
+            if len(sub_tasks) > 0 and st != "" and st != "default description":
                 _sub_tasks = sub_tasks[0]
                 task = Task(
                     id=task.id,
-                    description=_sub_tasks["description"] + task.description if len(sub_tasks) == 1 else '',
-                    priority=_sub_tasks["priority"],
-                    estimated_complexity=_sub_tasks["estimated_complexity"],
-                    time_sensitivity=_sub_tasks["time_sensitivity"],
+                    description=st+ task.description if len(sub_tasks) == 1 else '',
+                    priority=_sub_tasks["priority"] if isinstance(sub_tasks[0], dict) else 1,
+                    estimated_complexity=_sub_tasks["estimated_complexity"] if isinstance(sub_tasks[0], dict) else 1,
+                    time_sensitivity=_sub_tasks["time_sensitivity"] if isinstance(sub_tasks[0], dict) else 1,
                     created_at=datetime.now()
                 )
 
@@ -702,6 +705,11 @@ class Agent:
         # Stage 3: Function execution
         await update_progress()
 
+        sto_model = None
+        if self.main_run_model is not None:
+            sto_model = self.amd.model
+            self.amd.model = self.main_run_model
+
         if with_functions is False:
             self.add_function_to_prompt = False
 
@@ -713,7 +721,7 @@ class Agent:
             iterations = max_iterations
             while out is None and iterations > 0:
                 iterations -= 1
-                out = self.run_model(llm_message=llm_message, persist_local=persist, persist_mem=persist_mem, **kwargs)
+                out = await self.a_run_model(llm_message=llm_message, persist_local=persist, persist_mem=persist_mem, **kwargs)
             await update_progress()
 
             await update_progress()
@@ -744,10 +752,22 @@ class Agent:
             await update_progress()
 
         else:
+            if sto_model is not None:
+                self.amd.model = sto_model
             raise ValueError(f"Could not {with_functions=} must be true or false")
 
+        if sto_model is not None:
+            self.amd.model = sto_model
         stage[0] = 1
         await update_progress(1)
+
+        if task.id not in self.status_dict:
+            task_status = TaskStatus(
+                task_id=task.id,
+                status="queued",
+                progress=0.0
+            )
+            self.status_dict[task.id] = task_status
 
         self.status_dict[task.id].status = "completed"
         self.status_dict[task.id].result = out

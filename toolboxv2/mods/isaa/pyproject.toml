@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "isaa"
+version = "0.1.4"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "starlette",
+    "litellm",
+    # "gpt4all",
+    "pebble",
+    "transformers",
+    # "inquirer",
+    "networkx",
+    "numpy",
+    "tiktoken",
+    "chromadb",
+    "openai",
+    "pyaudio",
+    "whisper",
+    "gtts",
+    #"playsound",
+    "pydub",
+    "websockets",
+    "keyboard",
+    "pyperclip",
+    "pygments",
+    "beautifulsoup4",
+    "duckduckgo_search",
+    "langchain",
+    "langchain_community",
+    "langchain_core",
+    "Pebble",
+    "Requests",
+    "torch",
+    "tqdm",
+    "utils",
+    "tokenizers",
+    "sentence-transformers",
+    "browser-use>=0.1.40",
+    "python-git>=2018.2.1",
+    "langchain-experimental>=0.3.4",
+    "rapidfuzz>=3.12.2",
+    "astor>=0.8.1",
+    "taichi>=1.7.3",
+    "nest-asyncio>=1.6.0",
+    "schedule>=1.2.2",
+    "python-levenshtein>=0.27.1",
+    "langchain-google-genai>=2.1.2",
+]

@@ -10,6 +10,7 @@ import asyncio
 from functools import wraps
 from platform import system, node
 
+from toolboxv2.utils.system.api import cli_api_runner
 # from sqlalchemy.testing.suite.test_reflection import metadata
 from yaml import safe_load
 
@@ -17,7 +18,7 @@ from toolboxv2.flows import flows_dict as flows_dict_func
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.system.conda_runner import conda_runner_main
 from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
-from toolboxv2.utils.system.main_tool import MainTool
+from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyproject
 from toolboxv2.utils.extras.Style import Style, Spinner
 from toolboxv2.utils.system.session import Session
 
@@ -284,6 +285,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Welcome to the ToolBox cli")
 
     parser.add_argument("conda", help="run conda commands for mor infos run tb conda -h", default=False,
+                        action='store_true')
+
+    parser.add_argument("api", help="run conda commands for mor infos run tb conda -h", default=False,
                         action='store_true')
 
     parser.add_argument("gui", help="start gui no args", default=False,
@@ -665,10 +669,7 @@ async def command_runner(tb_app, command, **kwargs):
 async def main():
     """Console script for toolboxv2."""
     tb_app, args = await setup_app()
-    with open(os.getenv('CONFIG_FILE', f'{os.path.abspath(__file__).replace("__main__.py", "")}toolbox.yaml'),
-              'r', encoding="utf8") as config_file:
-        _version = safe_load(config_file)
-        __version__ = _version.get('main', {}).get('version', '-.-.-')
+    __version__ = get_version_from_pyproject()
 
     abspath = os.path.dirname(os.path.abspath(__file__))
     info_folder = abspath + '\\.info\\'
@@ -928,6 +929,56 @@ def start_ipython_session(argv):
 
     shell = start_ipython(argv=None, config=config)
 
+import toml
+
+# Directory where subprojects are stored
+root_dir = 'toolboxv2/mods/'
+
+# Function to read dependencies from a 'requirements.txt' file
+def read_requirements(subproject_path):
+    req_file_path = os.path.join(subproject_path, 'requirements.txt')
+    if not os.path.exists(req_file_path):
+        print(f"No 'requirements.txt' found in {subproject_path}. Skipping...")
+        return []
+
+    with open(req_file_path, 'r') as req_file:
+        return [line.strip() for line in req_file.readlines() if line.strip()]
+
+# Function to generate pyproject.toml for a subproject
+def generate_pyproject(subproject_name, subproject_path, dependencies):
+    pyproject = {
+        "project": {
+            "name": subproject_name,
+            "version": "0.1.0",  # You can adjust the version based on your needs
+            "description": f"Subproject {subproject_name}",
+            "requires-python": ">=3.10",  # Set this based on the Python version your subproject uses
+            "dependencies": dependencies
+        }
+    }
+
+    # Path to save the generated pyproject.toml
+    pyproject_path = os.path.join(subproject_path, 'pyproject.toml')
+
+    with open(pyproject_path, 'w') as pyfile:
+        toml.dump(pyproject, pyfile)
+
+    print(f"Generated pyproject.toml for {subproject_name} at {pyproject_path}")
+
+# Main function to iterate over subprojects and generate their pyproject.toml
+def create_subproject_pyprojects():
+    for subproject_name in os.listdir(root_dir):
+        subproject_path = os.path.join(root_dir, subproject_name)
+
+        if os.path.isdir(subproject_path):  # Only process directories (subprojects)
+            print(f"Processing subproject: {subproject_name}")
+
+            # Read dependencies from the subproject's 'requirements.txt'
+            dependencies = read_requirements(subproject_path)
+
+            # Generate the pyproject.toml for this subproject
+            generate_pyproject(subproject_name, subproject_path, dependencies)
+
+
 
 def main_runner():
     sys.excepthook = sys.__excepthook__
@@ -937,6 +988,14 @@ def main_runner():
     elif len(sys.argv) >= 6 and sys.argv[5] == "conda":
         sys.argv[4:] = sys.argv[5:]
         sys.exit(conda_runner_main())
+    if len(sys.argv) >= 2 and sys.argv[1] == "api":
+        sys.argv[1:] = sys.argv[2:]
+        get_app()
+        sys.exit(cli_api_runner())
+    elif len(sys.argv) >= 6 and sys.argv[5] == "api":
+        sys.argv[4:] = sys.argv[5:]
+        get_app()
+        sys.exit(cli_api_runner())
     elif '--ipy' in sys.argv:
         argv = sys.argv[1:]
         sys.argv = sys.argv[:1]
@@ -948,8 +1007,29 @@ def main_runner():
         loop = asyncio.new_event_loop()
         loop.run_until_complete(main())
 
+import ctypes
+
+def get_real_python_executable():
+    try:
+        # Set the return type for the function call
+        ctypes.pythonapi.Py_GetProgramFullPath.restype = ctypes.c_char_p
+        exe_path = ctypes.pythonapi.Py_GetProgramFullPath()
+        print(exe_path)
+        if exe_path:
+            return exe_path.decode('utf-8')
+    except Exception as e:
+        # If anything goes wrong, fall back to sys.executable
+        print(f"Error detecting real executable: {e}")
+    return sys.executable
+
+
 def server_helper(instance_id:str="main", db_mode="RR"):
+    # real_exe = get_real_python_executable()
+    from pathlib import Path
+    sys.executable = str(Path(os.getenv("PYTHON_EXECUTABLE")))
+    print("Using Python executable env:", sys.executable)
     loop = asyncio.new_event_loop()
+    sys.argv.append('-l')
     app, _ = loop.run_until_complete(setup_app(instance_id))
     app.loop = loop
     db = get_app().get_mod("DB")

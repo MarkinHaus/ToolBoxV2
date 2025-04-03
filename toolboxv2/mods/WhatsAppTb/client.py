@@ -1723,7 +1723,7 @@ def runner(app, phone_number_id, to):
 
         last_result: Optional[Dict[str, Any]] = field(default=None) # opionl
 
-        def show_word_model(self):
+        def show_world_model(self):
             if not self.world_model:
                 return "balnk"
             return "Key <> Value\n" + "\n".join([f"{k} <> {v}" for k, v in self.world_model.items()])
@@ -1766,7 +1766,7 @@ def runner(app, phone_number_id, to):
 
         def format_class(self, format_class, task, re_try=4, gen=None):
            # tasks a BasModel Cass as input and a str string and retus a  full version for the model example :
-            prompt = f"Determen if to change the current world model ##{self.show_word_model()}## basd on the new informaiton :" + query
+            prompt = f"Determen if to change the current world model ##{self.show_world_model()}## basd on the new informaiton :" + query
 
             class WorldModelAdaption(BaseModel):
                 ""world model adaption action['remove' or 'add' or ' change' or None] ;

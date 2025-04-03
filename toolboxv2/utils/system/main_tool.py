@@ -13,6 +13,25 @@ except ImportError:
     CLOUDM_AUTHMANAGER = lambda: None
     CLOUDM_AUTHMANAGER.GET_USER_BY_NAME = ("CLOUDM_AUTHMANAGER", "GET_USER_BY_NAME".lower())
 
+def get_version_from_pyproject(pyproject_path='../pyproject.toml'):
+    """Reads the version from the pyproject.toml file."""
+    try:
+        import toml
+        # Load the pyproject.toml file
+        with open(pyproject_path, 'r') as file:
+            pyproject_data = toml.load(file)
+
+        # Extract the version from the 'project' section
+        version = pyproject_data.get('project', {}).get('version')
+
+        if version is None:
+            raise ValueError(f"Version not found in {pyproject_path}")
+
+        return version
+    except Exception as e:
+        print(f"Error reading version: {e}")
+        return "0.0.0"
+
 
 class MainTool:
     toolID: str = ""

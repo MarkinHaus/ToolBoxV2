@@ -7,7 +7,6 @@ import tempfile
 import textwrap
 import time
 
-import git
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
 
@@ -21,7 +20,7 @@ from inspect import getdoc, signature, isfunction, ismethod, currentframe, Signa
 from collections import Counter, defaultdict
 from typing import Optional, Dict, Any, List, Union, Type, Tuple
 from copy import deepcopy
-import re
+
 
 import importlib
 import subprocess
@@ -609,164 +608,6 @@ class VirtualFileSystem:
         return s
 
 
-class EnhancedVirtualFileSystem:
-    def __init__(self, base_path: Optional[str] = None):
-        """
-        Enhanced Virtual File System with Git integration
-
-        Args:
-            base_path (Optional[str]): Base directory for file operations
-        """
-        self.base_path = Path(base_path or os.getcwd()).absolute()
-        self.repo = None
-        self.logger = get_logger()
-        self._ensure_directory_exists()
-
-    def _ensure_directory_exists(self):
-        """Ensure base path directory exists"""
-        try:
-            self.base_path.mkdir(parents=True, exist_ok=True)
-            self.logger.info(f"Ensured directory exists: {self.base_path}")
-        except Exception as e:
-            self.logger.error(f"Failed to create directory: {e}")
-            raise
-
-    def init_git_repo(self, remote_url: Optional[str] = None) -> bool:
-        """
-        Initialize a git repository locally or clone from remote
-
-        Args:
-            remote_url (Optional[str]): Remote repository URL
-
-        Returns:
-            bool: True if repository is successfully initialized/cloned
-        """
-        try:
-            if remote_url:
-                # Clone remote repository
-                self.repo = git.Repo.clone_from(remote_url, self.base_path)
-                self.logger.info(f"Cloned repository from {remote_url}")
-            else:
-                # Initialize local repository
-                self.repo = git.Repo.init(self.base_path)
-                self.logger.info("Initialized local git repository")
-
-            return True
-        except Exception as e:
-            self.logger.error(f"Git repository initialization failed: {e}")
-            return False
-
-    def commit_changes(self, message: str, force: bool = False) -> bool:
-        """
-        Commit changes to the repository
-
-        Args:
-            message (str): Commit message
-            force (bool): Force commit even with unstaged changes
-
-        Returns:
-            bool: True if commit is successful
-        """
-        if not self.repo:
-            self.logger.warning("Git repository not initialized")
-            return False
-
-        try:
-            # Stage all changes
-            self.repo.git.add(A=True)
-
-            # Optional force commit
-            if force:
-                self.repo.git.add(update=True)
-
-            # Commit changes
-            self.repo.index.commit(message)
-            self.logger.info(f"Changes committed: {message}")
-            return True
-        except Exception as e:
-            self.logger.error(f"Commit failed: {e}")
-            return False
-
-    def pull_changes(self, remote: str = 'origin', branch: str = 'main') -> bool:
-        """
-        Pull changes from remote repository
-
-        Args:
-            remote (str): Remote name
-            branch (str): Branch to pull
-
-        Returns:
-            bool: True if pull is successful
-        """
-        if not self.repo:
-            self.logger.warning("Git repository not initialized")
-            return False
-
-        try:
-            self.repo.remotes[remote].pull(branch)
-            self.logger.info(f"Pulled changes from {remote}/{branch}")
-            return True
-        except Exception as e:
-            self.logger.error(f"Pull failed: {e}")
-            return False
-
-    def push_changes(self, remote: str = 'origin', branch: str = 'main') -> bool:
-        """
-        Push changes to remote repository
-
-        Args:
-            remote (str): Remote name
-            branch (str): Branch to push
-
-        Returns:
-            bool: True if push is successful
-        """
-        if not self.repo:
-            self.logger.warning("Git repository not initialized")
-            return False
-
-        try:
-            self.repo.remotes[remote].push(branch)
-            self.logger.info(f"Pushed changes to {remote}/{branch}")
-            return True
-        except Exception as e:
-            self.logger.error(f"Push failed: {e}")
-            return False
-
-    def get_repository_status(self) -> Dict[str, Any]:
-        """
-        Get comprehensive repository status
-
-        Returns:
-            Dict[str, Any]: Repository status details
-        """
-        if not self.repo:
-            return {"error": "Repository not initialized"}
-
-        status = {
-            "is_dirty": self.repo.is_dirty(),
-            "untracked_files": self.repo.untracked_files,
-            "current_branch": self.repo.active_branch.name,
-            "commits_ahead": len(list(self.repo.iter_commits())),
-        }
-        return status
-
-    def create_snapshot(self, snapshot_name: str) -> bool:
-        """
-        Create a snapshot/checkpoint of current state
-
-        Args:
-            snapshot_name (str): Name of the snapshot
-
-        Returns:
-            bool: True if snapshot created successfully
-        """
-        try:
-            self.commit_changes(f"Snapshot: {snapshot_name}", force=True)
-            return True
-        except Exception as e:
-            self.logger.error(f"Snapshot creation failed: {e}")
-            return False
 
 
 from contextlib import redirect_stdout, redirect_stderr, contextmanager
@@ -950,10 +791,8 @@ class MockIPython:
         """Create virtual environment if it doesn't exist"""
         if not self._venv_path.exists():
             try:
-                import venv
-                builder = venv.EnvBuilder(with_pip=True)
-                builder.create(self._venv_path)
-            except Exception as e:
+                subprocess.run([sys.executable, "-m", "venv", str(self._venv_path)], check=True)
+            except subprocess.CalledProcessError as e:
                 raise RuntimeError(f"Failed to create virtual environment: {str(e)}")
 
     def _virtual_open(self, filepath, mode='r', *args, **kwargs):
@@ -986,8 +825,6 @@ class MockIPython:
             '__name__': '__main__',
             '__builtins__': __builtins__,
             'toolboxv2': toolboxv2,
-            # 'git': EnhancedVirtualFileSystem(str(self.vfs.base_dir / 'src')),
-            # 'git_files': VirtualFileSystem(self.vfs.base_dir / 'src'),
             '__file__': None,
             '__path__': [str(self.vfs.current_dir)],
             'auto_install': auto_install,
@@ -1349,7 +1186,7 @@ class MockIPython:
                                 for method in node.body:
                                     if isinstance(method, ast.FunctionDef) and method.name == method_name:
                                         # Find the method in the source code
-                                        method_pattern = f"def {method_name}.*?:(.*?)(?=\n    \w|\n\w|\Z)"
+                                        method_pattern = fr"def {method_name}.*?:(.*?)(?=\n    \w|\n\w|\Z)"
                                         method_match = re.search(method_pattern, original_content, re.DOTALL)
 
                                         if method_match:
@@ -1367,7 +1204,7 @@ class MockIPython:
                     if code.startswith('"""') and code.endswith('"""'):
                         # Handle function updates
                         func_code = code.strip('"""')
-                        func_pattern = f"def {clean_object_name}.*?:(.*?)(?=\n\w|\Z)"
+                        func_pattern = fr"def {clean_object_name}.*?:(.*?)(?=\n\w|\Z)"
                         func_match = re.search(func_pattern, original_content, re.DOTALL)
 
                         if func_match:
@@ -1381,7 +1218,7 @@ class MockIPython:
                             result_message.append(f"Updated function '{clean_object_name}' in file '{file}'")
                     else:
                         # Handle variable updates
-                        var_pattern = f"{clean_object_name}\s*=.*"
+                        var_pattern = fr"{clean_object_name}\s*=.*"
                         var_replacement = f"{clean_object_name} = {code}"
                         updated_content = re.sub(var_pattern, var_replacement, original_content)
 
@@ -1631,8 +1468,631 @@ Execution:
             else:
                 return "No Rust files found in the project."
 
-# Usage in run_project function:
-# execute_function = default_rust_execute_function
+
+from browser_use import Agent as BrowserAgent, Browser, BrowserConfig
+from browser_use.browser.context import BrowserContextConfig
+from langchain_community.chat_models import ChatLiteLLM
+import asyncio
+import os
+import json
+from typing import Optional, Dict, Any, List, Union
+
+
+class WebContentParser:
+    """
+    Parser for extracting content from web pages in various formats.
+
+    Provides methods to extract content as markdown, plain text,
+    structured data, and take screenshots with scrolling support.
+    """
+
+    def __init__(self, browser_wrapper):
+        """Initialize the parser with a browser wrapper instance"""
+        self.browser = browser_wrapper
+
+    async def to_markdown(self, page=None, selector="main, article, #content, .content, body",
+                          include_images=True):
+        """
+        Convert webpage content to markdown format
+
+        Args:
+            page: The page to parse (uses current page if None)
+            selector: CSS selector for the content to extract
+            include_images: Whether to include image references
+
+        Returns:
+            str: Markdown content
+        """
+        return await self.browser.extract_markdown(page, selector, include_images)
+
+    async def to_text(self, page=None, selector="body"):
+        """Extract plain text from webpage"""
+        return await self.browser.extract_text(page, selector)
+
+    async def to_structured(self, page=None, config=None):
+        """Extract structured data from webpage using selector configuration"""
+        return await self.browser.extract_structured_content(page, config)
+
+    async def to_screenshot(self, page=None, full_page=True, path=None,
+                            initial_delay=1000, scroll_delay=500, format='png'):
+        """
+        Take a screenshot with scrolling functionality
+
+        Args:
+            page: The page to screenshot
+            full_page: Whether to capture the full page
+            path: Path to save the screenshot
+            initial_delay: Delay in ms before starting screenshot
+            scroll_delay: Delay in ms between scrolls
+            format: Image format ('png' or 'jpeg')
+        """
+        return await self.browser.take_scrolling_screenshot(
+            page, full_page, path, initial_delay, scroll_delay, format
+        )
+
+    async def extract_all(self, page=None, selector="body", include_images=True,
+                          screenshot=True, screenshot_path=None):
+        """Extract all content types (markdown, text, structured data, screenshot)"""
+        result = {
+            'markdown': await self.to_markdown(page, selector, include_images),
+            'text': await self.to_text(page, selector),
+            'structured': await self.to_structured(page)
+        }
+
+        if screenshot:
+            result['screenshot'] = await self.to_screenshot(
+                page, path=screenshot_path, initial_delay=1000
+            )
+
+        return result
+
+class BrowserWrapper:
+    """
+    A wrapper for browser agent functionality that allows seamless interaction with web browsers.
+
+    This class provides a system-agnostic interface to control browsers through the browser_use
+    library, supporting both local and remote browser connections.
+
+    Attributes:
+        browser: The Browser instance for web automation
+        agent: The BrowserAgent instance for intelligent browsing
+        is_initialized (bool): Whether the browser has been initialized
+        config (Dict): Configuration for the browser
+        remote_url (Optional[str]): URL for remote browser connection if applicable
+    """
+
+    def __init__(self,
+                 llm: Any = None,
+                 headless: bool = False,
+                 chrome_path: Optional[str] = None,
+                 remote_url: Optional[str] = None,
+                 api_key: Optional[str]=None,
+                 config: Optional[Dict[str, Any]] = None):
+        """
+        Initialize the browser wrapper.
+
+        Args:
+            llm: Language model to use for the browser agent
+            headless: Whether to run the browser in headless mode
+            chrome_path: Path to local Chrome executable
+            remote_url: URL for remote browser connection (wss or cdp)
+            config: Additional browser configuration
+        """
+        self.is_initialized = False
+        self.agent = None
+        self.browser = None
+        self.context = None
+        from pydantic import SecretStr
+        import os
+        pars = lambda x: x.split('/')[-1] if '/' in x else x
+        if llm is None:
+            llm = 'google/gemini-2.0-flash-exp'
+        if not isinstance(llm, str):
+            llm = llm
+        elif 'deepseek' in llm:
+            from langchain_openai import ChatOpenAI
+            llm = ChatOpenAI(base_url='https://api.deepseek.com/v1', model=pars(llm), api_key=SecretStr(api_key or os.getenv('DEEPSEEK_API_KEY')))
+        elif 'google' in llm:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            llm = ChatGoogleGenerativeAI(model=pars(llm), api_key=SecretStr(api_key or os.getenv('GEMINI_API_KEY')))
+        elif 'claude' in llm:
+            from langchain_anthropic import ChatAnthropic
+            llm = ChatAnthropic(
+                model_name=pars(llm),
+                temperature=0.0,
+                timeout=400,  # Increase for complex tasks
+                api_key=SecretStr(api_key or os.getenv('ANTHROPIC_API_KEY')))
+        elif isinstance(llm, str):
+            from langchain_openai import ChatOpenAI
+            llm = ChatOpenAI(
+                model=pars(llm),
+                temperature=0.0,api_key=SecretStr(api_key or os.getenv('OPENAI_API_KEY'))
+            )
+
+
+
+        self.llm = ChatLiteLLM(model=llm) if isinstance(llm,str) else llm
+        self.parser = None
+
+        browser_config = {
+            'headless': headless,
+            'disable_security': True
+        }
+
+        if config:
+            browser_config.update(config)
+
+        self.config = browser_config
+
+        # Set up remote connection if specified
+        if remote_url:
+            if remote_url.startswith('wss://'):
+                self.config['wss_url'] = remote_url
+            elif remote_url.startswith('http'):
+                self.config['cdp_url'] = remote_url
+            self.remote_url = remote_url
+        else:
+            self.remote_url = None
+
+        # Set up local Chrome path if specified
+        if not headless and remote_url is None and chrome_path is None:
+            import os
+            import platform
+
+            def get_chrome_path():
+                """
+                Returns the correct path to the Chrome executable based on the OS.
+                If Chrome is not found, returns None.
+                """
+                chrome_paths = {
+                    "Darwin": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",  # macOS
+                    "Windows": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",  # Windows
+                    "Linux": "/usr/bin/google-chrome"  # Linux
+                }
+
+                system = platform.system()
+                chrome_path_ = chrome_paths.get(system)
+
+                if chrome_path_ and os.path.isfile(chrome_path_):
+                    return chrome_path_
+
+                return None
+
+            chrome_path = get_chrome_path()
+        if chrome_path:
+            self.config['chrome_instance_path'] = chrome_path
+
+
+    async def initialize(self):
+        """Initialize the browser and context"""
+        if self.is_initialized:
+            return
+
+        try:
+            # Create browser instance
+            self.browser = Browser(
+                config=BrowserConfig(**self.config)
+            )
+
+            # Create context configuration with better settings for scraping
+            context_config = BrowserContextConfig(
+                wait_for_network_idle_page_load_time=3.0,
+                highlight_elements=True,
+                viewport_expansion=500,
+                wait_between_actions=0.5  # Add a small delay between actions
+            )
+
+            # Initialize context
+            self.context = await self.browser.new_context(config=context_config)
+
+            # Create an initial page
+            browser_state = await self.context.get_state()
+            if not browser_state or not browser_state.tabs:
+                # If no tabs exist, create a new page
+                playwright_browser = await self.browser.get_playwright_browser()
+                browser_context = await self.context.get_playwright_context()
+                self.page = await browser_context.new_page()
+            else:
+                # Use the existing active tab
+                self.page = await self.context.get_current_page()
+
+            self.is_initialized = True
+
+        except Exception as e:
+            # Clean up resources in case of initialization error
+            if self.context:
+                await self.context.close()
+            if self.browser:
+                await self.browser.close()
+            raise Exception(f"Failed to initialize browser: {str(e)}")
+
+    async def create_agent(self, task: str, initial_actions=None):
+        """Create a browser agent with the specified task"""
+        #if not self.is_initialized:
+        #    await self.initialize()
+
+        self.agent = BrowserAgent(
+            task=task,
+            llm=self.llm,
+            #browser_context=self.context,
+            initial_actions=initial_actions,
+            #browser=self.browser,
+        )
+        return self.agent
+
+    async def run(self, task: str):
+        """Run the browser agent with the specified task"""
+        agent = await self.create_agent(task)
+        result = await agent.run()
+        return result
+
+    async def navigate(self, url: str):
+        """Navigate to a URL"""
+        if not self.is_initialized:
+            await self.initialize()
+
+        # Get the current active page or create a new one if needed
+        try:
+            page = await self.context.get_current_page()
+            if not page:
+                browser_context = await self.context.get_playwright_context()
+                page = await browser_context.new_page()
+
+            # Navigate to the URL
+            await page.goto(url)
+            self.page = page
+            return page
+        except Exception as e:
+            raise Exception(f"Failed to navigate to {url}: {str(e)}")
+
+    async def get_tabs(self):
+        """Get all open tabs/pages"""
+        if not self.is_initialized:
+            await self.initialize()
+
+        browser_state = await self.context.get_state()
+        return browser_state.tabs if browser_state else []
+
+    async def switch_to_tab(self, tab_index: int):
+        """Switch to a specific tab by index"""
+        if not self.is_initialized:
+            await self.initialize()
+
+        browser_state = await self.context.get_state()
+        if not browser_state or not browser_state.tabs or tab_index >= len(browser_state.tabs):
+            raise ValueError(f"Tab index {tab_index} is out of range")
+
+        tab_id = browser_state.tabs[tab_index].id
+        await self.context.switch_to_tab(tab_id)
+        self.page = await self.context.get_current_page()
+        return self.page
+
+    async def create_new_tab(self):
+        """Create a new tab/page"""
+        if not self.is_initialized:
+            await self.initialize()
+
+        browser_context = await self.context.get_playwright_context()
+        new_page = await browser_context.new_page()
+        self.page = new_page
+        return new_page
+
+    async def close_current_tab(self):
+        """Close the current tab/page"""
+        if not self.is_initialized:
+            return
+
+        page = await self.context.get_current_page()
+        if page:
+            await page.close()
+
+        # Update the current page reference
+        browser_state = await self.context.get_state()
+        if browser_state and browser_state.tabs:
+            await self.switch_to_tab(0)
+
+    async def execute_js(self, code: str, page=None):
+        """Execute JavaScript code in the browser context"""
+        if not self.is_initialized:
+            await self.initialize()
+
+        if page is None:
+            pages = await self.context.pages()
+            if not pages:
+                page = await self.context.new_page()
+            else:
+                page = pages[0]
+
+        result = await page.evaluate(code)
+        return result
+
+    async def save_context(self):
+        """Save browser context state"""
+        if not self.is_initialized:
+            return None
+
+        return await self.browser.export_context(self.context)
+
+    async def restore_context(self, context_data):
+        """Restore browser context from saved state"""
+        if not self.is_initialized:
+            await self.initialize()
+
+        await self.browser.import_context(context_data)
+
+    async def close(self):
+        """Close the browser"""
+        if self.is_initialized and self.browser:
+            await self.browser.close()
+            self.is_initialized = False
+
+    # Add these methods to the BrowserWrapper class
+
+    def get_parser(self):
+        """Get a content parser for the browser"""
+        if self.parser is None:
+            self.parser = WebContentParser(self)
+        return self.parser
+
+    async def extract_markdown(self, page=None, selector="body", include_images=True):
+        """
+        Extract content from a webpage and convert it to markdown.
+        """
+        if not self.is_initialized:
+            await self.initialize()
+
+        if page is None:
+            pages = await self.context.pages()
+            if not pages:
+                page = await self.context.new_page()
+            else:
+                page = pages[0]
+
+        # JavaScript to convert HTML to markdown
+        script = """
+        (selector, includeImages) => {
+            const element = document.querySelector(selector);
+            if (!element) return '';
+
+            // Simple HTML to Markdown conversion function
+            const htmlToMarkdown = (node) => {
+                let result = '';
+
+                // Process text nodes
+                if (node.nodeType === Node.TEXT_NODE) {
+                    return node.textContent;
+                }
+
+                // Process element nodes
+                if (node.nodeType === Node.ELEMENT_NODE) {
+                    const tagName = node.tagName.toLowerCase();
+
+                    // Process by tag type
+                    switch(tagName) {
+                        case 'h1': return '# ' + getInnerText(node) + '\\n\\n';
+                        case 'h2': return '## ' + getInnerText(node) + '\\n\\n';
+                        case 'h3': return '### ' + getInnerText(node) + '\\n\\n';
+                        case 'h4': return '#### ' + getInnerText(node) + '\\n\\n';
+                        case 'h5': return '##### ' + getInnerText(node) + '\\n\\n';
+                        case 'h6': return '###### ' + getInnerText(node) + '\\n\\n';
+                        case 'p': return getInnerText(node) + '\\n\\n';
+                        case 'br': return '\\n';
+                        case 'hr': return '---\\n\\n';
+                        case 'b':
+                        case 'strong': return '**' + getInnerText(node) + '**';
+                        case 'i':
+                        case 'em': return '*' + getInnerText(node) + '*';
+                        case 'a': {
+                            const href = node.getAttribute('href');
+                            return '[' + getInnerText(node) + '](' + href + ')';
+                        }
+                        case 'img': {
+                            if (!includeImages) return '';
+                            const src = node.getAttribute('src');
+                            const alt = node.getAttribute('alt') || 'image';
+                            return '![' + alt + '](' + src + ')\\n\\n';
+                        }
+                        case 'code':
+                        case 'pre': return '`' + getInnerText(node) + '`';
+                        case 'ul': {
+                            let listResult = '\\n';
+                            Array.from(node.children).forEach(li => {
+                                if (li.tagName.toLowerCase() === 'li') {
+                                    listResult += '- ' + getInnerText(li) + '\\n';
+                                }
+                            });
+                            return listResult + '\\n';
+                        }
+                        case 'ol': {
+                            let listResult = '\\n';
+                            Array.from(node.children).forEach((li, index) => {
+                                if (li.tagName.toLowerCase() === 'li') {
+                                    listResult += (index + 1) + '. ' + getInnerText(li) + '\\n';
+                                }
+                            });
+                            return listResult + '\\n';
+                        }
+                        case 'blockquote': return '> ' + getInnerText(node) + '\\n\\n';
+                        default: {
+                            // Process child nodes for other elements
+                            for (const child of node.childNodes) {
+                                result += htmlToMarkdown(child);
+                            }
+                            return result;
+                        }
+                    }
+                }
+
+                return '';
+            };
+
+            // Helper function to get inner text with special handling
+            const getInnerText = (node) => {
+                let text = '';
+                for (const child of node.childNodes) {
+                    text += htmlToMarkdown(child);
+                }
+                return text;
+            };
+
+            return htmlToMarkdown(element);
+        }
+        """
+
+        try:
+            # Try to convert to markdown using our script
+            markdown = await page.evaluate(script, selector, include_images)
+
+            # Add a title if we have one
+            title = await page.title()
+            if title and not markdown.startswith("# "):
+                markdown = f"# {title}\n\n{markdown}"
+
+            return markdown
+        except Exception as e:
+            # Fallback to basic extraction if script fails
+            content = await self.extract_text(page, selector)
+            title = await page.title()
+            return f"# {title}\n\n{content}"
+
+    async def take_scrolling_screenshot(self, page=None, full_page=True, path=None,
+                                        initial_delay=1000, scroll_delay=500, format='png'):
+        """
+        Take a screenshot with scrolling functionality and delay.
+        """
+        if not self.is_initialized:
+            await self.initialize()
+
+        if page is None:
+            pages = await self.context.pages()
+            if not pages:
+                page = await self.context.new_page()
+            else:
+                page = pages[0]
+
+        # Wait for the initial delay to let content load
+        if initial_delay > 0:
+            await page.wait_for_timeout(initial_delay)
+
+        if full_page and scroll_delay > 0:
+            # Get page dimensions
+            dimensions = await page.evaluate("""
+                () => {
+                    return {
+                        width: document.documentElement.scrollWidth,
+                        height: document.documentElement.scrollHeight,
+                        windowHeight: window.innerHeight
+                    }
+                }
+            """)
+
+            # Scroll down the page gradually to trigger lazy loading
+            current_position = 0
+            while current_position < dimensions['height']:
+                await page.evaluate(f"window.scrollTo(0, {current_position})")
+                await page.wait_for_timeout(scroll_delay)
+                current_position += dimensions['windowHeight'] // 2  # Scroll by half viewport
+
+        # Reset scroll position to top
+        await page.evaluate("window.scrollTo(0, 0)")
+
+        # Take the screenshot
+        screenshot_params = {
+            'full_page': full_page,
+            'type': format
+        }
+
+        if path:
+            screenshot_params['path'] = path
+
+        return await page.screenshot(**screenshot_params)
+
+    async def extract_text(self, page=None, selector="body"):
+        """
+        Extract plain text from a webpage.
+        """
+        if not self.is_initialized:
+            await self.initialize()
+
+        if page is None:
+            pages = await self.context.pages()
+            if not pages:
+                page = await self.context.new_page()
+            else:
+                page = pages[0]
+
+        text = await page.evaluate("""
+            (selector) => {
+                const element = document.querySelector(selector);
+                return element ? element.innerText : '';
+            }
+        """, selector)
+
+        return text
+
+    async def extract_structured_content(self, page=None, config=None):
+        """
+        Extract structured content from a webpage based on a configuration.
+        """
+        if not self.is_initialized:
+            await self.initialize()
+
+        if page is None:
+            pages = await self.context.pages()
+            if not pages:
+                page = await self.context.new_page()
+            else:
+                page = pages[0]
+
+        if not config:
+            # Default configuration if none provided
+            config = {
+                'title': 'h1',
+                'headings': 'h2, h3, h4, h5, h6',
+                'paragraphs': 'p',
+                'links': 'a',
+                'images': 'img'
+            }
+
+        result = {}
+
+        for key, selector in config.items():
+            if key == 'links':
+                # Extract links with their href and text
+                result[key] = await page.evaluate("""
+                    (selector) => {
+                        return Array.from(document.querySelectorAll(selector))
+                            .map(el => ({
+                                text: el.innerText.trim(),
+                                href: el.href
+                            }))
+                            .filter(item => item.text && item.href);
+                    }
+                """, selector)
+            elif key == 'images':
+                # Extract images with their src and alt
+                result[key] = await page.evaluate("""
+                    (selector) => {
+                        return Array.from(document.querySelectorAll(selector))
+                            .map(el => ({
+                                src: el.src,
+                                alt: el.alt || ''
+                            }))
+                            .filter(item => item.src);
+                    }
+                """, selector)
+            else:
+                # Extract text content for other elements
+                result[key] = await page.evaluate("""
+                    (selector) => {
+                        return Array.from(document.querySelectorAll(selector))
+                            .map(el => el.innerText.trim())
+                            .filter(text => text);
+                    }
+                """, selector)
+
+        return result
+
 
 class Pipeline:
     """
@@ -1681,9 +2141,10 @@ class Pipeline:
         restore: Optional[bool] = None,
         max_think_after_think = None,
         print_f=None,
-        web_js=True,
+        web_js=False,
         timeout_timer=25,
         v_agent=None,
+        web_llm=None,
     ):
         """
         Initialize the Pipeline.
@@ -1706,13 +2167,14 @@ class Pipeline:
         # self.agent.verbose = verbose
         self.task = None
         self.web_js = web_js
-        self.verbose_output = EnhancedVerboseOutput(verbose=verbose, print_f=print_f)
+        self.print_f = print_f
+        self.verbose_output = EnhancedVerboseOutput(verbose=verbose, print_f=self.print_f)
         self.variables = self._process_variables(variables or {})
         self.variables['auto_install'] = auto_install
         self.execution_history = []
         self.session_name = None
 
-        self.browser_session: Optional[BrowserSession] = BrowserSession(verbose)
+        self.browser_session: Optional[BrowserWrapper] = BrowserWrapper(llm=web_llm or agent.amd.model)
         self.js_history: List[JSExecutionRecord] = []
 
         self._session_dir = Path(get_app().appdata) / 'ChatSession' / agent.amd.name
@@ -1722,25 +2184,15 @@ class Pipeline:
 
         # Initialize interpreter with variables
         self.init_keys = list(self.ipython.user_ns.keys()).copy()
+        if self.web_js:
+            self.variables['web_actions'] = self.browser_session.run
+            self.variables['browser_session'] = self.browser_session
         self.ipython.user_ns.update(self.variables)
 
         self.restore_var = restore
 
         if restore:
             self.restore()
-
-    async def start_web(self):
-        """Initialize pipeline including browser session"""
-        await self.browser_session.initialize()
-        # Set default timeout
-        self.browser_session.page.set_default_timeout(30000)  # 30 seconds
-        # Enable JavaScript
-        await self.browser_session.context.add_init_script("""
-            window.onError = function(message, source, lineno, colno, error) {
-                console.error('JavaScript Error:', error);
-                return false;
-            };
-        """)
 
     def on_exit(self):
         self.chat_session.on_exit()
@@ -1754,14 +2206,6 @@ class Pipeline:
         """Save current session"""
         self.session_name = name
         self.ipython.save_session(name)
-
-    async def save_web(self, name:str="main"):
-        context = await self.browser_session.get_context_state()
-        self.ipython.vfs.write_file(f"browser/context_{name}.json", json.dumps(asdict(context)))
-
-    async def restore_web(self, name:str="main"):
-        context = self.ipython.vfs.read_file(f"browser/context_{name}.json")
-        await self.browser_session.restore_context(BrowserContext(**json.loads(context)))
 
     def load_session(self, name: str):
         """Load saved session"""
@@ -2100,53 +2544,37 @@ class Pipeline:
         try:
             # Prepare execution context
             url = context.get('url')
+            page = None
+            result = None
+            page_state = {}
+
+            extracted_data = None
             if url:
-                await self.browser_session.page.goto(url, wait_until='networkidle')
+                page = await self.browser_session.navigate(url)
+                parser = self.browser_session.get_parser()
+                markdown = await parser.to_markdown(page)
 
-            self.ipython.vfs.write_file(f'src/temp_js/_temp_{len(self.js_history)}.js', code)
+                if 'patterns' in context:
+                    extracted_data = await parser.to_structured(page, context['patterns'])
 
-            # Modified JavaScript execution to use DOM methods instead of Playwright API
-            # Wrap the code in an async function for proper execution
-            if 'async' not in code and 'await' in code:
-                # If code contains await but isn't marked async, wrap it
-                code = f"async () => {{\n{code}\n}}"
+                page_state = {
+                    'url': page.url,
+                    'title': await page.title(),
+                    'content': markdown,
+                }
 
-            # await self.browser_session.page.screenshot(path=self._session / "..")
-            # Execute JavaScript
-            result = await self.browser_session.page.evaluate("""
-                    async () => {
-                        try {
-                            const result = await (async () => {
-                                %s
-                            })();
-                            return { success: true, result };
-                        } catch (error) {
-                            return {
-                                success: false,
-                                error: error.toString(),
-                                stack: error.stack
-                            };
-                        }
-                    }
-                    """ % code)
+            if code:
+                result = await self.browser_session.execute_js(code, page)
 
-            if isinstance(result, dict) and 'success' in result:
-                if not result['success']:
-                    raise Exception(f"JavaScript Error: {result.get('error')}\nStack: {result.get('stack')}")
-                result = result.get('result')
+                if isinstance(result, dict) and 'success' in result:
+                    if not result['success']:
+                        raise Exception(f"JavaScript Error: {result.get('error')}\nStack: {result.get('stack')}")
+                    result = result.get('result')
 
             # Capture page state after execution
-            page_state = {
-                'url': self.browser_session.page.url,
-                'title': await self.browser_session.page.title(),
-                'content': await self.browser_session.page.content(),
-            }
+
 
             # Extract data using patterns if specified
-            extracted_data = None
-            if 'patterns' in context:
-                extractor = Extractor(self.browser_session.page)
-                extracted_data = await extractor.extract(context['patterns'])
 
             # Create execution record
             record = JSExecutionRecord(
@@ -2410,92 +2838,9 @@ note : for the final result only toke information from the <execution_result>. i
 Ensure that your evaluation is thorough, constructive, and provides actionable insights for improving future task executions.
 Add guidance based on the the last execution result"""
         code_follow_up_prompt_ = [code_follow_up_prompt]
-        py_chane_prompt = '''2. 'update':
-    - For updating variables, functions, and methods in memory and optionally in files
-    - Required: code in content
-    - Required: object_name in context
-    - Optional: file in context for file updates
-    - Preserves method signatures and indentation
-    - Required structure: {
-         'context': {
-             'object_name': "Name of variable, function, or method to update",
-             'file': "Optional: Path to file to update (if none, updates only in memory)"
-         },
-         'content': 'New code, value, or implementation',
-         'action': 'update'
-    }
-
-    - Examples:
-
-        # 1. Update a variable in memory
-        {
-            'context': {
-                'object_name': "x"
-            },
-            'content': "5",
-            'action': 'update'
-        }
-
-        # 2. Change a method implementation
-        {
-            'context': {
-                'object_name': "Dog.sound",
-                'file': "animals.py"  # Optional: updates both in memory and file
-            },
-            'content': '"""def sound(self):\n        return "Woof""""',
-            'action': 'update'
-        }
-
-        # 3. Modify a function with memory-only update
-        {
-            'context': {
-                'object_name': "calculate_age"
-            },
-            'content': '"""def calculate_age():\n    return 25"""',
-            'action': 'update'
-        }
-
-        # 4. Update class method with file persistence
-        {
-            'context': {
-                'object_name': "User.__init__",
-                'file': "models.py"
-            },
-            'content': '"""def __init__(self, name="Default"):\n        self.name = name\n        self.created_at = datetime.now()"""',
-            'action': 'update'
-        }
-
-        # 5. Update global configuration variable
-        {
-            'context': {
-                'object_name': "MAX_CONNECTIONS",
-                'file': "config.py"
-            },
-            'content': "100",
-            'action': 'update'
-        }
-
-        # 6. Modify class property
-        {
-            'context': {
-                'object_name': "Product.price"
-            },
-            'content': "@property\ndef price(self):\n    return self._price * (1 + self.tax_rate)",
-            'action': 'update'
-        }
-
-        # 7. Update function with complex logic
-        {
-            'context': {
-                'object_name': "process_data",
-                'file': "utils.py"
-            },
-            'content': '"""def process_data(data):\n    result = {}\n    for key, value in data.items():\n        result[key.lower()] = value.upper()\n    return result"""',
-            'action': 'update'
-        }'''
         py_chane_prompt = ""
         initial_prompt = f"""
-You are an AI {'js running (in playwright browser)' if self.web_js else 'py'} coding agent specializing in iterative development and code refinement, designed to perform tasks that involve thinking. Your goal is to complete the given task while demonstrating a clear thought process throughout the execution.
+You are an AI py coding agent specializing in iterative development and code refinement, designed to perform tasks that involve thinking. Your goal is to complete the given task while demonstrating a clear thought process throughout the execution.
 SYSTEM STATE:
 <current_state>
 Iteration: #ITER#
@@ -2554,23 +2899,20 @@ ACTIONS:
     - MUST check <global_variables> first
     - NEVER create demo functions
     - Include 'reason'
-    - lang default {'py - js' if self.web_js else 'py'}
+    - lang default 'py'
     - Required: code in content
     - code MUST call a function or display the row variabel / value at the end!
-    - Required: {{'context':{{'lang':{'js' if self.web_js else 'py'},  'reason': ... }}...}}
-    - Optional file key in context example {{'context':{{'lang':{'py' if self.web_js else 'py'},  'file': 'main.py' ,  'reason': ... }}...}}
+    - Required: {{'context':{{'lang':'py',  'reason': ... }}...}}
+    - Optional file key in context example {{'context':{{'lang':'py',  'file': 'main.py' ,  'reason': ... }}...}}
     - py code allows for toplevel await !!! use it !!! like
 :file-start:
 print("using toplevel await")
 await abc()
 :file-end:
+
     - Tip: use comments to reason with in the code
-
-    { js_prompt if self.web_js else py_chane_prompt}
-
-
 3. 'infos': Request specific details
-4. 'guide': Get step clarification use on complex task!
+4. 'guide': Get step clarification use on complex task and ery 5 step for staying on trak!
 5. 'brake': Pause for assessment
 6. 'done': Summarize changes
 
@@ -2613,9 +2955,9 @@ Next Action Required:
 - FOR reasoning and validation write small code blocks.
 - THE CODE must call something or end the code with an value!
 - NO INFINIT LOOPS! none breakable while loops ar not allowed, exception ui (closed by user)
-- NO {'python' if not self.web_js else 'javascript'} top level return, only write the variabel or value itself!
-- {'code is run using exec! do not use !pip ...' if not self.web_js else 'session is persistent'}
-{'- instead use auto_install(package_name, install_method="pip", upgrade=False, quiet=False, version=None, extra_args=None)' if not self.web_js else '- The js code is NOT run as an module! no imports not script tags'}
+- NO 'python' top level return, only write the variabel or value itself!
+- 'code is run using exec! do not use !pip ...'
+'- instead use auto_install(package_name, install_method="pip", upgrade=False, quiet=False, version=None, extra_args=None)'
 # Example usage first time
 │ auto_install('pandas', version='1.3.0')
 │ import pandas
@@ -2624,13 +2966,13 @@ Next Action Required:
 │ auto_install('numpy')
 │ import numpy as np
 !TIPS!
-- {'<global_variables> can contain instances and functions you can use in your python' if not self.web_js else 'write javascript'} code
+- '<global_variables> can contain instances and functions you can use in your python' code
 - if the function is async you can use top level await
 - if their is missing of informations try running code to get the infos
 - if you got stuck or need assistance break with a question to the user.
-{'- run functions from <global_variables> using name(*args, **kwargs) or await name(*args, **kwargs)' if not self.web_js else '- the js code is run async top level with in playwright'}
-{'- <global_variables> ar global accessible!' if not self.web_js else '- include elements for retrival from a web page'}
-{'- if an <global_variables> name is lower lists an redy to use instance' if not self.web_js else '- use {{"context" : {{"url": page }}}} to navigate to a web page '}
+'- run functions from <global_variables> using name(*args, **kwargs) or await name(*args, **kwargs)'
+'- <global_variables> ar global accessible!'
+'- if an <global_variables> name is lower lists an redy to use instance'
 """
         p_hint, c_hint = await self.get_process_hint(task)
         initial_prompt = initial_prompt.replace('#PHINT#', p_hint)
@@ -2646,10 +2988,8 @@ Next Action Required:
             self.restore()
             await self.chat_session.add_message({'role': 'user', 'content': task})
 
-        if self.web_js and self.browser_session.browser is None:
-            await self.start_web()
-            if self.restore_var:
-                await self.restore_web()
+        if self.web_js and self.browser_session is None:
+            self.browser_session = BrowserWrapper(llm=self.agent.amd.modle)
 
         # await self.verbose_output.log_message('user', task)
         self.verbose_output.log_header(task)
@@ -2715,12 +3055,10 @@ Next Action Required:
                     await self.chat_session.add_message({'role': 'system', 'content': 'Evaluation: '+str(result)})
                     await self.verbose_output.log_message('system', str(result))
                     code_follow_up_prompt_[0] = code_follow_up_prompt.replace("#EXECUTION_RESULT#", str(result))
-                    if not self.web_js and isinstance(result ,ExecutionRecord):
+                    if isinstance(result ,ExecutionRecord):
                         code_follow_up_prompt_[0] = code_follow_up_prompt_[0].replace("#CODE#", result.code)
-                    elif not self.web_js:
-                        code_follow_up_prompt_[0] = code_follow_up_prompt_[0].replace("#CODE#", self._generate_variable_descriptions())
                     else:
-                        code_follow_up_prompt_[0] = code_follow_up_prompt_[0].replace("#CODE#", "Focus on the result!")
+                        code_follow_up_prompt_[0] = code_follow_up_prompt_[0].replace("#CODE#", self._generate_variable_descriptions())
                 else:
                     code_follow_up_prompt_[0] = code_follow_up_prompt.replace("#EXECUTION_RESULT#", str(think_result))
                     code_follow_up_prompt_[0] = code_follow_up_prompt_[0].replace("#CODE#",
@@ -2936,7 +3274,7 @@ Next Action Required:
         self.clear()
         return self
 
-    async def configure(self, verbose=None, print_function=None, with_js=False, agent=None, variables=None):
+    async def configure(self, verbose=None, print_function=None, with_js=False, agent=None, variables=None, web_kwargs=None):
         if verbose is not None and (print_function is not None or verbose != self.verbose_output.verbose):
             if agent is None:
                 agent = self.agent
@@ -2944,18 +3282,14 @@ Next Action Required:
                 self.agent = agent
             agent.verbose = verbose
             self.verbose_output = EnhancedVerboseOutput(verbose=verbose, print_f=print_function)
-            if with_js:
-                self.browser_session: Optional[BrowserSession] = BrowserSession(verbose)
+
             if print_function is not None:
                 agent.print_verbose = print_function
         if variables:
             self.variables = {**self.variables, **self._process_variables(variables)}
-        if with_js:
-            self.browser_session: Optional[BrowserSession] = BrowserSession(verbose)
-            await self.start_web()
-            if self.restore_var:
-                await self.restore_web()
-            self.web_js = with_js
+        if with_js and web_kwargs:
+            self.browser_session: Optional[BrowserWrapper] = BrowserWrapper(**web_kwargs)
+        self.web_js = with_js
         if self.restore_var:
             self.restore()
 
@@ -2965,7 +3299,6 @@ Next Action Required:
         if self.web_js:
             await self.browser_session.close()
             if self.restore_var:
-                await self.save_web()
                 self.save_session(f"Pipeline_Session_{self.agent.amd.name}")
         if exc_type is not None:
             print(f"Exception occurred: {exc_value}")
@@ -3130,138 +3463,6 @@ if __name__ == '__main__':
 if __name__ == '__main__':
     x = 1
         """, live_output=True)
-        result = await mock_ipy.run_cell('''
-import git
-import os
-import pathlib
-from typing import Union, Optional
-
-class GitVirtualFileSystemAdapter:
-    def __init__(self, virtual_fs):
-        """
-        Initialize GitVirtualFileSystemAdapter with a VirtualFileSystem instance
-
-        Args:
-            virtual_fs (VirtualFileSystem): The virtual file system to extend
-        """
-        self.virtual_fs = virtual_fs
-        self.repo = None
-
-    def clone_remote_repo(self, remote_url: str, local_path: Union[str, pathlib.Path] = None, branch: str = 'main'):
-        """
-        Clone a remote Git repository into the virtual file system
-
-        Args:
-            remote_url (str): URL of the remote Git repository
-            local_path (Union[str, pathlib.Path], optional): Local path to clone into. Defaults to repo name.
-            branch (str, optional): Branch to checkout. Defaults to 'main'.
-
-        Returns:
-            pathlib.Path: Path to the cloned repository
-        """
-        if local_path is None:
-            local_path = os.path.basename(remote_url).replace('.git', '')
-
-        # Ensure directory exists in virtual file system
-        self.virtual_fs.create_directory(local_path)
-
-        # Clone the repository
-        self.repo = git.Repo.clone_from(remote_url, local_path)
-
-        # Checkout specific branch if needed
-        if branch != 'main':
-            self.repo.git.checkout(branch)
-
-        return pathlib.Path(local_path)
-
-    def commit_changes(self, message: str, force: bool = False):
-        """
-        Commit changes to the local repository
-
-        Args:
-            message (str): Commit message
-            force (bool, optional): Force commit even with untracked files. Defaults to False.
-        """
-        if not self.repo:
-            raise ValueError("No repository initialized. Clone a repo first.")
-
-        # Stage all changes
-        if force:
-            self.repo.git.add(A=True)
-        else:
-            self.repo.git.add(update=True)
-
-        # Commit changes
-        self.repo.index.commit(message)
-
-    def push_changes(self, remote: str = 'origin', branch: str = None, force: bool = False):
-        """
-        Push local changes to remote repository
-
-        Args:
-            remote (str, optional): Remote name. Defaults to 'origin'.
-            branch (str, optional): Branch to push. Uses current branch if not specified.
-            force (bool, optional): Force push. Defaults to False.
-        """
-        if not self.repo:
-            raise ValueError("No repository initialized. Clone a repo first.")
-
-        if branch is None:
-            branch = self.repo.active_branch.name
-
-        if force:
-            self.repo.git.push(remote, branch, force=True)
-        else:
-            self.repo.git.push(remote, branch)
-
-    def pull_changes(self, remote: str = 'origin', branch: str = None, force: bool = False):
-        """
-        Pull changes from remote repository
-
-        Args:
-            remote (str, optional): Remote name. Defaults to 'origin'.
-            branch (str, optional): Branch to pull. Uses current branch if not specified.
-            force (bool, optional): Force pull, discarding local changes. Defaults to False.
-        """
-        if not self.repo:
-            raise ValueError("No repository initialized. Clone a repo first.")
-
-        if branch is None:
-            branch = self.repo.active_branch.name
-
-        if force:
-            self.repo.git.fetch(remote)
-            self.repo.git.reset(f'{remote}/{branch}', hard=True)
-        else:
-            self.repo.git.pull(remote, branch)
-
-    def get_repo_overview(self) -> dict:
-        """
-        Provide an overview of the current repository for LLM context
-
-        Returns:
-            dict: Repository overview with key details
-        """
-        if not self.repo:
-            return {"status": "No repository initialized"}
-
-        return {
-            "active_branch": self.repo.active_branch.name,
-            "remote_urls": {rem.name: rem.url for rem in self.repo.remotes},
-            "uncommitted_changes": len(self.repo.index.diff(self.repo.head.commit)) if self.repo.head.is_valid() else 0,
-            "untracked_files": len(self.repo.untracked_files)
-        }
-
-# Optionally demonstrate basic usage
-if __name__ == '__main__':
-    vfs = VirtualFileSystem('.')
-    git_adapter = GitVirtualFileSystemAdapter(vfs)
-
-    # Example workflow (uncomment and modify as needed)
-    # repo_path = git_adapter.clone_remote_repo('https://github.com/example/repo.git')
-    # git_adapter.commit_changes('Initial commit')
-    # git_adapter.push_changes()
-''', live_output=False)
 
         print("Result:", result)
 
@@ -3274,3 +3475,5 @@ if __name__ == '__main__':
     #print(type(cleaned_result), len(asd), len(cleaned_result))
     #print(cleaned_result)
 
+if __name__ == "__main__":
+    print(asyncio.run(BrowserWrapper().run("Finde eine Lösung für mein Problem. ich habe ine rust aplikation die beim ausführen der exe zurückgibt : returned non-zero exit status 3221225781. oder spezifischer : (exit code: 0xc0000135, STATUS_DLL_NOT_FOUND) ich nutze pyo3 damit rust python verwenden kann in einer venv so wiet habe ich nur das gefunde : https://github.com/PyO3/pyo3/issues/3589 wie fixe ich mein probelm?")))

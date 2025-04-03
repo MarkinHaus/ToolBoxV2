@@ -367,7 +367,7 @@ function renderer({content="", extend = false, id = "main", Dome = DOME, add_scr
             Dome.outerHTML = '<main id="MainContent"></main>'
         }
         Dome.innerHTML = content
-        updateDome(Dome, add_script)
+        setTimeout(()=>updateDome(Dome, add_script), 500)
     } else if (Dome) {
         if (!helper){
             helper = document.createElement("div");
@@ -1083,7 +1083,7 @@ function linksInit(){
         return;
     }
     linksButton.style.transition = "transform 0.5s ease";
-    let linksContent =  `<div class="links-form" >
+    let linksContent =  `<div class="links-form" id="links-form-modal">
             <ul>
                 <li><a href="/">Home</a></li>
                 <li><a href="/web/mainContent.html">Apps</a></li>
@@ -1098,16 +1098,15 @@ function linksInit(){
         </div>`
 
     let linksIcon = document.getElementById("linkIcon");
-    let linksAcker = document.getElementById("overlay");
+    let linksAcker = document.getElementById("links");
 
     async function openLinksOverlay(){
-
-
         linksButton.style.transform = 'rotate(360deg)  scale(1.26)';
         // linksButton.style.scale = 1.26
         linksButton.style.zIndex = '9999';
 
         linksAcker.insertAdjacentHTML('afterend', linksContent);
+        linksAcker.nextElementSibling.classList.add('is-active');
         updateDome(linksAcker.nextElementSibling, false, onCloseLinksOverlay)
         if (linksIcon){
             linksIcon.outerHTML = `<span id="linkIcon" class="plus material-symbols-outlined">close</span>`
@@ -1117,6 +1116,7 @@ function linksInit(){
     }
 
     function onCloseLinksOverlay(){
+        linksAcker.nextElementSibling.classList.remove('is-active');
         linksButton.style.transform = 'rotate(0deg) scale(1)';
         linksButton.style.zIndex = '2'
         const insertedContent = linksAcker.nextElementSibling;
@@ -1139,7 +1139,23 @@ function linksInit(){
             onCloseLinksOverlay()
         }
 
+
     });
+
+    document.addEventListener('click', (event) => {
+        // Prüfen, ob das Menü überhaupt offen ist
+        if (!window.TBf.getVar("linkToggle")[0]) {
+            return; // Nichts tun, wenn Menü geschlossen ist
+        }
+
+        const isClickInsideButton = linksAcker.contains(event.target);
+
+        if (isClickInsideButton) {
+             console.log("Click outside detected, closing menu."); // Debugging
+            onCloseLinksOverlay(); // Nur schließen, wenn der Klick wirklich außerhalb war
+        }
+    });
+
 
 }
 

@@ -1,43 +1,155 @@
-use actix_web::{web, App,HttpRequest, HttpServer, HttpResponse, middleware};
-use actix_files as fs;
-use actix_session::{Session, SessionMiddleware, storage::CookieSessionStore};
+use actix_web::{web, App, HttpRequest, HttpServer, HttpResponse, middleware, FromRequest};
 use actix_web::cookie::{Key};
 use actix_web::http::Method;
+use actix_web::dev::Service;
+use actix_files as fs;
+use actix_session::{Session, SessionMiddleware, storage::CookieSessionStore, SessionExt};
+
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use serde_json;
+
+use base64::{engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
 use config::{Config, File, FileFormat};
 use env_logger;
 use rand::{thread_rng, Rng};
-use std::collections::{HashMap, HashSet};
-use std::process::{Command, Child};
-use std::thread::ThreadId;
+use std::collections::{HashMap};
+
 use std::time::{Duration, Instant};
 use futures::executor::block_on;
-use futures::TryFutureExt;
-use serde_json::json;
-use thiserror::Error;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::time::{timeout, sleep};
+
 use uuid::Uuid;
 use tracing::{info, warn, error, debug};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::cell::RefCell;
-use std::io::{self, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+
 use std::sync::{Arc, Mutex};
-use base64::Engine;
 use lazy_static::lazy_static;
-use serde_json::Value;
-use serde_json;
-use std::future::Future;
-use std::pin::Pin;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyList};
-use tokio::task;
+use tokio::{task, time};
 use pyo3::PyResult;
 use std::env;
-use std::path::PathBuf;
-use pyo3_asyncio::{tokio::future_into_py, tokio::into_future}; // Added for async support
+use std::process::Command;
+use base64::Engine;
+use futures::{Stream};
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
+use bytes::Bytes;
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+use actix_multipart::Multipart;
+use bytes::BytesMut; // To accumulate field data
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _}; // Use alias
+use std::io::Write; // For writing bytes
+use futures_util::{StreamExt, TryStreamExt};
+
+// Define a helper struct for file data representation
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct UploadedFile {
+    filename: Option<String>,
+    content_type: Option<String>,
+    content_base64: String, // Store content as base64
+}
+
+// For io::Error
+// Helper function to convert PyObject to Bytes
+fn py_object_to_bytes(py: Python, obj: PyObject) -> PyResult<Bytes> {
+    // Prioritize raw bytes if available (e.g., from PyBytes)
+    if let Ok(py_bytes) = obj.downcast::<pyo3::types::PyBytes>(py) {
+        return Ok(Bytes::from(py_bytes.as_bytes().to_vec()));
+    }
+    // Then Vec<u8>
+    if let Ok(bytes_vec) = obj.extract::<Vec<u8>>(py) {
+        return Ok(Bytes::from(bytes_vec));
+    }
+    // Then string
+    if let Ok(string) = obj.extract::<String>(py) {
+        return Ok(Bytes::from(string));
+    }
+
+    // Fallback to JSON representation ONLY if other types fail
+    // The 'py' parameter already represents the held GIL token.
+    match py_to_value_global(py, obj.as_ref(py)) { // Use the 'py' passed into the function
+        Ok(json_value) => {
+            match serde_json::to_vec(&json_value) {
+                Ok(vec) => Ok(Bytes::from(vec)),
+                Err(e) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("JSON serialization error: {}", e))),
+            }
+        },
+        Err(e) => {
+             // Log the original Python error for better debugging
+             error!("Error converting Python object to JSON Value: {}", e);
+             Err(e) // Propagate the original PyErr
+        }
+    }
+}
+// Hypothetical global version of py_to_value for the helper
+// You might need to adapt this based on where py_to_value is actually defined
+fn py_to_value_global(py: Python, value: &PyAny) -> PyResult<serde_json::Value> {
+    // ... (Implementation of py_to_value, assuming it's accessible here)
+    // For demonstration, let's copy the logic (ideally, share it)
+    if value.is_none() { return Ok(serde_json::Value::Null); }
+    if let Ok(b) = value.extract::<bool>() { return Ok(serde_json::Value::Bool(b)); }
+    if let Ok(i) = value.extract::<i64>() { return Ok(serde_json::Value::Number(i.into())); }
+    if let Ok(f) = value.extract::<f64>() { return Ok(serde_json::json!(f)); } // Use json! macro for potential NaN/Infinity
+    if let Ok(s) = value.extract::<String>() { return Ok(serde_json::Value::String(s)); }
+    if let Ok(seq) = value.downcast::<PyList>() {
+        let mut arr = Vec::new();
+        for item in seq.iter() { arr.push(py_to_value_global(py, item)?); }
+        return Ok(serde_json::Value::Array(arr));
+    }
+    if let Ok(tup) = value.downcast::<PyTuple>() {
+        let mut arr = Vec::new();
+        for item in tup.iter() { arr.push(py_to_value_global(py, item)?); }
+        return Ok(serde_json::Value::Array(arr));
+    }
+    if let Ok(dict) = value.downcast::<PyDict>() {
+        let mut map = serde_json::Map::new();
+        for (key, val) in dict.iter() {
+            let key_str = key.extract::<String>()?;
+            map.insert(key_str, py_to_value_global(py, val)?);
+        }
+        return Ok(serde_json::Value::Object(map));
+    }
+    if let Ok(s) = value.str()?.extract::<String>() { return Ok(serde_json::Value::String(s)); }
+    Ok(serde_json::Value::Null) // Fallback
+}
+
+
+// Define a struct to hold the state needed in the Drop impl
+struct InstanceGuard {
+    client: ToolboxClient,
+    instance_id: String,
+    released: bool, // Flag to prevent double-release
+}
+
+impl InstanceGuard {
+    fn new(client: ToolboxClient, instance_id: String) -> Self {
+        InstanceGuard { client, instance_id, released: false }
+    }
+
+    // Explicitly release the instance (e.g., after successful stream completion)
+    fn release(&mut self) {
+        if !self.released {
+            self.client.mark_instance_done(&self.instance_id);
+            self.released = true;
+            debug!("Instance {} released explicitly.", self.instance_id);
+        }
+    }
+}
+
+// Implement Drop to ensure the instance is marked done even on errors/panics
+impl Drop for InstanceGuard {
+    fn drop(&mut self) {
+        if !self.released {
+            self.client.mark_instance_done(&self.instance_id);
+            debug!("Instance {} released via Drop.", self.instance_id);
+        }
+    }
+}
+
 
 lazy_static! {
     static ref TOOLBOX_CLIENT: Mutex<Option<ToolboxClient>> = Mutex::new(None);
@@ -92,14 +204,21 @@ impl From<PyErr> for ToolboxError {
     }
 }
 
-/// Initialize Python properly in the current process
+
+/// Initializes the Python environment by setting PYTHONHOME and PYTHONPATH
 pub fn initialize_python_environment() -> Result<(), ToolboxError> {
     // First try to detect Python from conda environment
     if let Ok(conda_prefix) = env::var("CONDA_PREFIX") {
-        let conda_path = PathBuf::from(&conda_prefix);
-
         // Set PYTHONHOME to conda environment
         env::set_var("PYTHONHOME", &conda_prefix);
+
+        // Determine Python executable path
+        let python_executable = if cfg!(windows) {
+            format!("{}\\python.exe", conda_prefix.replace("\\", "\\\\"))
+        } else {
+            format!("{}/bin/python", conda_prefix)
+        };
+        env::set_var("PYTHON_EXECUTABLE", &python_executable);
 
         // Create proper PYTHONPATH for Windows
         let lib_path = format!(
@@ -109,70 +228,27 @@ pub fn initialize_python_environment() -> Result<(), ToolboxError> {
         env::set_var("PYTHONPATH", &lib_path);
 
         info!("Using conda environment at: {}", conda_prefix);
-        debug!("Set PYTHONHOME={}", conda_prefix);
-        debug!("Set PYTHONPATH={}", lib_path);
+        debug!(" PYTHONHOME={}", conda_prefix);
+        debug!(" PYTHON_EXECUTABLE={}", python_executable);
+        debug!(" PYTHONPATH={}", lib_path);
 
         return Ok(());
     }
 
-    // If conda not found, try to detect Python using the sys.executable
-    // We need to run a Python process to discover this information
+    // Fallback to detecting Python normally
     let output = std::process::Command::new("python")
-        .args(&["-c", r#"
-import sys, json, os
-print(json.dumps({
-    "executable": sys.executable,
-    "prefix": sys.prefix,
-    "sys_path": sys.path,
-    "platform": sys.platform
-}))
-        "#])
+        .args(&["-c", "import sys; print(sys.executable)"])
         .output();
 
     match output {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            match serde_json::from_str::<serde_json::Value>(&stdout.trim()) {
-                Ok(info) => {
-                    if let Some(prefix) = info.get("prefix").and_then(|v| v.as_str()) {
-                        let prefix_path = PathBuf::from(prefix);
-
-                        // Set PYTHONHOME to the detected prefix
-                        env::set_var("PYTHONHOME", prefix);
-
-                        // Create PYTHONPATH based on platform
-                        let is_windows = info.get("platform")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.contains("win"))
-                            .unwrap_or(false);
-
-                        let python_path = if is_windows {
-                            format!("{0}\\Lib;{0}\\Lib\\site-packages;{0}\\DLLs",
-                                    prefix.replace("\\", "\\\\"))
-                        } else {
-                            format!("{0}/lib/python3.10:{0}/lib/python3.10/site-packages", prefix)
-                        };
-
-                        env::set_var("PYTHONPATH", &python_path);
-
-                        info!("Using Python at: {}", prefix);
-                        debug!("Set PYTHONHOME={}", prefix);
-                        debug!("Set PYTHONPATH={}", python_path);
-
-                        return Ok(());
-                    }
-                },
-                Err(e) => {
-                    warn!("Failed to parse Python environment info: {}", e);
-                }
-            }
-        },
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!("Python detection script failed: {}", stderr);
-        },
-        Err(e) => {
-            warn!("Failed to execute Python detection script: {}", e);
+            env::set_var("PYTHON_EXECUTABLE", stdout.trim());
+            info!("Detected system Python at: {}", stdout.trim());
+            return Ok(());
+        }
+        _ => {
+            warn!("Could not detect Python automatically");
         }
     }
 
@@ -181,6 +257,7 @@ print(json.dumps({
 
     Ok(())
 }
+
 
 /// Initialize the toolbox client and immediately create an instance
 pub async fn initialize_toolbox_client(
@@ -209,6 +286,26 @@ pub async fn initialize_toolbox_client(
 pub fn get_toolbox_client() -> Result<ToolboxClient, ToolboxError> {
     let client = TOOLBOX_CLIENT.lock().unwrap();
     client.clone().ok_or_else(|| ToolboxError::Unknown("ToolboxClient not initialized".to_string()))
+}
+
+
+fn check_python_paths(py: Python) {
+    let sys = py.import("sys").unwrap();
+    let sys_path: &PyList = sys.getattr("path").unwrap().downcast().unwrap();
+
+    println!("Python sys.path:");
+    for path in sys_path.iter() {
+        println!("  {:?}", path);
+    }
+
+}
+
+fn check_toolboxv2(py: Python) -> PyResult<()> {
+    let toolbox = py.import("toolboxv2")?;
+    let version: &PyAny = toolbox.getattr("__version__")?;
+    println!("toolboxv2 version: {}", version.extract::<String>()?);
+
+    Ok(())
 }
 
 impl ToolboxClient {
@@ -249,7 +346,7 @@ impl ToolboxClient {
     /// Create a new Python instance
     /// Create a new Python instance
     async fn create_python_instance(&self) -> Result<String, ToolboxError> {
-        debug!("Creating new Python instance");
+        debug!("Creating new Python instance at {:?}", env::var("PYO3_PYTHON"));
 
         // Check if we've reached max instances
         {
@@ -264,6 +361,8 @@ impl ToolboxClient {
 
             Python::with_gil(|py| -> Result<(String, PyObject), ToolboxError> {
                 // Import the toolboxv2 module
+                debug!("this Python {:?}", check_python_paths(py));
+                debug!("this tb {:?}", check_toolboxv2(py));
                 let toolbox = match PyModule::import(py, "toolboxv2.__main__") {
                     Ok(module) => module,
                     Err(e) => {
@@ -405,62 +504,6 @@ impl ToolboxClient {
     }
 
     /// Convert Python value to Rust
-    fn py_to_value<'a>(&self, py: Python<'a>, value: &'a PyAny) -> PyResult<serde_json::Value> {
-        if value.is_none() {
-            return Ok(serde_json::Value::Null);
-        }
-
-        if let Ok(b) = value.extract::<bool>() {
-            return Ok(serde_json::Value::Bool(b));
-        }
-
-        if let Ok(i) = value.extract::<i64>() {
-            return Ok(serde_json::Value::Number(i.into()));
-        }
-
-        if let Ok(f) = value.extract::<f64>() {
-            return Ok(serde_json::json!(f));
-        }
-
-        if let Ok(s) = value.extract::<String>() {
-            return Ok(serde_json::Value::String(s));
-        }
-
-        // Check if it's a list/tuple
-        if let Ok(seq) = value.downcast::<PyList>() {
-            let mut arr = Vec::new();
-            for item in seq.iter() {
-                arr.push(self.py_to_value(py, item)?);
-            }
-            return Ok(serde_json::Value::Array(arr));
-        }
-
-        if let Ok(tup) = value.downcast::<PyTuple>() {
-            let mut arr = Vec::new();
-            for item in tup.iter() {
-                arr.push(self.py_to_value(py, item)?);
-            }
-            return Ok(serde_json::Value::Array(arr));
-        }
-
-        // Check if it's a dict
-        if let Ok(dict) = value.downcast::<PyDict>() {
-            let mut map = serde_json::Map::new();
-            for (key, val) in dict.iter() {
-                let key_str = key.extract::<String>()?;
-                map.insert(key_str, self.py_to_value(py, val)?);
-            }
-            return Ok(serde_json::Value::Object(map));
-        }
-
-        // Try to convert complex objects to string as fallback
-        if let Ok(s) = value.str()?.extract::<String>() {
-            return Ok(serde_json::Value::String(s));
-        }
-
-        // Default to null if we can't convert
-        Ok(serde_json::Value::Null)
-    }
 
     /// Make sure a module is loaded and get an instance that has it
     async fn ensure_module_loaded(&self, module_name: String) -> Result<String, ToolboxError> {
@@ -699,8 +742,346 @@ impl ToolboxClient {
 
     }
 
+    // Add this new method to support streaming
+    pub async fn stream_generator(
+        &self,
+        module_name: &str,
+        function_name: &str,
+        spec: &str,
+        args: Vec<String>,
+        kwargs: HashMap<String, serde_json::Value>,
+    ) -> Result<impl Stream<Item = Result<Bytes, io::Error>>, ToolboxError> {
+        // Get instance and setup
+        let instance_id = self.get_instance_for_module(module_name).await?;
+        let self_clone = self.clone();
+        let instance_guard = InstanceGuard::new(self_clone.clone(), instance_id);
+
+        // Small buffer to prevent backpressure but not cause delays
+        let (tx, rx) = mpsc::channel(1);
+
+        // Clone variables for task
+        let module_name = module_name.to_string();
+        let function_name = function_name.to_string();
+        let spec = spec.to_string();
+
+        // Launch task
+        tokio::spawn(async move {
+            let guard = instance_guard;
+            let instance_id = guard.instance_id.clone();
+
+            // Run Python code in blocking task
+            let _ = task::spawn_blocking(move || {
+                Python::with_gil(|py| -> Result<(), ToolboxError> {
+                    // Get Python instance
+                    let instance = {
+                        let instances = self_clone.instances.lock().unwrap();
+                        match instances.iter().find(|i| i.id == instance_id).cloned() {
+                            Some(inst) => inst,
+                            None => return Err(ToolboxError::InstanceNotFound(instance_id))
+                        }
+                    };
+
+                    // Prepare call
+                    let app = instance.py_app.as_ref(py);
+                    let py_args = PyList::empty(py);
+                    for arg in args {
+                        py_args.append(arg.into_py(py))?;
+                    }
+
+                    let py_kwargs = PyDict::new(py);
+                    for (key, value) in kwargs {
+                        py_kwargs.set_item(key, self_clone.value_to_py(py, &value)?)?;
+                    }
+                    py_kwargs.set_item("tb_run_with_specification", spec)?;
+
+                    let func_tuple = PyTuple::new(py, &[module_name.into_py(py), function_name.into_py(py)]);
+
+                    // Call Python function
+                    let run_method = app.getattr("run")?;
+                    let result = run_method.call((func_tuple, py_args), Some(py_kwargs))?;
+
+                    // Handle start event
+                    let start_event = serde_json::json!({"event": "stream_start", "id": "0"});
+                    let _ = tx.blocking_send(Ok(Bytes::from(serde_json::to_vec(&start_event).unwrap())));
+
+                    // DIRECT GENERATOR HANDLING
+                    if let Ok(dict) = result.downcast::<PyDict>() {
+                        // Dict result - check for stream/generator
+                        if let Some(generator) = dict.get_item("generator")? {
+                            // Process as generator
+                            if generator.hasattr("__anext__")? {
+                                // Async generator
+                                let _asyncio  = py.import("asyncio")?;
+                                let helper_code = r#"
+def get_next_item(gen):
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    try:
+        return (True, loop.run_until_complete(gen.__anext__()))
+    except StopAsyncIteration:
+        return (False, None)
+    except Exception as e:
+        return (False, str(e))
+"#;
+                                py.run(helper_code, None, None)?;
+                                let get_next = py.eval("get_next_item", None, None)?;
+
+                                // Process items one by one - IMMEDIATE SENDING
+                                loop {
+                                    let result = get_next.call1((generator,))?;
+                                    let tuple = result.downcast::<PyTuple>().unwrap();
+                                    let has_more = tuple.get_item(0)?.extract::<bool>()?;
+
+                                    if !has_more {
+                                        break;
+                                    }
+
+                                    let item = tuple.get_item(1)?;
+                                    let bytes = py_object_to_bytes(py, item.to_object(py))?;
+
+                                    // SEND IMMEDIATELY
+                                    if tx.blocking_send(Ok(bytes)).is_err() {
+                                        break;
+                                    }
+                                }
+                            } else {
+                                // Sync generator
+                                let next_fn = py.import("builtins")?.getattr("next")?;
+
+                                loop {
+                                    match next_fn.call1((generator,)) {
+                                        Ok(item) => {
+                                            let bytes = py_object_to_bytes(py, item.to_object(py))?;
+                                            // SEND IMMEDIATELY
+                                            if tx.blocking_send(Ok(bytes)).is_err() {
+                                                break;
+                                            }
+                                        },
+                                        Err(e) => {
+                                            if e.is_instance_of::<pyo3::exceptions::PyStopIteration>(py) {
+                                                break;
+                                            } else {
+                                                let _ = tx.blocking_send(Err(io::Error::new(
+                                                    io::ErrorKind::Other,
+                                                    format!("Error: {}", e)
+                                                )));
+                                                return Err(ToolboxError::PyError(e.to_string()));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else if result.hasattr("__anext__")? {
+                        // Direct async generator
+                        let _asyncio = py.import("asyncio")?;
+
+                        // Simplified helper
+                        py.run(r#"
+def process_async_gen(gen):
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    while True:
+        try:
+            item = loop.run_until_complete(gen.__anext__())
+            yield item
+        except StopAsyncIteration:
+            break
+"#, None, None)?;
+
+                        let process_gen = py.eval("process_async_gen", None, None)?;
+                        let sync_gen = process_gen.call1((result,))?;
+
+                        // Process synchronously
+                        let next_fn = py.import("builtins")?.getattr("next")?;
+                        loop {
+                            match next_fn.call1((sync_gen,)) {
+                                Ok(item) => {
+                                    let bytes = py_object_to_bytes(py, item.to_object(py))?;
+                                    // SEND IMMEDIATELY
+                                    if tx.blocking_send(Ok(bytes)).is_err() {
+                                        break;
+                                    }
+                                },
+                                Err(e) => {
+                                    if e.is_instance_of::<pyo3::exceptions::PyStopIteration>(py) {
+                                        break;
+                                    } else {
+                                        let _ = tx.blocking_send(Err(io::Error::new(
+                                            io::ErrorKind::Other,
+                                            format!("Error: {}", e)
+                                        )));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    } else if result.hasattr("__next__")? {
+                        // Direct sync generator
+                        let next_fn = py.import("builtins")?.getattr("next")?;
+
+                        loop {
+                            match next_fn.call1((result,)) {
+                                Ok(item) => {
+                                    let bytes = py_object_to_bytes(py, item.to_object(py))?;
+                                    // SEND IMMEDIATELY
+                                    if tx.blocking_send(Ok(bytes)).is_err() {
+                                        break;
+                                    }
+                                },
+                                Err(e) => {
+                                    if e.is_instance_of::<pyo3::exceptions::PyStopIteration>(py) {
+                                        break;
+                                    } else {
+                                        let _ = tx.blocking_send(Err(io::Error::new(
+                                            io::ErrorKind::Other,
+                                            format!("Error: {}", e)
+                                        )));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Single item result
+                        let bytes = py_object_to_bytes(py, result.to_object(py))?;
+                        // SEND IMMEDIATELY
+                        let _ = tx.blocking_send(Ok(bytes));
+                    }
+
+                    // Send end event
+                    let end_event = serde_json::json!({"event": "stream_end", "id": "final"});
+                    let _ = tx.blocking_send(Ok(Bytes::from(serde_json::to_vec(&end_event).unwrap())));
+
+                    Ok(())
+                })
+            }).await;
+        });
+
+        // Return stream
+        let rx_stream = ReceiverStream::new(rx)
+            .inspect(|result| {
+                match result {
+                    Ok(bytes) => {
+                        if let Ok(text) = String::from_utf8(bytes.to_vec()) {
+                            debug!("Sending SSE response: {}", text);
+                        } else {
+                            debug!("Sending binary SSE data: {} bytes", bytes.len());
+                        }
+                    },
+                    Err(e) => debug!("Sending SSE error: {}", e),
+                }
+            });
+
+        Ok(rx_stream)
+    }
+
+    fn py_to_value<'a>(&self, py: Python<'a>, value: &'a PyAny) -> PyResult<serde_json::Value> {
+        // ... (your existing implementation) ...
+        if value.is_none() { return Ok(serde_json::Value::Null); }
+        if let Ok(b) = value.extract::<bool>() { return Ok(serde_json::Value::Bool(b)); }
+        if let Ok(i) = value.extract::<i64>() { return Ok(serde_json::Value::Number(i.into())); }
+        if let Ok(f) = value.extract::<f64>() { return Ok(serde_json::json!(f)); } // Use json! macro for potential NaN/Infinity
+        if let Ok(s) = value.extract::<String>() { return Ok(serde_json::Value::String(s)); }
+        if let Ok(seq) = value.downcast::<PyList>() {
+            let mut arr = Vec::new();
+            for item in seq.iter() { arr.push(self.py_to_value(py, item)?); }
+            return Ok(serde_json::Value::Array(arr));
+        }
+        if let Ok(tup) = value.downcast::<PyTuple>() {
+            let mut arr = Vec::new();
+            for item in tup.iter() { arr.push(self.py_to_value(py, item)?); }
+            return Ok(serde_json::Value::Array(arr));
+        }
+        if let Ok(dict) = value.downcast::<PyDict>() {
+            let mut map = serde_json::Map::new();
+            for (key, val) in dict.iter() {
+                let key_str = key.extract::<String>()?;
+                map.insert(key_str, self.py_to_value(py, val)?);
+            }
+            return Ok(serde_json::Value::Object(map));
+        }
+        if let Ok(s) = value.str()?.extract::<String>() { return Ok(serde_json::Value::String(s)); }
+        Ok(serde_json::Value::Null) // Fallback
+    }
 
 
+    pub async fn stream_sse_events(&self,
+                                   module_name: &str,
+                                   function_name: &str,
+                                   spec: &str,
+                                   args: Vec<String>,
+                                   kwargs: HashMap<String, serde_json::Value>,
+    ) -> Result<impl Stream<Item = Result<Bytes, std::io::Error>>, ToolboxError> {
+        // Get base stream
+        let base_stream = self.stream_generator(module_name, function_name, spec, args, kwargs).await?;
+
+        // IMPORTANT: Use fully qualified path to avoid ambiguity
+        let mapped_stream = futures::stream::StreamExt::map(base_stream, move |result| {
+            match result {
+                Ok(data) => {
+                    // Format as proper SSE
+                    if let Ok(text) = String::from_utf8(data.to_vec()) {
+                        let text = text.trim();
+
+                        // Already in SSE format?
+                        if (text.starts_with("data:") || text.starts_with("event:")) &&
+                            (text.ends_with("\n\n") || text.contains("\n\ndata:") || text.contains("\n\nevent:")) {
+                            debug!("Pre-formatted SSE: {}", text.replace("\n", "\\n"));
+                            Ok(Bytes::from(text.to_string() + "\n"))
+                        } else if text.starts_with("{") && text.ends_with("}") {
+                            // JSON data
+                            debug!("JSON as SSE: {}", text);
+                            Ok(Bytes::from(format!("{}\n\n", text)))
+                        } else {
+                            // Plain text
+                            debug!("Text as SSE: {}", text);
+                            Ok(Bytes::from(format!("{}\n\n", text)))
+                        }
+                    } else {
+                        // Binary data
+                        debug!("Binary as SSE comment");
+                        Ok(Bytes::from(format!(": [binary data: {} bytes]\n\n", data.len())))
+                    }
+                },
+                Err(e) => {
+                    error!("SSE stream error: {}", e);
+                    Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Error: {}", e)))
+                },
+            }
+        });
+
+        // Add a heartbeat ping every 15 seconds
+        struct HeartbeatStream {
+            interval: tokio::time::Interval,
+        }
+
+        impl Stream for HeartbeatStream {
+            type Item = Result<Bytes, std::io::Error>;
+
+            fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+                match Pin::new(&mut self.interval).poll_tick(cx) {
+                    Poll::Ready(_) => Poll::Ready(Some(Ok(Bytes::from(":\n\n")))),
+                    Poll::Pending => Poll::Pending,
+                }
+            }
+        }
+
+        let heartbeat = HeartbeatStream {
+            interval: tokio::time::interval(std::time::Duration::from_secs(15)),
+        };
+
+        // Merge the streams using fully qualified path
+        let combined = futures::stream::select(mapped_stream, heartbeat);
+
+        Ok(combined)
+    }
     /// Get information about all current instances
     pub fn get_instances_info(&self) -> Vec<HashMap<String, String>> {
         let instances = self.instances.lock().unwrap();
@@ -750,7 +1131,6 @@ struct ToolboxSettings {
 struct SessionSettings {
     secret_key: String,
     duration_minutes: u64,
-    cookie_name: String
 }
 
 // Session state
@@ -767,6 +1147,7 @@ struct SessionData {
     h_sid: String,
     user_name: Option<String>,
     new: bool,
+    anonymous: bool,
 }
 
 impl Default for SessionData {
@@ -783,6 +1164,7 @@ impl Default for SessionData {
             h_sid: String::new(),
             user_name: None,
             new: true,
+            anonymous: true,
         }
     }
 }
@@ -807,7 +1189,7 @@ struct ApiRequest {
 
 // Utility functions
 fn generate_session_id() -> String {
-    let random_value: u64 = thread_rng().gen();
+    let random_value: u64 = thread_rng().random();
     format!("0x{:x}", random_value)
 }
 // Session middleware
@@ -871,23 +1253,24 @@ impl SessionManager {
             h_sid,
             user_name: None,
             new: false,
+            anonymous: jwt_claim.is_none() && username.is_none(),
         };
 
         self.save_session(&session_id, session_data);
 
         // Check if IP is in gray or black list
         if self.gray_list.contains(&ip) {
-            return "#0".to_string();
+            return "#0X".to_string();
         }
 
         if self.black_list.contains(&ip) {
-            return "#0".to_string();
+            return "#0X".to_string();
         }
 
         if let (Some(jwt), Some(user)) = (jwt_claim, username) {
             self.verify_session_id(&session_id, &user, &jwt).await
         } else {
-            "#0".to_string()
+            session_id
         }
     }
 
@@ -1011,7 +1394,7 @@ impl SessionManager {
                 info!("VtID for user instance: {}", vt_id);
             }
 
-            let encoded_username = format!("encoded:{}", username);
+            let encoded_username = format!("{}", username);
             live_data.insert("user_name".to_string(), encoded_username.clone());
 
             let updated_session = SessionData {
@@ -1039,11 +1422,16 @@ impl SessionManager {
 
         let session = self.get_session(session_id);
 
+        if session.anonymous {
+            info!("Anonymous session: {}", session_id);
+            return false;  // Not valid for protected resources
+        }
+
         if session.new || !session.validate {
             info!("Session is new or not validated: new={}, validate={}", session.new, session.validate);
             if let (Some(user_name), Some(jwt)) = (&session.user_name, &session.jwt_claim) {
                 // Extract username from encoded format
-                let username = user_name.strip_prefix("encoded:").unwrap_or(user_name);
+                let username = user_name;
                 info!("Verifying session ID for user: {}", username);
                 let result = self.verify_session_id(session_id, username, jwt).await != "#0";
                 info!("Session verification result: {}", result);
@@ -1069,7 +1457,7 @@ impl SessionManager {
             // Session expired, need to verify again
             if let (Some(user_name), Some(jwt)) = (&session.user_name, &session.jwt_claim) {
                 // Extract username from encoded format
-                let username = user_name.strip_prefix("encoded:").unwrap_or(user_name);
+                let username = user_name;
                 info!("Re-verifying session ID for user: {}", username);
                 let result = self.verify_session_id(session_id, username, jwt).await != "#0";
                 info!("Session re-verification result: {}", result);
@@ -1320,101 +1708,534 @@ async fn logout_handler(
 }
 
 
+fn parse_response(response: ApiResult, fall_back: Value) -> HttpResponse {
+    match response.result {
+        Some(result) => {
+            let data_type = result.data_type.as_deref().unwrap_or("json"); // Default to JSON
+            let data_value = result.data.unwrap_or(Value::Null);
+
+            match data_type {
+                // === JSON (default) ===
+               "json" => HttpResponse::Ok().json(data_value),
+
+                // === Plain Text ===
+                "text" | "plain" => HttpResponse::Ok().content_type("text/plain; charset=utf-8").body(
+                    data_value.as_str().unwrap_or("").to_string(), // Default to empty string
+                ),
+
+                // === HTML / CSS / JavaScript ===
+                "html" => HttpResponse::Ok().content_type("text/html; charset=utf-8").body(
+                    data_value.as_str().unwrap_or("").to_string(), // Default to empty string
+                ),
+                // === Special HTML with custom headers ===
+                "special_html" => {
+                    if let Value::Object(obj) = &data_value {
+                        let html_content = obj.get("html")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(""); // Default to empty string
+
+                        // Create an empty map for default headers
+                        let empty_map = serde_json::Map::new();
+                        let headers = obj.get("headers")
+                            .and_then(|v| v.as_object())
+                            .unwrap_or(&empty_map); // Use empty map if headers are missing/invalid
+
+                        let mut response_builder = HttpResponse::Ok();
+                        response_builder.content_type("text/html; charset=utf-8");
+
+                        // Add custom headers
+                        for (key, value) in headers {
+                            if let Some(header_value) = value.as_str() {
+                                // Use try_from for header names for robustness
+                                if let Ok(header_name) = actix_web::http::header::HeaderName::try_from(key.as_str()) {
+                                     if let Ok(header_val) = actix_web::http::header::HeaderValue::from_str(header_value) {
+                                        response_builder.append_header((header_name, header_val));
+                                     } else {
+                                         warn!("Invalid header value for {}: {}", key, header_value);
+                                     }
+                                } else {
+                                     warn!("Invalid header name: {}", key);
+                                }
+                            } else {
+                                 warn!("Non-string header value for key: {}", key);
+                            }
+                        }
+                        response_builder.body(html_content.to_string())
+                    } else {
+                        // Fallback if the format isn't a JSON object
+                        HttpResponse::BadRequest().content_type("text/plain")
+                            .body("Invalid special_html data format: expected JSON object with 'html' and optional 'headers' keys.".to_string())
+                    }
+                },
+                "css" => HttpResponse::Ok().content_type("text/css; charset=utf-8").body(
+                    data_value.as_str().unwrap_or("").to_string(), // Default to empty string
+                ),
+                "js" | "javascript" => HttpResponse::Ok().content_type("application/javascript; charset=utf-8").body(
+                    data_value.as_str().unwrap_or("").to_string(), // Default to empty string
+                ),
+
+                // === XML / YAML ===
+                "xml" => HttpResponse::Ok().content_type("application/xml; charset=utf-8").body(
+                    data_value.as_str().unwrap_or("").to_string(), // Default to empty string
+                ),
+                "yaml" => { // Handle potential serialization errors
+                    match serde_yaml::to_string(&data_value) {
+                        Ok(yaml_string) => HttpResponse::Ok().content_type("application/x-yaml; charset=utf-8").body(yaml_string),
+                        Err(e) => HttpResponse::InternalServerError().body(format!("Failed to serialize data to YAML: {}", e)),
+                    }
+                },
+
+                // === Images (PNG, JPEG, GIF, SVG, WebP) ===
+                "png" => image_response("image/png", data_value),
+                "jpg" | "jpeg" => image_response("image/jpeg", data_value),
+                "gif" => image_response("image/gif", data_value),
+                "svg" => image_response("image/svg+xml", data_value),
+                "webp" => image_response("image/webp", data_value),
+
+                // === Binary Data / Files ===
+                "binary" | "bytes" | "file" => {
+                     match data_value.as_str() {
+                        Some(base64_data) => match STANDARD.decode(base64_data) {
+                            Ok(decoded) => HttpResponse::Ok()
+                                .content_type("application/octet-stream")
+                                .body(decoded),
+                            Err(_) => HttpResponse::BadRequest().body("Invalid base64 binary/file data"),
+                        },
+                        None => HttpResponse::BadRequest().body("Missing or invalid binary/file data (expected base64 string)"),
+                    }
+                },
+
+                // === Streaming ===
+                "stream" | "streaming" => streaming_response(data_value),
+
+                // === Unsupported Type ===
+                _ => HttpResponse::Ok().json(fall_back),
+            }
+        }
+        None => HttpResponse::Ok().json(fall_back),
+    }
+}
+
+/// 🖼️ **Helper for Image Responses**
+fn image_response(content_type: &str, data: Value) -> HttpResponse {
+    match data.as_str() {
+        Some(base64_data) => match STANDARD.decode(base64_data.trim()) { // Trim whitespace just in case
+            Ok(decoded) => HttpResponse::Ok()
+                .content_type(content_type)
+                .body(decoded),
+            Err(e) => {
+                warn!("Invalid base64 image data received: {}", e);
+                HttpResponse::BadRequest().body("Invalid base64 image data")
+            },
+        },
+        None => HttpResponse::BadRequest().body("Missing image data (expected base64 string)"),
+    }
+}
+
+/// 📂 **Helper for File Responses**
+fn file_response(data: Value) -> Vec<u8> {
+    match data.as_str() {
+        Some(base64_data) => STANDARD.decode(base64_data).unwrap_or_else(|_| vec![]),
+        None => vec![],
+    }
+}
+
+/// 🔄 **Helper for Binary Responses**
+fn binary_response(data: Value) -> Vec<u8> {
+    match data.as_array() {
+        Some(arr) => arr.iter().filter_map(|v| v.as_u64().map(|b| b as u8)).collect(),
+        None => vec![],
+    }
+}
+
+/// 🔀 **Helper for Streaming Responses**
+fn streaming_response(data: Value) -> HttpResponse {
+    // Extract streaming parameters
+    let module = data.get("module").and_then(Value::as_str).unwrap_or("default");
+    let function = data.get("function").and_then(Value::as_str).unwrap_or("stream");
+    let spec = data.get("spec").and_then(Value::as_str).unwrap_or("default");
+    let content_type = data.get("content_type").and_then(Value::as_str).unwrap_or("text/plain");
+
+    // Extract args and kwargs
+    let args = data.get("args")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let kwargs = data.get("kwargs")
+        .and_then(Value::as_object)
+        .map(|obj| obj.clone())
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+
+    // Set up streaming
+    match get_toolbox_client() {
+        Ok(client) => {
+            match tokio::runtime::Runtime::new() {
+                Ok(rt) => {
+                    match rt.block_on(client.stream_generator(module, function, spec, args, kwargs)) {
+                        Ok(stream) => {
+                            // Return a streaming response with the appropriate content type
+                            HttpResponse::Ok()
+                                .content_type(content_type)
+                                .streaming(stream)
+                        },
+                        Err(e) => {
+                            HttpResponse::InternalServerError()
+                                .body(format!("Failed to create stream: {}", e))
+                        }
+                    }
+                },
+                Err(e) => {
+                    HttpResponse::InternalServerError()
+                        .body(format!("Failed to create runtime: {}", e))
+                }
+            }
+        },
+        Err(e) => {
+            HttpResponse::InternalServerError()
+                .body(format!("Failed to get toolbox client: {}", e))
+        }
+    }
+}
+
+
 async fn api_handler(
-     req: HttpRequest,
+    req: HttpRequest,
     path: web::Path<(String, String)>,
     query: web::Query<HashMap<String, String>>,
-    body: Option<web::Json<serde_json::Value>>,
+    mut payload: web::Payload,
     session: Session,
     open_modules: web::Data<Arc<Vec<String>>>,
 ) -> HttpResponse {
     let (module_name, function_name) = path.into_inner();
+    let request_method = req.method().clone();
 
-    // Check if the request is for a protected module or function
+    // Session validation (unchanged)
+    let session_id = match session.get::<String>("ID") {
+        Ok(Some(id)) => id,
+        _ => {
+            let connection_info = req.connection_info().clone();
+            let ip = connection_info.realip_remote_addr().unwrap_or("unknown").split(':').next().unwrap_or("unknown").to_string();
+            let port = connection_info.peer_addr().unwrap_or("unknown").split(':').nth(1).unwrap_or("unknown").to_string();
+            let session_manager = req.app_data::<web::Data<SessionManager>>().expect("SessionManager not found");
+            let id = session_manager.create_new_session(ip, port, None, None, None).await;
+            let _ = session.insert("ID", &id);
+            let _ = session.insert("anonymous", true);
+            id
+        }
+    };
+
     let is_protected = !open_modules.contains(&module_name) && !function_name.starts_with("open");
-
     if is_protected {
         let valid = match session.get::<bool>("valid") {
             Ok(Some(true)) => true,
             _ => false,
         };
         if !valid {
-            // Return unauthorized error with ApiResult format
             return HttpResponse::Unauthorized().json(ApiResult {
-                error: Some("Unauthorized".to_string()),
-                origin: None,
-                result: None,
-                info: None,
+                error: Some("Unauthorized: Session invalid or missing permissions.".to_string()),
+                origin: None, result: None, info: None,
             });
         }
     }
 
     let live_data = session.get::<HashMap<String, String>>("live_data").unwrap_or_else(|_| None);
-    info!("API FOR: {:?} {:?}", live_data, session.get::<HashMap<String, String>>("ip").unwrap_or_else(|_| None));
+    info!("API FOR: {:?} SessionID: {}", live_data, session_id);
+    let spec = live_data.as_ref().and_then(|data| data.get("spec")).cloned().unwrap_or_else(|| "app".to_string());
+    let args: Vec<String> = Vec::new();
 
-    // Get specification from live_data
-    let spec = live_data
-        .as_ref()
-        .and_then(|data| data.get("spec"))
-        .cloned()
-        .unwrap_or_else(|| "app".to_string());
-
-    // Convert query parameters
-    let args: Vec<String> = Vec::new(); // Path params would go here if needed
-
+    // Initialize kwargs with query parameters
     let mut kwargs: HashMap<String, serde_json::Value> = query.into_inner()
         .into_iter()
         .map(|(k, v)| (k, serde_json::json!(v)))
         .collect();
 
-    // Check if this is a POST request and add data parameter only if it is
-    if req.method() == Method::POST {
-        // Extract the data from the request body (if it exists)
-        if let Some(body_data) = body {
-            let data = body_data.into_inner();
-            kwargs.insert("data".to_string(), data);
+    // Process payload based on HTTP method
+    if request_method == Method::POST || request_method == Method::PUT || request_method == Method::PATCH {
+        let content_type = req.headers().get(actix_web::http::header::CONTENT_TYPE)
+            .and_then(|val| val.to_str().ok())
+            .unwrap_or("");
+
+        if content_type.starts_with("multipart/form-data") {
+            debug!("Processing multipart/form-data request");
+            let mut multipart_payload = Multipart::new(req.headers(), payload);
+            let mut form_data_map: HashMap<String, serde_json::Value> = HashMap::new();
+
+            while let Ok(Some(mut field)) = multipart_payload.try_next().await {
+                let content_disposition_opt = field.content_disposition();
+                if let Some(content_disposition) = content_disposition_opt {
+                    let field_name = content_disposition.get_name().unwrap_or("").to_string();
+                    if field_name.is_empty() {
+                        warn!("Multipart field received without a name in Content-Disposition, skipping.");
+                        continue;
+                    }
+
+                    if content_disposition.get_filename().is_some() {
+                        // File Upload
+                        let filename = content_disposition.get_filename().map(String::from);
+                        let content_type_mime = field.content_type().map(|mime| mime.to_string());
+                        debug!("Processing uploaded file: name='{}', filename='{:?}', content_type='{:?}'", field_name, filename, content_type_mime);
+                        let mut file_bytes = BytesMut::new();
+                        while let Ok(Some(chunk)) = field.try_next().await {
+                            file_bytes.extend_from_slice(&chunk);
+                        }
+                        let base64_content = BASE64_STANDARD.encode(&file_bytes);
+                        let file_data = UploadedFile { filename, content_type: content_type_mime, content_base64: base64_content };
+                        form_data_map.insert(field_name, serde_json::to_value(file_data).unwrap_or(Value::Null));
+                    } else {
+                        // Regular Field
+                        debug!("Processing form field: name='{}'", field_name);
+                        let mut field_bytes = BytesMut::new();
+                        while let Ok(Some(chunk)) = field.try_next().await {
+                            field_bytes.extend_from_slice(&chunk);
+                        }
+                        match String::from_utf8(field_bytes.to_vec()) {
+                            Ok(value_str) => { form_data_map.insert(field_name, serde_json::json!(value_str)); },
+                            Err(e) => {
+                                warn!("Failed to decode form field '{}' as UTF-8: {}. Storing as Null.", field_name, e);
+                                form_data_map.insert(field_name, Value::Null);
+                            }
+                        }
+                    }
+                } else {
+                    warn!("Multipart field received without Content-Disposition header, skipping.");
+                    while let Ok(Some(_)) = field.try_next().await {} // Drain field
+                    continue;
+                }
+            }
+            if !form_data_map.is_empty() {
+                // Use "form_data" key for consistency with multipart
+                kwargs.insert("form_data".to_string(), serde_json::json!(form_data_map));
+            }
+
+        } else if content_type.starts_with("application/json") {
+            debug!("Processing application/json request");
+            // Collect payload bytes
+            let mut body_bytes = BytesMut::new();
+            while let Some(chunk_result) = payload.next().await {
+                match chunk_result {
+                    Ok(chunk) => body_bytes.extend_from_slice(&chunk),
+                    Err(e) => {
+                        warn!("Error reading JSON payload stream: {}", e);
+                        break; // Stop reading on error
+                    }
+                }
+            }
+
+            if !body_bytes.is_empty() {
+                // Try to parse as JSON
+                match serde_json::from_slice::<serde_json::Value>(&body_bytes) {
+                    Ok(json_value) => {
+                        kwargs.insert("data".to_string(), json_value);
+                    },
+                    Err(e) => {
+                        warn!("Failed to parse JSON body: {}", e);
+                        // Optionally try to log the raw content for debugging
+                        if let Ok(body_str) = String::from_utf8(body_bytes.to_vec()) {
+                            debug!("Raw JSON body (potentially invalid): {}", body_str);
+                        }
+                    }
+                }
+            } else {
+                debug!("Received empty body for application/json");
+            }
+        } else if content_type.starts_with("application/x-www-form-urlencoded") {
+            debug!("Processing application/x-www-form-urlencoded request");
+            let mut body_bytes = BytesMut::new();
+            // Read the entire payload stream into bytes
+            while let Some(chunk_result) = payload.next().await {
+                match chunk_result {
+                    Ok(chunk) => body_bytes.extend_from_slice(&chunk),
+                    Err(e) => {
+                        warn!("Error reading urlencoded payload stream: {}", e);
+                        // Decide if this is fatal or if we try parsing what we got
+                        break; // Stop reading on error
+                    }
+                }
+            }
+
+            if !body_bytes.is_empty() {
+                // Attempt to parse the bytes as urlencoded string -> map -> JSON Value
+                match serde_urlencoded::from_bytes::<HashMap<String, String>>(&body_bytes) {
+                    Ok(parsed_form) => {
+                        // Convert the HashMap<String, String> to serde_json::Value
+                        match serde_json::to_value(parsed_form) {
+                            Ok(json_value) => {
+                                // Use "form_data" key for consistency
+                                kwargs.insert("form_data".to_string(), json_value);
+                            }
+                            Err(e) => {
+                                warn!("Failed to convert parsed urlencoded form data to JSON Value: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to parse application/x-www-form-urlencoded body: {}", e);
+                        // Optionally try decoding as UTF-8 just for logging
+                        if let Ok(body_str) = String::from_utf8(body_bytes.to_vec()) {
+                            debug!("Raw urlencoded body (potentially invalid): {}", body_str);
+                        }
+                    }
+                }
+            } else {
+                debug!("Received empty body for application/x-www-form-urlencoded");
+            }
+
+        } else if !content_type.is_empty() {
+            debug!("Ignoring request body with Content-Type: {} for method {}", content_type, request_method);
+            // Drain the payload if ignored, otherwise the connection might hang
+            while let Some(_) = payload.next().await {}
+        } else {
+            debug!("Request method {} had no Content-Type header.", request_method);
+            // No content type, no body processing needed. Payload is automatically drained on drop.
         }
+    } else {
+        debug!("Skipping payload processing for request method: {}", request_method);
     }
 
-   let request_metadata = serde_json::json!({
+
+    // --- Prepare request metadata (unchanged) ---
+    let request_metadata = serde_json::json!({
+        // form_data or data are now directly in kwargs if processed
         "session": live_data.unwrap_or_default(),
+        "session_id": session_id,
         "request": {
             "path": req.path(),
             "headers": req.headers().iter().map(|(k, v)| (k.as_str(), v.to_str().unwrap_or(""))).collect::<HashMap<_, _>>(),
-            "method": req.method().as_str(),
+            "method": request_method.as_str(),
+            "query_params": kwargs.iter()
+                         .filter(|(k, _)| *k != "data" && *k != "form_data" && *k != "request")
+                         .map(|(k, v)| (k.clone(), v.clone()))
+                         .collect::<HashMap<_,_>>(),
+            "content_type": if request_method == Method::POST || request_method == Method::PUT || request_method == Method::PATCH {
+                 req.headers().get(actix_web::http::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("").to_string()
+            } else {
+                "".to_string()
+            }
         }
     });
 
-    info!("request_metadata: {:?}", request_metadata);
 
     kwargs.insert("request".to_string(), request_metadata);
+    info!("Final kwargs keys before sending to Python: {:?}", kwargs.keys());
 
-    let client = match get_toolbox_client() {
-        Ok(client) => Arc::new(client),
+    // Process API request with Toolbox
+    let client_result = get_toolbox_client();
+    if client_result.is_err() {
+        error!("Failed to get toolbox client: {:?}", client_result.err());
+        return HttpResponse::InternalServerError().json(ApiResult {
+            error: Some("Internal Server Error: Cannot access backend service.".to_string()),
+            origin: None, result: None, info: None,
+        });
+    }
+
+    let client = Arc::new(client_result.unwrap());
+
+    match client.run_function(&module_name, &function_name, &spec, args, kwargs).await {
+        Ok(response_value) => {
+            match serde_json::from_value::<ApiResult>(response_value.clone()) {
+                Ok(parsed_api_result) => parse_response(parsed_api_result, response_value),
+                Err(e) => {
+                    error!("Failed to parse Python response into ApiResult. Error: {}. Raw response: {}", e, response_value);
+                    HttpResponse::InternalServerError().json(ApiResult {
+                        error: Some(format!("Internal Server Error: Unexpected response format from backend.")),
+                        origin: Some(serde_json::json!({
+                            "parsing_error": e.to_string(),
+                            "raw_response_preview": format!("{:.200}", response_value)
+                        })),
+                        result: None, info: None,
+                    })
+                }
+            }
+        },
         Err(e) => {
-            return HttpResponse::InternalServerError().json(ApiResult {
-                error: Some(format!("Error getting toolbox client: {:?}", e)),
-                origin: None,
-                result: None,
-                info: None,
-            });
+            error!("Toolbox execution error for {}/{}: {:?}", module_name, function_name, e);
+            HttpResponse::InternalServerError().json(ApiResult {
+                error: Some(format!("Backend Execution Error: {}", e)),
+                origin: None, result: None, info: None,
+            })
+        }
+    }
+}
+
+async fn sse_handler(
+    req: HttpRequest,
+    path: web::Path<(String, String)>,
+    query: web::Query<HashMap<String, String>>,
+    session: Session,
+) -> HttpResponse {
+    let (module_name, function_name) = path.into_inner();
+
+    // Session-ID prüfen
+    let session_id = match session.get::<String>("ID") {
+        Ok(Some(id)) => id,
+        _ => {
+            // Anonyme Session für öffentliche Streams erstellen
+            let connection_info = req.connection_info().clone();
+            let ip = connection_info.realip_remote_addr()
+                .unwrap_or("unknown").split(':').next().unwrap_or("unknown").to_string();
+            let port = connection_info.peer_addr()
+                .unwrap_or("unknown").split(':').nth(1).unwrap_or("unknown").to_string();
+
+            let session_manager = req.app_data::<web::Data<SessionManager>>()
+                .expect("SessionManager not found");
+
+            let id = block_on(session_manager.create_new_session(ip, port, None, None, None));
+            session.insert("ID", &id).unwrap_or(());
+            id
         }
     };
 
-    // Run function via toolbox client
-    match client.run_function(&module_name, &function_name, &spec, args, kwargs).await {
-        Ok(response) => {
-            // The Python client.run_function already returns an ApiResult object
-            // which can be directly returned
-            HttpResponse::Ok().json(response)
+    // Berechtigungsprüfung für geschützte Streams
+    let is_protected = !function_name.starts_with("open");
+    let valid = match session.get::<bool>("valid") {
+        Ok(Some(true)) => true,
+        _ => false,
+    };
+
+    if is_protected && !valid {
+        return HttpResponse::Unauthorized().finish();
+    }
+
+    // Session-Daten vorbereiten
+    let live_data = session.get::<HashMap<String, String>>("live_data").unwrap_or_else(|_| None);
+    let spec = live_data.as_ref().and_then(|data| data.get("spec")).cloned().unwrap_or_else(|| "app".to_string());
+
+    // Parameter vorbereiten
+    let mut kwargs: HashMap<String, serde_json::Value> = query.into_inner()
+        .into_iter()
+        .map(|(k, v)| (k, serde_json::json!(v)))
+        .collect();
+
+    // Session-Metadaten hinzufügen
+    kwargs.insert("request".to_string(), serde_json::json!({
+        "session": live_data.unwrap_or_default(),
+        "session_id": session_id,
+    }));
+
+    // Stream starten
+    match get_toolbox_client() {
+        Ok(client) => {
+            match client.stream_sse_events(&module_name, &function_name, &spec, vec![], kwargs).await {
+                Ok(stream) => {
+                    // Force immediate streaming with critical headers
+                    HttpResponse::Ok()
+                        .content_type("text/event-stream")
+                        .insert_header(("Cache-Control", "no-cache, no-transform"))
+                        .insert_header(("Connection", "keep-alive"))
+                        .insert_header(("X-Accel-Buffering", "no"))
+                        .insert_header(("Content-Encoding", "identity"))
+                        .streaming(stream)
+                },
+                Err(e) => {
+                    HttpResponse::InternalServerError().body(format!("Stream error: {:?}", e))
+                }
+            }
         },
         Err(e) => {
-            HttpResponse::InternalServerError().json(ApiResult {
-                error: Some(format!("Error: {:?}", e)),
-                origin: None,
-                result: None,
-                info: None,
-            })
+            HttpResponse::InternalServerError().body(format!("Toolbox error: {:?}", e))
         }
     }
 }
@@ -1481,6 +2302,69 @@ async fn main() -> std::io::Result<()> {
                 CookieSessionStore::default(),
                 key.clone(),
             ))
+            .wrap_fn(|req, srv| {  // this middleware to ensure all requests have a session
+                let fut = srv.call(req);
+                async {
+                    let res = fut.await?;
+
+                    // Get the request's session
+                    let session = res.request().get_session();
+                    // Make sure we have a session ID
+                    if session.get::<String>("ID").unwrap_or(None).is_none() {
+                        let session_manager = res.request()
+                            .app_data::<web::Data<SessionManager>>()
+                            .expect("SessionManager not found");
+
+                        // Extract IP and port
+                        let connection_info = res.request().connection_info().clone();
+                        let ip = connection_info.realip_remote_addr()
+                            .unwrap_or("unknown")
+                            .split(':')
+                            .next()
+                            .unwrap_or("unknown")
+                            .to_string();
+
+                        let port = connection_info.peer_addr()
+                            .unwrap_or("unknown")
+                            .split(':')
+                            .nth(1)
+                            .unwrap_or("unknown")
+                            .to_string();
+
+                        // Create anonymous session
+                        let session_id = block_on(session_manager.create_new_session(
+                            ip, port, None, None, None
+                        ));
+
+                        // Store session ID
+                        let _ = session.insert("ID", session_id);
+                        let _ = session.insert("anonymous", true);
+
+                    }
+
+                    Ok(res)
+                }
+            })
+            // 6. Middleware to add session information to responses
+            .wrap_fn(|req, srv| {
+                let fut = srv.call(req);
+                async {
+                    let mut res = fut.await?;
+
+                    // Add session ID to response headers for debugging/tracking
+                    let session = res.request().get_session();
+                    if let Ok(Some(session_id)) = session.get::<String>("ID") {
+                        res.headers_mut().insert(
+                            actix_web::http::header::HeaderName::from_static("x-session-id"),
+                            actix_web::http::header::HeaderValue::from_str(&session_id).unwrap_or_else(|_|
+                                actix_web::http::header::HeaderValue::from_static("unknown"))
+                        );
+                    }
+
+
+                    Ok(res)
+                }
+            })
             .app_data(web::Data::clone(&session_manager))
             // API routes
             .service(
@@ -1492,6 +2376,10 @@ async fn main() -> std::io::Result<()> {
                         .route(web::delete().to(api_handler))
                         .route(web::put().to(api_handler))
                     )
+            )
+            .service(
+                web::scope("/sse")
+                    .route("/{module_name}/{function_name}", web::get().to(sse_handler))
             )
             .service(web::resource("/validateSession")
                 .route(web::post().to(validate_session_handler))

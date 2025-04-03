@@ -31,7 +31,377 @@ import pstats
 import io
 from contextlib import contextmanager
 import time
+from dataclasses import dataclass, field
+from typing import Dict, Any, Optional, List, Union
 
+
+@dataclass
+class Headers:
+    """Class representing HTTP headers with strongly typed common fields."""
+    # General Headers
+    accept: Optional[str] = None
+    accept_charset: Optional[str] = None
+    accept_encoding: Optional[str] = None
+    accept_language: Optional[str] = None
+    accept_ranges: Optional[str] = None
+    access_control_allow_credentials: Optional[str] = None
+    access_control_allow_headers: Optional[str] = None
+    access_control_allow_methods: Optional[str] = None
+    access_control_allow_origin: Optional[str] = None
+    access_control_expose_headers: Optional[str] = None
+    access_control_max_age: Optional[str] = None
+    access_control_request_headers: Optional[str] = None
+    access_control_request_method: Optional[str] = None
+    age: Optional[str] = None
+    allow: Optional[str] = None
+    alt_svc: Optional[str] = None
+    authorization: Optional[str] = None
+    cache_control: Optional[str] = None
+    clear_site_data: Optional[str] = None
+    connection: Optional[str] = None
+    content_disposition: Optional[str] = None
+    content_encoding: Optional[str] = None
+    content_language: Optional[str] = None
+    content_length: Optional[str] = None
+    content_location: Optional[str] = None
+    content_range: Optional[str] = None
+    content_security_policy: Optional[str] = None
+    content_security_policy_report_only: Optional[str] = None
+    content_type: Optional[str] = None
+    cookie: Optional[str] = None
+    cross_origin_embedder_policy: Optional[str] = None
+    cross_origin_opener_policy: Optional[str] = None
+    cross_origin_resource_policy: Optional[str] = None
+    date: Optional[str] = None
+    device_memory: Optional[str] = None
+    digest: Optional[str] = None
+    dnt: Optional[str] = None
+    dpr: Optional[str] = None
+    etag: Optional[str] = None
+    expect: Optional[str] = None
+    expires: Optional[str] = None
+    feature_policy: Optional[str] = None
+    forwarded: Optional[str] = None
+    from_header: Optional[str] = None  # 'from' is a Python keyword
+    host: Optional[str] = None
+    if_match: Optional[str] = None
+    if_modified_since: Optional[str] = None
+    if_none_match: Optional[str] = None
+    if_range: Optional[str] = None
+    if_unmodified_since: Optional[str] = None
+    keep_alive: Optional[str] = None
+    large_allocation: Optional[str] = None
+    last_modified: Optional[str] = None
+    link: Optional[str] = None
+    location: Optional[str] = None
+    max_forwards: Optional[str] = None
+    origin: Optional[str] = None
+    pragma: Optional[str] = None
+    proxy_authenticate: Optional[str] = None
+    proxy_authorization: Optional[str] = None
+    public_key_pins: Optional[str] = None
+    public_key_pins_report_only: Optional[str] = None
+    range: Optional[str] = None
+    referer: Optional[str] = None
+    referrer_policy: Optional[str] = None
+    retry_after: Optional[str] = None
+    save_data: Optional[str] = None
+    sec_fetch_dest: Optional[str] = None
+    sec_fetch_mode: Optional[str] = None
+    sec_fetch_site: Optional[str] = None
+    sec_fetch_user: Optional[str] = None
+    sec_websocket_accept: Optional[str] = None
+    sec_websocket_extensions: Optional[str] = None
+    sec_websocket_key: Optional[str] = None
+    sec_websocket_protocol: Optional[str] = None
+    sec_websocket_version: Optional[str] = None
+    server: Optional[str] = None
+    server_timing: Optional[str] = None
+    service_worker_allowed: Optional[str] = None
+    set_cookie: Optional[str] = None
+    sourcemap: Optional[str] = None
+    strict_transport_security: Optional[str] = None
+    te: Optional[str] = None
+    timing_allow_origin: Optional[str] = None
+    tk: Optional[str] = None
+    trailer: Optional[str] = None
+    transfer_encoding: Optional[str] = None
+    upgrade: Optional[str] = None
+    upgrade_insecure_requests: Optional[str] = None
+    user_agent: Optional[str] = None
+    vary: Optional[str] = None
+    via: Optional[str] = None
+    warning: Optional[str] = None
+    www_authenticate: Optional[str] = None
+    x_content_type_options: Optional[str] = None
+    x_dns_prefetch_control: Optional[str] = None
+    x_forwarded_for: Optional[str] = None
+    x_forwarded_host: Optional[str] = None
+    x_forwarded_proto: Optional[str] = None
+    x_frame_options: Optional[str] = None
+    x_xss_protection: Optional[str] = None
+
+    # Browser-specific and custom headers
+    sec_ch_ua: Optional[str] = None
+    sec_ch_ua_mobile: Optional[str] = None
+    sec_ch_ua_platform: Optional[str] = None
+    sec_ch_ua_arch: Optional[str] = None
+    sec_ch_ua_bitness: Optional[str] = None
+    sec_ch_ua_full_version: Optional[str] = None
+    sec_ch_ua_full_version_list: Optional[str] = None
+    sec_ch_ua_platform_version: Optional[str] = None
+
+    # HTMX specific headers
+    hx_boosted: Optional[str] = None
+    hx_current_url: Optional[str] = None
+    hx_history_restore_request: Optional[str] = None
+    hx_prompt: Optional[str] = None
+    hx_request: Optional[str] = None
+    hx_target: Optional[str] = None
+    hx_trigger: Optional[str] = None
+    hx_trigger_name: Optional[str] = None
+
+    # Additional fields can be stored in extra_headers
+    extra_headers: Dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self):
+        """Convert header keys with hyphens to underscores for attribute access."""
+        # Handle the 'from' header specifically since it's a Python keyword
+        if 'from' in self.__dict__:
+            self.from_header = self.__dict__.pop('from')
+
+        # Store any attributes that weren't explicitly defined in extra_headers
+        all_attrs = self.__annotations__.keys()
+        for key in list(self.__dict__.keys()):
+            if key not in all_attrs and key != "extra_headers":
+                self.extra_headers[key.replace("_", "-")] = getattr(self, key)
+                delattr(self, key)
+
+    @classmethod
+    def from_dict(cls, headers_dict: Dict[str, str]) -> 'Headers':
+        """Create a Headers instance from a dictionary."""
+        # Convert header keys from hyphenated to underscore format for Python attributes
+        processed_headers = {}
+        extra_headers = {}
+
+        for key, value in headers_dict.items():
+            # Handle 'from' header specifically
+            if key.lower() == 'from':
+                processed_headers['from_header'] = value
+                continue
+
+            python_key = key.replace("-", "_").lower()
+            if python_key in cls.__annotations__ and python_key != "extra_headers":
+                processed_headers[python_key] = value
+            else:
+                extra_headers[key] = value
+
+        return cls(**processed_headers, extra_headers=extra_headers)
+
+    def to_dict(self) -> Dict[str, str]:
+        """Convert the Headers object back to a dictionary."""
+        result = {}
+
+        # Add regular attributes
+        for key, value in self.__dict__.items():
+            if key != "extra_headers" and value is not None:
+                # Handle from_header specially
+                if key == "from_header":
+                    result["from"] = value
+                else:
+                    result[key.replace("_", "-")] = value
+
+        # Add extra headers
+        result.update(self.extra_headers)
+
+        return result
+
+
+@dataclass
+class Request:
+    """Class representing an HTTP request."""
+    content_type: str
+    headers: Headers
+    method: str
+    path: str
+    query_params: Dict[str, Any] = field(default_factory=dict)
+    form_data: Optional[Dict[str, Any]] = None
+    body: Optional[Any] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Request':
+        """Create a Request instance from a dictionary."""
+        headers = Headers.from_dict(data.get('headers', {}))
+
+        # Extract other fields
+        return cls(
+            content_type=data.get('content_type', ''),
+            headers=headers,
+            method=data.get('method', ''),
+            path=data.get('path', ''),
+            query_params=data.get('query_params', {}),
+            form_data=data.get('form_data'),
+            body=data.get('body')
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert the Request object back to a dictionary."""
+        result = {
+            'content_type': self.content_type,
+            'headers': self.headers.to_dict(),
+            'method': self.method,
+            'path': self.path,
+            'query_params': self.query_params,
+        }
+
+        if self.form_data is not None:
+            result['form_data'] = self.form_data
+
+        if self.body is not None:
+            result['body'] = self.body
+
+        return result
+
+
+@dataclass
+class Session:
+    """Class representing a session."""
+    SiID: str
+    level: str
+    spec: str
+    user_name: str
+    # Allow for additional fields
+    extra_data: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Session':
+        """Create a Session instance from a dictionary."""
+        # Extract known fields
+        known_fields = {k: data.get(k) for k in ['SiID', 'level', 'spec', 'user_name'] if k in data}
+
+        # Extract extra fields
+        extra_data = {k: v for k, v in data.items() if k not in known_fields}
+
+        return cls(**known_fields, extra_data=extra_data)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert the Session object back to a dictionary."""
+        result = {
+            'SiID': self.SiID,
+            'level': self.level,
+            'spec': self.spec,
+            'user_name': self.user_name,
+        }
+
+        # Add extra data
+        result.update(self.extra_data)
+
+        return result
+
+    @property
+    def valid(self):
+        return int(self.level) > 0
+
+
+@dataclass
+class RequestData:
+    """Main class representing the complete request data structure."""
+    request: Request
+    session: Session
+    session_id: str
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'RequestData':
+        """Create a RequestData instance from a dictionary."""
+        return cls(
+            request=Request.from_dict(data.get('request', {})),
+            session=Session.from_dict(data.get('session', {})),
+            session_id=data.get('session_id', '')
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert the RequestData object back to a dictionary."""
+        return {
+            'request': self.request.to_dict(),
+            'session': self.session.to_dict(),
+            'session_id': self.session_id
+        }
+
+
+# Example usage:
+def parse_request_data(data: Dict[str, Any]) -> RequestData:
+    """Parse the incoming request data into a strongly typed structure."""
+    return RequestData.from_dict(data)
+
+
+# Example data parsing
+if __name__ == "__main__":
+    example_data = {
+        'request': {
+            'content_type': 'application/x-www-form-urlencoded',
+            'headers': {
+                'accept': '*/*',
+                'accept-encoding': 'gzip, deflate, br, zstd',
+                'accept-language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
+                'connection': 'keep-alive',
+                'content-length': '107',
+                'content-type': 'application/x-www-form-urlencoded',
+                'cookie': 'session=abc123',
+                'host': 'localhost:8080',
+                'hx-current-url': 'http://localhost:8080/api/TruthSeeker/get_main_ui',
+                'hx-request': 'true',
+                'hx-target': 'estimates-guest_1fc2c9',
+                'hx-trigger': 'config-form-guest_1fc2c9',
+                'origin': 'http://localhost:8080',
+                'referer': 'http://localhost:8080/api/TruthSeeker/get_main_ui',
+                'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"Windows"',
+                'sec-fetch-dest': 'empty',
+                'sec-fetch-mode': 'cors',
+                'sec-fetch-site': 'same-origin',
+                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            },
+            'method': 'POST',
+            'path': '/api/TruthSeeker/update_estimates',
+            'query_params': {},
+            'form_data': {
+                'param1': 'value1',
+                'param2': 'value2'
+            }
+        },
+        'session': {
+            'SiID': '29a2e258e18252e2afd5ff943523f09c82f1bb9adfe382a6f33fc6a8381de898',
+            'level': '1',
+            'spec': '74eed1c8de06886842e235486c3c2fd6bcd60586998ac5beb87f13c0d1750e1d',
+            'user_name': 'root',
+            'custom_field': 'custom_value'
+        },
+        'session_id': '0x29dd1ac0d1e30d3f'
+    }
+
+    # Parse the data
+    parsed_data = parse_request_data(example_data)
+    print(f"Session ID: {parsed_data.session_id}")
+    print(f"Request Method: {parsed_data.request.method}")
+    print(f"Request Path: {parsed_data.request.path}")
+    print(f"User Name: {parsed_data.session.user_name}")
+
+    # Access form data
+    if parsed_data.request.form_data:
+        print(f"Form Data: {parsed_data.request.form_data}")
+
+    # Access headers
+    print(f"User Agent: {parsed_data.request.headers.user_agent}")
+    print(f"HX Request: {parsed_data.request.headers.hx_request}")
+
+    # Convert back to dictionary
+    data_dict = parsed_data.to_dict()
+    print(f"Converted back to dictionary: {data_dict['request']['method']} {data_dict['request']['path']}")
+
+    # Access extra session data
+    if parsed_data.session.extra_data:
+        print(f"Extra Session Data: {parsed_data.session.extra_data}")
 
 @contextmanager
 def profile_section(profiler, enable_profiling: bool):
@@ -198,6 +568,7 @@ class ApiResult(BaseModel):
 
 
 class Result:
+    _task = None
     def __init__(self,
                  error: ToolBoxError,
                  result: ToolBoxResult,
@@ -249,6 +620,10 @@ class Result:
             origin=self.origin
         )
 
+    def task(self, task):
+        self._task = task
+        return self
+
     @staticmethod
     def result_from_dict(error: str, result: dict, info: dict, origin: list or None or str):
         # print(f" error={self.error}, result= {self.result}, info= {self.info}, origin= {self.origin}")
@@ -261,11 +636,86 @@ class Result:
                 data_type=result.get('data_type', '404'),
             ) if result else None,
             info=ToolBoxInfoBM(
-                exec_code=info.get('exec_code', '404'),  # exec_code umwandel in http resposn codes
+                exec_code=info.get('exec_code', 404),
                 help_text=info.get('help_text', '404')
             ) if info else None,
             origin=origin
         ).as_result()
+
+    @classmethod
+    def stream(cls,
+               stream_generator,
+               content_type="text/event-stream",
+               headers=None,
+               info="OK",
+               interface=ToolBoxInterfaces.remote,
+               cleanup_func=None):
+        """
+        Create a streaming response Result that properly handles all types of stream sources.
+
+        Args:
+            stream_generator: Any stream source (async generator, sync generator, iterable, or even string)
+            content_type: Content-Type header (default: text/event-stream for SSE)
+            headers: Additional HTTP headers
+            info: Help text for the result
+            interface: Interface to send data to
+
+        Returns:
+            A Result object configured for streaming
+        """
+        error = ToolBoxError.none
+        info_obj = ToolBoxInfo(exec_code=0, help_text=info)
+
+        # Standard SSE headers
+        standard_headers = {
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+
+        # Apply custom headers
+        all_headers = standard_headers.copy()
+        if headers:
+            all_headers.update(headers)
+
+        # Handle different types of stream sources
+        if content_type == "text/event-stream":
+            wrapped_generator = stream_generator
+            if inspect.isgenerator(stream_generator) or hasattr(stream_generator, '__iter__'):
+                # Sync generator or iterable
+                wrapped_generator = SSEGenerator.create_sse_stream(stream_generator, cleanup_func)
+
+            elif isinstance(stream_generator, str):
+                # String (could be a memory address or other reference)
+                # Convert to a generator that yields a single string
+                async def string_to_stream():
+                    yield stream_generator
+
+                wrapped_generator = SSEGenerator.create_sse_stream(string_to_stream(), cleanup_func)
+
+            # The final generator to use
+            final_generator = wrapped_generator
+
+        else:
+            # For non-SSE streams, use the original generator
+            final_generator = stream_generator
+
+        # Prepare streaming data
+        streaming_data = {
+            "type": "stream",
+            "generator": final_generator,
+            "content_type": content_type,
+            "headers": all_headers
+        }
+
+        result = ToolBoxResult(
+            data_to=interface,
+            data=streaming_data,
+            data_info="Streaming response",
+            data_type="stream"
+        )
+
+        return cls(error=error, info=info_obj, result=result)
 
     @classmethod
     def default(cls, interface=ToolBoxInterfaces.native):
@@ -275,10 +725,93 @@ class Result:
         return cls(error=error, info=info, result=result)
 
     @classmethod
+    def json(cls, data, info="OK", interface=ToolBoxInterfaces.remote):
+        """Create a JSON response Result."""
+        error = ToolBoxError.none
+        info_obj = ToolBoxInfo(exec_code=0, help_text=info)
+
+        result = ToolBoxResult(
+            data_to=interface,
+            data=data,
+            data_info="JSON response",
+            data_type="json"
+        )
+
+        return cls(error=error, info=info_obj, result=result)
+
+    @classmethod
+    def text(cls, text_data, content_type="text/plain",exec_code=None,status=200, info="OK", interface=ToolBoxInterfaces.remote, headers=None):
+        """Create a text response Result with specific content type."""
+        if headers is not None:
+            return cls.html(text_data, status= exec_code or status, info=info, headers=headers)
+        error = ToolBoxError.none
+        info_obj = ToolBoxInfo(exec_code=exec_code or status, help_text=info)
+
+        result = ToolBoxResult(
+            data_to=interface,
+            data=text_data,
+            data_info="Text response",
+            data_type=content_type
+        )
+
+        return cls(error=error, info=info_obj, result=result)
+
+    @classmethod
+    def binary(cls, data, content_type="application/octet-stream", download_name=None, info="OK",
+               interface=ToolBoxInterfaces.remote):
+        """Create a binary data response Result."""
+        error = ToolBoxError.none
+        info_obj = ToolBoxInfo(exec_code=0, help_text=info)
+
+        # Create a dictionary with binary data and metadata
+        binary_data = {
+            "data": data,
+            "content_type": content_type,
+            "filename": download_name
+        }
+
+        result = ToolBoxResult(
+            data_to=interface,
+            data=binary_data,
+            data_info=f"Binary response: {download_name}" if download_name else "Binary response",
+            data_type="binary"
+        )
+
+        return cls(error=error, info=info_obj, result=result)
+
+    @classmethod
+    def redirect(cls, url, status_code=302, info="Redirect", interface=ToolBoxInterfaces.remote):
+        """Create a redirect response."""
+        error = ToolBoxError.none
+        info_obj = ToolBoxInfo(exec_code=status_code, help_text=info)
+
+        result = ToolBoxResult(
+            data_to=interface,
+            data=url,
+            data_info="Redirect response",
+            data_type="redirect"
+        )
+
+        return cls(error=error, info=info_obj, result=result)
+
+    @classmethod
     def ok(cls, data=None, data_info="", info="OK", interface=ToolBoxInterfaces.native):
         error = ToolBoxError.none
         info = ToolBoxInfo(exec_code=0, help_text=info)
         result = ToolBoxResult(data_to=interface, data=data, data_info=data_info, data_type=type(data).__name__)
+        return cls(error=error, info=info, result=result)
+
+    @classmethod
+    def html(cls, data=None, data_info="", info="OK", interface=ToolBoxInterfaces.remote, data_type="html",status=200, headers=None):
+        error = ToolBoxError.none
+        info = ToolBoxInfo(exec_code=status, help_text=info)
+
+        if isinstance(headers, Dict):
+            result = ToolBoxResult(data_to=interface, data={'html':data,'headers':headers}, data_info=data_info,
+                                   data_type="special_html")
+        else:
+            result = ToolBoxResult(data_to=interface, data=data, data_info=data_info,
+                                   data_type=data_type if data_type is not None else type(data).__name__)
         return cls(error=error, info=info, result=result)
 
     @classmethod
@@ -290,6 +823,13 @@ class Result:
 
     @classmethod
     def custom_error(cls, data=None, data_info="", info="", exec_code=-1, interface=ToolBoxInterfaces.native):
+        error = ToolBoxError.custom_error
+        info = ToolBoxInfo(exec_code=exec_code, help_text=info)
+        result = ToolBoxResult(data_to=interface, data=data, data_info=data_info, data_type=type(data).__name__)
+        return cls(error=error, info=info, result=result)
+
+    @classmethod
+    def error(cls, data=None, data_info="", info="", exec_code=450, interface=ToolBoxInterfaces.remote):
         error = ToolBoxError.custom_error
         info = ToolBoxInfo(exec_code=exec_code, help_text=info)
         result = ToolBoxResult(data_to=interface, data=data, data_info=data_info, data_type=type(data).__name__)
@@ -371,6 +911,10 @@ class Result:
                                                                                                             **kwargs)
 
         return self if data is None else data if _test_is_result(data) else self.custom_error(data=data, **kwargs)
+
+    @property
+    def bg_task(self):
+        return self._task
 
 
 def _test_is_result(data: Result):
@@ -1286,3 +1830,156 @@ class AppType:
 
             analyzed_data = analyze_data(stats.__dict__)
             return Result.ok(data=stats.__dict__, data_info=analyzed_data)
+
+
+import json
+import base64
+import asyncio
+import inspect
+import traceback
+from typing import Union, Any, AsyncGenerator, Optional
+
+import asyncio
+import base64
+import inspect
+import json
+import traceback
+from typing import Any, AsyncGenerator, Callable, Optional, TypeVar, Union
+
+T = TypeVar('T')
+
+
+class SSEGenerator:
+    """
+    Production-ready SSE generator that converts any data source to
+    properly formatted Server-Sent Events compatible with browsers.
+    """
+
+    @staticmethod
+    def format_sse_event(data: Any) -> str:
+        """Format any data as a proper SSE event message."""
+        # Already formatted as SSE
+        if isinstance(data, str) and (data.startswith('data:') or data.startswith('event:')) and '\n\n' in data:
+            return data
+
+        # Handle bytes (binary data)
+        if isinstance(data, bytes):
+            try:
+                # Try to decode as UTF-8 first
+                data = data.decode('utf-8')
+            except UnicodeDecodeError:
+                # Binary data, encode as base64
+                b64_data = base64.b64encode(data).decode('utf-8')
+                return f"event: binary\ndata: {b64_data}\n\n"
+
+        # Convert objects to JSON
+        if not isinstance(data, str):
+            try:
+                data = json.dumps(data)
+            except Exception:
+                data = str(data)
+
+        # Handle JSON data with special event formatting
+        if data.strip().startswith('{'):
+            try:
+                json_data = json.loads(data)
+                if isinstance(json_data, dict) and 'event' in json_data:
+                    event_type = json_data['event']
+                    event_id = json_data.get('id', '')
+
+                    sse = f"event: {event_type}\n"
+                    if event_id:
+                        sse += f"id: {event_id}\n"
+                    sse += f"data: {data}\n\n"
+                    return sse
+                else:
+                    # Regular JSON without event
+                    return f"data: {data}\n\n"
+            except json.JSONDecodeError:
+                # Not valid JSON, treat as text
+                return f"data: {data}\n\n"
+        else:
+            # Plain text
+            return f"data: {data}\n\n"
+
+    @classmethod
+    async def wrap_sync_generator(cls, generator):
+        """Convert a synchronous generator to an async generator."""
+        for item in generator:
+            yield item
+            # Allow other tasks to run
+            await asyncio.sleep(0)
+
+    @classmethod
+    async def create_sse_stream(
+        cls,
+        source,
+        cleanup_func: Optional[Union[Callable[[], None], Callable[[], T], Callable[[], AsyncGenerator[T, None]]]] = None
+    ) -> AsyncGenerator[str, None]:
+        """
+        Convert any source to a properly formatted SSE stream.
+
+        Args:
+            source: Can be async generator, sync generator, or iterable
+            cleanup_func: Optional function to call when the stream ends or is cancelled.
+                          Can be a synchronous function, async function, or async generator.
+
+        Yields:
+            Properly formatted SSE messages
+        """
+        # Send stream start event
+        yield cls.format_sse_event({"event": "stream_start", "id": "0"})
+
+        try:
+            # Handle different types of sources
+            if inspect.isasyncgen(source):
+                # Source is already an async generator
+                async for item in source:
+                    yield cls.format_sse_event(item)
+            elif inspect.isgenerator(source) or hasattr(source, '__iter__'):
+                # Source is a sync generator or iterable
+                async for item in cls.wrap_sync_generator(source):
+                    yield cls.format_sse_event(item)
+            else:
+                # Single item
+                yield cls.format_sse_event(source)
+        except asyncio.CancelledError:
+            # Client disconnected
+            yield cls.format_sse_event({"event": "cancelled", "id": "cancelled"})
+            raise
+        except Exception as e:
+            # Error in stream
+            error_info = {
+                "event": "error",
+                "message": str(e),
+                "traceback": traceback.format_exc()
+            }
+            yield cls.format_sse_event(error_info)
+        finally:
+            # Always send end event
+            yield cls.format_sse_event({"event": "stream_end", "id": "final"})
+
+            # Execute cleanup function if provided
+            if cleanup_func:
+                try:
+                    if asyncio.iscoroutinefunction(cleanup_func):
+                        # Async function
+                        await cleanup_func()
+                    elif inspect.isasyncgen(cleanup_func):
+                        # Async generator
+                        async for _ in cleanup_func():
+                            pass  # Exhaust the generator to ensure cleanup completes
+                    else:
+                        # Synchronous function
+                        cleanup_func()
+                except Exception as e:
+                    # Log cleanup errors but don't propagate them to client
+                    error_info = {
+                        "event": "cleanup_error",
+                        "message": str(e),
+                        "traceback": traceback.format_exc()
+                    }
+                    # We can't yield here as the stream is already closing
+                    # Instead, log the error
+                    print(f"SSE cleanup error: {error_info}", flush=True)
+
