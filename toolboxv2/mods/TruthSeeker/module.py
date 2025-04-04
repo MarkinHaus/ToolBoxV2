@@ -42,8 +42,6 @@ def start(app=None):
     global talk_generate, talk_tts
     if app is None:
         app = get_app("Starting Talk interface")
-    app.run_any(("CloudM","add_ui" ), name="TruthSeeker", title="TruthSeeker Research", path=f"/api/{MOD_NAME}/get_main_ui",
-                             description="AI Research Assistant")
     app.get_mod("isaa").load_keys_from_env()# (build=False)
 
     app.get_mod("CodeVerification")

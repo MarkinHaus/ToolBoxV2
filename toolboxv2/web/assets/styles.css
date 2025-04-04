@@ -430,7 +430,6 @@ form button, form input[type="submit"] { align-self: center; min-width: 120px; }
 /* REMOVED: header styling (now just a container) */
 header {
     /* No background, shadow, or explicit height needed anymore */
-    position: relative; /* Changed from fixed */
     z-index: var(--z-nav-controls); /* Ensure it's interactive */
     width: auto; /* Only as wide as its content */
     padding: 0; /* Remove padding */

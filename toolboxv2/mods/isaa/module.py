@@ -49,8 +49,6 @@ from toolboxv2.mods.isaa.base.Agents import Agent, AgentBuilder, LLMFunction, Co
 from .SearchAgentCluster.search_tool import web_search
 
 from toolboxv2.mods.isaa.CodingAgent.live import Pipeline
-# from .CodingAgent.flowui.web_flow_ui import init_isaaflow_ui
-# from .CodingAgent.flowui.web_flow_ui2 import get_main_ui
 PIPLINE = None
 Name = 'isaa'
 version = "0.1.5"

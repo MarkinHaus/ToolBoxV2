@@ -295,8 +295,7 @@ class ArXivPDFProcessor:
             async with semaphore:
                 self.send_status(f"in process_query semaphore{i}")
                 # --- Phase 1: Searching ---
-                # Wrap blocking search in asyncio.to_thread
-                papers = await asyncio.to_thread(search_papers, query, self.nsrpq)
+                papers = search_papers(query, self.nsrpq)
                 with lock:
                     self.send_status(f"in lock semaphore{i}")
                     self.all_ref_papers += len(papers)
@@ -311,14 +310,12 @@ class ArXivPDFProcessor:
                     try:
                         # Download the PDF (blocking) in a thread.
                         self.send_status(f"Processing '{query}' ration : {self.all_texts_len} / {self.f_texts_len} ")
-                        pdf_path = await asyncio.to_thread(
-                            self.parser.download_pdf,
+                        pdf_path = self.parser.download_pdf(
                             paper.pdf_url,
                             'temp_pdf_' + paper.title[:20]
                         )
                         # Extract text from PDF (blocking) in a thread.
-                        pdf_pages = await asyncio.to_thread(
-                            self.parser.extract_text_from_pdf,
+                        pdf_pages = self.parser.extract_text_from_pdf(
                             pdf_path
                         )
 
@@ -363,9 +360,10 @@ class ArXivPDFProcessor:
                 return final_papers
 
         # Launch all queries concurrently.
-        tasks = [asyncio.create_task(process_query(i, query)) for i, query in enumerate(queries)]
-        # Wait for all tasks to complete.
-        results = await asyncio.gather(*tasks)# , return_exceptions=False)
+        results = []
+        for i, query in enumerate(queries):
+            results.append(await process_query(i, query))
+            # Wait for all tasks to complete.
         # Flatten the list of lists of papers.
         for res in results:
             all_papers.extend(res)
