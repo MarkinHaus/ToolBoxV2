@@ -385,7 +385,7 @@ def main_api_runner(debug=False):
     if not os.path.exists(os.getenv("PY_DILL", '.')):
         add_py_dill()
     if is_uv_installed():
-        print(f"VIRTUAL_ENV=$ {os.getenv('VIRTUAL_ENV')} {os.getenv("PY_SITE_PACKAGES")}")
+        print(f"VIRTUAL_ENV=$ {os.getenv('VIRTUAL_ENV')} {os.getenv('PY_SITE_PACKAGES')}")
         os.environ["VIRTUAL_ENV"] = os.getenv('UV_BASE_ENV', os.getenv('VIRTUAL_ENV'))
         # os.environ["PY_SITE_PACKAGES"] = os.getenv('PY_SITE_PACKAGES')
     if debug:
