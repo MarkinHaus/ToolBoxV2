@@ -20,7 +20,9 @@ jobs:
                     pip install --user uv
                     python -m uv venv --python 3.11
             - name: Install toolboxv2 with ISAA
-              run: python -m  uv pip install .[isaa]
+              run: |
+               python -m uv pip install -e toolboxv2/mods/isaa
+               python -m uv pip install .
               working-directory: ${{ github.workspace }}
             -   name: Debug mkdocstrings import
                 run: |

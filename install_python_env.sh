@@ -58,7 +58,10 @@ install_pip() {
 }
 
 install_current_package() {
-    $PYTHON_EXE -m pip install -e ".${TOOLBOX_EXTRAS}" --no-warn-script-location
+   if [[ "$TOOLBOX_EXTRAS" == *"isaa"* ]]; then
+         $PYTHON_EXE -m pip install -e "toolboxv2/mods/isaa" --no-warn-script-location
+    fi
+    $PYTHON_EXE -m pip install -e "." --no-warn-script-location
 }
 
 install_extra_packages() {
