@@ -120,4 +120,4 @@ jobs:
               releaseDraft: true
               prerelease: false
               args: ${{ matrix.args }}
-              tauriScript: npm run tauri build --prefix toolboxv2/simple-core
+              tauriScript: npm run tauri build
