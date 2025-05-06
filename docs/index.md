@@ -8,8 +8,8 @@
 
 At its core, ToolBoxV2 integrates a Python backend with a Rust server and a Tauri-based UI, offering a powerful and versatile development experience.
 
--   **Free software:** Custom License (refer to [LICENSE](./LICENSE) file)
--   **Full Documentation:** <https://markinhaus.github.io/ToolBoxV2/>
+-   **Free software:** Custom License
+-   **Officel Web page:** <https://simplecore.com/>
 -   **GitHub Repository:** <https://github.com/MarkinHaus/ToolBoxV2>
 
 ---
