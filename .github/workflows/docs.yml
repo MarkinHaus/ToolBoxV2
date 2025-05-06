@@ -29,4 +29,4 @@ jobs:
                     python -c "import toolboxv2; print('toolboxv2 loaded successfully')"
             -   name: Add project to PYTHONPATH
                 run: echo "PYTHONPATH=$GITHUB_WORKSPACE/toolboxv2" >> $GITHUB_ENV
-            -   run: mkdocs gh-deploy --force
+            -   run: python -c "import pathlib; globals()['PosixPath'] = pathlib.PosixPath; import mkdocs.__main__" gh-deploy --force --verbose
