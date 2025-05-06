@@ -3,7 +3,6 @@
   "productName": "simple-core",
   "version": "0.1.0",
   "identifier": "com.simple-core.app",
-  "public-key": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU1NjMyM0YyMzQ0RUVEQgpSV1RiN2tRalB6SldEcmZKVHUvbkdaMlZQZHZSelVlWnhvKzVNdmZYaGxDTlpXbHZEU0JyT1JSeQo=",
   "build": {
     "devUrl": "http://localhost:5000/",
     "frontendDist": "https://simplecore.app/"
@@ -19,6 +18,12 @@
     ],
     "security": {
       "csp": null
+    }
+  },
+    "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU1NjMyM0YyMzQ0RUVEQgpSV1RiN2tRalB6SldEcmZKVHUvbkdaMlZQZHZSelVlWnhvKzVNdmZYaGxDTlpXbHZEU0JyT1JSeQo=",
+      "endpoints": ["https://my.app.updater/{{target}}/{{current_version}}"]
     }
   },
   "bundle": {
