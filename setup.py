@@ -30,9 +30,22 @@ with io.open(path.join(here, "requirements_dev.txt"), encoding="utf-8") as f:
     all_reqs = f.read().split("\n")
 
 install_requires_dev = [x.strip() for x in all_reqs if "git+" not in x]
-
-with io.open(path.join(here, "requirements_isaa.txt"), encoding="utf-8") as f:
-    all_reqs = f.read().split("\n")
+all_reqs = """langchain-experimental
+PyAudio
+Pebble
+transformers
+litellm
+gpt4all
+SpeechRecognition
+chromadb
+pydub
+duckduckgo-search
+langchain-groq
+beautifulsoup4
+langchain-huggingface
+langchain
+langchain-chroma
+langchain-ollama""".split("\n")
 
 install_requires_isaa = [x.strip() for x in all_reqs if "git+" not in x]
 install_requires_isaa.extend(install_requires_dev[:8])
