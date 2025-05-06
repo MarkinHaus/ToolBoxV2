@@ -335,7 +335,7 @@ class App(AppType, metaclass=Singleton):
         if error_message.startswith("No module named 'toolboxv2.mods"):
             if mod_name.startswith('.'):
                 return
-            return self.run_any(("CloudM", "install"), module_name=mod_name)
+            return self.run_a_from_sync(self.run_any, ("CloudM", "install"), module_name=mod_name)
         if error_message.startswith("No module named '"):
             pip_requ = error_message.split("'")[1].replace("'", "").strip()
             # if 'y' in input(f"\t\t\tAuto install {pip_requ} Y/n").lower:
@@ -1271,7 +1271,7 @@ class App(AppType, metaclass=Singleton):
         else:
             return self.fuction_runner(function, function_data, args, kwargs, t0)
 
-    def run_a_from_sync(self, function, *args):
+    def run_a_from_sync(self, function, *args, **kwargs):
         # Initialize self.loop if not already set.
         if self.loop is None:
             try:
@@ -1287,7 +1287,7 @@ class App(AppType, metaclass=Singleton):
                 new_loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(new_loop)
                 try:
-                    result = new_loop.run_until_complete(function(*args))
+                    result = new_loop.run_until_complete(function(*args, **kwargs))
                     result_future.set_result(result)
                 except Exception as e:
                     result_future.set_exception(e)
@@ -1300,7 +1300,7 @@ class App(AppType, metaclass=Singleton):
             return result_future.result()
         else:
             # If the loop is not running, schedule and run the coroutine directly.
-            future = self.loop.create_task(function(*args))
+            future = self.loop.create_task(function(*args, **kwargs))
             return self.loop.run_until_complete(future)
 
     def fuction_runner(self, function, function_data: dict, args: list, kwargs: dict, t0=.0):
