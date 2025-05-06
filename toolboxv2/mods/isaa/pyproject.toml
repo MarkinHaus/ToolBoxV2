@@ -11,10 +11,8 @@ requires-python = ">=3.10"
 dependencies = [
     "starlette",
     "litellm",
-    # "gpt4all",
     "pebble",
     "transformers",
-    # "inquirer",
     "networkx",
     "numpy",
     "tiktoken",
@@ -23,7 +21,6 @@ dependencies = [
     "pyaudio",
     "whisper",
     "gtts",
-    #"playsound",
     "pydub",
     "websockets",
     "keyboard",
@@ -40,6 +37,7 @@ dependencies = [
     "tqdm",
     "utils",
     "tokenizers",
+    "graphiti-core[anthropic,google-genai,groq]>=0.10.5",
     "sentence-transformers",
     "browser-use>=0.1.40",
     "python-git>=2018.2.1",
@@ -58,7 +56,6 @@ dependencies = [
     "google-adk>=0.3.0",
     "python-a2a[all]>=0.5.1",
     "mcp>=1.6.0",
-    "graphiti-core[anthropic,google-genai,groq]>=0.10.5",
     "google-cloud-aiplatform>=1.90.0",
     "pyyaml>=6.0.2",
     "restrictedpython>=8.0",
@@ -66,3 +63,7 @@ dependencies = [
     "httpx>=0.28.1",
     "fastapi>=0.115.12",
 ]
+
+[tool.setuptools.packages.find]
+include = ["base*", "extras*", "subtools*"]
+exclude = ["lnn*", "ui*", "CodingAgent*", "SearchAgentCluster*"]
