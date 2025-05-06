@@ -46,7 +46,7 @@ jobs:
                     pip install --user --no-cache-dir Cython
                     pip install --user uv
                     python -m uv venv --python 3.11
-                    python -m uv pip install .[isaa] --system
+                    python -m uv pip install .[isaa]
             -   name: PKG-TEST
                 run: |
                     python -m unittest discover -s toolboxv2/tests/

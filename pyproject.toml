@@ -33,7 +33,6 @@ dependencies = [
     "transformers>=4.49.0",
     "watchfiles>=1.0.4",
     "webauthn>=2.5.1",
-    "isaa @ file:///C://Users/Markin/Workspace/ToolBoxV2/toolboxv2/mods/isaa",
     "schedule>=1.2.2",
     "websockets>=15.0.1",
 ]
@@ -55,6 +54,8 @@ dev-dependencies = [
     "setuptools"
 ]
 
+[project.optional-dependencies]
+isaa = ["isaa @ file://localhost/${PROJECT_ROOT}/toolboxv2/mods/isaa"]
 
 [tool.uv.workspace]
 members = ["toolboxv2/mods/isaa"]
