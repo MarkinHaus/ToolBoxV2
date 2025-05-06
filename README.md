@@ -144,12 +144,12 @@ ToolBoxV2 can be used to build a wide range of applications, including:
 ## 📚 Learn More / Further Information
 
 *   [📦 Current Installer (Web Demo/Entry)](https://simplecore.app/web/core0/Installer.html)
-*   [📚 Documentation (WIP)](https://simplecore.app/web/core0/docs/)
+*   [📚 Documentation (WIP)](https://markinhaus.github.io/ToolBoxV2/)
 *   [🐍 PyPI Package](https://pypi.org/project/ToolBoxV2)
 *   [🐙 GitHub Repository](https://github.com/MarkinHaus/ToolBoxV2)
 
 ---
-
+![image.png](docs/image.png)
 ## 📄 License
 
 This project is distributed under a custom license. Please refer to the [LICENSE](./LICENSE) file in the repository for detailed terms and conditions.
