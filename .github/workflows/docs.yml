@@ -18,7 +18,7 @@ jobs:
                     python -m pip install --upgrade pip
                     pip install --user --no-cache-dir Cython
                     pip install --user uv
-                    uv pip install .[isaa] --system
+                    python -m uv pip install .[isaa] --system
             -   name: Install toolboxv2 package
                 run: pip install -e .
             -   name: Debug mkdocstrings import
