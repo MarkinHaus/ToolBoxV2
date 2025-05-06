@@ -108,7 +108,7 @@ jobs:
                 npm install
                 cd ../src-core
                 npm install
-                argo install tauri-cli
+                cargo install tauri-cli
          - uses: tauri-apps/tauri-action@v0
            env:
              GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
