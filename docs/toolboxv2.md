@@ -1,67 +1,136 @@
 # toolboxv2 API Reference
 
-This section provides an API reference for key components within the `toolboxv2` package.
+This section provides an API reference for key components directly available from the `toolboxv2` package.
 
-## Core Classes and Utilities
+## Core Application & Tooling
 
 ::: toolboxv2.App
     options:
       show_root_heading: true
-      show_source: false # Optional: set to true if you want to show source code
+      show_source: false
 
 ::: toolboxv2.MainTool
     options:
       show_root_heading: true
       show_source: false
 
-::: toolboxv2.utils.system.file_handler.FileHandler
+::: toolboxv2.get_app
     options:
       show_root_heading: true
       show_source: false
-      heading_level: 3 # Example: Adjust heading level if needed
 
-::: toolboxv2.utils.extras.Style.Style
-    options:
-      show_root_heading: true
-      show_source: false
-      heading_level: 3
+## System Utilities & Configuration
 
-## Key Types and Data Structures
-
-::: toolboxv2.utils.system.types.AppArgs
+::: toolboxv2.FileHandler
     options:
       show_root_heading: true
       show_source: false
       heading_level: 3
 
-::: toolboxv2.utils.system.types.Result
+::: toolboxv2.utils
+    options:
+      show_root_heading: true
+      heading_level: 3
+      show_bases: false
+      show_submodules: true
+
+::: toolboxv2.show_console
     options:
       show_root_heading: true
       show_source: false
       heading_level: 3
 
-::: toolboxv2.utils.system.types.RequestData
+## Logging
+
+::: toolboxv2.get_logger
     options:
       show_root_heading: true
       show_source: false
       heading_level: 3
 
-## Runnable Components / Flows
+::: toolboxv2.setup_logging
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
 
-<!--
-  If 'runnable' refers to a specific module or class, use the ::: syntax.
-  For example, if you have a module 'toolboxv2.runnable':
--->
-<!-- ::: toolboxv2.runnable -->
+## Styling & Console Output
 
-<!--
-  Or if 'runnable' is a specific class within a module, e.g., toolboxv2.flows.MyRunnableFlow:
--->
-<!-- ::: toolboxv2.flows.MyRunnableFlow -->
+::: toolboxv2.Style
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
 
-<!--
-  If 'runnable' refers to a conceptual section about how to make things runnable
-  or list key runnable scripts/flows, you might describe it textually or link to
-  the CLI documentation. For now, I'm assuming it might be a module or class.
-  If it's not, this section would need a different approach.
--->
+::: toolboxv2.Spinner
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+::: toolboxv2.remove_styles
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+## Data Types & Structures
+
+::: toolboxv2.AppArgs
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+::: toolboxv2.Result
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+::: toolboxv2.ApiResult
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+::: toolboxv2.RequestData
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+## Security
+
+::: toolboxv2.Code
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+## Modules & Flows
+
+::: toolboxv2.mods
+    options:
+      show_root_heading: true
+      heading_level: 3
+      show_submodules: true
+
+::: toolboxv2.flows_dict
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+::: toolboxv2.TBEF
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+## Other Exposed Items
+
+::: toolboxv2.ToolBox_over
+    options:
+      show_root_heading: true
+      show_source: false

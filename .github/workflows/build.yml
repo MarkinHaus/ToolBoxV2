@@ -96,16 +96,21 @@ jobs:
            # webkitgtk 4.0 is for Tauri v1 - webkitgtk 4.1 is for Tauri v2.
            # You can remove the one that doesn't apply to your app to speed up the workflow a bit.
          - name: install frontend dependencies
-           run: yarn install # change this to npm, pnpm or bun depending on which one you use.
+           working-directory: ./toolboxv2/web
+           run: |
+                npm install
+                cd ../src-core
+                npm install
          - uses: tauri-apps/tauri-action@v0
            env:
              GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
            with:
-             projectPath: ./toolboxv2/simple-core
-             distPath: ./toolboxv2/dist
-             tagName: simple-v__VERSION__ # the action automatically replaces \_\_VERSION\_\_ with the app version.
-             releaseName: 'App v__VERSION__'
-             releaseBody: 'See the assets to download this version and install.'
-             releaseDraft: true
-             prerelease: false
-             args: ${{ matrix.args }}
+              projectPath: ./toolboxv2/simple-core
+              distPath: ./toolboxv2/dist
+              tagName: simple-v__VERSION__
+              releaseName: 'App v__VERSION__'
+              releaseBody: 'See the assets to download this version and install.'
+              releaseDraft: true
+              prerelease: false
+              args: ${{ matrix.args }}
+              tauriScript: npm run tauri build --prefix ./toolboxv2/simple-core
