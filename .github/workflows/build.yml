@@ -21,14 +21,14 @@ jobs:
                     - { os: ubuntu-latest, py: "3.10" }
                     - { os: ubuntu-latest, py: "3.11" }
                     - { os: ubuntu-latest, py: "3.12" }
-                   # - { os: windows-latest, py: "3.9" }
+                    # - { os: windows-latest, py: "3.9" }
                     - { os: windows-latest, py: "3.10" }
                     - { os: windows-latest, py: "3.11" }
-                    - { os:  windows-latest, py: "3.12" }
-                   # - { os: macOS-latest, py: "3.9" }
+                    - { os: windows-latest, py: "3.12" }
+                    # - { os: macOS-latest, py: "3.9" }
                     - { os: macOS-latest, py: "3.10" }
                     - { os: macOS-latest, py: "3.11" }
-                    - { os:  macOS-latest, py: "3.12" }
+                    - { os: macOS-latest, py: "3.12" }
 
         env:
             SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
@@ -53,23 +53,26 @@ jobs:
         name: Rust Build & Test (Actix)
         runs-on: ubuntu-latest
         steps:
-          - uses: actions/checkout@v4
-          - uses: dtolnay/rust-toolchain@stable
-          - name: Build & Test Rust Server
-            working-directory: ./toolboxv2/src-core
-            run: |
-              cargo build --release
-              cargo test
+            -   uses: actions/checkout@v4
+            -   uses: dtolnay/rust-toolchain@stable
+            -   name: Build & Test Rust Server
+                working-directory: ./toolboxv2/src-core
+                run: |
+                    cargo build --release
+                    cargo test
 
     build-tauri:
         name: Build Tauri App
         runs-on: ubuntu-latest
         steps:
-          - uses: actions/checkout@v4
-          - uses: tauri-apps/tauri-action@v0
-            with:
-              args: "build"
-            env:
-              TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-              TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
-              GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            -   uses: actions/checkout@v4
+            -   uses: tauri-apps/tauri-action@v0
+                working-directory: ./toolboxv2/
+                with:
+
+                    args: "build"
+                env:
+                    TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+                    TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+                    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                run: npm run tauriB
