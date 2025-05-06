@@ -952,7 +952,7 @@ def generate_pyproject(subproject_name, subproject_path, dependencies):
             "name": subproject_name,
             "version": "0.1.0",  # You can adjust the version based on your needs
             "description": f"Subproject {subproject_name}",
-            "requires-python": ">=3.10",  # Set this based on the Python version your subproject uses
+            "requires-python": ">=3.11",  # Set this based on the Python version your subproject uses
             "dependencies": dependencies
         }
     }

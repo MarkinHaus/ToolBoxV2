@@ -60,7 +60,7 @@ test_requirements = []
 setup(
     author="Markin Hausmanns",
     author_email='Markinhausmanns@gmail.com',
-    python_requires='>=3.10',
+    python_requires='>=3.11',
     classifiers=[
         'Development Status :: 2 - Pre-Alpha',
         'Intended Audience :: Developers',
