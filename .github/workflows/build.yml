@@ -44,12 +44,10 @@ jobs:
                 run: |
                     python -m pip install --upgrade pip
                     pip install --user --no-cache-dir Cython
-                    pip install --user uv
             -   name: Install toolboxv2 with ISAA
                 run: |
-                    python -m uv venv --python 3.11
-                    python -m uv pip install -e toolboxv2/mods/isaa
-                    python -m uv pip install .
+                    python -m pip install -e toolboxv2/mods/isaa --user
+                    python -m pip install . --user
                 working-directory: ${{ github.workspace }}
             -   name: PKG-TEST
                 run: |
