@@ -18,6 +18,7 @@ jobs:
                     python -m pip install --upgrade pip
                     pip install --user --no-cache-dir Cython
                     pip install --user uv
+                    python -m uv venv --python 3.11
                     python -m uv pip install .[isaa] --system
             -   name: Install toolboxv2 package
                 run: pip install -e .
