@@ -287,9 +287,6 @@ def parse_args():
     parser.add_argument("conda", help="run conda commands for mor infos run tb conda -h", default=False,
                         action='store_true')
 
-    parser.add_argument("api", help="run conda commands for mor infos run tb conda -h", default=False,
-                        action='store_true')
-
     parser.add_argument("gui", help="start gui no args", default=False,
                         action='store_true')
 

@@ -135,5 +135,4 @@ def main():
 
 
 if __name__ == "__main__":
-    install_extra_win_gpu_12_6_package(r"C:\Users\Markin\Workspace\ToolBoxV2\python_env\python.exe")
-    # main()
+    main()

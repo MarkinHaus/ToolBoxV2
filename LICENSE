@@ -1,16 +1,28 @@
-Apache Software License 2.0
+Hier ist die englische Übersetzung deiner Lizenz, Punkt 5 wurde weggelassen:
 
-Copyright (c) 2022, Markin Hausmanns
+---
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+**ToolBoxV2 License v1.0 (Custom)**
 
-http://www.apache.org/licenses/LICENSE-2.0
+Copyright (c) 2022–2025, Markin Hausmanns
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+1. **Attribution:**
+   Any public or private use must include a visible reference to the original source ([https://github.com/MarkinHaus/ToolBoxV2](https://github.com/MarkinHaus/ToolBoxV2)).
 
+2. **Free Use:**
+   Individuals, non-commercial projects, and groups with fewer than 10 members may modify, host, and use the code as long as this notice is retained.
+
+3. **Commercial Use:**
+   Organizations with more than 10 employees or generating over €100,000/year in revenue through or in connection with ToolBoxV2 must obtain a commercial license. Contact: [contact@simplecore.app](mailto:contact@simplecore.app)
+
+4. **Modified Versions:**
+   Publicly accessible modified versions must link to the original project and clearly disclose that changes have been made.
+
+5. **Liability:**
+   The code is provided without warranty. No liability is accepted for any damages resulting from its use.
+
+---
+
+Optional commercial license: see LICENSE-commercial.md
+
+---
