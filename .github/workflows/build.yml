@@ -45,7 +45,7 @@ jobs:
                     python -m pip install --upgrade pip
                     pip install --user --no-cache-dir Cython
                     pip install --user uv
-                    uv pip install .[isaa]
+                    uv pip install .[isaa] --system
             -   name: PKG-TEST
                 run: |
                     python -m unittest discover -s toolboxv2/tests/
@@ -113,4 +113,4 @@ jobs:
               releaseDraft: true
               prerelease: false
               args: ${{ matrix.args }}
-              tauriScript: npm run tauri build --prefix ./toolboxv2/simple-core
+              tauriScript: npm run tauri build --prefix toolboxv2/simple-core
