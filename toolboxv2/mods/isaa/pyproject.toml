@@ -52,6 +52,7 @@ dependencies = [
     "qdrant-client[fastembed]>=1.13.3",
     "pyvis>=0.3.2",
     "matplotlib>=3.10.1",
+    "redis",
     "seaborn>=0.13.2",
     "google-adk>=0.3.0",
     "python-a2a[all]>=0.5.1",
