@@ -19,9 +19,9 @@ jobs:
                     pip install --user --no-cache-dir Cython
                     pip install --user uv
                     python -m uv venv --python 3.11
-                    python -m uv pip install .[isaa]
-            -   name: Install toolboxv2 package
-                run: pip install -e .[isaa]
+            - name: Install toolboxv2 with ISAA
+              run: python -m  uv pip install .[isaa]
+              working-directory: ${{ github.workspace }}
             -   name: Debug mkdocstrings import
                 run: |
                     python -c "import toolboxv2; print('toolboxv2 loaded successfully')"

@@ -55,7 +55,7 @@ dev-dependencies = [
 ]
 
 [project.optional-dependencies]
-isaa = ["isaa @ file://./toolboxv2/mods/isaa"]
+isaa = ["isaa @ file:toolboxv2/mods/isaa"]
 
 [tool.uv.workspace]
 members = ["toolboxv2/mods/isaa"]
