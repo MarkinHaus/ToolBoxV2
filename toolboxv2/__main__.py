@@ -291,7 +291,7 @@ def parse_args():
                         action='store_true')
 
     parser.add_argument("-init",
-                        help="ToolBoxV2 init (name) -> default : -n name = main", type=str or None, default=None)
+                        help="ToolBoxV2 init (name) -> options ['venv', 'system', 'docker', 'uninstall']", type=str or None, default=None)
 
     parser.add_argument("-v", "--get-version",
                         help="get version of ToolBox and all mods with -l",
@@ -677,6 +677,10 @@ async def main():
                                         "install",
                                         module_name=args.install, get_results=True)
         report.print()
+
+    if args.init:
+        from .setup_helper import main as setup_main
+        setup_main()
 
     if args.lm:
         edit_logs()
