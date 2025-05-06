@@ -47,8 +47,8 @@ jobs:
                     pip install --user uv
             -   name: Install toolboxv2 with ISAA
                 run: |
-                    python -m uv pip install toolboxv2/mods/isaa --system
-                    python -m uv pip install . --system
+                    python -m uv pip install --user toolboxv2/mods/isaa --system
+                    python -m uv pip install --user . --system
                 working-directory: ${{ github.workspace }}
             -   name: PKG-TEST
                 run: |
