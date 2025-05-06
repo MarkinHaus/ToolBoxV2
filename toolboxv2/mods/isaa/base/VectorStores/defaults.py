@@ -16,11 +16,15 @@ from typing import List, Dict, Any, Optional
 from abc import ABC, abstractmethod
 
 import torch
-from redis.commands.search.field import VectorField, TextField
-from redis.commands.search.query import Query
-from redis.commands.search.indexDefinition import IndexDefinition
-
-
+try:
+    from redis.commands.search.field import VectorField, TextField
+    from redis.commands.search.query import Query
+    from redis.commands.search.indexDefinition import IndexDefinition
+except ImportError:
+    VectorField = lambda *a, **k: None
+    TextField = lambda *a, **k: None
+    Query = lambda *a, **k: None
+    IndexDefinition = lambda *a, **k: None
 @dataclass(slots=True)
 class Chunk:
     """Represents a chunk of text with its embedding and metadata"""
