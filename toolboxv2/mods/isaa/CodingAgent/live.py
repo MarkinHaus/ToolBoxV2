@@ -12,9 +12,7 @@ from pydantic import BaseModel, Field
 
 import toolboxv2
 from toolboxv2 import Style, Spinner, get_app, get_logger
-from toolboxv2.mods.isaa.CodingAgent.web import JSExecutionRecord, BrowserSession, Extractor, BrowserContext, js_prompt
 from toolboxv2.mods.isaa.extras.modes import get_free_agent
-
 from inspect import getdoc, signature, isfunction, ismethod, currentframe, Signature, isclass
 
 from collections import Counter, defaultdict
@@ -40,6 +38,16 @@ import os
 import traceback
 from pathlib import Path
 from typing import Tuple, Optional, Any, Union
+
+@dataclass
+class JSExecutionRecord:
+    """Records JavaScript execution details"""
+    code: str
+    result: Any
+    error: Optional[str] = None
+    page_state: Optional[Dict] = None
+    extracted_data: Optional[Dict] = None
+
 
 class VerboseFormatter:
     def __init__(self,print_f, spinner_style: str = "d"):

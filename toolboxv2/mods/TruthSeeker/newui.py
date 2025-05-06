@@ -62,7 +62,7 @@ async def get_main_ui(app: App):
     }
 
     .card {
-        background-color: var(--card-bg);
+        background-color: rgba(255, 255, 255, 0.85);
         border-radius: 0.75rem;
         box-shadow: var(--shadow);
         padding: 1.5rem;
@@ -153,29 +153,7 @@ async def get_main_ui(app: App):
         transition: width 0.5s ease;
     }
 
-    .revenue-container {
-        height: 12px;
-        background-color: var(--theme-accent);
-        border-radius: 6px;
-        margin: 1rem 0;
-        overflow: hidden;
-        position: relative;
-    }
 
-    .revenue-bar {
-        height: 100%;
-        background-color: var(--success-color);
-        border-radius: 6px;
-        width: 0%;
-        transition: width 0.5s ease;
-    }
-
-    .revenue-label {
-        text-align: center;
-        font-size: 0.75rem;
-        margin-top: 0.25rem;
-        color: var(--theme-text-muted);
-    }
 
     .spinner {
         display: inline-block;
@@ -504,14 +482,7 @@ async def get_main_ui(app: App):
             <button id="donate-button" class="btn btn-primary mt-4">Donate</button>
         </div>
 
-        <div class="card">
-            <h3>Service Credit</h3>
-            <div class="revenue-container">
-                <div id="revenue-bar" class="revenue-bar" style="width: 10%;"></div>
-            </div>
-            <div class="revenue-label"><p id="revenue-amount"></p>
-            </div>
-        </div>
+
     </div>
     """
 
@@ -524,7 +495,7 @@ async def get_main_ui(app: App):
             let selectedAmount = 5;
             let currentResearchId = null;
             let eventSource = null;
-            let revenuePct = 10; // Initial revenue percentage (0-100)
+
 
             // Elements
             const queryInput = document.getElementById('query');
@@ -544,16 +515,10 @@ async def get_main_ui(app: App):
             const estimationContainer = document.getElementById('estimation-container');
             const estimatedTimeEl = document.getElementById('estimated-time');
             const estimatedCostEl = document.getElementById('estimated-cost');
-            const revenueBar = document.getElementById('revenue-bar');
-            const revenueAmount = document.getElementById('revenue-amount');
-
             // Donation elements
             const donationOptions = document.querySelectorAll('.donation-option');
             const customAmountInput = document.getElementById('custom-amount');
             const donateButton = document.getElementById('donate-button');
-
-            // Initialize revenue bar
-            updateRevenueBar(revenuePct);
 
             // Tab navigation
             const tabs = document.querySelectorAll('.tab');
@@ -575,25 +540,7 @@ async def get_main_ui(app: App):
                 });
             });
 
-            // Update max search value based on revenue
-            function updateRevenueBar(percent) {
-                revenueBar.style.width = percent + '%';
 
-                // Update the displayed amount (example calculation)
-                const amount = (percent / 100 * 5).toFixed(2); // Max €5 at 100%
-                revenueAmount.textContent = '€' + amount;
-
-                // Update max search based on revenue
-                if (percent <= 0) {
-                    maxSearchInput.value = 4;
-                    maxSearchInput.max = 4;
-                } else {
-                    // Scale max search from 4 to 20 based on revenue percentage
-                    const maxSearchValue = Math.floor(4 + (percent / 100 * 16));
-                    maxSearchInput.value = maxSearchValue;
-                    maxSearchInput.max = 20;
-                }
-            }
 
             // Get processing time and cost estimates when query changes
             queryInput.addEventListener('input', debounce(updateEstimates, 500));
@@ -688,16 +635,7 @@ async def get_main_ui(app: App):
                     return;
                 }
 
-                // Check if there's enough revenue
-                if (estimatedCostEl.textContent) {
-                    const cost = parseFloat(estimatedCostEl.textContent || "0");
-                    const revenue = parseFloat(revenueAmount.textContent.replace('€', '') || "0");
 
-                    if (cost > revenue) {
-                        alert('Insufficient credit for this research. Please add funds or reduce search parameters.');
-                        return;
-                    }
-                }
 
                 searchButton.disabled = true;
                 searchButton.innerHTML = '<div class="spinner"></div>Processing...';
@@ -736,13 +674,7 @@ async def get_main_ui(app: App):
                         // Connect to SSE endpoint for status updates
                         connectToSSE(currentResearchId);
 
-                        // Reduce available revenue if cost estimate is available
-                        if (estimatedCostEl.textContent) {
-                            const cost = parseFloat(estimatedCostEl.textContent || "0");
-                            const maxCost = 5; // Maximum cost in euros
-                            revenuePct = Math.max(0, revenuePct - (cost / maxCost * 100));
-                            updateRevenueBar(revenuePct);
-                        }
+
                     } else {
                         handleError('Failed to start research process');
                     }
@@ -990,10 +922,7 @@ async def get_main_ui(app: App):
                         if (paymentData.status === 'completed') {
                             paymentEventSource.close();
 
-                            // Update revenue bar
-                            const newAmount = parseFloat(paymentData.amount || 0);
-                            revenuePct = Math.min(100, revenuePct + (newAmount / 5 * 100));
-                            updateRevenueBar(revenuePct);
+
 
                             alert('Payment successful! Your credit has been updated.');
                         } else if (paymentData.status === 'cancelled') {

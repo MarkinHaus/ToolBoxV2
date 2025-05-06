@@ -340,7 +340,7 @@ async def login(m_link: str, app: Optional[App] = None):
         app.session.username = app.get_username(False, default=m_link.split('&name=')[-1])
     app.set_username(m_link.split('&name=')[-1])
     if await app.session.login():
-        return
+        return False
     return await app.session.init_log_in_mk_link(m_link)
 
 

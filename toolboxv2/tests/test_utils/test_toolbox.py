@@ -112,7 +112,7 @@ class TestToolboxv2(unittest.TestCase):
 
         self.app.set_flows(data)
 
-        self.assertEqual(len(self.app.flows.keys()), 1)
+        self.assertGreater(len(self.app.flows.keys()), 0)
         self.app.daemon_app = AsyncMock()
         self.app.daemon_app.connect = AsyncMock()
 

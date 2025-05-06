@@ -1110,6 +1110,49 @@ class PyEnvEval:
     def tool(self):
         return {"PythonEval": {"func": self.run_and_display, "description": "Use Python Code to Get to an Persis Answer! input must be valid python code all non code parts must be comments!"}}
 
+def get_str_response(chunk):
+    # print("Got response :: get_str_response", chunk)
+    if isinstance(chunk, list):
+        if len(chunk) == 0:
+            chunk = ""
+        if len(chunk) > 1:
+            return '\n'.join([get_str_response(c) for c in chunk])
+        if len(chunk) == 1:
+            chunk = chunk[0]
+    if isinstance(chunk, dict):
+        data = chunk['choices'][0]
+
+        if "delta" in data.keys():
+            message = chunk['choices'][0]['delta']
+            if isinstance(message, dict):
+                message = message['content']
+        elif "text" in data.keys():
+            message = chunk['choices'][0]['text']
+        elif "message" in data.keys():
+            message = chunk['choices'][0]['message']['content']
+        elif "content" in data['delta'].keys():
+            message = chunk['choices'][0]['delta']['content']
+        else:
+            message = ""
+
+    elif isinstance(chunk, str):
+        message = chunk
+    else:
+        try:
+            if hasattr(chunk.choices[0], 'message'):
+                message = chunk.choices[0].message.content
+            elif hasattr(chunk.choices[0], 'delta'):
+                message = chunk.choices[0].delta.content
+                if message is None:
+                    message = ''
+            else:
+                raise AttributeError
+        except AttributeError:
+            message = f"Unknown chunk type {chunk}{type(chunk)}"
+    if message is None:
+        message = f"Unknown message None : {type(chunk)}|{chunk}"
+    return message
+
 
 def get_token_mini(text: str, model_name=None, isaa=None, only_len=True):
     logger = get_logger()

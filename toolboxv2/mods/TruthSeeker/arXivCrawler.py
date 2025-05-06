@@ -1,23 +1,25 @@
-import threading
+"""
+ArXiv Crawler for TruthSeeker.
+Main module for processing research queries.
+"""
+import os
+import asyncio
 import time
 import uuid
-from typing import List, Tuple, Optional, Dict
-
-import asyncio
-
+import threading
+from typing import List, Dict, Any, Optional, Tuple, Callable
+import concurrent.futures
 from pydantic import BaseModel, Field
 
-from toolboxv2 import get_app, Spinner
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from tqdm import tqdm
-import arxiv
-import os
-import requests
-from requests.adapters import HTTPAdapter, Retry
-import PyPDF2
-from PIL import Image
-import io
-import time
+# Import the new modular components
+from .sources.source_manager import SourceManager, search_all_sources, UnifiedPaper
+from .llm_processor import LlamaProcessor
+from .research_processor import ResearchProcessor
+from .sources.arxiv_source import search_papers, Paper
+from .pdf_processor import RobustPDFDownloader, filter_relevant_texts
+from .text_splitter import TextSplitter
+
+from toolboxv2 import get_app
 import logging
 
 from urllib3 import Retry
@@ -210,7 +212,16 @@ def search_papers(query: str, max_results=10) -> List[Paper]:
 
 
 
+# Import the new modular components
+from .sources.source_manager import SourceManager, search_all_sources, UnifiedPaper
+from .llm_processor import LlamaProcessor
+from .research_processor import ResearchProcessor
+
 class ArXivPDFProcessor:
+    """
+    Main processor for research queries.
+    This is a wrapper around the new ResearchProcessor for backward compatibility.
+    """
     def __init__(self,
                  query: str,
                  tools,
@@ -220,157 +231,102 @@ class ArXivPDFProcessor:
                  num_search_result_per_query=6,
                  max_search=6,
                  download_dir="pdfs",
-                 callback=None, num_workers=None):
+                 callback=None,
+                 num_workers=None):
+        """Initialize the ArXiv PDF processor.
+
+        Args:
+            query: Research query
+            tools: Tools module
+            chunk_size: Size of text chunks for processing
+            overlap: Overlap between chunks
+            max_workers: Maximum number of worker threads
+            num_search_result_per_query: Number of search results per query
+            max_search: Maximum number of search queries
+            download_dir: Directory to save downloaded files
+            callback: Callback function for status updates
+            num_workers: Number of worker threads
+        """
+        # Create the new research processor
+        self.processor = ResearchProcessor(
+            query=query,
+            tools=tools,
+            chunk_size=chunk_size,
+            overlap=overlap,
+            max_workers=max_workers,
+            num_search_result_per_query=num_search_result_per_query,
+            max_search=max_search,
+            download_dir=download_dir,
+            callback=callback,
+            num_workers=num_workers
+        )
+
+        # Copy attributes for backward compatibility
         self.insights_generated = False
         self.queries_generated = False
         self.query = query
         self.tools = tools
-        self.mem = self.tools.get_memory()
+        self.mem = tools.get_memory()
         self.chunk_size = chunk_size
         self.overlap = overlap
-        self.max_workers = max_workers if max_workers is not None else os.cpu_count() or 4
+        self.max_workers = max_workers
         self.nsrpq = num_search_result_per_query
         self.max_search = max_search
         self.download_dir = download_dir
         self.parser = RobustPDFDownloader(download_dir=download_dir)
         self.callback = callback if callback is not None else lambda status: None
-
         self.mem_name = None
         self.current_session = None
         self.all_ref_papers = 0
         self.last_insights_list = None
-
         self.all_texts_len = 0
         self.f_texts_len = 0
-
         self.s_id = str(uuid.uuid4())
-        from sentence_transformers import SentenceTransformer
-        self.semantic_model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
+        self.semantic_model = self.processor.semantic_model
         self._query_progress = {}
-        self._progress_lock = threading.Lock()  # to guard shared variables
-        if num_workers is None:
-            self.num_workers = max(1, (os.cpu_count() or 1))  # Ensure at least 1 worker
-        else:
-            self.num_workers = min(num_workers, (os.cpu_count() or max_workers))
+        self._progress_lock = threading.Lock()
+        self.num_workers = self.processor.num_workers
 
     def _update_global_progress(self) -> float:
         """Calculate overall progress considering all processing phases."""
-        total_queries = len(self._query_progress)
-
-        # Phase progress calculations
-        generate_queries_progress = 1.0 if self.queries_generated else 0.0
-        insights_progress = 1.0 if self.insights_generated else 0.0
-
-        if total_queries == 0:
-            search_progress = 0.0
-            process_progress = 0.0
-        else:
-            # Calculate search progress (0.0-0.3 range per query)
-            search_progress = sum(min(p, 0.3) for p in self._query_progress.values()) / (0.3 * total_queries)
-            # Calculate processing progress (0.3-1.0 range per query)
-            process_progress = sum(max(p - 0.3, 0) for p in self._query_progress.values()) / (0.7 * total_queries)
-
-        # Weighted phase contributions
-        overall = (
-            0.1 * generate_queries_progress +  # Query generation phase
-            0.4 * search_progress +  # Search and download phase
-            0.3 * process_progress +  # Processing phase
-            0.2 * insights_progress  # Insights generation phase
-        )
-        return max(0.0, min(overall, 1.0))
+        return self.processor._update_global_progress()
 
     async def search_and_process_papers(self, queries: List[str]) -> List[Paper]:
-        self.send_status("Starting search and processing papers")
-        all_papers = []
-        lock = threading.Lock()
-        total_queries = len(queries)
-        # Initialize per-query progress to 0 for each query index.
-        self._query_progress = {i: 0.0 for i in range(total_queries)}
-
-        # Create a semaphore to limit the number of concurrent queries.
-        semaphore = asyncio.Semaphore(self.num_workers)
-
-        async def process_query(i: int, query: str) -> List[Paper]:
-            self.send_status(f"Starting process_query {i}")
-            async with semaphore:
-                self.send_status(f"in process_query semaphore{i}")
-                # --- Phase 1: Searching ---
-                papers = search_papers(query, self.nsrpq)
-                with lock:
-                    self.send_status(f"in lock semaphore{i}")
-                    self.all_ref_papers += len(papers)
-                # Mark search phase as 30% complete for this query.
-                self._query_progress[i] = 0.3
-                self.send_status(f"Found {len(papers)} papers for '{query}'")
-
-                # --- Phase 2: Process each paper's PDF ---
-                num_papers = len(papers)
-                final_papers = []
-                for j, paper in enumerate(papers):
-                    try:
-                        # Download the PDF (blocking) in a thread.
-                        self.send_status(f"Processing '{query}' ration : {self.all_texts_len} / {self.f_texts_len} ")
-                        pdf_path = self.parser.download_pdf(
-                            paper.pdf_url,
-                            'temp_pdf_' + paper.title[:20]
-                        )
-                        # Extract text from PDF (blocking) in a thread.
-                        pdf_pages = self.parser.extract_text_from_pdf(
-                            pdf_path
-                        )
-
-                        # Save extracted data to memory (this is async already).
-                        texts = [page['text'] for page in pdf_pages]
-                        self.all_texts_len += len(texts)
-                        # --- Apply Fuzzy & Semantic Filtering ---
-                        # Filter pages relevant to the current query.
-                        if self.nsrpq * self.max_search > 6_000:
-                            scaled_value = 11
-                        else:
-                            scaled_value = -4 + (self.nsrpq * self.max_search - 1) * (10 - (-4)) / (6_000 - 1)
-                        if scaled_value < -4:
-                            scaled_value = -4
-                        # print("scaled_value", scaled_value)
-                        filtered_texts = filter_relevant_texts(
-                            query=query,
-                            texts=texts,
-                            fuzzy_threshold=int(70.0 + scaled_value),  # adjust as needed
-                            semantic_threshold=0.75 + (scaled_value/10),  # adjust as needed
-                            model=self.semantic_model  # reuse the preloaded model
-                        )
-                        self.f_texts_len += len(filtered_texts)
-
-                        # Save filtered extracted data to memory.
-
-                        self.send_status(f"Filtered {len(texts)} / {len(filtered_texts)}",
-                                         additional_info=paper.title)
-                        if len(filtered_texts) > 0:
-                            final_papers.append(paper)
-                            await self.mem.add_data(memory_name=self.mem_name,
-                                                                 data=filtered_texts)
-                        # Update status with paper title
-                    except Exception as e:
-                        self.send_status("Error processing PDF",
-                                         additional_info=f"{paper.title}: {e}")
-                        continue
-                    # Update the progress for this query:
-                    # The PDF processing phase is 70% of the query’s portion.
-                    self._query_progress[i] = 0.3 + ((j + 1) / num_papers) * 0.7
-
-                return final_papers
-
-        # Launch all queries concurrently.
-        results = []
-        for i, query in enumerate(queries):
-            results.append(await process_query(i, query))
-            # Wait for all tasks to complete.
-        # Flatten the list of lists of papers.
-        for res in results:
-            all_papers.extend(res)
-
-        # Final status update.
-        self.send_status("Completed processing all papers", progress=1.0)
-        return all_papers
+        """Search for and process papers based on queries.
+        
+        Args:
+            queries: List of search queries
+        
+        Returns:
+            List of processed papers
+        """
+        # Use the new processor to search and process papers
+        unified_papers = await self.processor.search_and_process_papers(queries)
+        
+        # Convert UnifiedPaper objects to Paper objects for backward compatibility
+        papers = []
+        for paper in unified_papers:
+            if paper.source == "arxiv":
+                # Convert to the old Paper format
+                arxiv_paper = Paper(
+                    title=paper.title,
+                    authors=paper.authors,
+                    summary=paper.summary,
+                    url=paper.url,
+                    pdf_url=paper.pdf_url,
+                    published=paper.published,
+                    updated=paper.source_specific_data.get("updated", ""),
+                    categories=paper.source_specific_data.get("categories", []),
+                    paper_id=paper.paper_id
+                )
+                papers.append(arxiv_paper)
+        
+        # Update attributes for backward compatibility
+        self.all_ref_papers = self.processor.all_ref_papers
+        self.all_texts_len = self.processor.all_texts_len
+        self.f_texts_len = self.processor.f_texts_len
+        
+        return papers
 
     def send_status(self, step: str, progress: float = None, additional_info: str = ""):
         """Send status update via callback."""

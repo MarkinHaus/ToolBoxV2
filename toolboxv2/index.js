@@ -389,7 +389,7 @@ function renderer({content="", extend = false, id = "main", Dome = DOME, add_scr
 
 }
 
-function dashboard_init() {
+function dashboard_init(){
 
     init_d = true
     const helper = document.createElement("div");
@@ -907,17 +907,6 @@ function addState(key, value){
 function getState(key){
     return state.TBc[key]
 }
-
-// lazy load
-
-function getWidgetUtility(){
-
-}
-
-function getOverlayUtility(){
-
-}
-
 
 // Htmx
 

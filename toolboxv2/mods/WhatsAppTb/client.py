@@ -7,9 +7,12 @@ from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-
-from whatsapp import WhatsApp, Message
-
+try:
+    from whatsapp import WhatsApp, Message
+except ImportError:
+    print("NO Whatsapp installed")
+    WhatsApp = lambda :None
+    Message = lambda :None
 from toolboxv2 import get_app, TBEF
 from toolboxv2.mods.WhatsAppTb.utils import ProgressMessenger, emoji_set_thermometer, emoji_set_work_phases
 from toolboxv2.mods.WhatsAppTb.server import AppManager

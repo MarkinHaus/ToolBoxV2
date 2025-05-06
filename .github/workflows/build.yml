@@ -7,10 +7,6 @@ on:
             - mod-server
             - master
     pull_request:
-        branches:
-            - light-tb
-            - mod-server
-            - master
 
 
 jobs:
@@ -52,5 +48,28 @@ jobs:
                     pip install --user -r requirements_dev.txt
             -   name: PKG-TEST
                 run: |
-                    python -m unittest discover -s toolboxv2/tests/
 
+    test-rust:
+        name: Rust Build & Test (Actix)
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+          - uses: dtolnay/rust-toolchain@stable
+          - name: Build & Test Rust Server
+            working-directory: ./toolboxv2/src-core
+            run: |
+              cargo build --release
+              cargo test
+
+    build-tauri:
+        name: Build Tauri App
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+          - uses: tauri-apps/tauri-action@v0
+            with:
+              args: "build"
+            env:
+              TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+              TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+              GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

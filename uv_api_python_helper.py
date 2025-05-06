@@ -115,6 +115,7 @@ def install_extra_win_gpu_12_6_package(python_exe):
     "taichi>=1.7.3",
     "nest-asyncio>=1.6.0",
     "schedule>=1.2.2",
+    "qdrant-client[fastembed]",
     "python-levenshtein>=0.27.1",
     "langchain-google-genai>=2.1.2"], check=True)
     subprocess.run([python_exe, "-m", "pip", "install", "websockets", "schedule", "mailjet_rest", "mockito"], check=True)

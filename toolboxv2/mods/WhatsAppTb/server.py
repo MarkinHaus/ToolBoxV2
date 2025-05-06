@@ -2,14 +2,19 @@ import json
 import os
 import threading
 
-from nicegui import ui
+#from nicegui import ui
 from datetime import datetime
 from typing import Dict
 from threading import Thread, Event
 import time
 import signal
 import sys
-from whatsapp import WhatsApp, Message
+try:
+    from whatsapp import WhatsApp, Message
+except ImportError:
+    print("NO Whatsapp installed")
+    WhatsApp = lambda :None
+    Message = lambda :None
 from toolboxv2 import Singleton, Code
 import asyncio
 import logging

@@ -1,7 +1,7 @@
 # This workflows will upload a Python Package using Twine when a release is created
 # For more information see: https://help.github.com/en/actions/language-and-framework-guides/using-python-with-github-actions#publishing-to-package-registries
 
-name: pypi
+name: Release
 
 on:
     release:
@@ -28,3 +28,24 @@ jobs:
                 run: |
                     python setup.py sdist bdist_wheel
                     twine upload dist/*
+
+    docker-push:
+        name: Docker Image Build & Push
+        runs-on: ubuntu-latest
+        steps:
+            -   uses: actions/checkout@v4
+            -   name: Login to DockerHub
+                run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+            -   name: Build & Push Image
+                run: |
+                    docker build -t markinhaus/toolboxv2:latest .
+                    docker push markinhaus/toolboxv2:latest
+
+    notify-deployment:
+        name: Notify Webhook Server
+        needs: [ docker-push ]
+        runs-on: ubuntu-latest
+        steps:
+            -   name: Send Webhook
+                run: |
+                    curl -X POST ${{ secrets.DEPLOY_WEBHOOK_URL }} -H "Content-Type: application/json" -d '{"event":"new_release"}'

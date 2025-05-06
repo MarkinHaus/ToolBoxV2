@@ -49,6 +49,15 @@ from toolboxv2.mods.isaa.base.Agents import Agent, AgentBuilder, LLMFunction, Co
 from .SearchAgentCluster.search_tool import web_search
 
 from toolboxv2.mods.isaa.CodingAgent.live import Pipeline
+
+import subprocess
+import shlex
+import json
+import platform
+import locale
+from typing import Dict, Any
+import sys
+
 PIPLINE = None
 Name = 'isaa'
 version = "0.1.5"
@@ -99,17 +108,6 @@ def get_location():
 
     return location_data
 
-
-def extract_code(x):
-    data = x.split('```')
-    if len(data) == 3:
-        text = data[1].split('\n')
-        code_type = text[0]
-        code = '\n'.join(text[1:])
-        return code, code_type
-    if len(data) > 3:
-        print(x)
-    return '', ''
 
 class Tools(MainTool, FileHandler):
 
@@ -542,7 +540,6 @@ class Tools(MainTool, FileHandler):
                 self.config[f"{p_type + model}_pipeline"] = PIPLINE(p_type, model=model, **kwargs)
             self.app.logger.info("Done")
             self.initstate[p_type + model] = True
-
 
     def free_llm_model(self, names: List[str]):
         for model in names:
@@ -1352,15 +1349,6 @@ class Tools(MainTool, FileHandler):
         return f"set to {self.local_files_tools=}"
 
 
-import subprocess
-import shlex
-import json
-import platform
-import locale
-from typing import Dict, Any
-import sys
-
-
 def detect_shell() -> str:
     """Detect system-appropriate shell with fallbacks"""
     if platform.system() == "Windows":
@@ -1447,67 +1435,3 @@ def shell_tool_function(command: str) -> str:
 
 if __name__ == "__main__":
     print(shell_tool_function("ls"))
-
-"""
-    def execute_2tree(self, user_text, tree, config: Agent):
-        config.binary_tree = tree
-        config.stop_sequence = "\n\n\n\n"
-        config.set_completion_mode('chat')
-        res_um = 'Plan for The Task:'
-        res = ''
-        tree_depth_ = config.binary_tree.get_depth(config.binary_tree.root)
-        for _ in range(tree_depth_):
-            self.print(f"NEXT chain {config.binary_tree.get_depth(config.binary_tree.root)}"
-                       f"\n{config.binary_tree.get_left_side(0)}")
-            res = self.run_agent(config, user_text, mode_over_lode='q2tree')
-            tree_depth = config.binary_tree.get_depth(config.binary_tree.root)
-            don, next_on, speak = False, 0, res
-            str_ints_list_to = list(range(tree_depth + 1))
-            for line in res.split("\n"):
-                if line.startswith("Answer"):
-                    print(F"LINE:{line[:10]}")
-                    for char in line[6:12]:
-                        char_ = char.strip()
-                        if char_ in [str(x) for x in str_ints_list_to]:
-                            next_on = int(char_)
-                            break
-
-                if line.startswith("+1"):
-                    print(F"detected +1")
-                    line = line.replace("+1", '')
-                    exit_on = -1
-                    if "N/A" in line:
-                        alive = False
-                        res_um = "Task is not fitting isaa's capabilities"
-                        break
-                    for char in line[0:6]:
-                        char_ = char.strip()
-                        if char_ in [str(x) for x in str_ints_list_to]:
-                            exit_on = int(char_)
-                            break
-                    if exit_on != -1:
-                        next_on = exit_on
-
-            if next_on == 0:
-                if len(res) < 1000:
-                    for char in res:
-                        char_ = char.strip()
-                        if char_ in [str(x) for x in str_ints_list_to]:
-                            next_on = int(char_)
-                            break
-
-            if next_on == tree_depth:
-                alive = False
-                break
-
-            elif next_on == 0:
-                alive = False
-                res_um = 'Task is to complicated'
-                break
-            else:
-                new_tree = config.binary_tree.cut_tree('L' * (next_on - 1) + 'R')
-                config.binary_tree = new_tree
-
-        return res, res_um
-
-    """""

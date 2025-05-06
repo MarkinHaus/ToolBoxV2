@@ -1240,6 +1240,9 @@ class AppType:
     def exit(self):
         """proxi attr"""
 
+    def web_context(self) -> str:
+        """returns the build index ( toolbox web component )"""
+
     async def a_exit(self):
         """proxi attr"""
 

@@ -927,6 +927,18 @@ async def get_manager(app, request):
         return Managers[key]
 
 
+@export(mod_name=Name, name="init", initial=True)
+def init(app=None):
+    if app is None:
+        app = get_app()
+    app.run_any(("CloudM","add_ui"),
+                name=Name,
+                title=Name,
+                path=f"/api/{Name}/main_web_DoNext_entry",
+                description="In Pre Demo"
+                )
+
+
 @export(mod_name=Name, name="new-action", api=True, row=True, request_as_kwarg=True, api_methods=['POST'])
 async def api_new_action(app, request: RequestSession):
     if request is None:
@@ -1048,8 +1060,10 @@ async def complete_current_action(app, request):
 
 @get_app().tb(mod_name=Name, version=version, level=0, api=True,
               name="main_web_DoNext_entry", row=True, state=False)
-def DoNext():
-    return HTMLResponse(content=template)
+def DoNext(app=None):
+    if app is None:
+        app = get_app(Name)
+    return Result.html(app.web_context()+template)
 
 
 # Example usage

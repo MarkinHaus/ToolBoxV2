@@ -383,7 +383,7 @@ class App(AppType, metaclass=Singleton):
         app_instance_type = "file/application"
 
         if tools_class is None:
-            modular_id = getattr(modular_file_object, "Name")
+            modular_id = getattr(modular_file_object, "Name") if hasattr(modular_file_object, "Name") else mod_name
 
         if tools_class is None and modular_id is None:
             modular_id = str(modular_file_object.__name__)

@@ -461,7 +461,11 @@ class SpinnerManager(metaclass=Singleton):
         self._lock = threading.Lock()
         self._render_thread = None
         self._should_run = False
-        signal.signal(signal.SIGINT, self._signal_handler)
+        try:
+            signal.signal(signal.SIGINT, self._signal_handler)
+        except ValueError:
+            print("Spinner Manager not in the min Thread no signal possible")
+            pass
 
     def _signal_handler(self, signum, frame):
         """Handle SIGINT by stopping all spinners gracefully."""

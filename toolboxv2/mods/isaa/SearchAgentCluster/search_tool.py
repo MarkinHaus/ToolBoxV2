@@ -163,151 +163,156 @@ async def main():
             Dictionary containing search results and extracted information
         """
         await self.initialize()
-        start_time = datetime.now()
+        try:
+            start_time = datetime.now()
 
-        # Try different search engines in order
-        search_engines = [
-            {
-                "url": f"https://www.google.com/search?q={urllib.parse.quote_plus(query)}",
-                "result_selector": ".g",
-                "title_selector": "h3",
-                "link_selector": "a",
-                "snippet_selector": ".VwiC3b",
-                "name": "google"
-            },
-            {
-                "url": f"https://www.bing.com/search?q={urllib.parse.quote_plus(query)}",
-                "result_selector": ".b_algo",
-                "title_selector": "h2",
-                "link_selector": "a",
-                "snippet_selector": ".b_caption p",
-                "name": "bing"
-            },
-            {
-                "url": f"https://duckduckgo.com/?q={urllib.parse.quote_plus(query)}",
-                "result_selector": ".result",
-                "title_selector": "h2",
-                "link_selector": "a.result__a",
-                "snippet_selector": ".result__snippet",
-                "name": "duckduckgo"
-            }
-        ]
+            # Try different search engines in order
+            search_engines = [
+                {
+                    "url": f"https://www.google.com/search?q={urllib.parse.quote_plus(query)}",
+                    "result_selector": ".g",
+                    "title_selector": "h3",
+                    "link_selector": "a",
+                    "snippet_selector": ".VwiC3b",
+                    "name": "google"
+                },
+                {
+                    "url": f"https://www.bing.com/search?q={urllib.parse.quote_plus(query)}",
+                    "result_selector": ".b_algo",
+                    "title_selector": "h2",
+                    "link_selector": "a",
+                    "snippet_selector": ".b_caption p",
+                    "name": "bing"
+                },
+                {
+                    "url": f"https://duckduckgo.com/?q={urllib.parse.quote_plus(query)}",
+                    "result_selector": ".result",
+                    "title_selector": "h2",
+                    "link_selector": "a.result__a",
+                    "snippet_selector": ".result__snippet",
+                    "name": "duckduckgo"
+                }
+            ]
 
-        results = []
+            results = []
 
-        for engine in search_engines:
-            try:
-                # Navigate to search engine
-                page = await self.browser_wrapper.navigate(engine["url"])
-                await page.wait_for_load_state("networkidle")
-                await page.wait_for_timeout(2000)  # Wait for results to load
+            for engine in search_engines:
+                try:
+                    # Navigate to search engine
+                    page = await self.browser_wrapper.navigate(engine["url"])
+                    await page.wait_for_load_state("networkidle")
+                    await page.wait_for_timeout(2000)  # Wait for results to load
 
-                # Extract search results
-                search_results = await page.evaluate(
-                    """
-                    (selectors) => {
-                        const results = [];
-                        const elements = document.querySelectorAll(selectors.result_selector);
+                    # Extract search results
+                    search_results = await page.evaluate(
+                        """
+                        (selectors) => {
+                            const results = [];
+                            const elements = document.querySelectorAll(selectors.result_selector);
 
-                        for (const element of elements) {
-                            const titleElement = element.querySelector(selectors.title_selector);
-                            const linkElement = element.querySelector(selectors.link_selector);
-                            const snippetElement = element.querySelector(selectors.snippet_selector);
+                            for (const element of elements) {
+                                const titleElement = element.querySelector(selectors.title_selector);
+                                const linkElement = element.querySelector(selectors.link_selector);
+                                const snippetElement = element.querySelector(selectors.snippet_selector);
 
-                            if (titleElement && linkElement) {
-                                const url = linkElement.href;
-                                // Skip non-http links and same-domain results
-                                if (url && url.startsWith('http') &&
-                                    !url.includes('google.com/search') &&
-                                    !url.includes('bing.com/search') &&
-                                    !url.includes('duckduckgo.com')) {
-                                    results.push({
-                                        title: titleElement.textContent.trim(),
-                                        url: url,
-                                        snippet: snippetElement ? snippetElement.textContent.trim() : '',
-                                        source: selectors.name
-                                    });
+                                if (titleElement && linkElement) {
+                                    const url = linkElement.href;
+                                    // Skip non-http links and same-domain results
+                                    if (url && url.startsWith('http') &&
+                                        !url.includes('google.com/search') &&
+                                        !url.includes('bing.com/search') &&
+                                        !url.includes('duckduckgo.com')) {
+                                        results.push({
+                                            title: titleElement.textContent.trim(),
+                                            url: url,
+                                            snippet: snippetElement ? snippetElement.textContent.trim() : '',
+                                            source: selectors.name
+                                        });
+                                    }
                                 }
                             }
+                            return results;
                         }
-                        return results;
-                    }
-                    """,
-                    engine
+                        """,
+                        engine
+                    )
+
+                    if search_results and len(search_results) > 0:
+                        # We got results, add them and break
+                        results = search_results
+                        break
+
+                except Exception as e:
+                    print(f"Error searching with {engine['name']}: {str(e)}")
+                    continue  # Try next engine
+
+            # Filter and limit results
+            unique_urls = set()
+            filtered_results = []
+
+            for result in results:
+                if result['url'] not in unique_urls and len(filtered_results) < max_results:
+                    unique_urls.add(result['url'])
+                    filtered_results.append(result)
+
+            results = filtered_results
+
+            # Get detailed content if requested
+            if include_content and results:
+                # Extract content from each result page
+                urls_to_scrape = [result['url'] for result in results]
+
+                # Configure what to extract
+                extract_config = {}
+                if extract_tables:
+                    extract_config['tables'] = 'table'
+                if extract_images:
+                    extract_config['images'] = 'img'
+                if extract_links:
+                    extract_config['links'] = 'a'
+
+                # Scrape all pages in parallel using our efficient multi-tab approach
+                scraped_data = await self.scrape_urls(
+                    urls_to_scrape,
+                    extract_config=extract_config if extract_config else None
                 )
 
-                if search_results and len(search_results) > 0:
-                    # We got results, add them and break
-                    results = search_results
-                    break
+                # Add content to results
+                for i, result in enumerate(results):
+                    if i < len(scraped_data) and 'error' not in scraped_data[i]:
+                        result['content'] = {
+                            'title': scraped_data[i].get('title', result['title']),
+                            'markdown': scraped_data[i].get('markdown', ''),
+                            'text': scraped_data[i].get('text', ''),
+                        }
 
-            except Exception as e:
-                print(f"Error searching with {engine['name']}: {str(e)}")
-                continue  # Try next engine
+                        # Add structured data if available
+                        if extract_config and 'structured_data' in scraped_data[i]:
+                            structured_data = scraped_data[i]['structured_data']
+                            for key, value in structured_data.items():
+                                if value:  # Only add non-empty data
+                                    result['content'][key] = value
 
-        # Filter and limit results
-        unique_urls = set()
-        filtered_results = []
+            # Prepare final response
+            response = {
+                'query': query,
+                'timestamp': datetime.now().isoformat(),
+                'num_results': len(results),
+                'results': results,
+                'execution_time': (datetime.now() - start_time).total_seconds()
+            }
 
-        for result in results:
-            if result['url'] not in unique_urls and len(filtered_results) < max_results:
-                unique_urls.add(result['url'])
-                filtered_results.append(result)
+            # Save to file if requested
+            if save_to_file:
+                os.makedirs(os.path.dirname(os.path.abspath(save_to_file)), exist_ok=True)
+                with open(save_to_file, 'w', encoding='utf-8') as f:
+                    json.dump(response, f, ensure_ascii=False, indent=2)
 
-        results = filtered_results
+            return response
 
-        # Get detailed content if requested
-        if include_content and results:
-            # Extract content from each result page
-            urls_to_scrape = [result['url'] for result in results]
-
-            # Configure what to extract
-            extract_config = {}
-            if extract_tables:
-                extract_config['tables'] = 'table'
-            if extract_images:
-                extract_config['images'] = 'img'
-            if extract_links:
-                extract_config['links'] = 'a'
-
-            # Scrape all pages in parallel using our efficient multi-tab approach
-            scraped_data = await self.scrape_urls(
-                urls_to_scrape,
-                extract_config=extract_config if extract_config else None
-            )
-
-            # Add content to results
-            for i, result in enumerate(results):
-                if i < len(scraped_data) and 'error' not in scraped_data[i]:
-                    result['content'] = {
-                        'title': scraped_data[i].get('title', result['title']),
-                        'markdown': scraped_data[i].get('markdown', ''),
-                        'text': scraped_data[i].get('text', ''),
-                    }
-
-                    # Add structured data if available
-                    if extract_config and 'structured_data' in scraped_data[i]:
-                        structured_data = scraped_data[i]['structured_data']
-                        for key, value in structured_data.items():
-                            if value:  # Only add non-empty data
-                                result['content'][key] = value
-
-        # Prepare final response
-        response = {
-            'query': query,
-            'timestamp': datetime.now().isoformat(),
-            'num_results': len(results),
-            'results': results,
-            'execution_time': (datetime.now() - start_time).total_seconds()
-        }
-
-        # Save to file if requested
-        if save_to_file:
-            os.makedirs(os.path.dirname(os.path.abspath(save_to_file)), exist_ok=True)
-            with open(save_to_file, 'w', encoding='utf-8') as f:
-                json.dump(response, f, ensure_ascii=False, indent=2)
-
-        return response
+        finally:
+            # Make sure we clean up browser resources
+            await self.close()
 
     async def _scrape_url(self, url: str, task_id: str, extract_config: Dict[str, Any] = None):
         """
@@ -1055,7 +1060,7 @@ async def main2():
         # Simple search with content extraction
         results = await scraper.search_web(
             query="climate change latest research",
-            max_results=3,
+            max_results=15,
             include_content=True,
             extract_tables=True,
             save_to_file="search_results.json"
