@@ -105,10 +105,12 @@ jobs:
       - name: install frontend dependencies
         working-directory: ./toolboxv2/web
         run: |
-          npm install
-          cd ../src-core
-          npm install
-          cargo install tauri-cli
+            npm install
+            cd ../simple-core
+            npm install
+            cd ..
+            npm install
+            npm run build
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -121,7 +123,6 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
-          tauriScript: npm run tauri build
 
   build-docker:
     name: Build Docker Image
