@@ -22,7 +22,7 @@ from tqdm import tqdm
 from toolboxv2.mods.isaa.base.KnowledgeBase import TextSplitter
 from toolboxv2.mods.isaa.extras.filter import filter_relevant_texts
 from toolboxv2.mods.isaa.types import TaskChain
-from toolboxv2.mods.isaa.ui.nice import IsaaWebSocketUI
+# from toolboxv2.mods.isaa.ui.nice import IsaaWebSocketUI
 from toolboxv2.utils.extras.keword_matcher import calculate_weighted_score, extract_keywords
 from toolboxv2.utils.system import FileCache
 from .CodingAgent.auto_runner import ProjectManager
@@ -159,7 +159,7 @@ class Tools(MainTool, FileHandler):
             "save_to_mem": self.save_to_mem,
             "mini_task": self.mini_task_completion,
             "get_agent": self.get_agent,
-            "run_agent": self.run_agent,
+            # "run_agent": self.run_agent,
             "run_task": self.run_task,
             "crate_task_chain": self.crate_task_chain,
             "format_class": self.format_class,
@@ -204,7 +204,7 @@ class Tools(MainTool, FileHandler):
         self.shell_tool_function = shell_tool_function
 
         self.print(f"Start {self.spec}.isaa")
-        IsaaWebSocketUI(self)
+        # IsaaWebSocketUI(self)
         # init_isaaflow_ui(self.app)
         with Spinner(message=f"Starting module", symbols='c'):
             self.load_file_handler()
@@ -947,10 +947,13 @@ class Tools(MainTool, FileHandler):
 
 
     def format_class(self, format_class, task, agent_name="TaskCompletion"):
-
+        if format_class is None:
+            return None
+        if not task:
+            return None
         if isinstance(agent_name, str):
             agent: Agent = self.get_agent(agent_name)
-        else:
+        elif isinstance(agent_name, Agent):
             agent = agent_name
 
         return agent.format_class(format_class, task)
@@ -1150,7 +1153,7 @@ class Tools(MainTool, FileHandler):
             return out, ""
         return out
 
-    @get_app('isaa-run-agent').tb(name=Name, test=False)
+    # @get_app('isaa-run-agent').tb(name=Name, test=False)
     async def run_agent(self, name: str or Agent,
                   text: str,
                   verbose: bool = False,

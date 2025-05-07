@@ -1457,6 +1457,9 @@ class App(AppType, metaclass=Singleton):
 
         r = await self.session.fetch(f"/api/{modular_name}/{function_name}{'?' + args_ if args_ is not None else ''}",
                                      data=kwargs, method=method)
+        if r is False:
+            print("§ Session server Offline!", self.session.base)
+            return {}
         return await r.json()
 
     def run_local(self, *args, **kwargs):

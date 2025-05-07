@@ -178,8 +178,6 @@ class Tools(MainTool, FileHandler):
         interface=ToolBoxInterfaces.internal,
         pre_compute=pre_function,
     )
-    def initialized(self) -> bool:
-        return self.data_base is not None
 
     @export(
         mod_name=Name,
@@ -187,8 +185,9 @@ class Tools(MainTool, FileHandler):
         version=version,
         interface=ToolBoxInterfaces.internal,
     )
-    def delete(self, query: str, matching=False) -> Result:
-        if not self.initialized():
+    def delete(self, query: str, matching:bool=False) -> Result:
+
+        if self.data_base is None:
             return Result.default_internal_error(info="No database connection")
 
         if self.mode.value == "LOCAL_DICT" or self.mode.value == "LOCAL_REDDIS" or self.mode.value == "REMOTE_REDDIS":

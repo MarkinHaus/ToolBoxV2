@@ -39,7 +39,7 @@ class RequestSession(Response):
             return self._json
         return self._json()
 
-
+from aiohttp import ClientConnectorError, ClientError
 class Session(metaclass=Singleton):
 
     # user: LocalUser
@@ -56,7 +56,19 @@ class Session(metaclass=Singleton):
         self.base = base.rstrip('/')  # Ensure no trailing slash
 
         async def helper():
-            await self.session.close() if self.session is not None else None
+            try:
+                await self.session.close() if self.session is not None else None
+            except ClientConnectorError as e:
+                print(f"Server nicht erreichbar (DNS oder Verbindung): {e}")
+                return False
+            except socket.gaierror as e:
+                print(f"DNS-Auflösung fehlgeschlagen: {e}")
+                return False
+            except ClientError as e:
+                print(f"Allgemeiner Client-Fehler: {e}")
+                return False
+            except Exception:
+                print("No session to close for", self.username)
 
         atexit.register(async_test(helper))
 
@@ -138,17 +150,30 @@ class Session(metaclass=Singleton):
             res = await self.auth_with_prv_key()
             print(str(res))
             return res is True
-        async with self.session.request("GET", url=f"{self.base}/validateSession", json={'Jwt_claim': claim.decode(),
-                                                                                         'Username': self.username}) as response:
-            if response.status == 200:
-                print("Successfully Connected 2 TBxN")
-                get_logger().info("LogIn successful")
-                self.valid = True
-                return True
-            if response.status == 401 and self.if_key():
-                return await self.auth_with_prv_key()
-            print(response)
-            get_logger().warning("LogIn failed")
+        try:
+            async with self.session.request("GET", url=f"{self.base}/validateSession", json={'Jwt_claim': claim.decode(),
+                                                                                             'Username': self.username}) as response:
+                if response.status == 200:
+                    print("Successfully Connected 2 TBxN")
+                    get_logger().info("LogIn successful")
+                    self.valid = True
+                    return True
+                if response.status == 401 and self.if_key():
+                    return await self.auth_with_prv_key()
+                print(response)
+                get_logger().warning("LogIn failed")
+                return False
+        except ClientConnectorError as e:
+            print(f"Server nicht erreichbar (DNS oder Verbindung): {e}")
+            return False
+        except socket.gaierror as e:
+            print(f"DNS-Auflösung fehlgeschlagen: {e}")
+            return False
+        except ClientError as e:
+            print(f"Allgemeiner Client-Fehler: {e}")
+            return False
+        except Exception as e:
+            print("Connection error", self.username, e)
             return False
 
     async def download_file(self, url, dest_folder="mods_sto"):
@@ -168,36 +193,73 @@ class Session(metaclass=Singleton):
         file_path = os.path.join(dest_folder, filename)
         if isinstance(url, str):
             url = self.base + url
-        async with self.session.get(url) as response:
-            if response.status == 200:
-                with open(file_path, 'wb') as f:
-                    while True:
-                        chunk = await response.content.read(1024)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                print(f'File downloaded: {file_path}')
-                return True
-            else:
-                print(f'Failed to download file: {url}. Status code: {response.status}')
+        try:
+            async with self.session.get(url) as response:
+                if response.status == 200:
+                    with open(file_path, 'wb') as f:
+                        while True:
+                            chunk = await response.content.read(1024)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                    print(f'File downloaded: {file_path}')
+                    return True
+                else:
+                    print(f'Failed to download file: {url}. Status code: {response.status}')
+        except ClientConnectorError as e:
+            print(f"Server nicht erreichbar (DNS oder Verbindung): {e}")
+            return False
+        except socket.gaierror as e:
+            print(f"DNS-Auflösung fehlgeschlagen: {e}")
+            return False
+        except ClientError as e:
+            print(f"Allgemeiner Client-Fehler: {e}")
+            return False
+        except Exception as e:
+            print("Error:",e, self.username)
         return False
 
     async def logout(self) -> bool:
         if self.session:
-            async with self.session.post(f'{self.base}/web/logoutS') as response:
-                await self.session.close()
-                self.session = None
-                return response.status == 200
+            try:
+                async with self.session.post(f'{self.base}/web/logoutS') as response:
+                    await self.session.close()
+                    self.session = None
+                    return response.status == 200
+            except ClientConnectorError as e:
+                print(f"Server nicht erreichbar (DNS oder Verbindung): {e}")
+                return False
+            except socket.gaierror as e:
+                print(f"DNS-Auflösung fehlgeschlagen: {e}")
+                return False
+            except ClientError as e:
+                print(f"Allgemeiner Client-Fehler: {e}")
+                return False
+            except Exception as e:
+                print("Error session logout:", e, self.username)
         return False
 
     async def fetch(self, url: str, method: str = 'GET', data=None) -> ClientResponse or Response:
         if isinstance(url, str):
             url = self.base + url
         if self.session:
-            if method.upper() == 'POST':
-                return await self.session.post(url, json=data)
-            else:
-                return await self.session.get(url)
+            try:
+                if method.upper() == 'POST':
+                    return await self.session.post(url, json=data)
+                else:
+                    return await self.session.get(url)
+            except ClientConnectorError as e:
+                print(f"Server nicht erreichbar (DNS oder Verbindung): {e}")
+                return False
+            except socket.gaierror as e:
+                print(f"DNS-Auflösung fehlgeschlagen: {e}")
+                return False
+            except ClientError as e:
+                print(f"Allgemeiner Client-Fehler: {e}")
+                return False
+            except Exception as e:
+                print("Error session fetch:", e, self.username)
+                return requests.request(method, url, data=data)
         else:
             print(f"Could not find session using request on {url}")
             if method.upper() == 'POST':
@@ -224,17 +286,28 @@ class Session(metaclass=Singleton):
         with MultipartWriter('form-data') as mpwriter:
             part = mpwriter.append(file_data)
             part.set_content_disposition('form-data', name='file', filename=os.path.basename(file_path))
+            try:
+                async with self.session.post(upload_url, data=mpwriter, timeout=20000) as response:
 
-            async with self.session.post(upload_url, data=mpwriter, timeout=20000) as response:
-
-                # Prüfe, ob der Upload erfolgreich war
-                if response.status == 200:
-                    print(f"Datei {file_path} erfolgreich hochgeladen.")
-                    return await response.json()
-                else:
-                    print(f"Fehler beim Hochladen der Datei {file_path}. Status: {response.status}")
-                    print(await response.text())
-                    return None
+                    # Prüfe, ob der Upload erfolgreich war
+                    if response.status == 200:
+                        print(f"Datei {file_path} erfolgreich hochgeladen.")
+                        return await response.json()
+                    else:
+                        print(f"Fehler beim Hochladen der Datei {file_path}. Status: {response.status}")
+                        print(await response.text())
+                        return None
+            except ClientConnectorError as e:
+                print(f"Server nicht erreichbar (DNS oder Verbindung): {e}")
+                return False
+            except socket.gaierror as e:
+                print(f"DNS-Auflösung fehlgeschlagen: {e}")
+                return False
+            except ClientError as e:
+                print(f"Allgemeiner Client-Fehler: {e}")
+                return False
+            except Exception as e:
+                print(f"Error session Fehler beim Hochladen der Datei {file_path}:", e, self.username)
 
 
 

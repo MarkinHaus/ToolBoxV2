@@ -106,7 +106,7 @@ class Tools(MainTool, FileHandler):
         Return diagnostic information about API configurations and currently running APIs.
         """
         config_info = {name: cfg for name, cfg in self.api_config.items()}
-        running_info = {name: proc.pid for name, proc in self.running_apis.items() if proc.poll() is None}
+        running_info = {name: proc.pid for name, proc in self.running_apis.items() if proc.is_alive()}
         self.logger.info("API Configurations: %s", config_info)
         self.logger.info("Running APIs: %s", running_info)
         # Optionally, print to console as well
@@ -117,14 +117,14 @@ class Tools(MainTool, FileHandler):
             print(f"API: {api_name}, Process ID: {pid}")
         return {"configurations": config_info, "running": running_info}
 
-    def conf_api(self, api_name: str, host: str = "localhost", port: Union[str, int] = 5000) -> None:
+    def conf_api(self, api_name: str, host: str = "localhost", port: int = 5000) -> None:
         """
         Update or create an API configuration.
 
         Args:
             api_name (str): The name of the API.
             host (str): The host address (default "localhost"). Use "lh" for "127.0.0.1" or "0" for "0.0.0.0".
-            port (int or str): The port number (default 5000; use "0" for port 8000).
+            port (int): The port number (default 5000; use "0" for port 8000).
         """
         if host.lower() == "lh":
             host = "127.0.0.1"
@@ -207,7 +207,7 @@ class Tools(MainTool, FileHandler):
             return None
 
         # Check if API is already running.
-        if api_name in self.running_apis and self.running_apis[api_name].poll() is None:
+        if api_name in self.running_apis and self.running_apis[api_name].is_alive():
             msg = f"API '{api_name}' is already running."
             self.logger.info(msg)
             return msg
