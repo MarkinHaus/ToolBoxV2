@@ -95,7 +95,8 @@ jobs:
 
            run: |
                 npm install
-                cd ../src-core
+                npm build
+                cd ../simple-core
                 npm install
                 cargo install tauri-cli
          - uses: tauri-apps/tauri-action@v0
