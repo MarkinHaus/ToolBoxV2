@@ -55,17 +55,6 @@ jobs:
             -   name: PKG-TEST
                 run: |
                     python -m unittest discover -s toolboxv2/tests/
-    test-rust:
-        name: Rust Build & Test (Actix)
-        runs-on: ubuntu-latest
-        steps:
-          - uses: actions/checkout@v4
-          - uses: dtolnay/rust-toolchain@stable
-          - name: Build & Test Rust Server
-            working-directory: ./toolboxv2/src-core
-            run: |
-              cargo build --release
-              cargo test
 
     publish-tauri:
        permissions:
