@@ -157,7 +157,7 @@ class Tools(MainTool, FileHandler):
             "get_task": self.get_task,
             "list_task": self.list_task,
             "save_to_mem": self.save_to_mem,
-            "mini_task": self.mini_task_completion,
+            # "mini_task": self.mini_task_completion,
             "get_agent": self.get_agent,
             # "run_agent": self.run_agent,
             "run_task": self.run_task,

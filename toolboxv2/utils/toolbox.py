@@ -1459,7 +1459,7 @@ class App(AppType, metaclass=Singleton):
                                      data=kwargs, method=method)
         if r is False:
             print("§ Session server Offline!", self.session.base)
-            return {}
+            return Result.default_internal_error().as_dict()
         return await r.json()
 
     def run_local(self, *args, **kwargs):

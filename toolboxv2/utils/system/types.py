@@ -583,6 +583,22 @@ class Result:
     def as_result(self):
         return self
 
+    def as_dict(self):
+        return {
+            "error":self.error.value if isinstance(self.error, Enum) else self.error,
+        "result" : {
+            "data_to":self.result.data_to.value if isinstance(self.result.data_to, Enum) else self.result.data_to,
+            "data_info":self.result.data_info,
+            "data":self.result.data,
+            "data_type":self.result.data_type
+        } if self.result else None,
+        "info" : {
+            "exec_code" : self.info.exec_code,  # exec_code umwandel in http resposn codes
+        "help_text" : self.info.help_text
+        } if self.info else None,
+        "origin" : self.origin
+        }
+
     def set_origin(self, origin):
         if self.origin is not None:
             raise ValueError("You cannot Change the origin of a Result!")
