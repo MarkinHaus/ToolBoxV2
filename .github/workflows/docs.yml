@@ -19,14 +19,24 @@ jobs:
                     pip install --user --no-cache-dir Cython
                     pip install --user uv
                     python -m uv venv --python 3.11
-            - name: Install toolboxv2 with ISAA
-              run: |
-               python -m uv pip install -e toolboxv2/mods/isaa
-               python -m uv pip install .
-              working-directory: ${{ github.workspace }}
+            -   name: Install toolboxv2 with ISAA
+                run: |
+                    python -m uv pip install -e toolboxv2/mods/isaa
+                    python -m uv pip install .
+                working-directory: ${{ github.workspace }}
             -   name: Debug mkdocstrings import
                 run: |
                     python -c "import toolboxv2; print('toolboxv2 loaded successfully')"
             -   name: Add project to PYTHONPATH
                 run: echo "PYTHONPATH=$GITHUB_WORKSPACE/toolboxv2" >> $GITHUB_ENV
-            -   run: python -c "import pathlib; globals()['PosixPath'] = pathlib.PosixPath; import mkdocs.__main__" gh-deploy --force --verbose
+            -   name: fix docs live
+                run: |
+                    python -c "import pathlib; globals()['PosixPath'] = pathlib.PosixPath; import mkdocs.__main__" gh-deploy --force --verbose
+                    pip install mkdocs-material mkdocstrings mkdocstrings-python-legacy mkdocs-git-revision-date-plugin mkdocs-jupyter ipykernel
+            -   name: build --clean
+                run: mkdocs build --clean
+            -   name: Deploy
+                uses: peaceiris/actions-gh-pages@v4
+                with:
+                    github_token: ${{ secrets.GITHUB_TOKEN }}
+                    publish_dir: ./docs

@@ -112,23 +112,3 @@ jobs:
               releaseDraft: true
               prerelease: false
               args: ${{ matrix.args }}
-
-    deploy:
-        runs-on: ubuntu-latest
-        steps:
-            -   uses: actions/checkout@v4
-
-            -   uses: actions/setup-python@v4
-                with:
-                    python-version: 3.11
-
-            -   run: pip install -U pip
-            -   run: pip install mkdocs-material mkdocstrings mkdocstrings-python-legacy mkdocs-git-revision-date-plugin mkdocs-jupyter ipykernel
-
-            -   run: mkdocs build --clean
-
-            -   name: Deploy to GitHub Pages
-                uses: peaceiris/actions-gh-pages@v3
-                with:
-                    github_token: ${{ secrets.GITHUB_TOKEN }}
-                    publish_dir: ./site
