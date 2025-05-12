@@ -33,8 +33,12 @@ jobs:
                 run: |
                     python -c "import pathlib; globals()['PosixPath'] = pathlib.PosixPath; import mkdocs.__main__" gh-deploy --force --verbose
                     pip install mkdocs-material mkdocstrings mkdocstrings-python-legacy mkdocs-git-revision-date-plugin mkdocs-jupyter ipykernel
+            -   name: build --clean
+                run: |
+                    python -c "import pathlib; globals()['PosixPath'] = pathlib.PosixPath; import mkdocs.__main__" gh-deploy --force --verbose
+                    mkdocs build --clean  --verbose
             -   name: Deploy
                 uses: peaceiris/actions-gh-pages@v4
                 with:
                     github_token: ${{ secrets.GITHUB_TOKEN }}
-                    publish_dir: ./public
+                    publish_dir: ./site
