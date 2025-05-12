@@ -4,7 +4,7 @@ This section provides an API reference for key components directly available fro
 
 ## Core Application & Tooling
 
-::: toolboxv2.App
+::: toolboxv2.utils.toolbox.App
     options:
       show_root_heading: true
       show_source: false

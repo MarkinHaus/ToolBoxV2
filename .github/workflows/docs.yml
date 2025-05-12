@@ -22,7 +22,7 @@ jobs:
             -   name: Install toolboxv2 with ISAA
                 run: |
                     python -m uv pip install -e toolboxv2/mods/isaa
-                    python -m uv pip install .
+                    python -m uv pip install .[isaa]
                 working-directory: ${{ github.workspace }}
             -   name: Debug mkdocstrings import
                 run: |
