@@ -2228,7 +2228,8 @@ class AgentBuilder:
         if self.isaa_reference is None:
             raise ValueError("no isaa_reference set")
         if self.is_build:
-            raise ValueError("Agent was constructed! pleas delay builder instance")
+            print("Agent was constructed! pleas delay builder instance")
+            return self.agent
         self.build_amd()
         if not self.agent.check_valid():
             raise ValueError(
