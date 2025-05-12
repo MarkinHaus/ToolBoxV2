@@ -282,12 +282,110 @@ def setup_service_linux():
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Welcome to the ToolBox cli")
+    import argparse
+    import textwrap
 
-    parser.add_argument("conda", help="run conda commands for mor infos run tb conda -h", default=False,
-                        action='store_true')
+    class ASCIIHelpFormatter(argparse.RawDescriptionHelpFormatter):
+        pass
+
+    parser = argparse.ArgumentParser(
+        description=textwrap.dedent("""
+        +----------------------------------------------------------------------------+
+                                  🧰 ToolBoxV2 CLI Helper 🧰
+        +----------------------------------------------------------------------------+
+
+        Usage:
+          tb [command] [options]
+
+        Positional Commands (choose one):
+
+          gui             ▶ Launch graphical interface
+
+          api             ▶ Run Rust API manager
+                          (for details: tb api -h)
+          conda           ▶ Run conda commands
+                          (for details: tb conda -h)
+
+        Core Options:
+          -h, --help      ▶ Show this help message and exit
+          -v, --version   ▶ Print ToolBoxV2 version and installed modules
+
+          -l, --load-all-mod-in-files
+                          ▶ Start all mods during start of the instance
+
+          -c, --command   ▶ Execute mod $ tb -c CloudM Version
+          --ipy           ▶ Enter IPython toolbox shell
+
+        Module Management:
+          --sm            ▶ Service Manager (Windows auto-start/restart)
+          --lm            ▶ Log Manager (remove/edit logs)
+          -m, --modi      ▶ Select interface mode (default: CLI)
+          --docker        ▶ Use Docker backend (modes: test, live, dev)
+          --build         ▶ Build Docker image from local source
+
+        Installation & Updates:
+          -i, --install   ▶ Install module/interface by name
+          -u, --update    ▶ Update module/interface by name
+          -r, --remove    ▶ Uninstall module/interface by name
+
+        Runtime Control:
+          --kill          ▶ Kill running tb instance
+          -bg             ▶ Run interface in background
+          -fg             ▶ Run interface in foreground
+          --remote        ▶ Start in remote mode
+          --debug         ▶ Enable debug (hot-reload) mode
+
+        Networking:
+          -n, --name      ▶ ToolBox instance ID
+          -p, --port      ▶ Interface port
+          -w, --host      ▶ Interface host
+
+        File & Data Operations:
+          --delete-config-all   ▶ !!! DANGER: wipe all config !!!
+          --delete-data-all     ▶ !!! DANGER: wipe all data !!!
+          --delete-config       ▶ ⚠ Delete named config folder
+          --delete-data         ▶ ⚠ Delete named data folder
+
+        Utilities:
+          -sfe, --save-function-enums-in-file
+                            ▶ Generate all_function_enums.py and Save enums to file (requires -l)
+          --test         ▶ Run test suite
+          --profiler     ▶ Profile registered functions
+          --sysPrint     ▶ Enable verbose system prints
+
+        IPython Integration only work in ipython:
+          In [X]:tb save NAME   ▶ Save session to <NAME>
+          In [X]:tb inject NAME ▶ Inject session <NAME> into file
+          In [X]:tb loadx NAME  ▶ Load & run session in IPython
+          In [X]:tb loade NAME  ▶ Reload session into IPython
+          In [X]:tb open NAME   ▶ Open saved session in Jupyter
+
+        Key-Value Kwargs:
+          --kwargs key=value [...]
+                            ▶ Pass arbitrary kwargs to functions
+
+        Examples:
+          $ tb api -m live --port 8080
+          $ tb conda install numpy
+          $ tb --docker -m dev -p 8000 -w 0.0.0.0
+          $ tb api start
+          $ tb gui
+          $ tb --ipy
+          $ tb -c CloudM Version -c CloudM get_mod_snapshot CloudM
+          $ tb -c CloudM get_mod_snapshot --kwargs mod_name:CloudM
+
+        +----------------------------------------------------------------------------+
+        """),
+        formatter_class=ASCIIHelpFormatter
+    )
 
     parser.add_argument("gui", help="start gui no args", default=False,
+                        action='store_true')
+
+    parser.add_argument("api", help="run rust api for mor infos run tb api -h", default=False,
+                        action='store_true')
+
+    parser.add_argument("conda", help="run conda commands for mor infos run tb conda -h", default=False,
                         action='store_true')
 
     parser.add_argument("-init",
@@ -410,16 +508,6 @@ def parse_args():
     parser.add_argument("--ipy", action="store_true", default=False,
                         help="activate toolbox in IPython Commands in IPython tb [ModName] [fuctionName] [args...] | "
                              "ipy_magic command only work in IPython")
-    parser.add_argument('--ipy_magic_save',  type=str, default="main",
-                        help='save   [filename] -> save session in a fiel')
-    parser.add_argument('--ipy_magic_inject',  type=str, default="main",
-                        help='tb inject [filename] -> inject app and args to an file in the ipy_sessions folder')
-    parser.add_argument('--ipy_magic_loadx',  type=str, default="main",
-                        help='tb loadX  [filename] -> load and run command from session in IPython')
-    parser.add_argument('--ipy_magic_loade',  type=str, default="main",
-                        help='tb load   [filename] -> load session back in IPython')
-    parser.add_argument('--ipy_magic_open',  type=str, default="main",
-                        help='tb open [notebook/lab] [filename] -> open an saved session in jupyter (notebook or Labs) ')
 
     parser.add_argument('--kwargs', nargs='*', default=[], type=str, action='append',
                         help='Key-value pairs to pass as kwargs, format: key=value')
@@ -982,6 +1070,7 @@ def create_subproject_pyprojects():
 
 
 def main_runner():
+    # The fuck is uv not PyO3 compatible
     sys.excepthook = sys.__excepthook__
     if len(sys.argv) >= 2 and sys.argv[1] == "conda":
         sys.argv[1:] = sys.argv[2:]

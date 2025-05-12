@@ -114,8 +114,12 @@ __author__ = """Markin Hausmanns"""
 __email__ = 'Markinhausmanns@gmail.com'
 
 
+from platform import node, system
+from pathlib import Path
+__cwd__ = cwd = Path.cwd()
 
-__version__ = get_version_from_pyproject("pyproject.toml")
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+__version__ = get_version_from_pyproject()
 
 ToolBox_over: str = "root"
 __all__ = [
@@ -138,4 +142,5 @@ __all__ = [
     "RequestData",  # ADD
     "Code",
     "show_console",  # ADD
+    "cwd"
 ]

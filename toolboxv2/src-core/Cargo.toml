@@ -6,6 +6,7 @@ edition = "2021"
 description = "High-performance Rust server for serving static files with Toolboxv2 API integration"
 
 [dependencies]
+listenfd = "1.0.2"
 actix-web =  { version = "4.10.2", features = ["macros"] }
 actix-rt = "2"
 actix-files = "0.6.6"

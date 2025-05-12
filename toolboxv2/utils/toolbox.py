@@ -55,7 +55,6 @@ class App(AppType, metaclass=Singleton):
         else:
             dir_name = os.path.dirname(abspath).replace("\\utils", "")
 
-        os.chdir(dir_name)
         self.start_dir = str(dir_name)
 
         self.bg_tasks = []
@@ -120,7 +119,7 @@ class App(AppType, metaclass=Singleton):
         if not os.path.exists(self.info_dir):
             os.makedirs(self.info_dir, exist_ok=True)
 
-        print(f"Starting ToolBox as {prefix} from :", Style.Bold(Style.CYAN(f"{os.getcwd()}")), sys.argv)
+        print(f"Starting ToolBox as {prefix} from :", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 
         logger_info_str, self.logger, self.logging_filename = self.set_logger(args.debug)
 
@@ -1059,6 +1058,8 @@ class App(AppType, metaclass=Singleton):
             del self.functions[mod_name]
 
     def exit(self, remove_all=True):
+        if not self.alive:
+            return
         if self.args_sto.debug:
             self.hide_console()
         self.disconnect()

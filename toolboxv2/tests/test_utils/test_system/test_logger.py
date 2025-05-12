@@ -1,3 +1,4 @@
+import time
 import unittest
 import os
 import logging
@@ -17,7 +18,10 @@ class TestLoggingImplementation(unittest.TestCase):
     def tearDown(self):
         # Clean up temporary directory
         for file in os.listdir(self.test_logs_dir):
-            os.remove(os.path.join(self.test_logs_dir, file))
+            try:
+                os.remove(os.path.join(self.test_logs_dir, file))
+            except PermissionError:
+                return
         os.rmdir(self.test_logs_dir)
 
     def test_setup_logging_basic(self):
