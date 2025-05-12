@@ -1458,10 +1458,45 @@ class App(AppType, metaclass=Singleton):
 
         r = await self.session.fetch(f"/api/{modular_name}/{function_name}{'?' + args_ if args_ is not None else ''}",
                                      data=kwargs, method=method)
-        if r is False:
-            print("§ Session server Offline!", self.session.base)
-            return Result.default_internal_error().as_dict()
-        return await r.json()
+        try:
+            if not r:
+                print("§ Session server Offline!", self.session.base)
+                return Result.default_internal_error(msg="Session fetch failed").as_dict()
+
+            content_type = r.headers.get('Content-Type', '').lower()
+            raw = await r.read()
+            encoding = r.get_encoding() or 'utf-8'
+            text = raw.decode(encoding, errors='ignore')
+
+            # Attempt JSON
+            if 'application/json' in content_type:
+                try:
+                    return await r.json()
+                except Exception as e:
+                    print("⚠ JSON decode error:", e)
+
+            # Attempt YAML
+            if 'yaml' in content_type or text.strip().startswith('---'):
+                try:
+                    import yaml
+                    return yaml.safe_load(text)
+                except Exception as e:
+                    print("⚠ YAML decode error:", e)
+
+            # Attempt XML
+            if 'xml' in content_type or text.strip().startswith('<?xml'):
+                try:
+                    import xmltodict
+                    return xmltodict.parse(text)
+                except Exception as e:
+                    print("⚠ XML decode error:", e)
+
+            # Fallback: return plain text
+            return Result.default_internal_error(data={'raw_text': text, 'content_type': content_type}).as_dict()
+
+        except Exception as e:
+            print("❌ Fatal error during API call:", e)
+            return Result.default_internal_error(str(e)).as_dict()
 
     def run_local(self, *args, **kwargs):
         return self.run_any(*args, **kwargs)

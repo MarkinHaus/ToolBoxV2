@@ -110,7 +110,7 @@ class Session(metaclass=Singleton):
 
         challenge = Result.result_from_dict(**challenge)
         if challenge.is_error():
-            return challenge
+            return challenge.lazy_return(-1, "Server returned invalid data")
 
         await asyncio.sleep(0.1)
         claim_data = await get_app("Session.InitLogin").run_http('CloudM.AuthManager', 'validate_device',
@@ -120,6 +120,8 @@ class Session(metaclass=Singleton):
                                                                      salt_length=32),
                                                                  method="POST")
         claim_data = Result.result_from_dict(**claim_data)
+        if claim_data.is_error():
+            return claim_data.lazy_return(-1, "Server returned invalid data")
 
         claim = claim_data.get("key")
 
@@ -153,6 +155,7 @@ class Session(metaclass=Singleton):
         try:
             async with self.session.request("GET", url=f"{self.base}/validateSession", json={'Jwt_claim': claim.decode(),
                                                                                              'Username': self.username}) as response:
+                print(response.status, "status")
                 if response.status == 200:
                     print("Successfully Connected 2 TBxN")
                     get_logger().info("LogIn successful")
