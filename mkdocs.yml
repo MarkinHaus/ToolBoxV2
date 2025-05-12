@@ -1,13 +1,14 @@
-site_name: ReSimpleToolBox
+site_name: ToolBoxV2 Docs
 
-site_url: https://MarkinHaus.github.io/ReSimpleToolBox
+site_url: https://MarkinHaus.github.io/ToolBoxV2
+repo_url: https://github.com/MarkinHaus/ToolBoxV2
 
-repo_url: https://github.com/MarkinHaus/ReSimpleToolBox
+repo_name: ToolBoxV2
 
 theme:
     palette:
         scheme: preference
-    name: material
+    name: mkdocs
     icon:
         repo: fontawesome/brands/github
     features:
@@ -17,16 +18,6 @@ theme:
         # - navigation.tabs
     custom_dir: "docs/overrides"
 
-plugins:
-    - search
-    - mkdocstrings
-    - git-revision-date
-    -   mkdocs-jupyter:
-            include_source: True
-            #   ignore_h1_titles: True
-            #   execute: True
-            #   execute_ignore: "*.ipynb"
-
 markdown_extensions:
     - attr_list
     - pymdownx.superfences
@@ -34,12 +25,6 @@ markdown_extensions:
             linenums: true
     -   toc:
             permalink: true
-
-# extra:
-#     analytics:
-#         provider: google
-#         property: UA-XXXXXXXXX-X
-
 nav:
     -   Home: index.md
     -   Installation: installation.md
@@ -47,7 +32,7 @@ nav:
     -   Contributing: contributing.md
     -   FAQ: faq.md
     -   Changelog: changelog.md
-    -   Report Issues: https://github.com/MarkinHaus/ReSimpleToolBox/issues
+    -   Report Issues: https://github.com/MarkinHaus/ToolBoxV2/issues
     -   API Reference:
             -   toolboxv2 module: toolboxv2.md
-            -   utils: /utils
+            -   utils: utils.md
