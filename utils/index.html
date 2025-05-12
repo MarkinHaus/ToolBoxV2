@@ -1,0 +1,1093 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        
+        
+        <link rel="canonical" href="https://MarkinHaus.github.io/ToolBoxV2/utils/">
+        <link rel="shortcut icon" href="../img/favicon.ico">
+        <title>utils - ToolBoxV2 Docs</title>
+        <link href="../css/bootstrap.min.css" rel="stylesheet">
+        <link href="../css/fontawesome.min.css" rel="stylesheet">
+        <link href="../css/brands.min.css" rel="stylesheet">
+        <link href="../css/solid.min.css" rel="stylesheet">
+        <link href="../css/v4-font-face.min.css" rel="stylesheet">
+        <link href="../css/base.css" rel="stylesheet">
+        <link id="hljs-light" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" >
+        <link id="hljs-dark" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css" disabled>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script>hljs.highlightAll();</script> 
+    </head>
+
+    <body>
+        <div class="navbar fixed-top navbar-expand-lg navbar-dark bg-primary">
+            <div class="container">
+                <a class="navbar-brand" href="..">ToolBoxV2 Docs</a>
+                <!-- Expander button -->
+                <button type="button" class="navbar-toggler" data-bs-toggle="collapse" data-bs-target="#navbar-collapse" aria-controls="navbar-collapse" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+
+                <!-- Expanded navigation -->
+                <div id="navbar-collapse" class="navbar-collapse collapse">
+                        <!-- Main navigation -->
+                        <ul class="nav navbar-nav">
+                            <li class="nav-item">
+                                <a href=".." class="nav-link">Home</a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="../installation/" class="nav-link">Installation</a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="../usage/" class="nav-link">Usage</a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="../contributing/" class="nav-link">Contributing</a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="../faq/" class="nav-link">FAQ</a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="../changelog/" class="nav-link">Changelog</a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="https://github.com/MarkinHaus/ToolBoxV2/issues" class="nav-link">Report Issues</a>
+                            </li>
+                            <li class="nav-item dropdown">
+                                <a href="#" class="nav-link dropdown-toggle active" aria-current="page" role="button" data-bs-toggle="dropdown"  aria-expanded="false">API Reference</a>
+                                <ul class="dropdown-menu">
+                                    
+<li>
+    <a href="../toolboxv2/" class="dropdown-item">toolboxv2 module</a>
+</li>
+                                    
+<li>
+    <a href="./" class="dropdown-item active" aria-current="page">utils</a>
+</li>
+                                </ul>
+                            </li>
+                        </ul>
+
+                    <ul class="nav navbar-nav ms-md-auto">
+                        <li class="nav-item">
+                            <a href="#" class="nav-link" data-bs-toggle="modal" data-bs-target="#mkdocs_search_modal">
+                                <i class="fa fa-search"></i> Search
+                            </a>
+                        </li>
+                            <li class="nav-item">
+                                <a rel="prev" href="../toolboxv2/" class="nav-link">
+                                    <i class="fa fa-arrow-left"></i> Previous
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a rel="next" class="nav-link disabled">
+                                    Next <i class="fa fa-arrow-right"></i>
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="https://github.com/MarkinHaus/ToolBoxV2/edit/master/docs/utils.md" class="nav-link">Edit on ToolBoxV2
+                                    </a>
+                            </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="container">
+            <div class="row">
+
+
+
+                    <div class="col-md-3"><div class="navbar-expand-md bs-sidebar hidden-print affix" role="complementary">
+    <div class="navbar-header">
+        <button type="button" class="navbar-toggler collapsed" data-bs-toggle="collapse" data-bs-target="#toc-collapse" title="Table of Contents">
+            <span class="fa fa-angle-down"></span>
+        </button>
+    </div>
+
+    
+    <div id="toc-collapse" class="navbar-collapse collapse card bg-body-tertiary">
+        <ul class="nav flex-column">
+            
+            <li class="nav-item" data-bs-level="1"><a href="#toolboxv2-the-app-class" class="nav-link">ToolBoxV2: The App Class</a>
+              <ul class="nav flex-column">
+            <li class="nav-item" data-bs-level="2"><a href="#initialization" class="nav-link">Initialization</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#core-functionalities" class="nav-link">Core Functionalities</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#session-management-appsession" class="nav-link">Session Management (app.session)</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#key-cli-arguments" class="nav-link">Key CLI Arguments</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#cli-execution-flow-__main__py" class="nav-link">CLI Execution Flow (__main__.py)</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#example-cli-usage" class="nav-link">Example CLI Usage</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#creating-a-maintool-based-module" class="nav-link">Creating a MainTool-based Module</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#steps-to-create-a-valid-toolboxv2-module" class="nav-link">Steps to Create a Valid Toolboxv2 Module:</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+              </ul>
+            </li>
+        </ul>
+    </div>
+</div></div>
+                    <div class="col-md-9" role="main">
+
+<h1 id="toolboxv2-the-app-class">ToolBoxV2: The <code>App</code> Class<a class="headerlink" href="#toolboxv2-the-app-class" title="Permanent link">&para;</a></h1>
+<p>The <code>App</code> class is the central singleton instance in ToolBoxV2, responsible for managing the application's lifecycle, configuration, module loading, and core functionalities. It's typically accessed via the <code>get_app()</code> utility function.</p>
+<h2 id="initialization">Initialization<a class="headerlink" href="#initialization" title="Permanent link">&para;</a></h2>
+<p>The <code>App</code> instance is initialized with a <code>prefix</code> and <code>AppArgs</code> (command-line arguments).</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span>
+<span class="normal">12</span>
+<span class="normal">13</span>
+<span class="normal">14</span>
+<span class="normal">15</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2</span><span class="w"> </span><span class="kn">import</span> <span class="n">App</span><span class="p">,</span> <span class="n">AppArgs</span><span class="p">,</span> <span class="n">get_app</span>
+
+<span class="c1"># Example: Initialize or get the App instance</span>
+<span class="c1"># The prefix helps differentiate multiple App instances if needed,</span>
+<span class="c1"># and is often used in directory naming.</span>
+<span class="n">args</span> <span class="o">=</span> <span class="n">AppArgs</span><span class="p">()</span><span class="o">.</span><span class="n">default</span><span class="p">()</span> <span class="c1"># Or parsed from sys.argv in __main__.py</span>
+<span class="n">app_instance</span> <span class="o">=</span> <span class="n">get_app</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">&quot;my_app_instance&quot;</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="n">args</span><span class="p">)</span>
+
+<span class="c1"># Accessing key attributes:</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;App ID: </span><span class="si">{</span><span class="n">app_instance</span><span class="o">.</span><span class="n">id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Version: </span><span class="si">{</span><span class="n">app_instance</span><span class="o">.</span><span class="n">version</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Start Directory: </span><span class="si">{</span><span class="n">app_instance</span><span class="o">.</span><span class="n">start_dir</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Data Directory: </span><span class="si">{</span><span class="n">app_instance</span><span class="o">.</span><span class="n">data_dir</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Config Directory: </span><span class="si">{</span><span class="n">app_instance</span><span class="o">.</span><span class="n">config_dir</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Debug Mode: </span><span class="si">{</span><span class="n">app_instance</span><span class="o">.</span><span class="n">debug</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+<h3 id="key-initialization-steps">Key Initialization Steps:<a class="headerlink" href="#key-initialization-steps" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>System &amp; Paths:</strong></p>
+<ul>
+<li>Determines the operating system (<code>system_flag</code>).</li>
+<li>Sets the <code>start_dir</code> to the application's root directory.</li>
+<li>Resolves the <code>prefix</code>:<ul>
+<li>If no prefix is provided, it attempts to load the last used prefix from <code>.data/last-app-prefix.txt</code>.</li>
+<li>If a prefix is provided, it's saved to this file for future use.</li>
+</ul>
+</li>
+<li>Constructs the <code>app_id</code> (e.g., <code>prefix-hostname</code>).</li>
+<li>Sets up <code>data_dir</code>, <code>config_dir</code>, and <code>info_dir</code> based on the <code>app_id</code> (e.g., <code>./.data/prefix-hostname/</code>).</li>
+<li>Sets up <code>appdata</code> directory (OS-specific application data folder).</li>
+</ul>
+</li>
+<li>
+<p><strong>Logging:</strong></p>
+<ul>
+<li>Initializes a logger (<code>app.logger</code>). The logging level and output (terminal/file) can vary based on the <code>prefix</code> (e.g., "test", "live", "debug") and the <code>--debug</code> CLI argument.</li>
+</ul>
+</li>
+<li>
+<p><strong>Configuration:</strong></p>
+<ul>
+<li>Loads application configuration using <code>FileHandler</code> from a file typically named <code>app_id.config</code> in the <code>config_dir</code>.</li>
+<li>Defines default configuration <code>keys</code> and <code>defaults</code> (e.g., for macros, helpers, debug status).</li>
+</ul>
+</li>
+<li>
+<p><strong>Core Attributes:</strong></p>
+<ul>
+<li><code>version</code>: ToolBoxV2 version, read from <code>pyproject.toml</code>.</li>
+<li><code>debug</code>: Boolean, controlled by CLI args and config.</li>
+<li><code>dev_modi</code>: Boolean, development mode status from config.</li>
+<li><code>functions</code>: A dictionary to store registered functions from modules.</li>
+<li><code>modules</code>: A dictionary to store loaded module objects.</li>
+<li><code>interface_type</code>: Default <code>ToolBoxInterfaces.native</code>.</li>
+<li><code>alive</code>: Boolean, controls the main application loop.</li>
+<li><code>args_sto</code>: Stores the parsed <code>AppArgs</code>.</li>
+<li><code>loop</code>: The asyncio event loop (initialized later or if already running).</li>
+<li><code>session</code>: A <code>Session</code> object for managing user/remote session state.</li>
+</ul>
+</li>
+<li>
+<p><strong>Conditional Actions (based on <code>AppArgs</code>):</strong></p>
+<ul>
+<li><code>args.init</code>: If true, adds <code>start_dir</code> to <code>sys.path</code>.</li>
+<li>The <code>__main__.py</code> script handles other arguments like <code>--update</code>, <code>--get-version</code>, etc., by calling <code>App</code> methods or other utilities.</li>
+</ul>
+</li>
+</ol>
+<h2 id="core-functionalities">Core Functionalities<a class="headerlink" href="#core-functionalities" title="Permanent link">&para;</a></h2>
+<h3 id="module-management">Module Management<a class="headerlink" href="#module-management" title="Permanent link">&para;</a></h3>
+<ul>
+<li>
+<p><strong><code>load_mod(mod_name: str, spec='app', mlm='I', **kwargs)</code> / <code>save_load(modname, spec='app')</code>:</strong></p>
+<ul>
+<li>Loads a module into the application.</li>
+<li><code>spec</code> (specification): Used to namespace or categorize the module instance (e.g., 'app' for general, or a specific session ID).</li>
+<li>Supports different loading mechanisms (<code>mlm</code>):<ul>
+<li><code>'I'</code>: In-place load (imports the Python module directly). This is the default.</li>
+<li><code>'C'</code>: Copies the module file to a runtime directory before loading (less common).</li>
+</ul>
+</li>
+<li>Handles <code>ModuleNotFoundError</code> by attempting to guide the user (e.g., install via <code>CloudM</code> or <code>pip</code>).</li>
+<li>Registers the module's exported functions and/or its <code>Tools</code> class instance.</li>
+<li>Can reload modules if they are already loaded.
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
+<span class="normal">2</span>
+<span class="normal">3</span>
+<span class="normal">4</span>
+<span class="normal">5</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Load the &#39;MyModule&#39;</span>
+<span class="n">my_module_instance</span> <span class="o">=</span> <span class="n">app_instance</span><span class="o">.</span><span class="n">load_mod</span><span class="p">(</span><span class="s2">&quot;MyModule&quot;</span><span class="p">)</span>
+
+<span class="c1"># Or if it&#39;s a Tool-based module:</span>
+<span class="c1"># my_tool_instance = app_instance.load_mod(&quot;MyToolModule&quot;)</span>
+</code></pre></div></td></tr></table></div></li>
+</ul>
+</li>
+<li>
+<p><strong><code>get_mod(name: str, spec='app') -&gt; ModuleType | MainToolType</code>:</strong></p>
+<ul>
+<li>Retrieves a loaded module instance. If the module isn't loaded, it attempts to load it.
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
+<span class="normal">2</span>
+<span class="normal">3</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="n">db_mod</span> <span class="o">=</span> <span class="n">app_instance</span><span class="o">.</span><span class="n">get_mod</span><span class="p">(</span><span class="s2">&quot;DB&quot;</span><span class="p">)</span>
+<span class="k">if</span> <span class="n">db_mod</span><span class="p">:</span>
+    <span class="n">db_mod</span><span class="o">.</span><span class="n">some_db_function</span><span class="p">()</span>
+</code></pre></div></td></tr></table></div></li>
+</ul>
+</li>
+<li>
+<p><strong><code>remove_mod(mod_name: str, spec='app', delete=True)</code> / <code>a_remove_mod(...)</code> (async):</strong></p>
+<ul>
+<li>Unloads a module, calling its <code>on_exit</code> functions if defined.</li>
+<li><code>delete=True</code> removes it completely from the <code>functions</code> registry.</li>
+</ul>
+</li>
+<li>
+<p><strong><code>reload_mod(mod_name: str, spec='app', ...)</code>:</strong></p>
+<ul>
+<li>Reloads an existing module. Useful for development.</li>
+</ul>
+</li>
+<li>
+<p><strong><code>watch_mod(mod_name: str, ...)</code>:</strong></p>
+<ul>
+<li>Monitors a module's source file(s) for changes and automatically reloads it.
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
+<span class="normal">2</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># In development, watch &#39;MyDevModule&#39; for changes</span>
+<span class="n">app_instance</span><span class="o">.</span><span class="n">watch_mod</span><span class="p">(</span><span class="s2">&quot;MyDevModule&quot;</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div></li>
+</ul>
+</li>
+<li>
+<p><strong><code>load_all_mods_in_file(working_dir="mods")</code> / <code>a_load_all_mods_in_file(...)</code> (async):</strong></p>
+<ul>
+<li>Scans the specified directory (default <code>./mods/</code>) and loads all valid Python modules found.</li>
+</ul>
+</li>
+</ul>
+<h3 id="function-registration-and-execution">Function Registration and Execution<a class="headerlink" href="#function-registration-and-execution" title="Permanent link">&para;</a></h3>
+<ul>
+<li>
+<p><strong><code>@app.tb(...)</code> Decorator (via <code>_create_decorator</code>):</strong></p>
+<ul>
+<li>The primary way functions are registered with ToolBoxV2. See <code>example_mod.md</code> for details on usage.</li>
+<li>This decorator populates the <code>app.functions</code> dictionary.</li>
+</ul>
+</li>
+<li>
+<p><strong><code>get_function(name: Enum | tuple, metadata=False, state=True, specification='app', ...)</code>:</strong></p>
+<ul>
+<li>Retrieves a registered function.</li>
+<li><code>name</code>: Can be an Enum (from <code>all_functions_enums.py</code>) or a <code>(module_name, function_name)</code> tuple.</li>
+<li><code>metadata=True</code>: Returns a tuple <code>(function_data_dict, callable_function)</code>.</li>
+<li><code>state=True</code>: Returns a stateful version of the function (bound to its module instance if applicable).</li>
+<li><code>state=False</code>: Returns the raw, stateless function.</li>
+<li><code>specification</code>: The context/instance spec to get the function for.</li>
+</ul>
+</li>
+<li>
+<p><strong><code>run_any(mod_function_name, ..., get_results=False, **kwargs)</code> / <code>a_run_any(...)</code> (async):</strong></p>
+<ul>
+<li>Executes a registered function by its name (Enum or tuple).</li>
+<li>Handles argument passing, stateful/stateless execution, and error wrapping into a <code>Result</code> object.</li>
+<li><code>get_results=True</code>: Returns the <code>Result</code> object itself.</li>
+<li><code>get_results=False</code> (default): Returns the <code>data</code> payload from the <code>Result</code> object if successful.</li>
+<li>Automatically handles running the function's pre/post compute hooks and caching if configured via <code>@app.tb</code>.
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
+<span class="normal">2</span>
+<span class="normal">3</span>
+<span class="normal">4</span>
+<span class="normal">5</span>
+<span class="normal">6</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Synchronous execution</span>
+<span class="n">result_data</span> <span class="o">=</span> <span class="n">app_instance</span><span class="o">.</span><span class="n">run_any</span><span class="p">((</span><span class="s2">&quot;MyModule&quot;</span><span class="p">,</span> <span class="s2">&quot;my_function&quot;</span><span class="p">),</span> <span class="n">arg1</span><span class="o">=</span><span class="s2">&quot;hello&quot;</span><span class="p">)</span>
+<span class="n">full_result_obj</span> <span class="o">=</span> <span class="n">app_instance</span><span class="o">.</span><span class="n">run_any</span><span class="p">((</span><span class="s2">&quot;MyModule&quot;</span><span class="p">,</span> <span class="s2">&quot;my_function&quot;</span><span class="p">),</span> <span class="n">arg1</span><span class="o">=</span><span class="s2">&quot;hello&quot;</span><span class="p">,</span> <span class="n">get_results</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Asynchronous execution</span>
+<span class="n">async_result_data</span> <span class="o">=</span> <span class="k">await</span> <span class="n">app_instance</span><span class="o">.</span><span class="n">a_run_any</span><span class="p">((</span><span class="s2">&quot;MyAsyncModule&quot;</span><span class="p">,</span> <span class="s2">&quot;my_async_function&quot;</span><span class="p">))</span>
+</code></pre></div></td></tr></table></div></li>
+</ul>
+</li>
+<li>
+<p><strong><code>run_http(mod_function_name, function_name=None, method="GET", ...)</code> (async):</strong></p>
+<ul>
+<li>Executes a function on a remote ToolBoxV2 instance via HTTP, using the app's <code>session</code> object.</li>
+</ul>
+</li>
+</ul>
+<h3 id="application-lifecycle">Application Lifecycle<a class="headerlink" href="#application-lifecycle" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>exit()</code> / <code>a_exit()</code> (async):</strong><ul>
+<li>Gracefully shuts down the application.</li>
+<li>Calls <code>on_exit</code> functions for all loaded modules.</li>
+<li>Saves configuration.</li>
+<li>Stops the main application loop (<code>alive = False</code>).</li>
+<li>Cleans up threads and the event loop if applicable.</li>
+</ul>
+</li>
+</ul>
+<h3 id="utilities">Utilities<a class="headerlink" href="#utilities" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>print(text, *args, **kwargs)</code> / <code>sprint(text, *args, **kwargs)</code>:</strong><ul>
+<li>Styled print functions, prepending <code>System$[app_id]:</code>. <code>sprint</code> is often used for more verbose/system-level messages and can be silenced.</li>
+</ul>
+</li>
+<li><strong><code>debug_rains(e: Exception)</code>:</strong> If <code>app.debug</code> is true, prints a full traceback and re-raises the exception.</li>
+<li><strong><code>set_flows(r: dict)</code> / <code>run_flows(name: str, **kwargs)</code>:</strong> Manages and executes predefined application flows (sequences of operations).</li>
+<li><strong><code>get_username()</code> / <code>set_username(username: str)</code>:</strong> Manages the application's user identity.</li>
+<li><strong><code>save_autocompletion_dict()</code> / <code>get_autocompletion_dict()</code>:</strong> Saves/loads a dictionary of modules and their functions for autocompletion features.</li>
+<li><strong><code>save_registry_as_enums(directory: str, filename: str)</code>:</strong> Generates an <code>all_functions_enums.py</code>-like file from the currently registered functions.</li>
+<li><strong><code>execute_all_functions(...)</code> / <code>a_execute_all_functions(...)</code> (async):</strong><ul>
+<li>Runs all registered testable functions (marked with <code>test=True</code> in <code>@app.tb</code> or having <code>samples</code>).</li>
+<li>Useful for integration testing and profiling.</li>
+<li>Can filter by module (<code>m_query</code>) and function (<code>f_query</code>).</li>
+<li>Supports profiling via <code>cProfile</code>.</li>
+</ul>
+</li>
+<li><strong><code>run_bg_task(task: Callable)</code>:</strong><ul>
+<li>Runs a synchronous or asynchronous task in a separate background thread with its own event loop. Ensures proper handling of nested asyncio operations within the task.</li>
+</ul>
+</li>
+</ul>
+<h2 id="session-management-appsession">Session Management (<code>app.session</code>)<a class="headerlink" href="#session-management-appsession" title="Permanent link">&para;</a></h2>
+<p>The <code>app.session</code> attribute holds an instance of the <code>Session</code> class (from <code>toolboxv2.utils.system.session</code>). It's used for:
+*   Authenticating with a remote ToolBoxV2 service (e.g., SimpleCore Hub).
+*   Making authenticated HTTP requests (<code>session.fetch</code>, <code>session.upload_file</code>, <code>session.download_file</code>).
+*   Manages JWT claims and private key authentication.</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
+<span class="normal">2</span>
+<span class="normal">3</span>
+<span class="normal">4</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Example: Making an authenticated API call</span>
+<span class="c1"># Assumes app.session is already authenticated</span>
+<span class="n">response_data</span> <span class="o">=</span> <span class="k">await</span> <span class="n">app_instance</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">fetch</span><span class="p">(</span><span class="s2">&quot;/api/MyRemoteModule/get_info&quot;</span><span class="p">)</span>
+<span class="n">json_payload</span> <span class="o">=</span> <span class="k">await</span> <span class="n">response_data</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+</code></pre></div></td></tr></table></div>
+<hr />
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span>
+<span class="normal">12</span>
+<span class="normal">13</span>
+<span class="normal">14</span>
+<span class="normal">15</span></pre></div></td><td class="code"><div><pre><span></span><code>### 2. `cli.md` - Documenting the Command Line Interface
+
+This should explain how to use the `tb` (or `python -m toolboxv2`) command-line tool, detailing its arguments and their effects.
+
+```markdown
+# ToolBoxV2: Command Line Interface (CLI)
+
+ToolBoxV2 provides a command-line interface (CLI) for managing and running applications. It&#39;s typically invoked as `tb` (if installed globally or via an alias) or `python -m toolboxv2`.
+
+## General Usage
+
+```bash
+python -m toolboxv2 [options] [sub-commands]
+# or
+tb [options] [sub-commands]
+</code></pre></div></td></tr></table></div>
+<p>The CLI script (<code>__main__.py</code>) performs the following main steps:
+1.  Parses command-line arguments.
+2.  Initializes the <code>App</code> instance via <code>setup_app()</code> (which calls <code>get_app()</code>).
+3.  Handles various options to:
+    *   Manage application data and configuration.
+    *   Control application modes (background, proxy, debug).
+    *   Load modules and manage their state.
+    *   Run tests or profilers.
+    *   Execute specific application flows or commands.</p>
+<h2 id="key-cli-arguments">Key CLI Arguments<a class="headerlink" href="#key-cli-arguments" title="Permanent link">&para;</a></h2>
+<p>The following are some of the primary arguments available. Use <code>tb -h</code> or <code>python -m toolboxv2 -h</code> for a full list.</p>
+<ul>
+<li>
+<p><strong>Instance and Mode:</strong></p>
+<ul>
+<li><code>-init [name]</code>: Initializes ToolBoxV2 with a specific instance name (default: <code>main</code>).</li>
+<li><code>-n, --name &lt;name&gt;</code>: Specifies an ID for the ToolBox instance (default: <code>main</code>). This affects data/config directory names.</li>
+<li><code>-m, --modi &lt;mode&gt;</code>: Starts a ToolBoxV2 interface/flow (e.g., <code>cli</code>, <code>bg</code>, or custom flows). Default is usually "cli".</li>
+<li><code>--debug</code>: Starts the application in debug mode (more verbose logging, potentially different behavior).</li>
+<li><code>--remote</code>: Starts in remote mode, often for connecting to a proxy or another instance.</li>
+<li><code>-bg, --background-application</code>: Starts an interface in the background as a detached process.</li>
+<li><code>-bgr, --background-application-runner</code>: Runs the background application logic in the current terminal (for daemons).</li>
+<li><code>-fg, --live-application</code>: Starts a proxy interface, connecting to a background daemon.</li>
+<li><code>--kill</code>: Kills the currently running local ToolBoxV2 instance (matching the <code>-m &lt;mode&gt;</code> and <code>-n &lt;name&gt;</code>).</li>
+</ul>
+</li>
+<li>
+<p><strong>Module and Version Management:</strong></p>
+<ul>
+<li><code>-l, --load-all-mod-in-files</code>: Loads all modules found in the <code>mods/</code> directory on startup.</li>
+<li><code>-sfe, --save-function-enums-in-file</code>: Generates/updates the <code>all_functions_enums.py</code> file based on loaded modules. Often used with <code>-l</code>.</li>
+<li><code>-v, --get-version</code>: Prints the version of ToolBoxV2 and all loaded modules.</li>
+<li><code>-i, --install &lt;name&gt;</code>: Installs a module or interface (likely via <code>CloudM</code> module).</li>
+<li><code>-r, --remove &lt;name&gt;</code>: Uninstalls a module or interface.</li>
+<li><code>-u, --update &lt;name_or_main&gt;</code>: Updates a module/interface or the core ToolBoxV2 (<code>main</code>).</li>
+</ul>
+</li>
+<li>
+<p><strong>Development and Testing:</strong></p>
+<ul>
+<li><code>--test</code>: Runs all unit tests (typically discovers and runs tests in the <code>tests/</code> directory).</li>
+<li><code>--profiler</code>: Runs all registered testable functions and profiles their execution using <code>cProfile</code>.</li>
+<li><code>--ipy</code>: Starts an IPython session with the ToolBoxV2 app pre-loaded. Provides magic commands like <code>%tb save/loadX/load/open/inject</code>.</li>
+</ul>
+</li>
+<li>
+<p><strong>Service Management (<code>--sm</code>):</strong></p>
+<ul>
+<li>Provides a sub-menu for managing ToolBoxV2 as a system service (Linux/systemd or Windows Startup).</li>
+<li>Options: Init, Start/Stop/Restart, Status, Uninstall, Show/Hide console window (Windows).</li>
+</ul>
+</li>
+<li>
+<p><strong>Log Management (<code>--lm</code>):</strong></p>
+<ul>
+<li>Provides a sub-menu for managing log files (e.g., removing or unstyling logs by date/level).</li>
+</ul>
+</li>
+<li>
+<p><strong>Data and Configuration Management:</strong></p>
+<ul>
+<li><code>--delete-config-all</code>: Deletes <em>all</em> configuration files. <strong>Use with caution!</strong></li>
+<li><code>--delete-data-all</code>: Deletes <em>all</em> data folders. <strong>Use with caution!</strong></li>
+<li><code>--delete-config</code>: Deletes the configuration file for the <em>named</em> instance.</li>
+<li><code>--delete-data</code>: Deletes the data folder for the <em>named</em> instance.</li>
+</ul>
+</li>
+<li>
+<p><strong>Network Configuration (for interfaces):</strong></p>
+<ul>
+<li><code>-p, --port &lt;port&gt;</code>: Specifies the port for an interface (default: <code>5000</code> or <code>6587</code> for background).</li>
+<li><code>-w, --host &lt;host&gt;</code>: Specifies the host for an interface (default: <code>0.0.0.0</code>).</li>
+</ul>
+</li>
+<li>
+<p><strong>Direct Command Execution:</strong></p>
+<ul>
+<li><code>-c, --command &lt;module_name&gt; &lt;function_name&gt; [arg1 arg2 ...]</code> (can be repeated): Executes a specific function.</li>
+<li><code>--kwargs &lt;key=value&gt;</code> (can be repeated): Provides keyword arguments for commands specified with <code>-c</code>.</li>
+</ul>
+</li>
+<li>
+<p><strong>Conda Integration:</strong></p>
+<ul>
+<li><code>conda [conda_args...]</code>: Special argument to pass commands directly to a <code>conda_runner.py</code> script (e.g., <code>tb conda env list</code>).</li>
+</ul>
+</li>
+<li>
+<p><strong>API Runner:</strong></p>
+<ul>
+<li><code>api [api_args...]</code>: Special argument to invoke <code>cli_api_runner.py</code>, likely for direct API interactions or testing.</li>
+</ul>
+</li>
+<li>
+<p><strong>GUI:</strong></p>
+<ul>
+<li><code>gui</code>: Starts the GUI version of ToolBoxV2 (imports and runs <code>toolboxv2.__gui__.start</code>).</li>
+</ul>
+</li>
+</ul>
+<h2 id="cli-execution-flow-__main__py">CLI Execution Flow (<code>__main__.py</code>)<a class="headerlink" href="#cli-execution-flow-__main__py" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Argument Parsing:</strong> <code>parse_args()</code> uses <code>argparse</code> to define and parse all CLI arguments.</li>
+<li><strong>App Setup (<code>setup_app()</code>):</strong><ul>
+<li>Initializes the <code>App</code> instance using <code>get_app()</code> with the parsed arguments and name.</li>
+<li>Sets up PID file for the current process.</li>
+<li>Optionally silences <code>app.sprint</code> if not in debug/verbose mode.</li>
+<li>Loads all modules if <code>-l</code> is specified.</li>
+<li>Handles <code>--update</code> logic.</li>
+</ul>
+</li>
+<li><strong>Background/Live Application Handling:</strong><ul>
+<li>If <code>-bgr</code>: Initializes <code>DaemonApp</code>.</li>
+<li>If <code>-bg</code>: Starts the application as a detached background process using <code>subprocess.Popen</code>.</li>
+<li>If <code>-fg</code> (live-application): Attempts to connect to a background daemon using <code>ProxyApp</code>.</li>
+</ul>
+</li>
+<li><strong>Action Dispatching:</strong> Based on the parsed arguments, it performs actions like:<ul>
+<li>Module installation (<code>--install</code>).</li>
+<li>Log management (<code>--lm</code>).</li>
+<li>Service management (<code>--sm</code>).</li>
+<li>Saving function enums (<code>-sfe</code>).</li>
+<li>Printing versions (<code>-v</code>).</li>
+<li>Running the profiler (<code>--profiler</code>).</li>
+<li>Running flows based on <code>--modi</code>.</li>
+<li>Handling Docker commands (<code>--docker</code>).</li>
+<li>Killing an existing instance (<code>--kill</code>).</li>
+<li>Executing direct commands (<code>-c</code>).</li>
+</ul>
+</li>
+<li><strong>Cleanup:</strong> Removes the PID file and calls <code>app.a_exit()</code> before exiting.</li>
+</ol>
+<h2 id="example-cli-usage">Example CLI Usage<a class="headerlink" href="#example-cli-usage" title="Permanent link">&para;</a></h2>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span>
+<span class="normal">12</span>
+<span class="normal">13</span>
+<span class="normal">14</span>
+<span class="normal">15</span>
+<span class="normal">16</span>
+<span class="normal">17</span>
+<span class="normal">18</span>
+<span class="normal">19</span>
+<span class="normal">20</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Get version information</span>
+python<span class="w"> </span>-m<span class="w"> </span>toolboxv2<span class="w"> </span>-v
+
+<span class="c1"># Load all modules and save function enums</span>
+python<span class="w"> </span>-m<span class="w"> </span>toolboxv2<span class="w"> </span>-l<span class="w"> </span>-sfe
+
+<span class="c1"># Run a specific function in MyModule</span>
+python<span class="w"> </span>-m<span class="w"> </span>toolboxv2<span class="w"> </span>-c<span class="w"> </span>MyModule<span class="w"> </span>my_function<span class="w"> </span>arg_value<span class="w"> </span>--kwargs<span class="w"> </span><span class="nv">param_name</span><span class="o">=</span>kwarg_value
+
+<span class="c1"># Start the application with a custom flow named &#39;web_server&#39; in debug mode</span>
+python<span class="w"> </span>-m<span class="w"> </span>toolboxv2<span class="w"> </span>-m<span class="w"> </span>web_server<span class="w"> </span>--debug<span class="w"> </span>-n<span class="w"> </span>my_web_instance
+
+<span class="c1"># Start a background daemon for the &#39;bg_processing&#39; flow</span>
+python<span class="w"> </span>-m<span class="w"> </span>toolboxv2<span class="w"> </span>-m<span class="w"> </span>bg_processing<span class="w"> </span>-bg<span class="w"> </span>-n<span class="w"> </span>background_processor
+
+<span class="c1"># Connect to the background daemon with a live proxy application</span>
+python<span class="w"> </span>-m<span class="w"> </span>toolboxv2<span class="w"> </span>-m<span class="w"> </span>cli<span class="w"> </span>-fg<span class="w"> </span>-n<span class="w"> </span>background_processor
+
+<span class="c1"># Kill the &#39;web_server&#39; modi instance named &#39;my_web_instance&#39;</span>
+python<span class="w"> </span>-m<span class="w"> </span>toolboxv2<span class="w"> </span>-m<span class="w"> </span>web_server<span class="w"> </span>--kill<span class="w"> </span>-n<span class="w"> </span>my_web_instance
+</code></pre></div></td></tr></table></div>
+<hr />
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">  1</span>
+<span class="normal">  2</span>
+<span class="normal">  3</span>
+<span class="normal">  4</span>
+<span class="normal">  5</span>
+<span class="normal">  6</span>
+<span class="normal">  7</span>
+<span class="normal">  8</span>
+<span class="normal">  9</span>
+<span class="normal"> 10</span>
+<span class="normal"> 11</span>
+<span class="normal"> 12</span>
+<span class="normal"> 13</span>
+<span class="normal"> 14</span>
+<span class="normal"> 15</span>
+<span class="normal"> 16</span>
+<span class="normal"> 17</span>
+<span class="normal"> 18</span>
+<span class="normal"> 19</span>
+<span class="normal"> 20</span>
+<span class="normal"> 21</span>
+<span class="normal"> 22</span>
+<span class="normal"> 23</span>
+<span class="normal"> 24</span>
+<span class="normal"> 25</span>
+<span class="normal"> 26</span>
+<span class="normal"> 27</span>
+<span class="normal"> 28</span>
+<span class="normal"> 29</span>
+<span class="normal"> 30</span>
+<span class="normal"> 31</span>
+<span class="normal"> 32</span>
+<span class="normal"> 33</span>
+<span class="normal"> 34</span>
+<span class="normal"> 35</span>
+<span class="normal"> 36</span>
+<span class="normal"> 37</span>
+<span class="normal"> 38</span>
+<span class="normal"> 39</span>
+<span class="normal"> 40</span>
+<span class="normal"> 41</span>
+<span class="normal"> 42</span>
+<span class="normal"> 43</span>
+<span class="normal"> 44</span>
+<span class="normal"> 45</span>
+<span class="normal"> 46</span>
+<span class="normal"> 47</span>
+<span class="normal"> 48</span>
+<span class="normal"> 49</span>
+<span class="normal"> 50</span>
+<span class="normal"> 51</span>
+<span class="normal"> 52</span>
+<span class="normal"> 53</span>
+<span class="normal"> 54</span>
+<span class="normal"> 55</span>
+<span class="normal"> 56</span>
+<span class="normal"> 57</span>
+<span class="normal"> 58</span>
+<span class="normal"> 59</span>
+<span class="normal"> 60</span>
+<span class="normal"> 61</span>
+<span class="normal"> 62</span>
+<span class="normal"> 63</span>
+<span class="normal"> 64</span>
+<span class="normal"> 65</span>
+<span class="normal"> 66</span>
+<span class="normal"> 67</span>
+<span class="normal"> 68</span>
+<span class="normal"> 69</span>
+<span class="normal"> 70</span>
+<span class="normal"> 71</span>
+<span class="normal"> 72</span>
+<span class="normal"> 73</span>
+<span class="normal"> 74</span>
+<span class="normal"> 75</span>
+<span class="normal"> 76</span>
+<span class="normal"> 77</span>
+<span class="normal"> 78</span>
+<span class="normal"> 79</span>
+<span class="normal"> 80</span>
+<span class="normal"> 81</span>
+<span class="normal"> 82</span>
+<span class="normal"> 83</span>
+<span class="normal"> 84</span>
+<span class="normal"> 85</span>
+<span class="normal"> 86</span>
+<span class="normal"> 87</span>
+<span class="normal"> 88</span>
+<span class="normal"> 89</span>
+<span class="normal"> 90</span>
+<span class="normal"> 91</span>
+<span class="normal"> 92</span>
+<span class="normal"> 93</span>
+<span class="normal"> 94</span>
+<span class="normal"> 95</span>
+<span class="normal"> 96</span>
+<span class="normal"> 97</span>
+<span class="normal"> 98</span>
+<span class="normal"> 99</span>
+<span class="normal">100</span>
+<span class="normal">101</span>
+<span class="normal">102</span>
+<span class="normal">103</span></pre></div></td><td class="code"><div><pre><span></span><code>### 3. `example_mod.md` - Documenting Module Creation
+
+This needs to be updated to accurately reflect the `@app.tb(...)` decorator from `toolbox.py` and the `Result` and `RequestData` classes from `types.py`.
+
+```markdown
+# ToolBoxV2: Creating Modules
+
+ToolBoxV2 modules are Python files or packages that extend the framework&#39;s functionality. They can define simple functions, stateful tools (classes inheriting from `MainTool`), or API endpoints.
+
+## Basic Module Structure
+
+A typical ToolBoxV2 module (`.py` file) includes:
+
+1.  **Imports:** Necessary libraries and ToolBoxV2 components.
+2.  **Module Metadata (Optional but Recommended):**
+    *   `Name` (or `name`): A string defining the module&#39;s canonical name.
+    *   `version`: A string for the module&#39;s version (e.g., &quot;1.0.0&quot;).
+3.  **Function/Class Definitions:** The core logic of your module.
+4.  **Exporting Functions:** Functions are made available to ToolBoxV2 using the `@export` decorator (which is an alias for `app.tb`).
+
+## The `@export` Decorator (`app.tb`)
+
+The `@export` decorator is the primary mechanism for registering functions and configuring their behavior within ToolBoxV2. It&#39;s obtained from an `App` instance.
+
+```python
+from toolboxv2 import get_app, App, Result, RequestData, MainTool
+from toolboxv2.utils.system.types import ToolBoxInterfaces # For specific interface types
+from typing import Optional, Dict, Any, List
+import asyncio
+
+# Get the application instance (singleton)
+# The &#39;prefix&#39; for get_app here is often the module&#39;s own name,
+# though the decorator will use its &#39;mod_name&#39; parameter.
+app = get_app(&quot;MyModule&quot;)
+export = app.tb # Alias the decorator for convenience
+
+# --- Module Metadata (Best Practice) ---
+Name = &quot;MyModule&quot;  # Used by the decorator if mod_name is not specified
+version = &quot;1.0.1&quot;
+
+# --- Example Functions ---
+
+@export(mod_name=Name, version=version, helper=&quot;A simple greeting function.&quot;)
+def greet(name: str) -&gt; str:
+    &quot;&quot;&quot;Returns a greeting message.&quot;&quot;&quot;
+    return f&quot;Hello, {name} from MyModule!&quot;
+
+@export(mod_name=Name, version=version, row=True, helper=&quot;Returns raw data without Result wrapping.&quot;)
+def get_raw_data() -&gt; dict:
+    &quot;&quot;&quot;Demonstrates returning raw data.&quot;&quot;&quot;
+    return {&quot;key&quot;: &quot;value&quot;, &quot;number&quot;: 123}
+
+@export(mod_name=Name, version=version, initial=True, helper=&quot;Runs when the module is first loaded.&quot;)
+def on_module_load():
+    &quot;&quot;&quot;Initialization logic for this module.&quot;&quot;&quot;
+    app.print(f&quot;{Name} module has been loaded and initialized!&quot;)
+    # return Result.ok(info=&quot;MyModule initialized successfully&quot;) # Optional: return a Result
+
+@export(mod_name=Name, version=version, exit_f=True, helper=&quot;Runs when the application is shutting down.&quot;)
+async def on_module_exit():
+    &quot;&quot;&quot;Cleanup logic for this module.&quot;&quot;&quot;
+    await asyncio.sleep(0.1) # Simulate async cleanup
+    app.print(f&quot;{Name} module is cleaning up.&quot;)
+    # return Result.ok(info=&quot;MyModule cleaned up.&quot;) # Optional
+
+@export(mod_name=Name, version=version, api=True, api_methods=[&#39;GET&#39;], request_as_kwarg=True,
+        helper=&quot;An example API endpoint.&quot;)
+async def my_api_endpoint(request: Optional[RequestData] = None) -&gt; Result:
+    &quot;&quot;&quot;
+    Handles GET requests to /api/MyModule/my_api_endpoint.
+    Accesses request details if provided.
+    &quot;&quot;&quot;
+    if request:
+        app.print(f&quot;API request received: {request.request.method} {request.request.path}&quot;)
+        app.print(f&quot;Query Params: {request.request.query_params}&quot;)
+        app.print(f&quot;User from session: {request.session.user_name}&quot;)
+    return Result.json(data={&quot;message&quot;: &quot;API call successful!&quot;, &quot;module_version&quot;: version})
+
+@export(mod_name=Name, version=version, memory_cache=True, memory_cache_ttl=60)
+def expensive_calculation(param: int) -&gt; int:
+    &quot;&quot;&quot;
+    An example of a function whose results will be cached in memory for 60 seconds.
+    &quot;&quot;&quot;
+    app.print(f&quot;Performing expensive calculation for {param}...&quot;)
+    time.sleep(2) # Simulate work
+    return param * param
+
+# Example of a more complex function using App instance and returning a Result
+@export(mod_name=Name, version=version)
+def process_data_with_app(app_instance: App, data_id: int) -&gt; Result:
+    &quot;&quot;&quot;
+    This function automatically receives the &#39;App&#39; instance if its first parameter is type-hinted as &#39;App&#39;.
+    This is determined by the &#39;state=True&#39; logic in the decorator if &#39;app&#39; is the first param.
+    Alternatively, use state=False for stateless functions.
+    &quot;&quot;&quot;
+    if not isinstance(app_instance, App): # Should always be App if first param is &#39;app&#39;
+        return Result.default_internal_error(&quot;App instance not correctly passed.&quot;)
+
+    # Use app_instance for logging, accessing config, other modules, etc.
+    app_instance.logger.info(f&quot;Processing data_id: {data_id} in {Name}&quot;)
+    if data_id &lt; 0:
+        return Result.default_user_error(info=&quot;Data ID cannot be negative.&quot;)
+    return Result.ok(data={&quot;processed_id&quot;: data_id, &quot;status&quot;: &quot;completed&quot;})
+</code></pre></div></td></tr></table></div>
+<h3 id="export-decorator-parameters"><code>@export</code> Decorator Parameters:<a class="headerlink" href="#export-decorator-parameters" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>name</code> (str, optional): The name to register the function under. Defaults to the function's actual name.</li>
+<li><code>mod_name</code> (str): The name of the module this function belongs to. If not provided, it tries to infer from <code>func.__module__</code> or a global <code>Name</code> in the module.</li>
+<li><code>version</code> (str, optional): Version string for this function/feature. Combined with the app's version.</li>
+<li><code>helper</code> (str, optional): A docstring or help text for the function.</li>
+<li><code>api</code> (bool, default <code>False</code>): If <code>True</code>, exposes this function as an HTTP API endpoint.<ul>
+<li>The URL pattern is typically <code>/api/&lt;mod_name&gt;/&lt;func_name&gt;</code>.</li>
+<li>For streaming, <code>/sse/&lt;mod_name&gt;/&lt;func_name&gt;</code>.</li>
+</ul>
+</li>
+<li><code>api_methods</code> (List[str], optional): Specifies allowed HTTP methods (e.g., <code>['GET', 'POST']</code>). Defaults to <code>['AUTO']</code> (GET if no body params, POST if body params).</li>
+<li><code>request_as_kwarg</code> (bool, default <code>False</code>): If <code>True</code> and <code>api=True</code>, the function will receive a <code>request: RequestData</code> keyword argument if it's defined in its signature.</li>
+<li><code>row</code> (bool, default <code>False</code>): If <code>True</code>, the function's raw return value is used directly. If <code>False</code> (default), the return value is automatically wrapped in a <code>Result.ok()</code> object if it's not already a <code>Result</code> or <code>ApiResult</code>.</li>
+<li><code>initial</code> (bool, default <code>False</code>): If <code>True</code>, this function is added to the module's "on_start" list and is called when the module is loaded by the <code>App</code> instance (if the module instance is a <code>MainTool</code> or similar, or if called directly).</li>
+<li><code>exit_f</code> (bool, default <code>False</code>): If <code>True</code>, this function is added to the module's "on_exit" list and is called when the <code>App</code> instance is shutting down or the module is removed.</li>
+<li><code>state</code> (bool, optional):<ul>
+<li>If <code>None</code> (default): Automatically determined. If the first parameter of the decorated function is named <code>self</code> or <code>app</code> (and type-hinted as <code>App</code>), <code>state</code> is considered <code>True</code>. Otherwise <code>False</code>.</li>
+<li>If <code>True</code>: The function is considered stateful. If its first parameter is <code>self</code>, it's assumed to be a method of a class instance (e.g., a <code>MainTool</code> subclass). If <code>app</code>, the <code>App</code> instance is passed.</li>
+<li>If <code>False</code>: The function is treated as stateless.</li>
+</ul>
+</li>
+<li><code>test</code> (bool, default <code>True</code>): Marks the function as testable. Used by <code>app.execute_all_functions()</code>.</li>
+<li><code>samples</code> (List[Dict[str, Any]], optional): A list of sample keyword arguments to be used when testing the function with <code>app.execute_all_functions()</code>.</li>
+<li><code>memory_cache</code> (bool, default <code>False</code>): Enables in-memory caching for the function's results.</li>
+<li><code>memory_cache_ttl</code> (int, default <code>300</code>): Time-to-live in seconds for memory cache entries.</li>
+<li><code>memory_cache_max_size</code> (int, default <code>100</code>): Max number of entries in the memory cache.</li>
+<li><code>file_cache</code> (bool, default <code>False</code>): Enables file-based caching for the function's results. (Stored in <code>app.data_dir/cache/...</code>).</li>
+<li><code>restrict_in_virtual_mode</code> (bool, default <code>False</code>): If <code>True</code>, restricts function in certain virtualized/proxied modes.</li>
+<li><code>level</code> (int, default <code>-1</code>): A general-purpose level or priority for the function.</li>
+<li><code>pre_compute</code> (Callable, optional): A function <code>(func, *args, **kwargs) -&gt; (args, kwargs)</code> called before the main function executes. It can modify args/kwargs.</li>
+<li><code>post_compute</code> (Callable, optional): A function <code>(result, func, *args, **kwargs) -&gt; result</code> called after the main function executes. It can modify the result.</li>
+<li><code>interface</code> (ToolBoxInterfaces | str, optional): Specifies the intended interface type (e.g., <code>ToolBoxInterfaces.cli</code>, <code>ToolBoxInterfaces.api</code>). Defaults to "tb".</li>
+</ul>
+<h3 id="result-and-apiresult-objects"><code>Result</code> and <code>ApiResult</code> Objects<a class="headerlink" href="#result-and-apiresult-objects" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Modules should typically return <code>Result</code> objects (or <code>ApiResult</code> for API endpoints) to provide standardized responses including success/error status, data payload, and informational messages.</li>
+<li>The <code>toolboxv2.utils.system.types.Result</code> class provides factory methods:<ul>
+<li><code>Result.ok(data=..., info=...)</code></li>
+<li><code>Result.json(data=..., info=...)</code> (for <code>api=True</code> functions)</li>
+<li><code>Result.html(data=..., info=...)</code></li>
+<li><code>Result.text(text_data=..., info=...)</code></li>
+<li><code>Result.binary(data=..., content_type=..., download_name=...)</code></li>
+<li><code>Result.redirect(url=..., status_code=...)</code></li>
+<li><code>Result.stream(stream_generator=..., info=..., cleanup_func=...)</code> (for SSE)</li>
+<li><code>Result.default_user_error(info=..., exec_code=...)</code></li>
+<li><code>Result.default_internal_error(info=..., exec_code=...)</code></li>
+<li><code>Result.custom_error(data=..., info=..., exec_code=...)</code></li>
+</ul>
+</li>
+<li>The <code>Result</code> object has a <code>task(background_task_callable)</code> method to schedule a background task to run after the main function returns.</li>
+</ul>
+<h3 id="requestdata-object"><code>RequestData</code> Object<a class="headerlink" href="#requestdata-object" title="Permanent link">&para;</a></h3>
+<ul>
+<li>For API functions (<code>api=True</code>) with <code>request_as_kwarg=True</code>, if the function signature includes <code>request: Optional[RequestData] = None</code>, it will receive an instance of <code>toolboxv2.utils.system.types.RequestData</code>.</li>
+<li><code>RequestData</code> provides access to:<ul>
+<li><code>request.method</code>, <code>request.path</code></li>
+<li><code>request.headers</code> (an instance of <code>Headers</code>, e.g., <code>request.headers.user_agent</code>, <code>request.headers.hx_request</code>)</li>
+<li><code>request.query_params</code> (dict)</li>
+<li><code>request.form_data</code> (dict, if applicable)</li>
+<li><code>request.body</code> (parsed JSON if <code>content_type</code> is <code>application/json</code>, otherwise raw bytes/str)</li>
+<li><code>session.SiID</code>, <code>session.user_name</code>, <code>session.level</code> (from the current user's session)</li>
+</ul>
+</li>
+</ul>
+<h2 id="creating-a-maintool-based-module">Creating a <code>MainTool</code>-based Module<a class="headerlink" href="#creating-a-maintool-based-module" title="Permanent link">&para;</a></h2>
+<p>For more complex, stateful modules, you can create a class that inherits from <code>toolboxv2.utils.system.main_tool.MainTool</code>.</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span>
+<span class="normal">12</span>
+<span class="normal">13</span>
+<span class="normal">14</span>
+<span class="normal">15</span>
+<span class="normal">16</span>
+<span class="normal">17</span>
+<span class="normal">18</span>
+<span class="normal">19</span>
+<span class="normal">20</span>
+<span class="normal">21</span>
+<span class="normal">22</span>
+<span class="normal">23</span>
+<span class="normal">24</span>
+<span class="normal">25</span>
+<span class="normal">26</span>
+<span class="normal">27</span>
+<span class="normal">28</span>
+<span class="normal">29</span>
+<span class="normal">30</span>
+<span class="normal">31</span>
+<span class="normal">32</span>
+<span class="normal">33</span>
+<span class="normal">34</span>
+<span class="normal">35</span>
+<span class="normal">36</span>
+<span class="normal">37</span>
+<span class="normal">38</span>
+<span class="normal">39</span>
+<span class="normal">40</span>
+<span class="normal">41</span>
+<span class="normal">42</span>
+<span class="normal">43</span>
+<span class="normal">44</span>
+<span class="normal">45</span>
+<span class="normal">46</span>
+<span class="normal">47</span>
+<span class="normal">48</span>
+<span class="normal">49</span>
+<span class="normal">50</span>
+<span class="normal">51</span>
+<span class="normal">52</span>
+<span class="normal">53</span>
+<span class="normal">54</span>
+<span class="normal">55</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_app</span><span class="p">,</span> <span class="n">App</span><span class="p">,</span> <span class="n">Result</span><span class="p">,</span> <span class="n">MainTool</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.system.types</span><span class="w"> </span><span class="kn">import</span> <span class="n">ToolBoxError</span>
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">get_app</span><span class="p">(</span><span class="s2">&quot;MyToolModule&quot;</span><span class="p">)</span>
+<span class="n">export</span> <span class="o">=</span> <span class="n">app</span><span class="o">.</span><span class="n">tb</span>
+
+<span class="n">Name</span> <span class="o">=</span> <span class="s2">&quot;MyToolModule&quot;</span>
+<span class="n">version</span> <span class="o">=</span> <span class="s2">&quot;0.5.0&quot;</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Tools</span><span class="p">(</span><span class="n">MainTool</span><span class="p">):</span> <span class="c1"># The class must be named &#39;Tools&#39; for auto-detection by older App versions</span>
+                      <span class="c1"># or ensure your module file directly uses @export on methods if not named Tools.</span>
+    <span class="c1"># Or, you can export methods directly from any class:</span>
+    <span class="c1"># class MyCustomTool(MainTool):</span>
+    <span class="c1">#    @export(...)</span>
+    <span class="c1">#    def my_method(self, ...): ...</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">__ainit__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="c1"># Asynchronous initialization</span>
+        <span class="c1"># self.app is automatically available</span>
+        <span class="c1"># self.name, self.version, self.logger are set by MainTool&#39;s __await__</span>
+        <span class="k">await</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">__ainit__</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="n">Name</span><span class="p">,</span> <span class="n">v</span><span class="o">=</span><span class="n">version</span><span class="p">,</span> <span class="n">tool</span><span class="o">=</span><span class="p">{</span>
+            <span class="s2">&quot;process_item&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">process_item</span><span class="p">,</span> <span class="c1"># For older compatibility if functions were in &#39;tools&#39; dict</span>
+            <span class="s2">&quot;get_status&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_status</span>
+        <span class="p">})</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">internal_state</span> <span class="o">=</span> <span class="s2">&quot;initialized&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> (Tool) has been initialized with state: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">internal_state</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">Name</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">)</span> <span class="c1"># Decorate methods to export them</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">process_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">details</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Result</span><span class="p">:</span>
+        <span class="c1"># &#39;self&#39; provides access to app, logger, name, version, config</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> processing item: </span><span class="si">{</span><span class="n">item_id</span><span class="si">}</span><span class="s2"> - </span><span class="si">{</span><span class="n">details</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">internal_state</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;last_processed_</span><span class="si">{</span><span class="n">item_id</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">if</span> <span class="n">item_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">return_result</span><span class="p">(</span> <span class="c1"># Helper from MainTool</span>
+                <span class="n">error</span><span class="o">=</span><span class="n">ToolBoxError</span><span class="o">.</span><span class="n">input_error</span><span class="p">,</span>
+                <span class="n">exec_code</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="c1"># Custom error code</span>
+                <span class="n">help_text</span><span class="o">=</span><span class="s2">&quot;Item ID cannot be zero.&quot;</span><span class="p">,</span>
+                <span class="n">data_info</span><span class="o">=</span><span class="s2">&quot;Validation failed&quot;</span>
+            <span class="p">)</span>
+        <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">ok</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;item_id&quot;</span><span class="p">:</span> <span class="n">item_id</span><span class="p">,</span> <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;processed by tool&quot;</span><span class="p">})</span>
+
+    <span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">Name</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">)</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_status</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="c1"># Example async method</span>
+        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.01</span><span class="p">)</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Tool </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> current state: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">internal_state</span><span class="si">}</span><span class="s2">&quot;</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">on_exit</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="c1"># Not automatically called unless also decorated or part of a convention</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Tool </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> is shutting down its internal state.&quot;</span><span class="p">)</span>
+        <span class="c1"># Perform cleanup</span>
+
+<span class="c1"># To ensure on_exit is called by the App framework:</span>
+<span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">Name</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">,</span> <span class="n">exit_f</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">custom_tool_exit_function</span><span class="p">(</span><span class="n">app_instance</span><span class="p">:</span> <span class="n">App</span><span class="p">):</span>
+    <span class="n">tool_instance</span> <span class="o">=</span> <span class="n">app_instance</span><span class="o">.</span><span class="n">get_mod</span><span class="p">(</span><span class="n">Name</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">tool_instance</span> <span class="ow">and</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">tool_instance</span><span class="p">,</span> <span class="s1">&#39;on_exit&#39;</span><span class="p">)</span> <span class="ow">and</span> <span class="nb">callable</span><span class="p">(</span><span class="n">tool_instance</span><span class="o">.</span><span class="n">on_exit</span><span class="p">):</span>
+        <span class="k">await</span> <span class="n">tool_instance</span><span class="o">.</span><span class="n">on_exit</span><span class="p">()</span>
+</code></pre></div></td></tr></table></div>
+<p><strong>Key aspects of <code>MainTool</code>:</strong>
+*   <strong>Asynchronous Initialization:</strong> Use <code>async def __ainit__(self)</code> for setup. The <code>MainTool</code> itself is awaitable, and <code>__ainit__</code> is called when the instance is first awaited (e.g., by <code>app.load_mod</code> or <code>app.get_mod</code>).
+*   <strong><code>self.app</code>:</strong> The <code>App</code> instance is available as <code>self.app</code>.
+*   <strong><code>self.name</code>, <code>self.version</code>, <code>self.logger</code>:</strong> These are automatically set up.
+*   <strong><code>self.return_result(...)</code>:</strong> A helper method for creating <code>Result</code> objects.
+*   Methods intended to be called via <code>app.run_any</code> should be decorated with <code>@export</code>.</p>
+<h2 id="steps-to-create-a-valid-toolboxv2-module">Steps to Create a Valid Toolboxv2 Module:<a class="headerlink" href="#steps-to-create-a-valid-toolboxv2-module" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Define Module Structure:</strong> Organize your code with imports, metadata, and function/class definitions.</li>
+<li><strong>Clarify Dependencies:</strong> Import necessary libraries. Handle missing optional dependencies gracefully if needed.</li>
+<li><strong>Export Functions/Methods:</strong> Use the <code>@export(...)</code> decorator (e.g., <code>app.tb(...)</code>) to mark functions/methods that ToolBoxV2 should recognize.<ul>
+<li>Provide <code>mod_name</code> and <code>version</code>.</li>
+<li>Use other parameters (<code>api</code>, <code>row</code>, <code>initial</code>, <code>exit_f</code>, <code>memory_cache</code>, etc.) as needed.</li>
+<li>Ensure clear signatures and document parameters/return types (Python type hints are highly recommended).</li>
+</ul>
+</li>
+<li><strong>Documentation and Versioning:</strong> Document your module and its functions. Use semantic versioning.</li>
+<li><strong>Testing:</strong> Test your module thoroughly, including how it integrates with the ToolBoxV2 app (<code>app.run_any</code>, <code>app.get_mod</code>, etc.). Use the <code>test=True</code> and <code>samples</code> parameters in <code>@export</code> to facilitate automated testing via <code>app.execute_all_functions()</code>.</li>
+</ol></div>
+
+            </div>
+        </div>
+
+        <footer class="col-md-12">
+            <hr>
+            <p>Documentation built with <a href="https://www.mkdocs.org/">MkDocs</a>.</p>
+        </footer>
+        <script src="../js/bootstrap.bundle.min.js"></script>
+        <script>
+            var base_url = "..",
+                shortcuts = {"help": 191, "next": 78, "previous": 80, "search": 83};
+        </script>
+        <script src="../js/base.js"></script>
+        <script src="../search/main.js"></script>
+
+        <div class="modal" id="mkdocs_search_modal" tabindex="-1" role="dialog" aria-labelledby="searchModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title" id="searchModalLabel">Search</h4>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>From here you can search these documents. Enter your search terms below.</p>
+                <form>
+                    <div class="form-group">
+                        <input type="search" class="form-control" placeholder="Search..." id="mkdocs-search-query" title="Type search term here">
+                    </div>
+                </form>
+                <div id="mkdocs-search-results" data-no-results-text="No results found"></div>
+            </div>
+            <div class="modal-footer">
+            </div>
+        </div>
+    </div>
+</div><div class="modal" id="mkdocs_keyboard_modal" tabindex="-1" role="dialog" aria-labelledby="keyboardModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title" id="keyboardModalLabel">Keyboard Shortcuts</h4>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th style="width: 20%;">Keys</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="help shortcut"><kbd>?</kbd></td>
+                    <td>Open this help</td>
+                  </tr>
+                  <tr>
+                    <td class="next shortcut"><kbd>n</kbd></td>
+                    <td>Next page</td>
+                  </tr>
+                  <tr>
+                    <td class="prev shortcut"><kbd>p</kbd></td>
+                    <td>Previous page</td>
+                  </tr>
+                  <tr>
+                    <td class="search shortcut"><kbd>s</kbd></td>
+                    <td>Search</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="modal-footer">
+            </div>
+        </div>
+    </div>
+</div>
+
+    </body>
+</html>

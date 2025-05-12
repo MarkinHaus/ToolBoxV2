@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        
+        
+        <link rel="canonical" href="https://MarkinHaus.github.io/ToolBoxV2/usage/">
+        <link rel="shortcut icon" href="../img/favicon.ico">
+        <title>Usage - ToolBoxV2 Docs</title>
+        <link href="../css/bootstrap.min.css" rel="stylesheet">
+        <link href="../css/fontawesome.min.css" rel="stylesheet">
+        <link href="../css/brands.min.css" rel="stylesheet">
+        <link href="../css/solid.min.css" rel="stylesheet">
+        <link href="../css/v4-font-face.min.css" rel="stylesheet">
+        <link href="../css/base.css" rel="stylesheet">
+        <link id="hljs-light" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" >
+        <link id="hljs-dark" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css" disabled>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+        <script>hljs.highlightAll();</script> 
+    </head>
+
+    <body>
+        <div class="navbar fixed-top navbar-expand-lg navbar-dark bg-primary">
+            <div class="container">
+                <a class="navbar-brand" href="..">ToolBoxV2 Docs</a>
+                <!-- Expander button -->
+                <button type="button" class="navbar-toggler" data-bs-toggle="collapse" data-bs-target="#navbar-collapse" aria-controls="navbar-collapse" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+
+                <!-- Expanded navigation -->
+                <div id="navbar-collapse" class="navbar-collapse collapse">
+                        <!-- Main navigation -->
+                        <ul class="nav navbar-nav">
+                            <li class="nav-item">
+                                <a href=".." class="nav-link">Home</a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="../installation/" class="nav-link">Installation</a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="./" class="nav-link active" aria-current="page">Usage</a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="../contributing/" class="nav-link">Contributing</a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="../faq/" class="nav-link">FAQ</a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="../changelog/" class="nav-link">Changelog</a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="https://github.com/MarkinHaus/ToolBoxV2/issues" class="nav-link">Report Issues</a>
+                            </li>
+                            <li class="nav-item dropdown">
+                                <a href="#" class="nav-link dropdown-toggle" role="button" data-bs-toggle="dropdown"  aria-expanded="false">API Reference</a>
+                                <ul class="dropdown-menu">
+                                    
+<li>
+    <a href="../toolboxv2/" class="dropdown-item">toolboxv2 module</a>
+</li>
+                                    
+<li>
+    <a href="../utils/" class="dropdown-item">utils</a>
+</li>
+                                </ul>
+                            </li>
+                        </ul>
+
+                    <ul class="nav navbar-nav ms-md-auto">
+                        <li class="nav-item">
+                            <a href="#" class="nav-link" data-bs-toggle="modal" data-bs-target="#mkdocs_search_modal">
+                                <i class="fa fa-search"></i> Search
+                            </a>
+                        </li>
+                            <li class="nav-item">
+                                <a rel="prev" href="../installation/" class="nav-link">
+                                    <i class="fa fa-arrow-left"></i> Previous
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a rel="next" href="../contributing/" class="nav-link">
+                                    Next <i class="fa fa-arrow-right"></i>
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="https://github.com/MarkinHaus/ToolBoxV2/edit/master/docs/usage.md" class="nav-link">Edit on ToolBoxV2
+                                    </a>
+                            </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="container">
+            <div class="row">
+
+
+
+                    <div class="col-md-3"><div class="navbar-expand-md bs-sidebar hidden-print affix" role="complementary">
+    <div class="navbar-header">
+        <button type="button" class="navbar-toggler collapsed" data-bs-toggle="collapse" data-bs-target="#toc-collapse" title="Table of Contents">
+            <span class="fa fa-angle-down"></span>
+        </button>
+    </div>
+
+    
+    <div id="toc-collapse" class="navbar-collapse collapse card bg-body-tertiary">
+        <ul class="nav flex-column">
+            
+            <li class="nav-item" data-bs-level="1"><a href="#toolboxv2-developer-guide" class="nav-link">ToolBoxV2 Developer Guide</a>
+              <ul class="nav flex-column">
+            <li class="nav-item" data-bs-level="2"><a href="#introduction" class="nav-link">Introduction</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#setting-up-your-application" class="nav-link">Setting Up Your Application</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#function-types" class="nav-link">Function Types</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#working-with-request-data" class="nav-link">Working with Request Data</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#working-with-results" class="nav-link">Working with Results</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#advanced-features" class="nav-link">Advanced Features</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+            <li class="nav-item" data-bs-level="2"><a href="#url-patterns-for-api-endpoints" class="nav-link">URL Patterns for API Endpoints</a>
+              <ul class="nav flex-column">
+              </ul>
+            </li>
+              </ul>
+            </li>
+        </ul>
+    </div>
+</div></div>
+                    <div class="col-md-9" role="main">
+
+<h1 id="toolboxv2-developer-guide">ToolBoxV2 Developer Guide<a class="headerlink" href="#toolboxv2-developer-guide" title="Permanent link">&para;</a></h1>
+<p>Based on the provided documentation, here's a comprehensive guide on how to use the ToolBoxV2 framework for building applications.</p>
+<h2 id="introduction">Introduction<a class="headerlink" href="#introduction" title="Permanent link">&para;</a></h2>
+<p>ToolBoxV2 is a Python framework that provides a structured approach to building applications with standardized request handling and response formatting. It consists of two main components:</p>
+<ol>
+<li><strong>RequestData Classes</strong> - For handling HTTP requests with strong typing</li>
+<li><strong>Result Class</strong> - For standardized response handling and error management</li>
+</ol>
+<h2 id="setting-up-your-application">Setting Up Your Application<a class="headerlink" href="#setting-up-your-application" title="Permanent link">&para;</a></h2>
+<h3 id="creating-a-module">Creating a Module<a class="headerlink" href="#creating-a-module" title="Permanent link">&para;</a></h3>
+<p>Start by initializing your application module:</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
+<span class="normal">2</span>
+<span class="normal">3</span>
+<span class="normal">4</span>
+<span class="normal">5</span>
+<span class="normal">6</span>
+<span class="normal">7</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_app</span><span class="p">,</span> <span class="n">App</span><span class="p">,</span> <span class="n">RequestData</span><span class="p">,</span> <span class="n">Result</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Optional</span>
+
+<span class="c1"># Define your module</span>
+<span class="n">MOD_NAME</span> <span class="o">=</span> <span class="s2">&quot;YOUR_MODULE_NAME&quot;</span>
+<span class="n">version</span> <span class="o">=</span> <span class="s2">&quot;1.0&quot;</span>
+<span class="n">export</span> <span class="o">=</span> <span class="n">get_app</span><span class="p">(</span><span class="s2">&quot;{MODULE-NAME.SUB-MODULE}&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">tb</span>
+</code></pre></div></td></tr></table></div>
+<h3 id="registering-functions">Registering Functions<a class="headerlink" href="#registering-functions" title="Permanent link">&para;</a></h3>
+<p>Use the <code>@export</code> decorator to register functions within your module:</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
+<span class="normal">2</span>
+<span class="normal">3</span>
+<span class="normal">4</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">your_function</span><span class="p">():</span>
+    <span class="c1"># Function logic here</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">ok</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="s2">&quot;Success&quot;</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+<h2 id="function-types">Function Types<a class="headerlink" href="#function-types" title="Permanent link">&para;</a></h2>
+<h3 id="standard-system-functions">Standard System Functions<a class="headerlink" href="#standard-system-functions" title="Permanent link">&para;</a></h3>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span>
+<span class="normal">12</span>
+<span class="normal">13</span>
+<span class="normal">14</span>
+<span class="normal">15</span>
+<span class="normal">16</span>
+<span class="normal">17</span>
+<span class="normal">18</span>
+<span class="normal">19</span>
+<span class="normal">20</span>
+<span class="normal">21</span>
+<span class="normal">22</span>
+<span class="normal">23</span>
+<span class="normal">24</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Basic function with App parameter</span>
+<span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">,</span> <span class="n">row</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">system_function</span><span class="p">(</span><span class="n">app</span><span class="p">:</span> <span class="n">App</span><span class="p">):</span>
+    <span class="c1"># Implementation</span>
+    <span class="k">return</span> <span class="s2">&quot;Raw return value&quot;</span>  <span class="c1"># Will be returned as-is because row=True</span>
+
+<span class="c1"># Function without App parameter</span>
+<span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">function_without_app</span><span class="p">():</span>
+    <span class="c1"># Implementation</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">ok</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="s2">&quot;Success&quot;</span><span class="p">)</span>
+
+<span class="c1"># Function with arguments</span>
+<span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">function_with_args</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Result</span><span class="p">:</span>
+    <span class="c1"># Implementation</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">ok</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="n">name</span><span class="p">)</span>
+
+<span class="c1"># Function returning raw data</span>
+<span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">,</span> <span class="n">row</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">function_with_args_kwargs</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">nickname</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">nickname</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">nickname</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">name</span> <span class="o">+</span> <span class="n">nickname</span>  <span class="c1"># Returned as raw string</span>
+</code></pre></div></td></tr></table></div>
+<h3 id="async-functions">Async Functions<a class="headerlink" href="#async-functions" title="Permanent link">&para;</a></h3>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
+<span class="normal">2</span>
+<span class="normal">3</span>
+<span class="normal">4</span>
+<span class="normal">5</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">,</span> <span class="n">row</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">async_function</span><span class="p">(</span><span class="n">app</span><span class="p">:</span> <span class="n">App</span><span class="p">):</span>
+    <span class="c1"># Async implementation</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">some_async_operation</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">result</span>
+</code></pre></div></td></tr></table></div>
+<h3 id="api-endpoints">API Endpoints<a class="headerlink" href="#api-endpoints" title="Permanent link">&para;</a></h3>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span>
+<span class="normal">12</span>
+<span class="normal">13</span>
+<span class="normal">14</span>
+<span class="normal">15</span>
+<span class="normal">16</span>
+<span class="normal">17</span>
+<span class="normal">18</span>
+<span class="normal">19</span>
+<span class="normal">20</span>
+<span class="normal">21</span>
+<span class="normal">22</span>
+<span class="normal">23</span>
+<span class="normal">24</span>
+<span class="normal">25</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># API endpoint with request parameter</span>
+<span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">api</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="s2">&quot;1.0&quot;</span><span class="p">,</span> <span class="n">request_as_kwarg</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_data</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">RequestData</span><span class="p">]</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">request</span><span class="p">:</span>
+        <span class="n">query_params</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">query_params</span>
+        <span class="c1"># Process query parameters</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">json</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;success&quot;</span><span class="p">})</span>
+
+<span class="c1"># API endpoint with App and Request parameters</span>
+<span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">api</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="s2">&quot;1.0&quot;</span><span class="p">,</span> <span class="n">request_as_kwarg</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_user_data</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">request</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">RequestData</span><span class="p">]</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+    <span class="c1"># Implementation using app and request</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">ok</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;user&quot;</span><span class="p">:</span> <span class="s2">&quot;data&quot;</span><span class="p">})</span>
+
+<span class="c1"># API endpoint with specific HTTP methods</span>
+<span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">api</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="s2">&quot;1.0&quot;</span><span class="p">,</span> <span class="n">api_methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;PUT&#39;</span><span class="p">,</span> <span class="s1">&#39;POST&#39;</span><span class="p">])</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">update_data</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="n">Dict</span><span class="p">):</span>
+    <span class="c1"># Process the JSON data received in the request body</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">ok</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="n">data</span><span class="p">)</span>
+
+<span class="c1"># API endpoint handling form data</span>
+<span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">api</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="s2">&quot;1.0&quot;</span><span class="p">,</span> <span class="n">api_methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;PUT&#39;</span><span class="p">,</span> <span class="s1">&#39;POST&#39;</span><span class="p">])</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">submit_form</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">form_data</span><span class="p">:</span> <span class="n">Dict</span><span class="p">):</span>
+    <span class="c1"># Process form data</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">ok</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="n">form_data</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+<h2 id="working-with-request-data">Working with Request Data<a class="headerlink" href="#working-with-request-data" title="Permanent link">&para;</a></h2>
+<h3 id="accessing-request-information">Accessing Request Information<a class="headerlink" href="#accessing-request-information" title="Permanent link">&para;</a></h3>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span>
+<span class="normal">12</span>
+<span class="normal">13</span>
+<span class="normal">14</span>
+<span class="normal">15</span>
+<span class="normal">16</span>
+<span class="normal">17</span>
+<span class="normal">18</span>
+<span class="normal">19</span>
+<span class="normal">20</span>
+<span class="normal">21</span>
+<span class="normal">22</span>
+<span class="normal">23</span>
+<span class="normal">24</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">api</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="s2">&quot;1.0&quot;</span><span class="p">,</span> <span class="n">request_as_kwarg</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">process_request</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">RequestData</span><span class="p">]</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">request</span><span class="p">:</span>
+        <span class="c1"># Access method and path</span>
+        <span class="n">method</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">method</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">path</span>
+
+        <span class="c1"># Access headers</span>
+        <span class="n">user_agent</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">user_agent</span>
+        <span class="n">content_type</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">content_type</span>
+        <span class="n">custom_header</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">extra_headers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;x-custom-header&#39;</span><span class="p">)</span>
+
+        <span class="c1"># Access query parameters</span>
+        <span class="n">query_params</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">query_params</span>
+        <span class="n">search_term</span> <span class="o">=</span> <span class="n">query_params</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;search&#39;</span><span class="p">)</span>
+
+        <span class="c1"># Access form data or JSON body</span>
+        <span class="k">if</span> <span class="n">request</span><span class="o">.</span><span class="n">form_data</span><span class="p">:</span>
+            <span class="n">form_values</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">form_data</span>
+
+        <span class="k">if</span> <span class="n">request</span><span class="o">.</span><span class="n">body</span> <span class="ow">and</span> <span class="n">request</span><span class="o">.</span><span class="n">content_type</span> <span class="o">==</span> <span class="s1">&#39;application/json&#39;</span><span class="p">:</span>
+            <span class="n">json_data</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">body</span>
+
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">ok</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="s2">&quot;Request processed&quot;</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+<h3 id="accessing-session-information">Accessing Session Information<a class="headerlink" href="#accessing-session-information" title="Permanent link">&para;</a></h3>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span>
+<span class="normal">12</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">api</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="s2">&quot;1.0&quot;</span><span class="p">,</span> <span class="n">request_as_kwarg</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_user_session</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">RequestData</span><span class="p">]</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">request</span> <span class="ow">and</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="s1">&#39;session&#39;</span><span class="p">):</span>
+        <span class="c1"># Access session data</span>
+        <span class="n">session_id</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">SiID</span>
+        <span class="n">user_name</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">user_name</span>
+        <span class="n">session_level</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">level</span>
+
+        <span class="c1"># Access custom session data</span>
+        <span class="n">custom_data</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">extra_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;custom_key&#39;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">ok</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;user&quot;</span><span class="p">:</span> <span class="n">user_name</span><span class="p">})</span>
+</code></pre></div></td></tr></table></div>
+<h2 id="working-with-results">Working with Results<a class="headerlink" href="#working-with-results" title="Permanent link">&para;</a></h2>
+<h3 id="creating-different-types-of-responses">Creating Different Types of Responses<a class="headerlink" href="#creating-different-types-of-responses" title="Permanent link">&para;</a></h3>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span>
+<span class="normal">12</span>
+<span class="normal">13</span>
+<span class="normal">14</span>
+<span class="normal">15</span>
+<span class="normal">16</span>
+<span class="normal">17</span>
+<span class="normal">18</span>
+<span class="normal">19</span>
+<span class="normal">20</span>
+<span class="normal">21</span>
+<span class="normal">22</span>
+<span class="normal">23</span>
+<span class="normal">24</span>
+<span class="normal">25</span>
+<span class="normal">26</span>
+<span class="normal">27</span>
+<span class="normal">28</span>
+<span class="normal">29</span>
+<span class="normal">30</span>
+<span class="normal">31</span>
+<span class="normal">32</span>
+<span class="normal">33</span>
+<span class="normal">34</span>
+<span class="normal">35</span>
+<span class="normal">36</span>
+<span class="normal">37</span>
+<span class="normal">38</span>
+<span class="normal">39</span>
+<span class="normal">40</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">api</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="s2">&quot;1.0&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">response_examples</span><span class="p">(</span><span class="n">app</span><span class="p">):</span>
+    <span class="c1"># Choose the appropriate response type based on your needs</span>
+
+    <span class="c1"># 1. Standard success response</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">ok</span><span class="p">(</span>
+        <span class="n">data</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;key&quot;</span><span class="p">:</span> <span class="s2">&quot;value&quot;</span><span class="p">},</span>
+        <span class="n">info</span><span class="o">=</span><span class="s2">&quot;Operation completed successfully&quot;</span>
+    <span class="p">)</span>
+
+    <span class="c1"># 2. JSON response</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">json</span><span class="p">(</span>
+        <span class="n">data</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;online&quot;</span><span class="p">,</span> <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="s2">&quot;1.0&quot;</span><span class="p">},</span>
+        <span class="n">info</span><span class="o">=</span><span class="s2">&quot;API status retrieved&quot;</span>
+    <span class="p">)</span>
+
+    <span class="c1"># 3. HTML response</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">html</span><span class="p">(</span>
+        <span class="n">data</span><span class="o">=</span><span class="s2">&quot;&lt;html&gt;&lt;body&gt;&lt;h1&gt;Welcome&lt;/h1&gt;&lt;/body&gt;&lt;/html&gt;&quot;</span><span class="p">,</span>
+        <span class="n">info</span><span class="o">=</span><span class="s2">&quot;Page rendered&quot;</span>
+    <span class="p">)</span>
+
+    <span class="c1"># 4. Text response</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">text</span><span class="p">(</span>
+        <span class="n">text_data</span><span class="o">=</span><span class="s2">&quot;Plain text content&quot;</span><span class="p">,</span>
+        <span class="n">content_type</span><span class="o">=</span><span class="s2">&quot;text/plain&quot;</span>
+    <span class="p">)</span>
+
+    <span class="c1"># 5. Binary file response</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">binary</span><span class="p">(</span>
+        <span class="n">data</span><span class="o">=</span><span class="n">binary_data</span><span class="p">,</span>
+        <span class="n">content_type</span><span class="o">=</span><span class="s2">&quot;application/pdf&quot;</span><span class="p">,</span>
+        <span class="n">download_name</span><span class="o">=</span><span class="s2">&quot;report.pdf&quot;</span>
+    <span class="p">)</span>
+
+    <span class="c1"># 6. Redirect response</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">redirect</span><span class="p">(</span>
+        <span class="n">url</span><span class="o">=</span><span class="s2">&quot;/dashboard&quot;</span><span class="p">,</span>
+        <span class="n">status_code</span><span class="o">=</span><span class="mi">302</span>
+    <span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+<h3 id="error-handling">Error Handling<a class="headerlink" href="#error-handling" title="Permanent link">&para;</a></h3>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span>
+<span class="normal">12</span>
+<span class="normal">13</span>
+<span class="normal">14</span>
+<span class="normal">15</span>
+<span class="normal">16</span>
+<span class="normal">17</span>
+<span class="normal">18</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">process_with_validation</span><span class="p">(</span><span class="n">user_input</span><span class="p">):</span>
+    <span class="c1"># Validate input</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">user_input</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">default_user_error</span><span class="p">(</span>
+            <span class="n">info</span><span class="o">=</span><span class="s2">&quot;Empty input is not allowed&quot;</span><span class="p">,</span>
+            <span class="n">exec_code</span><span class="o">=</span><span class="mi">400</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Process valid input</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">processed_data</span> <span class="o">=</span> <span class="n">process_data</span><span class="p">(</span><span class="n">user_input</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">ok</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="n">processed_data</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">default_sys_error</span><span class="p">(</span>
+            <span class="n">info</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;Processing error: </span><span class="si">{</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="n">exec_code</span><span class="o">=</span><span class="mi">500</span>
+        <span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+<h3 id="using-lazy_return-for-simplified-error-handling">Using lazy_return for Simplified Error Handling<a class="headerlink" href="#using-lazy_return-for-simplified-error-handling" title="Permanent link">&para;</a></h3>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">validate_and_process</span><span class="p">(</span><span class="n">data</span><span class="p">):</span>
+    <span class="c1"># Validate data</span>
+    <span class="n">validation_result</span> <span class="o">=</span> <span class="n">validate_data</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+
+    <span class="c1"># If validation fails, return the error</span>
+    <span class="c1"># If validation succeeds, return the processed data</span>
+    <span class="k">return</span> <span class="n">validation_result</span><span class="o">.</span><span class="n">lazy_return</span><span class="p">(</span>
+        <span class="s1">&#39;user&#39;</span><span class="p">,</span>  <span class="c1"># Use user error if validation fails</span>
+        <span class="n">data</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;processed&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;original&quot;</span><span class="p">:</span> <span class="n">data</span><span class="p">}</span>  <span class="c1"># Return this if successful</span>
+    <span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+<h3 id="streaming-responses">Streaming Responses<a class="headerlink" href="#streaming-responses" title="Permanent link">&para;</a></h3>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span>
+<span class="normal">12</span>
+<span class="normal">13</span>
+<span class="normal">14</span>
+<span class="normal">15</span>
+<span class="normal">16</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">api</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="s2">&quot;1.0&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">stream_data</span><span class="p">():</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">generator</span><span class="p">():</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+            <span class="k">yield</span> <span class="p">{</span><span class="s2">&quot;chunk&quot;</span><span class="p">:</span> <span class="n">i</span><span class="p">}</span>
+            <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">cleanup</span><span class="p">():</span>
+        <span class="c1"># Cleanup resources when the stream closes</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Stream closed, performing cleanup&quot;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span>
+        <span class="n">stream_generator</span><span class="o">=</span><span class="n">generator</span><span class="p">(),</span>
+        <span class="n">info</span><span class="o">=</span><span class="s2">&quot;Streaming data chunks&quot;</span><span class="p">,</span>
+        <span class="n">cleanup_func</span><span class="o">=</span><span class="n">cleanup</span>
+    <span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+<h2 id="advanced-features">Advanced Features<a class="headerlink" href="#advanced-features" title="Permanent link">&para;</a></h2>
+<h3 id="caching">Caching<a class="headerlink" href="#caching" title="Permanent link">&para;</a></h3>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span>
+<span class="normal">12</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Memory caching</span>
+<span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">,</span> <span class="n">memory_cache</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">memory_cache_max_size</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">memory_cache_ttl</span><span class="o">=</span><span class="mi">300</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">cached_function</span><span class="p">(</span><span class="n">key</span><span class="p">):</span>
+    <span class="c1"># Expensive operation here</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">ok</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="n">compute_expensive_data</span><span class="p">(</span><span class="n">key</span><span class="p">))</span>
+
+<span class="c1"># File caching</span>
+<span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">,</span> <span class="n">file_cache</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">file_cached_function</span><span class="p">(</span><span class="n">key</span><span class="p">):</span>
+    <span class="c1"># Expensive operation here</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">ok</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="n">compute_expensive_data</span><span class="p">(</span><span class="n">key</span><span class="p">))</span>
+</code></pre></div></td></tr></table></div>
+<h3 id="background-functions">Background Functions<a class="headerlink" href="#background-functions" title="Permanent link">&para;</a></h3>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span>
+<span class="normal">12</span>
+<span class="normal">13</span>
+<span class="normal">14</span>
+<span class="normal">15</span>
+<span class="normal">16</span>
+<span class="normal">17</span>
+<span class="normal">18</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Memory caching</span>
+<span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">function_with_log_running_bg_call</span><span class="p">():</span>
+    <span class="c1"># Expensive operation here</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">sync_bg_function</span><span class="p">():</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;running in gb&quot;</span><span class="p">)</span>
+        <span class="n">compute_expensive_function</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">ok</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="s2">&quot;Starting processing&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">task</span><span class="p">(</span><span class="n">sync_bg_function</span><span class="p">)</span>
+
+<span class="c1"># File caching</span>
+<span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">function_with_log_running_bg_call</span><span class="p">():</span>
+    <span class="c1"># Expensive operation here</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">bg_function</span><span class="p">():</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;running in gb&quot;</span><span class="p">)</span>
+        <span class="k">await</span> <span class="n">compute_expensive_function</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">ok</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="s2">&quot;Starting processing&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">task</span><span class="p">(</span><span class="n">bg_function</span><span class="p">())</span>
+</code></pre></div></td></tr></table></div>
+<h3 id="lifecycle-management">Lifecycle Management<a class="headerlink" href="#lifecycle-management" title="Permanent link">&para;</a></h3>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span>
+<span class="normal">12</span>
+<span class="normal">13</span>
+<span class="normal">14</span>
+<span class="normal">15</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Initialization function</span>
+<span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">,</span> <span class="n">initial</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">initialize_module</span><span class="p">(</span><span class="n">app</span><span class="p">:</span> <span class="n">App</span><span class="p">):</span>
+    <span class="c1"># Called when the module is loaded</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Initializing </span><span class="si">{</span><span class="n">MOD_NAME</span><span class="si">}</span><span class="s2"> module&quot;</span><span class="p">)</span>
+    <span class="c1"># Set up resources, connections, etc.</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">ok</span><span class="p">(</span><span class="n">info</span><span class="o">=</span><span class="s2">&quot;Module initialized&quot;</span><span class="p">)</span>
+
+<span class="c1"># Exit function</span>
+<span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">,</span> <span class="n">exit_f</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">cleanup_module</span><span class="p">(</span><span class="n">app</span><span class="p">:</span> <span class="n">App</span><span class="p">):</span>
+    <span class="c1"># Called when the application is shutting down</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cleaning up </span><span class="si">{</span><span class="n">MOD_NAME</span><span class="si">}</span><span class="s2"> module&quot;</span><span class="p">)</span>
+    <span class="c1"># Release resources, close connections, etc.</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">ok</span><span class="p">(</span><span class="n">info</span><span class="o">=</span><span class="s2">&quot;Module cleaned up&quot;</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+<h3 id="prepost-compute-functions">Pre/Post Compute Functions<a class="headerlink" href="#prepost-compute-functions" title="Permanent link">&para;</a></h3>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span>
+<span class="normal">12</span>
+<span class="normal">13</span>
+<span class="normal">14</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">log_before_execution</span><span class="p">(</span><span class="n">func</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Executing </span><span class="si">{</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> with args: </span><span class="si">{</span><span class="n">args</span><span class="si">}</span><span class="s2">, kwargs: </span><span class="si">{</span><span class="n">kwargs</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">args</span><span class="p">,</span> <span class="n">kwargs</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">log_after_execution</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">func</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Function </span><span class="si">{</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> returned: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">result</span>
+
+<span class="nd">@export</span><span class="p">(</span><span class="n">mod_name</span><span class="o">=</span><span class="n">MOD_NAME</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">,</span>
+        <span class="n">pre_compute</span><span class="o">=</span><span class="n">log_before_execution</span><span class="p">,</span>
+        <span class="n">post_compute</span><span class="o">=</span><span class="n">log_after_execution</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">monitored_function</span><span class="p">(</span><span class="n">name</span><span class="p">):</span>
+    <span class="c1"># Function logic</span>
+    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">ok</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;Hello, </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">!&quot;</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+<h2 id="url-patterns-for-api-endpoints">URL Patterns for API Endpoints<a class="headerlink" href="#url-patterns-for-api-endpoints" title="Permanent link">&para;</a></h2>
+<p>API endpoints are accessible using the following URL patterns:</p>
+<ul>
+<li>Regular API: <code>/api/MOD_NAME/{function_name}?param1=value1&amp;param2=value2</code></li>
+<li>Server-Sent Events (streaming): <code>/sse/MOD_NAME/{function_name}?param1=value1&amp;param2=value2</code></li>
+</ul></div>
+
+            </div>
+        </div>
+
+        <footer class="col-md-12">
+            <hr>
+            <p>Documentation built with <a href="https://www.mkdocs.org/">MkDocs</a>.</p>
+        </footer>
+        <script src="../js/bootstrap.bundle.min.js"></script>
+        <script>
+            var base_url = "..",
+                shortcuts = {"help": 191, "next": 78, "previous": 80, "search": 83};
+        </script>
+        <script src="../js/base.js"></script>
+        <script src="../search/main.js"></script>
+
+        <div class="modal" id="mkdocs_search_modal" tabindex="-1" role="dialog" aria-labelledby="searchModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title" id="searchModalLabel">Search</h4>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>From here you can search these documents. Enter your search terms below.</p>
+                <form>
+                    <div class="form-group">
+                        <input type="search" class="form-control" placeholder="Search..." id="mkdocs-search-query" title="Type search term here">
+                    </div>
+                </form>
+                <div id="mkdocs-search-results" data-no-results-text="No results found"></div>
+            </div>
+            <div class="modal-footer">
+            </div>
+        </div>
+    </div>
+</div><div class="modal" id="mkdocs_keyboard_modal" tabindex="-1" role="dialog" aria-labelledby="keyboardModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title" id="keyboardModalLabel">Keyboard Shortcuts</h4>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th style="width: 20%;">Keys</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="help shortcut"><kbd>?</kbd></td>
+                    <td>Open this help</td>
+                  </tr>
+                  <tr>
+                    <td class="next shortcut"><kbd>n</kbd></td>
+                    <td>Next page</td>
+                  </tr>
+                  <tr>
+                    <td class="prev shortcut"><kbd>p</kbd></td>
+                    <td>Previous page</td>
+                  </tr>
+                  <tr>
+                    <td class="search shortcut"><kbd>s</kbd></td>
+                    <td>Search</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="modal-footer">
+            </div>
+        </div>
+    </div>
+</div>
+
+    </body>
+</html>
