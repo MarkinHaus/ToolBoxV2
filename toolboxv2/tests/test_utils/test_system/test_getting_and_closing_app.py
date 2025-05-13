@@ -1,7 +1,5 @@
 import asyncio
-import atexit
 import time
-from typing import List, Optional
 
 import unittest
 from unittest.mock import MagicMock, patch, Mock, AsyncMock

@@ -9,7 +9,6 @@ from typing import Any
 
 import networkx as nx
 import numpy as np
-from litellm import batch_completion, ModelResponse, fallbacks
 from pydantic import BaseModel
 
 from toolboxv2 import get_logger, get_app, Spinner
@@ -18,18 +17,15 @@ from sklearn.cluster import HDBSCAN
 from typing import Dict, Set, Tuple, Optional, NamedTuple
 from dataclasses import dataclass
 import json
-import asyncio
 from collections import defaultdict
 import re
 
 from toolboxv2.mods.isaa.base.VectorStores.qdrant_store import QdrantVectorStore
 from toolboxv2.mods.isaa.extras.filter import after_format
 from toolboxv2.mods.isaa.base.VectorStores.defaults import AbstractVectorStore, FastVectorStoreO, FaissVectorStore, \
-    EnhancedVectorStore, FastVectorStore1, RedisVectorStore, NumpyVectorStore, VectorStoreConfig
+    EnhancedVectorStore, FastVectorStore1, NumpyVectorStore, VectorStoreConfig
 from toolboxv2.mods.isaa.extras.adapter import litellm_complete
-import numpy as np
 from typing import List
-from collections import deque
 
 
 i__ = [0, 0, 0]
@@ -432,7 +428,7 @@ class ConceptExtractor:
 
             return concepts
 
-        except Exception as e:
+        except Exception:
             i__[2] +=1
             return []
 
@@ -869,7 +865,7 @@ class KnowledgeBase:
         split_texts = []
         split_metadata = []
 
-        while Spinner(f"Saving Data to Memory", symbols='t'):
+        while Spinner("Saving Data to Memory", symbols='t'):
 
             for idx, text in enumerate(texts):
                 chunks = self.text_splitter.split_text(text)

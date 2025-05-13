@@ -1,8 +1,7 @@
 import unittest
 
-from toolboxv2 import Result, get_app
-from toolboxv2.utils.system.types import ToolBoxError, ToolBoxInterfaces, analyze_data, CallingObject, MainToolType
-from unittest.mock import MagicMock, patch, Mock
+from toolboxv2 import Result
+from toolboxv2.utils.system.types import ToolBoxError, ToolBoxInterfaces, analyze_data, CallingObject
 
 
 class TestResult(unittest.TestCase):

@@ -5,7 +5,6 @@ import subprocess
 from dataclasses import dataclass, field
 
 from toolboxv2.mods.CloudM.mini import get_service_status
-from toolboxv2.utils.system.session import get_public_ip
 from toolboxv2.utils.system.types import CallingObject, ApiResult
 
 try:
@@ -14,7 +13,7 @@ try:
 
     READCHAR = True
     READCHAR_error = None
-except ImportError and ModuleNotFoundError as READCHAR_error:
+except ImportError and ModuleNotFoundError:
     READCHAR = False
 
 from toolboxv2 import get_app, App, Result
@@ -32,7 +31,7 @@ try:
 
     PROMPT_TOOLKIT = True
     PROMPT_TOOLKIT_error = None
-except ImportError and ModuleNotFoundError as PROMPT_TOOLKIT_error:
+except ImportError and ModuleNotFoundError:
     PROMPT_TOOLKIT = False
 
 Name = 'cli_functions'

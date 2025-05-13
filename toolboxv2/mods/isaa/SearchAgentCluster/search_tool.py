@@ -1,24 +1,19 @@
 import asyncio
 import base64
-import inspect
 import re
-import sys
 import os
 import urllib
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, Pattern, Sequence, Union, TypeVar, Generic
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Optional, Union, TypeVar
+from pydantic import BaseModel
 import json
 from datetime import datetime
 from urllib.parse import urlparse
 
 # Import BrowserAnt components
-from browser_use import Agent as BrowserAgent, Controller, SystemPrompt
+from browser_use import Controller, SystemPrompt
 from langchain_core.language_models import BaseChatModel
-from langchain_community.chat_models import ChatLiteLLM
 
 from toolboxv2.mods.isaa.CodingAgent.live import BrowserWrapper
-from typing import Dict, Any, List, Optional, Union
 T = TypeVar('T', bound=BaseModel)
 global_headless = False
 
@@ -520,7 +515,7 @@ async def main():
             parsed_results = []
             for result in raw_results:
                 try:
-                    if "structured_data" in result and not "error" in result:
+                    if "structured_data" in result and "error" not in result:
                         # Map the extracted data to model fields
                         model_data = {}
                         for field_name in model.__annotations__:
@@ -675,8 +670,8 @@ class WebContentParser:
         page = await self.browser_wrapper.navigate(url)
 
         # Script to extract table data
-        extract_table_js = f"""
-        (tableSelector) => {{
+        extract_table_js = """
+        (tableSelector) => {
             const tables = document.querySelectorAll(tableSelector);
             if (tables.length === 0) return [];
 
@@ -694,23 +689,23 @@ class WebContentParser:
             // Start from 1 if we have headers, otherwise from 0
             const startIdx = headers.length > 0 ? 1 : 0;
 
-            for (let i = startIdx; i < rows.length; i++) {{
+            for (let i = startIdx; i < rows.length; i++) {
                 const row = rows[i];
                 const cells = Array.from(row.querySelectorAll('td')).map(td => td.textContent.trim());
 
-                if (cells.length > 0) {{
-                    const rowData = {{}};
-                    for (let j = 0; j < Math.min(headerRow.length, cells.length); j++) {{
+                if (cells.length > 0) {
+                    const rowData = {};
+                    for (let j = 0; j < Math.min(headerRow.length, cells.length); j++) {
                         // Create a valid object key from header
                         const key = headerRow[j].replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
                         rowData[key] = cells[j];
-                    }}
+                    }
                     result.push(rowData);
-                }}
-            }}
+                }
+            }
 
             return result;
-        }}
+        }
         """
 
         # Extract data
@@ -723,18 +718,18 @@ class WebContentParser:
         page = await self.browser_wrapper.navigate(url)
 
         # Script to extract links
-        extract_links_js = f"""
-        (linkSelector) => {{
+        extract_links_js = """
+        (linkSelector) => {
             const links = Array.from(document.querySelectorAll(linkSelector));
-            return links.map(link => {{
-                return {{
+            return links.map(link => {
+                return {
                     text: link.textContent.trim(),
                     href: link.href,
                     title: link.getAttribute('title') || '',
                     isExternal: link.hostname !== window.location.hostname
-                }};
-            }}).filter(link => link.href && link.href.startsWith('http'));
-        }}
+                };
+            }).filter(link => link.href && link.href.startsWith('http'));
+        }
         """
 
         # Extract links
@@ -742,10 +737,7 @@ class WebContentParser:
         return links
 
 
-import asyncio
-import os
-import re
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 from typing import Dict, List, Set, Optional
 import logging
 

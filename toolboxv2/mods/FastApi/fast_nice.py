@@ -1,13 +1,9 @@
 import asyncio
 import inspect
-from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
-from mockito import kwargs
-from nicegui import app as nicegui_app, ui
+from nicegui import ui
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.middleware.sessions import SessionMiddleware
 from typing import Dict, Optional, Callable, Any
 from datetime import datetime
 import os
@@ -17,9 +13,8 @@ from starlette.responses import RedirectResponse
 from toolboxv2 import Singleton, get_app
 from toolboxv2.utils.extras.base_widget import get_user_from_request, get_spec, get_s_id
 from toolboxv2.utils.system.session import RequestSession
-from typing import List, Dict
-from dataclasses import dataclass, asdict
-import json
+from typing import List
+from dataclasses import dataclass
 
 @dataclass
 class UIEndpoint:
@@ -72,7 +67,7 @@ class NiceGUIManager(metaclass=Singleton):
     def _setup_admin_gui(self):
         """Setup the admin GUI interface"""
 
-        @ui.page(f'/admin')
+        @ui.page('/admin')
         def admin_gui(user=None):
             print("admin_gui;", user)
             if user is None or user.name != "root":
@@ -152,7 +147,7 @@ class NiceGUIManager(metaclass=Singleton):
                     )
 
                     ui.notify('GUI added successfully')
-                    ui.navigate.to(f'admin')  # Refresh page
+                    ui.navigate.to('admin')  # Refresh page
                 except Exception as e:
                     ui.notify(f'Error adding GUI: {str(e)}', color='negative')
 
@@ -174,7 +169,7 @@ class NiceGUIManager(metaclass=Singleton):
             ui.label(f'Memory Usage: {memory_usage:.2f} MB')
 
             # Add refresh button
-            ui.button('Refresh Stats', on_click=lambda: ui.navigate.to(f'/admin'))
+            ui.button('Refresh Stats', on_click=lambda: ui.navigate.to('/admin'))
 
     def _handle_gui_removal(self, gui_id: str):
         """Handle GUI removal with confirmation"""
@@ -182,7 +177,7 @@ class NiceGUIManager(metaclass=Singleton):
         def confirm_remove():
             if self.remove_gui(gui_id):
                 ui.notify(f'GUI {gui_id} removed successfully')
-                ui.navigate.to(f'/admin')  # Refresh page
+                ui.navigate.to('/admin')  # Refresh page
             else:
                 ui.notify('Error removing GUI', color='negative')
 

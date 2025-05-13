@@ -4,10 +4,7 @@ import platform
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import subprocess
 import os
-import platform
-import shutil
 
 
 from toolboxv2.utils.system.api import detect_os_and_arch, download_executable, query_executable_url

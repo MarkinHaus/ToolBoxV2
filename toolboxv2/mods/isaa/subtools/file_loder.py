@@ -1,6 +1,5 @@
 import mimetypes
 import os
-from typing import Optional, Callable
 from langchain_community.document_loaders import ImageCaptionLoader, DirectoryLoader
 from langchain_core.documents import Document
 

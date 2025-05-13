@@ -1,7 +1,6 @@
 import time
 import unittest
 import os
-import shelve
 from tempfile import TemporaryDirectory
 
 from toolboxv2.utils.system import FileCache, MemoryCache

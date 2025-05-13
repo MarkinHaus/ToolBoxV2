@@ -5,7 +5,6 @@ from collections import Counter
 
 import nltk
 from collections import defaultdict
-import random
 
 # Initialize NLTK components
 from nltk.tokenize import word_tokenize

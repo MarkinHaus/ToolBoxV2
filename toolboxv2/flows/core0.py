@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from toolboxv2 import App, AppArgs, TBEF, ToolBox_over, TBEF, get_app, Result
+from toolboxv2 import App, AppArgs, ToolBox_over, TBEF, get_app
 from toolboxv2.utils.extras.blobs import BlobFile
 
 try:

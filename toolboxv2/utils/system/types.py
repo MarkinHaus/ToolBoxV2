@@ -11,28 +11,16 @@ from .all_functions_enums import *
 from .file_handler import FileHandler
 from ..extras.Style import Spinner
 
-import asyncio
-from concurrent.futures import ProcessPoolExecutor
-from functools import partial
-from typing import Dict, List, Tuple, Any
 from ..extras import generate_test_cases
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import multiprocessing as mp
 
-import asyncio
-from concurrent.futures import ProcessPoolExecutor
-from functools import partial
-from typing import Dict, List, Tuple, Any
-from ..extras import generate_test_cases
-from dataclasses import dataclass, field
-import multiprocessing as mp
 import cProfile
 import pstats
 import io
 from contextlib import contextmanager
 import time
-from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, List, Union
+from typing import Union
 
 
 @dataclass
@@ -1844,7 +1832,7 @@ class AppType:
             if enable_profiling:
                 print("\nProfiling Summary:")
                 print(f"{'=' * 50}")
-                print(f"Top 10 time-consuming functions:")
+                print("Top 10 time-consuming functions:")
                 ps.print_stats(10)
 
             analyzed_data = analyze_data(stats.__dict__)
@@ -1856,14 +1844,10 @@ import base64
 import asyncio
 import inspect
 import traceback
-from typing import Union, Any, AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Optional
 
 import asyncio
-import base64
-import inspect
-import json
-import traceback
-from typing import Any, AsyncGenerator, Callable, Optional, TypeVar, Union
+from typing import Any, Callable, Optional, TypeVar
 
 T = TypeVar('T')
 

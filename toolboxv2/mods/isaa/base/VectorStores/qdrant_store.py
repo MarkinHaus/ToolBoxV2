@@ -7,9 +7,7 @@ for storing and searching embeddings.
 import numpy as np
 import pickle
 import uuid
-from typing import List, Dict, Any, Optional, Union, Tuple
-import os
-import json
+from typing import List, Optional
 
 try:
     from qdrant_client import QdrantClient

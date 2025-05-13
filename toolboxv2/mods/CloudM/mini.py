@@ -41,7 +41,7 @@ def check_multiple_processes(pids: List[int]) -> Dict[int, str]:
     if os.name == 'nt':  # Windows
         try:
             # Windows tasklist requires separate /FI for each filter
-            command = f'tasklist'
+            command = 'tasklist'
 
             # Add encoding handling for Windows
             result = subprocess.run(

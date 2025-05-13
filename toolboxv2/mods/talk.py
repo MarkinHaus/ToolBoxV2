@@ -209,7 +209,7 @@ async def upload_audio_isaa(websocket: WebSocket, context="F", all_c="F", v_name
             if accumulated_text[0] != "":
                 try:
                     text = stt(format_bytes[0][:WEBM_START_BYTES_FORMAT_] + audio_data)['text']
-                except Exception as e:
+                except Exception:
                     print(f"MAGIC-Number {WEBM_START_BYTES_FORMAT_} is not valid")
 
                     for i in range(WEBM_START_BYTES_FORMAT_ - 130, WEBM_START_BYTES_FORMAT_ + 130):
@@ -217,9 +217,9 @@ async def upload_audio_isaa(websocket: WebSocket, context="F", all_c="F", v_name
                         try:
                             text = stt(format_bytes[0][:i] + audio_data)['text']
                             WEBM_START_BYTES_FORMAT[0] = i
-                            print(f"NEW Magic-Number:", i)
+                            print("NEW Magic-Number:", i)
                             break
-                        except Exception as e:
+                        except Exception:
                             pass
             else:
                 text = stt(audio_data)['text']

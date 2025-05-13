@@ -55,7 +55,6 @@ class TicTacToe:
 
 
 import torch
-from torch import nn, optim
 
 
 class TicTacToeAgent:

@@ -1,21 +1,15 @@
 import json
 import os
 import pathlib
-import platform
 import time
 import uuid
 from typing import Set
-from zipfile import ZipFile
 
-import yaml
 from fastapi import APIRouter, UploadFile, WebSocket, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
-from starlette.responses import HTMLResponse
 
-from toolboxv2 import get_logger, App, get_app
+from toolboxv2 import get_app
 from toolboxv2.utils.system.api import find_highest_zip_version_entry
 from toolboxv2.utils.system.state_system import TbState, get_state_from_app
-from packaging import version
 
 router = APIRouter(
     prefix="/installer",
@@ -66,7 +60,7 @@ async def generate_download_zip(websocket: WebSocket):
     target_version = data.get('targetVersion', app.version)
     await ws_send("Crate installation instructions yml data", websocket=websocket)
     await ws_send(f"root @> Testing Version: {target_version}", websocket=websocket)
-    await ws_send(f"root @> Creating Mod bundle ...", websocket=websocket)
+    await ws_send("root @> Creating Mod bundle ...", websocket=websocket)
     installation_data = {
         "core": "",
         "mods": [],
@@ -85,29 +79,29 @@ async def generate_download_zip(websocket: WebSocket):
                       websocket=websocket)
         await ws_send(f"mods @> {mod_name} infos: version= {mod_data.get('version')}", websocket=websocket)
         await ws_send(f"mods @> {mod_name} infos: provider = {mod_data.get('provider')}", websocket=websocket)
-    await ws_send(f"root @> adding Core", websocket=websocket)
+    await ws_send("root @> adding Core", websocket=websocket)
     if target_version is None:
         target_version = '0.1.14'
     if dir_f := data.get("installationFolder"):
         installation_data['core'] = f"pip install --target={dir_f} ToolBoxV2==" + target_version
     else:
         installation_data['core'] = "pip install ToolBoxV2==" + target_version
-    await ws_send(f"root @> adding Extras", websocket=websocket)
+    await ws_send("root @> adding Extras", websocket=websocket)
     if data.get("DBtype") == 'local_redis':
         installation_data['extras']['redis'] = 'local'
 
-    await ws_send(f"root @> adding Dependencies", websocket=websocket)
+    await ws_send("root @> adding Dependencies", websocket=websocket)
     if "diffuser" in data.get("Install"):
         installation_data['dependency'].append("cuda")
-        await ws_send(f"root @> adding cuda", websocket=websocket)
+        await ws_send("root @> adding cuda", websocket=websocket)
 
     if data.get("Ollama"):
         installation_data['dependency'].append("ollama")
-        await ws_send(f"root @> adding ollama", websocket=websocket)
+        await ws_send("root @> adding ollama", websocket=websocket)
 
     if "isaa" in data.get("Install"):
         installation_data['dependency'].append("isaa")
-        await ws_send(f"root @> adding isaa", websocket=websocket)
+        await ws_send("root @> adding isaa", websocket=websocket)
 
     await ws_send("Data crated successfully:", websocket=websocket)
     # Senden des Download-Links als letzte Nachricht
@@ -207,8 +201,8 @@ echo Installation
 echo abgeschlossen.
 pause"""
     elif ClientInfos.get('os') == "IOS" or ClientInfos.get('os') == "Android":
-        await websocket.send_text(f"Sorry IOS is Not Nativ Supportet. we start the WebApp Installer")
-        await websocket.send_text(f"ServiceWorker::Active")
+        await websocket.send_text("Sorry IOS is Not Nativ Supportet. we start the WebApp Installer")
+        await websocket.send_text("ServiceWorker::Active")
         await websocket.close()
         return
     else:
@@ -311,7 +305,7 @@ read -p " END " T"""
         script_file.write(script)
 
     await ws_send(f"Link: /installer/download/installer\\{custom_script_name}", websocket=websocket)
-    await ws_send(f"Press the Download button to Download the script", websocket=websocket)
+    await ws_send("Press the Download button to Download the script", websocket=websocket)
     await websocket.close()
 
 

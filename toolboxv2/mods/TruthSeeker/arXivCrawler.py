@@ -7,16 +7,13 @@ import asyncio
 import time
 import uuid
 import threading
-from typing import List, Dict, Any, Optional, Tuple, Callable
-import concurrent.futures
+from typing import List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 # Import the new modular components
-from .sources.source_manager import SourceManager, search_all_sources, UnifiedPaper
-from .llm_processor import LlamaProcessor
 from .research_processor import ResearchProcessor
 from .sources.arxiv_source import search_papers, Paper
-from .pdf_processor import RobustPDFDownloader, filter_relevant_texts
+from .pdf_processor import RobustPDFDownloader
 from .text_splitter import TextSplitter
 
 from toolboxv2 import get_app
@@ -24,9 +21,7 @@ import logging
 
 from urllib3 import Retry
 
-from toolboxv2.mods.isaa.base.AgentUtils import AISemanticMemory
 from toolboxv2.mods.isaa.base.KnowledgeBase import TextSplitter
-from toolboxv2.mods.isaa.extras.filter import filter_relevant_texts
 
 
 class RobustPDFDownloader:
@@ -213,9 +208,6 @@ def search_papers(query: str, max_results=10) -> List[Paper]:
 
 
 # Import the new modular components
-from .sources.source_manager import SourceManager, search_all_sources, UnifiedPaper
-from .llm_processor import LlamaProcessor
-from .research_processor import ResearchProcessor
 
 class ArXivPDFProcessor:
     """

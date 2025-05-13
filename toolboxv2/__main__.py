@@ -1,5 +1,4 @@
 """Console script for toolboxv2."""
-import json
 import pprint
 # Import default Pages
 import sys
@@ -12,7 +11,6 @@ from platform import system, node
 
 from toolboxv2.utils.system.api import cli_api_runner
 # from sqlalchemy.testing.suite.test_reflection import metadata
-from yaml import safe_load
 
 from toolboxv2.flows import flows_dict as flows_dict_func
 from toolboxv2.tests.a_util import async_test
@@ -20,11 +18,9 @@ from toolboxv2.utils.system.conda_runner import conda_runner_main
 from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
 from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyproject
 from toolboxv2.utils.extras.Style import Style, Spinner
-from toolboxv2.utils.system.session import Session
 
 from toolboxv2.utils.toolbox import App
 
-from toolboxv2.utils import show_console
 from toolboxv2.utils import get_app
 from toolboxv2.utils.daemon import DaemonApp
 from toolboxv2.utils.proxy import ProxyApp
@@ -104,9 +100,9 @@ try:
 
         # Erstellen eines Streams für die Profilergebnisse
 
-except ImportError as e:
-    profile_execute_all_functions = lambda *args: print(args);
-    raise ValueError(f"Failed to import function for profiling")
+except ImportError:
+    profile_execute_all_functions = lambda *args: print(args)
+    raise ValueError("Failed to import function for profiling")
 
 try:
     from toolboxv2.utils.system.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
@@ -399,7 +395,7 @@ def parse_args():
                         default=False,
                         action="store_true")
 
-    parser.add_argument("--lm", help=f"Log Manager remove and edit log files", default=False,
+    parser.add_argument("--lm", help="Log Manager remove and edit log files", default=False,
                         action="store_true")
 
     parser.add_argument("-m", "--modi",
@@ -568,7 +564,7 @@ def edit_logs():
             return False, -1
         return _level in [50, 40, 30, 20, 10, 0], _level
 
-    date = input(f"Date of log format : YYYY-MM-DD replace M||D with xx for multiple editing\n:")
+    date = input("Date of log format : YYYY-MM-DD replace M||D with xx for multiple editing\n:")
 
     while not date_in_format(date):
         date = input("Date of log format : YYYY-MM-DD :")
@@ -1013,7 +1009,7 @@ get_ipython().events.register("post_run_cell", post_run_code_hook)
 
 
 def start_ipython_session(argv):
-    from IPython import start_ipython, get_ipython
+    from IPython import start_ipython
     config = configure_ipython(argv)
 
     shell = start_ipython(argv=None, config=config)

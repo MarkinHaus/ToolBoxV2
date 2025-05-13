@@ -3,23 +3,14 @@ import sys
 from fastapi import FastAPI, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import RedirectResponse, JSONResponse
-import hashlib
 import jwt
-import time
 from datetime import datetime, timedelta
 import asyncio
 import subprocess
 import os
 
-from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
-from starlette.responses import RedirectResponse, JSONResponse
-import jwt
-from datetime import datetime, timedelta
-import asyncio
-import subprocess
-import os
+from fastapi import WebSocket
 from typing import Dict, Optional, Any
 
 from toolboxv2 import Singleton
@@ -200,7 +191,7 @@ class BidirectionalStreamlitAppManager(BaseHTTPMiddleware, metaclass=Singleton):
             app_path = os.path.join(self.streamlit_apps_dir, f"{app_name}.py")
 
             # Verify session is valid
-            if not 'public' in app_name and not request.session.get("valid", False):
+            if 'public' not in app_name and not request.session.get("valid", False):
                 return JSONResponse(
                     status_code=401,
                     content={"message": "Invalid session"}

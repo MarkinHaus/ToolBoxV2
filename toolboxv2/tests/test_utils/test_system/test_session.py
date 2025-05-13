@@ -1,12 +1,10 @@
 import unittest
-import asyncio
 import os
 import tempfile
 from unittest.mock import patch, MagicMock, AsyncMock
 
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.system.session import Session
-from toolboxv2.utils.system.getting_and_closing_app import get_app
 
 
 class TestSession(unittest.TestCase):

@@ -7,11 +7,11 @@ NAME = 'bgws'
 
 
 async def run(app: App, app_args:AppArgs):
-    from toolboxv2.utils.extras.blobs import BlobFile, BlobStorage
+    from toolboxv2.utils.extras.blobs import BlobFile
     app.print("Running...")
 
 
-    with BlobFile(f"HRMODS/dev", mode='r') as f:
+    with BlobFile("HRMODS/dev", mode='r') as f:
         modules = f.read_json().get("modules", [])
     for mods in modules:
         app.print(f"ADDING :  {mods}")

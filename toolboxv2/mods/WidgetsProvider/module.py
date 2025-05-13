@@ -1,8 +1,7 @@
 import asyncio
-from toolboxv2 import get_app, App, Result, TBEF, Code
+from toolboxv2 import get_app, App, Result, TBEF
 
 from ..CloudM import User
-from ...utils.extras.blobs import BlobFile
 
 Name = 'WidgetsProvider'
 export = get_app("WidgetsProvider.Export").tb

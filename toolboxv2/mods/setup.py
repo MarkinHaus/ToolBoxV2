@@ -34,9 +34,7 @@ steps :
      -> move to mod_sto
      -> install on to remote
 """
-import os
-import shutil
-from toolboxv2 import get_app, TBEF, Spinner
+from toolboxv2 import get_app
 
 Name = 'setup'
 export = get_app("setup.Export").tb

@@ -1,9 +1,5 @@
 import pickle
-import shutil
 
-from fastapi import Request, Request, HTTPException
-from starlette.datastructures import UploadFile
-import io
 import os
 from toolboxv2 import MainTool
 from toolboxv2.utils.extras import BaseWidget
@@ -13,8 +9,6 @@ import mimetypes
 from starlette.responses import Response
 from pathlib import Path
 
-from io import BytesIO
-import os
 from typing import Optional
 import re
 from dataclasses import dataclass

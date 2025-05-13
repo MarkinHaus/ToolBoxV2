@@ -257,8 +257,8 @@ class InputProcessor(metaclass=Singleton):
             cache_dir = os.getenv('APPDATA') if os.name == 'nt' else os.getenv('XDG_CONFIG_HOME') or os.path.expanduser(
                 '~/.config') if os.name == 'posix' else "."
             self.cache = FileCache(
-                folder=cache_dir + f'\\ToolBoxV2\\cache\\InputProcessor\\',
-                filename=cache_dir + f'\\ToolBoxV2\\cache\\InputProcessor\\cache.db'
+                folder=cache_dir + '\\ToolBoxV2\\cache\\InputProcessor\\',
+                filename=cache_dir + '\\ToolBoxV2\\cache\\InputProcessor\\cache.db'
             )
             print("InputProcessor online ...")
             self.started.set()

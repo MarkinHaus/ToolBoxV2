@@ -129,7 +129,7 @@ def parsing_inputs(isaa, request: str or list, existing_code_base: str, local_so
         if len(result_list) != 3:
             return f"Expected format invalid agent interpretation {result}"
         pbar.update(1)
-        pbar.write(f"Parsing existing_code_base")
+        pbar.write("Parsing existing_code_base")
         is_code = False
         is_url = False
         is_file = False
@@ -169,7 +169,7 @@ def parsing_inputs(isaa, request: str or list, existing_code_base: str, local_so
             if docs_data != '':
                 analyze_usage_from_markdown(docs_data, isaa, space_name)
         pbar.update(1)
-        pbar.write(f"Parsing local_sources")
+        pbar.write("Parsing local_sources")
         if local_sources is not None:
             for source in local_sources:
                 if source[-3] == '.' or source.endswith('.py') or source.endswith('.html'):
@@ -184,7 +184,7 @@ def parsing_inputs(isaa, request: str or list, existing_code_base: str, local_so
                     parse_code("\n\n".join([x.page_content for x in data]), isaa, space_name)
                 pbar.update(1)
         pbar.update(1)
-        pbar.write(f"Parsing remote_sources")
+        pbar.write("Parsing remote_sources")
         if remote_sources is not None:
             loders = []
             for source in remote_sources:

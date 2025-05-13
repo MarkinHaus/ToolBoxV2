@@ -1,9 +1,7 @@
 import unittest
-import re
-import json
 import sys
 import io
-from contextlib import contextmanager, redirect_stdout
+from contextlib import contextmanager
 
 # Import the functions and classes to be tested
 from toolboxv2.utils.extras.Style import (
@@ -12,7 +10,6 @@ from toolboxv2.utils.extras.Style import (
     print_to_console,
     extract_json_strings,
     extract_python_code,
-    JSONExtractor,
     Spinner
 )
 

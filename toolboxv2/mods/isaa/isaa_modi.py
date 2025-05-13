@@ -442,11 +442,11 @@ def run_chain_in_cmd(isaa, task, chains, extracted_dict: str or dict, self_agent
     chain_ret = []
     chain_name = extracted_dict
     if isinstance(extracted_dict, dict):
-        get_logger().info(f"Getting dict")
+        get_logger().info("Getting dict")
         chain_name = extracted_dict['name']
         dicht = chains.get(chain_name)
         if dicht != extracted_dict:
-            get_logger().info(f"Getting not found start init")
+            get_logger().info("Getting not found start init")
             chains.add(chain_name, extracted_dict['tasks'])
             chains.init_chain(chain_name)
             get_logger().info(f"added {chain_name}")
@@ -471,7 +471,7 @@ def run_chain_in_cmd(isaa, task, chains, extracted_dict: str or dict, self_agent
             response = chain_ret[-1][1]
         else:
             print(pipe_res[0]['score'])
-            print(f'🟢')
+            print('🟢')
             task_done = True
             response = chain_ret[-1][1]
 
@@ -486,11 +486,11 @@ def run_chain_in_cmd_auto_observation_que(isaa, task, chains, extracted_dict: st
     def get_chain_name(extracted_dict_data):
         chain_name_ = extracted_dict_data
         if isinstance(extracted_dict_data, dict):
-            get_logger().info(f"Getting dict")
+            get_logger().info("Getting dict")
             chain_name_ = extracted_dict_data['name']
             dicht = chains.get(chain_name_)
             if dicht != extracted_dict_data:
-                get_logger().info(f"Getting not found start init")
+                get_logger().info("Getting not found start init")
                 chains.add(chain_name_, extracted_dict_data['tasks'])
                 chains.init_chain(chain_name_)
                 get_logger().info(f"added {chain_name_}")
@@ -515,7 +515,7 @@ def run_chain_in_cmd_auto_observation_que(isaa, task, chains, extracted_dict: st
 
         # do task get
         # evaluate, data...
-        sys_print(f"---------------------- Start --------------------")
+        sys_print("---------------------- Start --------------------")
         pipe_res_label = "POSITIVE"
         try:
             chain_ret, chain_data, uesd_mem = isaa.execute_thought_chain(task, chains.get(chain_name),
@@ -533,7 +533,7 @@ def run_chain_in_cmd_auto_observation_que(isaa, task, chains, extracted_dict: st
             sys_print(f"🔴 {e}")
             evaluation = e
 
-        sys_print(f"---------------------- End execute_thought_chain step(s) --------------------")
+        sys_print("---------------------- End execute_thought_chain step(s) --------------------")
 
         sys_print(f"Progress Main Chain at step : {step} from :{len(task_que)}")
 
@@ -553,20 +553,20 @@ def run_chain_in_cmd_auto_observation_que(isaa, task, chains, extracted_dict: st
                 if isinstance(data, dict):
                     try:
                         task_que[step] = data['task'][0]
-                        sys_print(f'🟡🟢')
+                        sys_print('🟡🟢')
                     except KeyError:
-                        sys_print(f'🟡🔴')
+                        sys_print('🟡🔴')
                         step += 1
             elif 'r' == ui:
                 print("RETRY")
-                sys_print(f'🟡🟡')
+                sys_print('🟡🟡')
                 if RETRYS == 0:
-                    sys_print(f'🟡🟡🔴')
+                    sys_print('🟡🟡🔴')
                     break
                 RETRYS -= 1
             elif len(ui) > 3:
                 self_agent_config.add_message("user", ui)
-                sys_print(f'🟡🟢🟢')
+                sys_print('🟡🟢🟢')
             elif ui == 'e':
                 chain_sum_data = isaa.summarize_ret_list(chain_ret)
                 response = isaa.run_agent("think",
@@ -576,11 +576,11 @@ def run_chain_in_cmd_auto_observation_que(isaa, task, chains, extracted_dict: st
 
                 return response, chain_ret
             else:
-                sys_print(f'🟢🟡')
+                sys_print('🟢🟡')
                 step += 1
 
         else:
-            sys_print(f'🟢')
+            sys_print('🟢')
             step += 1
 
     chain_sum_data = isaa.summarize_ret_list(chain_ret)
@@ -617,9 +617,9 @@ def free_run_in_cmd(isaa, task, self_agent_config):
     data = []
     while free_run:
 
-        sys_print(f"-------------------- Start Agent (free text mode) -----------------")
+        sys_print("-------------------- Start Agent (free text mode) -----------------")
         sim = isaa.run_agent(self_agent_config, env_text, mode_over_lode='execution')
-        sys_print(f"-------------------- End Agent -----------------")
+        sys_print("-------------------- End Agent -----------------")
 
         self_agent_config.add_message("assistant", sim)
 
@@ -628,7 +628,7 @@ def free_run_in_cmd(isaa, task, self_agent_config):
         sys_print(f"-------------------- in free exiqution ----------------- STEP : {strp}")
 
         if "user:" in sim.lower():
-            sys_print(f"-------------------- USER QUESTION -----------------")
+            sys_print("-------------------- USER QUESTION -----------------")
             self_agent_config.add_message("user", input("User: "))
 
         if new_agent != isaa.config["agents-name-list"][-1]:
@@ -1200,7 +1200,7 @@ Aufgaben Name oder None:"""
         #        return task_name  # Agent selected a valid task
         #
         # self.print_stream(f"Agent Evaluation: System cant detect valid task : {task_name}")
-        self.print_stream(f"Pleas Open The Task editor or the isaa task creator")
+        self.print_stream("Pleas Open The Task editor or the isaa task creator")
         tools, names = self_agent.generate_tools_and_names_compact()
         ta_c = self.mini_task_completion(
             f"Handle als Entscheidungsagenten Überlege, wie komplex die Aufgabe ist und welche Fähigkeiten dafür "
@@ -1322,7 +1322,7 @@ Aufgaben Name oder None:"""
                             sender.put({"ChairData": True, "data": {'res': res}})
 
                     except Exception as e:
-                        sender.put({'error': f"Error e", 'res': str(e)})
+                        sender.put({'error': "Error e", 'res': str(e)})
                         sender.put('exit')
             sender.put('exit')
 

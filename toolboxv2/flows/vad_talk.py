@@ -1333,7 +1333,7 @@ Now, you're ready to engage in deep, analytical discussions with users!"""}]+sel
                 await self.chat_session.add_message({'role': 'assistant', 'content': "Inner Agent report:\n" + _res})
 
                 agent_res = await self.agent0.a_format_class(
-                    UserResponse, f"Response to the user focus on the chat history (last inner agent assistant massage)! , optionally on an error run an inner command with an dirent approach!",
+                    UserResponse, "Response to the user focus on the chat history (last inner agent assistant massage)! , optionally on an error run an inner command with an dirent approach!",
                     message= self.chat_session.get_past_x(
                         6*4).copy()
                 )

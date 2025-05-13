@@ -3,7 +3,6 @@ import asyncio
 import inspect
 import os
 import pkgutil
-import queue
 import sys
 import threading
 import time
@@ -17,7 +16,6 @@ from types import ModuleType
 from functools import partial, wraps
 from typing import Optional, List, Callable, Dict, Any
 
-from yaml import safe_load
 
 from .singelton_class import Singleton
 
@@ -33,7 +31,6 @@ import logging
 from dotenv import load_dotenv
 
 from ..utils.system.main_tool import get_version_from_pyproject
-from ..tests.a_util import async_test
 
 load_dotenv()
 
@@ -516,19 +513,19 @@ class App(AppType, metaclass=Singleton):
             state = state_
 
         if function is None:
-            self.logger.warning(f"No function found")
+            self.logger.warning("No function found")
             return "404", 300
 
         if params is None:
-            self.logger.warning(f"No function (params) found")
+            self.logger.warning("No function (params) found")
             return "404", 301
 
         if metadata and not state:
-            self.logger.info(f"returning metadata stateless")
+            self.logger.info("returning metadata stateless")
             return (function_data, function), 0
 
         if not state:  # mens a stateless function
-            self.logger.info(f"returning stateless function")
+            self.logger.info("returning stateless function")
             return function, 0
 
         instance = self.functions[modular_id].get(f"{specification}_instance")
@@ -543,7 +540,7 @@ class App(AppType, metaclass=Singleton):
             instance = self.functions[modular_id].get(f"{specification}_instance")
 
         if instance is None:
-            self.logger.warning(f"No live Instance found")
+            self.logger.warning("No live Instance found")
             return "404", 400
 
         # if instance_type.endswith("/BC"):  # for backwards compatibility  functions/class/BC old modules
@@ -556,16 +553,16 @@ class App(AppType, metaclass=Singleton):
         #         return (function_data, function), 0
         #     return function, 0
 
-        self.logger.info(f"wrapping in higher_order_function")
+        self.logger.info("wrapping in higher_order_function")
 
         self.logger.info(f"returned fuction {specification}.{modular_id}.{function_id}")
         higher_order_function = partial(function, instance)
 
         if metadata:
-            self.logger.info(f"returning metadata stateful")
+            self.logger.info("returning metadata stateful")
             return (function_data, higher_order_function), 0
 
-        self.logger.info(f"returning stateful function")
+        self.logger.info("returning stateful function")
         return higher_order_function, 0
 
     def save_exit(self):
@@ -1092,7 +1089,7 @@ class App(AppType, metaclass=Singleton):
                     break
         if hasattr(self, 'loop'):
             if self.loop is not None:
-                with Spinner(f"closing Event loop:", symbols="+"):
+                with Spinner("closing Event loop:", symbols="+"):
                     self.loop.stop()
 
     async def a_exit(self):
@@ -1165,10 +1162,10 @@ class App(AppType, metaclass=Singleton):
                                                           metadata=True, specification=tb_run_with_specification)
 
         if error_code == 404:
-            self.logger.warning(Style.RED(f"Function Not Found"))
+            self.logger.warning(Style.RED("Function Not Found"))
             return (Result.default_user_error(interface=self.interface_type,
                                               exec_code=404,
-                                              info=f"function not found function is not decorated").
+                                              info="function not found function is not decorated").
                     set_origin(mod_function_name))
 
         if error_code == 300:
@@ -1193,9 +1190,9 @@ class App(AppType, metaclass=Singleton):
             self.logger.warning(Style.RED(f"Function {function_name} not found"))
             return Result.default_internal_error(interface=self.interface_type,
                                                  exec_code=404,
-                                                 info=f"function not found function").set_origin(mod_function_name)
+                                                 info="function not found function").set_origin(mod_function_name)
 
-        self.logger.info(f"Profiling function")
+        self.logger.info("Profiling function")
         t0 = time.perf_counter()
         if asyncio.iscoroutinefunction(function):
             return await self.a_fuction_runner(function, function_data, args, kwargs, t0)
@@ -1235,10 +1232,10 @@ class App(AppType, metaclass=Singleton):
                                                           metadata=True, specification=tb_run_with_specification)
 
         if error_code == 2:
-            self.logger.warning(Style.RED(f"Function Not Found"))
+            self.logger.warning(Style.RED("Function Not Found"))
             return (Result.default_user_error(interface=self.interface_type,
                                               exec_code=404,
-                                              info=f"function not found function is not decorated").
+                                              info="function not found function is not decorated").
                     set_origin(mod_function_name))
 
         if error_code == -1:
@@ -1263,9 +1260,9 @@ class App(AppType, metaclass=Singleton):
             self.logger.warning(Style.RED(f"Function {function_name} not found"))
             return Result.default_internal_error(interface=self.interface_type,
                                                  exec_code=404,
-                                                 info=f"function not found function").set_origin(mod_function_name)
+                                                 info="function not found function").set_origin(mod_function_name)
 
-        self.logger.info(f"Profiling function")
+        self.logger.info("Profiling function")
         t0 = time.perf_counter()
         if asyncio.iscoroutinefunction(function):
             raise ValueError(f"Fuction {function_name} is Async use a_run_any")
@@ -1630,7 +1627,7 @@ class App(AppType, metaclass=Singleton):
                 # Get the source code of the module
                 try:
                     source = inspect.getsource(module)
-                except Exception as e:
+                except Exception:
                     # print(f"No source for {str(module_name).split('from')[0]}: {e}")
                     return module
                 # Compile the source code
@@ -1638,7 +1635,7 @@ class App(AppType, metaclass=Singleton):
                     code = compile(source, module.__file__, 'exec')
                     # Execute the code in the module's namespace
                     exec(code, module.__dict__)
-                except Exception as e:
+                except Exception:
                     # print(f"No source for {str(module_name).split('from')[0]}: {e}")
                     pass
                 return module

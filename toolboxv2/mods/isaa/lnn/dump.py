@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from matplotlib import pyplot as plt
 from test import NeuralSystem, create_heatmap, transform_ffn_for_heatmap, \
-    transform_sequential_for_heatmap, transform_state_for_heatmap, LiquidStateVisualizer
+    transform_sequential_for_heatmap, transform_state_for_heatmap
 
 import torch.nn.functional as F
 

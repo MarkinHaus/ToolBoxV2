@@ -40,4 +40,4 @@ def start_client(host_ip: int, port: int=44667) -> None:
     while not alive:
         pass
 
-    print(f"DATTA FROM DONE")
+    print("DATTA FROM DONE")

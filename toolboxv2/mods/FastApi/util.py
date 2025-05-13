@@ -1,6 +1,5 @@
 import os
 from pathlib import Path
-from typing import List
 
 from pydantic import BaseModel
 from starlette.responses import FileResponse

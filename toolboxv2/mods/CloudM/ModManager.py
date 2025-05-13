@@ -502,7 +502,7 @@ def install_dependencies(yaml_file, do=False):
         dependencies_file = dependencies["dependencies_file"]
 
         # Installation der Abhängigkeiten mit pip
-        print(f"Dependency :", dependencies_file)
+        print("Dependency :", dependencies_file)
         subprocess.call(['pip', 'install', '-r', dependencies_file])
 
 

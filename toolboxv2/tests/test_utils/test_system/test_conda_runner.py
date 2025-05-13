@@ -2,7 +2,6 @@ import os
 import unittest
 import json
 import subprocess
-import platform
 import tempfile
 import shutil
 
@@ -13,7 +12,6 @@ from toolboxv2.utils.system.conda_runner import (
     create_conda_env,
     delete_conda_env,
     add_dependency,
-    update_dependencies,
     create_env_registry,
     run_script_in_conda_env
 )
@@ -62,7 +60,7 @@ class TestCondaRunner(unittest.TestCase):
 
         # Check if the environment exists
         try:
-            output = subprocess.check_output(f"conda env list", shell=True, text=True)
+            output = subprocess.check_output("conda env list", shell=True, text=True)
             self.assertIn(self.test_env_name, output)
         except subprocess.CalledProcessError:
             self.fail(f"Environment {self.test_env_name} was not created")

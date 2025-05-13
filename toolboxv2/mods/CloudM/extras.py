@@ -8,7 +8,6 @@ from urllib.parse import quote
 from toolboxv2 import Style, Result, TBEF, App
 from toolboxv2 import get_app, Code
 from .AuthManager import get_invitation
-from ...utils.extras.blobs import BlobFile
 from ...utils.extras.qr import print_qrcode_to_console
 from .types import User
 
@@ -85,19 +84,19 @@ def show_version(_, app: App):
 
 """
 
-    self.logger.info(f"crating boilerplate")
+    self.logger.info("crating boilerplate")
     if '-fh' in options:
         boilerplate = boilerplate.replace('pass', '').replace('# ~ ', '')
-        self.logger.info(f"adding FileHandler")
+        self.logger.info("adding FileHandler")
     if '-func' in options:
         boilerplate += helper_functions_func
-        self.logger.info(f"adding functional based")
+        self.logger.info("adding functional based")
     else:
         boilerplate += helper_functions_class
-        self.logger.info(f"adding Class based")
+        self.logger.info("adding Class based")
     self.print(f"Test existing {self.api_version=} ")
 
-    self.logger.info(f"Testing connection")
+    self.logger.info("Testing connection")
 
     # self.get_version()
 
@@ -108,15 +107,15 @@ def show_version(_, app: App):
             return False
 
     self.print("NEW MODULE: " + mod_name, end=" ")
-    if os.path.exists(f"mods/" + mod_name +
-                      ".py") or os.path.exists(f"mods_dev/" + mod_name +
+    if os.path.exists("mods/" + mod_name +
+                      ".py") or os.path.exists("mods_dev/" + mod_name +
                                                ".py"):
         self.print(Style.Bold(Style.RED("MODULE exists pleas use a other name")))
         return False
 
     fle = Path("mods_dev/" + mod_name + ".py")
     fle.touch(exist_ok=True)
-    with open(f"mods_dev/" + mod_name + ".py", "wb") as mod_file:
+    with open("mods_dev/" + mod_name + ".py", "wb") as mod_file:
         mod_file.write(bytes(boilerplate.replace('NAME', mod_name),
                              'ISO-8859-1'))
 
@@ -255,7 +254,7 @@ def create_magic_log_in(app: App, username: str):
         return Result.default_internal_error("Invalid user or db connection", data="Add -c DB edit_cli [RR, LR, LD, RD]")
     key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
     base_url = app.config_fh.get_file_handler("provider::") + (
-        f':5000' if app.args_sto.host == 'localhost' else "")
+        ':5000' if app.args_sto.host == 'localhost' else "")
     url = f"{base_url}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
     print_qrcode_to_console(url)
     return url

@@ -1,25 +1,16 @@
 import json
-import librosa
-import librosa.display
 import os
-import random
-import torch.nn.functional as F
 import torch.optim as optim
-from itertools import product
 from matplotlib.animation import FuncAnimation
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import Polygon
 from sklearn.cluster import KMeans
-from torch import save as t_save, load as t_load
-from torchvision import models
 
-from toolboxv2.utils.system import MemoryCache
 import torch
 import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
-import torch.nn as nn
 
 
 def create_heatmap(data, update_interval=1000, is_complex=False, get_data=None, title="heat map"):

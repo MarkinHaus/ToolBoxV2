@@ -8,7 +8,7 @@ try:
 except ImportError:
     class Response:
         pass
-from typing import Optional, Callable
+from typing import Optional
 
 import requests
 from ..extras.blobs import BlobFile

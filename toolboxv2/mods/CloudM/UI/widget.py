@@ -24,9 +24,9 @@ def load_root_widget(app, uid):
     if not all_users:
         all_users = [b"{'name': 'root', 'uid': uid}"]
     all_users = [eval(user) for user in all_users]
-    all_user = {'name': f"system_users-root",
+    all_user = {'name': "system_users-root",
                 'group': [{'name': f'mod-{user_.get("name", "--")}',
-                           'file_path': f'./mods/CloudM/UI/assets/user_controller_template.html',
+                           'file_path': './mods/CloudM/UI/assets/user_controller_template.html',
                            'kwargs': {
                                'username': user_.get('name', '--'),
                                'userId': user_.get('uid'),
@@ -36,12 +36,12 @@ def load_root_widget(app, uid):
                            } for user_ in all_users]}
     app.run_any(TBEF.MINIMALHTML.ADD_COLLECTION_TO_GROUP, group_name=Name, collection=all_user)
     all_users_config = app.run_any(TBEF.MINIMALHTML.GENERATE_HTML, group_name=Name,
-                                   collection_name=f"system_users-root")
+                                   collection_name="system_users-root")
 
     root_sys = {'name': "RootSys",
                 'group': [
                     {'name': 'infos_root',
-                     'file_path': f'./mods/CloudM/UI/assets/system_root.html',
+                     'file_path': './mods/CloudM/UI/assets/system_root.html',
                      'kwargs': {
                          'UserController': app.run_any(TBEF.MINIMALHTML.FUSE_TO_STRING, html_elements=all_users_config),
                      }
@@ -50,7 +50,7 @@ def load_root_widget(app, uid):
     root_infos = {'name': "RootInfos",
                   'group': [
                       {'name': 'infos_root',
-                       'file_path': f'./mods/CloudM/UI/assets/infos_root.html',
+                       'file_path': './mods/CloudM/UI/assets/infos_root.html',
                        'kwargs': {
                            'systemName': app.id,
                            'systemIP': get_local_ip(),
@@ -69,7 +69,7 @@ def reload_widget_main(app, user, WidgetID):
     widget = {'name': f"MainWidget-{user.uid}",
               'group': [
                   {'name': 'main',
-                   'file_path': f'./mods/CloudM/UI/assets/main.html',
+                   'file_path': './mods/CloudM/UI/assets/main.html',
                    'kwargs': {
                        'username': user.name,
                        'root': root,
@@ -88,7 +88,7 @@ def reload_widget_info(app, user, WidgetID):
         load_root_widget(app, user.uid)
     devices = {'name': f"Devices-{user.uid}",
                'group': [{'name': f'divice-{user.user_pass_pub_devices.index(d)}',
-                          'template': f'<button hx-get="$root/removed?index=$index" hx-trigger="click">remove $name</button>',
+                          'template': '<button hx-get="$root/removed?index=$index" hx-trigger="click">remove $name</button>',
                           'kwargs': {
                               'name': d[12:16],
                               'root': root,
@@ -102,7 +102,7 @@ def reload_widget_info(app, user, WidgetID):
     infos = {'name': f"infosTab-{user.uid}",
              'group': [
                  {'name': 'infos',
-                  'file_path': f'./mods/CloudM/UI/assets/infos.html',
+                  'file_path': './mods/CloudM/UI/assets/infos.html',
                   'kwargs': {
                       'userName': user.name,
                       'userEmail': user.email,
@@ -126,7 +126,7 @@ def reload_widget_mods(app, user, WidgetID):
 
     mods_a = {'name': f"mods-{user.uid}",
               'group': [{'name': f'mod-{mod_name}',
-                         'file_path': f'./mods/CloudM/UI/assets/a_mod.html',
+                         'file_path': './mods/CloudM/UI/assets/a_mod.html',
                          'kwargs': {
                              'modId': mod_name,
                              'modName': mod_name,
@@ -139,7 +139,7 @@ def reload_widget_mods(app, user, WidgetID):
 
     mods_b = {'name': f"mods_app-{user.uid}",
               'group': [{'name': f'mod-{mod_name}',
-                         'file_path': f'./mods/CloudM/UI/assets/b_mod.html',
+                         'file_path': './mods/CloudM/UI/assets/b_mod.html',
                          'kwargs': {
                              'modId': mod_name,
                              'modName': mod_name,
@@ -154,7 +154,7 @@ def reload_widget_mods(app, user, WidgetID):
     mods_ = {'name': f"modTab-{user.uid}",
              'group': [
                  {'name': 'mods',
-                  'file_path': f'./mods/CloudM/UI/assets/mods.html',
+                  'file_path': './mods/CloudM/UI/assets/mods.html',
                   'kwargs': {
                       "modsList": app.run_any(TBEF.MINIMALHTML.FUSE_TO_STRING, html_elements=html_mods),
                       "AvalabelModsList": app.run_any(TBEF.MINIMALHTML.FUSE_TO_STRING, html_elements=html_mods_a),
@@ -172,7 +172,7 @@ def reload_widget_system(app, user, WidgetID):
     system_person = {'name': f"sysTab-{user.uid}",
                      'group': [
                          {'name': 'mods',
-                          'file_path': f'./mods/CloudM/UI/assets/system.html',
+                          'file_path': './mods/CloudM/UI/assets/system.html',
                           'kwargs': {
                               'root': root,
                               'WidgetID': WidgetID,
@@ -222,12 +222,12 @@ async def removed(app, index, request: Request):
         return Result.default_internal_error("No request specified")
     user: User = await get_user_from_request(app, request=request)
     if not user:
-        return f"<h2>Invalid User</h2>"
+        return "<h2>Invalid User</h2>"
     if isinstance(index, str):
         index = int(index)
     user.user_pass_pub_devices.pop(index)
     db_helper_save_user(app, asdict(user))
-    return f""
+    return ""
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True)
@@ -236,7 +236,7 @@ async def danger(app, request: Request):
         return Result.default_internal_error("No request specified")
     user = await get_user_from_request(app, request=request)
     if not user:
-        return f"<h2>Invalid User</h2>"
+        return "<h2>Invalid User</h2>"
     WidgetID = str(uuid.uuid4())[:4]
     reload_widget_system(app, user, WidgetID)
     html_widget = app.run_any(TBEF.MINIMALHTML.GENERATE_HTML, group_name=Name, collection_name=f"sysTab-{user.uid}")
@@ -251,7 +251,7 @@ async def stop(app, request: Request):
         return Result.default_internal_error("No request specified")
     user = await get_user_from_request(app, request=request)
     if not user:
-        return f"<h2>Invalid User</h2>"
+        return "<h2>Invalid User</h2>"
     app.run_any(TBEF.CLOUDM_USERINSTANCES.CLOSE_USER_INSTANCE, uid=user.uid)
     if user.name == 'root':
         await app.a_exit()
@@ -265,7 +265,7 @@ async def reset(app, request: Request):
         return Result.default_internal_error("No request specified")
     user = await get_user_from_request(app, request=request)
     if not user:
-        return f"<h2>Invalid User</h2>"
+        return "<h2>Invalid User</h2>"
     app.run_any(TBEF.CLOUDM_USERINSTANCES.DELETE_USER_INSTANCE, uid=user.uid)
     db_helper_delete_user(app, user.name, user.uid, matching=True)
     return f"<h2>account gelöscht {user.name=}</h2>"
@@ -277,7 +277,7 @@ async def link(app, request: Request):
         return Result.default_internal_error("No request specified")
     user = await get_user_from_request(app, request=request)
     if not user:
-        return f"<h2>Invalid User</h2>"
+        return "<h2>Invalid User</h2>"
     link_ = await app.a_run_any(TBEF.CLOUDM.CREATE_MAGIC_LOG_IN, username=user.name)
     return f"<h2>{link_}</h2>"
 
@@ -288,7 +288,7 @@ async def info(app, request: Request):
         return Result.default_internal_error("No request specified")
     user = await get_user_from_request(app, request=request)
     if not user:
-        return f"<h2>Invalid User</h2>"
+        return "<h2>Invalid User</h2>"
 
     WidgetID = str(uuid.uuid4())[:4]
     reload_widget_info(app, user, WidgetID)
@@ -302,7 +302,7 @@ async def deleteUser(app, user: str, request: Request):
         return Result.default_internal_error("No request specified")
     user_ob = await get_user_from_request(app, request=request)
     if user_ob.name != 'root':
-        return f"<h2>Invalid User</h2>"
+        return "<h2>Invalid User</h2>"
     user_ed = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user)
     app.run_any(TBEF.CLOUDM_USERINSTANCES.DELETE_USER_INSTANCE, uid=user_ed.uid)
     db_helper_delete_user(app, user_ed.name, user_ed.uid, matching=True)
@@ -315,7 +315,7 @@ async def sendMagicLink(app, user: str, request: Request):
         return Result.default_internal_error("No request specified")
     user_ob = await get_user_from_request(app, request=request)
     if user_ob.name != 'root':
-        return f"<h2>Invalid User</h2>"
+        return "<h2>Invalid User</h2>"
     link = await app.a_run_any(TBEF.CLOUDM.CREATE_MAGIC_LOG_IN, username=user)
     user_ed = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user)
     msg = app.run_any(TBEF.EMAIL_WAITING_LIST.CRATE_MAGIC_LICK_DEVICE_EMAIL,
@@ -332,7 +332,7 @@ async def setUserLevel(app, user: str, request: Request):
         return Result.default_internal_error("No request specified")
     user_ob = await get_user_from_request(app, request=request)
     if user_ob.name != 'root':
-        return f"<h2>Invalid User</h2>"
+        return "<h2>Invalid User</h2>"
     userLevel = request.json()
     userLevel = userLevel.get('userLevel', 0)
     user_ed = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user)
@@ -349,7 +349,7 @@ async def mods(app, request: Request):
         return Result.default_internal_error("No request specified")
     user = await get_user_from_request(app, request=request)
     if not user:
-        return f"<h2>Invalid User</h2>"
+        return "<h2>Invalid User</h2>"
 
     WidgetID = str(uuid.uuid4())[:4]
     reload_widget_mods(app, user, WidgetID)
@@ -363,7 +363,7 @@ async def addMod(app, modId: str, request: Request):
         return Result.default_internal_error("No request specified")
     user = await get_user_from_request(app, request=request)
     if not user:
-        return f"<h2>Invalid User</h2>"
+        return "<h2>Invalid User</h2>"
     user_instance = app.run_any(TBEF.CLOUDM_USERINSTANCES.GET_USER_INSTANCE, uid=user.uid)
     if modId in user_instance["save"]["mods"]:
         return f"<h2>{modId} is already active</h2>"
@@ -378,7 +378,7 @@ async def remove(app, modId: str, request: Request):
         return Result.default_internal_error("No request specified")
     user = await get_user_from_request(app, request=request)
     if not user:
-        return f"<h2>Invalid User</h2>"
+        return "<h2>Invalid User</h2>"
     user_instance = app.run_any(TBEF.CLOUDM_USERINSTANCES.GET_USER_INSTANCE, uid=user.uid)
     if modId not in user_instance["save"]["mods"]:
         return f"<h2>{modId} is already active</h2>"

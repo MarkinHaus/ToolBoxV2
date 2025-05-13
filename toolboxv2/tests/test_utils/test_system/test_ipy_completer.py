@@ -2,9 +2,7 @@ import os
 import unittest
 import tempfile
 from dataclasses import dataclass
-from typing import List, Type
 
-from IPython.core.completer import IPCompleter
 
 from toolboxv2.utils.system.ipy_completer import (
     extract_class_info,

@@ -1,8 +1,7 @@
 import os
-import json
 import unittest
 import tempfile
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from toolboxv2 import setup_logging
 from toolboxv2.utils.system.file_handler import FileHandler

@@ -3,11 +3,10 @@ import sys
 import tempfile
 
 from pydantic import BaseModel, Field
-from typing import List, Dict, Optional, Literal
+from typing import List, Dict, Literal
 from dataclasses import dataclass
 import asyncio
 import os
-import logging
 
 from toolboxv2 import get_logger
 from toolboxv2.mods.isaa.base.Agents import Agent

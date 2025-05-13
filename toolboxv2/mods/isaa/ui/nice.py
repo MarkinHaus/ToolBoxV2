@@ -6,16 +6,12 @@ from starlette.responses import HTMLResponse
 
 from toolboxv2 import get_app, Singleton, TBEF
 import uuid
-from typing import List, Dict, Optional, Callable, Any
+from typing import List, Dict, Optional
 
-import os
 import asyncio
-import numpy as np
-from collections import deque
-from typing import Optional, Callable
 from dataclasses import dataclass
 
-from toolboxv2.utils.extras.base_widget import get_user_from_request, get_spec
+from toolboxv2.utils.extras.base_widget import get_spec
 
 
 @dataclass

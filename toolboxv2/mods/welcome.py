@@ -1,6 +1,6 @@
 import sys
 
-from toolboxv2 import MainTool, Style, get_app
+from toolboxv2 import Style, get_app
 from time import sleep
 from platform import system
 import os

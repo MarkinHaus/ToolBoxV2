@@ -77,12 +77,12 @@ class Tools(MainTool, FileHandler):
                           name=self.name, logs=self.logger, color=self.color, on_exit=self.on_exit)
 
     def on_start(self):
-        self.logger.info(f"Starting WebSocketManager")
+        self.logger.info("Starting WebSocketManager")
         self.load_file_handler()
         pass
 
     def on_exit(self):
-        self.logger.info(f"Closing WebSocketManager")
+        self.logger.info("Closing WebSocketManager")
         self.save_file_handler()
         for key in list(self.active_connections_client.keys()):
             self.close_websocket(key)
@@ -206,9 +206,9 @@ class Tools(MainTool, FileHandler):
         return websocket
 
     def close_websocket(self, websocket_id):
-        self.print(f"close_websocket called")
+        self.print("close_websocket called")
         if websocket_id not in self.active_connections_client.keys():
-            self.print(f"websocket not found")
+            self.print("websocket not found")
         self.active_connections_client[websocket_id].close()
         del self.active_connections_client[websocket_id]
 
@@ -524,9 +524,6 @@ class Tools(MainTool, FileHandler):
             self._get_pools_manager = WebSocketPoolManager()
         return self._get_pools_manager
 
-import asyncio
-import json
-import logging
 from typing import Dict, List, Callable, Any
 
 

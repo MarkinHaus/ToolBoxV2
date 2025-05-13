@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 """Tests for `toolboxv2` package."""
-import asyncio
 import os
 import time
 import unittest
@@ -43,13 +42,13 @@ class TestToolboxv2Mods(unittest.TestCase):
         cls.app.logger.info(f"Accomplished in {time.perf_counter() - cls.t0}")
 
     def setUp(self):
-        self.app.logger.info(Style.BEIGEBG(f"Next Test"))
+        self.app.logger.info(Style.BEIGEBG("Next Test"))
         """Set up test fixtures, if any."""
 
     def tearDown(self):
         """Tear down test fixtures, if any."""
         # self.app.remove_all_modules()
-        self.app.logger.info(Style.BEIGEBG(f"tearDown"))
+        self.app.logger.info(Style.BEIGEBG("tearDown"))
 
     def test_crypt(self):
         t0 = time.perf_counter()
@@ -60,7 +59,7 @@ class TestToolboxv2Mods(unittest.TestCase):
         encode_string = code.encode_code(test_string)
         self.app.logger.info(Style.WHITE("test for differences between encode_string and test_string"))
         if encode_string == test_string:
-            self.app.logger.warning(Style.YELLOW(f"No crypt active please init or crate owen "))
+            self.app.logger.warning(Style.YELLOW("No crypt active please init or crate owen "))
 
         self.app.logger.info(Style.WHITE("decode test string"))
         out_string = code.decode_code(encode_string)

@@ -91,7 +91,7 @@ class MiniRedis:
                 data.append(val)
 
         if not data:
-            return Result.ok(info=f"No data found for key", data=None, data_info=data_info).set_origin(
+            return Result.ok(info="No data found for key", data=None, data_info=data_info).set_origin(
                 "Reddis DB")
 
         if len(data) == 1:

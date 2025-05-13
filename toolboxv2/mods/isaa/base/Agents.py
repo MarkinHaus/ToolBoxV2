@@ -1,4 +1,3 @@
-import ast
 import os
 import re
 import uuid
@@ -38,11 +37,11 @@ from toolboxv2.mods.isaa.extras.filter import filter_relevant_texts
 
 try:
     import gpt4all
-except Exception as e:
+except Exception:
     gpt4all = lambda : None
     gpt4all.GPT4All = None
 
-from toolboxv2 import get_logger, Style, Spinner, Singleton, get_app
+from toolboxv2 import get_logger, Style, Spinner, Singleton
 import json
 from dataclasses import asdict
 from typing import Type
@@ -946,7 +945,7 @@ class Agent:
 
     def function_invoke(self, name, **kwargs):
         if self.functions is None:
-            return f"no functions"
+            return "no functions"
         fuction_list = [f.function for f in self.functions if f.name == name]
         if len(fuction_list):
             try:
@@ -979,7 +978,7 @@ class Agent:
 
     def construct_first_msg(self) -> List[Dict[str, str]]:
         llm_prompt = self.amd.system_message
-        self.print_verbose(f"construct first msg")
+        self.print_verbose("construct first msg")
         cfunctions_infos = []
         message = []
         if self.capabilities:
@@ -1476,7 +1475,7 @@ class Agent:
             except litellm.RateLimitError as e:
                 print(f"RateLimitError {e}")
                 last_error_ = e
-                if '413' in str(e) and not 'reduce' in str(e):
+                if '413' in str(e) and 'reduce' not in str(e):
                     with Spinner("Reitlimit Waiting 1 minute"):
                         time.sleep(30)
                 r_try += 1
@@ -1544,7 +1543,7 @@ class Agent:
             except litellm.RateLimitError as e:
                 print(f"RateLimitError {e}")
                 last_error_ = e
-                if '413' in str(e) and not 'reduce' in str(e):
+                if '413' in str(e) and 'reduce' not in str(e):
                     with Spinner("Reitlimit Waiting 1 minute"):
                         time.sleep(30)
                 r_try += 1
@@ -1911,7 +1910,6 @@ class Agent:
             Returns:
                 list[tuple]: List of tuples (image_path_url, is_path, is_url, image_type)
             """
-            import re
             from urllib.parse import urlparse
 
             # Pattern to match Image[...] format
@@ -2363,7 +2361,7 @@ class ControllerManager:
             return cls(controllers=controllers)
 
         if filename is not None and json_data is not None:
-            raise ValueError(f"filename and json_data are provided only one accepted filename or json_data")
+            raise ValueError("filename and json_data are provided only one accepted filename or json_data")
 
         if filename is not None:
             if os.path.exists(filename) and os.path.isfile(filename):

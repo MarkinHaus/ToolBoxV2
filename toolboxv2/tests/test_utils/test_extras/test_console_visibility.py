@@ -1,7 +1,6 @@
 import unittest
 import ctypes
 import sys
-import os
 
 # Import the function to be tested
 from toolboxv2.utils.extras.show_and_hide_console import show_console, TBRUNNER_console_viabel

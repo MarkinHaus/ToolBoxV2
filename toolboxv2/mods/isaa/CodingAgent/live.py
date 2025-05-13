@@ -1,4 +1,3 @@
-import fnmatch
 import json
 import pickle
 import shutil
@@ -11,11 +10,10 @@ from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
 
 import toolboxv2
-from toolboxv2 import Style, Spinner, get_app, get_logger
-from toolboxv2.mods.isaa.extras.modes import get_free_agent
+from toolboxv2 import Style, Spinner, get_app
 from inspect import getdoc, signature, isfunction, ismethod, currentframe, Signature, isclass
 
-from collections import Counter, defaultdict
+from collections import defaultdict
 from typing import Optional, Dict, Any, List, Union, Type, Tuple
 from copy import deepcopy
 
@@ -29,7 +27,7 @@ from toolboxv2.mods.isaa.extras.session import ChatSession
 ### ---- Styles ------- ###
 
 from enum import Enum, auto
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 import asyncio
 import nest_asyncio
 import ast
@@ -37,7 +35,6 @@ import io
 import os
 import traceback
 from pathlib import Path
-from typing import Tuple, Optional, Any, Union
 
 @dataclass
 class JSExecutionRecord:
@@ -93,7 +90,7 @@ class VerboseFormatter:
             'DONE': self.style.BLUE2
         }.get(state, self.style.WHITE2)
         res_str = f"\nCurrent State: {state}"
-        self.print(f"\n{self.style.Bold(f'Current State:')} {state_color(state)}")
+        self.print(f"\n{self.style.Bold('Current State:')} {state_color(state)}")
 
         if details:
             for key, value in details.items():
@@ -250,14 +247,8 @@ class PipelineResult:
     message: List[Dict[str, str]]
 
 
-import subprocess
-import os
-from pathlib import Path
-import shutil
-import json
 import re
-from typing import Dict, Any, Optional, Tuple
-import io
+from typing import Dict, Any, Optional
 from contextlib import redirect_stdout, redirect_stderr
 
 
@@ -508,7 +499,7 @@ class VirtualFileSystem:
             abs_path = self._resolve_path(filepath)
         except ValueError:
             print("invalid :", filepath)
-            filepath = f"src/temp_js/_temp_fix.py"
+            filepath = "src/temp_js/_temp_fix.py"
             abs_path = self._resolve_path(filepath)
         abs_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -618,7 +609,6 @@ class VirtualFileSystem:
 
 
 
-from contextlib import redirect_stdout, redirect_stderr, contextmanager
 
 
 class VirtualEnvContext:
@@ -1254,7 +1244,7 @@ class MockIPython:
                 if isinstance(value, str):
                     value = value.encode('utf-8').decode('utf-8')
                 pickle.dumps(value)
-            except Exception as e:
+            except Exception:
                 user_ns[key] = f"not serializable: {str(value)}"
 
         for key, value in output_history.items():
@@ -1264,7 +1254,7 @@ class MockIPython:
                         if isinstance(v, str):
                             value[k] = v.encode('utf-8').decode('utf-8')
                 pickle.dumps(value)
-            except Exception as e:
+            except Exception:
                 output_history[key] = f"not serializable: {str(value)}"
 
 
@@ -1480,9 +1470,6 @@ Execution:
 from browser_use import Agent as BrowserAgent, Browser, BrowserConfig
 from browser_use.browser.context import BrowserContextConfig
 from langchain_community.chat_models import ChatLiteLLM
-import asyncio
-import os
-import json
 from typing import Optional, Dict, Any, List, Union
 
 
@@ -1957,7 +1944,7 @@ class BrowserWrapper:
                 markdown = f"# {title}\n\n{markdown}"
 
             return markdown
-        except Exception as e:
+        except Exception:
             # Fallback to basic extraction if script fails
             content = await self.extract_text(page, selector)
             title = await page.title()
@@ -2841,7 +2828,7 @@ Regardless of task completion status, evaluate the procedure and effectiveness o
 tip: Enclose mutil line strings property for python eval to function!
 tip: Set is_completed True if all requirements are completed from <task_description>.
 tip: Help the Agent with your analyses to finalize the <task_description>.
-{f'tip: Prefer new informations from <execution_result> over <refactored_task_description_from_ai> based of <code>' if not do_continue else ''}
+{'tip: Prefer new informations from <execution_result> over <refactored_task_description_from_ai> based of <code>' if not do_continue else ''}
 note : for the final result only toke information from the <execution_result>. if the relevant informations is not avalabel try string withe tips in the recommendations. else set is_completed True and return the teh Task failed!
 Ensure that your evaluation is thorough, constructive, and provides actionable insights for improving future task executions.
 Add guidance based on the the last execution result"""
@@ -3006,7 +2993,7 @@ Next Action Required:
             t0 = time.perf_counter()
             prompt = initial_prompt.replace('#ITER#', f'{iter_i} max {self.max_iter}')
             prompt = prompt.replace('#STATE#', f'{state.name}')
-            prompt = prompt.replace('#EXECUTION#', f'{next_infos}')  if next_infos else prompt.replace('Last EXECUTION: #EXECUTION#', f'')
+            prompt = prompt.replace('#EXECUTION#', f'{next_infos}')  if next_infos else prompt.replace('Last EXECUTION: #EXECUTION#', '')
             prompt = prompt.replace('#LOCALS#', f'{self._generate_variable_descriptions()}')
             self.verbose_output.log_state(state.name, {})
             self.verbose_output.formatter.print_iteration(iter_i, self.max_iter)

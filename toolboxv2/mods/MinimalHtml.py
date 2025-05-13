@@ -1,6 +1,5 @@
-import inspect
 import logging
-from toolboxv2 import MainTool, FileHandler, App, Style
+from toolboxv2 import MainTool, FileHandler
 import string
 
 from toolboxv2.utils.toolbox import get_app
@@ -35,10 +34,10 @@ class Tools(MainTool, FileHandler):
         self.file_chas = {}
 
     def on_start(self):
-        self.logger.info(f"Starting MinimalHtml")
+        self.logger.info("Starting MinimalHtml")
 
     def on_exit(self):
-        self.logger.info(f"Closing MinimalHtml")
+        self.logger.info("Closing MinimalHtml")
 
     def show_version(self):
         self.print("Version: ", self.version)
@@ -50,7 +49,7 @@ class Tools(MainTool, FileHandler):
             return ""
 
         if file_path in self.file_chas.keys():
-            self.print(f"Returning from chash")
+            self.print("Returning from chash")
             return self.file_chas[file_path]
 
         self.print(f"Reading template file at {file_path}")

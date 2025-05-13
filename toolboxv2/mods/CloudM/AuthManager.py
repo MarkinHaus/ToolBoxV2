@@ -264,7 +264,7 @@ def create_user(app: App, data: CreateUserObject = None, username: str = 'test-u
                                          interface=ToolBoxInterfaces.remote)
 
     if not invitation.startswith("00#"):  # not db_valid_invitation(app, invitation):
-        return Result.default_user_error(info=f"Invalid invitation", interface=ToolBoxInterfaces.remote)
+        return Result.default_user_error(info="Invalid invitation", interface=ToolBoxInterfaces.remote)
 
     test_bub_key = "Invalid"
 
@@ -349,7 +349,7 @@ def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 
         return Result.default_user_error(info=f"Username '{username}' not known", interface=ToolBoxInterfaces.remote)
 
     if not invitation.startswith("01#"):  # not db_valid_invitation(app, invitation):
-        return Result.default_user_error(info=f"Invalid invitation", interface=ToolBoxInterfaces.remote)
+        return Result.default_user_error(info="Invalid invitation", interface=ToolBoxInterfaces.remote)
     invitation = invitation.replace("01#", "")
     test_bub_key = "Invalid"
 
@@ -370,7 +370,7 @@ def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 
     user: User = user_r.get()
 
     if invitation != Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email"):
-        return Result.default_user_error(info=f"Invalid invitation", interface=ToolBoxInterfaces.remote)
+        return Result.default_user_error(info="Invalid invitation", interface=ToolBoxInterfaces.remote)
 
     user.user_pass_pub_devices.append(pub_key)
     user.pub_key = pub_key

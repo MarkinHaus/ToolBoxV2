@@ -70,9 +70,9 @@ async def run(app: App, args):
     threaded = [False]
 
     def bottom_toolbar():
-        return HTML(f'Hotkeys shift:s control:c  <b><style bg="ansired">s+left</style></b> helper info '
-                    f'<b><style bg="ansired">c+space</style></b> Autocompletion tips '
-                    f'<b><style bg="ansired">s+up</style></b> run in shell')
+        return HTML('Hotkeys shift:s control:c  <b><style bg="ansired">s+left</style></b> helper info '
+                    '<b><style bg="ansired">c+space</style></b> Autocompletion tips '
+                    '<b><style bg="ansired">s+up</style></b> run in shell')
 
     async def exit_(_):
         print("EXITING")
@@ -174,15 +174,15 @@ async def run(app: App, args):
 
     def infos(_):
         app.print_functions()
-        return Result.ok(info=f"").set_origin("minicli::build-in")
+        return Result.ok(info="").set_origin("minicli::build-in")
 
     def colose_console(_):
         show_console(False)
-        return Result.ok(info=f"").set_origin("minicli::build-in")
+        return Result.ok(info="").set_origin("minicli::build-in")
 
     async def open_console(_):
         await app.show_console(True)
-        return Result.ok(info=f"").set_origin("minicli::build-in")
+        return Result.ok(info="").set_origin("minicli::build-in")
 
     bic = {
         "exit": exit_,

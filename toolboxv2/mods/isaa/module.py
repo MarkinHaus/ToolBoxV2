@@ -2,13 +2,10 @@ import copy
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import field
 
 from enum import Enum
-from functools import partial
 from inspect import signature
-from pathlib import Path
 from typing import Optional, List, Dict, Callable
 
 import requests
@@ -17,13 +14,11 @@ from langchain_experimental.tools import PythonREPLTool
 
 from pydantic import BaseModel
 
-from tqdm import tqdm
 
 from toolboxv2.mods.isaa.base.KnowledgeBase import TextSplitter
 from toolboxv2.mods.isaa.extras.filter import filter_relevant_texts
 from toolboxv2.mods.isaa.types import TaskChain
 # from toolboxv2.mods.isaa.ui.nice import IsaaWebSocketUI
-from toolboxv2.utils.extras.keword_matcher import calculate_weighted_score, extract_keywords
 from toolboxv2.utils.system import FileCache
 from .CodingAgent.auto_runner import ProjectManager
 from ...utils.toolbox import stram_print
@@ -37,13 +32,13 @@ from langchain_community.agent_toolkits.load_tools import load_tools, load_huggi
 from pebble import concurrent
 try:
     import gpt4all
-except Exception as e:
+except Exception:
     gpt4all = lambda : None
     gpt4all.GPT4All = None
 
 from toolboxv2 import MainTool, FileHandler, get_logger, Style, Spinner, get_app
 from toolboxv2.mods.isaa.extras.modes import crate_llm_function_from_langchain_tools, StrictFormatResponder, ChainTreeExecutor, \
-    TaskChainMode, TextExtractor, SummarizationMode, ISAA0CODE
+    TaskChainMode, SummarizationMode, ISAA0CODE
 from toolboxv2.mods.isaa.base.AgentUtils import AgentChain, AISemanticMemory, Scripts, dilate_string
 from toolboxv2.mods.isaa.base.Agents import Agent, AgentBuilder, LLMFunction, ControllerManager, AgentVirtualEnv
 from .SearchAgentCluster.search_tool import web_search
@@ -55,7 +50,7 @@ import shlex
 import json
 import platform
 import locale
-from typing import Dict, Any
+from typing import Any
 import sys
 
 PIPLINE = None
@@ -206,7 +201,7 @@ class Tools(MainTool, FileHandler):
         self.print(f"Start {self.spec}.isaa")
         # IsaaWebSocketUI(self)
         # init_isaaflow_ui(self.app)
-        with Spinner(message=f"Starting module", symbols='c'):
+        with Spinner(message="Starting module", symbols='c'):
             self.load_file_handler()
             config = self.get_file_handler(self.keys["Config"])
             if config is not None:
@@ -441,7 +436,7 @@ class Tools(MainTool, FileHandler):
 
         threading.Thread(target=helper, daemon=True).start()
 
-        with Spinner(message=f"Building Controller", symbols='c'):
+        with Spinner(message="Building Controller", symbols='c'):
             self.controller.init(self.config['controller_file'])
 
         if build:
@@ -1328,16 +1323,16 @@ class Tools(MainTool, FileHandler):
     def get_memory(self, name: Optional[str]=None) -> AISemanticMemory:
         logger = get_logger()
         if isinstance(self.agent_memory, str):
-            logger.info(Style.GREYBG(f"AISemanticMemory Initialized"))
+            logger.info(Style.GREYBG("AISemanticMemory Initialized"))
             self.agent_memory = AISemanticMemory(base_path=self.agent_memory)
-        logger.info(Style.GREYBG(f"AIContextMemory requested"))
+        logger.info(Style.GREYBG("AIContextMemory requested"))
         cm = self.agent_memory
         if name is not None:
             r = cm.get(name)
             if len(r) == 1:
                 return r[0]
             return r
-        logger.info(Style.Bold(f"AISemanticMemory instance, returned"))
+        logger.info(Style.Bold("AISemanticMemory instance, returned"))
         return cm
 
     def save_to_mem(self):
@@ -1420,7 +1415,7 @@ def shell_tool_function(command: str) -> str:
             "error": f"Process error [{e.returncode}]",
             "output": safe_decode(e.output)
         })
-    except subprocess.TimeoutExpired as e:
+    except subprocess.TimeoutExpired:
         result.update({
             "error": "Timeout",
             "output": f"Command timed out: {command}"

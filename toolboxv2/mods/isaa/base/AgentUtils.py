@@ -1,4 +1,3 @@
-import ast
 import json
 import os
 import pickle
@@ -13,7 +12,6 @@ from json import JSONDecodeError
 import re
 from typing import Dict, Optional, List, Tuple, Union
 
-import numpy as np
 import requests
 import tiktoken
 
@@ -22,8 +20,7 @@ from pebble import concurrent
 from toolboxv2 import Style, get_logger, Singleton
 
 
-from toolboxv2.mods.isaa.base.KnowledgeBase import KnowledgeBase, DataModel, ConceptAnalysis, TopicInsights, \
-    RelevanceAssessment
+from toolboxv2.mods.isaa.base.KnowledgeBase import KnowledgeBase
 
 
 def dilate_string(text, split_param, remove_every_x, start_index):
@@ -490,7 +487,7 @@ class AgentChain:
             files = os.listdir(self.directory)
         else:
             files = [f"{chain_name}.json"]
-        print(f"--------------------------------")
+        print("--------------------------------")
         for file in files:
             file_path = os.path.join(self.directory, file)
 
@@ -619,7 +616,7 @@ class AgentChain:
                 return
             chains_to_save = {chain_name: self.chains[chain_name]}
         if chains_to_save:
-            print(f"--------------------------------", end='\r')
+            print("--------------------------------", end='\r')
         for name, tasks in chains_to_save.items():
             file_path = os.path.join(self.directory, f"{name}.json")
             chain_data = {"name": name, "tasks": tasks, "dis": self.get_discr(name)}
@@ -897,7 +894,7 @@ class AISemanticMemory(metaclass=Singleton):
         try:
             self.memories[sanitized] = KnowledgeBase.load(path)
             return True
-        except Exception as e:
+        except Exception:
             # print(f"Error loading memory: {str(e)}")
             return False
 
@@ -1448,7 +1445,7 @@ def parse_json_with_auto_detection(json_data):
                 return eval(parsed_value)
             else:
                 return parsed_value
-        except Exception as e:
+        except Exception:
             # logging.warning(f"Failed to parse value as JSON: {value}. Exception: {e}")
             return value
 
@@ -1489,7 +1486,7 @@ def extract_json_objects(text: str, matches_only=False):
             x = json.loads(match)
             print("Found", x)
             json_objects.append(x)
-        except json.JSONDecodeError as e1:
+        except json.JSONDecodeError:
             # Wenn die JSON-Dekodierung fehlschlägt, versuchen Sie, das JSON-Objekt zu reparieren
             fixed_match = fix_json_object(match)
             if fixed_match:

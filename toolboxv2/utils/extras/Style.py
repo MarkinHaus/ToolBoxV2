@@ -387,7 +387,7 @@ class JSONExtractor(JSONDecoder):
         try:
             obj, end = super().raw_decode(s)
             return obj, end
-        except ValueError as e:
+        except ValueError:
             return None, 0
 
 
@@ -429,18 +429,9 @@ def extract_python_code(text):
     return python_code_blocks
 
 
-import sys
-import time
-import itertools
-import threading
-import os
 
 
-import sys
-import time
-import threading
 import signal
-import itertools
 
 class SpinnerManager(metaclass=Singleton):
     """

@@ -33,8 +33,9 @@ COPY ./requirements.txt ./requirements.txt
 COPY ./README.md ./README.md
 COPY ./setup.cfg ./setup.cfg
 COPY ./MANIFEST.in ./MANIFEST.in
+COPY ./pyproject.toml ./pyproject.toml
 COPY ./toolboxv2/mods ./toolboxv2/mods
-COPY ./toolboxv2/runabel ./toolboxv2/runabel
+COPY ./toolboxv2/flows ./toolboxv2/flows
 COPY ./toolboxv2/tests ./toolboxv2/tests
 COPY ./toolboxv2/web ./toolboxv2/web
 COPY ./toolboxv2/utils ./toolboxv2/utils
@@ -44,8 +45,6 @@ COPY ./toolboxv2/favicon.ico ./toolboxv2/favicon.ico
 COPY ./toolboxv2/index.html ./toolboxv2/index.html
 COPY ./toolboxv2/index.js ./toolboxv2/index.js
 COPY ./toolboxv2/package.json ./toolboxv2/package.json
-COPY ./toolboxv2/tbState.yaml ./toolboxv2/tbState.yaml
-COPY ./toolboxv2/toolbox.yaml ./toolboxv2/toolbox.yaml
 
 # Install the local application using pip.
 

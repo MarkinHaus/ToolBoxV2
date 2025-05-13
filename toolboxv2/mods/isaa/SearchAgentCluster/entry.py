@@ -36,7 +36,6 @@ class SearchSummary(BaseModel):
 
 # data_layer.py
 from dataclasses import dataclass, field
-from typing import Dict, Set
 import asyncio
 import aiohttp
 
@@ -65,7 +64,7 @@ class DataLayer:
                         self.cache.content[url] = content
                         self.cache.visited.add(url)
                         return content
-            except Exception as e:
+            except Exception:
                 return None
 
 

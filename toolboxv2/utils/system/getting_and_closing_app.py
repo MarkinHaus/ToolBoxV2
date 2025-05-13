@@ -1,6 +1,7 @@
 import asyncio
 import atexit
-import time, os
+import time
+import os
 from typing import List, Optional
 
 from .tb_logger import get_logger

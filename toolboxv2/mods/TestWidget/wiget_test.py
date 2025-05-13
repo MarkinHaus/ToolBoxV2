@@ -138,7 +138,7 @@ def get_widget_r(app: App = None, request: Request or None = None):
         return Result.default_internal_error("No request specified")
     widget_renderer = app.run_any(TBEF.WEBSOCKETMANAGER.CONSTRUCT_RENDER, content="<p> online</p>",
                                   element_id="widgetTest",
-                                  externals=[f"/web/0/logic.js"],
+                                  externals=["/web/0/logic.js"],
                                   from_file=False, to_str=False)
 
     return widget_renderer

@@ -753,7 +753,7 @@ def manage_server(action: str, executable_path: str = None, version_str: str = "
     elif action == "status":
         pid, ver, exe = read_server_state()
         if pid and is_process_running(pid):
-            print(f"Server is RUNNING.")
+            print("Server is RUNNING.")
             print(f"  PID: {pid}\n  Version: {ver}\n  Executable: {exe}")
             if platform.system().lower() != "windows" and os.path.exists(PERSISTENT_FD_FILE):
                 try:

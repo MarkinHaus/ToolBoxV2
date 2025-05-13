@@ -1,6 +1,5 @@
 import pickle
 import unittest
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from toolboxv2 import Code

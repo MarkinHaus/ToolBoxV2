@@ -1,22 +1,10 @@
 """Main module."""
-import asyncio
-import inspect
 import os
-import sys
-import threading
 import time
 import unittest
-from asyncio import Task
-from enum import Enum
-from importlib import import_module, reload
-from inspect import signature
-from types import ModuleType
-from functools import partial, wraps
 from typing import Callable
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import AsyncMock
 
-import requests
-from yaml import safe_load
 
 import logging
 from dotenv import load_dotenv
@@ -48,13 +36,13 @@ class TestToolboxv2(unittest.TestCase):
         cls.app.logger.info(f"Accomplished in {time.perf_counter() - cls.t0}")
 
     def setUp(self):
-        self.app.logger.info(Style.BEIGEBG(f"Next Test"))
+        self.app.logger.info(Style.BEIGEBG("Next Test"))
         """Set up test fixtures, if any."""
 
     def tearDown(self):
         """Tear down test fixtures, if any."""
         # self.app.remove_all_modules()
-        self.app.logger.info(Style.BEIGEBG(f"tearDown"))
+        self.app.logger.info(Style.BEIGEBG("tearDown"))
 
     def test__init__(self):
         self.assertTrue(os.path.exists(self.app.data_dir))

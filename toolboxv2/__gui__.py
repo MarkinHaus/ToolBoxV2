@@ -177,7 +177,7 @@ class DynamicFunctionApp:
 
         run_command_btn = ctk.CTkButton(
             search_frame,
-            text=f"Run Command",
+            text="Run Command",
             command=self._run_search_command,
             height=35,
         )

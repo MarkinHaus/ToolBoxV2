@@ -1,10 +1,7 @@
 import streamlit as st
 import requests
-import os
 from typing import Optional
-import json
 from pathlib import Path
-import base64
 
 # FastAPI Backend URL
 API_URL = "http://localhost:5000/apps"
@@ -99,12 +96,12 @@ def main():
                     col1, col2 = st.columns(2)
                     with col1:
                         if not app['running']:
-                            if st.button(f"Start", key=f"start_{app['name']}"):
+                            if st.button("Start", key=f"start_{app['name']}"):
                                 response = client.start_app(app['name'])
                                 st.success(response['message'])
                                 st.rerun()
                         else:
-                            if st.button(f"Stop", key=f"stop_{app['name']}"):
+                            if st.button("Stop", key=f"stop_{app['name']}"):
                                 response = client.stop_app(app['name'])
                                 st.success(response['message'])
                                 st.rerun()

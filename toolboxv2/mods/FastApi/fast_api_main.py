@@ -4,22 +4,17 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from inspect import signature
-from pathlib import Path
 from typing import List
 
 import fastapi
-from numpy.core.defchararray import endswith
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse, FileResponse, Response
-from starlette.staticfiles import StaticFiles
+from starlette.responses import JSONResponse, HTMLResponse, FileResponse, Response
 from starlette.websockets import WebSocketDisconnect
 from fastapi.responses import RedirectResponse
-from watchfiles import awatch
 
 import httpx
 from toolboxv2.mods.FastApi.fast_lit import BidirectionalStreamlitAppManager
-from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.system.session import RequestSession
 from toolboxv2.utils.extras.blobs import BlobFile, BlobStorage
 from toolboxv2.utils.security.cryp import DEVICE_KEY, Code
@@ -31,9 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from toolboxv2 import TBEF, AppArgs, ApiResult, Spinner, get_app, Result
 # from toolboxv2.__main__ import setup_app
-from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
 
-from toolboxv2.utils.system.state_system import get_state_from_app
 from functools import partial, wraps
 
 from .fast_nice import create_nicegui_manager
@@ -222,7 +215,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
 
         try:
             session = json.loads(session.get().decode('utf-8').replace("'", '"'))
-        except Exception as e:
+        except Exception:
             session = {
                 'jwt-claim': '',
                 'validate': False,
@@ -287,7 +280,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         # print("[jwt_claim]:, ", jwt_claim)
         # print(username)
         # print(request.json())
-        if request.client.host in self.GRAY_LIST and not request.url.path.split('/')[-1] in ['login', 'signup']:
+        if request.client.host in self.GRAY_LIST and request.url.path.split('/')[-1] not in ['login', 'signup']:
             return JSONResponse(
                 status_code=403,
                 content={"message": "Pleas Login or signup"}

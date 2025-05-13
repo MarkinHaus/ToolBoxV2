@@ -1,5 +1,4 @@
 import sys
-from pathlib import Path
 
 from toolboxv2 import get_app
 from toolboxv2.mods.TruthSeeker.module import start, codes, process, byCode, version
@@ -15,8 +14,7 @@ from toolboxv2.mods.TruthSeeker.arXivCrawler import (
     ArXivPDFProcessor,
     Paper,
     DocumentChunk,
-    Insights,
-    RelevanceAssessment
+    Insights
 )
 
 default_test = get_app("TruthSeeker.Export").tb(mod_name="TruthSeeker", test_only=True, version=version)

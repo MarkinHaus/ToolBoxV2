@@ -40,7 +40,7 @@ def bottle_up(tb_app, user='root', main_route=None, threaded=False, **kwargs):
             # self._setup_middleware()
 
             if main_route is None:
-                self.route(f'/', method='GET')(self.index_h)
+                self.route('/', method='GET')(self.index_h)
             # Dynamische Proxy-Route einrichten
             self.route('/<path:path>', 'ANY', self.proxy_route)
 
@@ -88,7 +88,7 @@ def bottle_up(tb_app, user='root', main_route=None, threaded=False, **kwargs):
         def _auto_generate_routes(self, main_rout):
             """Auto-generate routes based on tb_app functions"""
 
-            self.route(f'/index.js', method='GET')(self.index_j)
+            self.route('/index.js', method='GET')(self.index_j)
 
             try:
                 with open(os.path.join(self.tb_app.start_dir, 'dist', 'helper.html'), 'r') as f:
@@ -128,7 +128,7 @@ def bottle_up(tb_app, user='root', main_route=None, threaded=False, **kwargs):
                         self.route(f'/{mod_name}', method='GET')(tb_func_)
                         print("adding root:", f'/{mod_name}')
                         if mod_name == main_rout:
-                            self.route(f'/', method='GET')(tb_func_)
+                            self.route('/', method='GET')(tb_func_)
                         continue
 
                     # Handle websocket routes

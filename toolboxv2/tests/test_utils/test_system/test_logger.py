@@ -1,13 +1,10 @@
-import time
 import unittest
 import os
 import logging
 import tempfile
-import sys
-import inspect
 
 # Import the functions to be tested
-from toolboxv2.utils.system.tb_logger import setup_logging, get_logger, unstyle_log_files, edit_log_files
+from toolboxv2.utils.system.tb_logger import setup_logging, get_logger, unstyle_log_files
 
 
 class TestLoggingImplementation(unittest.TestCase):

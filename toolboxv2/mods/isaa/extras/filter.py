@@ -143,7 +143,7 @@ def after_format(d:str)->dict:
     if isinstance(d, str):
         try:
             d = eval(clean(d, ex=True))
-        except Exception as e:
+        except Exception:
             d = after_format_(d1)
     if len(d.keys()) == 1 and isinstance(d[list(d.keys())[0]], dict) and len(d[list(d.keys())[0]]) > 1:
         d = d[list(d.keys())[0]]

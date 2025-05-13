@@ -309,7 +309,7 @@ class Tools(MainTool, FileHandler):
             self.app.logger.warning("No mode parsed")
             return Result.default_user_error(info="mode is None")
         if mode not in ["LC", "RC", "LR", "RR"]:
-            return Result.default_user_error(info=f"Mode not supported")
+            return Result.default_user_error(info="Mode not supported")
         self.mode = DatabaseModes.crate(mode)
         if self.data_base is None:
             return Result.ok(data=self.initialize_database()).lazy_return(data=f"mode change to {mode}")
@@ -323,7 +323,7 @@ class Tools(MainTool, FileHandler):
             self.app.logger.warning("No mode parsed")
             return Result.default_user_error(info="mode is None")
         if mode not in ["LC", "RC", "LR", "RR"]:
-            return Result.default_user_error(info=f"Mode not supported")
+            return Result.default_user_error(info="Mode not supported")
         self.mode = DatabaseModes.crate(mode)
         if self.data_base is None:
             return Result.ok(data=self.initialize_database()).lazy_return(data=f"mode change to {mode}")

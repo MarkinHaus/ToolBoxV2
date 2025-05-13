@@ -5,7 +5,6 @@ The SocketManager Supports 2 types of connections
 
 """
 import gzip
-import inspect
 import io
 import json
 import os
@@ -16,14 +15,11 @@ import logging
 from enum import Enum
 import zipfile
 from io import BytesIO
-import shutil
-from typing import Optional
-from zipfile import ZipInfo, ZIP_LZMA
 import uuid
 
 from tqdm import tqdm
 
-from toolboxv2 import MainTool, FileHandler, App, Style, get_app, Result, Spinner
+from toolboxv2 import MainTool, FileHandler, Style, get_app, Result
 import requests
 
 import socket
@@ -160,14 +156,14 @@ class Tools(MainTool, FileHandler):
             self.stuf = False
 
     async def on_start(self):
-        self.logger.info(f"Starting SocketManager")
+        self.logger.info("Starting SocketManager")
         self.print(f"{Name} is Starting")
         threading.Thread(target=async_test(self.set_print_public_ip), daemon=True).start()
         threading.Thread(target=async_test(self.set_print_local_ip), daemon=True).start()
         # ~ self.load_file_handler()
 
     async def on_exit(self):
-        self.logger.info(f"Closing SocketManager")
+        self.logger.info("Closing SocketManager")
         for socket_name, socket_data in self.sockets.items():
             if not socket_data.get("alive"):
                 continue
@@ -381,7 +377,7 @@ class Tools(MainTool, FileHandler):
                     "server_receiver_"] is not None:
                     self.sockets[name]["running_dict"]["server_receiver_"].join(
                         timeout=0.251 if not self.app.debug else 0.1)
-            except TimeoutError as e:
+            except TimeoutError:
                 pass
             self.sockets[name]["running_dict"]["thread_receiver"] = None
 
@@ -1033,7 +1029,7 @@ class Tools(MainTool, FileHandler):
                             json.dumps({'data': 'Connected client', 'ip': sender_ip, 'port': sender_port}).encode(
                                 'utf-8'))
                         c_clients[str(client_ip_)] = client_port_
-                    except Exception as e:
+                    except Exception:
                         offline_clients.append(client_name_)
 
             sender_socket.sendall(json.dumps({'data': 'Connected clients', 'clients': c_clients}).encode('utf-8'))

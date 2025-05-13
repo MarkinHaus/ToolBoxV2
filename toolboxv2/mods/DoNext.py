@@ -1,11 +1,10 @@
-from starlette.responses import HTMLResponse
 
 from toolboxv2 import get_app, Code, Result
 from toolboxv2.utils.extras.base_widget import get_user_from_request
 from toolboxv2.utils.extras.blobs import BlobStorage, BlobFile
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import List, Optional, Dict, Any, Callable
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 from toolboxv2.utils.system.session import RequestSession
@@ -763,7 +762,7 @@ class ActionManager:
 
     def _load_data(self):
         try:
-            with BlobFile(f"DoNext/tasks", "r", self.storage) as f:
+            with BlobFile("DoNext/tasks", "r", self.storage) as f:
                 data = f.read_json()
                 self.actions = [Action.from_dict(**action) for action in data.get("tasks", [])]
                 if data.get("current") is not None:
@@ -774,7 +773,7 @@ class ActionManager:
             self.history = []
 
     def _save_data(self):
-        with BlobFile(f"DoNext/tasks", "w", self.storage) as f:
+        with BlobFile("DoNext/tasks", "w", self.storage) as f:
             f.write_json({
                 "tasks": [action.dict() for action in self.actions],
                 "history": [entry.dict() for entry in self.history],

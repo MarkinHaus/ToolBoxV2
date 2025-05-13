@@ -1,4 +1,3 @@
-import json
 import os
 import threading
 
@@ -19,7 +18,6 @@ from toolboxv2 import Singleton, Code
 import asyncio
 import logging
 
-from toolboxv2.mods.EventManager.module import EventID, SourceTypes, Scope
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

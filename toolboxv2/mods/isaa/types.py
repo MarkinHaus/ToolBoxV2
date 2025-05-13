@@ -1,6 +1,6 @@
 from typing import Optional, List
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
 class SupTask(BaseModel):
     """SupTask"""

@@ -1,4 +1,3 @@
-import json
 import os
 import pickle
 from collections import deque
@@ -13,7 +12,7 @@ import schedule
 import threading
 import time
 from datetime import datetime, timedelta
-from toolboxv2 import get_app, App, Result, MainTool, FileHandler, Style
+from toolboxv2 import get_app, Result, MainTool
 
 Name = 'SchedulerManager'
 export = get_app(Name).tb
@@ -195,7 +194,7 @@ class SchedulerManagerClass:
         if time_passer is None and second > 0:
             return schedule.every(second).seconds
         elif time_passer is None and second <= 0:
-            raise ValueError(f"second must be greater than 0")
+            raise ValueError("second must be greater than 0")
         return time_passer
 
     def _prepare_job_func(self, func: Callable, max_live: bool, second: float, job_id: str, *args, **kwargs):
@@ -222,7 +221,7 @@ class SchedulerManagerClass:
         elif job is not None:
             pass
         else:
-            return Result.default_internal_error(f"No Final job found for register")
+            return Result.default_internal_error("No Final job found for register")
         return Result.ok(job)
 
     def _save_job(self, job_id, job, save, args=None, **kwargs):

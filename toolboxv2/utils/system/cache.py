@@ -14,14 +14,14 @@ class FileCache:
         try:
             with shelve.open(self.filename) as db:
                 return db.get(key.replace('\x00', ''))
-        except Exception as e:
+        except Exception:
             return None
 
     def set(self, key, value):
         try:
             with shelve.open(self.filename, writeback=True) as db:
                 db[key.replace('\x00', '')] = value
-        except Exception as e:
+        except Exception:
             return None
 
     def cleanup(self):

@@ -102,6 +102,7 @@ For development or to get the latest version of the Python components:
   chmod +x install_python_env.sh
   ./install_python_env.sh
 
+
 ```
 
 ### 🖥️ Full Stack Desktop/Web Application (Tauri + Web)

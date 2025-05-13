@@ -1,10 +1,9 @@
 import unittest
-import asyncio
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock
 
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.tests.test_web import ensure_test_user
-from toolboxv2.utils.system.types import Result, ToolBoxError, ToolBoxInterfaces
+from toolboxv2.utils.system.types import ToolBoxError, ToolBoxInterfaces
 
 
 class TestMainTool(unittest.TestCase):

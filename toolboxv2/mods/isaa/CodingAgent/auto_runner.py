@@ -233,7 +233,7 @@ Generate:
 """
         try:
             return ProjectScope(**self.isaa.format_class(ProjectScope, prompt))
-        except Exception as e:
+        except Exception:
             print("Error ProjectScope default Prompt refactoring.")
         response = self.isaa.mini_task_completion(prompt, mode=self.isaa.controller.get("CreatePrompt"))
         formatted = ProjectScope(**self.isaa.format_class(ProjectScope, response))

@@ -1,11 +1,9 @@
-from toolboxv2 import get_app, App, RequestData, Result
+from toolboxv2 import get_app, App, Result
 import os
 import asyncio
 import uuid
 import json
 import stripe
-from typing import Dict, List, Optional, Tuple, Any
-import queue
 from toolboxv2.mods.TruthSeeker import ArXivPDFProcessor
 
 # Initialize module

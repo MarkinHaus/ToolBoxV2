@@ -56,7 +56,7 @@ jobs:
           pip install dist/*.whl
 
       - name: Run tests
-        run: pytest tests/
+        run: pytest /toolboxV2/tests/
 
   test-rust:
     name: Rust Build & Test (Actix)

@@ -205,7 +205,7 @@ class FileHandler(Code):
         if default is None:
             default = self.file_handler_load.get(obj)
 
-        logger.info(f"no data found")
+        logger.info("no data found")
         return default
 
     def set_defaults_keys_file_handler(self, keys: dict, defaults: dict):

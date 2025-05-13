@@ -134,3 +134,12 @@ For more specific build and run commands, please consult the `scripts` section i
     python -m toolboxv2 --help
 ```
 
+### developing tip use to activate all hooks
+```bash
+    bash .github/hooks/setup_hooks.sh
+```
+
+#### pre-commit hook
+
+runs Ruff Bandit Safety versions and on <sum> in the commit msg auto summary of the changes
+crates an report in local-reports
