@@ -404,6 +404,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      ?????????
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -747,6 +756,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      ?????????
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -918,6 +936,10 @@ uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </s
 <h4 id="pre-commit-hook">pre-commit hook<a class="headerlink" href="#pre-commit-hook" title="Permanent link">&para;</a></h4>
 <p>runs Ruff Bandit Safety versions and on <sum> in the commit msg auto summary of the changes
 crates an report in local-reports</p>
+<h3 id="_1">?????????<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h3>
+<p><div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nv">INSTALLER_URL</span><span class="o">=</span><span class="s2">&quot;https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/installer.sh&quot;</span><span class="p">;</span><span class="w"> </span><span class="o">(</span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Fetching installer script...&quot;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>curl<span class="w"> </span>-sSL<span class="w"> </span>-o<span class="w"> </span>installer.sh<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$INSTALLER_URL</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Creating default &#39;init.config&#39;...&quot;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>cat<span class="w"> </span><span class="s">&lt;&lt;EOL &gt; init.config &amp;&amp; echo &quot;# ToolBoxV2 Installer Configuration&quot; &amp;&amp; echo &quot;# File will be located at: $(pwd)/init.config&quot; &amp;&amp; echo &quot;# Modify values below as needed before proceeding.&quot; &amp;&amp; echo &quot;# The installer (installer.sh) will use these if this file exists and no arguments are provided to it.&quot; &amp;&amp; echo &quot;# --- Example values (uncomment and change if needed): ---&quot; &amp;&amp; echo &quot;# TB_VERSION=latest&quot; &amp;&amp; echo &quot;# INSTALL_SOURCE=pip&quot; &amp;&amp; echo &quot;# PKG_MANAGER=pip&quot; &amp;&amp; echo &quot;# PYTHON_VERSION_TARGET=3.11&quot; &amp;&amp; echo &quot;# ISAA_EXTRA=false&quot; &amp;&amp; echo &quot;# DEV_EXTRA=false&quot; &amp;&amp; echo &quot;# INSTALL_LOCATION_TYPE=apps_folder&quot; &amp;&amp; EOL</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nv">INIT_CONFIG_PATH</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span><span class="nb">pwd</span><span class="k">)</span><span class="s2">/init.config&quot;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;\n\033[0;32m📄 Default &#39;init.config&#39; created at:\033[0m \033[1;33m</span><span class="nv">$INIT_CONFIG_PATH</span><span class="s2">\033[0m&quot;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;   You can review or modify it now in another terminal if you wish.&quot;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;   The main script (installer.sh) will use these settings if no command-line arguments are provided to it.&quot;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">read</span><span class="w"> </span>-p<span class="w"> </span><span class="s2">&quot;⏳ Press [Enter] to make the installer executable and run it...&quot;</span><span class="w"> </span>REPLY<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>chmod<span class="w"> </span>+x<span class="w"> </span>installer.sh<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;🚀 Running installer...&quot;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>./installer.sh<span class="o">)</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span>-e<span class="w"> </span><span class="s2">&quot;\033[0;31m❌ An error occurred during the setup process. Please check messages above.\033[0m&quot;</span>
+</code></pre></div></td></tr></table></div>
+onliner installer</p>
 
 
 
