@@ -58,7 +58,7 @@ jobs:
           python -m pip install "$WHEEL_FILE"
 
       - name: Run tests
-        run: pytest ./toolboxv2/tests/
+        run: python -m tb --test -n test
 
   pypi-publish:
       name: Upload Release to PyPI
@@ -180,11 +180,23 @@ jobs:
           -   name: Check out code
               uses: actions/checkout@v4
 
-          -   name: Extract version from pyproject.toml
+          -   name: Extract version from commit message
               id: version
               run: |
-                  version=$(grep '^version' ./toolboxv2/pyproject.toml | head -n 1 | cut -d '"' -f2)
-                  echo "version=$version" >> $GITHUB_OUTPUT
+                set -e
+                commit_msg=$(git log -1 --pretty=%B)
+                echo "🔍 Commit message: $commit_msg"
+
+                # Extract first pattern that looks like a version number x.y.z
+                version=$(echo "$commit_msg" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+
+                if [ -z "$version" ]; then
+                  echo "❌ No version number found in commit message"
+                  exit 1
+                fi
+
+                echo "✅ Found version: $version"
+                echo "version=$version" >> $GITHUB_OUTPUT
 
           -   name: Get short Git SHA
               id: gitsha
@@ -248,17 +260,3 @@ jobs:
           -H "Content-Type: application/json" \
           -d '{"event":"new_release", "dockerfile_url": "${{ needs.build-docker.outputs.dockerfile-url }}"}'
 
-  upload-assets:
-    name: Upload Additional Assets to GitHub Release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Upload init.config and installer.sh to Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            ./init.config
-            ./installer.sh
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
