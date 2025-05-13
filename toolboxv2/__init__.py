@@ -49,8 +49,9 @@ try:
     from .utils.system.types import AppArgs, MainToolType, AppType, ToolBoxError, ToolBoxInterfaces, ToolBoxResult, \
     ToolBoxInfo, ToolBoxResultBM
 except ImportError:
-    AppArgs, MainToolType, AppType, ToolBoxError, ToolBoxInterfaces, ToolBoxResult, \
-    ToolBoxInfo, ToolBoxResultBM = [None] * 9
+    (AppArgs, MainToolType, AppType,
+     ToolBoxError, ToolBoxInterfaces, ToolBoxResult,
+    ToolBoxInfo, ToolBoxResultBM) = [None] * 8
     print("⚠️ Missing: utils.system.types.AppArgs")
 
 try:
