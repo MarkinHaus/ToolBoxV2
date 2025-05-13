@@ -41,7 +41,6 @@ dependencies = [
     "sentence-transformers",
     "browser-use>=0.1.40",
     "python-git>=2018.2.1",
-    "langchain-experimental>=0.3.4",
     "rapidfuzz>=3.12.2",
     "astor>=0.8.1",
     "taichi>=1.7.3",

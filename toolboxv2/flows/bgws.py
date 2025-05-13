@@ -1,7 +1,6 @@
 import asyncio
 
-from toolboxv2 import AppArgs, App
-
+from toolboxv2 import App, AppArgs
 
 NAME = 'bgws'
 

@@ -1,33 +1,30 @@
 import asyncio
 import json
 import os
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
-from inspect import signature
-from typing import List
-
-import fastapi
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.middleware.sessions import SessionMiddleware
-from starlette.responses import JSONResponse, HTMLResponse, FileResponse, Response
-from starlette.websockets import WebSocketDisconnect
-from fastapi.responses import RedirectResponse
-
-import httpx
-from toolboxv2.mods.FastApi.fast_lit import BidirectionalStreamlitAppManager
-from toolboxv2.utils.system.session import RequestSession
-from toolboxv2.utils.extras.blobs import BlobFile, BlobStorage
-from toolboxv2.utils.security.cryp import DEVICE_KEY, Code
-
-from fastapi import FastAPI, Request, WebSocket, APIRouter, HTTPException, Depends
 import sys
 import time
-from fastapi.middleware.cors import CORSMiddleware
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 
-from toolboxv2 import TBEF, AppArgs, ApiResult, Spinner, get_app, Result
 # from toolboxv2.__main__ import setup_app
-
 from functools import partial, wraps
+from inspect import signature
+
+import fastapi
+import httpx
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from starlette.websockets import WebSocketDisconnect
+
+from toolboxv2 import TBEF, ApiResult, AppArgs, Result, Spinner, get_app
+from toolboxv2.mods.FastApi.fast_lit import BidirectionalStreamlitAppManager
+from toolboxv2.utils.extras.blobs import BlobFile, BlobStorage
+from toolboxv2.utils.security.cryp import DEVICE_KEY, Code
+from toolboxv2.utils.system.session import RequestSession
 
 from .fast_nice import create_nicegui_manager
 from .util import serve_app_func
@@ -561,24 +558,7 @@ def protect_url_split_helper(url_split):
         tb_app.logger.info(f'protected url dashboards {url_split}')
         return True
 
-    elif url_split[1] == "web":
-        return False
-
-    elif url_split[1] == "static":
-        return False
-
-    elif url_split[-1] == "favicon.ico":
-        return False
-    elif "_nicegui" in url_split and url_split[-1] == "codehilite.css":
-        return False
-    elif "_nicegui" in url_split and "static" in url_split:
-        return False
-    elif "_nicegui" in url_split and "components" in url_split:
-        return False
-    elif "_nicegui" in url_split and "libraries" in url_split:
-        return False
-
-    elif url_split[1] == "api" and url_split[2] in [
+    elif url_split[1] == "web" or url_split[1] == "static" or url_split[-1] == "favicon.ico" or "_nicegui" in url_split and url_split[-1] == "codehilite.css" or "_nicegui" in url_split and "static" in url_split or "_nicegui" in url_split and "components" in url_split or "_nicegui" in url_split and "libraries" in url_split or url_split[1] == "api" and url_split[2] in [
         'CloudM.AuthManager',
         'email_waiting_list'
     ] + tb_app.api_allowed_mods_list:
@@ -987,7 +967,8 @@ async def helper(id_name):
         exit()
     tb_app.get_mod("WebSocketManager")
 
-    from .fast_api_install import register, router as install_router
+    from .fast_api_install import register
+    from .fast_api_install import router as install_router
     tb_app.sprint("loading CloudM")
     tb_app.get_mod("CloudM")
     # all_mods = tb_app.get_all_mods()
@@ -1030,7 +1011,7 @@ async def helper(id_name):
             params: list = function_data.get('params')
             sig: signature = function_data.get('signature')
             state: bool = function_data.get('state')
-            api_methods: List[str] = function_data.get('api_methods', ["AUTO"])
+            api_methods: list[str] = function_data.get('api_methods', ["AUTO"])
 
             tb_func, error = tb_app.get_function((mod_name, function_name), state=state, specification="app")
             if not hasattr(tb_func, "__name__"):

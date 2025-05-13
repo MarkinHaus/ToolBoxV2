@@ -1,9 +1,12 @@
-import unittest
 import ctypes
 import sys
+import unittest
 
 # Import the function to be tested
-from toolboxv2.utils.extras.show_and_hide_console import show_console, TBRUNNER_console_viabel
+from toolboxv2.utils.extras.show_and_hide_console import (
+    TBRUNNER_console_viabel,
+    show_console,
+)
 
 
 class TestShowConsole(unittest.TestCase):

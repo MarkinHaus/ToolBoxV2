@@ -1,32 +1,10 @@
 # syntax=docker/dockerfile:1
 
-# Comments are provided throughout this file to help you get started.
-# If you need more help, visit the Dockerfile reference guide at
-# https://docs.docker.com/engine/reference/builder/
-
-ARG PYTHON_VERSION=3.11
-FROM python:${PYTHON_VERSION}-slim as base
-# FROM python
-# Prevents Python from writing pyc files.
-ENV PYTHONDONTWRITEBYTECODE=1
-
-# Keeps Python from buffering stdout and stderr to avoid situations where
-# the application crashes without emitting any logs due to buffering.
-ENV PYTHONUNBUFFERED=1
+FROM toolbox-base:3.11 as base
 
 WORKDIR /app
 
-RUN apt-get update
-RUN apt-get install libasound-dev libportaudio2 libportaudiocpp0 portaudio19-dev -y
-RUN apt-get install gcc npm git -y
-# Create a non-privileged user that the app will run under.
-
-# Copy the source code into the container.
-# cage for live
-# RUN pip install --target ./ ToolBoxV2
-# COPY ./toolboxv2/web ./ToolBoxV2/toolboxv2/web
-# COPY ./toolboxv2/web/package_docker.json ./ToolBoxV2/toolboxv2/web/package.json
-# RUN npx bun install -y ./toolboxv2/web/
+# Copy only what you need — layer caching helps
 
 COPY ./setup.py ./setup.py
 COPY ./requirements.txt ./requirements.txt
@@ -45,31 +23,20 @@ COPY ./toolboxv2/favicon.ico ./toolboxv2/favicon.ico
 COPY ./toolboxv2/index.html ./toolboxv2/index.html
 COPY ./toolboxv2/index.js ./toolboxv2/index.js
 COPY ./toolboxv2/package.json ./toolboxv2/package.json
+COPY ./toolboxv2/src-core/src ./toolboxv2/src-core/src
+COPY ./toolboxv2/src-core/config.toml ./toolboxv2/src-core/config.toml
+COPY ./toolboxv2/src-core/Cargo.toml ./toolboxv2/src-core/Cargo.toml
 
-# Install the local application using pip.
-
-# RUN npm install --prefix ./toolboxv2
+# JS deps (cached if package.json unchanged)
 RUN npm install --prefix ./toolboxv2/web/
-RUN npm install --save-dev webpack-merge --prefix ./toolboxv2/web
+RUN npm install --save-dev webpack-merge --prefix ./toolboxv2/web/
 
-RUN pip install -e .[isaa]
-# Expose the port that the application listens on.
+# Install local Python package (torch already installed)
+RUN pip install uv
+RUN uv pip install -e .[isaa] --system
 
-EXPOSE 5000/tcp
-EXPOSE 5000/udp
+# Expose ports
+EXPOSE 5000/tcp 5000/udp 8000/tcp 8000/udp 8080/tcp 8080/udp 6587/tcp 6587/udp 17334/tcp 17334/udp
 
-EXPOSE 8000/tcp
-EXPOSE 8000/udp
-
-EXPOSE 8080/tcp
-EXPOSE 8080/udp
-
-EXPOSE 6587/tcp
-EXPOSE 6587/udp
-
-EXPOSE 17334/tcp
-EXPOSE 17334/udp
-
-
-# Run the application.
-CMD tb api start
+# Start
+CMD ["tb", "api", "start"]

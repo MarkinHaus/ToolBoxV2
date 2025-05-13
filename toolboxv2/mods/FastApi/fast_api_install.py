@@ -3,9 +3,8 @@ import os
 import pathlib
 import time
 import uuid
-from typing import Set
 
-from fastapi import APIRouter, UploadFile, WebSocket, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, WebSocket
 
 from toolboxv2 import get_app
 from toolboxv2.utils.system.api import find_highest_zip_version_entry
@@ -342,7 +341,7 @@ def save_mod_snapshot(app, mod_name, provider=None, tb_state: TbState or None = 
                  }}
     installer_path = f"./installer/{mod_name}-installer.json"
     if os.path.exists(installer_path):
-        with open(installer_path, "r") as installer_file:
+        with open(installer_path) as installer_file:
             file_data: dict = json.loads(installer_file.read())
             if len(file_data.get('mods', [])) > 1:
                 file_data['mods'].append(mod_data.url)
@@ -389,7 +388,7 @@ from nicegui import ui
 
 
 class FileBrowser:
-    ALLOWED_DIRECTORIES: Set[str] = {"mods_sto", "flows", "static", "apps"}
+    ALLOWED_DIRECTORIES: set[str] = {"mods_sto", "flows", "static", "apps"}
 
     def __init__(self, start_dir: str):
         self.static_dir = pathlib.Path(start_dir).resolve()

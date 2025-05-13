@@ -1,7 +1,7 @@
 
-from test import NeuralSystem
-
 import torch
+
+from test import NeuralSystem
 
 if __name__ == "__main__":
 

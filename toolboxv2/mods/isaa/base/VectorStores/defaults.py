@@ -4,22 +4,22 @@ except ImportError:
     numba = lambda :None
     numba.jit =lambda **_:lambda x:x
     numba.njit =lambda **_:lambda x:x
-import numpy as np
-import os
-import threading
-
-import redis
 import json
+import os
 import pickle
-from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
+import threading
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Any
 
+import numpy as np
+import redis
 import torch
+
 try:
-    from redis.commands.search.field import VectorField, TextField
-    from redis.commands.search.query import Query
+    from redis.commands.search.field import TextField, VectorField
     from redis.commands.search.indexDefinition import IndexDefinition
+    from redis.commands.search.query import Query
 except ImportError:
     VectorField = lambda *a, **k: None
     TextField = lambda *a, **k: None
@@ -30,21 +30,21 @@ class Chunk:
     """Represents a chunk of text with its embedding and metadata"""
     text: str
     embedding: np.ndarray
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     content_hash: str
-    cluster_id: Optional[int] = None
+    cluster_id: int | None = None
 
 
 class AbstractVectorStore(ABC):
     """Abstract base class for vector stores"""
 
     @abstractmethod
-    def add_embeddings(self, embeddings: np.ndarray, chunks: List[Chunk]) -> None:
+    def add_embeddings(self, embeddings: np.ndarray, chunks: list[Chunk]) -> None:
         """Add embeddings and their corresponding chunks to the store"""
         pass
 
     @abstractmethod
-    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> List[Chunk]:
+    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> list[Chunk]:
         """Search for similar vectors"""
         pass
 
@@ -124,7 +124,7 @@ class NumpyVectorStore(AbstractVectorStore):
         ti.init(arch=ti.gpu if use_gpu else ti.cpu)
         self.normalized_embeddings = None
 
-    def add_embeddings(self, embeddings: np.ndarray, chunks: List[Chunk]) -> None:
+    def add_embeddings(self, embeddings: np.ndarray, chunks: list[Chunk]) -> None:
         if len(embeddings.shape) != 2:
             raise ValueError("Embeddings must be 2D array")
         if len(chunks) != embeddings.shape[0]:
@@ -140,7 +140,7 @@ class NumpyVectorStore(AbstractVectorStore):
         # Reset normalized embeddings cache
         self.normalized_embeddings = None
 
-    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> List[Chunk]:
+    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> list[Chunk]:
         if self.embeddings.size == 0:
             return []
 
@@ -270,13 +270,13 @@ class FaissVectorStore(AbstractVectorStore):
         self.index = faiss.IndexFlatIP(dimension)
         self.chunks = []
 
-    def add_embeddings(self, embeddings: np.ndarray, chunks: List[Chunk]) -> None:
+    def add_embeddings(self, embeddings: np.ndarray, chunks: list[Chunk]) -> None:
         if embeddings.shape[1] != self.dimension:
             raise ValueError(f"Expected dimension {self.dimension}, got {embeddings.shape[1]}")
         self.index.add(embeddings.astype(np.float32))
         self.chunks.extend(chunks)
 
-    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> List[Chunk]:
+    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> list[Chunk]:
         if len(self.chunks) == 0:
             return []
 
@@ -284,7 +284,7 @@ class FaissVectorStore(AbstractVectorStore):
         distances, indices = self.index.search(query, k)
 
         results = []
-        for i, score in zip(indices[0], distances[0]):
+        for i, score in zip(indices[0], distances[0], strict=False):
             if score >= min_similarity and i < len(self.chunks):
                 results.append(self.chunks[i])
         return results
@@ -350,9 +350,9 @@ class RedisVectorStore(AbstractVectorStore):
                 definition=definition
             )
 
-    def add_embeddings(self, embeddings: np.ndarray, chunks: List[Chunk]) -> None:
+    def add_embeddings(self, embeddings: np.ndarray, chunks: list[Chunk]) -> None:
         pipe = self.redis_client.pipeline()
-        for emb, chunk in zip(embeddings, chunks):
+        for emb, chunk in zip(embeddings, chunks, strict=False):
             key = f"{self.prefix}{chunk.content_hash}"
             pipe.hset(key, mapping={
                 "text": chunk.text,
@@ -363,7 +363,7 @@ class RedisVectorStore(AbstractVectorStore):
             })
         pipe.execute()
 
-    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> List[Chunk]:
+    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> list[Chunk]:
         query_bytes = query_embedding.astype(np.float32).tobytes()
         query = (
             Query(f"*=>[KNN {k} @embedding $vec AS score]")
@@ -522,7 +522,7 @@ class EnhancedVectorStore(AbstractVectorStore):
         self.mmap_file = None
         self.mmap_array = None
 
-    def add_embeddings(self, embeddings: np.ndarray, chunks: List[Chunk]) -> None:
+    def add_embeddings(self, embeddings: np.ndarray, chunks: list[Chunk]) -> None:
         with self.lock:
             if len(embeddings.shape) != 2:
                 raise ValueError("Embeddings must be 2D array")
@@ -579,7 +579,7 @@ class EnhancedVectorStore(AbstractVectorStore):
             # Extend chunks list
             self.chunks.extend(chunks)
 
-    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> List[Chunk]:
+    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> list[Chunk]:
         if len(self.chunks) == 0:
             return []
 
@@ -591,7 +591,7 @@ class EnhancedVectorStore(AbstractVectorStore):
 
         # Convert distances to similarities and filter
         similarities = 1 - distances[0]
-        return [self.chunks[idx] for idx, sim in zip(labels[0], similarities) if sim >= min_similarity]
+        return [self.chunks[idx] for idx, sim in zip(labels[0], similarities, strict=False) if sim >= min_similarity]
 
     def _calculate_max_elements(self) -> int:
         bytes_per_vector = self.config.dimension * 4  # 4 bytes per float32
@@ -735,7 +735,7 @@ class FastVectorStore(AbstractVectorStore):
         self._compute_centroids = _compute_centroids_FastVectorStore
         self._batch_similarity = _batch_similarity_FastVectorStore
 
-    def add_embeddings(self, embeddings: np.ndarray, chunks: List[Chunk]) -> None:
+    def add_embeddings(self, embeddings: np.ndarray, chunks: list[Chunk]) -> None:
         if len(embeddings) == 0:
             return
 
@@ -781,7 +781,7 @@ class FastVectorStore(AbstractVectorStore):
         self.index_built = True
         self.index_dirty = False
 
-    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> List[Chunk]:
+    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> list[Chunk]:
         if self.current_size == 0:
             return []
 
@@ -924,7 +924,7 @@ class FastVectorStoreO(AbstractVectorStore):
         self._compute_centroids = _compute_centroids
         self._batch_similarity = _batch_similarity
 
-    def add_embeddings(self, embeddings: np.ndarray, chunks: List[Chunk]) -> None:
+    def add_embeddings(self, embeddings: np.ndarray, chunks: list[Chunk]) -> None:
         if len(embeddings) == 0:
             return
 
@@ -977,7 +977,7 @@ class FastVectorStoreO(AbstractVectorStore):
         self.index_built = True
         self.index_dirty = False
 
-    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> List[Chunk]:
+    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> list[Chunk]:
         if self.current_size == 0:
             return []
 
@@ -1099,7 +1099,7 @@ class FastVectorStore1(AbstractVectorStore):
         norm = np.sqrt(np.sum(vector * vector)) + 1e-8
         return vector / norm
 
-    def add_embeddings(self, embeddings: np.ndarray, chunks: List[Chunk]) -> None:
+    def add_embeddings(self, embeddings: np.ndarray, chunks: list[Chunk]) -> None:
         if len(embeddings.shape) != 2:
             raise ValueError("Embeddings must be 2D array")
         if len(chunks) != embeddings.shape[0]:
@@ -1123,7 +1123,7 @@ class FastVectorStore1(AbstractVectorStore):
             self.normalized_embeddings = np.empty_like(self.embeddings, dtype=np.float32)
             self._batch_normalize(self.embeddings, self.normalized_embeddings)
 
-    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> List[Chunk]:
+    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> list[Chunk]:
         if self.embeddings.size == 0:
             return []
 
@@ -1253,7 +1253,7 @@ class FastVectorStore2(AbstractVectorStore):
         self._batch_similarity_gpu = batch_similarity_gpu_FastVectorStore2
         self._compute_centroids_cpu = compute_centroids_cpu_FastVectorStore2
 
-    def add_embeddings(self, embeddings: np.ndarray, chunks: List[Chunk]) -> None:
+    def add_embeddings(self, embeddings: np.ndarray, chunks: list[Chunk]) -> None:
         if len(embeddings) == 0:
             return
 
@@ -1287,7 +1287,7 @@ class FastVectorStore2(AbstractVectorStore):
         # Mark index as dirty
         self.index_dirty = True
 
-    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> List[Chunk]:
+    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> list[Chunk]:
         if self.current_size == 0:
             return []
 

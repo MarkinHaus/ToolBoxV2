@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.tests.test_web import ensure_test_user

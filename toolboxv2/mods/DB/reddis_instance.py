@@ -1,6 +1,7 @@
 import json
 import time
-from typing import Optional, Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 try:
     import redis
@@ -9,7 +10,9 @@ except ImportError:
     redis.Redis = None
 
 from toolboxv2 import Result, get_logger
+
 from .types import AuthenticationTypes
+
 
 def sync_redis_databases(source_url, target_url):
     """Synchronize keys from the source Redis database to the target Redis database.
@@ -59,7 +62,7 @@ class MiniRedis:
 
     def __init__(self):
         self.encoding = 'utf-8'
-        self.rcon: Optional[redis.Redis] = None
+        self.rcon: redis.Redis | None = None
 
     def initialize(self, uri: str):
         try:
@@ -130,7 +133,7 @@ class MiniRedis:
         if not isinstance(value, list):
             value: list[Any] = [value]
 
-        db_val: Optional[str] = self.rcon.get(key)
+        db_val: str | None = self.rcon.get(key)
         save_val: str = db_val or '{"set": {}}'
         if db_val:
             set_val: list = json.loads(db_val).get('set', {})

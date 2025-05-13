@@ -1,32 +1,34 @@
 import asyncio
 import hashlib
+import json
 import math
 import os
 import pickle
+import re
 import time
 import uuid
-from typing import Any
+from collections import defaultdict
+from dataclasses import dataclass
+from typing import Any, NamedTuple
 
 import networkx as nx
 import numpy as np
 from pydantic import BaseModel
-
-from toolboxv2 import get_logger, get_app, Spinner
 from sklearn.cluster import HDBSCAN
 
-from typing import Dict, Set, Tuple, Optional, NamedTuple
-from dataclasses import dataclass
-import json
-from collections import defaultdict
-import re
-
+from toolboxv2 import Spinner, get_app, get_logger
+from toolboxv2.mods.isaa.base.VectorStores.defaults import (
+    AbstractVectorStore,
+    EnhancedVectorStore,
+    FaissVectorStore,
+    FastVectorStore1,
+    FastVectorStoreO,
+    NumpyVectorStore,
+    VectorStoreConfig,
+)
 from toolboxv2.mods.isaa.base.VectorStores.qdrant_store import QdrantVectorStore
-from toolboxv2.mods.isaa.extras.filter import after_format
-from toolboxv2.mods.isaa.base.VectorStores.defaults import AbstractVectorStore, FastVectorStoreO, FaissVectorStore, \
-    EnhancedVectorStore, FastVectorStore1, NumpyVectorStore, VectorStoreConfig
 from toolboxv2.mods.isaa.extras.adapter import litellm_complete
-from typing import List
-
+from toolboxv2.mods.isaa.extras.filter import after_format
 
 i__ = [0, 0, 0]
 
@@ -35,24 +37,24 @@ class Chunk:
     """Represents a chunk of text with its embedding and metadata"""
     text: str
     embedding: np.ndarray
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     content_hash: str
-    cluster_id: Optional[int] = None
+    cluster_id: int | None = None
 
 
 @dataclass
 class RetrievalResult:
     """Structure for organizing retrieval results"""
-    overview: List[Dict[str, any]]  # List of topic summaries
-    details: List[Chunk]  # Detailed chunks
-    cross_references: Dict[str, List[Chunk]]  # Related chunks by topic
+    overview: list[dict[str, any]]  # List of topic summaries
+    details: list[Chunk]  # Detailed chunks
+    cross_references: dict[str, list[Chunk]]  # Related chunks by topic
 
 
 class TopicSummary(NamedTuple):
     topic_id: int
     summary: str
-    key_chunks: List[Chunk]
-    related_chunks: List[Chunk]
+    key_chunks: list[Chunk]
+    related_chunks: list[Chunk]
 
 
 def normalize_vectors(vectors: np.ndarray) -> np.ndarray:
@@ -75,18 +77,18 @@ class rConcept(BaseModel):
     """
     name: str
     category: str
-    relationships: Dict[str, List[str]]
+    relationships: dict[str, list[str]]
     importance_score: float
-    context_snippets: List[str]
+    context_snippets: list[str]
 
 @dataclass
 class Concept:
     name: str
     category: str
-    relationships: Dict[str, Set[str]]
+    relationships: dict[str, set[str]]
     importance_score: float
-    context_snippets: List[str]
-    metadata: Dict[str, Any]
+    context_snippets: list[str]
+    metadata: dict[str, Any]
 
 
 class TConcept(BaseModel):
@@ -100,9 +102,9 @@ class TConcept(BaseModel):
         categories (List[str]): A list of concept categories to filter or group the concepts.
     """
     min_importance: float
-    target_concepts: List[str]
-    relationship_types: List[str]
-    categories: List[str]
+    target_concepts: list[str]
+    relationship_types: list[str]
+    categories: list[str]
 
 
 class Concepts(BaseModel):
@@ -112,7 +114,7 @@ class Concepts(BaseModel):
     Attributes:
         concepts (List[rConcept]): A list of Concept instances, each representing an individual key concept.
     """
-    concepts: List[rConcept]
+    concepts: list[rConcept]
 
 class ConceptAnalysis(BaseModel):
     """
@@ -175,7 +177,7 @@ class ConceptGraph:
     """Manages concept relationships and hierarchies"""
 
     def __init__(self):
-        self.concepts: Dict[str, Concept] = {}
+        self.concepts: dict[str, Concept] = {}
 
     def add_concept(self, concept: Concept):
         """Add or update a concept in the graph"""
@@ -192,7 +194,7 @@ class ConceptGraph:
         else:
             self.concepts[concept.name.lower()] = concept
 
-    def get_related_concepts(self, concept_name: str, relationship_type: Optional[str] = None) -> Set[str]:
+    def get_related_concepts(self, concept_name: str, relationship_type: str | None = None) -> set[str]:
         """Get related concepts, optionally filtered by relationship type"""
         if concept_name not in self.concepts:
             return set()
@@ -255,7 +257,7 @@ class GraphVisualizer:
         net.save_graph(output_file)
         print(f"Graph saved to {output_file} Open in browser to view.", len(nx_graph))
         if get_output:
-            c = open(output_file, "r", encoding="utf-8").read()
+            c = open(output_file, encoding="utf-8").read()
             os.remove(output_file)
             return c
 
@@ -288,7 +290,7 @@ class ConceptExtractor:
         self.concept_graph = ConceptGraph()
         self.requests_per_second = requests_per_second
 
-    async def extract_concepts(self, texts: List[str], metadatas: List[Dict[str, Any]]) -> List[List[Concept]]:
+    async def extract_concepts(self, texts: list[str], metadatas: list[dict[str, Any]]) -> list[list[Concept]]:
         """
         Extract concepts from texts using concurrent processing with rate limiting.
         Requests are made at the specified rate while responses are processed asynchronously.
@@ -321,10 +323,10 @@ class ConceptExtractor:
         # Prepare all requests
         requests = [
             (idx, f"Text to Convert in to JSON structure:\n{text}", system_prompt, metadata)
-            for idx, (text, metadata) in enumerate(zip(texts, metadatas))
+            for idx, (text, metadata) in enumerate(zip(texts, metadatas, strict=False))
         ]
 
-        async def process_single_request(idx: int, prompt: str, system_prompt: str, metadata: Dict[str, Any]):
+        async def process_single_request(idx: int, prompt: str, system_prompt: str, metadata: dict[str, Any]):
             """Process a single request with rate limiting"""
             try:
                 # Wait for rate limit
@@ -346,7 +348,7 @@ class ConceptExtractor:
                 print(f"Error initiating request {idx}: {str(e)}")
                 return idx, None
 
-        async def process_response(idx: int, response_future) -> List[Concept]:
+        async def process_response(idx: int, response_future) -> list[Concept]:
             """Process the response once it's ready"""
             try:
                 if response_future is None:
@@ -394,7 +396,7 @@ class ConceptExtractor:
 
         return sorted_results
 
-    async def _process_response(self, response: Any, metadata: Dict[str, Any]) -> List[Concept]:
+    async def _process_response(self, response: Any, metadata: dict[str, Any]) -> list[Concept]:
         """Helper method to process a single response and convert it to Concepts"""
         try:
             # Extract content from response
@@ -432,7 +434,7 @@ class ConceptExtractor:
             i__[2] +=1
             return []
 
-    async def process_chunks(self, chunks: List[Chunk]) -> None:
+    async def process_chunks(self, chunks: list[Chunk]) -> None:
         """
         Process all chunks in batch to extract and store concepts.
         Each chunk's metadata will be updated with the concept names and relationships.
@@ -443,14 +445,14 @@ class ConceptExtractor:
         all_concepts = await self.extract_concepts(texts, [chunk.metadata for chunk in chunks])
 
         # Update each chunk's metadata with its corresponding concepts.
-        for chunk, concepts in zip(chunks, all_concepts):
+        for chunk, concepts in zip(chunks, all_concepts, strict=False):
             chunk.metadata["concepts"] = [c.name for c in concepts]
             chunk.metadata["concept_relationships"] = {
                 c.name: {k: list(v) for k, v in c.relationships.items()}
                 for c in concepts
             }
 
-    async def query_concepts(self, query: str) -> Dict[str, any]:
+    async def query_concepts(self, query: str) -> dict[str, any]:
         """Query the concept graph based on natural language query"""
 
         system_prompt = """
@@ -570,7 +572,7 @@ class TextSplitter:
 
         return estimated_chunks * avg_chunk_size
 
-    def split_text(self, text: str) -> List[str]:
+    def split_text(self, text: str) -> list[str]:
         """Split text into chunks with overlap"""
         # Clean and normalize text
         text = re.sub(r'\s+', ' ', text).strip()
@@ -611,8 +613,8 @@ class KnowledgeBase:
     def __init__(self, embedding_dim: int = 768, similarity_threshold: float = 0.61, batch_size: int = 64,
                  n_clusters: int = 4, deduplication_threshold: float = 0.85, model_name=os.getenv("DEFAULTMODELSUMMERY"),
                  embedding_model=os.getenv("DEFAULTMODELEMBEDDING"),
-                 vis_class:Optional[str] = "EnhancedVectorStore",
-                 vis_kwargs:Optional[Dict[str, Any]]=None,
+                 vis_class:str | None = "EnhancedVectorStore",
+                 vis_kwargs:dict[str, Any] | None=None,
                  requests_per_second=85.,
                  chunk_size: int = 3600,
                  chunk_overlap: int = 130,
@@ -620,7 +622,7 @@ class KnowledgeBase:
                  ):
         """Initialize the knowledge base with given parameters"""
 
-        self.existing_hashes: Set[str] = set()
+        self.existing_hashes: set[str] = set()
         self.embedding_model = embedding_model
         self.embedding_dim = embedding_dim
         self.similarity_threshold = similarity_threshold
@@ -687,10 +689,10 @@ class KnowledgeBase:
         """Compute SHA-256 hash of text"""
         return hashlib.sha256(text.encode('utf-8', errors='ignore')).hexdigest()
 
-    async def _get_embeddings(self, texts: List[str]) -> np.ndarray:
+    async def _get_embeddings(self, texts: list[str]) -> np.ndarray:
         """Get normalized embeddings in batches"""
         try:
-            async def process_batch(batch: List[str]) -> np.ndarray:
+            async def process_batch(batch: list[str]) -> np.ndarray:
                 from toolboxv2.mods.isaa.extras.adapter import litellm_embed
                 # print("Processing", batch)
                 embeddings = await litellm_embed(texts=batch, model=self.embedding_model)
@@ -742,7 +744,7 @@ class KnowledgeBase:
                 keep_mask[similar_indices] = False
 
             # Keep only unique chunks
-            unique_chunks = [chunk for chunk, keep in zip(self.vdb.chunks, keep_mask) if keep]
+            unique_chunks = [chunk for chunk, keep in zip(self.vdb.chunks, keep_mask, strict=False) if keep]
             removed_count = len(self.vdb.chunks) - len(unique_chunks)
 
             # Update chunks and hashes
@@ -762,9 +764,9 @@ class KnowledgeBase:
 
     async def _add_data(
         self,
-        texts: List[str],
-        metadata: Optional[List[Dict[str, Any]]]= None,
-    ) -> Tuple[int, int]:
+        texts: list[str],
+        metadata: list[dict[str, Any]] | None= None,
+    ) -> tuple[int, int]:
         """
         Process and add new data to the knowledge base
         Returns: Tuple of (added_count, duplicate_count)
@@ -775,7 +777,7 @@ class KnowledgeBase:
             # Compute hashes and filter exact duplicates
             hashes = [self.compute_hash(text) for text in texts]
             unique_data = []
-            for t, m, h in zip(texts, metadata, hashes):
+            for t, m, h in zip(texts, metadata, hashes, strict=False):
                 if h in self.existing_hashes:
                     continue
                 # Update existing hashes
@@ -804,7 +806,7 @@ class KnowledgeBase:
                     embeddings_final.append(embeddings[i])
 
             else:
-                texts , metadata, hashes = zip(*unique_data)
+                texts , metadata, hashes = zip(*unique_data, strict=False)
                 embeddings_final = embeddings
 
             if not texts:  # All were similar to existing chunks
@@ -813,7 +815,7 @@ class KnowledgeBase:
             # Create and add new chunks
             new_chunks = [
                 Chunk(text=t, embedding=e, metadata=m, content_hash=h)
-                for t, e, m, h in zip(texts, embeddings_final, metadata, hashes)
+                for t, e, m, h in zip(texts, embeddings_final, metadata, hashes, strict=False)
             ]
 
             # Add new chunks
@@ -841,9 +843,9 @@ class KnowledgeBase:
 
     async def add_data(
         self,
-        texts: List[str],
-        metadata: Optional[List[Dict[str, Any]]] = None,
-    ) -> Tuple[int, int]:
+        texts: list[str],
+        metadata: list[dict[str, Any]] | None = None,
+    ) -> tuple[int, int]:
         """Enhanced version with smart splitting and clustering"""
         if isinstance(texts, str):
             texts = [texts]
@@ -886,7 +888,7 @@ class KnowledgeBase:
 
             return await self._add_data(split_texts, split_metadata)
 
-    def _update_similarity_graph(self, embeddings: np.ndarray, chunk_ids: List[int]):
+    def _update_similarity_graph(self, embeddings: np.ndarray, chunk_ids: list[int]):
         """Update similarity graph for connected information detection"""
         similarities = np.dot(embeddings, embeddings.T)
 
@@ -904,11 +906,11 @@ class KnowledgeBase:
     async def retrieve(
         self,
         query: str="",
-        query_embedding: Optional[np.ndarray] = None,
+        query_embedding: np.ndarray | None = None,
         k: int = 5,
         min_similarity: float = 0.2,
         include_connected: bool = True
-    ) -> List[Chunk]:
+    ) -> list[Chunk]:
         """Enhanced retrieval with connected information"""
         if query_embedding is None:
             query_embedding = (await self._get_embeddings([query]))[0]
@@ -941,7 +943,7 @@ class KnowledgeBase:
             reverse=True
         )[:k * 2]  # Return more results when including connected information
 
-    async def forget_irrelevant(self, irrelevant_concepts: List[str], similarity_threshold: Optional[float]=None) -> int:
+    async def forget_irrelevant(self, irrelevant_concepts: list[str], similarity_threshold: float | None=None) -> int:
         """
         Remove chunks similar to irrelevant concepts
         Returns: Number of chunks removed
@@ -982,12 +984,12 @@ class KnowledgeBase:
 
     def _cluster_chunks(
         self,
-        chunks: List[Chunk],
-        query_embedding: Optional[np.ndarray] = None,
+        chunks: list[Chunk],
+        query_embedding: np.ndarray | None = None,
         min_cluster_size: int = 2,
         min_samples: int = 1,
         max_clusters: int = 10
-    ) -> Dict[int, List[Chunk]]:
+    ) -> dict[int, list[Chunk]]:
         """
         Enhanced clustering of chunks into topics with query awareness
         and dynamic parameter adjustment
@@ -1054,7 +1056,7 @@ class KnowledgeBase:
             return self._fallback_clustering(chunks, query_embedding)
 
         # Organize chunks by cluster
-        clusters: Dict[int, List[Chunk]] = {}
+        clusters: dict[int, list[Chunk]] = {}
 
         # Sort clusters by size and relevance
         cluster_scores = []
@@ -1065,7 +1067,7 @@ class KnowledgeBase:
 
             # Fixed: Use boolean mask to select chunks for current cluster
             cluster_mask = best_clusters == label
-            cluster_chunks = [chunk for chunk, is_in_cluster in zip(chunks, cluster_mask) if is_in_cluster]
+            cluster_chunks = [chunk for chunk, is_in_cluster in zip(chunks, cluster_mask, strict=False) if is_in_cluster]
 
             # Skip empty clusters
             if not cluster_chunks:
@@ -1088,7 +1090,7 @@ class KnowledgeBase:
             clusters[i] = cluster_chunks
 
         # Handle noise points by assigning to nearest cluster
-        noise_chunks = [chunk for chunk, label in zip(chunks, best_clusters) if label == -1]
+        noise_chunks = [chunk for chunk, label in zip(chunks, best_clusters, strict=False) if label == -1]
         if noise_chunks:
             self._assign_noise_points(noise_chunks, clusters, query_embedding)
 
@@ -1098,7 +1100,7 @@ class KnowledgeBase:
     def _evaluate_clustering(
         embeddings: np.ndarray,
         labels: np.ndarray,
-        query_embedding: Optional[np.ndarray] = None
+        query_embedding: np.ndarray | None = None
     ) -> float:
         """
         Evaluate clustering quality using multiple metrics
@@ -1144,9 +1146,9 @@ class KnowledgeBase:
 
     @staticmethod
     def _fallback_clustering(
-        chunks: List[Chunk],
-        query_embedding: Optional[np.ndarray] = None
-    ) -> Dict[int, List[Chunk]]:
+        chunks: list[Chunk],
+        query_embedding: np.ndarray | None = None
+    ) -> dict[int, list[Chunk]]:
         """
         Simple fallback clustering when HDBSCAN fails
         """
@@ -1170,9 +1172,9 @@ class KnowledgeBase:
 
     @staticmethod
     def _assign_noise_points(
-        noise_chunks: List[Chunk],
-        clusters: Dict[int, List[Chunk]],
-        query_embedding: Optional[np.ndarray] = None
+        noise_chunks: list[Chunk],
+        clusters: dict[int, list[Chunk]],
+        query_embedding: np.ndarray | None = None
     ) -> None:
         """
         Assign noise points to nearest clusters
@@ -1205,7 +1207,7 @@ class KnowledgeBase:
 
     @staticmethod
     def _generate_topic_summary(
-        chunks: List[Chunk],
+        chunks: list[Chunk],
         query_embedding: np.ndarray,
         max_sentences=3
     ) -> str:
@@ -1348,10 +1350,10 @@ class KnowledgeBase:
 
     def _find_cross_references(
         self,
-        chunk_ids: Set[int],
+        chunk_ids: set[int],
         depth: int,
         query_embedding: np.ndarray
-    ) -> Set[int]:
+    ) -> set[int]:
         """Enhanced cross-reference finding with relevance scoring"""
         related_ids = set(chunk_ids)
         current_depth = 0
@@ -1388,7 +1390,7 @@ class KnowledgeBase:
     def _is_relevant_cross_ref(
         chunk: Chunk,
         query_embedding: np.ndarray,
-        initial_results: List[Chunk]
+        initial_results: list[Chunk]
     ) -> bool:
         """Determine if a cross-reference is relevant enough to include"""
         # Calculate similarity to query
@@ -1407,10 +1409,10 @@ class KnowledgeBase:
 
     @staticmethod
     def _select_diverse_cross_refs(
-        cross_refs: List[Chunk],
+        cross_refs: list[Chunk],
         max_count: int,
         query_embedding: np.ndarray
-    ) -> List[Chunk]:
+    ) -> list[Chunk]:
         """Select diverse and relevant cross-references"""
         if not cross_refs or len(cross_refs) <= max_count:
             return cross_refs
@@ -1449,7 +1451,7 @@ class KnowledgeBase:
 
     @staticmethod
     def _calculate_topic_relevance(
-        chunks: List[Chunk],
+        chunks: list[Chunk],
         query_embedding: np.ndarray,
     ) -> float:
         """Calculate overall topic relevance score"""
@@ -1463,10 +1465,10 @@ class KnowledgeBase:
 
     @staticmethod
     def _sort_chunks_by_relevance(
-        chunks: List[Chunk],
+        chunks: list[Chunk],
         query_embedding: np.ndarray,
-        initial_results: List[Chunk]
-    ) -> List[Chunk]:
+        initial_results: list[Chunk]
+    ) -> list[Chunk]:
         """Sort chunks by combined relevance score"""
         scored_chunks = []
         for chunk in chunks:
@@ -1484,7 +1486,7 @@ class KnowledgeBase:
         scored_chunks.sort(reverse=True)
         return [chunk for _, chunk in scored_chunks]
 
-    async def query_concepts(self, query: str) -> Dict[str, any]:
+    async def query_concepts(self, query: str) -> dict[str, any]:
         """Query concepts extracted from the knowledge base"""
         return await self.concept_extractor.query_concepts(query)
 
@@ -1496,7 +1498,7 @@ class KnowledgeBase:
         cross_ref_depth: int = 2,
         max_cross_refs: int = 10,
         max_sentences: int = 10
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Unified retrieval function that combines concept querying, retrieval with overview,
         and basic retrieval, then generates a comprehensive summary using LLM.
@@ -1632,7 +1634,7 @@ class KnowledgeBase:
             }
         }
 
-    def save(self, path: str) -> Optional[bytes]:
+    def save(self, path: str) -> bytes | None:
         """
         Save the complete knowledge base to disk, including all sub-components
 

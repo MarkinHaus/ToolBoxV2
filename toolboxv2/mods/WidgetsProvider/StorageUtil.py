@@ -1,12 +1,13 @@
 import json
 import os
-from typing import List, Optional
 
-from toolboxv2 import get_app, App, Result, TBEF
 from fastapi import Request
-from ..CloudM import User
+
+from toolboxv2 import TBEF, App, Result, get_app
+
 from ...utils.extras.base_widget import get_user_from_request
 from ...utils.system.session import RequestSession
+from ..CloudM import User
 
 Name = 'WidgetsProvider'
 export = get_app("WidgetsProvider.Export").tb
@@ -33,7 +34,7 @@ def get_all_sto_names(app, user_name="", user_id=""):
     return res
 
 
-def set_sto_names(app, sto_names: List[str], user_name: str = "", user_id: str = "") -> Result:
+def set_sto_names(app, sto_names: list[str], user_name: str = "", user_id: str = "") -> Result:
     query = f'{get_db_query(user_name=user_name, user_id=user_id)}::AllSTOS'
     return app.run_any(TBEF.DB.SET, query=query, data=sto_names, get_results=True)
 
@@ -138,7 +139,7 @@ async def get_names(app: App = None, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="get_sto")
-async def get_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: Request or None = None):
+async def get_sto_by_name(app: App = None, sto_name: str | None = None, request: Request or None = None):
     if sto_name is None or len(sto_name) <= 1:
         return Result.default_user_error(info="No name specified")
     if app is None:
@@ -153,7 +154,7 @@ async def get_sto_by_name(app: App = None, sto_name: Optional[str] = None, reque
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="set_sto")
-async def set_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: RequestSession or None = None):
+async def set_sto_by_name(app: App = None, sto_name: str | None = None, request: RequestSession or None = None):
     if sto_name is None or len(sto_name) <= 1:
         return Result.default_user_error(info="No name specified")
     if app is None:
@@ -176,7 +177,7 @@ async def set_sto_by_name(app: App = None, sto_name: Optional[str] = None, reque
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="add_sto")
-async def add_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: Request or None = None):
+async def add_sto_by_name(app: App = None, sto_name: str | None = None, request: Request or None = None):
     if sto_name is None or len(sto_name) <= 1:
         return Result.default_user_error(info="No name specified")
     if app is None:
@@ -196,7 +197,7 @@ async def add_sto_by_name(app: App = None, sto_name: Optional[str] = None, reque
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="delete_sto")
-async def remove_sto_by_name(app: App = None, sto_name: Optional[str] = None, request: Request or None = None):
+async def remove_sto_by_name(app: App = None, sto_name: str | None = None, request: Request or None = None):
     if sto_name is None or len(sto_name) <= 1:
         return Result.default_user_error(info="No name specified")
     if app is None:

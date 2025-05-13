@@ -2,7 +2,6 @@ import os
 import re
 import subprocess
 import time
-from typing import List, Dict
 
 # Define the directory where PID files are stored
 PID_DIRECTORY = "./pids"
@@ -21,14 +20,14 @@ def get_service_pids(info_dir):
         if match:
             services_type, service_name = match.groups()
             # Read the PID from the file
-            with open(os.path.join(info_dir, pid_file), 'r') as file:
+            with open(os.path.join(info_dir, pid_file)) as file:
                 pid = file.read().strip()
                 # Store the PID using a formatted key
                 services[f"{service_name} - {services_type}"] = int(pid)
     return services
 
 
-def check_multiple_processes(pids: List[int]) -> Dict[int, str]:
+def check_multiple_processes(pids: list[int]) -> dict[int, str]:
     """
     Checks the status of multiple processes in a single system call.
     Returns a dictionary mapping PIDs to their status (GREEN_CIRCLE, RED_CIRCLE, or YELLOW_CIRCLE).

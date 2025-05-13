@@ -4,16 +4,23 @@ This vector store uses the Qdrant vector database (https://github.com/qdrant/qdr
 for storing and searching embeddings.
 """
 
-import numpy as np
 import pickle
 import uuid
-from typing import List, Optional
+
+import numpy as np
 
 try:
     from qdrant_client import QdrantClient
     from qdrant_client.http import models
-    from qdrant_client.http.models import Distance, VectorParams, PointStruct
-    from qdrant_client.http.models import Filter, FieldCondition, Range, MatchValue
+    from qdrant_client.http.models import (
+        Distance,
+        FieldCondition,
+        Filter,
+        MatchValue,
+        PointStruct,
+        Range,
+        VectorParams,
+    )
     QDRANT_AVAILABLE = True
 except ImportError:
     QDRANT_AVAILABLE = False
@@ -31,16 +38,16 @@ class QdrantVectorStore(AbstractVectorStore):
     def __init__(
         self,
         collection_name: str = "default_collection",
-        location: Optional[str] = ":memory:",  # Use in-memory Qdrant by default
-        url: Optional[str] = None,
+        location: str | None = ":memory:",  # Use in-memory Qdrant by default
+        url: str | None = None,
         port: int = 6333,
         grpc_port: int = 6334,
         prefer_grpc: bool = False,
-        https: Optional[bool] = None,
-        api_key: Optional[str] = None,
-        timeout: Optional[int] = None,
-        host: Optional[str] = None,
-        path: Optional[str] = None,
+        https: bool | None = None,
+        api_key: str | None = None,
+        timeout: int | None = None,
+        host: str | None = None,
+        path: str | None = None,
         embedding_size: int = 768,
         distance: str = "Cosine",
         **kwargs,
@@ -129,7 +136,7 @@ class QdrantVectorStore(AbstractVectorStore):
                 ),
             )
 
-    def add_embeddings(self, embeddings: np.ndarray, chunks: List[Chunk]) -> None:
+    def add_embeddings(self, embeddings: np.ndarray, chunks: list[Chunk]) -> None:
         """Add embeddings and their corresponding chunks to the store.
 
         Args:
@@ -141,7 +148,7 @@ class QdrantVectorStore(AbstractVectorStore):
 
         # Prepare points for Qdrant
         points = []
-        for i, (embedding, chunk) in enumerate(zip(embeddings, chunks)):
+        for i, (embedding, chunk) in enumerate(zip(embeddings, chunks, strict=False)):
             # Generate a UUID for the point if not already present
             point_id = str(uuid.uuid4())
 
@@ -184,7 +191,7 @@ class QdrantVectorStore(AbstractVectorStore):
                 )
 
 
-    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> List[Chunk]:
+    def search(self, query_embedding: np.ndarray, k: int = 5, min_similarity: float = 0.7) -> list[Chunk]:
         """Search for similar vectors.
 
         Args:
@@ -304,7 +311,7 @@ class QdrantVectorStore(AbstractVectorStore):
         """
         pass
 
-    def get_by_content_hash(self, content_hash: str) -> List[Chunk]:
+    def get_by_content_hash(self, content_hash: str) -> list[Chunk]:
         """Retrieve chunks by content hash.
 
         Args:
@@ -356,7 +363,7 @@ class QdrantVectorStore(AbstractVectorStore):
 
         return chunks
 
-    def get_by_cluster_id(self, cluster_id: int) -> List[Chunk]:
+    def get_by_cluster_id(self, cluster_id: int) -> list[Chunk]:
         """Retrieve chunks by cluster ID.
 
         Args:

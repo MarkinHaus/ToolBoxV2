@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.simple-core.app",
   "build": {
-    "devUrl": "http://localhost:5000/",
+    "devUrl": "http://localhost:8080/",
     "frontendDist": "https://simplecore.app/"
   },
   "app": {

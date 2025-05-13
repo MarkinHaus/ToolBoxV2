@@ -1,26 +1,40 @@
+import fnmatch
 import json
 import os
-import threading
-import fnmatch
-import subprocess
 import re
+import subprocess
+import threading
 import uuid
+
 import requests
 from bs4 import BeautifulSoup
 from langchain_community.agent_toolkits.load_tools import load_tools
+from langchain_community.tools import (
+    AIPluginTool,
+    CopyFileTool,
+    DeleteFileTool,
+    ListDirectoryTool,
+    MoveFileTool,
+    ReadFileTool,
+    ShellTool,
+    WriteFileTool,
+)
 from tqdm import tqdm
 
 from toolboxv2 import App, get_logger
 from toolboxv2.mods import BROWSER
-
-from toolboxv2.utils.toolbox import get_app
-from langchain_community.tools import AIPluginTool, CopyFileTool, DeleteFileTool, ListDirectoryTool, MoveFileTool, ReadFileTool, ShellTool, WriteFileTool
 from toolboxv2.mods.isaa.subtools.web_loder import route_url_to_function
+from toolboxv2.utils.toolbox import get_app
 
 PIPLINE = None
 
 try:
-    from toolboxv2.mods.isaa_audio import s30sek_mean, text_to_speech3, speech_stream, get_audio_transcribe
+    from toolboxv2.mods.isaa_audio import (
+        get_audio_transcribe,
+        s30sek_mean,
+        speech_stream,
+        text_to_speech3,
+    )
 
     SPEAK = True
 except ImportError:
@@ -33,8 +47,9 @@ try:
 except ImportError:
     INQUIRER = False
 
-from toolboxv2.utils.extras.Style import print_to_console, Style, Spinner
 import networkx as nx
+
+from toolboxv2.utils.extras.Style import Spinner, Style, print_to_console
 
 
 def visualize_tree(tree, graph=None, parent_name=None, node_name=''):
@@ -80,10 +95,10 @@ def speak(x, speak_text=SPEAK, vi=0, **kwargs):
         app.new_ac_mod("isaa")
         x = app.AC_MOD.mas_text_summaries(x, min_length=50)
 
-    if 'de' == ln[0]["label"] and ln[0]["score"] > 0.2:
+    if ln[0]["label"] == 'de' and ln[0]["score"] > 0.2:
         text_to_speech3(x)
 
-    elif 'en' == ln[0]["label"] and ln[0]["score"] > 0.5:
+    elif ln[0]["label"] == 'en' and ln[0]["score"] > 0.5:
         speech_stream(x, voice_index=vi)
     else:
         sys_print(f"SPEEK SCORE TO LOW : {ln[0]['score']}")
@@ -544,7 +559,7 @@ def run_chain_in_cmd_auto_observation_que(isaa, task, chains, extracted_dict: st
             print("Y -> to generate task adjustment\nR (text for infos)-> Retry on Task\nE -> return current state\n"
                   "lev black for next task")
             ui = input("optimise ? : ").lower()
-            if "y" == ui:
+            if ui == "y":
                 data = generate_exi_dict(isaa,
                                          f"Optimise the task: {task_que[step]} based on this outcome : {chain_ret[-1]}"
                                          f" the evaluation {evaluation} and the task {task}\nOnly return the dict\nWitch The Corrent Task updated:",
@@ -557,7 +572,7 @@ def run_chain_in_cmd_auto_observation_que(isaa, task, chains, extracted_dict: st
                     except KeyError:
                         sys_print('🟡🔴')
                         step += 1
-            elif 'r' == ui:
+            elif ui == 'r':
                 print("RETRY")
                 sys_print('🟡🟡')
                 if RETRYS == 0:

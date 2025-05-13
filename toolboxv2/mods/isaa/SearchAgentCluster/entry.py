@@ -1,8 +1,8 @@
 # models.py
-from pydantic import BaseModel, Field
-from typing import List, Dict, Optional, Set
-from enum import Enum
 from datetime import datetime
+from enum import Enum
+
+from pydantic import BaseModel, Field
 
 
 class ContentCategory(str, Enum):
@@ -15,35 +15,36 @@ class ContentCategory(str, Enum):
 class SearchResult(BaseModel):
     content: str
     url: str
-    categories: List[ContentCategory]
+    categories: list[ContentCategory]
     relevance_score: float = Field(ge=0.0, le=1.0)
     timestamp: datetime
     depth: int = Field(ge=0, le=3)
 
 
 class AnalyzedContent(BaseModel):
-    key_points: List[str] or str = Field(max_items=3)
-    spatial_context: Optional[str]
-    temporal_context: Optional[str]
+    key_points: list[str] or str = Field(max_items=3)
+    spatial_context: str | None
+    temporal_context: str | None
     source_quality: float = Field(ge=0.0, le=1.0)
 
 
 class SearchSummary(BaseModel):
-    main_findings: List[str] = Field(max_items=3)
-    cross_references: List[str] = Field(max_items=3)
+    main_findings: list[str] = Field(max_items=3)
+    cross_references: list[str] = Field(max_items=3)
     confidence_score: float = Field(ge=0.0, le=1.0)
 
 
 # data_layer.py
-from dataclasses import dataclass, field
 import asyncio
+from dataclasses import dataclass, field
+
 import aiohttp
 
 
 @dataclass
 class WebCache:
-    content: Dict[str, str] = field(default_factory=dict)
-    visited: Set[str] = field(default_factory=set)
+    content: dict[str, str] = field(default_factory=dict)
+    visited: set[str] = field(default_factory=set)
 
 
 class DataLayer:
@@ -52,7 +53,7 @@ class DataLayer:
         self.max_depth = max_depth
         self.semaphore = asyncio.Semaphore(5)
 
-    async def fetch_content(self, url: str, depth: int) -> Optional[str]:
+    async def fetch_content(self, url: str, depth: int) -> str | None:
         if depth > self.max_depth or url in self.cache.visited:
             return None
 
@@ -90,7 +91,7 @@ class ContentAnalyzer:
             self.isaa.mini_task_completion(analysis_prompt)
         )
 
-    def categorize_result(self, content: str) -> List[ContentCategory]:
+    def categorize_result(self, content: str) -> list[ContentCategory]:
         categorization_prompt = f"""
         Determine relevant categories for this content:
         {content[:500]}
@@ -100,7 +101,7 @@ class ContentAnalyzer:
         """
 
         class ContentCategorys(BaseModel):
-            contentCategorys: List[ContentCategory]
+            contentCategorys: list[ContentCategory]
 
         categories = self.isaa.format_class(ContentCategorys, categorization_prompt)["contentCategorys"]
         return categories
@@ -151,7 +152,7 @@ class SemanticSearchEngine:
 
         return self._create_summary(results)
 
-    async def _get_initial_urls(self, query: str) -> List[str]:
+    async def _get_initial_urls(self, query: str) -> list[str]:
         url_prompt = f"""
         Generate 3 most relevant URLs for searching:
         Query: {query}
@@ -159,7 +160,7 @@ class SemanticSearchEngine:
         Return only high-quality, authoritative sources.
         """
         class Urls(BaseModel):
-            urls : List[str]
+            urls : list[str]
 
         urls = self.isaa.format_class(Urls, url_prompt)["urls"]
         return [url.strip() for url in urls if url.strip()]
@@ -178,7 +179,7 @@ class SemanticSearchEngine:
             score = 0
         return min(max(score, 0.0), 1.0)
 
-    def _create_summary(self, results: List[SearchResult]) -> SearchSummary:
+    def _create_summary(self, results: list[SearchResult]) -> SearchSummary:
         if not results:
             return SearchSummary(
                 main_findings=[],
@@ -200,7 +201,7 @@ class SemanticSearchEngine:
             self.isaa.mini_task_completion(summary_prompt)
         )
 
-    def _extract_urls(self, content: str) -> List[str]:
+    def _extract_urls(self, content: str) -> list[str]:
         url_prompt = f"""
         Extract up to 2 most relevant linked URLs from:
         {content[:1000]}

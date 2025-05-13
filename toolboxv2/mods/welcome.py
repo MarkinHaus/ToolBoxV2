@@ -1,9 +1,9 @@
+import os
 import sys
+from platform import system
+from time import sleep
 
 from toolboxv2 import Style, get_app
-from time import sleep
-from platform import system
-import os
 
 export = get_app(from_="welcome.EXPORT").tb
 Name = 'welcome'

@@ -2,13 +2,12 @@ import asyncio
 import os
 import sys
 from pathlib import Path
-from typing import Optional
 from urllib.parse import quote
 
-from toolboxv2 import Style, Result, TBEF, App
-from toolboxv2 import get_app, Code
-from .AuthManager import get_invitation
+from toolboxv2 import TBEF, App, Code, Result, Style, get_app
+
 from ...utils.extras.qr import print_qrcode_to_console
+from .AuthManager import get_invitation
 from .types import User
 
 Name = 'CloudM'
@@ -28,7 +27,7 @@ def add_ui(name:str, title:str, path:str, description:str, auth=False):
 @export(mod_name=Name, api=True, version=version)
 def openui():
     global uis
-    return [uis[name] for name in uis.keys()]
+    return [uis[name] for name in uis]
 
 @export(mod_name=Name, api=True, version=version, row=True)
 def openVersion(self):
@@ -326,11 +325,11 @@ def show_version(self):
 
 
 @export(mod_name=Name, version=version, state=False, request_as_kwarg=True)
-async def get_eco(app: Optional[App] = None,request=None):
+async def get_eco(app: App | None = None,request=None):
     return str(request)
 
 @export(mod_name=Name, version=version, state=False)
-async def login(m_link: str, app: Optional[App] = None):
+async def login(m_link: str, app: App | None = None):
     if app is None:
         app = get_app("CloudM.login")
     if app.session.username is None or len(app.session.username) == 0:

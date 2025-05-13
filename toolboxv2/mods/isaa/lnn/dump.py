@@ -1,12 +1,18 @@
 import random
 
-import torch
 import numpy as np
-from matplotlib import pyplot as plt
-from test import NeuralSystem, create_heatmap, transform_ffn_for_heatmap, \
-    transform_sequential_for_heatmap, transform_state_for_heatmap
-
+import torch
 import torch.nn.functional as F
+from matplotlib import pyplot as plt
+
+from test import (
+    NeuralSystem,
+    create_heatmap,
+    transform_ffn_for_heatmap,
+    transform_sequential_for_heatmap,
+    transform_state_for_heatmap,
+)
+
 
 def decimalToBinary(n, ziel_laenge=4):
     x = bin(n).replace("0b", "")

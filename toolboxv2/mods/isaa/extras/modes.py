@@ -1,13 +1,20 @@
 import os
 from platform import system
-from typing import List, Dict, Any
+from typing import Any
 
-
-from langchain_community.agent_toolkits.load_tools import load_tools, load_huggingface_tool
-
-
-from toolboxv2.mods.isaa.base.Agents import Agent, get_free_agent_data_factory, LLMMode, LLMFunction, Capabilities
+from langchain_community.agent_toolkits.load_tools import (
+    load_huggingface_tool,
+    load_tools,
+)
 from langchain_core.tools import BaseTool
+
+from toolboxv2.mods.isaa.base.Agents import (
+    Agent,
+    Capabilities,
+    LLMFunction,
+    LLMMode,
+    get_free_agent_data_factory,
+)
 
 
 def get_free_agent(name: str, *args, **kwargs) -> Agent:
@@ -87,7 +94,7 @@ def functions_to_llm_functions(functions: list):
     return llm_functions
 
 
-def crate_llm_function_from_langchain_tools(tool: str or BaseTool or List[str], hf=False) -> List[LLMFunction]:
+def crate_llm_function_from_langchain_tools(tool: str or BaseTool or list[str], hf=False) -> list[LLMFunction]:
     if isinstance(tool, BaseTool):
         return [LLMFunction(name=tool.name, description=tool.description, parameters=tool.args, function=tool)]
 
@@ -140,7 +147,7 @@ CodingCapability = Capabilities(
 )
 
 
-def generate_prompt(subject: str, context: str = "", additional_requirements: Dict[str, Any] = None) -> str:
+def generate_prompt(subject: str, context: str = "", additional_requirements: dict[str, Any] = None) -> str:
     """
     Generates a prompt based on the given subject, with optional context and additional requirements.
 
@@ -577,9 +584,10 @@ ISAA0CODE = ('5baa6cf0:789ced5d4b8fdbc811fe2b822eb97807fd7eec2d4172480eebc048f6b
              '45a0f88e4bc01a67ce3e8fe754ee0d997fb37a6827aabb2a7017c595afbb70780c20df11dbab8952db7ecf978953d1d802970d937'
              'eda309ecd90087bf00fff5ffa213c95a')
 
-from typing import List, Dict, Any, Callable
-from enum import Enum
 import re
+from collections.abc import Callable
+from enum import Enum
+from typing import Any
 
 
 class TaskType(Enum):
@@ -600,13 +608,13 @@ class Task:
 
 class VariableSyntaxSystem:
     def __init__(self):
-        self.variables: Dict[str, Any] = {}
+        self.variables: dict[str, Any] = {}
         self.user_input = ""
 
     def declare_variable(self, name: str, value: Any) -> None:
         self.variables[name] = value
 
-    def parse_declarations(self, raw_string: str) -> List[tuple[str, Any]]:
+    def parse_declarations(self, raw_string: str) -> list[tuple[str, Any]]:
         pattern = r'\$(\w+)(?::(\w+))?\s*=\s*(.+?)(?=\$|$)'
         matches = re.findall(pattern, raw_string)
         declarations = []
@@ -639,7 +647,7 @@ class VariableSyntaxSystem:
 
         return re.sub(r'\$(\w+)', replace_var, text.replace('user-input', 'userinput'.upper()))
 
-    def detect_undefined_variables(self, text: str) -> List[str]:
+    def detect_undefined_variables(self, text: str) -> list[str]:
         pattern = r'\$(\w+)'
         matches = re.findall(pattern, text)
         return [var for var in matches if var not in self.variables and var != 'user-input']
@@ -648,7 +656,7 @@ class VariableSyntaxSystem:
 class ChainTreeExecutor:
     def __init__(self):
         self.variable_system = VariableSyntaxSystem()
-        self.task_results: Dict[str, Any] = {}
+        self.task_results: dict[str, Any] = {}
         self.function_runner: Callable = lambda name, **b: b
         self.agent_runner: Callable = lambda name, task, **b: task
 

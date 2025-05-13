@@ -3,16 +3,15 @@ import json
 import os
 import queue
 import threading
-from typing import Any, Optional, Tuple
+from typing import Any
 
-from ..toolbox import App
-from ..system.types import Result, AppType
+from ..extras.show_and_hide_console import show_console
+from ..extras.Style import Style
 from ..system.all_functions_enums import *
-
 from ..system.getting_and_closing_app import get_app
 from ..system.tb_logger import get_logger
-from ..extras.Style import Style
-from ..extras.show_and_hide_console import show_console
+from ..system.types import AppType, Result
+from ..toolbox import App
 
 
 class DaemonUtil:
@@ -39,7 +38,7 @@ class DaemonUtil:
         return self.__initobj().__await__()
 
     async def __ainit__(self, class_instance: Any, host='0.0.0.0', port=6587, t=False,
-                        app: Optional[App or AppType] = None,
+                        app: (App or AppType) | None = None,
                         peer=False, name='daemonApp-server', on_register=None, on_client_exit=None, on_server_exit=None,
                         unix_socket=False, test_override=False):
         from toolboxv2.mods.SocketManager import SocketType
@@ -110,7 +109,7 @@ class DaemonUtil:
         # 'client_to_receiver_thread': to_receive,
         # 'client_receiver_threads': threeds,
 
-    async def send(self, data: dict or bytes or str, identifier: Tuple[str, int] or str = "main"):
+    async def send(self, data: dict or bytes or str, identifier: tuple[str, int] or str = "main"):
         result = await self.server.aget()
         sender = result.get('sender')
         await sender(data, identifier)
@@ -203,7 +202,7 @@ class DaemonUtil:
 
                         if name == 'rrun_flow':
                             show_console(True)
-                            runnner = getattr(self.class_instance, "run_flow")
+                            runnner = self.class_instance.run_flow
                             threading.Thread(target=runnner, args=args, kwargs=kwargs, daemon=True).start()
                             await sender({'ok': 0}, identifier)
                             show_console(False)
@@ -225,9 +224,7 @@ class DaemonUtil:
                                         res_ = await res.aget()
                                         res.result.data = res_
                                     res = json.loads(res.to_api_result().json())
-                                elif isinstance(res, bytes):
-                                    pass
-                                elif isinstance(res, dict):
+                                elif isinstance(res, bytes) or isinstance(res, dict):
                                     pass
                                 else:
                                     res = {'data': 'unsupported type', 'type': str(type(res))}

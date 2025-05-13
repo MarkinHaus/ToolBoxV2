@@ -1,7 +1,7 @@
 import logging
-from toolboxv2 import MainTool, FileHandler
 import string
 
+from toolboxv2 import FileHandler, MainTool
 from toolboxv2.utils.toolbox import get_app
 
 
@@ -53,7 +53,7 @@ class Tools(MainTool, FileHandler):
             return self.file_chas[file_path]
 
         self.print(f"Reading template file at {file_path}")
-        with open(file_path, 'r') as file:
+        with open(file_path) as file:
             content = file.read()
 
         self.file_chas[file_path] = content

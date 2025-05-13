@@ -1,33 +1,35 @@
 import logging
 import os
-from typing import Optional
-import numpy as np
 
+import numpy as np
 import pyaudio
+
 from toolboxv2 import get_app, get_logger
 
 logger = get_logger()
 
 
-import wave
-import webrtcvad
-import websockets
-from pydantic import BaseModel, Field
-
-import tempfile
-from concurrent.futures import ThreadPoolExecutor
-from groq import Groq
-import sys
-
 import asyncio
-import threading
 import queue
-import traceback
-# For language detection; install via pip install langdetect
-from langdetect import detect
-import time
+
 # Import needed for random debugging logs
 import random
+import sys
+import tempfile
+import threading
+import time
+import traceback
+import wave
+from concurrent.futures import ThreadPoolExecutor
+
+import webrtcvad
+import websockets
+from groq import Groq
+
+# For language detection; install via pip install langdetect
+from langdetect import detect
+from pydantic import BaseModel, Field
+
 
 # Configuration
 class Config:
@@ -888,8 +890,8 @@ class SpeechDeserializerModule:
 
 
 def get_game_email(credentials_path=r"C:\Users\Markin\Workspace\ToolBoxV2\client_secret.json"):
-    from google_auth_oauthlib.flow import Flow
     from google.oauth2.credentials import Credentials
+    from google_auth_oauthlib.flow import Flow
 
     def init_services():
         """
@@ -946,9 +948,9 @@ def get_game_email(credentials_path=r"C:\Users\Markin\Workspace\ToolBoxV2\client
 class TTSModule:
     def __init__(self, config, on_tts_start, on_tts_end, vad_name="ISAA0"):
         from RealtimeTTS import (
-            TextToAudioStream,
             KokoroEngine,
             SystemEngine,
+            TextToAudioStream,
         )
         self.config = config
         self.on_tts_start = on_tts_start
@@ -982,10 +984,10 @@ class TTSModule:
             # level=logging.DEBUG if getattr(self.config, "DEBUG", False) else logging.WARNING
         )
 
-        from toolboxv2.mods.isaa.isaa_modi import browse_website
-        from toolboxv2.mods.isaa.subtools.file_loder import route_local_file_to_function
         from toolboxv2.mods.isaa.CodingAgent.live import Pipeline
         from toolboxv2.mods.isaa.extras.session import ChatSession
+        from toolboxv2.mods.isaa.isaa_modi import browse_website
+        from toolboxv2.mods.isaa.subtools.file_loder import route_local_file_to_function
 
         if not get_app("vad.TTS").mod_online("isaa"):
             get_app("vad.TTS").get_mod("isaa").init_isaa(build=True)
@@ -1177,7 +1179,7 @@ class TTSModule:
            - Plan error recovery strategy
         5. Prepare fallback options for execution failures""")
 
-            inner: Optional[str] = Field(...,
+            inner: str | None = Field(...,
                                          description="""Technical task specification for Pipeline including:
         - Language context (Python)
         - Required variables/state
@@ -1189,7 +1191,7 @@ class TTSModule:
         2. 'Scrape product data from example.com using a_web_search("example.com")'
         3. 'Modify ML model parameters and retrain'""")
 
-            inner_max_iterations: Optional[int] = Field(...,
+            inner_max_iterations: int | None = Field(...,
                                                         description="""Complexity estimation:
         1-3: Simple code execution/query
         4-8: Multi-step analysis

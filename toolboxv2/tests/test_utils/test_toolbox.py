@@ -1,15 +1,14 @@
 """Main module."""
+import logging
 import os
 import time
 import unittest
-from typing import Callable
+from collections.abc import Callable
 from unittest.mock import AsyncMock
 
-
-import logging
 from dotenv import load_dotenv
 
-from toolboxv2 import get_app, Style, flows_dict
+from toolboxv2 import Style, flows_dict, get_app
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.system import ToolBoxInterfaces
 

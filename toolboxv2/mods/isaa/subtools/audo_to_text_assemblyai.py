@@ -1,6 +1,7 @@
 # `pip3 install assemblyai` (macOS)
 # `pip install assemblyai` (Windows)
 import os
+
 try:
     from langchain_community.document_loaders import AssemblyAIAudioTranscriptLoader
     from langchain_community.document_loaders.assemblyai import TranscriptFormat

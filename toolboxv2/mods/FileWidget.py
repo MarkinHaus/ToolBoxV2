@@ -1,26 +1,23 @@
-import pickle
-
-import os
-from toolboxv2 import MainTool
-from toolboxv2.utils.extras import BaseWidget
-from toolboxv2.utils.extras.blobs import BlobStorage, BlobFile
-
 import mimetypes
-from starlette.responses import Response
-from pathlib import Path
-
-from typing import Optional
+import os
+import pickle
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
+from starlette.responses import Response
+
+from toolboxv2 import MainTool
+from toolboxv2.utils.extras import BaseWidget
+from toolboxv2.utils.extras.blobs import BlobFile, BlobStorage
 from toolboxv2.utils.system.session import RequestSession
 
 
 @dataclass
 class ChunkInfo:
     filename: str
-    chunk_index: Optional[int]
-    total_chunks: Optional[int]
+    chunk_index: int | None
+    total_chunks: int | None
     content: bytes
 
 

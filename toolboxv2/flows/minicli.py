@@ -3,6 +3,7 @@ import datetime
 import inspect
 import os
 import threading
+
 try:
     import psutil
     IS_PSUTIL = True
@@ -13,10 +14,14 @@ from prompt_toolkit import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.shortcuts import set_title
 
-from toolboxv2 import App, Result, TBEF
-from toolboxv2.mods.cli_functions import parse_command_output, parse_linux_command_output, replace_bracketed_content
+from toolboxv2 import TBEF, App, Result
+from toolboxv2.mods.cli_functions import (
+    parse_command_output,
+    parse_linux_command_output,
+    replace_bracketed_content,
+)
 from toolboxv2.utils import show_console
-from toolboxv2.utils.extras.Style import cls, Spinner, Style
+from toolboxv2.utils.extras.Style import Spinner, Style, cls
 from toolboxv2.utils.system.types import CallingObject
 
 NAME = 'cli'
@@ -274,8 +279,8 @@ async def run(app: App, args):
         if call.module_name == "openM":
             autocompletion_dict = app.run_any(TBEF.CLI_FUNCTIONS.UPDATE_AUTOCOMPLETION_MODS,
                                               autocompletion_dict=autocompletion_dict)
-        elif call.module_name.split('.')[0] in all_modes or call.module_name in bic.keys():
-            if call.function_name.strip() == '' and call.module_name not in bic.keys():
+        elif call.module_name.split('.')[0] in all_modes or call.module_name in bic:
+            if call.function_name.strip() == '' and call.module_name not in bic:
                 app.print_functions(call.module_name)
             else:
                 if call.args is not None:

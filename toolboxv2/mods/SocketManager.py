@@ -4,29 +4,27 @@ The SocketManager Supports 2 types of connections
 2. Peer to Peer
 
 """
+import asyncio
 import gzip
 import io
 import json
-import os
-import random
-import time
-from dataclasses import dataclass
 import logging
-from enum import Enum
-import zipfile
-from io import BytesIO
-import uuid
-
-from tqdm import tqdm
-
-from toolboxv2 import MainTool, FileHandler, Style, get_app, Result
-import requests
-
+import os
+import queue
+import random
 import socket
 import threading
-import queue
-import asyncio
+import time
+import uuid
+import zipfile
+from dataclasses import dataclass
+from enum import Enum
+from io import BytesIO
 
+import requests
+from tqdm import tqdm
+
+from toolboxv2 import FileHandler, MainTool, Result, Style, get_app
 from toolboxv2.tests.a_util import async_test
 
 version = "0.1.9"
@@ -1068,7 +1066,7 @@ class Tools(MainTool, FileHandler):
             if client_socket is None:
                 continue
 
-            client_socket.sendall("exit".encode('utf-8'))
+            client_socket.sendall(b"exit")
 
     @export(mod_name=Name, name="run_as_single_communication_server", test=False)
     async def run_as_single_communication_server(self, name: str = 'local-host', host: str = '0.0.0.0',
@@ -1092,7 +1090,7 @@ class Tools(MainTool, FileHandler):
                 t0 = time.perf_counter()
                 try:
                     msg_json = client.recv(1024).decode()
-                except socket.error:
+                except OSError:
                     break
 
                 self.print(f"run_as_single_communication_server -- received -- {msg_json}")

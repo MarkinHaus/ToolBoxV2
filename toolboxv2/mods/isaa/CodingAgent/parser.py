@@ -1,6 +1,7 @@
-import re
-import os
 import ast
+import os
+import re
+
 import astor  # More robust AST handling
 
 
@@ -72,7 +73,7 @@ class CodeProcessor:
             """
         try:
             # Read existing code
-            with open(filepath, 'r') as f:
+            with open(filepath) as f:
                 existing_code = f.read()
 
             # Parse existing and new code

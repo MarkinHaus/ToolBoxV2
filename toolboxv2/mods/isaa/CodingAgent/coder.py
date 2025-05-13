@@ -1,12 +1,12 @@
+import asyncio
 import json
+import os
 import sys
 import tempfile
+from dataclasses import dataclass
+from typing import Literal
 
 from pydantic import BaseModel, Field
-from typing import List, Dict, Literal
-from dataclasses import dataclass
-import asyncio
-import os
 
 from toolboxv2 import get_logger
 from toolboxv2.mods.isaa.base.Agents import Agent
@@ -22,7 +22,7 @@ class TestCase(BaseModel):
     description: str = Field(..., description="What the test verifies")
     expected_result: str = Field(..., description="Expected outcome")
     test_code: str = Field(..., description="Actual test implementation")
-    dependencies: List[str] = Field(default_factory=list, description="Required dependencies")
+    dependencies: list[str] = Field(default_factory=list, description="Required dependencies")
 
 
 class CodeFile(BaseModel):
@@ -36,7 +36,7 @@ class CodeFile(BaseModel):
 class ProjectStructure(BaseModel):
     """Project layout specification"""
     root_dir: str
-    directories_files: Dict[str, List[str]] = Field(
+    directories_files: dict[str, list[str]] = Field(
         description="Map of directory types to paths"
     )
     test_framework: str = Field(
@@ -49,7 +49,7 @@ class TestResult(BaseModel):
     """Individual test execution result"""
     passed: bool
     message: str
-    details: Dict[str, str]
+    details: dict[str, str]
 
 
 @dataclass
@@ -57,7 +57,7 @@ class MVPPipeline:
     agent: Agent
     message: list
 
-    async def generate_project(self, requirements: str) -> List[CodeFile]:
+    async def generate_project(self, requirements: str) -> list[CodeFile]:
         """Generate complete project from requirements"""
         try:
             logger.info("Starting MVP project generation")
@@ -158,7 +158,7 @@ class MVPPipeline:
 
     @staticmethod
     async def _save_files(structure: ProjectStructure,
-                          files: List[CodeFile]) -> None:
+                          files: list[CodeFile]) -> None:
         """Save generated files to disk"""
         try:
             # Create directories_files
@@ -180,7 +180,7 @@ class MVPPipeline:
             logger.error(f"Failed to save files: {str(e)}")
             raise
 
-async def run_tests(test_files: List[CodeFile], impl_files: List[CodeFile]) -> List[TestResult]:
+async def run_tests(test_files: list[CodeFile], impl_files: list[CodeFile]) -> list[TestResult]:
     """Execute tests using pytest and return results"""
     try:
         if len(test_files + impl_files) == 0:

@@ -1,12 +1,11 @@
 import asyncio
 import threading
 import time
+import unittest
 
 from toolboxv2 import get_app
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.daemon import DaemonUtil
-import unittest
-
 from toolboxv2.utils.proxy import ProxyUtil
 
 

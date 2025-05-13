@@ -1,17 +1,16 @@
+import threading
+import time
+
+import keyboard
 import numpy as np
 import pyautogui
-import keyboard
-
-import time
-import threading
-
-import win32gui
-import win32con
+import torch
 import win32api
+import win32con
+import win32gui
+from PIL import Image, ImageGrab
 
 from test import NeuralSystem
-import torch
-from PIL import Image, ImageGrab
 
 
 class LivePredictor:

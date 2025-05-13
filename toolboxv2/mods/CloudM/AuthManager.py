@@ -11,14 +11,18 @@ from urllib.parse import quote
 import jwt
 import webauthn
 from pydantic import BaseModel, field_validator
-from webauthn.helpers.exceptions import InvalidAuthenticationResponse, InvalidRegistrationResponse
+from webauthn.helpers.exceptions import (
+    InvalidAuthenticationResponse,
+    InvalidRegistrationResponse,
+)
 from webauthn.helpers.structs import AuthenticationCredential, RegistrationCredential
 
-from toolboxv2 import get_app, App, Result, TBEF, ToolBox_over, get_logger
+from toolboxv2 import TBEF, App, Result, ToolBox_over, get_app, get_logger
 from toolboxv2.mods.DB.types import DatabaseModes
 from toolboxv2.utils.security.cryp import Code
-from toolboxv2.utils.system.types import ToolBoxInterfaces, ApiResult
-from .types import UserCreator, User
+from toolboxv2.utils.system.types import ApiResult, ToolBoxInterfaces
+
+from .types import User, UserCreator
 
 version = "0.0.2"
 Name = 'CloudM.AuthManager'
@@ -108,7 +112,7 @@ def db_helper_delete_user(app: App, username: str, uid: str, matching=False):
 
 
 def add_exp(massage: dict, hr_ex=2):
-    massage['exp'] = datetime.datetime.now(tz=datetime.timezone.utc) + datetime.timedelta(hours=hr_ex)
+    massage['exp'] = datetime.datetime.now(tz=datetime.UTC) + datetime.timedelta(hours=hr_ex)
     return massage
 
 

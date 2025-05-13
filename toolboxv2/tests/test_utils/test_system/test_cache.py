@@ -1,6 +1,6 @@
+import os
 import time
 import unittest
-import os
 from tempfile import TemporaryDirectory
 
 from toolboxv2.utils.system import FileCache, MemoryCache

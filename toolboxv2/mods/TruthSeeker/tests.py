@@ -1,21 +1,22 @@
-import sys
-
-from toolboxv2 import get_app
-from toolboxv2.mods.TruthSeeker.module import start, codes, process, byCode, version
-import unittest
-from unittest.mock import Mock, patch, MagicMock, AsyncMock
 import os
+import sys
+import unittest
 from tempfile import TemporaryDirectory
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
 import PyPDF2
 import requests
-from toolboxv2.tests.a_util import async_test
+
+from toolboxv2 import get_app
 from toolboxv2.mods.TruthSeeker.arXivCrawler import (
-    RobustPDFDownloader,
     ArXivPDFProcessor,
-    Paper,
     DocumentChunk,
-    Insights
+    Insights,
+    Paper,
+    RobustPDFDownloader,
 )
+from toolboxv2.mods.TruthSeeker.module import byCode, codes, process, start, version
+from toolboxv2.tests.a_util import async_test
 
 default_test = get_app("TruthSeeker.Export").tb(mod_name="TruthSeeker", test_only=True, version=version)
 

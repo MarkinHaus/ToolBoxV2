@@ -1,8 +1,8 @@
 import random
-from typing import Any, List
+from typing import Any
 
 
-def generate_test_cases(sig) -> List[dict]:
+def generate_test_cases(sig) -> list[dict]:
     params = list(sig.parameters.values())
 
     if len(params) != 0:

@@ -1,16 +1,16 @@
 import os
-import unittest
 import tempfile
+import unittest
 from dataclasses import dataclass
-
+from enum import Enum, auto
 
 from toolboxv2.utils.system.ipy_completer import (
-    extract_class_info,
     create_completions_from_classes,
+    extract_class_info,
+    get_dataclasses_from_file,
     nested_dict_autocomplete,
-    get_dataclasses_from_file
 )
-from enum import Enum, auto
+
 
 # Create a test dataclass and enum for testing
 @dataclass

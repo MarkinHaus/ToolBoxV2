@@ -1,39 +1,44 @@
+import asyncio
+import logging
 import os
-import re
-import uuid
 import queue
+import re
 import threading
-
 import time
+import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
-from functools import partial
-from typing import Callable, Any, Tuple, Literal
-
 from enum import Enum
-from typing import Optional
+from functools import partial
 from inspect import signature
+from typing import Any, Literal
 
-import asyncio
+import litellm
 from langchain_community.llms import HuggingFaceHub
-
-from litellm.utils import trim_messages, get_max_tokens
-
-from litellm import BudgetManager, batch_completion, acompletion
+from litellm import (
+    BudgetManager,
+    acompletion,
+    batch_completion,
+    completion,
+    token_counter,
+)
+from litellm.utils import get_max_tokens, trim_messages
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
-from toolboxv2.mods.isaa.extras.filter import after_format
-from toolboxv2.mods.isaa.base.AgentUtils import ShortTermMemory, AISemanticMemory, get_token_mini, \
-    get_max_token_fom_model_name, \
-    _extract_from_json, _extract_from_string_de, _extract_from_string, anything_from_str_to_dict
-
-import litellm
-import logging
-from litellm import completion, token_counter
-
-from toolboxv2.mods.isaa.extras.filter import filter_relevant_texts
+from toolboxv2.mods.isaa.base.AgentUtils import (
+    AISemanticMemory,
+    ShortTermMemory,
+    _extract_from_json,
+    _extract_from_string,
+    _extract_from_string_de,
+    anything_from_str_to_dict,
+    get_max_token_fom_model_name,
+    get_token_mini,
+)
+from toolboxv2.mods.isaa.extras.filter import after_format, filter_relevant_texts
 
 try:
     import gpt4all
@@ -41,17 +46,16 @@ except Exception:
     gpt4all = lambda : None
     gpt4all.GPT4All = None
 
-from toolboxv2 import get_logger, Style, Spinner, Singleton
 import json
 from dataclasses import asdict
-from typing import Type
 
-from toolboxv2.utils.extras.Style import stram_print, print_prompt
 from fuzzywuzzy import fuzz
-from typing import List, Dict
+
+from toolboxv2 import Singleton, Spinner, Style, get_logger
+from toolboxv2.utils.extras.Style import print_prompt, stram_print
 
 
-def reduce_system_messages(messages: List[Dict[str, str]], similarity_threshold: int = 80) -> List[Dict[str, str]]:
+def reduce_system_messages(messages: list[dict[str, str]], similarity_threshold: int = 80) -> list[dict[str, str]]:
     """
     Reduce system messages by removing duplicates and highly similar content using fuzzy string matching.
 
@@ -99,15 +103,15 @@ def get_str_response(chunk):
     if isinstance(chunk, dict):
         data = chunk['choices'][0]
 
-        if "delta" in data.keys():
+        if "delta" in data:
             message = chunk['choices'][0]['delta']
             if isinstance(message, dict):
                 message = message['content']
-        elif "text" in data.keys():
+        elif "text" in data:
             message = chunk['choices'][0]['text']
-        elif "message" in data.keys():
+        elif "message" in data:
             message = chunk['choices'][0]['message']['content']
-        elif "content" in data['delta'].keys():
+        elif "content" in data['delta']:
             message = chunk['choices'][0]['delta']['content']
         else:
             message = ""
@@ -183,8 +187,8 @@ class CompletionError(Enum):
 class LLMFunction:
     name: str
     description: str
-    parameters: Dict[str, str] or List[str] or None
-    function: Optional[Callable[[str], str]]
+    parameters: dict[str, str] or list[str] or None
+    function: Callable[[str], str] | None
 
     def __str__(self):
         return f"----\nname -> '{self.name}'\nparameters -> {self.parameters} \ndescription -> '{self.description}'"
@@ -204,7 +208,7 @@ class Capabilities:
     name: str
     description: str
     trait: str
-    functions: Optional[List[LLMFunction]]
+    functions: list[LLMFunction] | None
 
     # TODO: use a agent to combine capabilities
 
@@ -214,8 +218,8 @@ class LLMMode:
     name: str
     description: str
     system_msg: str
-    post_msg: Optional[str] = None
-    examples: Optional[List[str]] = None
+    post_msg: str | None = None
+    examples: list[str] | None = None
 
     def __str__(self):
         return f"LLMMode: {self.name} (description) {self.description}"
@@ -223,17 +227,17 @@ class LLMMode:
 
 @dataclass(frozen=True)
 class AgentPromptData:
-    initial_prompt_value: Optional[str]
-    final_prompt_value: Optional[str]
+    initial_prompt_value: str | None
+    final_prompt_value: str | None
 
-    system_pre_message: Optional[str]
-    system_post_message: Optional[str]
+    system_pre_message: str | None
+    system_post_message: str | None
 
-    user_pre_message: Optional[str]
-    user_post_message: Optional[str]
+    user_pre_message: str | None
+    user_post_message: str | None
 
-    assistant_pre_message: Optional[str]
-    assistant_post_message: Optional[str]
+    assistant_pre_message: str | None
+    assistant_post_message: str | None
 
 
 @dataclass
@@ -241,27 +245,27 @@ class AgentModelData:
     name: str = field(default=None, hash=True)
     model: str = field(default=None)
     model_path: str = field(default=None)
-    provider: Optional[str] = field(default=None)
+    provider: str | None = field(default=None)
     system_message: str = field(default="")
 
-    temperature: Optional[int] = field(default=None)
-    top_k: Optional[int] = field(default=None)
-    top_p: Optional[int] = field(default=None)
-    repetition_penalty: Optional[int] = field(default=None)
+    temperature: int | None = field(default=None)
+    top_k: int | None = field(default=None)
+    top_p: int | None = field(default=None)
+    repetition_penalty: int | None = field(default=None)
 
-    repeat_penalty: Optional[int] = field(default=None)
-    repeat_last_n: Optional[float] = field(default=None)
-    n_batch: Optional[int] = field(default=None)
+    repeat_penalty: int | None = field(default=None)
+    repeat_last_n: float | None = field(default=None)
+    n_batch: int | None = field(default=None)
 
-    api_key: Optional[str] = field(default=None)
-    api_base: Optional[str] = field(default=None)
-    api_version: Optional[str] = field(default=None)
-    user_id: Optional[str] = field(default=None)
+    api_key: str | None = field(default=None)
+    api_base: str | None = field(default=None)
+    api_version: str | None = field(default=None)
+    user_id: str | None = field(default=None)
 
-    fallbacks: Optional[List[Dict[str, str]] or List[str]] = field(default=None)
-    stop_sequence: Optional[List[str]] = field(default=None)
-    budget_manager: Optional[BudgetManager] = field(default=None)
-    caching: Optional[bool] = field(default=None)
+    fallbacks: (list[dict[str, str]] or list[str]) | None = field(default=None)
+    stop_sequence: list[str] | None = field(default=None)
+    budget_manager: BudgetManager | None = field(default=None)
+    caching: bool | None = field(default=None)
 
 
 def get_free_agent_data_factory(name="Gpt4All", model="groq/deepseek-r1-distill-qwen-32b") -> AgentModelData:
@@ -299,7 +303,7 @@ class ModeController(LLMMode):
         pass
 
     @classmethod
-    def from_llm_mode(cls, llm_mode: LLMMode, shots: Optional[list] = None):
+    def from_llm_mode(cls, llm_mode: LLMMode, shots: list | None = None):
         if shots is None:
             shots = []
 
@@ -376,8 +380,8 @@ class RankingSystem:
 # Define TaskStack class
 class TaskStack:
     def __init__(self):
-        self.tasks: List[Task] = []
-        self.current_task: Optional[Task] = None
+        self.tasks: list[Task] = []
+        self.current_task: Task | None = None
         self._lock = threading.Lock()
         self.ranking_system = RankingSystem()
 
@@ -389,7 +393,7 @@ class TaskStack:
     def _sort_tasks(self):
         self.tasks.sort(key=lambda x: self.ranking_system.rank_task(x), reverse=True)
 
-    def get_next_task(self) -> Optional[Task]:
+    def get_next_task(self) -> Task | None:
         with self._lock:
             if self.tasks:
                 self.current_task = self.tasks.pop(0)
@@ -420,21 +424,21 @@ class TaskStatus:
     task_id: str
     status: str  # queued, running, completed, error
     progress: float  # Range 0.0 to 1.0
-    result: Optional[Any] = None
-    error: Optional[str] = None
+    result: Any | None = None
+    error: str | None = None
 
 
 class StFilter(metaclass=Singleton):
-    filter: Optional[SentenceTransformer] = None
+    filter: SentenceTransformer | None = None
 
 @dataclass
 class Agent:
     amd: AgentModelData = field(default_factory=AgentModelData)
 
-    main_run_model : Optional[str] = None
+    main_run_model : str | None = None
 
     stream: bool = field(default=False)
-    messages: List[Dict[str, str]] = field(default_factory=list)
+    messages: list[dict[str, str]] = field(default_factory=list)
     trim: str = field(default="IsaaTrim")
     max_history_length: int = field(default=10)
     similarity_threshold: int = field(default=75)
@@ -442,45 +446,45 @@ class Agent:
     batch_completion: bool = field(default=False)
     stream_function: Callable[[str], bool or None] = field(default_factory=print)
 
-    max_tokens: Optional[int] = field(default=None)
+    max_tokens: int | None = field(default=None)
 
-    taskstack: Optional[TaskStack] = field(default_factory=TaskStack)
+    taskstack: TaskStack | None = field(default_factory=TaskStack)
     executor: ThreadPoolExecutor = field(default_factory=lambda: ThreadPoolExecutor(max_workers=1))
 
-    status_dict: Dict[str, TaskStatus] = field(default_factory=dict)
+    status_dict: dict[str, TaskStatus] = field(default_factory=dict)
     _stop_event: threading.Event = field(default_factory=threading.Event)
     state: AgentState = AgentState.IDLE
-    world_model: Dict[str, str] = field(default_factory=dict)
+    world_model: dict[str, str] = field(default_factory=dict)
 
-    post_callback: Optional[Callable] = field(default=None)
-    progress_callback: Optional[Callable] = field(default=None)
+    post_callback: Callable | None = field(default=None)
+    progress_callback: Callable | None = field(default=None)
 
-    functions: Optional[List[LLMFunction]] = field(default=None)
-    add_function_to_prompt: Optional[bool] = field(default=None)
+    functions: list[LLMFunction] | None = field(default=None)
+    add_function_to_prompt: bool | None = field(default=None)
 
-    config: Optional[Dict[str, Any]] = field(default=None)
+    config: dict[str, Any] | None = field(default=None)
 
-    batch_completion_messages: Optional[List[List[LLMMessage]]] = field(default=None)
+    batch_completion_messages: list[list[LLMMessage]] | None = field(default=None)
 
-    memory: Optional[AISemanticMemory] = field(default=None)
-    content_memory: Optional[ShortTermMemory] = field(default=None)
+    memory: AISemanticMemory | None = field(default=None)
+    content_memory: ShortTermMemory | None = field(default=None)
 
-    capabilities: Optional[Capabilities] = field(default=None)
-    mode: Optional[LLMMode or ModeController] = field(default=None)
-    last_result: Optional[Dict[str, Any]] = field(default=None)
+    capabilities: Capabilities | None = field(default=None)
+    mode: (LLMMode or ModeController) | None = field(default=None)
+    last_result: dict[str, Any] | None = field(default=None)
 
-    model: Optional[gpt4all.GPT4All or HuggingFaceHub] = field(default=None)
-    hits: Optional[str] = field(default=None)
+    model: (gpt4all.GPT4All or HuggingFaceHub) | None = field(default=None)
+    hits: str | None = field(default=None)
 
-    next_fuction: Optional[str] = field(default=None)
-    llm_function_runner: Optional[LLMFunctionRunner] = field(default=None)
+    next_fuction: str | None = field(default=None)
+    llm_function_runner: LLMFunctionRunner | None = field(default=None)
 
-    rformat: Optional[dict] = field(default=None)
+    rformat: dict | None = field(default=None)
 
-    user_input: Optional[str] = field(default=None)
+    user_input: str | None = field(default=None)
 
-    vision: Optional[bool] = field(default=None)
-    audio: Optional[bool] = field(default=None)
+    vision: bool | None = field(default=None)
+    audio: bool | None = field(default=None)
 
     if_for_fuction_use_overrides: bool = False
 
@@ -498,9 +502,9 @@ class Agent:
             """world model adaption action['remove' or 'add' or 'change' or None] ;
             key from the existing word model or new one ; key format xyz.abc like Person.Tom
             information changed or added. informations must be in str relation graph format like 'Person:Name, Works:at, Startup:Complot'"""
-            action: Optional[str] = field(default=None)
-            key: Optional[str] = field(default=None)
-            informations: Optional[str] = field(default=None)
+            action: str | None = field(default=None)
+            key: str | None = field(default=None)
+            informations: str | None = field(default=None)
 
         model_action = await self.a_format_class(WorldModelAdaption, prompt)
         self.print_verbose(str(model_action))
@@ -645,7 +649,7 @@ class Agent:
 
 3. include all Informations in the description !
 """
-                sub_tasks: List[sTask]
+                sub_tasks: list[sTask]
 
             sub_tasks = self.format_class(TaskList, user_input)["sub_tasks"]
 
@@ -816,7 +820,7 @@ class Agent:
             query: str
 
         class RefMemory(BaseModel):
-            queries: List[MemoryQuery]
+            queries: list[MemoryQuery]
 
         queries = self.format_class(RefMemory, ref)
 
@@ -832,10 +836,10 @@ class Agent:
         await update_progress()
         if self.content_memory and len(self.content_memory.text) > 260:
             class Context(BaseModel):
-                f"""Persise and relavent context only for {ref[:5000]}"""
+                """Persise and relevant context only for {ref[:5000]}"""
                 context: str
 
-            context = self.format_class(Context, self.content_memory.text)["context"]
+            context = self.format_class(Context, self.content_memory.text + f"Persise and relevant context only for {ref[:5000]}")["context"]
             if context:
                 add_unique_message("system", "(system memory-context) :" + context)
             await update_progress()
@@ -937,7 +941,7 @@ class Agent:
         if not self.stream:
             try:
                 c = resp.choices[0].message.tool_calls[0].function.arguments
-            except:
+            except ValueError:
                 pass
         if c is None:
             c = self.parse_completion(resp)
@@ -976,7 +980,7 @@ class Agent:
         self.print_verbose(f"Agent Parsed {self.amd.name} {self.amd.model}")
         return response
 
-    def construct_first_msg(self) -> List[Dict[str, str]]:
+    def construct_first_msg(self) -> list[dict[str, str]]:
         llm_prompt = self.amd.system_message
         self.print_verbose("construct first msg")
         cfunctions_infos = []
@@ -1009,7 +1013,7 @@ class Agent:
             message.append({'role': 'system', 'content': llm_prompt})
         return message
 
-    async def get_batch_llm_messages(self, user_input: List[str], fetch_memory: Optional[bool] = None,
+    async def get_batch_llm_messages(self, user_input: list[str], fetch_memory: bool | None = None,
                                message=None, task_from: str = 'user'):
         llm_messages = []
         for task in user_input:
@@ -1019,7 +1023,7 @@ class Agent:
             llm_messages.append(msg)
         return llm_messages
 
-    def get_llm_message(self, user_input: str, persist: Optional[bool] = None,
+    def get_llm_message(self, user_input: str, persist: bool | None = None,
                         message=None, task_from: str = 'user'):
         llm_message = message
         if llm_message is None:
@@ -1089,9 +1093,8 @@ class Agent:
                     text = '\n'.join(msg['content'] for msg in text if isinstance(msg['content'], str))
 
                 tokens = get_token_mini(text, self.amd.model, isaa, only_len)
-                if only_len:
-                    if tokens == 0:
-                        tokens = int(len(text) * (3 / 4))
+                if only_len and tokens == 0:
+                    tokens = int(len(text) * (3 / 4))
                 return tokens
 
             new_msg = isaa.short_prompt_messages(llm_message.copy(), get_tokens_estimation,
@@ -1355,8 +1358,7 @@ class Agent:
         return result
 
     def transcription(self, file_bytes, prompt="", temperature=0,
-                      response_format: Optional[
-                          Literal["json", "text", "srt", "verbose_json", "vtt"]] = None
+                      response_format: Literal["json", "text", "srt", "verbose_json", "vtt"] | None = None
                       ):
         return litellm.transcription(
             model=self.amd.model,
@@ -1377,9 +1379,7 @@ class Agent:
             # Iterate over each streaming choice chunk
             for choice in result.choices:
                 delta = getattr(choice, "delta", None)
-                if delta:
-                    # Accumulate text content if present
-                    if getattr(delta, "content", None):
+                if delta and getattr(delta, "content", None):
                         default = delta.content
         else:
             # Non-streaming mode handling
@@ -1775,7 +1775,7 @@ class Agent:
             return match_list, v_match
         return match_list[v_match.index(max(v_match))]
 
-    def test_use_function(self, agent_text: str, all_actions: List[str], language='en') -> Tuple[
+    def test_use_function(self, agent_text: str, all_actions: list[str], language='en') -> tuple[
         str or None, str or None]:
         if not agent_text:
             return None, None
@@ -1809,7 +1809,7 @@ class Agent:
                 inputs = agent_dict.get("Inputs", {})
             if action is not None:
                 return action, inputs
-        except:
+        except ValueError:
             pass
 
         return None, None
@@ -1897,8 +1897,9 @@ class Agent:
     @staticmethod
     def content_add_immage(content):
         import base64
-        import requests
         from urllib.parse import urlparse
+
+        import requests
 
         def parse_image_references(text):
             """
@@ -2002,7 +2003,7 @@ class Agent:
 class AgentBuilder:
     isaa_reference = None
 
-    def __init__(self, agent_class: Type[Agent]):
+    def __init__(self, agent_class: type[Agent]):
         self.agent = agent_class()
         self.amd_attributes = {}
         self.missing_amd_fields = ["name", "model"]
@@ -2082,11 +2083,11 @@ class AgentBuilder:
         self.amd_attributes['user_id'] = user_id
         return self
 
-    def set_amd_fallbacks(self, fallbacks: List[Dict[str, str]] or List[str]):
+    def set_amd_fallbacks(self, fallbacks: list[dict[str, str]] or list[str]):
         self.amd_attributes['fallbacks'] = fallbacks
         return self
 
-    def set_amd_stop_sequence(self, stop_sequence: List[str]):
+    def set_amd_stop_sequence(self, stop_sequence: list[str]):
         self.amd_attributes['stop_sequence'] = stop_sequence
         return self
 
@@ -2134,7 +2135,7 @@ class AgentBuilder:
         self.agent.stream = stream
         return self
 
-    def set_messages(self, messages: List[Dict[str, str]]):
+    def set_messages(self, messages: list[dict[str, str]]):
         self.agent.messages = messages
         return self
 
@@ -2154,33 +2155,33 @@ class AgentBuilder:
         self.agent.stream_function = stream_function
         return self
 
-    def set_max_tokens(self, max_tokens: Optional[int]):
+    def set_max_tokens(self, max_tokens: int | None):
         self.agent.max_tokens = max_tokens
         return self
 
-    def set_taskstack(self, taskstack: Optional[TaskStack]):
+    def set_taskstack(self, taskstack: TaskStack | None):
         self.agent.taskstack = taskstack
         return self
 
-    def set_functions(self, functions: Optional[List[LLMFunction]]):
+    def set_functions(self, functions: list[LLMFunction] | None):
         if self.agent.functions is None:
             self.agent.functions = []
         self.agent.functions += functions
         return self
 
-    def set_config(self, config: Optional[Dict[str, Any]]):
+    def set_config(self, config: dict[str, Any] | None):
         self.agent.config = config
         return self
 
-    def set_batch_completion_messages(self, batch_completion_messages: Optional[List[List[LLMMessage]]]):
+    def set_batch_completion_messages(self, batch_completion_messages: list[list[LLMMessage]] | None):
         self.agent.batch_completion_messages = batch_completion_messages
         return self
 
-    def set_memory(self, memory: Optional[AISemanticMemory]):
+    def set_memory(self, memory: AISemanticMemory | None):
         self.agent.memory = memory
         return self
 
-    def set_content_memory(self, content_memory: Optional[ShortTermMemory]):
+    def set_content_memory(self, content_memory: ShortTermMemory | None):
         self.agent.content_memory = content_memory
         return self
 
@@ -2194,31 +2195,31 @@ class AgentBuilder:
             raise ValueError("content_memory is not set")
         self.agent.content_memory.isaa = isaa
 
-    def set_capabilities(self, capabilities: Optional[Capabilities]):
+    def set_capabilities(self, capabilities: Capabilities | None):
         self.agent.capabilities = capabilities
         return self
 
-    def set_mode(self, mode: Optional[LLMMode or ModeController]):
+    def set_mode(self, mode: (LLMMode or ModeController) | None):
         self.agent.mode = mode
         return self
 
-    def set_last_result(self, last_result: Optional[Dict[str, Any]]):
+    def set_last_result(self, last_result: dict[str, Any] | None):
         self.agent.last_result = last_result
         return self
 
-    def set_model(self, model: Optional[gpt4all.GPT4All or HuggingFaceHub]):
+    def set_model(self, model: (gpt4all.GPT4All or HuggingFaceHub) | None):
         self.agent.model = model
         return self
 
-    def set_hits(self, hits: Optional[str]):
+    def set_hits(self, hits: str | None):
         self.agent.hits = hits
         return self
 
-    def set_vision(self, vision: Optional[bool]):
+    def set_vision(self, vision: bool | None):
         self.agent.vision = vision
         return self
 
-    def set_add_function_to_prompt(self, add_function_to_prompt: Optional[bool]):
+    def set_add_function_to_prompt(self, add_function_to_prompt: bool | None):
         self.agent.add_function_to_prompt = add_function_to_prompt
         return self
 
@@ -2276,9 +2277,9 @@ class AgentBuilder:
         return clear_data
 
     @classmethod
-    def load_from_json_file(cls, file_path: str, agent_class: Type[Agent]):
+    def load_from_json_file(cls, file_path: str, agent_class: type[Agent]):
         try:
-            with open(file_path, 'r') as f:
+            with open(file_path) as f:
                 data = json.load(f)
             print(f"Loaded Agent from file {data}")
         except:
@@ -2303,7 +2304,7 @@ class AgentBuilder:
 
 @dataclass
 class ControllerManager:
-    controllers: Dict[str, ModeController] = field(default_factory=dict)
+    controllers: dict[str, ModeController] = field(default_factory=dict)
 
     def rget(self, llm_mode: LLMMode, name: str = None):
         if name is None:
@@ -2340,7 +2341,7 @@ class ControllerManager:
     def __str__(self):
         return "LLMModes \n" + "\n\t".join([str(m).replace('LLMMode: ', '') for m in self.controllers.values()])
 
-    def save(self, filename: Optional[str], get_data=False):
+    def save(self, filename: str | None, get_data=False):
 
         data = asdict(self)
 
@@ -2352,7 +2353,7 @@ class ControllerManager:
             return json.dumps(data)
 
     @classmethod
-    def init(cls, filename: Optional[str], json_data: Optional[str] = None):
+    def init(cls, filename: str | None, json_data: str | None = None):
 
         controllers = {}
 
@@ -2365,7 +2366,7 @@ class ControllerManager:
 
         if filename is not None:
             if os.path.exists(filename) and os.path.isfile(filename):
-                with open(filename, 'r') as f:
+                with open(filename) as f:
                     controllers = json.load(f)
             else:
                 print("file not found")
@@ -2386,8 +2387,8 @@ def test_test_use_function():
 class AgentVirtualEnv:
     def __init__(self):
         self.default = "FUNCTION"
-        self.prefixes: Dict[str, LLMFunction] = {}
-        self.buffer: Dict[str, List[str]] = {}
+        self.prefixes: dict[str, LLMFunction] = {}
+        self.buffer: dict[str, list[str]] = {}
         self._results = ""
         self._brake_test = None
         self.brake = None
@@ -2416,7 +2417,7 @@ class AgentVirtualEnv:
     def results_reset(self):
         self._results = ""
 
-    def register_prefix(self, name: str, description: str, parameters: Dict[str, str] | List[str] | None = None):
+    def register_prefix(self, name: str, description: str, parameters: dict[str, str] | list[str] | None = None):
         def decorator(func):
             if parameters is None:
                 self.prefixes[name] = LLMFunction(name, description, signature(func).parameters.items(), func)

@@ -1,7 +1,7 @@
-from toolboxv2 import App, AppArgs
 import threading
 import time
 
+from toolboxv2 import App, AppArgs
 
 NAME = "vu"
 llm_text = [""]

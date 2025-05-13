@@ -1,5 +1,4 @@
 import os.path
-from typing import Optional
 
 from toolboxv2 import App
 
@@ -13,8 +12,8 @@ def path_getter(path):
     return [doc.page_content for doc in docs], [doc.metadata if doc.metadata else {'doc-from': path} for doc in docs],
 
 async def run(app:App, __, mem_name=None, path=None):
-    from toolboxv2.mods.isaa.base.KnowledgeBase import KnowledgeBase
     from toolboxv2.mods.isaa.base.AgentUtils import AISemanticMemory
+    from toolboxv2.mods.isaa.base.KnowledgeBase import KnowledgeBase
     from toolboxv2.mods.isaa.isaa_modi import get_multiline_input
 
     if mem_name is None:
@@ -24,7 +23,7 @@ async def run(app:App, __, mem_name=None, path=None):
     isaa = app.get_mod("isaa", spec=NAME)
     agent = isaa.init_isaa(build=True)
     memory : AISemanticMemory = isaa.get_memory()
-    mem_instance: Optional[KnowledgeBase] = None
+    mem_instance: KnowledgeBase | None = None
 
     if path is not None:
         if not os.path.exists(path):
@@ -59,6 +58,7 @@ async def run(app:App, __, mem_name=None, path=None):
 
 
 if __name__ == "__main__":
-    from toolboxv2 import get_app
     import asyncio
+
+    from toolboxv2 import get_app
     asyncio.run(run(get_app(), None, "uni_lina", r"C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\data\uniAnna"))

@@ -1,5 +1,7 @@
 import numpy as np
+
 from test import NeuralSystem
+
 
 class TicTacToe:
     def __init__(self):

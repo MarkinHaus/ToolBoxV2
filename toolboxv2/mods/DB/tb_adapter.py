@@ -3,13 +3,15 @@ import os
 from abc import ABC
 from typing import Any, Optional
 
-from toolboxv2 import MainTool, FileHandler, Result, get_app
+from dotenv import load_dotenv
+
+from toolboxv2 import FileHandler, MainTool, Result, get_app
 from toolboxv2.utils.security.cryp import Code
 from toolboxv2.utils.system.types import ToolBoxInterfaces
+
 from .local_instance import MiniDictDB
 from .reddis_instance import MiniRedis
-from .types import DatabaseModes, AuthenticationTypes
-from dotenv import load_dotenv
+from .types import AuthenticationTypes, DatabaseModes
 
 Name = "DB"
 export = get_app(from_="DB.EXPORT").tb
@@ -227,9 +229,7 @@ class Tools(MainTool, FileHandler):
 
         if self.mode.value == DatabaseModes.LC.value:
             self.data_base = MiniDictDB()
-        elif self.mode.value == DatabaseModes.LR.value:
-            self.data_base = MiniRedis()
-        elif self.mode.value == DatabaseModes.RR.value:
+        elif self.mode.value == DatabaseModes.LR.value or self.mode.value == DatabaseModes.RR.value:
             self.data_base = MiniRedis()
         else:
             return Result.default_internal_error(info="Not implemented")

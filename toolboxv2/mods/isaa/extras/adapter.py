@@ -30,35 +30,31 @@ __version__ = "1.0.0"
 __author__ = "Markin Hausmanns"
 __status__ = "Demo"
 
-import sys
 import os
-from typing import Union
+import sys
 
 import litellm
+
+# lightRag utilities and types
+import numpy as np
+
 # Use pipmaster to ensure the litellm dependency is installed
-from litellm import RateLimitError, acompletion, Timeout, APIConnectionError
+from litellm import APIConnectionError, RateLimitError, Timeout, acompletion
 
 # Import litellm's asynchronous client and error classes
-
-
-
 # Retry handling for transient errors
 from tenacity import (
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
 )
-
-# lightRag utilities and types
-
-import numpy as np
 
 from toolboxv2 import get_logger
 
 # Ensure AsyncIterator is imported correctly depending on Python version
 if sys.version_info < (3, 9):
-    from typing import AsyncIterator
+    from collections.abc import AsyncIterator
 else:
     from collections.abc import AsyncIterator
 
@@ -78,7 +74,7 @@ async def litellm_complete_if_cache(
     base_url=None,
     api_key=None,
     **kwargs,
-) -> Union[str, AsyncIterator[str]]:
+) -> str | AsyncIterator[str]:
     """
     Core function to query the LiteLLM model. It builds the message context,
     invokes the completion API, and returns either a complete result string or
@@ -144,7 +140,7 @@ async def litellm_complete_if_cache(
 
 async def litellm_complete(
     prompt, system_prompt=None, history_messages=None, keyword_extraction=False, model_name = "groq/gemma2-9b-it", **kwargs
-) -> Union[str, AsyncIterator[str]]:
+) -> str | AsyncIterator[str]:
     """
     Public completion interface using the model name specified in the global configuration.
     Optionally extracts keywords if requested.

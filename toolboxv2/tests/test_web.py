@@ -1,10 +1,14 @@
 import time
 
 from toolboxv2 import get_app
-from toolboxv2.mods.CloudM.AuthManager import get_user_by_name, crate_local_account, get_invitation
+from toolboxv2.mods.CloudM.AuthManager import (
+    crate_local_account,
+    get_invitation,
+    get_user_by_name,
+)
 from toolboxv2.mods.CloudM.extras import create_magic_log_in
 from toolboxv2.tests.a_util import async_test
-from toolboxv2.tests.web_util import WebTestFramework, AsyncWebTestFramework
+from toolboxv2.tests.web_util import AsyncWebTestFramework, WebTestFramework
 from toolboxv2.utils.system.session import Session
 
 
@@ -35,6 +39,7 @@ def ensure_web_server_online():
 def ensure_moc_session(session: Session):
     pass
     from fastapi.testclient import TestClient
+
     from toolboxv2.mods.FastApi.fast_api_main import app
     tc = TestClient(app)
     session.init()

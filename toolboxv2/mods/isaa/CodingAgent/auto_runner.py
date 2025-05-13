@@ -1,23 +1,22 @@
+import json
+import logging
 import os
 import re
 import subprocess
 from collections import defaultdict
-
-from toolboxv2 import get_app, Code, Spinner
-from toolboxv2.mods.isaa.extras.modes import CoderMode
-from toolboxv2.mods.isaa.base.AgentUtils import AISemanticMemory
-from toolboxv2.mods.isaa.base.Agents import AgentVirtualEnv
-from toolboxv2.mods.isaa.CodingAgent.parser import extract_code_blocks
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import List, Tuple
-from pydantic import BaseModel
-import json
-import logging
-from enum import Enum, auto
-from typing import Optional, Dict, Any
 from datetime import datetime
+from enum import Enum, auto
+from pathlib import Path
+from typing import Any
 
+from pydantic import BaseModel
+
+from toolboxv2 import Code, Spinner, get_app
+from toolboxv2.mods.isaa.base.Agents import AgentVirtualEnv
+from toolboxv2.mods.isaa.base.AgentUtils import AISemanticMemory
+from toolboxv2.mods.isaa.CodingAgent.parser import extract_code_blocks
+from toolboxv2.mods.isaa.extras.modes import CoderMode
 from toolboxv2.mods.isaa.extras.session import ChatSession
 
 
@@ -37,7 +36,7 @@ class FixCyclePlanner:
         self.current_state = ExecutionPhase.ANALYSIS
         self.priority_queue = []
         self.execution_history = []
-        self.current_function: Optional[str] = None
+        self.current_function: str | None = None
         self.iteration = 0
         self.start_time = datetime.now()
         self.metadata = {
@@ -69,7 +68,7 @@ class FixCyclePlanner:
             return True
         return False
 
-    def record_operation(self, operation: str, result: Dict[str, Any]):
+    def record_operation(self, operation: str, result: dict[str, Any]):
         """Log detailed operation results"""
         entry = {
             'timestamp': datetime.now().isoformat(),
@@ -155,16 +154,16 @@ class ImplementationScope(BaseModel):
 
 class ProjectScope(BaseModel):
     """Define overall project scope and structure"""
-    technical_requirements: List[str]
-    features: List[str]
-    testing_requirements: List[str]
+    technical_requirements: list[str]
+    features: list[str]
+    testing_requirements: list[str]
 
 
 class TestResult(BaseModel):
     """Define overall project scope and structure"""
     passed: bool
-    fatal_error: Optional[bool]
-    error_msgs: Optional[List[Tuple[str, str]]]
+    fatal_error: bool | None
+    error_msgs: list[tuple[str, str]] | None
 
 
 @dataclass
@@ -172,11 +171,11 @@ class ProjectMetadata:
     """Comprehensive project metadata including all scopes"""
     project_name: str
     creation_date: str = field(default_factory=lambda: datetime.now().isoformat())
-    cognitive_codes: Dict[str, str] = field(default_factory=dict)
-    combined_code: Optional[str] = None
-    work_code: Optional[str] = None
-    current_scope: Optional[ProjectScope] = None
-    shar_code: Dict[str, str] = field(default_factory=dict)
+    cognitive_codes: dict[str, str] = field(default_factory=dict)
+    combined_code: str | None = None
+    work_code: str | None = None
+    current_scope: ProjectScope | None = None
+    shar_code: dict[str, str] = field(default_factory=dict)
 
 
 class ProjectManager:
@@ -196,7 +195,7 @@ class ProjectManager:
         # Initialize state
         self.planner = FixCyclePlanner(self.project_name)
         self.metadata = self._init_metadata()
-        self.current_scope: Optional[ProjectScope] = None
+        self.current_scope: ProjectScope | None = None
 
         self.chat_history = ChatSession(self.vecSto, max_length=26)
         # Ensure project structure exists
@@ -205,7 +204,7 @@ class ProjectManager:
     def _init_metadata(self) -> ProjectMetadata:
         """Initialize or load existing project metadata"""
         if self.metadata_path.exists():
-            with open(self.metadata_path, 'r') as f:
+            with open(self.metadata_path) as f:
                 data = json.load(f)
                 return ProjectMetadata(**data)
         return ProjectMetadata(project_name=self.project_name)
@@ -247,7 +246,7 @@ Generate:
         self.metadata.cognitive_codes[file_path] = cognitive_code
         self.save_metadata()
 
-    async def evaluate_implementation(self) -> Tuple[bool, list]:
+    async def evaluate_implementation(self) -> tuple[bool, list]:
         """Evaluate implementation quality and test coverage"""
         try:
             fatal_errors = []
@@ -354,7 +353,7 @@ Current Project Overview:
             task: str
 
         class CodingSteps(BaseModel):
-            steps: List[Step] = field(default_factory=list)
+            steps: list[Step] = field(default_factory=list)
 
         if 'CodingStepsAgent' not in self.isaa.config['agents-name-list']:
             coding_steps_agent = self.isaa.get_default_agent_builder("code")
@@ -467,7 +466,7 @@ Test Analysis:
         # Process and save files
         updated_files = extract_code_blocks(result, str(self.project_path))
         for file in updated_files:
-            with open(file, 'r') as f:
+            with open(file) as f:
                 await self.process_code_block(f.read(), str(Path(file).relative_to(self.project_path)))
 
         all_passed = False
@@ -491,7 +490,7 @@ Test Analysis:
     def _get_directory_structure(self) -> str:
         """Generate current directory structure"""
 
-        def format_tree(path: Path, prefix: str = "") -> List[str]:
+        def format_tree(path: Path, prefix: str = "") -> list[str]:
             output = []
             for p in sorted(path.iterdir()):
                 if p.name.startswith('.'):

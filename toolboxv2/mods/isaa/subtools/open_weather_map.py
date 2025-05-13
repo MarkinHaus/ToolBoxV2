@@ -1,6 +1,7 @@
 
 # pip install --upgrade --quiet  pyowm
 import os
+
 from langchain_community.document_loaders import WeatherDataLoader
 
 _api_key_ = lambda: os.environ.get('OPENWEATHERMAP')

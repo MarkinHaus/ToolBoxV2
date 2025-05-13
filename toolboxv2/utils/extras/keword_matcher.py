@@ -1,9 +1,8 @@
 import re
 from collections import defaultdict
-from typing import Set, Union, List, Tuple
 
 
-def calculate_keyword_score(text: str, keywords: Set[str]) -> int:
+def calculate_keyword_score(text: str, keywords: set[str]) -> int:
     """
     Berechnet den Keyword-Score basierend auf der Häufigkeit der Keywords im Text.
     Case-insensitive und optimiert für Geschwindigkeit.
@@ -57,14 +56,14 @@ def calculate_weighted_score(text: str, keyword_weights: dict or list) -> float:
 STOPWORDS = {
         "der", "die", "das", "und", "oder", "in", "zu", "den",
         "ein", "eine", "von", "mit", "im", "am", "dem", "des",
-    "a", "about", "above", "after", "again", "against", "all", "am", "an", "and",
+    "a", "about", "above", "after", "again", "against", "all", "an", "and",
     "any", "are", "aren't", "as", "at", "be", "because", "been", "before", "being",
     "below", "between", "both", "but", "by", "can", "can't", "cannot", "could",
     "couldn't", "did", "didn't", "do", "does", "doesn't", "doing", "don't", "down",
     "during", "each", "few", "for", "from", "further", "had", "hadn't", "has",
     "hasn't", "have", "haven't", "having", "he", "he'd", "he'll", "he's", "her",
     "here", "here's", "hers", "herself", "him", "himself", "his", "how", "how's",
-    "i", "i'd", "i'll", "i'm", "i've", "if", "in", "into", "is", "isn't", "it",
+    "i", "i'd", "i'll", "i'm", "i've", "if", "into", "is", "isn't", "it",
     "it's", "its", "itself", "let's", "me", "more", "most", "mustn't", "my",
     "myself", "no", "nor", "not", "of", "off", "on", "once", "only", "or", "other",
     "ought", "our", "ours", "ourselves", "out", "over", "own", "same", "shan't",
@@ -86,7 +85,7 @@ def extract_keywords(
     with_weights: bool = False,
     remove_stopwords: bool = True,
     stopwords: bool = True
-) -> Union[List[str], List[Tuple[str, int]]]:
+) -> list[str] | list[tuple[str, int]]:
     """
     Extrahiert Keywords mit optionaler Frequenzgewichtung
 

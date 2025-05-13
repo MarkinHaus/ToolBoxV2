@@ -1,15 +1,16 @@
-from packaging import version
 import json
-from pathlib import Path
-import re
-import platform
-import time
-import socket
 import os
-import sys
-import subprocess
-import tarfile
+import platform
+import re
 import shutil
+import socket
+import subprocess
+import sys
+import tarfile
+import time
+from pathlib import Path
+
+from packaging import version
 
 SERVER_STATE_FILE = "server_state.json"
 PERSISTENT_FD_FILE = "server_socket.fd" # Used on POSIX
@@ -38,7 +39,7 @@ def find_highest_zip_version_entry(name, target_app_version=None, filepath='tbSt
     highest_zip_ver = None
     highest_entry = {}
 
-    with open(filepath, 'r') as file:
+    with open(filepath) as file:
         data = yaml.safe_load(file)
         # print(data)
         app_ver_h = None
@@ -462,7 +463,7 @@ def get_executable_name_with_extension(base_name=DEFAULT_EXECUTABLE_NAME):
 def read_server_state(state_file=SERVER_STATE_FILE):
     try:
         if os.path.exists(state_file):
-            with open(state_file, 'r') as f:
+            with open(state_file) as f:
                 state = json.load(f)
                 return state.get('pid'), state.get('version'), state.get('executable_path')
         return None, None, None
@@ -519,7 +520,7 @@ def ensure_socket_and_fd_file_posix(host, port, backlog, fd_file_path) -> tuple[
     """POSIX: Ensures a listening socket exists and its FD is in the fd_file."""
     if os.path.exists(fd_file_path):
         try:
-            with open(fd_file_path, 'r') as f:
+            with open(fd_file_path) as f:
                 fd = int(f.read().strip())
             # Basic check (less reliable than on-demand creation for ensuring liveness)
             # This check is mostly to see if the FD *number* is plausible.
@@ -607,7 +608,7 @@ def update_server_posix(new_executable_path: str, new_version: str):
         print(f"[POSIX] Error: FD file '{PERSISTENT_FD_FILE}' not found. Cannot update.")
         return False
     try:
-        with open(PERSISTENT_FD_FILE, 'r') as f: persistent_fd = int(f.read().strip())
+        with open(PERSISTENT_FD_FILE) as f: persistent_fd = int(f.read().strip())
         print(f"[POSIX] Using persistent listener FD: {persistent_fd}")
     except Exception as e:
         print(f"[POSIX] Error reading FD from '{PERSISTENT_FD_FILE}': {e}")
@@ -757,7 +758,7 @@ def manage_server(action: str, executable_path: str = None, version_str: str = "
             print(f"  PID: {pid}\n  Version: {ver}\n  Executable: {exe}")
             if platform.system().lower() != "windows" and os.path.exists(PERSISTENT_FD_FILE):
                 try:
-                    with open(PERSISTENT_FD_FILE, 'r') as f_fd: fd_val = f_fd.read().strip()
+                    with open(PERSISTENT_FD_FILE) as f_fd: fd_val = f_fd.read().strip()
                     print(f"  Listening FD (from file, POSIX only): {fd_val}")
                 except Exception: pass
         else:

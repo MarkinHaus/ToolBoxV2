@@ -8,19 +8,17 @@ try:
 except ImportError:
     class Response:
         pass
-from typing import Optional
 
 import requests
-from ..extras.blobs import BlobFile
-from ..singelton_class import Singleton
-from .getting_and_closing_app import get_app, get_logger
-
-from aiohttp import ClientSession, ClientResponse, MultipartWriter
+from aiohttp import ClientResponse, ClientSession, MultipartWriter
 
 from ... import Code
 from ...tests.a_util import async_test
-
+from ..extras.blobs import BlobFile
+from ..singelton_class import Singleton
+from .getting_and_closing_app import get_app, get_logger
 from .types import Result
+
 
 class RequestSession(Response):
 
@@ -40,13 +38,15 @@ class RequestSession(Response):
         return self._json()
 
 from aiohttp import ClientConnectorError, ClientError
+
+
 class Session(metaclass=Singleton):
 
     # user: LocalUser
 
     def __init__(self, username, base=None):
         self.username = username
-        self.session: Optional[ClientSession] = None
+        self.session: ClientSession | None = None
         self.valid = False
         if base is None:
             base = os.environ.get("TOOLBOXV2_REMOTE_BASE", "https://simplecore.app")
@@ -73,7 +73,7 @@ class Session(metaclass=Singleton):
         atexit.register(async_test(helper))
 
     async def init_log_in_mk_link(self, mak_link):
-        from urllib.parse import urlparse, parse_qs
+        from urllib.parse import parse_qs, urlparse
         await asyncio.sleep(0.1)
 
         pub_key, prv_key = Code.generate_asymmetric_keys()

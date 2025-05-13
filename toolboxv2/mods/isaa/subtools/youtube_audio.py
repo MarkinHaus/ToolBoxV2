@@ -10,11 +10,10 @@
 # Then, ues OpenAIWhisperParser() to transcribe them to text.
 
 # Let’s take the first lecture of Andrej Karpathy’s YouTube course as an example!
+from langchain_community.document_loaders import YoutubeLoader
 from langchain_community.document_loaders.blob_loaders.youtube_audio import (
     YoutubeAudioLoader,
 )
-
-from langchain_community.document_loaders import YoutubeLoader
 from langchain_community.document_loaders.youtube import TranscriptFormat
 
 

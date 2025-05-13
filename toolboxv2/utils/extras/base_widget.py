@@ -1,7 +1,6 @@
 import asyncio
 import uuid
 
-
 try:
     from ..system.all_functions_enums import CLOUDM_AUTHMANAGER
 except ImportError:

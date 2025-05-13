@@ -1,23 +1,23 @@
 import os
+import signal
+import sys
 import threading
+import time
 
 #from nicegui import ui
 from datetime import datetime
-from typing import Dict
-from threading import Thread, Event
-import time
-import signal
-import sys
+from threading import Event, Thread
+
 try:
-    from whatsapp import WhatsApp, Message
+    from whatsapp import Message, WhatsApp
 except ImportError:
     print("NO Whatsapp installed")
     WhatsApp = lambda :None
     Message = lambda :None
-from toolboxv2 import Singleton, Code
 import asyncio
 import logging
 
+from toolboxv2 import Code, Singleton
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,15 +27,15 @@ class AppManager(metaclass=Singleton):
     pepper = "pepper0"
 
     def __init__(self, start_port: int = 8000, port_range: int = 10, em=None):
-        self.instances: Dict[str, Dict] = {}
+        self.instances: dict[str, dict] = {}
         self.start_port = start_port
         self.port_range = port_range
-        self.threads: Dict[str, Thread] = {}
-        self.stop_events: Dict[str, Event] = {}
+        self.threads: dict[str, Thread] = {}
+        self.stop_events: dict[str, Event] = {}
         self.message_queue: asyncio.Queue = asyncio.Queue()
-        self.last_messages: Dict[str, datetime] = {}
-        self.keys: Dict[str, str] = {}
-        self.forwarders: Dict[str, Dict] = {}
+        self.last_messages: dict[str, datetime] = {}
+        self.keys: dict[str, str] = {}
+        self.forwarders: dict[str, dict] = {}
         self.runner = lambda :None
 
         if em is None:

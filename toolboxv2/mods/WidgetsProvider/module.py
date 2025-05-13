@@ -1,5 +1,6 @@
 import asyncio
-from toolboxv2 import get_app, App, Result, TBEF
+
+from toolboxv2 import TBEF, App, Result, get_app
 
 from ..CloudM import User
 
@@ -28,7 +29,7 @@ def get_all_widget_mods(app: App):
     valid_widgets = []
     for widget_mod in all_widget:
         _, error = app.get_function((widget_mod, "get_widget"))
-        if 0 != error:
+        if error != 0:
             continue
         valid_widgets.append(widget_mod)
     all_widgets = valid_widgets

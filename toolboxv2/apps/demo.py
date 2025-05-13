@@ -2,7 +2,8 @@
 import os
 
 import streamlit as st
-from toolboxv2.mods.FastApi.fast_lit import verify_streamlit_session, inject_custom_css
+
+from toolboxv2.mods.FastApi.fast_lit import inject_custom_css, verify_streamlit_session
 
 # Pfad zur CSS-Datei
 css_file_path = "./web/assets/styles.css"

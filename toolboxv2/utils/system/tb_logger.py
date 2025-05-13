@@ -1,6 +1,6 @@
+import datetime
 import logging
 import os
-import datetime
 from logging.handlers import SocketHandler
 
 from ..extras.Style import Style, remove_styles
@@ -50,7 +50,7 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
         "P": 62435
     }
 
-    with open(f"{logs_directory}/Logs.info", "r") as li:
+    with open(f"{logs_directory}/Logs.info") as li:
         log_info_data_str = li.read()
         try:
             log_info_data = eval(log_info_data_str)
@@ -139,7 +139,7 @@ def get_logger() -> logging.Logger:
 
 def unstyle_log_files(filename):
     text = ""
-    with open(filename, "r") as f:
+    with open(filename) as f:
         text = f.read()
     text = remove_styles(text)
     text += "\n no-styles \n"

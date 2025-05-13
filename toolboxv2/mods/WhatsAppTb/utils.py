@@ -2,10 +2,9 @@
 emoji_set_work_phases = ["📂", "📄", "🖊️", "📊", "📈", "💻", "🔧", "✅", "🚀", "🏁"]
 emoji_set_thermometer = ["❄️", "🌬️", "☁️", "🌤️", "🌞", "🔥", "🌋", "💥", "🌟", "☀️"]
 
-import time
-import threading
 import logging
-from typing import List
+import threading
+import time
 
 logging.basicConfig(
     level=logging.INFO,
@@ -14,7 +13,7 @@ logging.basicConfig(
 
 
 class ProgressMessenger:
-    def __init__(self, messenger, recipient_phone: str, max_steps: int = 5, emoji_set: List[str] = None, content=None):
+    def __init__(self, messenger, recipient_phone: str, max_steps: int = 5, emoji_set: list[str] = None, content=None):
         self.messenger = messenger
         self.recipient_phone = recipient_phone
         self.max_steps = max_steps

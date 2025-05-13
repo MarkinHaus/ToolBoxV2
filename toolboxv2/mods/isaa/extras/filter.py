@@ -1,21 +1,19 @@
 # Import fuzzy matching library:
 import ast
 import json
+import os
 import re
-from typing import List
-
-from rapidfuzz import fuzz
+import sys
 
 # Import semantic search libraries:
-from sentence_transformers import SentenceTransformer, util
 
 
 # --- Helper function for filtering pages ---
 def filter_relevant_texts(query: str,
-                          texts: List[str],
+                          texts: list[str],
                           fuzzy_threshold: int = 70,
                           semantic_threshold: float = 0.75,
-                          model: SentenceTransformer = None) -> List[str]:
+                          model = None) -> list[str]:
     """
     Filters a list of texts based on their relevance to the query.
     It first uses a fuzzy matching score and, if that score is below the threshold,
@@ -28,6 +26,17 @@ def filter_relevant_texts(query: str,
     :param model: A preloaded SentenceTransformer model (if None, one will be loaded).
     :return: Filtered list of texts deemed relevant.
     """
+    try:
+        from rapidfuzz import fuzz
+    except Exception:
+        os.system([sys.executable, '-m', 'pip', 'install', 'RapidFuzz'])
+        from rapidfuzz import fuzz
+    try:
+        from sentence_transformers import SentenceTransformer, util
+    except Exception:
+        os.system([sys.executable, '-m', 'pip', 'install', 'sentence-transformers'])
+        from sentence_transformers import SentenceTransformer, util
+
     if model is None:
         # For efficiency, consider pre-loading this model outside the function.
         model = SentenceTransformer('paraphrase-MiniLM-L6-v2')

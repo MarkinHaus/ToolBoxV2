@@ -1,22 +1,19 @@
 import asyncio
+import json
 import logging
 import math
+import os.path
 import queue
 import threading
 import time
 
-import os.path
-from typing import List
 import websockets
+from fastapi import HTTPException, WebSocket
+from websockets import serve
 from websockets.sync.client import connect
 
-import json
-
-from toolboxv2 import MainTool, FileHandler, Style
-from toolboxv2 import Result, get_app
+from toolboxv2 import FileHandler, MainTool, Result, Style, get_app
 from toolboxv2.utils.system.types import ApiOb
-from fastapi import WebSocket, HTTPException
-from websockets import serve
 
 
 async def valid_id(ws_id, id_v, websocket=None):
@@ -484,7 +481,7 @@ class Tools(MainTool, FileHandler):
                 return
             await asyncio.Future()  # Run forever
 
-    def construct_render(self, content: str, element_id: str, externals: List[str] or None = None,
+    def construct_render(self, content: str, element_id: str, externals: list[str] or None = None,
                          placeholder_content: str or None = None, from_file=False, to_str=True):
 
         if externals is None:
@@ -497,7 +494,7 @@ class Tools(MainTool, FileHandler):
 
         if from_file:
             if os.path.exists(content):
-                with open(content, 'r') as f:
+                with open(content) as f:
                     self.logger.info(f"File read from {content}")
                     content = f.read()
             else:
@@ -524,12 +521,13 @@ class Tools(MainTool, FileHandler):
             self._get_pools_manager = WebSocketPoolManager()
         return self._get_pools_manager
 
-from typing import Dict, List, Callable, Any
+from collections.abc import Callable
+from typing import Any
 
 
 class WebSocketPoolManager:
     def __init__(self):
-        self.pools: Dict[str, Dict[str, Any]] = {}
+        self.pools: dict[str, dict[str, Any]] = {}
         self.logger = logging.getLogger(__name__)
 
     async def create_pool(self, pool_id: str) -> None:
@@ -561,7 +559,7 @@ class WebSocketPoolManager:
             self.logger.warning(f"Connection {connection_id} not found in pool {pool_id}")
 
     def register_action(self, pool_id: str, action_name: str, handler: Callable,
-                        connection_ids: List[str] = None) -> None:
+                        connection_ids: list[str] = None) -> None:
         """Register an action for specific connections or the entire pool."""
         if pool_id not in self.pools:
             self.logger.error(f"Pool {pool_id} does not exist")
@@ -623,7 +621,7 @@ class WebSocketPoolManager:
         else:
             self.logger.error(f"Connection {connection_id} not found in pool {pool_id}")
 
-    def get_pool_connections(self, pool_id: str) -> List[str]:
+    def get_pool_connections(self, pool_id: str) -> list[str]:
         """Get a list of all connection IDs in a pool."""
         if pool_id in self.pools:
             return list(self.pools[pool_id]['connections'].keys())
@@ -631,7 +629,7 @@ class WebSocketPoolManager:
             self.logger.error(f"Pool {pool_id} does not exist")
             return []
 
-    def get_all_pools(self) -> List[str]:
+    def get_all_pools(self) -> list[str]:
         """Get a list of all pool IDs."""
         return list(self.pools.keys())
 

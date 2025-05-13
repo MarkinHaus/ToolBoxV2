@@ -1,7 +1,12 @@
 import unittest
 
 from toolboxv2 import Result
-from toolboxv2.utils.system.types import ToolBoxError, ToolBoxInterfaces, analyze_data, CallingObject
+from toolboxv2.utils.system.types import (
+    CallingObject,
+    ToolBoxError,
+    ToolBoxInterfaces,
+    analyze_data,
+)
 
 
 class TestResult(unittest.TestCase):

@@ -1,12 +1,13 @@
 
-from toolboxv2 import get_app, Code, Result
-from toolboxv2.utils.extras.base_widget import get_user_from_request
-from toolboxv2.utils.extras.blobs import BlobStorage, BlobFile
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import List, Optional, Dict, Any
+from typing import Any
+
 from pydantic import BaseModel, Field
 
+from toolboxv2 import Code, Result, get_app
+from toolboxv2.utils.extras.base_widget import get_user_from_request
+from toolboxv2.utils.extras.blobs import BlobFile, BlobStorage
 from toolboxv2.utils.system.session import RequestSession
 
 Name = "DoNext"
@@ -698,15 +699,15 @@ class ActionStatus(str, Enum):
 class Action(BaseModel):
     id: str
     title: str
-    description: Optional[str] = None
-    parent_id: Optional[str] = None
+    description: str | None = None
+    parent_id: str | None = None
     frequency: Frequency
     priority: int = Field(ge=1, le=5)
-    fixed_time: Optional[datetime] = None
+    fixed_time: datetime | None = None
     created_at: datetime = Field(default_factory=datetime.now)
     status: ActionStatus = Field(default=ActionStatus.NOT_STARTED)
-    last_completed: Optional[datetime] = None
-    next_due: Optional[datetime] = None
+    last_completed: datetime | None = None
+    next_due: datetime | None = None
 
     def dict(self, *args, **kwargs):
         # Convert datetime objects to strings for serialization
@@ -726,7 +727,7 @@ class Action(BaseModel):
 
 
 class Actions(BaseModel):
-    actions: List[Action]
+    actions: list[Action]
 
 
 class HistoryEntry(BaseModel):
@@ -734,7 +735,7 @@ class HistoryEntry(BaseModel):
     action_title: str
     timestamp: datetime
     status: ActionStatus
-    parent_id: Optional[str] = None
+    parent_id: str | None = None
 
     def dict(self, *args, **kwargs):
         # Convert datetime objects to strings for serialization
@@ -754,10 +755,10 @@ class HistoryEntry(BaseModel):
 
 
 class ActionManager:
-    def __init__(self, user_id, storage: Optional[BlobStorage] = None):
+    def __init__(self, user_id, storage: BlobStorage | None = None):
         self.storage = storage
         self.user_id = user_id
-        self.current_action: Optional[Action] = None
+        self.current_action: Action | None = None
         self._load_data()
 
     def _load_data(self):
@@ -780,7 +781,7 @@ class ActionManager:
                 "current": self.current_action.dict() if self.current_action else None,
             })
 
-    def new_action(self, action_data: Dict[str, Any]) -> Action:
+    def new_action(self, action_data: dict[str, Any]) -> Action:
         action = Action.from_dict(**action_data)
 
         # Calculate next_due based on frequency
@@ -795,7 +796,7 @@ class ActionManager:
         self.actions.extend(actions)
         self._save_data()
 
-    def get_current_action(self) -> Optional[Dict]:
+    def get_current_action(self) -> dict | None:
         if self.current_action is None:
             return None
         return self.current_action.dict()
@@ -807,7 +808,7 @@ class ActionManager:
         self.actions.remove(action)
         self._save_data()
 
-    def set_current_action(self, action_id: str) -> Dict:
+    def set_current_action(self, action_id: str) -> dict:
         action = next((a for a in self.actions if a.id == action_id), None)
         if not action:
             raise ValueError("Action not found")
@@ -859,7 +860,7 @@ class ActionManager:
         self.current_action = None
         self._save_data()
 
-    def get_suggestions(self) -> List[Dict]:
+    def get_suggestions(self) -> list[dict]:
         if self.current_action:
             # If there's a current action, only suggest its sub-actions
             return [
@@ -884,10 +885,10 @@ class ActionManager:
 
         return list(map(lambda x: x.dict(), sorted_actions[:2]))
 
-    def get_history(self) -> List[Dict]:
+    def get_history(self) -> list[dict]:
         return list(map(lambda x: x.dict(), sorted(self.history, key=lambda x: x.timestamp, reverse=True)))
 
-    def get_all_actions(self) -> Dict[str, List[Dict]]:
+    def get_all_actions(self) -> dict[str, list[dict]]:
         # Group actions by parent_id
         result = {"root": []}
 

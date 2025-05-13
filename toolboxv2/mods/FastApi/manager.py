@@ -6,10 +6,9 @@ import signal
 import time
 from datetime import datetime
 from platform import system
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
-
-from toolboxv2 import MainTool, FileHandler
+from toolboxv2 import FileHandler, MainTool
 from toolboxv2.utils.extras.blobs import BlobFile
 from toolboxv2.utils.extras.qr import print_qrcode_to_console
 from toolboxv2.utils.system.session import get_local_ip, get_public_ip
@@ -30,19 +29,19 @@ class Tools(MainTool, FileHandler):
       - Get live diagnostic info about running APIs
     """
 
-    def __init__(self, app: Optional[Any] = None) -> None:
+    def __init__(self, app: Any | None = None) -> None:
         # Running APIs will be stored as a mapping from api_name to subprocess.Popen
-        self.running_apis: Dict[str, multiprocessing.Process] = {}
-        self.api_config: Dict[str, Dict[str, Union[str, int]]] = {}
+        self.running_apis: dict[str, multiprocessing.Process] = {}
+        self.api_config: dict[str, dict[str, str | int]] = {}
         self.version: str = VERSION
         self.name: str = NAME
         self.logger: logging.Logger = app.logger if app else logging.getLogger(__name__)
         self.color: str = "WHITE"
-        self.keys: Dict[str, str] = {"Apis": "api~config"}
+        self.keys: dict[str, str] = {"Apis": "api~config"}
         # In case app is not passed in, ensure that we have a dummy object with required properties
 
         # Define available tool commands
-        self.tools: Dict[str, Any] = {
+        self.tools: dict[str, Any] = {
             "all": [
                 ["Version", "Shows current Version"],
                 ["edit-api", "Set default API for name, host and port"],
@@ -98,7 +97,7 @@ class Tools(MainTool, FileHandler):
         self.logger.info("Version: %s", self.version)
         return self.version
 
-    def info(self) -> Dict[str, Any]:
+    def info(self) -> dict[str, Any]:
         """
         Return diagnostic information about API configurations and currently running APIs.
         """
@@ -139,7 +138,7 @@ class Tools(MainTool, FileHandler):
         self.logger.info("Updated API configuration for '%s': %s", api_name, self.api_config[api_name])
         print(f"API configuration updated: {self.api_config[api_name]}")
 
-    def start_dev(self, api_name: str, *modules: str, **kwargs: Any) -> Optional[str]:
+    def start_dev(self, api_name: str, *modules: str, **kwargs: Any) -> str | None:
         """
         Start an API in development mode.
 
@@ -160,13 +159,13 @@ class Tools(MainTool, FileHandler):
 
         return self._start_api(api_name, live=False, reload=False, test_override=False, host="localhost")
 
-    def start_live(self, api_name: str) -> Optional[str]:
+    def start_live(self, api_name: str) -> str | None:
         """
         Start an API in live mode.
         """
         return self._start_api(api_name, live=True, reload=False, test_override=False)
 
-    def start_debug(self, api_name: str) -> Optional[str]:
+    def start_debug(self, api_name: str) -> str | None:
         """
         Start an API in debug mode.
         """
@@ -179,7 +178,7 @@ class Tools(MainTool, FileHandler):
         reload: bool = False,
         test_override: bool = False,
         host: str = "localhost"
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         Start an API process with the given configuration.
 
@@ -238,7 +237,7 @@ class Tools(MainTool, FileHandler):
             os.system("npm install --prefix ./web ./web")
 
         # Build the uvicorn command.
-        cmd_parts: List[str] = [
+        cmd_parts: list[str] = [
             # sys.executable,
             # "-m",
             "uvicorn",
@@ -314,7 +313,7 @@ class Tools(MainTool, FileHandler):
 
         try:
             # Read PID from file
-            with open(pid_file, "r") as f:
+            with open(pid_file) as f:
                 api_pid = int(f.read().strip())
 
             # Try graceful shutdown first
@@ -376,7 +375,7 @@ class Tools(MainTool, FileHandler):
         else:
             return name
 
-    def show_running(self) -> List[str]:
+    def show_running(self) -> list[str]:
         """
         Display and return the list of currently running APIs with their status.
         """

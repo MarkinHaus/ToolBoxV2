@@ -1,8 +1,8 @@
 # Build a toolbox version -> push to git
 # run the live server
-import subprocess
 import os
 import signal
+import subprocess
 import time
 
 from toolboxv2 import get_app

@@ -2,10 +2,9 @@
 
 """The setup script."""
 
-import io
 from os import path
 
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 # from mypyc.build import mypycify
 
@@ -19,42 +18,17 @@ version = "v0.1.21"  # _version  # _version.get('main', {}).get('version', '-.-.
 here = path.abspath(path.dirname(__file__))
 
 # get the dependencies and installs
-with io.open(path.join(here, "requirements.txt"), encoding="utf-8") as f:
+with open(path.join(here, "requirements.txt"), encoding="utf-8") as f:
     all_reqs = f.read().split("\n")
 
 install_requires = [x.strip() for x in all_reqs if "git+" not in x]
 dependency_links = [x.strip().replace("git+", "") for x in all_reqs if "git+" not in x]
 
 
-all_reqs = """fastapi
-starlette
-webauthn
-mailjet_rest
-redis
-watchfiles
-SQLAlchemy
-Faker
-playwright
-radon
-setuptools""".split("\n")
+all_reqs = ["fastapi\r", "starlette\r", "webauthn\r", "mailjet_rest\r", "redis\r", "watchfiles\r", "SQLAlchemy\r", "Faker\r", "playwright\r", "radon\r", "setuptools"]
 
 install_requires_dev = [x.strip() for x in all_reqs if "git+" not in x]
-all_reqs = """langchain-experimental
-PyAudio
-Pebble
-transformers
-litellm
-gpt4all
-SpeechRecognition
-chromadb
-pydub
-duckduckgo-search
-langchain-groq
-beautifulsoup4
-langchain-huggingface
-langchain
-langchain-chroma
-langchain-ollama""".split("\n")
+all_reqs = ["langchain-experimental\r", "PyAudio\r", "Pebble\r", "transformers\r", "litellm\r", "gpt4all\r", "SpeechRecognition\r", "chromadb\r", "pydub\r", "duckduckgo-search\r", "langchain-groq\r", "beautifulsoup4\r", "langchain-huggingface\r", "langchain\r", "langchain-chroma\r", "langchain-ollama"]
 
 install_requires_isaa = [x.strip() for x in all_reqs if "git+" not in x]
 install_requires_isaa.extend(install_requires_dev[:8])

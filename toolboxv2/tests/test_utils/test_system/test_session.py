@@ -1,7 +1,7 @@
-import unittest
 import os
 import tempfile
-from unittest.mock import patch, MagicMock, AsyncMock
+import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.system.session import Session

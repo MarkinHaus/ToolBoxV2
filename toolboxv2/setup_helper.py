@@ -1,13 +1,16 @@
-import sys
-from pathlib import Path
+import os
 import platform
 import shutil
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import os
+from pathlib import Path
 
-
-from toolboxv2.utils.system.api import detect_os_and_arch, download_executable, query_executable_url
+from toolboxv2.utils.system.api import (
+    detect_os_and_arch,
+    download_executable,
+    query_executable_url,
+)
 
 
 def input_with_validation(prompt, valid_options=None):

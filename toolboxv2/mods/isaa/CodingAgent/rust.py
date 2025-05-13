@@ -1,13 +1,18 @@
+import json
+import re
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
-import shutil
-import json
-import re
-from typing import Dict, Any, Optional
+from typing import Any
 
 import toml
-from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, DefaultMarkdownGenerator
+from crawl4ai import (
+    AsyncWebCrawler,
+    BrowserConfig,
+    CrawlerRunConfig,
+    DefaultMarkdownGenerator,
+)
 
 from toolboxv2.mods.isaa.CodingAgent.live import VirtualFileSystem
 from toolboxv2.mods.isaa.extras.session import ChatSession
@@ -54,7 +59,7 @@ class CargoRustInterface:
         except Exception as e:
             return f"Failed to create project: {str(e)}"
 
-    async def add_dependency(self, name: str, version: Optional[str] = None) -> str:
+    async def add_dependency(self, name: str, version: str | None = None) -> str:
         """Add a dependency to Cargo.toml"""
         if not self.current_project:
             return "No active project"
@@ -173,7 +178,7 @@ class CargoRustInterface:
             if not file_path.exists():
                 return f"File {file} not found"
 
-            with open(file_path, 'r') as f:
+            with open(file_path) as f:
                 content = f.read()
 
             # Handle function modification
@@ -210,7 +215,7 @@ class CargoRustInterface:
         """Load saved session state"""
         session_file = self._session_dir / f"{name}.json"
         if session_file.exists():
-            with open(session_file, 'r') as f:
+            with open(session_file) as f:
                 state = json.load(f)
                 self.output_history = state['output_history']
                 self.current_project = Path(state['current_project']) if state['current_project'] else None
@@ -219,7 +224,7 @@ class CargoRustInterface:
 import asyncio
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional
+
 from pydantic import BaseModel
 
 
@@ -233,14 +238,14 @@ class ThinkState(Enum):
 class ThinkResult(BaseModel):
     action: str
     content: str
-    context: Optional[Dict[str, Any]] = None
+    context: dict[str, Any] | None = None
 
 
 @dataclass
 class ExecutionRecord:
     code: str
-    result: Optional[str]
-    error: Optional[str]
+    result: str | None
+    error: str | None
 
 
 @dataclass
@@ -248,8 +253,8 @@ class CrateInfo:
     name: str
     version: str
     description: str
-    documentation: Optional[str]
-    repository: Optional[str]
+    documentation: str | None
+    repository: str | None
     downloads: int
 
 
@@ -271,7 +276,7 @@ class RustPipeline:
         project_path: Path,
         verbose: bool = False,
         max_iter: int = 12,
-        cache_dir: Optional[Path] = None
+        cache_dir: Path | None = None
     ):
         self.agent = agent
         self.project_path = Path(project_path)
@@ -289,9 +294,9 @@ class RustPipeline:
         )
 
         # Track project state
-        self.cargo_toml: Optional[Dict] = None
-        self.current_crates: Dict[str, CrateInfo] = {}
-        self.execution_history: List[ExecutionRecord] = []
+        self.cargo_toml: dict | None = None
+        self.current_crates: dict[str, CrateInfo] = {}
+        self.execution_history: list[ExecutionRecord] = []
 
         # Initialize memory systems
         self.docs_memory = ChatSession(agent.memory, "RustDocs")
@@ -318,7 +323,7 @@ class RustPipeline:
                 crate_data = json.load(f)
                 self.current_crates[crate_data["name"]] = CrateInfo(**crate_data)
 
-    async def fetch_crate_docs(self, crate_name: str, version: Optional[str] = None) -> str:
+    async def fetch_crate_docs(self, crate_name: str, version: str | None = None) -> str:
         """Fetch and cache documentation from docs.rs"""
         cache_file = self.cache_dir / f"crate_{crate_name}.json"
 
@@ -351,7 +356,7 @@ class RustPipeline:
         else:
             return f"Error fetching docs: {result.error_message}"
 
-    async def execute_rust(self, code: str, file_path: Optional[str] = None) -> ExecutionRecord:
+    async def execute_rust(self, code: str, file_path: str | None = None) -> ExecutionRecord:
         """Execute Rust code, handling both file updates and compilation"""
         try:
             if file_path:
@@ -371,7 +376,7 @@ class RustPipeline:
         except Exception as e:
             return ExecutionRecord(code=code, result=None, error=str(e))
 
-    async def _run_cargo_command(self, cmd: str, input_code: Optional[str] = None) -> str:
+    async def _run_cargo_command(self, cmd: str, input_code: str | None = None) -> str:
         """Execute cargo commands and capture output"""
         if cmd == "eval" and input_code:
             # Create temporary file for evaluation
@@ -395,7 +400,7 @@ fn main() {{
         stdout, stderr = await process.communicate()
         return f"stdout:\n{stdout.decode()}\nstderr:\n{stderr.decode()}"
 
-    async def run(self, task: str) -> Dict[str, Any]:
+    async def run(self, task: str) -> dict[str, Any]:
         """Execute a Rust development task with documentation and build feedback"""
         state = ThinkState.ACTION
         result = None

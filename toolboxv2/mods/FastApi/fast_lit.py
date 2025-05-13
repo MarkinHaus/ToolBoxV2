@@ -1,17 +1,14 @@
-import sys
-
-from fastapi import FastAPI, Request, Response
-from starlette.middleware.base import BaseHTTPMiddleware
-
-from starlette.responses import RedirectResponse, JSONResponse
-import jwt
-from datetime import datetime, timedelta
 import asyncio
-import subprocess
 import os
+import subprocess
+import sys
+from datetime import datetime, timedelta
+from typing import Any
 
-from fastapi import WebSocket
-from typing import Dict, Optional, Any
+import jwt
+from fastapi import FastAPI, Request, Response, WebSocket
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse, RedirectResponse
 
 from toolboxv2 import Singleton
 
@@ -59,7 +56,7 @@ class StreamlitAppManager:
 
 class WebSocketManager:
     def __init__(self):
-        self.active_connections: Dict[str, Dict[str, WebSocket]] = {}
+        self.active_connections: dict[str, dict[str, WebSocket]] = {}
         self.message_handlers = {}
 
     async def connect(self, websocket: WebSocket, session_id: str, app_id: str):
@@ -93,8 +90,8 @@ class APIRequestHelper:
     def __init__(self, token_secret: str):
         self.token_secret = token_secret
 
-    async def make_api_request(self, endpoint: str, method: str, data: Optional[dict] = None,
-                               headers: Optional[dict] = None, session_token: Optional[str] = None) -> Any:
+    async def make_api_request(self, endpoint: str, method: str, data: dict | None = None,
+                               headers: dict | None = None, session_token: str | None = None) -> Any:
         """
         Make API requests while maintaining session context
         """
@@ -160,7 +157,7 @@ class BidirectionalStreamlitAppManager(BaseHTTPMiddleware, metaclass=Singleton):
     #    except WebSocketDisconnect:
     #        await self.streamlit_manager.ws_manager.disconnect(session_id, app_id)
 
-    async def resolve_session_token(self, request: Request) -> Optional[str]:
+    async def resolve_session_token(self, request: Request) -> str | None:
         """
         Extract and validate session token from request
         """
@@ -212,7 +209,7 @@ class BidirectionalStreamlitAppManager(BaseHTTPMiddleware, metaclass=Singleton):
         return resposee
 
 
-async def make_api_request(endpoint: str, method: str = "GET", data: Optional[dict] = None):
+async def make_api_request(endpoint: str, method: str = "GET", data: dict | None = None):
     """Helper function for making API requests from Streamlit apps"""
     import streamlit as st
 
@@ -242,8 +239,8 @@ async def make_api_request(endpoint: str, method: str = "GET", data: Optional[di
 
 # Streamlit authentication helper (to be used in Streamlit apps)
 def verify_streamlit_session():
-    import streamlit as st
     import jwt
+    import streamlit as st
 
     # Get token from URL
     token = st.query_params.get("token", [None])[0]
@@ -275,7 +272,7 @@ def inject_custom_css(css_file_path="./web/assets/styles.css"):
     """
     import streamlit as st
     try:
-        with open(css_file_path, "r") as f:
+        with open(css_file_path) as f:
             css_content = f.read()
 
         # CSS in einen <style>-Tag einbetten

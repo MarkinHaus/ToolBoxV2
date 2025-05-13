@@ -1,8 +1,14 @@
 import os
-
-from toolboxv2.utils.system.state_system import TbState, DefaultFilesFormatElement, calculate_shasum, process_files, get_state_from_app
 import unittest
 from unittest.mock import MagicMock, patch
+
+from toolboxv2.utils.system.state_system import (
+    DefaultFilesFormatElement,
+    TbState,
+    calculate_shasum,
+    get_state_from_app,
+    process_files,
+)
 
 
 class TestTbState(unittest.TestCase):

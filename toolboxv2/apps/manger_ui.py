@@ -1,7 +1,7 @@
-import streamlit as st
-import requests
-from typing import Optional
 from pathlib import Path
+
+import requests
+import streamlit as st
 
 # FastAPI Backend URL
 API_URL = "http://localhost:5000/apps"
@@ -37,7 +37,7 @@ class AppManagerClient:
         return response.json()
 
 
-def save_uploaded_file(uploaded_file) -> Optional[str]:
+def save_uploaded_file(uploaded_file) -> str | None:
     """Speichert eine hochgeladene Datei und gibt den Pfad zurück"""
     if uploaded_file is None:
         return None

@@ -6,11 +6,10 @@ import time
 
 import requests
 
-from toolboxv2 import MainTool, FileHandler, get_app, Style
-from .UserInstances import UserInstances
+from toolboxv2 import FileHandler, MainTool, Style, get_app
+
 from ...utils.system.api import find_highest_zip_version
-
-
+from .UserInstances import UserInstances
 
 Name = 'CloudM'
 version = "0.0.3"

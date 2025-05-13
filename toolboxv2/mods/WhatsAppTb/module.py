@@ -3,7 +3,6 @@ import os
 
 from toolboxv2 import App, get_app
 from toolboxv2.mods.WhatsAppTb.client import runner
-
 from toolboxv2.mods.WhatsAppTb.server import AppManager
 
 Name = "WhatsAppTb"

@@ -1,10 +1,8 @@
 import os
-import subprocess
 import platform
-import time
-import urllib.request
-import zipfile
+import subprocess
 import tarfile
+import urllib.request
 
 
 def download_file(url, dest):
@@ -56,7 +54,7 @@ def install_python(target_dir, version="3.12.9"):
 
 def pip_exists(python_exe):
     try:
-        subprocess.run([python_exe, "-m", "pip", "--version"], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run([python_exe, "-m", "pip", "--version"], stdout=subprocess.DEVNULL)
         print("pip already installed.")
         return True
     except subprocess.CalledProcessError:
@@ -69,15 +67,18 @@ def install_pip(python_exe):
     get_pip_url = "https://bootstrap.pypa.io/get-pip.py"
     get_pip_path = os.path.join(os.path.dirname(python_exe), "get-pip.py")
     download_file(get_pip_url, get_pip_path)
-    subprocess.run([python_exe, get_pip_path], check=True)
+    subprocess.run([python_exe, get_pip_path])
     os.remove(get_pip_path)
 
 
 def install_current_package(python_exe):
-    subprocess.run([python_exe, "-m", "pip", "install", "-e", ".[isaa]", "--no-warn-script-location"], check=True)
+    subprocess.run([python_exe, "-m", "pip", "install", "-e", ".[isaa]", "--no-warn-script-location"])
 
 def install_extra_win_gpu_12_6_package(python_exe):
-    subprocess.run([python_exe, "-m", "pip", "install", "torch", "torchvision", "torchaudio", "--index-url", "https://download.pytorch.org/whl/cu126"], check=True)
+    subprocess.run([python_exe, "-m", "pip", "install",
+                    "torch", "torchvision", "torchaudio",
+                    "--index-url",
+                    "https://download.pytorch.org/whl/cu126"])
     subprocess.run([python_exe, "-m", "pip", "install", "starlette",
     "litellm",
     "pebble",
@@ -117,8 +118,15 @@ def install_extra_win_gpu_12_6_package(python_exe):
     "schedule>=1.2.2",
     "qdrant-client[fastembed]",
     "python-levenshtein>=0.27.1",
-    "langchain-google-genai>=2.1.2"], check=True)
-    subprocess.run([python_exe, "-m", "pip", "install", "websockets", "schedule", "mailjet_rest", "mockito"], check=True)
+    "langchain-google-genai>=2.1.2"])
+    subprocess.run([python_exe,
+                    "-m",
+                    "pip",
+                    "install",
+                    "websockets",
+                    "schedule",
+                    "mailjet_rest",
+                    "mockito"])
 
 
 def main():

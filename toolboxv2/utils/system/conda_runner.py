@@ -1,13 +1,13 @@
+import argparse
+import json
 import os
 import subprocess
 import sys
-import json
-from typing import List, Tuple, Optional
-import argparse
+
 from tqdm import tqdm
 
 
-def run_command(command: str, live: bool = True) -> Tuple[bool, Optional[str]]:
+def run_command(command: str, live: bool = True) -> tuple[bool, str | None]:
     print(f"Running command: {command}")
 
     if live:
@@ -32,8 +32,8 @@ def update_conda(live=False):
     return run_command("conda update -n base -c defaults conda", live)
 
 
-def run_script_in_conda_env(script_path: str, conda_env: str, script_args: List[str], live: bool = True,
-                            python: bool = True, no_conda: bool = False) -> Tuple[bool, Optional[str]]:
+def run_script_in_conda_env(script_path: str, conda_env: str, script_args: list[str], live: bool = True,
+                            python: bool = True, no_conda: bool = False) -> tuple[bool, str | None]:
     print(f"Running from {os.path.abspath(os.curdir)}")
     if python:
         command = f"conda run -v --no-capture-output -n {conda_env} python {script_path} {' '.join(script_args)}"
@@ -100,7 +100,7 @@ def add_dependency(env_name: str, dependency: str, save: bool = False) -> bool:
 def update_dependency_registry(env_name: str, dependency: str):
     registry_file = f"{env_name}_registry.json"
     try:
-        with open(registry_file, 'r') as f:
+        with open(registry_file) as f:
             registry = json.load(f)
     except FileNotFoundError:
         registry = []
@@ -118,7 +118,7 @@ def update_dependency_registry(env_name: str, dependency: str):
 def update_dependencies(env_name: str) -> bool:
     registry_file = f"{env_name}_registry.json"
     try:
-        with open(registry_file, 'r') as f:
+        with open(registry_file) as f:
             registry = json.load(f)
     except FileNotFoundError:
         print(f"No dependency registry found for environment {env_name}")
@@ -172,7 +172,7 @@ def create_env_registry(env_name: str) -> bool:
     except json.JSONDecodeError:
         print(f"Failed to parse package list for environment {env_name}")
         return False
-    except IOError:
+    except OSError:
         print(f"Failed to write registry file for environment {env_name}")
         return False
 

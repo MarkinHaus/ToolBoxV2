@@ -1,18 +1,20 @@
 import os
 import pickle
 from collections import deque
-from typing import Callable, Optional
+from collections.abc import Callable
 
 try:
     import dill
 except ImportError:
     dill = pickle
 
-import schedule
 import threading
 import time
 from datetime import datetime, timedelta
-from toolboxv2 import get_app, Result, MainTool
+
+import schedule
+
+from toolboxv2 import MainTool, Result, get_app
 
 Name = 'SchedulerManager'
 export = get_app(Name).tb
@@ -68,10 +70,10 @@ class SchedulerManagerClass:
     def register_job(self,
                      job_id: str,
                      second: int = -1,
-                     func: Optional[Callable or str] = None,
-                     job: Optional[schedule.Job] = None,
-                     time_passer: Optional[schedule.Job] = None,
-                     object_name: Optional[str] = None,
+                     func: (Callable or str) | None = None,
+                     job: schedule.Job | None = None,
+                     time_passer: schedule.Job | None = None,
+                     object_name: str | None = None,
                      receive_job: bool = False,
                      save: bool = False,
                      max_live: bool = False,
@@ -166,7 +168,7 @@ class SchedulerManagerClass:
     @staticmethod
     def _parse_function(func: str or Callable, object_name):
         if isinstance(func, str) and func.endswith('.py'):
-            with open(func, 'r') as file:
+            with open(func) as file:
                 func_code = file.read()
                 exec(func_code)
                 func = locals()[object_name]
@@ -436,9 +438,9 @@ class Tools(MainTool, SchedulerManagerClass):
             return None
         job_id = job_data["job_id"]
         second = job_data.get("second", 0)
-        func = job_data.get("func", None)
-        job = job_data.get("job", None)
-        time_passer = job_data.get("time_passer", None)
+        func = job_data.get("func")
+        job = job_data.get("job")
+        time_passer = job_data.get("time_passer")
         object_name = job_data.get("object_name", "tb_job_fuction")
         receive_job = job_data.get("receive_job", False)
         save = job_data.get("save", False)

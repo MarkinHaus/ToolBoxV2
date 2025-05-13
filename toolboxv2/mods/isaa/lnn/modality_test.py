@@ -1,4 +1,5 @@
 from test import NeuralSystem
+
 if __name__ == '__main__':
     import torch
     import torch.nn.functional as F

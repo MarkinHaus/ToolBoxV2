@@ -1,7 +1,7 @@
 import json
 import socket
 import time
-from typing import Dict, Any, Optional
+from typing import Any
 
 
 def make_known(name: str, get_flag: bytes = b"R", port=44667) -> Any | None:
@@ -34,5 +34,5 @@ def make_known(name: str, get_flag: bytes = b"R", port=44667) -> Any | None:
     finally:
         server.close()
 
-    out: Optional[Dict[str, int | str]] = None
+    out: dict[str, int | str] | None = None
     return json.loads(data.decode())

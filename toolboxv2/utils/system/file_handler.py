@@ -2,11 +2,9 @@ import ast
 import json
 import os
 
-from .tb_logger import get_logger
-
 from ..extras.Style import Style
-
 from ..security.cryp import Code
+from .tb_logger import get_logger
 
 
 class FileHandler(Code):

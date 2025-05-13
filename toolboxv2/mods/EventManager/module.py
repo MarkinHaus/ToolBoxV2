@@ -4,13 +4,13 @@ import queue
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
-from enum import Enum
-from typing import Dict, Tuple, Optional, Any, Callable, Union, Set, List
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict, dataclass, field
+from enum import Enum
+from typing import Any
 
-from toolboxv2 import get_app, Result, Spinner, MainTool, get_logger
-
+from toolboxv2 import MainTool, Result, Spinner, get_app, get_logger
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.brodcast.client import start_client
 from toolboxv2.utils.brodcast.server import make_known
@@ -113,14 +113,14 @@ class EventID:
 @dataclass
 class Event:
     name: str
-    source: Union[Callable, str, Tuple[str, str]]
+    source: Callable | str | tuple[str, str]
     source_types: SourceTypes = SourceTypes.F
     scope: Scope = Scope.local
     exec_in: ExecIn = ExecIn.local
     event_id: EventID = field(default_factory=EventID.crate_empty())
     threaded: bool = False
-    args: Optional[Tuple] = None
-    kwargs_: Optional[Dict] = None
+    args: tuple | None = None
+    kwargs_: dict | None = None
 
     def __eq__(self, other):
         if not isinstance(other, Event):
@@ -158,7 +158,7 @@ class Rout:
     def to_port(self):
         return self._to_port
 
-    async def put_data(self, event_id_data: Dict[str, str]):
+    async def put_data(self, event_id_data: dict[str, str]):
         event_id: EventID = EventID(**event_id_data)
         return await self.routing_function(event_id)
 
@@ -195,14 +195,14 @@ class ProxyRout(ProxyUtil):
 
 
 class EventManagerClass:
-    events: Set[Event] = set()
+    events: set[Event] = set()
     source_id: str
     _name: str
     _identification: str
 
-    routes_client: Dict[str, ProxyRout] = {}
-    routers_servers: Dict[str, DaemonRout] = {}
-    routers_servers_tasks: List[Any] = []
+    routes_client: dict[str, ProxyRout] = {}
+    routers_servers: dict[str, DaemonRout] = {}
+    routers_servers_tasks: list[Any] = []
     routers_servers_tasks_running_flag: bool = False
 
     receiver_que: queue.Queue
@@ -349,7 +349,7 @@ class EventManagerClass:
             print(f"Check the port {addr} Sever likely not Online : {e}")
             return False
 
-    async def add_mini_client(self, name: str, addr: Tuple[str, int]):
+    async def add_mini_client(self, name: str, addr: tuple[str, int]):
 
         mini_proxy = await ProxyRout(class_instance=None, timeout=15, app=get_app(),
                                      remote_functions=[""], peer=False, name=name, do_connect=False)
@@ -601,9 +601,7 @@ class EventManagerClass:
         if result is None:
             result = Result.default_user_error("Invalid Event ID")
 
-        if isinstance(result, bytes):
-            pass
-        elif isinstance(result, dict):
+        if isinstance(result, bytes) or isinstance(result, dict):
             pass
         elif isinstance(result, Result):
             result.result.data_info = str(event_id)

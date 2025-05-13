@@ -1,11 +1,14 @@
 if __name__ == "__main__":
+    import numpy as np
     import torch
     import torch.nn as nn
     import torch.optim as optim
-    from torch.utils.data import DataLoader, TensorDataset
-    import numpy as np
     from sklearn.model_selection import train_test_split
-    from test import NeuralSystem  # Stellen Sie sicher, dass Sie die Klasse importieren können
+    from torch.utils.data import DataLoader, TensorDataset
+
+    from test import (
+        NeuralSystem,  # Stellen Sie sicher, dass Sie die Klasse importieren können
+    )
 
     # Hyperparameter
     input_size = 10

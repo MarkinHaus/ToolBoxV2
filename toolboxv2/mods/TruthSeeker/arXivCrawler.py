@@ -2,26 +2,25 @@
 ArXiv Crawler for TruthSeeker.
 Main module for processing research queries.
 """
-import os
 import asyncio
+import logging
+import os
+import threading
 import time
 import uuid
-import threading
-from typing import List, Optional, Tuple
+
 from pydantic import BaseModel, Field
+from urllib3 import Retry
+
+from toolboxv2 import get_app
+from toolboxv2.mods.isaa.base.KnowledgeBase import TextSplitter
+
+from .pdf_processor import RobustPDFDownloader
 
 # Import the new modular components
 from .research_processor import ResearchProcessor
-from .sources.arxiv_source import search_papers, Paper
-from .pdf_processor import RobustPDFDownloader
+from .sources.arxiv_source import Paper, search_papers
 from .text_splitter import TextSplitter
-
-from toolboxv2 import get_app
-import logging
-
-from urllib3 import Retry
-
-from toolboxv2.mods.isaa.base.KnowledgeBase import TextSplitter
 
 
 class RobustPDFDownloader:
@@ -164,12 +163,12 @@ class RobustPDFDownloader:
             return []
 
 class Insights(BaseModel):
-    is_true: Optional[bool] = Field(..., description="if the Statement in the query is True or not basd on the papers")
+    is_true: bool | None = Field(..., description="if the Statement in the query is True or not basd on the papers")
     summary: str = Field(..., description="Comprehensive summary addressing the query")
-    key_point: Optional[str] = Field(..., description="Most important findings")
+    key_point: str | None = Field(..., description="Most important findings")
 
 class ISTRUE(BaseModel):
-    value: Optional[bool] = Field(..., description="if the Statement in the query is True or not basd on the papers")
+    value: bool | None = Field(..., description="if the Statement in the query is True or not basd on the papers")
 
 class DocumentChunk(BaseModel):
     content: str
@@ -180,15 +179,15 @@ class Paper(BaseModel):
     title: str
     summary: str
     pdf_url: str
-    ref_pages: Optional[List[int]] = Field(default_factory=list)
-    chunks: List[DocumentChunk] = Field(default_factory=list)
+    ref_pages: list[int] | None = Field(default_factory=list)
+    chunks: list[DocumentChunk] = Field(default_factory=list)
     overall_relevance_score: float = 0.0
 
 class RelevanceAssessment(BaseModel):
     relevance_score: float = Field(..., ge=0.0, le=1.0)
-    key_sections: List[str] = Field(default_factory=list)
+    key_sections: list[str] = Field(default_factory=list)
 
-def search_papers(query: str, max_results=10) -> List[Paper]:
+def search_papers(query: str, max_results=10) -> list[Paper]:
     search = arxiv.Search(
         query=query,
         max_results=max_results,
@@ -283,7 +282,7 @@ class ArXivPDFProcessor:
         """Calculate overall progress considering all processing phases."""
         return self.processor._update_global_progress()
 
-    async def search_and_process_papers(self, queries: List[str]) -> List[Paper]:
+    async def search_and_process_papers(self, queries: list[str]) -> list[Paper]:
         """Search for and process papers based on queries.
         
         Args:
@@ -294,7 +293,7 @@ class ArXivPDFProcessor:
         """
         # Use the new processor to search and process papers
         unified_papers = await self.processor.search_and_process_papers(queries)
-        
+
         # Convert UnifiedPaper objects to Paper objects for backward compatibility
         papers = []
         for paper in unified_papers:
@@ -312,12 +311,12 @@ class ArXivPDFProcessor:
                     paper_id=paper.paper_id
                 )
                 papers.append(arxiv_paper)
-        
+
         # Update attributes for backward compatibility
         self.all_ref_papers = self.processor.all_ref_papers
         self.all_texts_len = self.processor.all_texts_len
         self.f_texts_len = self.processor.f_texts_len
-        
+
         return papers
 
     def send_status(self, step: str, progress: float = None, additional_info: str = ""):
@@ -330,12 +329,12 @@ class ArXivPDFProcessor:
             "info": additional_info
         })
 
-    def generate_queries(self) -> List[str]:
+    def generate_queries(self) -> list[str]:
         self.send_status("Generating search queries")
         self.queries_generated = False
 
         class ArXivQueries(BaseModel):
-            queries: List[str] = Field(..., description="List of ArXiv search queries (en)")
+            queries: list[str] = Field(..., description="List of ArXiv search queries (en)")
 
         try:
             query_generator: ArXivQueries = self.tools.format_class(
@@ -390,7 +389,7 @@ class ArXivPDFProcessor:
         self.mem_name = self.generate_mem_name().strip().replace("\n", '') + '_' + session_id
         self.init_process_papers()
 
-    async def process(self, query=None) -> Tuple[List[Paper], dict]:
+    async def process(self, query=None) -> tuple[list[Paper], dict]:
         if query is not None:
             self.query = query
         self.send_status("Starting research process")

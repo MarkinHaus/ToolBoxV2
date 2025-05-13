@@ -1,17 +1,18 @@
 import asyncio
 import time
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from ..extras.Style import Spinner
+
 try:
     from ..system.all_functions_enums import SOCKETMANAGER
 except ImportError:
     SOCKETMANAGER = lambda: None
     SOCKETMANAGER.CREATE_SOCKET = ("SOCKETMANAGER", "CREATE_SOCKET".lower())
+from ... import get_app
 from ..system.types import ApiResult, AppType, Result
 from ..toolbox import App
-from ... import get_app
 
 
 class ProxyUtil:
@@ -35,7 +36,7 @@ class ProxyUtil:
         return self.__initobj().__await__()
 
     async def __ainit__(self, class_instance: Any, host='0.0.0.0', port=6587, timeout=6,
-                        app: Optional[App or AppType] = None,
+                        app: (App or AppType) | None = None,
                         remote_functions=None, peer=False, name='ProxyApp-client', do_connect=True, unix_socket=False,
                         test_override=False):
         self.class_instance = class_instance

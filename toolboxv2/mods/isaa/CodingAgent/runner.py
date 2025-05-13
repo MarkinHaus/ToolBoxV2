@@ -2,18 +2,17 @@ import json
 from asyncio import Future
 from concurrent.futures import ThreadPoolExecutor
 from logging import Logger
-from typing import List
+from urllib.parse import urlparse
 
 from tqdm import tqdm
 
-from urllib.parse import urlparse
-from toolboxv2 import get_app, get_logger, Spinner
-from toolboxv2.utils.extras.Style import print_prompt
+from toolboxv2 import Spinner, get_app, get_logger
 from toolboxv2.mods.CloudM.ModManager import download_files
 from toolboxv2.mods.isaa import Tools
-from toolboxv2.mods.isaa.extras.modes import DivideMode, CreatePrompt, TextExtractor
+from toolboxv2.mods.isaa.extras.modes import CreatePrompt, DivideMode, TextExtractor
 from toolboxv2.mods.isaa.subtools.file_loder import load_from_file_system
 from toolboxv2.mods.isaa.subtools.web_loder import read_git_repo, route_url_to_function
+from toolboxv2.utils.extras.Style import print_prompt
 
 Name = 'isaa.code'
 version = "0.0.2"
@@ -155,7 +154,7 @@ def parsing_inputs(isaa, request: str or list, existing_code_base: str, local_so
                                                     print)
                 is_file = True
             if is_file:
-                with open(existing_code_base, 'r') as f:
+                with open(existing_code_base) as f:
                     content = f.read()
                 if urlparse_existing_code_base.path.endswith('.py'):
                     code_data = content
@@ -173,7 +172,7 @@ def parsing_inputs(isaa, request: str or list, existing_code_base: str, local_so
         if local_sources is not None:
             for source in local_sources:
                 if source[-3] == '.' or source.endswith('.py') or source.endswith('.html'):
-                    with open(source, 'r') as f:
+                    with open(source) as f:
                         content = f.read()
                     if source.endswith('.md'):
                         analyze_usage_from_markdown(content, isaa, space_name)
@@ -202,7 +201,7 @@ def parsing_inputs(isaa, request: str or list, existing_code_base: str, local_so
     return {"request": request, "result_list": result_list}, [space_name + 'Code', space_name + 'Docs']
 
 
-def code_writer_agent_loop(isaa: Tools, task: str, memspaces: List[str], max_iterations: int = 6, v_code_base=r""):
+def code_writer_agent_loop(isaa: Tools, task: str, memspaces: list[str], max_iterations: int = 6, v_code_base=r""):
     """
     needed functions mini agent ide, interactive umgebung
 

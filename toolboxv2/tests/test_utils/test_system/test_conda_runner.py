@@ -1,19 +1,20 @@
-import os
-import unittest
 import json
+import os
+import shutil
 import subprocess
 import tempfile
-import shutil
+import unittest
 
 from toolboxv2 import get_app
+
 # Import the functions to be tested
 from toolboxv2.utils.system.conda_runner import (
-    run_command,
-    create_conda_env,
-    delete_conda_env,
     add_dependency,
+    create_conda_env,
     create_env_registry,
-    run_script_in_conda_env
+    delete_conda_env,
+    run_command,
+    run_script_in_conda_env,
 )
 
 
@@ -115,7 +116,7 @@ class TestCondaRunner(unittest.TestCase):
         self.assertTrue(os.path.exists(registry_file))
 
         # Verify registry contents
-        with open(registry_file, 'r') as f:
+        with open(registry_file) as f:
             registry = json.load(f)
 
         if isinstance(registry[0], dict):

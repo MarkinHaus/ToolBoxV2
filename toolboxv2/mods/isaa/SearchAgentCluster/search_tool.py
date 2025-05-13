@@ -1,19 +1,20 @@
 import asyncio
 import base64
-import re
-import os
-import urllib
-from typing import Any, Dict, List, Optional, Union, TypeVar
-from pydantic import BaseModel
 import json
+import os
+import re
+import urllib
 from datetime import datetime
+from typing import Any, TypeVar
 from urllib.parse import urlparse
 
 # Import BrowserAnt components
 from browser_use import Controller, SystemPrompt
 from langchain_core.language_models import BaseChatModel
+from pydantic import BaseModel
 
 from toolboxv2.mods.isaa.CodingAgent.live import BrowserWrapper
+
 T = TypeVar('T', bound=BaseModel)
 global_headless = False
 
@@ -34,7 +35,7 @@ class WebScraperConfig(BaseModel):
     extract_html: bool = False
     headless: bool = False
     disable_images: bool = False
-    user_agent: Optional[str] = None
+    user_agent: str | None = None
 
 
 class WebScraper:
@@ -88,10 +89,10 @@ async def main():
     def __init__(
         self,
         config: WebScraperConfig = WebScraperConfig(),
-        llm: Optional[Union[str, BaseChatModel]] = None,
-        chrome_path: Optional[str] = None,
-        remote_url: Optional[str] = None,
-        browser_config: Optional[Dict[str, Any]] = None
+        llm: str | BaseChatModel | None = None,
+        chrome_path: str | None = None,
+        remote_url: str | None = None,
+        browser_config: dict[str, Any] | None = None
     ):
         """
         Initialize the web scraper with configuration.
@@ -140,8 +141,8 @@ async def main():
         extract_images: bool = False,
         extract_tables: bool = False,
         extract_links: bool = False,
-        save_to_file: Optional[str] = None
-    ) -> Dict[str, Any]:
+        save_to_file: str | None = None
+    ) -> dict[str, Any]:
         """
         Perform a comprehensive web search and return high-quality data for the given query.
 
@@ -309,7 +310,7 @@ async def main():
             # Make sure we clean up browser resources
             await self.close()
 
-    async def _scrape_url(self, url: str, task_id: str, extract_config: Dict[str, Any] = None):
+    async def _scrape_url(self, url: str, task_id: str, extract_config: dict[str, Any] = None):
         """
         Internal method to scrape a single URL
 
@@ -405,7 +406,7 @@ async def main():
         except Exception as e:
             print(f"Error during auto-scroll: {e}")
 
-    async def scrape_url(self, url: str, extract_config: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def scrape_url(self, url: str, extract_config: dict[str, Any] = None) -> dict[str, Any]:
         """
         Scrape a single URL and return the results
 
@@ -423,9 +424,9 @@ async def main():
 
     async def scrape_urls(
         self,
-        urls: List[str],
-        extract_config: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
+        urls: list[str],
+        extract_config: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         """
         Scrape multiple URLs in parallel and return all results
 
@@ -451,10 +452,10 @@ async def main():
 
     async def scrape_structured_data(
         self,
-        urls: List[str],
+        urls: list[str],
         model: type[T],
         extraction_task: str = None
-    ) -> List[T]:
+    ) -> list[T]:
         """
         Scrape and parse structured data into pydantic models
 
@@ -583,7 +584,7 @@ class WebContentParser:
         """Initialize with a browser wrapper"""
         self.browser_wrapper = browser_wrapper
 
-    async def extract_article(self, url: str) -> Dict[str, Any]:
+    async def extract_article(self, url: str) -> dict[str, Any]:
         """Extract article content with title, text, and metadata"""
         await self.browser_wrapper.initialize()
         page = await self.browser_wrapper.navigate(url)
@@ -664,7 +665,7 @@ class WebContentParser:
 
         return article
 
-    async def extract_table_data(self, url: str, table_selector: str = 'table') -> List[Dict[str, Any]]:
+    async def extract_table_data(self, url: str, table_selector: str = 'table') -> list[dict[str, Any]]:
         """Extract tabular data from a webpage"""
         await self.browser_wrapper.initialize()
         page = await self.browser_wrapper.navigate(url)
@@ -712,7 +713,7 @@ class WebContentParser:
         table_data = await page.evaluate(extract_table_js, table_selector)
         return table_data
 
-    async def extract_links(self, url: str, link_selector: str = 'a') -> List[Dict[str, str]]:
+    async def extract_links(self, url: str, link_selector: str = 'a') -> list[dict[str, str]]:
         """Extract all links from a webpage"""
         await self.browser_wrapper.initialize()
         page = await self.browser_wrapper.navigate(url)
@@ -737,19 +738,18 @@ class WebContentParser:
         return links
 
 
-from urllib.parse import urljoin
-from typing import Dict, List, Set, Optional
 import logging
+from urllib.parse import urljoin
 
 
 async def scrape_documentation_to_markdown(
     start_url: str,
-    topic: Optional[str] = None,
+    topic: str | None = None,
     max_pages: int = 30,
     max_depth: int = 3,
-    output_dir: Optional[str] = None,
+    output_dir: str | None = None,
     toc_filename: str = "table_of_contents.md"
-) -> Dict[str, str]:
+) -> dict[str, str]:
     """
     Recursively scrape documentation pages starting from a URL,
     focused on a specific topic, and convert to Markdown.
@@ -781,9 +781,9 @@ async def scrape_documentation_to_markdown(
     await scraper.initialize()
 
     # Track visited and pending URLs
-    visited_urls: Set[str] = set()
-    pending_urls: List[Dict] = [{"url": start_url, "depth": 0, "parent": None}]
-    results: Dict[str, Dict] = {}
+    visited_urls: set[str] = set()
+    pending_urls: list[dict] = [{"url": start_url, "depth": 0, "parent": None}]
+    results: dict[str, dict] = {}
     domain = urlparse(start_url).netloc
 
     logging.info(f"Starting documentation scrape from {start_url}")
@@ -998,15 +998,15 @@ async def main():
     print(docs.get("table_of_contents", "No table of contents generated"))
 
 
+
 from pydantic import BaseModel
-from typing import List, Optional
 
 
 # Example model for structured data extraction
 class SearchResult(BaseModel):
     title: str
     url: str
-    content_excerpt: Optional[str] = None
+    content_excerpt: str | None = None
     source: str
 
 async def web_search(query: str):

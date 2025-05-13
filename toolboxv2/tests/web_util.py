@@ -1,19 +1,37 @@
 import asyncio
+import json
 import logging
 import os
 import time
-import json
-from typing import List, Dict, Any, Optional
+from typing import Any
 
 try:
-    from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page, Playwright
-    from playwright.async_api import async_playwright, Browser as ABrowser, BrowserContext as ABrowserContext, \
-        Page as APage, Playwright as APlaywright
+    from playwright.async_api import Browser as ABrowser
+    from playwright.async_api import BrowserContext as ABrowserContext
+    from playwright.async_api import Page as APage
+    from playwright.async_api import Playwright as APlaywright
+    from playwright.async_api import async_playwright
+    from playwright.sync_api import (
+        Browser,
+        BrowserContext,
+        Page,
+        Playwright,
+        sync_playwright,
+    )
 except ImportError:
     os.system("pip install playwright")
-    from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page, Playwright
-    from playwright.async_api import async_playwright, Browser as ABrowser, BrowserContext as ABrowserContext, \
-        Page as APage, Playwright as APlaywright
+    from playwright.async_api import Browser as ABrowser
+    from playwright.async_api import BrowserContext as ABrowserContext
+    from playwright.async_api import Page as APage
+    from playwright.async_api import Playwright as APlaywright
+    from playwright.async_api import async_playwright
+    from playwright.sync_api import (
+        Browser,
+        BrowserContext,
+        Page,
+        Playwright,
+        sync_playwright,
+    )
 
 
 class AsyncWebTestFramework:
@@ -45,9 +63,9 @@ class AsyncWebTestFramework:
         os.makedirs(state_dir, exist_ok=True)
 
         self.playwright = None
-        self.browser: Optional[ABrowser] = None
-        self.context: Optional[ABrowserContext] = None
-        self.page: Optional[APage] = None
+        self.browser: ABrowser | None = None
+        self.context: ABrowserContext | None = None
+        self.page: APage | None = None
 
     async def setup(self):
         """
@@ -69,7 +87,7 @@ class AsyncWebTestFramework:
         )
 
     async def create_context(self,
-                              viewport: Dict[str, int] = None,
+                              viewport: dict[str, int] = None,
                               user_agent: str = None):
         """
         Create a new browser context with optional configuration
@@ -90,7 +108,7 @@ class AsyncWebTestFramework:
         self.last_url = url
         await self.page.goto(url, wait_until='networkidle')
 
-    async def mimic_user_interaction(self, interactions: List[Dict[str, Any]]):
+    async def mimic_user_interaction(self, interactions: list[dict[str, Any]]):
         """
         Mimic user interactions using Playwright's API
 
@@ -182,7 +200,7 @@ class AsyncWebTestFramework:
             if not os.path.exists(state_path):
                 raise FileNotFoundError(f"State file {state_path} not found")
 
-            with open(state_path, 'r') as f:
+            with open(state_path) as f:
                 state = json.load(f)
 
             self.context = await self.browser.new_context(storage_state=state)
@@ -262,10 +280,10 @@ class WebTestFramework:
         # Ensure state directory exists
         os.makedirs(state_dir, exist_ok=True)
 
-        self.playwright:Optional[Playwright] = None
-        self.browser:Optional[Browser] = None
-        self.context:Optional[BrowserContext] = None
-        self.page:Optional[Page]  = None
+        self.playwright:Playwright | None = None
+        self.browser:Browser | None = None
+        self.context:BrowserContext | None = None
+        self.page:Page | None  = None
 
     def setup(self):
         """
@@ -286,7 +304,7 @@ class WebTestFramework:
         )
 
     def create_context(self,
-                       viewport: Dict[str, int] = None,
+                       viewport: dict[str, int] = None,
                        user_agent: str = None):
         """
         Create a new browser context with optional configuration
@@ -307,7 +325,7 @@ class WebTestFramework:
         self.last_url = url
         self.page.goto(url, wait_until='networkidle')
 
-    def mimic_user_interaction(self, interactions: List[Dict[str, Any]]):
+    def mimic_user_interaction(self, interactions: list[dict[str, Any]]):
         """
         Mimic user interactions using Playwright's API
 
@@ -419,7 +437,7 @@ class WebTestFramework:
             if not os.path.exists(state_path):
                 raise FileNotFoundError(f"State file {state_path} not found")
 
-            with open(state_path, 'r') as f:
+            with open(state_path) as f:
                 state = json.load(f)
 
             # Create a new context from the saved state

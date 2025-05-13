@@ -1,4 +1,4 @@
-from .module import Tools, Name, version
+from .module import Name, Tools, version
 
 Name = Name
 version = version

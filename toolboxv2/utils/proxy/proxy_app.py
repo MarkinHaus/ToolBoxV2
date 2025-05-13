@@ -1,6 +1,6 @@
-from .prox_util import ProxyUtil
 from ..singelton_class import Singleton
 from ..toolbox import App
+from .prox_util import ProxyUtil
 
 
 class ProxyApp(ProxyUtil, metaclass=Singleton):

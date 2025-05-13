@@ -1,7 +1,8 @@
 import importlib
 import os
-import requests
 from importlib.machinery import ModuleSpec
+
+import requests
 
 
 class GistLoader:
@@ -47,7 +48,7 @@ def create_or_update_gist(file_path, description="", public=True, gist_id=None, 
         raise FileNotFoundError(f"The file {file_path} does not exist.")
 
     # Read the content of the file
-    with open(file_path, 'r') as file:
+    with open(file_path) as file:
         content = file.read()
 
     if token is None:

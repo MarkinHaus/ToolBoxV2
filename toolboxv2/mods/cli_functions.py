@@ -5,7 +5,7 @@ import subprocess
 from dataclasses import dataclass, field
 
 from toolboxv2.mods.CloudM.mini import get_service_status
-from toolboxv2.utils.system.types import CallingObject, ApiResult
+from toolboxv2.utils.system.types import ApiResult, CallingObject
 
 try:
     from readchar import key as readchar_key
@@ -16,18 +16,19 @@ try:
 except ImportError and ModuleNotFoundError:
     READCHAR = False
 
-from toolboxv2 import get_app, App, Result
 from platform import node
 
+from toolboxv2 import App, Result, get_app
+
 try:
-    from prompt_toolkit import PromptSession, HTML
-    from prompt_toolkit.completion import NestedCompleter
-    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit import HTML, PromptSession
+    from prompt_toolkit.application import run_in_terminal
     from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
     from prompt_toolkit.clipboard import InMemoryClipboard
+    from prompt_toolkit.completion import NestedCompleter
     from prompt_toolkit.history import FileHistory
+    from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.output import ColorDepth
-    from prompt_toolkit.application import run_in_terminal
 
     PROMPT_TOOLKIT = True
     PROMPT_TOOLKIT_error = None
@@ -215,10 +216,10 @@ class UserInputObject:
     offset_y: int or None = field(default=None)
 
     def is_last(self) -> bool:
-        return "LAST" == self.char
+        return self.char == "LAST"
 
     def is_v_error(self) -> bool:
-        return "ValueError" == self.char
+        return self.char == "ValueError"
 
     @classmethod
     def default(cls,
@@ -531,7 +532,7 @@ def user_input(app: App,
             if kwargs_name is None:
                 return call_obj
             kwargs_name = kwargs_name.remove('app').remove('self')
-            call_obj.kwargs = dict(zip(kwargs_name, infos[2:]))
+            call_obj.kwargs = dict(zip(kwargs_name, infos[2:], strict=False))
         return call_obj
 
 

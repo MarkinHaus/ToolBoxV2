@@ -1,11 +1,12 @@
 import os.path
 
-from starlette.responses import HTMLResponse, FileResponse, RedirectResponse
+from starlette.responses import FileResponse, HTMLResponse, RedirectResponse
 
-from toolboxv2 import get_app, App
+from toolboxv2 import App, get_app
+from toolboxv2.mods.TruthSeeker.arXivCrawler import ArXivPDFProcessor
+
 # from toolboxv2.mods.TruthSeeker.nGui import create_ui
 from toolboxv2.utils.system.session import RequestSession
-from toolboxv2.mods.TruthSeeker.arXivCrawler import ArXivPDFProcessor
 
 Name = 'TruthSeeker'
 export = get_app("TruthSeeker.Export").tb

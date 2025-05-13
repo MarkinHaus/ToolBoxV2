@@ -1,4 +1,5 @@
-from packaging.version import Version
+import asyncio
+import os
 import shutil
 import subprocess
 import sys
@@ -6,20 +7,19 @@ import tempfile
 import time
 import urllib.request
 import zipfile
+from pathlib import Path
 
 import yaml
+from packaging import version as pv
+from packaging.version import Version
 from tqdm import tqdm
 
-from toolboxv2 import get_app, App, __version__, Spinner
+from toolboxv2 import App, Spinner, __version__, get_app
 from toolboxv2.utils.extras.reqbuilder import generate_requirements
 from toolboxv2.utils.system.api import find_highest_zip_version
-from toolboxv2.utils.system.types import ToolBoxInterfaces, Result
-from typing import Optional
-from packaging import version as pv
-from pathlib import Path
-import os
-import asyncio
 from toolboxv2.utils.system.state_system import get_state_from_app
+from toolboxv2.utils.system.types import Result, ToolBoxInterfaces
+
 Name = 'CloudM'
 export = get_app(f"{Name}.Export").tb
 version = "0.0.3"
@@ -297,7 +297,7 @@ def unpack_and_move_module(zip_path: str, base_path: str = './mods', module_name
 
 
 @export(mod_name=Name, name="make_install", test=False)
-async def make_installer(app: Optional[App], module_name: str, base="./mods", upload=None):
+async def make_installer(app: App | None, module_name: str, base="./mods", upload=None):
     if app is None:
         app = get_app(f"{Name}.installer")
 
@@ -323,7 +323,7 @@ async def make_installer(app: Optional[App], module_name: str, base="./mods", up
 
 
 @export(mod_name=Name, name="uninstall", test=False)
-def uninstaller(app: Optional[App], module_name: str):
+def uninstaller(app: App | None, module_name: str):
     if app is None:
         app = get_app(f"{Name}.installer")
 
@@ -340,7 +340,7 @@ def uninstaller(app: Optional[App], module_name: str):
 
 
 @export(mod_name=Name, name="upload", test=False)
-async def upload(app: Optional[App], module_name: str):
+async def upload(app: App | None, module_name: str):
     if app is None:
         app = get_app(f"{Name}.installer")
 
@@ -353,7 +353,7 @@ async def upload(app: Optional[App], module_name: str):
 
 
 @export(mod_name=Name, name="install", test=False)
-async def installer(app: Optional[App], module_name: str, build_state=True):
+async def installer(app: App | None, module_name: str, build_state=True):
     """
     Installiert oder aktualisiert ein Modul basierend auf der Remote-Version.
     """
@@ -495,7 +495,7 @@ def run_command(command, cwd=None):
 
 
 def install_dependencies(yaml_file, do=False):
-    with open(yaml_file, 'r') as f:
+    with open(yaml_file) as f:
         dependencies = yaml.safe_load(f)
 
     if "dependencies_file" in dependencies:
@@ -507,7 +507,7 @@ def install_dependencies(yaml_file, do=False):
 
 
 def uninstall_dependencies(yaml_file):
-    with open(yaml_file, 'r') as f:
+    with open(yaml_file) as f:
         dependencies = yaml.safe_load(f)
 
     # Installation der Abhängigkeiten mit pip

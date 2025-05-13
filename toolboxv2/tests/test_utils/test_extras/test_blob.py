@@ -1,9 +1,9 @@
 import pickle
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from toolboxv2 import Code
-from toolboxv2.utils.extras.blobs import BlobStorage, BlobFile
+from toolboxv2.utils.extras.blobs import BlobFile, BlobStorage
 
 
 class TestBlobStorage(unittest.TestCase):

@@ -1,14 +1,14 @@
 import uuid
 from dataclasses import asdict
 from datetime import datetime
-from typing import Optional
 
 from fastapi import Request
 
-from toolboxv2 import get_app, App, Result, TBEF
-from ..types import User
+from toolboxv2 import TBEF, App, Result, get_app
 from toolboxv2.mods.CloudM.AuthManager import db_helper_delete_user, db_helper_save_user
 from toolboxv2.mods.SocketManager import get_local_ip
+
+from ..types import User
 
 Name = 'CloudM.UI.widget'
 export = get_app(f"{Name}.Export").tb
@@ -388,7 +388,7 @@ async def remove(app, modId: str, request: Request):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="get_widget")
-async def get_widget(app: Optional[App] = None, request: Request = None, **kwargs):
+async def get_widget(app: App | None = None, request: Request = None, **kwargs):
     if app is None:
         app = get_app(from_=f"{Name}.get_widget")
 

@@ -1,9 +1,9 @@
 import random
 
-from test import NeuralSystem
-
 import torch
 from torch import nn
+
+from test import NeuralSystem
 
 sdata = {
     "input_size": 8,
@@ -73,7 +73,7 @@ def evaluate(ff_lsm, data):
     for inp, target in data:
         output = ff_lsm.forward(inp).detach().numpy()
         predicted = (output > 0.5).astype(int)
-        correct_bits += sum(p == t for p, t in zip(predicted, target))
+        correct_bits += sum(p == t for p, t in zip(predicted, target, strict=False))
         total_bits += len(target)
     return correct_bits / total_bits
 

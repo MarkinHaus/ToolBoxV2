@@ -1,19 +1,18 @@
-import threading
-
-from toolboxv2 import Result, ApiResult, TBEF, get_app, App
-from toolboxv2.utils.system.session import RequestSession
-
+import asyncio
+import functools
 import inspect
 import json
-from typing import Callable
-import functools
-import asyncio
+import threading
+from collections.abc import Callable
+
+from toolboxv2 import TBEF, ApiResult, App, Result, get_app
+from toolboxv2.utils.system.session import RequestSession
 
 
 def bottle_up(tb_app, user='root', main_route=None, threaded=False, **kwargs):
     import os
     try:
-        from bottle import Bottle, request, HTTPResponse, static_file
+        from bottle import Bottle, HTTPResponse, request, static_file
     except ImportError:
         print("Bottle is not available auto installation")
         os.system("pip install bottle")
@@ -91,7 +90,7 @@ def bottle_up(tb_app, user='root', main_route=None, threaded=False, **kwargs):
             self.route('/index.js', method='GET')(self.index_j)
 
             try:
-                with open(os.path.join(self.tb_app.start_dir, 'dist', 'helper.html'), 'r') as f:
+                with open(os.path.join(self.tb_app.start_dir, 'dist', 'helper.html')) as f:
                     helper_str = f.read()
             except Exception:
                 self.tb_app.debug_rains(RuntimeError(f"pleas build the main app or the (js) and save in {os.path.join(self.tb_app.start_dir, 'dist', 'helper.html')}"))
@@ -122,9 +121,9 @@ def bottle_up(tb_app, user='root', main_route=None, threaded=False, **kwargs):
                     if 'main' in func_name and 'web' in func_name:
 
                         if request_as_kwarg:
-                            tb_func_ = lambda **kw: open(os.path.join(self.tb_app.start_dir, 'dist', 'helper.html'), 'r').read()+tb_func(**kw)
+                            tb_func_ = lambda **kw: open(os.path.join(self.tb_app.start_dir, 'dist', 'helper.html')).read()+tb_func(**kw)
                         else:
-                            tb_func_ = lambda: open(os.path.join(self.tb_app.start_dir, 'dist', 'helper.html'), 'r').read() + tb_func()
+                            tb_func_ = lambda: open(os.path.join(self.tb_app.start_dir, 'dist', 'helper.html')).read() + tb_func()
                         self.route(f'/{mod_name}', method='GET')(tb_func_)
                         print("adding root:", f'/{mod_name}')
                         if mod_name == main_rout:

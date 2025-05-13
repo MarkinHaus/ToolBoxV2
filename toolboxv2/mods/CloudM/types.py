@@ -1,7 +1,6 @@
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, List
 
 from toolboxv2 import Code
 
@@ -22,8 +21,8 @@ class User:
     email: str = field(default="")
     name: str = field(default="")
     user_pass_pub: str = field(default="")
-    user_pass_pub_persona: Dict[str, str or bytes] = field(default_factory=lambda: ({}))
-    user_pass_pub_devices: List[str] = field(default_factory=lambda: ([]))
+    user_pass_pub_persona: dict[str, str or bytes] = field(default_factory=lambda: ({}))
+    user_pass_pub_devices: list[str] = field(default_factory=lambda: ([]))
     user_pass_pri: str = field(default="")
     user_pass_sync: str = field(default="")
     creation_time: str = field(default_factory=lambda: time.strftime("%Y-%m-%d::%H:%M:%S", time.localtime()))

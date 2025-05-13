@@ -1,36 +1,41 @@
 """Main module."""
 import asyncio
 import inspect
+import logging
 import os
 import pkgutil
 import sys
 import threading
 import time
 from asyncio import Task
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from enum import Enum
-from platform import node, system
+from functools import partial, wraps
 from importlib import import_module, reload
 from inspect import signature
+from platform import node, system
 from types import ModuleType
-from functools import partial, wraps
-from typing import Optional, List, Callable, Dict, Any
+from typing import Any
 
-
-from .singelton_class import Singleton
-
-from .system.cache import FileCache, MemoryCache
-from .system.tb_logger import get_logger, setup_logging
-from .system.types import AppArgs, ToolBoxInterfaces, ApiResult, Result, AppType, MainToolType, RequestData
-from .system.getting_and_closing_app import get_app
-from .system.file_handler import FileHandler
-
-from .extras.Style import Style, stram_print, Spinner
-
-import logging
 from dotenv import load_dotenv
 
 from ..utils.system.main_tool import get_version_from_pyproject
+from .extras.Style import Spinner, Style, stram_print
+from .singelton_class import Singleton
+from .system.cache import FileCache, MemoryCache
+from .system.file_handler import FileHandler
+from .system.getting_and_closing_app import get_app
+from .system.tb_logger import get_logger, setup_logging
+from .system.types import (
+    ApiResult,
+    AppArgs,
+    AppType,
+    MainToolType,
+    RequestData,
+    Result,
+    ToolBoxInterfaces,
+)
 
 load_dotenv()
 
@@ -62,7 +67,7 @@ class App(AppType, metaclass=Singleton):
             if not os.path.exists(f"{lapp}last-app-prefix.txt"):
                 os.makedirs(lapp, exist_ok=True)
                 open(f"{lapp}last-app-prefix.txt", "a").close()
-            with open(f"{lapp}last-app-prefix.txt", "r") as prefix_file:
+            with open(f"{lapp}last-app-prefix.txt") as prefix_file:
                 cont = prefix_file.read()
                 if cont:
                     prefix = cont.rstrip()
@@ -162,8 +167,8 @@ class App(AppType, metaclass=Singleton):
         self.dev_modi = self.config_fh.get_file_handler(self.keys["develop-mode"])
         if self.config_fh.get_file_handler("provider::") is None:
             self.config_fh.add_to_save_file_handler("provider::", "http://localhost:" + str(
-                self.args_sto.port) if "localhost" == os.environ.get("HOSTNAME",
-                                                                     "localhost") else "https://simplecore.app")
+                self.args_sto.port) if os.environ.get("HOSTNAME",
+                                                                     "localhost") == "localhost" else "https://simplecore.app")
         self.functions = {}
         self.modules = {}
 
@@ -186,7 +191,7 @@ class App(AppType, metaclass=Singleton):
         from .system.session import Session
         self.session: Session = Session(self.get_username())
 
-    def get_username(self, get_input=False, default="loot"):
+    def get_username(self, get_input=False, default="loot") -> str:
         user_name = self.config_fh.get_file_handler("ac_user:::")
         if get_input and user_name is None:
             user_name = input("Input your username\nbe sure to make no typos: ")
@@ -366,7 +371,7 @@ class App(AppType, metaclass=Singleton):
             self.print(f"module {loc + mod_name} is not valid")
             return None
         if hasattr(modular_file_object, "Tools"):
-            tools_class = getattr(modular_file_object, "Tools")
+            tools_class = modular_file_object.Tools
         else:
             if hasattr(modular_file_object, "name"):
                 tools_class = modular_file_object
@@ -379,7 +384,7 @@ class App(AppType, metaclass=Singleton):
         app_instance_type = "file/application"
 
         if tools_class is None:
-            modular_id = getattr(modular_file_object, "Name") if hasattr(modular_file_object, "Name") else mod_name
+            modular_id = modular_file_object.Name if hasattr(modular_file_object, "Name") else mod_name
 
         if tools_class is None and modular_id is None:
             modular_id = str(modular_file_object.__name__)
@@ -1571,7 +1576,7 @@ class App(AppType, metaclass=Singleton):
 
     def web_context(self):
         if self._web_context is None:
-            self._web_context = open("./dist/helper.html", "r", encoding="utf-8").read()
+            self._web_context = open("./dist/helper.html", encoding="utf-8").read()
         return self._web_context
 
     def get_mod(self, name, spec='app') -> ModuleType or MainToolType:
@@ -1716,11 +1721,11 @@ class App(AppType, metaclass=Singleton):
                           initial: bool=False,
                           exit_f: bool=False,
                           test: bool=True,
-                          samples:Optional[List[Dict[str, Any]]]=None,
-                          state:Optional[bool]=None,
-                          pre_compute:Optional[Callable]=None,
-                          post_compute:Optional[Callable[[], Result]]=None,
-                          api_methods:Optional[List[str]]=None,
+                          samples:list[dict[str, Any]] | None=None,
+                          state:bool | None=None,
+                          pre_compute:Callable | None=None,
+                          post_compute:Callable[[], Result] | None=None,
+                          api_methods:list[str] | None=None,
                           memory_cache: bool=False,
                           file_cache: bool=False,
                           request_as_kwarg: bool=False,
@@ -1862,7 +1867,7 @@ class App(AppType, metaclass=Singleton):
                     func = a_additional_process(func)
                 else:
                     func = additional_process(func)
-            if api and 'Result' == str(sig.return_annotation):
+            if api and str(sig.return_annotation) == 'Result':
                 raise ValueError(f"Fuction {module_name}.{func_name} registered as "
                                  f"Api fuction but uses {str(sig.return_annotation)}\n"
                                  f"Please change the sig from ..)-> Result to ..)-> ApiResult")
@@ -1909,7 +1914,7 @@ class App(AppType, metaclass=Singleton):
     def tb(self, name=None,
            mod_name: str = "",
            helper: str = "",
-           version: Optional[str] = None,
+           version: str | None = None,
            test: bool = True,
            restrict_in_virtual_mode: bool = False,
            api: bool = False,
@@ -1920,7 +1925,7 @@ class App(AppType, metaclass=Singleton):
            file_cache: bool = False,
            request_as_kwarg: bool = False,
            row: bool = False,
-           state: Optional[bool] = None,
+           state: bool | None = None,
            level: int = -1,
            memory_cache_max_size: int = 100,
            memory_cache_ttl: int = 300,
@@ -2025,8 +2030,8 @@ class App(AppType, metaclass=Singleton):
             class_name = module
             enum_members = "\n    ".join(
                 [
-                    f"{func_name.upper().replace('-', '')}:"
-                    f" str = '{func_name}'  "
+                    f"{func_name.upper().replace('-', '')}"
+                    f" = '{func_name}' "
                     f"# Input: ({fuction_data['params'] if isinstance(fuction_data, dict) else ''}),"
                     f" Output: {fuction_data['signature'].return_annotation if isinstance(fuction_data, dict) else 'None'}"
                     for func_name, fuction_data in functions.items()])

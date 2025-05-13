@@ -1,16 +1,16 @@
-import unittest
-import sys
 import io
+import sys
+import unittest
 from contextlib import contextmanager
 
 # Import the functions and classes to be tested
 from toolboxv2.utils.extras.Style import (
+    Spinner,
     Style,
-    remove_styles,
-    print_to_console,
     extract_json_strings,
     extract_python_code,
-    Spinner
+    print_to_console,
+    remove_styles,
 )
 
 

@@ -1,16 +1,16 @@
 import json
 import os
+
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import torch.nn as nn
 import torch.optim as optim
 from matplotlib.animation import FuncAnimation
 from matplotlib.collections import PatchCollection
+from matplotlib.colors import Normalize
 from matplotlib.patches import Polygon
 from sklearn.cluster import KMeans
-
-import torch
-import torch.nn as nn
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.colors import Normalize
 
 
 def create_heatmap(data, update_interval=1000, is_complex=False, get_data=None, title="heat map"):
@@ -476,7 +476,7 @@ class NeuralSystem(nn.Module):
             cluster_labels = kmeans.fit_predict(data)
 
             # Trainieren Sie das Netzwerk mit den Cluster-Labels
-            for input_data, label in zip(data, cluster_labels):
+            for input_data, label in zip(data, cluster_labels, strict=False):
                 if type(label) in (int, float):
                     label = [label]
                 self.train(input_data, None, label)
@@ -502,7 +502,7 @@ class NeuralSystem(nn.Module):
 
     @classmethod
     def load(cls, filepath):
-        with open(filepath + '_config.json', 'r') as f:
+        with open(filepath + '_config.json') as f:
             config = json.load(f)
 
         model = cls(**config)

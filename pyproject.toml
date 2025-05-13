@@ -7,6 +7,8 @@ name = "toolboxv2"
 version = "0.1.21"
 description = "Add your description here"
 readme = "README.md"
+# Aktiviert dynamisch das Einlesen von optional-dependencies
+dynamic = ["optional-dependencies"]
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.11.13",
@@ -19,7 +21,6 @@ dependencies = [
     "numpy>=2.2.3",
     "packaging>=24.2",
     "pyjwt>=2.10.1",
-    "pytest>=8.3.5",
     "python-dotenv>=1.0.1",
     "pyyaml>=6.0.2",
     "qrcode>=8.0",
@@ -45,6 +46,7 @@ tb = "toolboxv2.__main__:main_runner"
 [tool.uv]
 package = true
 dev-dependencies = [
+    "pytest>=8.3.5",
     "webauthn",
     "mailjet_rest",
     "redis",
@@ -68,6 +70,10 @@ dev-dependencies = [
 
 [tool.uv.workspace]
 members = ["toolboxv2/mods/isaa"]
+
+[tool.setuptools.dynamic]
+# Definiert für die Extra-Gruppe "isaa" die Quelldatei
+optional-dependencies = { isaa = { file = ["toolboxv2/mods/isaa/requirements.txt"] } }
 
 [tool.uv.sources]
 isaa = { workspace = true }
@@ -100,7 +106,7 @@ select = [
     # "C4", # flake8-comprehensions
     "SIM",# flake8-simplify
 ]
-
+ignore = ["E501", "S101", "E701", "E702"]
 # Optional: Bestimmte Regeln ignorieren (können auch Sicherheitsregeln sein)
 # ignore = [
 #   "S101",  # assert wird verwendet

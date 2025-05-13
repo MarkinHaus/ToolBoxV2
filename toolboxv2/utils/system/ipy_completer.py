@@ -1,11 +1,12 @@
-from typing import Type, Dict, Any, List
-from IPython.core.completer import IPCompleter, SimpleCompletion, Completer
-import inspect
 import importlib.util
+import inspect
 from dataclasses import is_dataclass
+from typing import Any
+
+from IPython.core.completer import Completer, IPCompleter, SimpleCompletion
 
 
-def extract_class_info(cls) -> Dict[str, Any]:
+def extract_class_info(cls) -> dict[str, Any]:
     class_info = {}
     for name, member in cls.__members__.items():
         class_info[name] = {
@@ -15,7 +16,7 @@ def extract_class_info(cls) -> Dict[str, Any]:
     return class_info
 
 
-def create_completions_from_classes(classes: List[type]) -> Dict[str, List[str]]:
+def create_completions_from_classes(classes: list[type]) -> dict[str, list[str]]:
     completions = {}
     for cls in classes:
         class_name = cls.__name__
@@ -24,7 +25,7 @@ def create_completions_from_classes(classes: List[type]) -> Dict[str, List[str]]
     return completions
 
 
-def nested_dict_autocomplete(classes: List[type]):
+def nested_dict_autocomplete(classes: list[type]):
     completions = create_completions_from_classes(classes)
 
     # print(completions)
@@ -50,7 +51,7 @@ def nested_dict_autocomplete(classes: List[type]):
     return ClassAttributeCompleter(completions)
 
 
-def get_dataclasses_from_file(file_path: str) -> List[Type]:
+def get_dataclasses_from_file(file_path: str) -> list[type]:
     # Load the module from the given file path
     spec = importlib.util.spec_from_file_location("module.name", file_path)
     module = importlib.util.module_from_spec(spec)

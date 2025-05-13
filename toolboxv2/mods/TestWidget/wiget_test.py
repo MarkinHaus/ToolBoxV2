@@ -1,7 +1,8 @@
 import uuid
-from toolboxv2 import get_app, App, Result, TBEF
+
 from fastapi import Request
 
+from toolboxv2 import TBEF, App, Result, get_app
 
 Name = 'TestWidget'
 export = get_app("TestWidget.Export").tb

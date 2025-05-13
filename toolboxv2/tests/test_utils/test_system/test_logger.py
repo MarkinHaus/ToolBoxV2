@@ -1,10 +1,10 @@
-import unittest
-import os
 import logging
+import os
 import tempfile
+import unittest
 
 # Import the functions to be tested
-from toolboxv2.utils.system.tb_logger import setup_logging, get_logger, unstyle_log_files
+from toolboxv2.utils.system.tb_logger import get_logger, setup_logging, unstyle_log_files
 
 
 class TestLoggingImplementation(unittest.TestCase):
@@ -87,7 +87,7 @@ class TestLoggingImplementation(unittest.TestCase):
         unstyle_log_files(test_log_file)
 
         # Check file content
-        with open(test_log_file, 'r') as f:
+        with open(test_log_file) as f:
             content = f.read()
             self.assertEqual(content.strip(), "Red styled log\n no-styles")
 

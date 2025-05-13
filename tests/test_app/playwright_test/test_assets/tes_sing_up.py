@@ -3,7 +3,7 @@ import time
 import faker
 from playwright.sync_api import Playwright, sync_playwright
 
-from toolboxv2 import get_app, TBEF
+from toolboxv2 import TBEF, get_app
 
 
 def test_run_sing_up(playwright: Playwright) -> None:

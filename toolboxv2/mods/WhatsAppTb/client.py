@@ -1,32 +1,39 @@
 import base64
 import os
 import time
-from dateutil import parser
-
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+
+from dateutil import parser
+
 try:
-    from whatsapp import WhatsApp, Message
+    from whatsapp import Message, WhatsApp
 except ImportError:
     print("NO Whatsapp installed")
     WhatsApp = lambda :None
     Message = lambda :None
-from toolboxv2 import get_app, TBEF
-from toolboxv2.mods.WhatsAppTb.utils import ProgressMessenger, emoji_set_thermometer, emoji_set_work_phases
-from toolboxv2.mods.WhatsAppTb.server import AppManager
-from toolboxv2.mods.isaa import Tools
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Callable, Any
-from enum import Enum
-from datetime import datetime, timedelta, timezone
-import threading
-from google.oauth2.credentials import Credentials
-import logging
 import json
+import logging
+import threading
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from enum import Enum
+from typing import Any, Optional
 
+from google.oauth2.credentials import Credentials
+
+from toolboxv2 import TBEF, get_app
+from toolboxv2.mods.isaa import Tools
 from toolboxv2.mods.isaa.base.Agents import LLMMode
+from toolboxv2.mods.WhatsAppTb.server import AppManager
+from toolboxv2.mods.WhatsAppTb.utils import (
+    ProgressMessenger,
+    emoji_set_thermometer,
+    emoji_set_work_phases,
+)
 from toolboxv2.utils.extras.blobs import BlobFile, BlobStorage
 from toolboxv2.utils.system import FileCache
 
@@ -60,7 +67,7 @@ class DocumentSystem:
             'video': ['mp4', 'mov', 'avi']
         }
 
-    def list_documents(self, filter_type: str = None) -> List[dict]:
+    def list_documents(self, filter_type: str = None) -> list[dict]:
         """List all documents with metadata"""
         docs = []
         for blob_id in self.storage._get_all_blob_ids():
@@ -104,13 +111,11 @@ class DocumentSystem:
             logging.error(f"Delete failed: {str(e)}")
             return False
 
-    def search_documents(self, query: str) -> List[dict]:
+    def search_documents(self, query: str) -> list[dict]:
         """Search documents by filename or content"""
         results = []
         for doc in self.list_documents():
-            if query.lower() in doc['name'].lower():
-                results.append(doc)
-            elif self._search_in_content(doc['id'], query):
+            if query.lower() in doc['name'].lower() or self._search_in_content(doc['id'], query):
                 results.append(doc)
         return results
 
@@ -136,7 +141,7 @@ class WhatsAppAssistant:
     whc: WhClient
     isaa: 'Tools'
     agent: Optional['Agent'] = None
-    credentials: Optional[Credentials] = None
+    credentials: Credentials | None = None
     state: AssistantState = AssistantState.OFFLINE
 
     # Service clients
@@ -149,11 +154,11 @@ class WhatsAppAssistant:
     duration_minutes: int = 20
     credentials_path: str = "/root/Toolboxv2/credentials.json"
     # Progress messengers
-    progress_messengers: Dict[str, 'ProgressMessenger'] = field(default_factory=dict)
-    buttons: Dict[str, Dict] = field(default_factory=dict)
+    progress_messengers: dict[str, 'ProgressMessenger'] = field(default_factory=dict)
+    buttons: dict[str, dict] = field(default_factory=dict)
     history: FileCache = field(default_factory=FileCache)
 
-    pending_actions: Dict[str, Dict] = field(default_factory=dict)
+    pending_actions: dict[str, dict] = field(default_factory=dict)
 
 
     def __post_init__(self):
@@ -592,7 +597,7 @@ class WhatsAppAssistant:
         self.pending_actions[self.whc.progress_messenger0.recipient_phone] = {}
         return "✅ cancel Done"
 
-    async def handle_button_interaction(self, content: Dict, message: Message):
+    async def handle_button_interaction(self, content: dict, message: Message):
         """Handle button click interactions"""
         button_id = content['id']
 
@@ -1111,7 +1116,7 @@ Profi-Tipps:
 
         try:
             # Define the time range for the search (next 24 hours)
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             end_time = now + timedelta(days=1)
 
             # FreeBusy Request
@@ -1151,7 +1156,7 @@ Profi-Tipps:
     def _calculate_efficient_slots(self, busy_slots, duration_minutes):
         """Effiziente Slot-Berechnung"""
         available_slots = []
-        current = datetime.now(timezone.utc)
+        current = datetime.now(UTC)
         end_time = current + timedelta(days=1)
 
         while current < end_time:

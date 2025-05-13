@@ -1,10 +1,12 @@
+import json
 import secrets
 import time
-from typing import Dict, Any, Optional
-from dataclasses import dataclass, field, asdict
-import json
-from toolboxv2 import get_app, Result
+from dataclasses import asdict, dataclass, field
+from typing import Any
+
 from starlette.responses import HTMLResponse
+
+from toolboxv2 import Result, get_app
 
 Name = 'CodeVerification'
 version = '0.0.1'
@@ -18,8 +20,8 @@ class ConfigTemplate:
     name: str
     usage_type: str  # 'one_time' or 'timed'
     max_uses: int = 1
-    valid_duration: Optional[int] = None  # in seconds
-    additional_params: Dict[str, Any] = field(default_factory=dict)
+    valid_duration: int | None = None  # in seconds
+    additional_params: dict[str, Any] = field(default_factory=dict)
     scope: str = "main"
 
 
@@ -169,7 +171,7 @@ class VerificationSystem:
 
         return code
 
-    def validate_code(self, code: str) -> Optional[Dict[str, Any]]:
+    def validate_code(self, code: str) -> dict[str, Any] | None:
         """
         Validate a code and return template information
 
@@ -308,7 +310,7 @@ VS = {}
 def init_scope(app=None, scope="Main"):
     if app is None:
         app = get_app(Name)
-    if scope in VS.keys():
+    if scope in VS:
         return VS[scope]
     tools = app.get_mod("DB", spec=scope)
     if tools.mode.value != "RR":

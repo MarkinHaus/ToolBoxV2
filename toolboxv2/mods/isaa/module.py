@@ -2,56 +2,72 @@ import copy
 import os
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import field
-
 from enum import Enum
 from inspect import signature
-from typing import Optional, List, Dict, Callable
 
 import requests
 import torch
-from langchain_experimental.tools import PythonREPLTool
-
+from langchain_community.agent_toolkits.load_tools import (
+    load_huggingface_tool,
+    load_tools,
+)
+from langchain_community.chat_models import ChatOpenAI
+from langchain_community.llms import HuggingFaceHub, OpenAI
+from langchain_community.tools import AIPluginTool
+from pebble import concurrent
 from pydantic import BaseModel
-
 
 from toolboxv2.mods.isaa.base.KnowledgeBase import TextSplitter
 from toolboxv2.mods.isaa.extras.filter import filter_relevant_texts
 from toolboxv2.mods.isaa.types import TaskChain
+
 # from toolboxv2.mods.isaa.ui.nice import IsaaWebSocketUI
 from toolboxv2.utils.system import FileCache
-from .CodingAgent.auto_runner import ProjectManager
+
 from ...utils.toolbox import stram_print
-from langchain_community.chat_models import ChatOpenAI
-from langchain_community.tools import AIPluginTool
+from .CodingAgent.auto_runner import ProjectManager
 
-
-from langchain_community.llms import OpenAI, HuggingFaceHub
-from langchain_community.agent_toolkits.load_tools import load_tools, load_huggingface_tool
-
-from pebble import concurrent
 try:
     import gpt4all
 except Exception:
     gpt4all = lambda : None
     gpt4all.GPT4All = None
 
-from toolboxv2 import MainTool, FileHandler, get_logger, Style, Spinner, get_app
-from toolboxv2.mods.isaa.extras.modes import crate_llm_function_from_langchain_tools, StrictFormatResponder, ChainTreeExecutor, \
-    TaskChainMode, SummarizationMode, ISAA0CODE
-from toolboxv2.mods.isaa.base.AgentUtils import AgentChain, AISemanticMemory, Scripts, dilate_string
-from toolboxv2.mods.isaa.base.Agents import Agent, AgentBuilder, LLMFunction, ControllerManager, AgentVirtualEnv
-from .SearchAgentCluster.search_tool import web_search
-
-from toolboxv2.mods.isaa.CodingAgent.live import Pipeline
-
-import subprocess
-import shlex
 import json
-import platform
 import locale
-from typing import Any
+import platform
+import shlex
+import subprocess
 import sys
+from typing import Any
+
+from toolboxv2 import FileHandler, MainTool, Spinner, Style, get_app, get_logger
+from toolboxv2.mods.isaa.base.Agents import (
+    Agent,
+    AgentBuilder,
+    AgentVirtualEnv,
+    ControllerManager,
+    LLMFunction,
+)
+from toolboxv2.mods.isaa.base.AgentUtils import (
+    AgentChain,
+    AISemanticMemory,
+    Scripts,
+    dilate_string,
+)
+from toolboxv2.mods.isaa.CodingAgent.live import Pipeline
+from toolboxv2.mods.isaa.extras.modes import (
+    ISAA0CODE,
+    ChainTreeExecutor,
+    StrictFormatResponder,
+    SummarizationMode,
+    TaskChainMode,
+    crate_llm_function_from_langchain_tools,
+)
+
+from .SearchAgentCluster.search_tool import web_search
 
 PIPLINE = None
 Name = 'isaa'
@@ -109,8 +125,8 @@ class Tools(MainTool, FileHandler):
     def __init__(self, app=None):
 
         self.run_callback = None
-        self.coding_projects: Dict[str, ProjectManager] = {}
-        self.pipes: Dict[str, Pipeline] = {}
+        self.coding_projects: dict[str, ProjectManager] = {}
+        self.pipes: dict[str, Pipeline] = {}
         if app is None:
             app = get_app("isaa-mod")
         self.version = version
@@ -169,7 +185,7 @@ class Tools(MainTool, FileHandler):
         self.agent_collective_senses = False
         self.global_stream_override = False
         self.pipes_device = 1
-        self.lang_chain_tools_dict: Dict[str, str] = {}
+        self.lang_chain_tools_dict: dict[str, str] = {}
         self.agent_chain = AgentChain(directory=f".data/{app.id}{extra_path}/chains")
         self.agent_chain_executor = ChainTreeExecutor()
         self.agent_chain_executor.function_runner = lambda name, **b: self.get_agent("self").function_invoke(name,
@@ -317,7 +333,7 @@ class Tools(MainTool, FileHandler):
                 self.agent_chain.load_from_dict(tasks)
                 self.print("tasks chains restored")
 
-    def init_tools(self, tools, model_name: str, agent: Optional[Agent] = None):  # not  in unit test
+    def init_tools(self, tools, model_name: str, agent: Agent | None = None):  # not  in unit test
 
         plugins = [
             # SceneXplain
@@ -536,12 +552,12 @@ class Tools(MainTool, FileHandler):
             self.app.logger.info("Done")
             self.initstate[p_type + model] = True
 
-    def free_llm_model(self, names: List[str]):
+    def free_llm_model(self, names: list[str]):
         for model in names:
             self.initstate[f'LLM-model-{model}-init'] = False
             del self.config[f'LLM-model-{model}']
 
-    def load_llm_models(self, names: List[str]):
+    def load_llm_models(self, names: list[str]):
         for model in names:
             if f'LLM-model-{model}-init' not in self.initstate.keys():
                 self.initstate[f'LLM-model-{model}-init'] = False
@@ -572,7 +588,7 @@ class Tools(MainTool, FileHandler):
             self.load_llm_models([name])
         return self.config[f'LLM-model-{name}']
 
-    def add_lang_chain_tools_to_agent(self, agent: Agent, tools: Optional[List[str]] = None):
+    def add_lang_chain_tools_to_agent(self, agent: Agent, tools: list[str] | None = None):
 
         if tools is None:
             tools = []
@@ -820,9 +836,6 @@ class Tools(MainTool, FileHandler):
         if name == "code":
             agent_builder.set_amd_model(self.config['DEFAULTMODELCODE'])
 
-        if "python" in name.lower():
-            tools['python'] = PythonREPLTool()
-
         tools = {**tools, **{
 
             "saveDataToMemory": {"func": ad_data, "description": "tool to save data to memory,"
@@ -1051,8 +1064,8 @@ class Tools(MainTool, FileHandler):
         return "ADDED"
 
     async def run_agent_in_environment(self, task,
-                                 agent_or_name: Optional[str or Agent] = None,
-                                 agent_env: Optional[str or AgentVirtualEnv] = None,
+                                 agent_or_name: (str or Agent) | None = None,
+                                 agent_env: (str or AgentVirtualEnv) | None = None,
                                  persist=False,
                                  persist_ref=False,
                                  max_iterations=10,
@@ -1222,7 +1235,7 @@ class Tools(MainTool, FileHandler):
 
                 class SummarizationSegments(BaseModel):
                     f"""importance for: {ref if ref != text else 'key details and concrete informations'}"""
-                    segments: List[Segments] = field(default_factory=list)
+                    segments: list[Segments] = field(default_factory=list)
 
                 if len(relevant_texts) > 26:
                     bf = self.mas_text_summaries(' '.join(relevant_texts[20:]), min_length=min_length + 100, ref=ref)
@@ -1253,7 +1266,7 @@ class Tools(MainTool, FileHandler):
 
         return summary
 
-    async def mass_text_summaries(self, text: str, min_length: int = 1600, ref: Optional[str] = None) -> str:
+    async def mass_text_summaries(self, text: str, min_length: int = 1600, ref: str | None = None) -> str:
         """
         Efficient large-text summarization using semantic memory retrieval
         Features:
@@ -1277,7 +1290,7 @@ class Tools(MainTool, FileHandler):
         semantic_memory = self.get_memory()
         ref_query = ref or text
 
-        def _chunk_text(text: str, chunk_size: int = 4000) -> List[str]:
+        def _chunk_text(text: str, chunk_size: int = 4000) -> list[str]:
             """Optimized text chunking with overlap"""
             return [text[i:i + chunk_size]
                     for i in range(0, len(text), chunk_size - 200)]
@@ -1306,7 +1319,7 @@ class Tools(MainTool, FileHandler):
         return summary
 
 
-    def _generate_llm_summary(self, chunks: List[Dict[str, str]], query: str, min_length: int) -> str:
+    def _generate_llm_summary(self, chunks: list[dict[str, str]], query: str, min_length: int) -> str:
         """LiteLLM-optimized summarization pipeline"""
         summary_prompt = f"""Generate a concise summary focusing on {query} from these key excerpts:
         {chunks}
@@ -1320,7 +1333,7 @@ class Tools(MainTool, FileHandler):
         return self.get_agent("self").mini_task(summary_prompt)
 
 
-    def get_memory(self, name: Optional[str]=None) -> AISemanticMemory:
+    def get_memory(self, name: str | None=None) -> AISemanticMemory:
         logger = get_logger()
         if isinstance(self.agent_memory, str):
             logger.info(Style.GREYBG("AISemanticMemory Initialized"))
@@ -1379,7 +1392,7 @@ def shell_tool_function(command: str) -> str:
     Robust system-agnostic command execution
     Handles encoding issues and shell detection automatically
     """
-    result: Dict[str, Any] = {"success": False, "output": "", "error": ""}
+    result: dict[str, Any] = {"success": False, "output": "", "error": ""}
     shell = detect_shell()
 
     try:
@@ -1401,7 +1414,7 @@ def shell_tool_function(command: str) -> str:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             timeout=120,
-            universal_newlines=False  # Handle decoding ourselves
+            text=False  # Handle decoding ourselves
         )
 
         result.update({

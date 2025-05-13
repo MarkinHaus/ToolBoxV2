@@ -1,14 +1,13 @@
-import os
 import ast
-import networkx as nx
-from collections import Counter
+import os
+from collections import Counter, defaultdict
 
+import networkx as nx
 import nltk
-from collections import defaultdict
+from nltk.corpus import stopwords
 
 # Initialize NLTK components
 from nltk.tokenize import word_tokenize
-from nltk.corpus import stopwords
 
 
 def create_import_usage_graph(folder_path):
@@ -20,7 +19,7 @@ def create_import_usage_graph(folder_path):
         for file in files:
             if file.endswith(".py"):
                 file_path = os.path.join(root, file)
-                with open(file_path, 'r', encoding='utf-8') as f:
+                with open(file_path, encoding='utf-8') as f:
                     node_name = os.path.relpath(file_path, folder_path)
                     tree = ast.parse(f.read(), filename=node_name)
 
@@ -94,7 +93,7 @@ def analyze_class_usage(folder_path):
         for file in files:
             if file.endswith(".py"):
                 file_path = os.path.join(root, file)
-                with open(file_path, 'r', encoding='utf-8') as f:
+                with open(file_path, encoding='utf-8') as f:
                     tree = ast.parse(f.read(), filename=file_path)
                     analyzer.file_name = file_path
                     analyzer.visit(tree)
@@ -150,7 +149,7 @@ def analyze_function_usage(folder_path):
         for file in files:
             if file.endswith(".py"):
                 file_path = os.path.join(root, file)
-                with open(file_path, 'r', encoding='utf-8') as f:
+                with open(file_path, encoding='utf-8') as f:
                     analyzer.source_code = f.read()
                     tree = ast.parse(analyzer.source_code, filename=file_path)
                     analyzer.file_name = file_path

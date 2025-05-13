@@ -1,15 +1,18 @@
 import os
-from typing import Optional, Callable
+from collections.abc import Callable
 from urllib.parse import urlparse
 
 # Importieren der benötigten Loader und Transformer
-from langchain_community.document_loaders import AsyncChromiumLoader, PyPDFLoader
+from langchain_community.document_loaders import (
+    AsyncChromiumLoader,
+    AsyncHtmlLoader,
+    PlaywrightURLLoader,
+    PyPDFLoader,
+    ToMarkdownLoader,
+    WebBaseLoader,
+    WikipediaLoader,
+)
 from langchain_community.document_transformers import BeautifulSoupTransformer
-from langchain_community.document_loaders import AsyncHtmlLoader
-from langchain_community.document_loaders import ToMarkdownLoader
-from langchain_community.document_loaders import PlaywrightURLLoader
-from langchain_community.document_loaders import WebBaseLoader
-from langchain_community.document_loaders import WikipediaLoader
 
 try:
     from langchain_community.document_loaders import GitLoader
@@ -67,9 +70,9 @@ def get_text_from_urls_vue(urls: list or str, tags_to_extract=None):
 
 
 def read_git_repo(repo_path: str,
-                  clone_url: Optional[str] = None,
-                  branch: Optional[str] = "main",
-                  file_filter: Optional[Callable[[str], bool]] = None, ):
+                  clone_url: str | None = None,
+                  branch: str | None = "main",
+                  file_filter: Callable[[str], bool] | None = None, ):
     if GitLoader_ac is not True:
         raise ImportError(GitLoader_ac)
     return GitLoader(repo_path, clone_url, branch, file_filter).lazy_load()

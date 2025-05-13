@@ -1,7 +1,9 @@
-from toolboxv2 import Result, get_app, App, MainTool
-from toolboxv2.utils.system.types import ToolBoxError, ApiResult, ToolBoxInterfaces
-from mailjet_rest import Client
 import os
+
+from mailjet_rest import Client
+
+from toolboxv2 import App, MainTool, Result, get_app
+from toolboxv2.utils.system.types import ApiResult, ToolBoxError, ToolBoxInterfaces
 
 Name = "email_waiting_list"
 version = '0.0.0'

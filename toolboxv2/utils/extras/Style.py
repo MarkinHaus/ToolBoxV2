@@ -1,13 +1,13 @@
+import itertools
 import os
-from random import uniform
 import re
+import sys
+import threading
 import time
 from json import JSONDecoder
 from platform import system
+from random import uniform
 from time import sleep
-import itertools
-import sys
-import threading
 
 from ..singelton_class import Singleton
 
@@ -432,6 +432,7 @@ def extract_python_code(text):
 
 
 import signal
+
 
 class SpinnerManager(metaclass=Singleton):
     """

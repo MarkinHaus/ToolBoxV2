@@ -3,6 +3,7 @@ import os
 
 from toolboxv2 import Result
 from toolboxv2.utils.security.cryp import Code
+
 from .types import AuthenticationTypes
 
 
@@ -143,5 +144,5 @@ def load_from_json(filename):
     if not os.path.exists(filename):
         return {'data': ''}
 
-    with open(filename, 'r') as file:
+    with open(filename) as file:
         return json.load(file)

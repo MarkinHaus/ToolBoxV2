@@ -46,8 +46,16 @@ except ImportError:
     print("⚠️ Missing: utils.extras.Style.remove_styles")
 
 try:
-    from .utils.system.types import AppArgs, MainToolType, AppType, ToolBoxError, ToolBoxInterfaces, ToolBoxResult, \
-    ToolBoxInfo, ToolBoxResultBM
+    from .utils.system.types import (
+        AppArgs,
+        AppType,
+        MainToolType,
+        ToolBoxError,
+        ToolBoxInfo,
+        ToolBoxInterfaces,
+        ToolBoxResult,
+        ToolBoxResultBM,
+    )
 except ImportError:
     (AppArgs, MainToolType, AppType,
      ToolBoxError, ToolBoxInterfaces, ToolBoxResult,
@@ -117,8 +125,9 @@ __author__ = """Markin Hausmanns"""
 __email__ = 'Markinhausmanns@gmail.com'
 
 
-from platform import node, system
 from pathlib import Path
+from platform import node, system
+
 __cwd__ = cwd = Path.cwd()
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))

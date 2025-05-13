@@ -1,9 +1,12 @@
 import mimetypes
 import os
-from langchain_community.document_loaders import ImageCaptionLoader, DirectoryLoader
-from langchain_core.documents import Document
 
-from langchain_community.document_loaders import PythonLoader
+from langchain_community.document_loaders import (
+    DirectoryLoader,
+    ImageCaptionLoader,
+    PythonLoader,
+)
+from langchain_core.documents import Document
 
 try:
 

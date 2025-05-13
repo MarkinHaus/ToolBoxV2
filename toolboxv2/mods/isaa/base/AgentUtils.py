@@ -2,24 +2,18 @@ import json
 import os
 import pickle
 import platform
-
+import re
 import socket
 import subprocess
 import threading
 from datetime import datetime
 from json import JSONDecodeError
 
-import re
-from typing import Dict, Optional, List, Tuple, Union
-
 import requests
 import tiktoken
-
 from pebble import concurrent
 
-from toolboxv2 import Style, get_logger, Singleton
-
-
+from toolboxv2 import Singleton, Style, get_logger
 from toolboxv2.mods.isaa.base.KnowledgeBase import KnowledgeBase
 
 
@@ -110,7 +104,7 @@ def initialize_system_infos(info_sys):
     else:
 
         try:
-            with open(".config/system.infos", "r", encoding="utf8") as f:
+            with open(".config/system.infos", encoding="utf8") as f:
                 SystemInfos = json.loads(f.read())
         except JSONDecodeError:
             pass
@@ -494,7 +488,7 @@ class AgentChain:
             if not file.endswith(".json"):
                 continue
             try:
-                with open(file_path, "r", encoding='utf-8') as f:
+                with open(file_path, encoding='utf-8') as f:
                     dat = f.read()
                     chain_data = json.loads(dat)
                 chain_name = os.path.splitext(file)[0]
@@ -658,7 +652,7 @@ class AISemanticMemory(metaclass=Singleton):
             default_deduplication_threshold: Default threshold for deduplication
         """
         self.base_path = os.path.join(os.getcwd(), ".data", base_path)
-        self.memories: Dict[str, KnowledgeBase] = {}
+        self.memories: dict[str, KnowledgeBase] = {}
 
         # Map of embedding models to their dimensions
         self.embedding_dims = {
@@ -694,8 +688,8 @@ class AISemanticMemory(metaclass=Singleton):
 
     def create_memory(self,
                       name: str,
-                      model_config: Optional[Dict] = None,
-                      storage_config: Optional[Dict] = None) -> KnowledgeBase:
+                      model_config: dict | None = None,
+                      storage_config: dict | None = None) -> KnowledgeBase:
         """
         Create new memory store with KnowledgeBase
 
@@ -744,8 +738,8 @@ class AISemanticMemory(metaclass=Singleton):
 
     async def add_data(self,
                        memory_name: str,
-                       data: Union[str, List[str], bytes, dict],
-                       metadata: Optional[Dict] = None) -> bool:
+                       data: str | list[str] | bytes | dict,
+                       metadata: dict | None = None) -> bool:
         """
         Add data to memory store
 
@@ -792,10 +786,10 @@ class AISemanticMemory(metaclass=Singleton):
 
     async def query(self,
                     query: str,
-                    memory_names: Optional[Union[str, List[str]]] = None,
-                    query_params: Optional[Dict] = None,
+                    memory_names: str | list[str] | None = None,
+                    query_params: dict | None = None,
                     to_str: bool = False,
-                    unified_retrieve: bool =False) -> Union[str, List[Dict]]:
+                    unified_retrieve: bool =False) -> str | list[dict]:
         """
         Query memories using KnowledgeBase retrieval
 
@@ -846,7 +840,7 @@ class AISemanticMemory(metaclass=Singleton):
             return str_res
         return results
 
-    def _get_target_memories(self, memory_names: Optional[Union[str, List[str]]]) -> List[Tuple[str, KnowledgeBase]]:
+    def _get_target_memories(self, memory_names: str | list[str] | None) -> list[tuple[str, KnowledgeBase]]:
         """Get target memories for query"""
         if not memory_names:
             return list(self.memories.items())
@@ -863,7 +857,7 @@ class AISemanticMemory(metaclass=Singleton):
                 targets.append((sanitized, kb))
         return targets
 
-    def list_memories(self) -> List[str]:
+    def list_memories(self) -> list[str]:
         """List all available memories"""
         return list(self.memories.keys())
 
@@ -970,10 +964,10 @@ result = memory.query(
 
 
 class ShortTermMemory:
-    memory_data: List[dict] = []
+    memory_data: list[dict] = []
     max_length: int = 2000
 
-    add_to_static: List[dict] = []
+    add_to_static: list[dict] = []
 
     lines_ = []
 
@@ -1385,7 +1379,7 @@ def get_max_token_fom_model_name(model: str) -> int:
     return fit
 
 
-def get_price(fit: int) -> List[float]:
+def get_price(fit: int) -> list[float]:
     model_dict = _get_all_model_dict_price_token_limit_approximation()
     ppt = [0.0004, 0.0016]
 

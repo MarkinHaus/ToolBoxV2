@@ -1,25 +1,22 @@
 
+import asyncio
+import uuid
+from dataclasses import dataclass
 from datetime import datetime
-from fastapi import WebSocket
 
+from fastapi import WebSocket
 from starlette.responses import HTMLResponse
 
-from toolboxv2 import get_app, Singleton, TBEF
-import uuid
-from typing import List, Dict, Optional
-
-import asyncio
-from dataclasses import dataclass
-
+from toolboxv2 import TBEF, Singleton, get_app
 from toolboxv2.utils.extras.base_widget import get_spec
 
 
 @dataclass
 class AgentState:
     is_running: bool = False
-    current_task: Optional[asyncio.Task] = None
+    current_task: asyncio.Task | None = None
     last_response: str = ""
-    verbose_output: List[str] = None
+    verbose_output: list[str] = None
 
     def to_dict(self):
         return {
@@ -32,9 +29,9 @@ class AgentState:
 class IsaaWebSocketUI(metaclass=Singleton):
     def __init__(self, isaa_tool, name="IsaaWebSocket"):
         self.isaa = isaa_tool
-        self.active_connections: Dict[str, WebSocket] = {}
-        self.message_history: List[Dict] = []
-        self.agent_states: Dict[str, AgentState] = {}
+        self.active_connections: dict[str, WebSocket] = {}
+        self.message_history: list[dict] = []
+        self.agent_states: dict[str, AgentState] = {}
         self.ping_interval = 60
         self.max_reconnect_attempts = 5
 
@@ -90,7 +87,7 @@ class IsaaWebSocketUI(metaclass=Singleton):
                 self.agent_states[client_id].is_running = False
                 await self._send_agent_state(client_id)
 
-    async def stream_agent_response(self, message: str, client_id: str, agent_name: Optional[str] = None):
+    async def stream_agent_response(self, message: str, client_id: str, agent_name: str | None = None):
         """Stream agent responses to the client with async task management"""
         if client_id not in self.agent_states:
             return
@@ -125,7 +122,7 @@ class IsaaWebSocketUI(metaclass=Singleton):
             # self.isaa.run_callback = get_callback(agent_name)
 
             for agent, name in zip([self.isaa.get_agent(name_) for name_ in self.isaa.config['agents-name-list']],
-                                   self.isaa.config['agents-name-list']):
+                                   self.isaa.config['agents-name-list'], strict=False):
                 agent.post_callback = get_callback(name)
                 self._setup_verbose_override(agent, get_callback(name + "-internal"))
 
@@ -164,7 +161,7 @@ class IsaaWebSocketUI(metaclass=Singleton):
         state.current_task = task
         await self._monitor_agent_task(task, client_id)
 
-    async def _send_stream_update(self, client_id: str, content: str, agent_name: Optional[str] = None):
+    async def _send_stream_update(self, client_id: str, content: str, agent_name: str | None = None):
         """Send streaming updates to connected client"""
         if client_id in self.active_connections:
             await self.active_connections[client_id].send_json({

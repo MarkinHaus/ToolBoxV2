@@ -13,16 +13,15 @@
 
  trans form state from on to an other.
  """
-from dataclasses import dataclass, asdict
-import os
 import hashlib
-from typing import Dict
+import os
+from dataclasses import asdict, dataclass
 
 import yaml
 from tqdm import tqdm
 
-from .getting_and_closing_app import get_app
 from ..extras.Style import Spinner
+from .getting_and_closing_app import get_app
 
 
 @dataclass
@@ -38,12 +37,12 @@ class DefaultFilesFormatElement:
 
 @dataclass
 class TbState:
-    utils: Dict[str, DefaultFilesFormatElement]
-    mods: Dict[str, DefaultFilesFormatElement]
-    installable: Dict[str, DefaultFilesFormatElement]
-    runnable: Dict[str, DefaultFilesFormatElement]
-    api: Dict[str, DefaultFilesFormatElement]
-    app: Dict[str, DefaultFilesFormatElement]
+    utils: dict[str, DefaultFilesFormatElement]
+    mods: dict[str, DefaultFilesFormatElement]
+    installable: dict[str, DefaultFilesFormatElement]
+    runnable: dict[str, DefaultFilesFormatElement]
+    api: dict[str, DefaultFilesFormatElement]
+    app: dict[str, DefaultFilesFormatElement]
 
     def __str__(self):
         fstr = "Utils\n"

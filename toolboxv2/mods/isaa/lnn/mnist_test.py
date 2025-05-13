@@ -1,8 +1,8 @@
+import matplotlib.pyplot as plt
 import torch
 import torchvision
-from torchvision import transforms
 from torch.utils.data import DataLoader
-import matplotlib.pyplot as plt
+from torchvision import transforms
 
 from test import NeuralSystem
 

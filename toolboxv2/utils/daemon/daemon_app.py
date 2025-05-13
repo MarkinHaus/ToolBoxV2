@@ -1,6 +1,6 @@
-from .daemon_util import DaemonUtil
-from ..toolbox import App
 from ..singelton_class import Singleton
+from ..toolbox import App
+from .daemon_util import DaemonUtil
 
 
 class DaemonApp(DaemonUtil, metaclass=Singleton):

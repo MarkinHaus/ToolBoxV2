@@ -1,30 +1,28 @@
 """Console script for toolboxv2."""
+import argparse
+import asyncio
 import pprint
+
 # Import default Pages
 import sys
-import argparse
 import threading
 import time
-import asyncio
 from functools import wraps
-from platform import system, node
+from platform import node, system
 
-from toolboxv2.utils.system.api import cli_api_runner
 # from sqlalchemy.testing.suite.test_reflection import metadata
-
 from toolboxv2.flows import flows_dict as flows_dict_func
 from toolboxv2.tests.a_util import async_test
+from toolboxv2.utils import get_app
+from toolboxv2.utils.daemon import DaemonApp
+from toolboxv2.utils.extras.Style import Spinner, Style
+from toolboxv2.utils.proxy import ProxyApp
+from toolboxv2.utils.system import CallingObject, get_state_from_app
+from toolboxv2.utils.system.api import cli_api_runner
 from toolboxv2.utils.system.conda_runner import conda_runner_main
 from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
 from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyproject
-from toolboxv2.utils.extras.Style import Style, Spinner
-
 from toolboxv2.utils.toolbox import App
-
-from toolboxv2.utils import get_app
-from toolboxv2.utils.daemon import DaemonApp
-from toolboxv2.utils.proxy import ProxyApp
-from toolboxv2.utils.system import get_state_from_app, CallingObject
 
 DEFAULT_MODI = "cli"
 
@@ -37,8 +35,8 @@ except ImportError:
 
 try:
     import cProfile
-    import pstats
     import io
+    import pstats
 
 
     def profile_execute_all_functions(app=None, m_query='', f_query=''):
@@ -105,9 +103,17 @@ except ImportError:
     raise ValueError("Failed to import function for profiling")
 
 try:
-    from toolboxv2.utils.system.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
+    from toolboxv2.utils.system.tb_logger import (
+        edit_log_files,
+        loggerNameOfToolboxv2,
+        unstyle_log_files,
+    )
 except ModuleNotFoundError:
-    from toolboxv2.utils.system.tb_logger import edit_log_files, loggerNameOfToolboxv2, unstyle_log_files
+    from toolboxv2.utils.system.tb_logger import (
+        edit_log_files,
+        loggerNameOfToolboxv2,
+        unstyle_log_files,
+    )
 
 import os
 import subprocess
@@ -138,9 +144,9 @@ def start(pidname, args, filename):
 
 def stop(pidfile, pidname):
     try:
-        with open(pidfile, "r", encoding="utf8") as f:
+        with open(pidfile, encoding="utf8") as f:
             procID = f.readline().strip()
-    except IOError:
+    except OSError:
         print("Process file does not exist")
         return
 
@@ -570,7 +576,7 @@ def edit_logs():
         date = input("Date of log format : YYYY-MM-DD :")
 
     level = input(
-        f"Level : {list(zip(['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'], [50, 40, 30, 20, 10, 0]))}"
+        f"Level : {list(zip(['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'], [50, 40, 30, 20, 10, 0], strict=False))}"
         f" : enter number\n:")
 
     while not level_in_format(level)[0]:
@@ -763,8 +769,20 @@ async def main():
         report.print()
 
     if args.init:
-        from .setup_helper import main as setup_main
+        from .setup_helper import setup_main
         setup_main()
+        if tb_app.system_flag == "Linux":
+            setup_service_linux()
+        if tb_app.system_flag == "Windows":
+            await setup_service_windows()
+        user_name = tb_app.get_username(get_input=True)
+        m_link = input("M - Link: ")
+        if m_link:
+            await command_runner(tb_app, ['CloudM', 'login', m_link])
+        st_gui = input("start gui (Y/n): ") or 'Y'
+        if 'y' in st_gui.lower():
+            from toolboxv2.__gui__ import start as start_gui
+            start_gui()
 
     if args.lm:
         edit_logs()
@@ -776,8 +794,7 @@ async def main():
             setup_service_linux()
         if tb_app.system_flag == "Windows":
             await setup_service_windows()
-        await tb_app.a_exit()
-        exit(0)
+        args.command = []
 
     if args.load_all_mod_in_files or args.save_function_enums_in_file or args.get_version or args.profiler or args.background_application_runner or args.test:
         if args.save_function_enums_in_file:
@@ -843,7 +860,7 @@ async def main():
         if not os.path.exists(pid_file):
             print("You must first run the mode")
         else:
-            with open(pid_file, "r", encoding="utf8") as f:
+            with open(pid_file, encoding="utf8") as f:
                 app_pid = f.read()
             print(f"Exit app {app_pid}")
             if system() == "Windows":
@@ -1026,7 +1043,7 @@ def read_requirements(subproject_path):
         print(f"No 'requirements.txt' found in {subproject_path}. Skipping...")
         return []
 
-    with open(req_file_path, 'r') as req_file:
+    with open(req_file_path) as req_file:
         return [line.strip() for line in req_file.readlines() if line.strip()]
 
 # Function to generate pyproject.toml for a subproject
@@ -1094,6 +1111,7 @@ def main_runner():
         loop.run_until_complete(main())
 
 import ctypes
+
 
 def get_real_python_executable():
     try:

@@ -13,11 +13,9 @@ try:
 except ImportError:
     pass
 
-from toolboxv2 import MainTool, FileHandler, Style, get_app
+from toolboxv2 import FileHandler, MainTool, Style, get_app
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.security.cryp import Code
-
-
 
 
 class TestToolboxv2Mods(unittest.TestCase):
@@ -144,8 +142,8 @@ class TestToolboxv2Mods(unittest.TestCase):
             t0 = time.perf_counter()
             self.app.logger.info(Style.GREYBG(f"Testing value : {test_value} of type : {type(test_value)}"))
             self.app.logger.info(Style.WHITE("initialized file handler"))
-            if os.path.exists(os.path.join("test.config".split('.')[1], "mainTool".replace('.', '-'), "test.config")):
-                os.remove(os.path.join("test.config".split('.')[1], "mainTool".replace('.', '-'), "test.config"))
+            if os.path.exists(os.path.join(["test", "config"][1], "mainTool".replace('.', '-'), "test.config")):
+                os.remove(os.path.join(["test", "config"][1], "mainTool".replace('.', '-'), "test.config"))
             fh = FileHandler("test.config", keys={"TestKey": "test~~~~~:"}, defaults={"TestKey": "Default"})
 
             self.app.logger.info(Style.WHITE("Verify that the object was initialized correctly"))

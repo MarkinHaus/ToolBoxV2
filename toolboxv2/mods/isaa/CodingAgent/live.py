@@ -1,49 +1,52 @@
+import ast
+import asyncio
+import importlib
+import io
 import json
+import os
 import pickle
 import shutil
+import subprocess
 import sys
 import tempfile
 import textwrap
 import time
+import traceback
+from collections import defaultdict
+from copy import deepcopy
+from dataclasses import dataclass
 
+### ---- Styles ------- ###
+from enum import Enum, auto
+from inspect import (
+    Signature,
+    currentframe,
+    getdoc,
+    isclass,
+    isfunction,
+    ismethod,
+    signature,
+)
+from pathlib import Path
+from typing import Any
+
+import nest_asyncio
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
 
 import toolboxv2
-from toolboxv2 import Style, Spinner, get_app
-from inspect import getdoc, signature, isfunction, ismethod, currentframe, Signature, isclass
-
-from collections import defaultdict
-from typing import Optional, Dict, Any, List, Union, Type, Tuple
-from copy import deepcopy
-
-
-import importlib
-import subprocess
-
+from toolboxv2 import Spinner, Style, get_app
 from toolboxv2.mods.isaa.extras.session import ChatSession
 
-
-### ---- Styles ------- ###
-
-from enum import Enum, auto
-from dataclasses import dataclass
-import asyncio
-import nest_asyncio
-import ast
-import io
-import os
-import traceback
-from pathlib import Path
 
 @dataclass
 class JSExecutionRecord:
     """Records JavaScript execution details"""
     code: str
     result: Any
-    error: Optional[str] = None
-    page_state: Optional[Dict] = None
-    extracted_data: Optional[Dict] = None
+    error: str | None = None
+    page_state: dict | None = None
+    extracted_data: dict | None = None
 
 
 class VerboseFormatter:
@@ -81,7 +84,7 @@ class VerboseFormatter:
         bar = "█" * progress + "░" * (20 - progress)
         self.print(f"\r{self.style.CYAN(f'Iteration [{bar}] {current}/{maximum}')}  ", end='')
 
-    def print_state(self, state: str, details: Optional[Dict[str, Any]] = None):
+    def print_state(self, state: str, details: dict[str, Any] | None = None):
         """Print current state with optional details"""
         state_color = {
             'ACTION': self.style.GREEN2,
@@ -157,7 +160,7 @@ class EnhancedVerboseOutput:
         self.print(f"\n{icon} {color_func(f'[{role}]')}")
         self.print(f"{self.formatter.style.GREY('└─')} {content}\n")
 
-    async def log_think_result(self, result: Dict[str, Any]):
+    async def log_think_result(self, result: dict[str, Any]):
         """Log thinking results with structured formatting"""
         if not self.verbose:
             return
@@ -169,7 +172,7 @@ class EnhancedVerboseOutput:
             f"Content:\n{result.get('content', '')}"
         )
 
-    async def log_process_result(self, result: Dict[str, Any]):
+    async def log_process_result(self, result: dict[str, Any]):
         """Log processing results with structured formatting"""
         if not self.verbose:
             return
@@ -193,7 +196,7 @@ class EnhancedVerboseOutput:
 
     def log_state(self, state: str, user_ns:dict, override=False):
         """Log method update with structured formatting"""
-        if not self.verbose and not not override:
+        if not self.verbose and override:
             return
 
         return self.formatter.print_state(state, user_ns)
@@ -218,22 +221,22 @@ class MethodUpdate(BaseModel):
     class_name: str = Field(..., description="Name of the class to update")
     method_name: str = Field(..., description="Name of the method to update")
     code: str = Field(..., description="Python code for the method implementation")
-    description: Optional[str] = Field(None, description="Description of what the method does")
+    description: str | None = Field(None, description="Description of what the method does")
 
 
 class ThinkResult(BaseModel):
     action: str = Field(..., description="Next action to take: 'code', 'brake', 'done'")
     content: str = Field(..., description="Content related to the action")
-    context: Optional[Dict[str, str | int | float | bool | Dict[str, str | int | float | bool ]]] = Field(default_factory=dict, description="Additional context for the action")
+    context: dict[str, str | int | float | bool | dict[str, str | int | float | bool]] | None = Field(default_factory=dict, description="Additional context for the action")
 
 class ThinkResults(BaseModel):
-    actions:List[ThinkResult]
+    actions:list[ThinkResult]
 
 @dataclass
 class ExecutionRecord:
     code: str
     result: Any
-    error: Optional[str] = None
+    error: str | None = None
 
     def __str__(self):
         return  '' if self.result is None and self.error is None else f"Output -> {self.result if self.result else ''}{'(error: '+self.error+')' if self.error else ''}"
@@ -241,15 +244,15 @@ class ExecutionRecord:
 
 @dataclass
 class PipelineResult:
-    variables: Dict[str, Any]
+    variables: dict[str, Any]
     result: Any
-    execution_history: List[ExecutionRecord]
-    message: List[Dict[str, str]]
+    execution_history: list[ExecutionRecord]
+    message: list[dict[str, str]]
 
 
 import re
-from typing import Dict, Any, Optional
-from contextlib import redirect_stdout, redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
+from typing import Any
 
 
 class CargoRustInterface:
@@ -324,7 +327,7 @@ await cargo_interface.test()
         except Exception as e:
             return f"Failed to create project: {str(e)}"
 
-    async def add_dependency(self, name: str, version: Optional[str] = None) -> str:
+    async def add_dependency(self, name: str, version: str | None = None) -> str:
         """Add a dependency to Cargo.toml"""
         if not self.current_project:
             return "No active project"
@@ -443,7 +446,7 @@ await cargo_interface.test()
             if not file_path.exists():
                 return f"File {file} not found"
 
-            with open(file_path, 'r') as f:
+            with open(file_path) as f:
                 content = f.read()
 
             # Handle function modification
@@ -480,7 +483,7 @@ await cargo_interface.test()
         """Load saved session state"""
         session_file = self._session_dir / f"{name}.json"
         if session_file.exists():
-            with open(session_file, 'r') as f:
+            with open(session_file) as f:
                 state = json.load(f)
                 self.output_history = state['output_history']
                 self.current_project = Path(state['current_project']) if state['current_project'] else None
@@ -490,10 +493,10 @@ class VirtualFileSystem:
     def __init__(self, base_dir: Path):
         self.base_dir = base_dir
         self.current_dir = base_dir
-        self.virtual_files: Dict[str, str] = {}
+        self.virtual_files: dict[str, str] = {}
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
-    def write_file(self, filepath: Union[str, Path], content: str) -> Path:
+    def write_file(self, filepath: str | Path, content: str) -> Path:
         """Write content to a virtual file and persist to disk using UTF-8"""
         try:
             abs_path = self._resolve_path(filepath)
@@ -513,7 +516,7 @@ class VirtualFileSystem:
 
         return abs_path
 
-    def read_file(self, filepath: Union[str, Path]) -> str:
+    def read_file(self, filepath: str | Path) -> str:
         """Read content from a virtual file using UTF-8"""
         abs_path = self._resolve_path(filepath)
         if not abs_path.exists():
@@ -531,7 +534,7 @@ class VirtualFileSystem:
             self.virtual_files[rel_path] = content
             return content
 
-    def delete_file(self, filepath: Union[str, Path]):
+    def delete_file(self, filepath: str | Path):
         """Delete a virtual file"""
         abs_path = self._resolve_path(filepath)
         rel_path = str(abs_path.relative_to(self.base_dir))
@@ -542,28 +545,28 @@ class VirtualFileSystem:
         if abs_path.exists():
             abs_path.unlink()
 
-    def create_directory(self, dirpath: Union[str, Path]):
+    def create_directory(self, dirpath: str | Path):
         """Create a new directory"""
         abs_path = self._resolve_path(dirpath)
         abs_path.mkdir(parents=True, exist_ok=True)
         return abs_path
 
 
-    def list_directory(self, dirpath: Union[str, Path] = '.') -> list:
+    def list_directory(self, dirpath: str | Path = '.') -> list:
         """List contents of a directory"""
         abs_path = self._resolve_path(dirpath)
         if not abs_path.exists():
             raise FileNotFoundError(f"Directory not found: {dirpath}")
         return [p.name for p in abs_path.iterdir()]
 
-    def change_directory(self, dirpath: Union[str, Path]):
+    def change_directory(self, dirpath: str | Path):
         """Change current working directory"""
         new_dir = self._resolve_path(dirpath)
         if not new_dir.exists() or not new_dir.is_dir():
             raise NotADirectoryError(f"Directory not found: {dirpath}")
         self.current_dir = new_dir
 
-    def _resolve_path(self, filepath: Union[str, Path]) -> Path:
+    def _resolve_path(self, filepath: str | Path) -> Path:
         """Convert relative path to absolute path"""
         filepath = Path(filepath)
         if filepath.is_absolute():
@@ -591,7 +594,7 @@ class VirtualFileSystem:
             self.current_dir = self.base_dir / state['current_dir']
             self.virtual_files = state['virtual_files']
 
-    def print_file_structure(self, start_path: Union[str, Path] = '.', indent: str = ''):
+    def print_file_structure(self, start_path: str | Path = '.', indent: str = ''):
         """Print the file structure starting from the given path"""
         start_path = self._resolve_path(start_path)
         if not start_path.exists():
@@ -778,7 +781,7 @@ class MockIPython:
         self._session_dir.mkdir(exist_ok=True)
         self.vfs = VirtualFileSystem(self._session_dir / 'virtual_fs')
         self._venv_path = self._session_dir / 'venv'
-        self.user_ns: Dict[str, Any] = {}
+        self.user_ns: dict[str, Any] = {}
         nest_asyncio.apply()
         # Set up virtual environment if it doesn't exist
         with Spinner("Starting virtual environment"):
@@ -833,16 +836,16 @@ class MockIPython:
         if self.auto_remove:
             shutil.rmtree(self.vfs.base_dir, ignore_errors=True)
 
-    def get_namespace(self) -> Dict[str, Any]:
+    def get_namespace(self) -> dict[str, Any]:
         """Get current namespace"""
         return self.user_ns.copy()
 
-    def update_namespace(self, variables: Dict[str, Any]):
+    def update_namespace(self, variables: dict[str, Any]):
         """Update namespace with new variables"""
         self.user_ns.update(variables)
 
     @staticmethod
-    def _parse_code(code: str) -> Tuple[Any, Optional[Any], bool, bool]:
+    def _parse_code(code: str) -> tuple[Any, Any | None, bool, bool]:
         """Parse code and handle top-level await"""
         code_ = ""
         for line in code.split('\n'):
@@ -1284,7 +1287,7 @@ class MockIPython:
         # Load VFS state with UTF-8 encoding
         vfs_state_file = self._session_dir / f"{name}_vfs.json"
         if vfs_state_file.exists():
-            with open(vfs_state_file, 'r', encoding='utf-8') as f:
+            with open(vfs_state_file, encoding='utf-8') as f:
                 self.vfs.virtual_files = json.load(f)
 
     def __str__(self):
@@ -1467,10 +1470,12 @@ Execution:
                 return "No Rust files found in the project."
 
 
-from browser_use import Agent as BrowserAgent, Browser, BrowserConfig
+from typing import Any
+
+from browser_use import Agent as BrowserAgent
+from browser_use import Browser, BrowserConfig
 from browser_use.browser.context import BrowserContextConfig
 from langchain_community.chat_models import ChatLiteLLM
-from typing import Optional, Dict, Any, List, Union
 
 
 class WebContentParser:
@@ -1559,10 +1564,10 @@ class BrowserWrapper:
     def __init__(self,
                  llm: Any = None,
                  headless: bool = False,
-                 chrome_path: Optional[str] = None,
-                 remote_url: Optional[str] = None,
-                 api_key: Optional[str]=None,
-                 config: Optional[Dict[str, Any]] = None):
+                 chrome_path: str | None = None,
+                 remote_url: str | None = None,
+                 api_key: str | None=None,
+                 config: dict[str, Any] | None = None):
         """
         Initialize the browser wrapper.
 
@@ -1577,8 +1582,9 @@ class BrowserWrapper:
         self.agent = None
         self.browser = None
         self.context = None
-        from pydantic import SecretStr
         import os
+
+        from pydantic import SecretStr
         pars = lambda x: x.split('/')[-1] if '/' in x else x
         if llm is None:
             llm = 'google/gemini-2.0-flash-exp'
@@ -2131,9 +2137,9 @@ class Pipeline:
         agent: Any,
         verbose: bool=False,
         max_iter: int= 12,
-        variables: Optional[Union[Dict[str, Any], List[Any]]] = None,
-        top_n: Optional[bool] = None,
-        restore: Optional[bool] = None,
+        variables: dict[str, Any] | list[Any] | None = None,
+        top_n: bool | None = None,
+        restore: bool | None = None,
         max_think_after_think = None,
         print_f=None,
         web_js=False,
@@ -2169,8 +2175,8 @@ class Pipeline:
         self.execution_history = []
         self.session_name = None
 
-        self.browser_session: Optional[BrowserWrapper] = BrowserWrapper(llm=web_llm or agent.amd.model)
-        self.js_history: List[JSExecutionRecord] = []
+        self.browser_session: BrowserWrapper | None = BrowserWrapper(llm=web_llm or agent.amd.model)
+        self.js_history: list[JSExecutionRecord] = []
 
         self._session_dir = Path(get_app().appdata) / 'ChatSession' / agent.amd.name
         self.ipython = MockIPython(self._session_dir, auto_remove=False)
@@ -2229,7 +2235,7 @@ class Pipeline:
         get_output_html=get_output_html, get_output_net=get_output_net))
 
     @staticmethod
-    def _process_variables(variables: Union[Dict[str, Any], List[Any]]) -> Dict[str, Any]:
+    def _process_variables(variables: dict[str, Any] | list[Any]) -> dict[str, Any]:
         """
         Process variables to generate meaningful names, using actual variable names where possible.
         Instances get lowercase names based on their class names.
@@ -2289,7 +2295,7 @@ class Pipeline:
 
     def _generate_variable_descriptions(
         self,
-        top_n: Optional[int] = None
+        top_n: int | None = None
     ) -> str:
         """
         Generate detailed descriptions of variables, showing args, kwargs, docstrings, and return values.
@@ -2318,7 +2324,7 @@ class Pipeline:
             except:
                 return "<error getting value>"
 
-        def get_instance_state(var: Any) -> Dict[str, Any]:
+        def get_instance_state(var: Any) -> dict[str, Any]:
             """Get current instance state"""
             state = {}
             if hasattr(var, '__dict__'):
@@ -2601,7 +2607,7 @@ class Pipeline:
         """String representation of pipeline session"""
         return str(self.ipython)
 
-    async def _process_think_result(self, think_result: ThinkResult, task:str) -> Tuple[ThinkState,  Optional[ExecutionRecord | str]]:
+    async def _process_think_result(self, think_result: ThinkResult, task:str) -> tuple[ThinkState,  ExecutionRecord | str | None]:
         """Process the result of agent thinking"""
         if think_result.action == 'brake':
             return ThinkState.BRAKE, think_result.content
@@ -3133,17 +3139,17 @@ Next Action Required:
         class FileAction(BaseModel):
             action: str
             path: str
-            content: Optional[str] = None
+            content: str | None = None
 
         class ProjectThinkResult(BaseModel):
             action: str
-            file_actions: List[FileAction]
+            file_actions: list[FileAction]
             reasoning: str
 
         class ProjectPipelineResult(BaseModel):
             result: str
-            execution_history: List[str]
-            files: Dict[str, str]
+            execution_history: list[str]
+            files: dict[str, str]
         state = ThinkState.ACTION
         result = None
         original_task = task
@@ -3283,7 +3289,7 @@ Next Action Required:
         if variables:
             self.variables = {**self.variables, **self._process_variables(variables)}
         if with_js and web_kwargs:
-            self.browser_session: Optional[BrowserWrapper] = BrowserWrapper(**web_kwargs)
+            self.browser_session: BrowserWrapper | None = BrowserWrapper(**web_kwargs)
         self.web_js = with_js
         if self.restore_var:
             self.restore()
@@ -3305,9 +3311,9 @@ Next Action Required:
 @dataclass
 class SyncReport:
     """Report of variables synced from namespace to pipeline"""
-    added: Dict[str, str]
-    skipped: Dict[str, str]  # var_name -> reason
-    errors: Dict[str, str]  # var_name -> error message
+    added: dict[str, str]
+    skipped: dict[str, str]  # var_name -> reason
+    errors: dict[str, str]  # var_name -> error message
 
     def __str__(self) -> str:
         parts = []
@@ -3328,10 +3334,10 @@ class SyncReport:
 
 def sync_globals_to_vars(
     pipeline: Any,
-    namespace: Optional[Dict[str, Any]] = None,
-    prefix: Optional[str] = None,
-    include_types: Optional[Union[Type, List[Type]]] = None,
-    exclude_patterns: Optional[List[str]] = None,
+    namespace: dict[str, Any] | None = None,
+    prefix: str | None = None,
+    include_types: type | list[type] | None = None,
+    exclude_patterns: list[str] | None = None,
     exclude_private: bool = True,
     deep_copy: bool = False,
     only_serializable: bool = False

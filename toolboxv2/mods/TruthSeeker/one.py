@@ -1,21 +1,25 @@
+import base64
+import io
 import os
+import threading
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Set, Optional, Union, Any
 from datetime import datetime
-import threading
+from typing import Any
+
 import numpy as np
-import io
-from PIL import Image
-
-import base64
-
 import torch
+from PIL import Image
+from transformers import (
+    AutoModel,
+    AutoTokenizer,
+    CLIPModel,
+    CLIPProcessor,
+    Wav2Vec2Model,
+    Wav2Vec2Processor,
+)
 
-from transformers import AutoTokenizer, AutoModel, CLIPProcessor, CLIPModel
-from transformers import Wav2Vec2Processor, Wav2Vec2Model
-
-from toolboxv2 import get_logger, Singleton
+from toolboxv2 import Singleton, get_logger
 from toolboxv2.utils.system import FileCache
 
 logger = get_logger()
@@ -24,33 +28,33 @@ logger = get_logger()
 class InputData:
     def __init__(
         self,
-        content: Union[str, bytes, np.ndarray],
+        content: str | bytes | np.ndarray,
         modality: str,
-        metadata: Optional[Dict] = None
+        metadata: dict | None = None
     ):
         self.content = content
         self.modality = modality  # 'text', 'image', or 'audio'
         self.metadata = metadata or {}
 
 
-class IntelligenceRingEmbeddings():
+class IntelligenceRingEmbeddings:
     name: str = "sentence-transformers/all-MiniLM-L6-v2"
     clip_name: str = "openai/clip-vit-base-patch32"
     wav2vec_name: str = "facebook/wav2vec2-base-960h"
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     vector_size: int = 768
-    tokenizer: Optional[Any] = None
-    text_model: Optional[Any] = None
+    tokenizer: Any | None = None
+    text_model: Any | None = None
 
-    clip_processor: Optional[Any] = None
-    clip_model: Optional[Any] = None
+    clip_processor: Any | None = None
+    clip_model: Any | None = None
 
-    audio_processor: Optional[Any] = None
-    audio_model: Optional[Any] = None
+    audio_processor: Any | None = None
+    audio_model: Any | None = None
 
-    text_projection: Optional[Any] = None
-    image_projection: Optional[Any] = None
-    audio_projection: Optional[Any] = None
+    text_projection: Any | None = None
+    image_projection: Any | None = None
+    audio_projection: Any | None = None
 
     def __init__(self, **kwargs):
 
@@ -98,7 +102,7 @@ class IntelligenceRingEmbeddings():
             projected = self.text_projection(embeddings)
             return torch.nn.functional.normalize(projected, p=2, dim=1)
 
-    def _process_image(self, image_data: Union[bytes, str]) -> torch.Tensor:
+    def _process_image(self, image_data: bytes | str) -> torch.Tensor:
         # Handle different image input types
         if isinstance(image_data, str):
             if image_data.startswith('data:image'):
@@ -120,7 +124,7 @@ class IntelligenceRingEmbeddings():
             projected = self.image_projection(outputs)
             return torch.nn.functional.normalize(projected, p=2, dim=1)
 
-    def _process_audio(self, audio_data: Union[bytes, str, np.ndarray]) -> torch.Tensor:
+    def _process_audio(self, audio_data: bytes | str | np.ndarray) -> torch.Tensor:
         try:
             import torchaudio
         except ImportError:
@@ -173,18 +177,18 @@ class IntelligenceRingEmbeddings():
 
         return embeddings.cpu().numpy()
 
-    def compute_query_embeddings(self, query: Union[str, bytes, np.ndarray], modality: str = "text") -> List[
+    def compute_query_embeddings(self, query: str | bytes | np.ndarray, modality: str = "text") -> list[
         np.ndarray]:
         """Compute embeddings for query input"""
         input_data = InputData(query, modality)
         embedding = self.process_input(input_data)
         return [embedding.squeeze()]
 
-    def compute_source_embeddings(self, sources: List[Union[str, bytes, np.ndarray]], modalities: List[str]) -> List[
+    def compute_source_embeddings(self, sources: list[str | bytes | np.ndarray], modalities: list[str]) -> list[
         np.ndarray]:
         """Compute embeddings for source inputs"""
         embeddings = []
-        for source, modality in zip(sources, modalities):
+        for source, modality in zip(sources, modalities, strict=False):
             input_data = InputData(source, modality)
             embedding = self.process_input(input_data)
             embeddings.append(embedding.squeeze())
@@ -201,11 +205,11 @@ class Concept:
     ttl: int
     created_at: datetime
     vector: np.ndarray
-    contradictions: Set[str]
-    similar_concepts: Set[str]
-    relations: Dict[str, float]
+    contradictions: set[str]
+    similar_concepts: set[str]
+    relations: dict[str, float]
     stage: int
-    metadata: Dict
+    metadata: dict
     modality: str = "text"
 
     def is_expired(self) -> bool:
@@ -264,7 +268,7 @@ class InputProcessor(metaclass=Singleton):
             self.started.set()
         threading.Thread(target=helper, daemon=True).start()
 
-    def get_embedding(self, content: Union[str, bytes, np.ndarray], modality: str = "text") -> Optional[np.ndarray]:
+    def get_embedding(self, content: str | bytes | np.ndarray, modality: str = "text") -> np.ndarray | None:
         while not self.started.is_set():
             time.sleep(0.2)
         # Only cache text embeddings
@@ -322,11 +326,10 @@ class InputProcessor(metaclass=Singleton):
         return combined_embedding
 
 
-    def batch_get_embeddings(self, contents: List[Union[str, bytes, np.ndarray]], modalities: List[str]) -> Optional[
-        np.ndarray]:
+    def batch_get_embeddings(self, contents: list[str | bytes | np.ndarray], modalities: list[str]) -> np.ndarray | None:
         try:
             results = []
-            for content, modality in zip(contents, modalities):
+            for content, modality in zip(contents, modalities, strict=False):
                 embedding = self.get_embedding(content, modality)
                 if embedding is not None:
                     results.append(embedding)

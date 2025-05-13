@@ -1,17 +1,15 @@
 import asyncio
 import base64
+import hashlib
+import os
 import queue
 import random
-import os
-import hashlib
+from collections.abc import Callable
 from functools import wraps
-from typing import Callable, Dict
 
 from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
@@ -29,7 +27,7 @@ def ensure_device_key_dir_exists():
 def get_or_create_device_key():
     ensure_device_key_dir_exists()
     if os.path.exists(DEVICE_KEY_PATH):
-        with open(DEVICE_KEY_PATH, "r") as key_file:
+        with open(DEVICE_KEY_PATH) as key_file:
             return key_file.read()
     else:
         key = Fernet.generate_key()
@@ -245,11 +243,11 @@ class Code:
         device_key = DEVICE_KEY()
 
         # Lade den öffentlichen Schlüssel
-        with open(public_key_path, "r") as f:
+        with open(public_key_path) as f:
             public_key = f.read()
 
         # Lade und entschlüssele den privaten Schlüssel
-        with open(private_key_path, "r") as f:
+        with open(private_key_path) as f:
             encrypted_private_key = f.read()
             private_key = Code.decrypt_symmetric(encrypted_private_key, device_key)
 
@@ -477,7 +475,7 @@ class E2EEncryption:
         return wrapper
 
     @staticmethod
-    def create_encrypted_channel(send_func: Callable, receive_func: Callable) -> Dict[str, Callable]:
+    def create_encrypted_channel(send_func: Callable, receive_func: Callable) -> dict[str, Callable]:
         e2e = E2EEncryption()
         return {
             'send': e2e.encrypt_wrapper(send_func),

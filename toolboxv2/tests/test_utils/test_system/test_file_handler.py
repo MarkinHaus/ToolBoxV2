@@ -1,6 +1,6 @@
 import os
-import unittest
 import tempfile
+import unittest
 from unittest.mock import patch
 
 from toolboxv2 import setup_logging

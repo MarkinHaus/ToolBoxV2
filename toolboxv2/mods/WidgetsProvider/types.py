@@ -1,4 +1,3 @@
-from typing import Dict
 
 
 # Datenmodell für Widgets
@@ -12,6 +11,6 @@ class Widget:
 
 # Datenmodell für Stos
 class Sto:
-    def __init__(self, name: str, widgets: Dict[str, Widget]):
+    def __init__(self, name: str, widgets: dict[str, Widget]):
         self.name = name
         self.widgets = widgets

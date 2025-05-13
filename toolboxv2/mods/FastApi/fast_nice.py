@@ -1,20 +1,20 @@
 import asyncio
 import inspect
+import os
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
 
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from nicegui import ui
 from starlette.middleware.base import BaseHTTPMiddleware
-from typing import Dict, Optional, Callable, Any
-from datetime import datetime
-import os
-
 from starlette.responses import RedirectResponse
 
 from toolboxv2 import Singleton, get_app
-from toolboxv2.utils.extras.base_widget import get_user_from_request, get_spec, get_s_id
+from toolboxv2.utils.extras.base_widget import get_s_id, get_spec, get_user_from_request
 from toolboxv2.utils.system.session import RequestSession
-from typing import List
-from dataclasses import dataclass
+
 
 @dataclass
 class UIEndpoint:
@@ -35,12 +35,12 @@ class NiceGUIManager(metaclass=Singleton):
         self.admin_password = os.getenv("TB_R_KEY", "root@admin")
         self.app = fastapi_app
         self.styles_path = styles_path
-        self.registered_guis: Dict[str, Dict[str, Any]] = {}
-        self.ws_connections: Dict[str, Dict[str, WebSocket]] = {}
+        self.registered_guis: dict[str, dict[str, Any]] = {}
+        self.ws_connections: dict[str, dict[str, WebSocket]] = {}
         self.mount_path = "/gui"
-        self.endpoints: List[UIEndpoint] = []
+        self.endpoints: list[UIEndpoint] = []
 
-        self.helper_contex = open("./dist/helper.html", "r", encoding="utf-8").read()
+        self.helper_contex = open("./dist/helper.html", encoding="utf-8").read()
 
         self.app.add_middleware(BaseHTTPMiddleware, dispatch=self.middleware_dispatch)
 
@@ -51,7 +51,7 @@ class NiceGUIManager(metaclass=Singleton):
 
     def _setup_endpoints_api(self):
         @self.app.get("/api/CloudM/openui")
-        def get_ui_endpoints(request: Request) -> List[Dict]:
+        def get_ui_endpoints(request: Request) -> list[dict]:
             def _(endpoint):
                 add_true = True
                 if endpoint.only_valid:
@@ -201,13 +201,13 @@ class NiceGUIManager(metaclass=Singleton):
     def _load_styles(self) -> str:
         """Load custom styles from CSS file"""
         try:
-            with open(self.styles_path, 'r') as f:
+            with open(self.styles_path) as f:
                 return f.read()
         except Exception as e:
             print(f"Error loading styles: {e}")
             return ""
 
-    def register_gui(self, gui_id: str, setup_func: Callable, mount_path: Optional[str] = None, additional: Optional[str] = None, title: Optional[str] = None , description: Optional[str] = None, **kwargs) -> None:
+    def register_gui(self, gui_id: str, setup_func: Callable, mount_path: str | None = None, additional: str | None = None, title: str | None = None , description: str | None = None, **kwargs) -> None:
         """Register a new NiceGUI application"""
         path = mount_path or f"/{gui_id}"
         self.endpoints.append(UIEndpoint(path=self.mount_path+path, title=title if title is not None else path.replace('/', '') , description=description if description is not None else '', **kwargs))
@@ -411,7 +411,7 @@ manager_online = [False]
 
 
 # Usage example:
-def create_nicegui_manager(app: FastAPI, token_secret: Optional[str] = None) -> NiceGUIManager:
+def create_nicegui_manager(app: FastAPI, token_secret: str | None = None) -> NiceGUIManager:
     """Create and initialize a NiceGUI manager instance"""
     manager = NiceGUIManager(app, token_secret)
     manager.init_app()
@@ -419,7 +419,7 @@ def create_nicegui_manager(app: FastAPI, token_secret: Optional[str] = None) -> 
     return manager
 
 
-def register_nicegui(gui_id: str, setup_func: Callable, mount_path: Optional[str] = None, additional: Optional[str] = None, **kwargs) -> None:
+def register_nicegui(gui_id: str, setup_func: Callable, mount_path: str | None = None, additional: str | None = None, **kwargs) -> None:
     if not manager_online[0]:
         return
     print("ADDED GUI:", gui_id)

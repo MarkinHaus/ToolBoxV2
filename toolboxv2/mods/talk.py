@@ -1,15 +1,14 @@
+import asyncio
 import json
 import threading
-
-from starlette.responses import HTMLResponse
-
-from toolboxv2 import get_app, App, TBEF, Spinner
-from toolboxv2.tests.a_util import async_test
-from toolboxv2.utils.extras.base_widget import get_spec, get_user_from_request
 from functools import partial
 
-from fastapi import WebSocket, Request
-import asyncio
+from fastapi import Request, WebSocket
+from starlette.responses import HTMLResponse
+
+from toolboxv2 import TBEF, App, Spinner, get_app
+from toolboxv2.tests.a_util import async_test
+from toolboxv2.utils.extras.base_widget import get_spec, get_user_from_request
 
 Name = 'talk'
 export = get_app("cli_functions.Export").tb
@@ -23,6 +22,8 @@ def start(app=None):
     global talk_generate, talk_tts
     if app is None:
         app = get_app("Starting Talk interface")
+    if not hasattr(TBEF, "AUDIO"):
+        return
     talk_generate = app.run_any(TBEF.AUDIO.STT_GENERATE,
                                 model="openai/whisper-small",
                                 row=True, device=1)

@@ -1,15 +1,13 @@
 import asyncio
 import atexit
-import time
 import os
-from typing import List, Optional
+import time
 
+from ..extras.Style import Style
 from .tb_logger import get_logger
 from .types import AppArgs, AppType
 
-from ..extras.Style import Style
-
-registered_apps: List[Optional[AppType]] = [None]
+registered_apps: list[AppType | None] = [None]
 
 
 def override_main_app(app):
@@ -48,8 +46,9 @@ def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None, sync=
 
 
 async def a_get_proxy_app(app, host="localhost", port=6587, key="remote@root", timeout=12):
-    from toolboxv2.utils.proxy.proxy_app import ProxyApp
     from os import getenv
+
+    from toolboxv2.utils.proxy.proxy_app import ProxyApp
     app.print("INIT PROXY APP")
     _ = await ProxyApp(app, host, port, timeout=timeout)
     time.sleep(0.2)

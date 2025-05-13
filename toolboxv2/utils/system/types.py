@@ -1,156 +1,154 @@
 import asyncio
+import cProfile
+import io
 import logging
+import multiprocessing as mp
 import os
-from dataclasses import field
+import pstats
+import time
+from collections.abc import Callable
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from inspect import signature
 from types import ModuleType
-from typing import Any, Optional, List, Tuple, Dict, Callable
+from typing import Any
+
 from pydantic import BaseModel
 
+from ..extras import generate_test_cases
+from ..extras.Style import Spinner
 from .all_functions_enums import *
 from .file_handler import FileHandler
-from ..extras.Style import Spinner
-
-from ..extras import generate_test_cases
-from dataclasses import dataclass
-import multiprocessing as mp
-
-import cProfile
-import pstats
-import io
-from contextlib import contextmanager
-import time
-from typing import Union
 
 
 @dataclass
 class Headers:
     """Class representing HTTP headers with strongly typed common fields."""
     # General Headers
-    accept: Optional[str] = None
-    accept_charset: Optional[str] = None
-    accept_encoding: Optional[str] = None
-    accept_language: Optional[str] = None
-    accept_ranges: Optional[str] = None
-    access_control_allow_credentials: Optional[str] = None
-    access_control_allow_headers: Optional[str] = None
-    access_control_allow_methods: Optional[str] = None
-    access_control_allow_origin: Optional[str] = None
-    access_control_expose_headers: Optional[str] = None
-    access_control_max_age: Optional[str] = None
-    access_control_request_headers: Optional[str] = None
-    access_control_request_method: Optional[str] = None
-    age: Optional[str] = None
-    allow: Optional[str] = None
-    alt_svc: Optional[str] = None
-    authorization: Optional[str] = None
-    cache_control: Optional[str] = None
-    clear_site_data: Optional[str] = None
-    connection: Optional[str] = None
-    content_disposition: Optional[str] = None
-    content_encoding: Optional[str] = None
-    content_language: Optional[str] = None
-    content_length: Optional[str] = None
-    content_location: Optional[str] = None
-    content_range: Optional[str] = None
-    content_security_policy: Optional[str] = None
-    content_security_policy_report_only: Optional[str] = None
-    content_type: Optional[str] = None
-    cookie: Optional[str] = None
-    cross_origin_embedder_policy: Optional[str] = None
-    cross_origin_opener_policy: Optional[str] = None
-    cross_origin_resource_policy: Optional[str] = None
-    date: Optional[str] = None
-    device_memory: Optional[str] = None
-    digest: Optional[str] = None
-    dnt: Optional[str] = None
-    dpr: Optional[str] = None
-    etag: Optional[str] = None
-    expect: Optional[str] = None
-    expires: Optional[str] = None
-    feature_policy: Optional[str] = None
-    forwarded: Optional[str] = None
-    from_header: Optional[str] = None  # 'from' is a Python keyword
-    host: Optional[str] = None
-    if_match: Optional[str] = None
-    if_modified_since: Optional[str] = None
-    if_none_match: Optional[str] = None
-    if_range: Optional[str] = None
-    if_unmodified_since: Optional[str] = None
-    keep_alive: Optional[str] = None
-    large_allocation: Optional[str] = None
-    last_modified: Optional[str] = None
-    link: Optional[str] = None
-    location: Optional[str] = None
-    max_forwards: Optional[str] = None
-    origin: Optional[str] = None
-    pragma: Optional[str] = None
-    proxy_authenticate: Optional[str] = None
-    proxy_authorization: Optional[str] = None
-    public_key_pins: Optional[str] = None
-    public_key_pins_report_only: Optional[str] = None
-    range: Optional[str] = None
-    referer: Optional[str] = None
-    referrer_policy: Optional[str] = None
-    retry_after: Optional[str] = None
-    save_data: Optional[str] = None
-    sec_fetch_dest: Optional[str] = None
-    sec_fetch_mode: Optional[str] = None
-    sec_fetch_site: Optional[str] = None
-    sec_fetch_user: Optional[str] = None
-    sec_websocket_accept: Optional[str] = None
-    sec_websocket_extensions: Optional[str] = None
-    sec_websocket_key: Optional[str] = None
-    sec_websocket_protocol: Optional[str] = None
-    sec_websocket_version: Optional[str] = None
-    server: Optional[str] = None
-    server_timing: Optional[str] = None
-    service_worker_allowed: Optional[str] = None
-    set_cookie: Optional[str] = None
-    sourcemap: Optional[str] = None
-    strict_transport_security: Optional[str] = None
-    te: Optional[str] = None
-    timing_allow_origin: Optional[str] = None
-    tk: Optional[str] = None
-    trailer: Optional[str] = None
-    transfer_encoding: Optional[str] = None
-    upgrade: Optional[str] = None
-    upgrade_insecure_requests: Optional[str] = None
-    user_agent: Optional[str] = None
-    vary: Optional[str] = None
-    via: Optional[str] = None
-    warning: Optional[str] = None
-    www_authenticate: Optional[str] = None
-    x_content_type_options: Optional[str] = None
-    x_dns_prefetch_control: Optional[str] = None
-    x_forwarded_for: Optional[str] = None
-    x_forwarded_host: Optional[str] = None
-    x_forwarded_proto: Optional[str] = None
-    x_frame_options: Optional[str] = None
-    x_xss_protection: Optional[str] = None
+    accept: None | str= None
+    accept_charset: None | str= None
+    accept_encoding: None | str= None
+    accept_language: None | str= None
+    accept_ranges: None | str= None
+    access_control_allow_credentials: None | str= None
+    access_control_allow_headers: None | str= None
+    access_control_allow_methods: None | str= None
+    access_control_allow_origin: None | str= None
+    access_control_expose_headers: None | str= None
+    access_control_max_age: None | str= None
+    access_control_request_headers: None | str= None
+    access_control_request_method: None | str= None
+    age: None | str= None
+    allow: None | str= None
+    alt_svc: None | str= None
+    authorization: None | str= None
+    cache_control: None | str= None
+    clear_site_data: None | str= None
+    connection: None | str= None
+    content_disposition: None | str= None
+    content_encoding: None | str= None
+    content_language: None | str= None
+    content_length: None | str= None
+    content_location: None | str= None
+    content_range: None | str= None
+    content_security_policy: None | str= None
+    content_security_policy_report_only: None | str= None
+    content_type: None | str= None
+    cookie: None | str= None
+    cross_origin_embedder_policy: None | str= None
+    cross_origin_opener_policy: None | str= None
+    cross_origin_resource_policy: None | str= None
+    date: None | str= None
+    device_memory: None | str= None
+    digest: None | str= None
+    dnt: None | str= None
+    dpr: None | str= None
+    etag: None | str= None
+    expect: None | str= None
+    expires: None | str= None
+    feature_policy: None | str= None
+    forwarded: None | str= None
+    from_header: None | str= None  # 'from' is a Python keyword
+    host: None | str= None
+    if_match: None | str= None
+    if_modified_since: None | str= None
+    if_none_match: None | str= None
+    if_range: None | str= None
+    if_unmodified_since: None | str= None
+    keep_alive: None | str= None
+    large_allocation: None | str= None
+    last_modified: None | str= None
+    link: None | str= None
+    location: None | str= None
+    max_forwards: None | str= None
+    origin: None | str= None
+    pragma: None | str= None
+    proxy_authenticate: None | str= None
+    proxy_authorization: None | str= None
+    public_key_pins: None | str= None
+    public_key_pins_report_only: None | str= None
+    range: None | str= None
+    referer: None | str= None
+    referrer_policy: None | str= None
+    retry_after: None | str= None
+    save_data: None | str= None
+    sec_fetch_dest: None | str= None
+    sec_fetch_mode: None | str= None
+    sec_fetch_site: None | str= None
+    sec_fetch_user: None | str= None
+    sec_websocket_accept: None | str= None
+    sec_websocket_extensions: None | str= None
+    sec_websocket_key: None | str= None
+    sec_websocket_protocol: None | str= None
+    sec_websocket_version: None | str= None
+    server: None | str= None
+    server_timing: None | str= None
+    service_worker_allowed: None | str= None
+    set_cookie: None | str= None
+    sourcemap: None | str= None
+    strict_transport_security: None | str= None
+    te: None | str= None
+    timing_allow_origin: None | str= None
+    tk: None | str= None
+    trailer: None | str= None
+    transfer_encoding: None | str= None
+    upgrade: None | str= None
+    upgrade_insecure_requests: None | str= None
+    user_agent: None | str= None
+    vary: None | str= None
+    via: None | str= None
+    warning: None | str= None
+    www_authenticate: None | str= None
+    x_content_type_options: None | str= None
+    x_dns_prefetch_control: None | str= None
+    x_forwarded_for: None | str= None
+    x_forwarded_host: None | str= None
+    x_forwarded_proto: None | str= None
+    x_frame_options: None | str= None
+    x_xss_protection: None | str= None
 
     # Browser-specific and custom headers
-    sec_ch_ua: Optional[str] = None
-    sec_ch_ua_mobile: Optional[str] = None
-    sec_ch_ua_platform: Optional[str] = None
-    sec_ch_ua_arch: Optional[str] = None
-    sec_ch_ua_bitness: Optional[str] = None
-    sec_ch_ua_full_version: Optional[str] = None
-    sec_ch_ua_full_version_list: Optional[str] = None
-    sec_ch_ua_platform_version: Optional[str] = None
+    sec_ch_ua: None | str= None
+    sec_ch_ua_mobile: None | str= None
+    sec_ch_ua_platform: None | str= None
+    sec_ch_ua_arch: None | str= None
+    sec_ch_ua_bitness: None | str= None
+    sec_ch_ua_full_version: None | str= None
+    sec_ch_ua_full_version_list: None | str= None
+    sec_ch_ua_platform_version: None | str= None
 
     # HTMX specific headers
-    hx_boosted: Optional[str] = None
-    hx_current_url: Optional[str] = None
-    hx_history_restore_request: Optional[str] = None
-    hx_prompt: Optional[str] = None
-    hx_request: Optional[str] = None
-    hx_target: Optional[str] = None
-    hx_trigger: Optional[str] = None
-    hx_trigger_name: Optional[str] = None
+    hx_boosted: None | str= None
+    hx_current_url: None | str= None
+    hx_history_restore_request: None | str= None
+    hx_prompt: None | str= None
+    hx_request: None | str= None
+    hx_target: None | str= None
+    hx_trigger: None | str= None
+    hx_trigger_name: None | str= None
 
     # Additional fields can be stored in extra_headers
-    extra_headers: Dict[str, str] = field(default_factory=dict)
+    extra_headers: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self):
         """Convert header keys with hyphens to underscores for attribute access."""
@@ -166,7 +164,7 @@ class Headers:
                 delattr(self, key)
 
     @classmethod
-    def from_dict(cls, headers_dict: Dict[str, str]) -> 'Headers':
+    def from_dict(cls, headers_dict: dict[str, str]) -> 'Headers':
         """Create a Headers instance from a dictionary."""
         # Convert header keys from hyphenated to underscore format for Python attributes
         processed_headers = {}
@@ -186,7 +184,7 @@ class Headers:
 
         return cls(**processed_headers, extra_headers=extra_headers)
 
-    def to_dict(self) -> Dict[str, str]:
+    def to_dict(self) -> dict[str, str]:
         """Convert the Headers object back to a dictionary."""
         result = {}
 
@@ -212,12 +210,12 @@ class Request:
     headers: Headers
     method: str
     path: str
-    query_params: Dict[str, Any] = field(default_factory=dict)
-    form_data: Optional[Dict[str, Any]] = None
-    body: Optional[Any] = None
+    query_params: dict[str, Any] = field(default_factory=dict)
+    form_data: dict[str, Any] | None = None
+    body: Any | None = None
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Request':
+    def from_dict(cls, data: dict[str, Any]) -> 'Request':
         """Create a Request instance from a dictionary."""
         headers = Headers.from_dict(data.get('headers', {}))
 
@@ -232,7 +230,7 @@ class Request:
             body=data.get('body')
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert the Request object back to a dictionary."""
         result = {
             'content_type': self.content_type,
@@ -259,10 +257,10 @@ class Session:
     spec: str
     user_name: str
     # Allow for additional fields
-    extra_data: Dict[str, Any] = field(default_factory=dict)
+    extra_data: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Session':
+    def from_dict(cls, data: dict[str, Any]) -> 'Session':
         """Create a Session instance from a dictionary."""
         # Extract known fields
         known_fields = {k: data.get(k) for k in ['SiID', 'level', 'spec', 'user_name'] if k in data}
@@ -272,7 +270,7 @@ class Session:
 
         return cls(**known_fields, extra_data=extra_data)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert the Session object back to a dictionary."""
         result = {
             'SiID': self.SiID,
@@ -299,7 +297,7 @@ class RequestData:
     session_id: str
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'RequestData':
+    def from_dict(cls, data: dict[str, Any]) -> 'RequestData':
         """Create a RequestData instance from a dictionary."""
         return cls(
             request=Request.from_dict(data.get('request', {})),
@@ -307,7 +305,7 @@ class RequestData:
             session_id=data.get('session_id', '')
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert the RequestData object back to a dictionary."""
         return {
             'request': self.request.to_dict(),
@@ -317,7 +315,7 @@ class RequestData:
 
 
 # Example usage:
-def parse_request_data(data: Dict[str, Any]) -> RequestData:
+def parse_request_data(data: dict[str, Any]) -> RequestData:
     """Parse the incoming request data into a strongly typed structure."""
     return RequestData.from_dict(data)
 
@@ -408,11 +406,11 @@ class ModuleInfo:
     functions_fatal_error: int = 0
     error: int = 0
     functions_sug: int = 0
-    calls: Dict[str, List[Any]] = field(default_factory=dict)
-    callse: Dict[str, List[Any]] = field(default_factory=dict)
-    coverage: List[int] = field(default_factory=lambda: [0, 0])
+    calls: dict[str, list[Any]] = field(default_factory=dict)
+    callse: dict[str, list[Any]] = field(default_factory=dict)
+    coverage: list[int] = field(default_factory=lambda: [0, 0])
     execution_time: float = 0.0
-    profiling_stats: Dict[str, Any] = field(default_factory=dict)
+    profiling_stats: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -421,10 +419,10 @@ class ExecutionStats:
     modular_fatal_error: int = 0
     errors: int = 0
     modular_sug: int = 0
-    coverage: List[str] = field(default_factory=list)
-    total_coverage: Dict = field(default_factory=dict)
+    coverage: list[str] = field(default_factory=list)
+    total_coverage: dict = field(default_factory=dict)
     total_execution_time: float = 0.0
-    profiling_data: Dict[str, Any] = field(default_factory=dict)
+    profiling_data: dict[str, Any] = field(default_factory=dict)
 
 
 class AppArgs:
@@ -500,9 +498,9 @@ class ToolBoxInterfaces(str, Enum):
 @dataclass
 class ToolBoxResult:
     data_to: ToolBoxInterfaces or str = field(default=ToolBoxInterfaces.cli)
-    data_info: Optional[Any] = field(default=None)
-    data: Optional[Any] = field(default=None)
-    data_type: Optional[str] = field(default=None)
+    data_info: Any | None = field(default=None)
+    data: Any | None = field(default=None)
+    data_type: None | str= field(default=None)
 
 
 @dataclass
@@ -513,9 +511,9 @@ class ToolBoxInfo:
 
 class ToolBoxResultBM(BaseModel):
     data_to: str = ToolBoxInterfaces.cli.value
-    data_info: Optional[str]
-    data: Optional[Any]
-    data_type: Optional[str]
+    data_info: str | None
+    data: Any | None
+    data_type: str | None
 
 
 class ToolBoxInfoBM(BaseModel):
@@ -524,10 +522,10 @@ class ToolBoxInfoBM(BaseModel):
 
 
 class ApiResult(BaseModel):
-    error: Optional[str] = None
-    origin: Optional[Any]
-    result: Optional[ToolBoxResultBM] = None
-    info: Optional[ToolBoxInfoBM]
+    error: None | str= None
+    origin: Any | None
+    result: ToolBoxResultBM | None = None
+    info: ToolBoxInfoBM | None
 
     def as_result(self):
         return Result(
@@ -561,7 +559,7 @@ class Result:
                  error: ToolBoxError,
                  result: ToolBoxResult,
                  info: ToolBoxInfo,
-                 origin: Optional[Any] = None,
+                 origin: Any | None = None,
                  ):
         self.error: ToolBoxError = error
         self.result: ToolBoxResult = result
@@ -810,7 +808,7 @@ class Result:
         error = ToolBoxError.none
         info = ToolBoxInfo(exec_code=status, help_text=info)
 
-        if isinstance(headers, Dict):
+        if isinstance(headers, dict):
             result = ToolBoxResult(data_to=interface, data={'html':data,'headers':headers}, data_info=data_info,
                                    data_type="special_html")
         else:
@@ -1008,7 +1006,7 @@ class MainToolType:
     _on_exit: Callable
     stuf: bool
     config: dict
-    user: Optional[U]
+    user: U | None
     description: str
 
     @staticmethod
@@ -1042,8 +1040,8 @@ class MainToolType:
 class AppType:
     prefix: str
     id: str
-    globals: Dict[str, Any] = {"root": dict, }
-    locals: Dict[str, Any] = {"user": {'app': "self"}, }
+    globals: dict[str, Any] = {"root": dict, }
+    locals: dict[str, Any] = {"user": {'app': "self"}, }
 
     local_test: bool = False
     start_dir: str
@@ -1054,12 +1052,12 @@ class AppType:
     logger: logging.Logger
     logging_filename: str
 
-    api_allowed_mods_list: List[str] = []
+    api_allowed_mods_list: list[str] = []
 
     version: str
     loop: asyncio.AbstractEventLoop
 
-    keys: Dict[str, str] = {
+    keys: dict[str, str] = {
         "MACRO": "macro~~~~:",
         "MACRO_C": "m_color~~:",
         "HELPER": "helper~~~:",
@@ -1071,29 +1069,29 @@ class AppType:
         "provider::": "provider::",
     }
 
-    defaults: Dict[str, Optional[bool or Dict or Dict[str, Dict[str, str]] or str or List[str] or List[List]]] = {
-        "MACRO": List[str],
-        "MACRO_C": Dict,
-        "HELPER": Dict,
+    defaults: dict[str, (bool or dict or dict[str, dict[str, str]] or str or list[str] or list[list]) | None] = {
+        "MACRO": list[str],
+        "MACRO_C": dict,
+        "HELPER": dict,
         "debug": str,
         "id": str,
         "st-load": False,
-        "comm-his": List[List],
+        "comm-his": list[list],
         "develop-mode": bool,
     }
 
     config_fh: FileHandler
     _debug: bool
-    flows: Dict[str, Callable]
+    flows: dict[str, Callable]
     dev_modi: bool
-    functions: Dict[str, Any]
-    modules: Dict[str, Any]
+    functions: dict[str, Any]
+    modules: dict[str, Any]
 
     interface_type: ToolBoxInterfaces
     REFIX: str
 
     alive: bool
-    called_exit: Tuple[bool, float]
+    called_exit: tuple[bool, float]
     args_sto: AppArgs
     system_flag = None
     session = None
@@ -1103,7 +1101,7 @@ class AppType:
     enable_profiling: bool = False
     sto = None
 
-    def __init__(self, prefix: Optional[str] = None, args: Optional[AppArgs] = None):
+    def __init__(self, prefix: None | str= None, args: AppArgs | None = None):
         self.args_sto = args
         self.prefix = prefix
         """proxi attr"""
@@ -1507,7 +1505,7 @@ class AppType:
     def get_autocompletion_dict(self):
         """proxi attr"""
 
-    def get_username(self, get_input=False, default="loot"):
+    def get_username(self, get_input=False, default="loot") -> str:
         """proxi attr"""
 
     def save_registry_as_enums(self, directory: str, filename: str):
@@ -1612,7 +1610,7 @@ class AppType:
     def calculate_complexity(filename_or_code):
         from radon.complexity import cc_rank, cc_visit
         if os.path.exists(filename_or_code):
-            with open(filename_or_code, 'r') as file:
+            with open(filename_or_code) as file:
                 code = file.read()
         else:
             code = filename_or_code
@@ -1643,7 +1641,7 @@ class AppType:
 
     async def execute_function_test(self, module_name: str, function_name: str,
                                     function_data: dict, test_kwargs: dict,
-                                    profiler: cProfile.Profile) -> Tuple[bool, str, dict, float]:
+                                    profiler: cProfile.Profile) -> tuple[bool, str, dict, float]:
         start_time = time.time()
         with profile_section(profiler, hasattr(self, 'enable_profiling') and self.enable_profiling):
             try:
@@ -1664,7 +1662,7 @@ class AppType:
                 return False, str(e), test_kwargs, execution_time
 
     async def process_function(self, module_name: str, function_name: str,
-                               function_data: dict, profiler: cProfile.Profile) -> Tuple[str, ModuleInfo]:
+                               function_data: dict, profiler: cProfile.Profile) -> tuple[str, ModuleInfo]:
         start_time = time.time()
         info = ModuleInfo()
 
@@ -1714,7 +1712,7 @@ class AppType:
             return function_name, info
 
     async def process_module(self, module_name: str, functions: dict,
-                             f_query: str, profiler: cProfile.Profile) -> Tuple[str, ModuleInfo]:
+                             f_query: str, profiler: cProfile.Profile) -> tuple[str, ModuleInfo]:
         start_time = time.time()
 
         with profile_section(profiler, hasattr(self, 'enable_profiling') and self.enable_profiling):
@@ -1839,15 +1837,13 @@ class AppType:
             return Result.ok(data=stats.__dict__, data_info=analyzed_data)
 
 
-import json
+import asyncio
 import base64
-import asyncio
 import inspect
+import json
 import traceback
-from typing import Any, AsyncGenerator, Optional
-
-import asyncio
-from typing import Any, Callable, Optional, TypeVar
+from collections.abc import AsyncGenerator, Callable
+from typing import Any, TypeVar
 
 T = TypeVar('T')
 
@@ -1917,7 +1913,7 @@ class SSEGenerator:
     async def create_sse_stream(
         cls,
         source,
-        cleanup_func: Optional[Union[Callable[[], None], Callable[[], T], Callable[[], AsyncGenerator[T, None]]]] = None
+        cleanup_func: Callable[[], None] | Callable[[], T] | Callable[[], AsyncGenerator[T, None]] | None = None
     ) -> AsyncGenerator[str, None]:
         """
         Convert any source to a properly formatted SSE stream.

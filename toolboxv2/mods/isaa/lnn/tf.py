@@ -1,8 +1,7 @@
+import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
-import numpy as np
-
 
 # =============================
 # 1. Forward–Forward (FF) Model
@@ -84,7 +83,7 @@ def ff_train_step(model, optimizer, x, y, threshold=1.0):
         loss = loss_pos + loss_neg
 
     grads = tape.gradient(loss, model.trainable_variables)
-    optimizer.apply_gradients(zip(grads, model.trainable_variables))
+    optimizer.apply_gradients(zip(grads, model.trainable_variables, strict=False))
     return loss
 
 
@@ -272,7 +271,7 @@ if __name__ == '__main__':
     ff_total = 0
     for x_batch, y_batch in test_dataset:
         preds = ff_predict(ff_model, x_batch)
-        ff_correct += np.sum((preds.numpy() == y_batch.numpy()))
+        ff_correct += np.sum(preds.numpy() == y_batch.numpy())
         ff_total += x_batch.shape[0]
     ff_accuracy = ff_correct / ff_total
     print(f"Forward–Forward model test accuracy: {ff_accuracy:.4f}")

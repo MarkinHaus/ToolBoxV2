@@ -1,9 +1,11 @@
-from toolboxv2 import get_app, App, Result
-import os
 import asyncio
-import uuid
 import json
+import os
+import uuid
+
 import stripe
+
+from toolboxv2 import App, Result, get_app
 from toolboxv2.mods.TruthSeeker import ArXivPDFProcessor
 
 # Initialize module
@@ -485,7 +487,7 @@ async def get_main_ui(app: App):
     """
 
     # Define JavaScript with setTimeout and SSE instead of polling
-    js = """
+    js = r"""
         <script unsave="true">
         setTimeout(function() {
             // Variables
@@ -1089,7 +1091,7 @@ async def status_stream(app: App, research_id: str):
                     # If the research is complete or there was an error, exit the loop
                     if status_data.get('status') in ['complete', 'error', 'stopped']:
                         break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Send a keep-alive comment to prevent connection timeout
                     yield ":\n\n"
         finally:
@@ -1123,7 +1125,7 @@ async def payment_stream(app: App, session_id: str):
                     # If the payment is complete or cancelled, exit the loop
                     if payment_data.get('status') in ['completed', 'cancelled']:
                         break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Send a keep-alive comment to prevent connection timeout
                     yield ":\n\n"
         finally:
@@ -1514,8 +1516,8 @@ async def payment_cancel(app: App, session_id: str, request_as_kwarg=True, reque
 def cleanup_module(app: App):
     """Cleanup resources when the module is unloaded"""
     # Clean up any temp files or resources
-    import shutil
     import glob
+    import shutil
 
     # Remove temporary PDF directories
     for pdf_dir in glob.glob("pdfs_*"):

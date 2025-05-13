@@ -3,9 +3,9 @@ import inspect
 
 from toolboxv2.utils.extras import Style
 
-from .types import Result, ToolBoxInterfaces, ToolBoxError, ToolBoxInfo, ToolBoxResult
 from .getting_and_closing_app import get_app
 from .tb_logger import get_logger
+from .types import Result, ToolBoxError, ToolBoxInfo, ToolBoxInterfaces, ToolBoxResult
 
 try:
     from .all_functions_enums import CLOUDM_AUTHMANAGER
@@ -18,7 +18,7 @@ def get_version_from_pyproject(pyproject_path='../pyproject.toml'):
     try:
         import toml
         # Load the pyproject.toml file
-        with open(pyproject_path, 'r') as file:
+        with open(pyproject_path) as file:
             pyproject_data = toml.load(file)
 
         # Extract the version from the 'project' section

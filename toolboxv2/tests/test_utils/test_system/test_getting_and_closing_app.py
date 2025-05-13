@@ -1,12 +1,14 @@
 import asyncio
 import time
-
 import unittest
-from unittest.mock import MagicMock, patch, Mock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
-from toolboxv2 import get_app, Style
+from toolboxv2 import Style, get_app
 from toolboxv2.utils.system import AppType, override_main_app
-from toolboxv2.utils.system.getting_and_closing_app import save_closing_app, a_save_closing_app
+from toolboxv2.utils.system.getting_and_closing_app import (
+    a_save_closing_app,
+    save_closing_app,
+)
 
 
 class TestGetApp(unittest.TestCase):

@@ -3,14 +3,12 @@ import json
 import os
 import pickle
 from pathlib import Path
-from typing import List
 
 import reedsolo
 import yaml
 
-from ..security.cryp import Code
 from ... import Singleton, get_app
-
+from ..security.cryp import Code
 
 
 class BlobStorage(metaclass=Singleton):
@@ -34,7 +32,7 @@ class BlobStorage(metaclass=Singleton):
         blob_data["links"][link_id] = link_data
         self._save_blob(blob_id, blob_data)
 
-    def chair_link(self, blob_ids: List[str]):
+    def chair_link(self, blob_ids: list[str]):
 
         all_links = [link for link in [self.update_self_link(_id) for _id in blob_ids]]
         all_links_len = len(all_links)

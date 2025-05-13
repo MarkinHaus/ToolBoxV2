@@ -1,7 +1,8 @@
 import os
 import platform
 import sys
-from toolboxv2 import show_console, Style
+
+from toolboxv2 import Style, show_console
 
 try:
     import customtkinter as ctk
@@ -9,12 +10,13 @@ except ImportError:
     os.system("pip install customtkinter")
     import customtkinter as ctk
 
-import inspect
-from typing import Callable, Dict
 import asyncio
-from toolboxv2.flows import flows_dict as flows_dict_func
+import inspect
 import subprocess
 import threading
+from collections.abc import Callable
+
+from toolboxv2.flows import flows_dict as flows_dict_func
 
 
 class ContextualInputDialog(ctk.CTkToplevel):
@@ -315,7 +317,7 @@ class DynamicFunctionApp:
             return ("magenta", "darkmagenta")[ctk.get_appearance_mode() == "Dark"]
         return ("gray90", "gray20")[ctk.get_appearance_mode() == "Dark"]
 
-    def _run_function(self, func_name: str, param_widgets: Dict):
+    def _run_function(self, func_name: str, param_widgets: dict):
         """Führt die ausgewählte Funktion aus"""
         kwargs = []
         if self.card_edit_states.get(func_name, False):
