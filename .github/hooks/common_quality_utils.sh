@@ -61,9 +61,11 @@ run_single_check_and_store() {
 get_versions_summary_part() {
   _raw_output="$1"
   echo "$_raw_OUTPUT" | awk '
-    /------------------ Version ------------------/ {in_version_block=1}
-    in_version_block && /^working on/ {in_version_block=0; exit}
-    in_version_block {print}
+      BEGIN { in_version_block = 0 }
+      /------------------ Version ------------------/ { in_version_block = 1; next }
+      in_version_block && (/^Building State data:/ || /^working on/) { in_version_block = 0; exit }
+      in_version_block { print }
+'
   '
 }
 
