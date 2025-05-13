@@ -60,19 +60,67 @@ run_single_check_and_store() {
 # Args: $1: Raw output from tb -l -v
 get_versions_summary_part() {
   _raw_output="$1"
-  echo "$_raw_OUTPUT" | awk '
-      BEGIN { in_version_block = 0 }
-      /------------------ Version ------------------/ { in_version_block = 1; next }
-      in_version_block && (/^Building State data:/ || /^working on/) { in_version_block = 0; exit }
-      in_version_block { print }
+
+  # Pre-process to remove ANSI escape codes like [K
+  # \x1B is ESC. Escape sequences are typically ESC [ ...
+  # This sed command removes ESC [ sequences followed by any characters until m, K, J, etc.
+  _processed_output=$(printf '%s\n' "$_raw_output" | sed 's/\x1B\[[0-9;]*[mKJHfABCDsu]//g')
+
+  # Debug: See the processed output
+  # printf "DEBUG get_versions_summary_part: Processed input (ANSI stripped):\n%s\nEND DEBUG PROCESSED INPUT\n" "$_processed_output" >&2
+
+  echo "$_processed_output" | awk '
+    BEGIN {
+      in_version_block = 0
+      blank_line_count = 0
+      # FS = "[ \t]*:[ \t]*" # Optional: If you only want to match "Key : Value" lines
+    }
+
+    # Start pattern
+    /^-+ Version -+$/ {
+      in_version_block = 1
+      blank_line_count = 0 # Reset blank line counter
+      next # Skip printing the "--- Version ---" line itself
+    }
+
+    # Stop conditions if already in the version block
+    in_version_block {
+      # Stop if we see "Building State data" or "working on"
+      if (/^Building State data:/ || /^working on/) {
+        in_version_block = 0
+        exit
+      }
+
+      # Check for blank lines
+      if (/^[[:space:]]*$/) {
+        blank_line_count++
+        if (blank_line_count >= 2) { # Stop after 2 or more consecutive blank lines
+          in_version_block = 0
+          exit
+        }
+        next # Skip printing this blank line, but continue checking
+      } else {
+        blank_line_count = 0 # Reset if not a blank line
+      }
+
+      # If we are here, it means we are in the block, it is not a stop pattern,
+      # and it is not an excessive blank line. So, print it.
+      # You could add more specific matching here if you only want lines with " : "
+      # For example: if ($0 ~ /[[:space:]]:[[:space:]]/) print
+      print
+    }
   '
 }
-
 # Function to escape text for sed replacement
 escape_for_sed() {
-  # Handles common sed metacharacters: \, &, /, and newlines
-  # Converts actual newlines to literal '\n' for sed's RHS
-  printf '%s\n' "$1" | sed -e 's/[\&/]/\\&/g' -e 's/\\/\\\\/g' -e ':a;N;$!ba;s/\n/\\n/g'
+  # Handles common sed metacharacters: \, &, /, the chosen delimiter |, and newlines
+  # The delimiter used in the main sed command is '|'.
+  printf '%s\n' "$1" | sed \
+    -e 's/\\/\\\\/g' \
+    -e 's/&/\\&/g' \
+    -e 's/\//\\\//g' \
+    -e 's/|/\\|/g' \
+    -e ':a;N;$!ba;s/\n/\\n/g'
 }
 
 # Function to clean up temporary check outputs
