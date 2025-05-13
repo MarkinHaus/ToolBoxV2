@@ -131,7 +131,7 @@ This section provides an API reference for key components directly available fro
     handler: python
     options:
       show_root_heading: true
-      heading_level: 3
+      heading_level: 2
       show_submodules: true
 
 ::: toolboxv2.flows_dict
@@ -139,14 +139,14 @@ This section provides an API reference for key components directly available fro
     options:
       show_root_heading: true
       show_source: true
-      heading_level: 3
+      heading_level: 1
 
 ::: toolboxv2.TBEF
     handler: python
     options:
       show_root_heading: true
       show_source: true
-      heading_level: 3
+      heading_level: 2
 
 ## Other Exposed Items
 
