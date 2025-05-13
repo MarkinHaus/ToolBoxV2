@@ -1,6 +1,6 @@
 import asyncio
 import inspect
-
+import os
 from toolboxv2.utils.extras import Style
 
 from .getting_and_closing_app import get_app
@@ -16,6 +16,11 @@ except ImportError:
 
 def get_version_from_pyproject(pyproject_path='../pyproject.toml'):
     """Reads the version from the pyproject.toml file."""
+    if not os.path.exists(pyproject_path) and pyproject_path=='../pyproject.toml':
+        pyproject_path = 'pyproject.toml'
+    if not os.path.exists(pyproject_path) and pyproject_path=='pyproject.toml':
+        return "0.1.21"
+
     try:
         import toml
         # Load the pyproject.toml file

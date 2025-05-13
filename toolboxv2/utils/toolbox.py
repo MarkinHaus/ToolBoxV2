@@ -335,7 +335,7 @@ class App(AppType, metaclass=Singleton):
         if error_message.startswith("No module named 'toolboxv2.mods"):
             if mod_name.startswith('.'):
                 return
-            return self.run_a_from_sync(self.run_any, ("CloudM", "install"), module_name=mod_name)
+            return self.run_a_from_sync(self.a_run_any, ("CloudM", "install"), module_name=mod_name)
         if error_message.startswith("No module named '"):
             pip_requ = error_message.split("'")[1].replace("'", "").strip()
             # if 'y' in input(f"\t\t\tAuto install {pip_requ} Y/n").lower:
