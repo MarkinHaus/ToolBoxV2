@@ -15,7 +15,7 @@
 # "
 # For your tools:
 CHECKS_DEFINITIONS="
-ruff check .|Ruff Linter & Security|true
+ruff check .|Ruff|true
 safety check --full-report|Safety|true
 " # Assuming both are critical for commit
 
