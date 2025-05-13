@@ -30,7 +30,6 @@ __all__ = [
     "ToolBoxResult",
     "ToolBoxInfo",
     "ToolBoxResultBM",
-    "ToolBoxInfo",
     "ApiResult",
     "Result",
     "CallingObject",

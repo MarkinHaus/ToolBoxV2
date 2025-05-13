@@ -46,9 +46,11 @@ except ImportError:
     print("⚠️ Missing: utils.extras.Style.remove_styles")
 
 try:
-    from .utils.system.types import AppArgs
+    from .utils.system.types import AppArgs, MainToolType, AppType, ToolBoxError, ToolBoxInterfaces, ToolBoxResult, \
+    ToolBoxInfo, ToolBoxResultBM
 except ImportError:
-    AppArgs = None
+    AppArgs, MainToolType, AppType, ToolBoxError, ToolBoxInterfaces, ToolBoxResult, \
+    ToolBoxInfo, ToolBoxResultBM = [None] * 9
     print("⚠️ Missing: utils.system.types.AppArgs")
 
 try:
@@ -142,5 +144,13 @@ __all__ = [
     "RequestData",  # ADD
     "Code",
     "show_console",  # ADD
-    "cwd"
+    "cwd",
+
+    "MainToolType",
+    "AppType",
+    "ToolBoxError",
+    "ToolBoxInterfaces",
+    "ToolBoxResult",
+    "ToolBoxInfo",
+    "ToolBoxResultBM",
 ]
