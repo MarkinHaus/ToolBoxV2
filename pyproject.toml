@@ -71,3 +71,47 @@ members = ["toolboxv2/mods/isaa"]
 
 [tool.uv.sources]
 isaa = { workspace = true }
+
+
+[tool.ruff]
+line-length = 90
+target-version = "py311"
+
+# Konfiguration für den Linter
+[tool.ruff.lint]
+# Wählen Sie einen Basissatz an Regeln und fügen Sie die 'S' Regeln für Sicherheit hinzu.
+# E = pycodestyle errors
+# W = pycodestyle warnings
+# F = Pyflakes
+# I = isort (Import-Sortierung)
+# S = flake8-bandit (Sicherheitsregeln)
+# UP = pyupgrade (Syntax-Modernisierung)
+# B = flake8-bugbear (mögliche Bugs oder Designprobleme)
+# Weitere nützliche Sets: A (flake8-builtins), C4 (flake8-comprehensions), SIM (flake8-simplify)
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # Pyflakes
+    "I",  # isort
+    "S",  # flake8-bandit (Sicherheit)
+    "UP", # pyupgrade
+    "B",  # flake8-bugbear
+    "A",  # flake8-builtins (Achtung, kann sehr detailreich sein)
+    "C4", # flake8-comprehensions
+    "SIM",# flake8-simplify
+]
+
+# Optional: Bestimmte Regeln ignorieren (können auch Sicherheitsregeln sein)
+# ignore = [
+#   "S101",  # assert wird verwendet
+#   "E501",  # Zeile zu lang (wenn line-length nicht ausreicht oder Ausnahmen erlaubt sind)
+# ]
+
+# Optional: Regeln, die automatisch korrigiert werden können (wenn --fix verwendet wird)
+# Ruff hat gute Standardwerte, aber Sie können es hier anpassen.
+# fixable = ["ALL"] # Vorsicht bei "ALL", besonders bei 'S' Regeln
+# unfixable = []
+
+# Optional: Spezifische Konfigurationen für flake8-bandit
+# [tool.ruff.lint.flake8-bandit]
+# requests-timeout = 10 # Für S113 (requests without timeout), Standard ist 5
