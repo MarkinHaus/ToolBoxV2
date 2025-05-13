@@ -11,33 +11,7 @@ A flexible modular framework for tools, functions, and complete applications –
 
 ToolBoxV2 combines a Python backend library with a Rust web/desktop server (Actix) and a cross-platform UI framework (Tauri + tbjs). This architecture enables the creation of versatile applications accessible through various interfaces.
 
-```text
-+------------------------+
-|        Users           |
-|  - Web, Desktop, Mobile|
-+-----------+------------+
-            |
-            ▼
-+-----------+------------+
-|    UI Layer (tbjs)     |
-|  - WebAssets (Webpack) |
-|  - Tauri App           |
-+-----------+------------+
-            |
-            ▼
-+-----------+------------+
-|     Rust Server        |
-|  - Actix Web           |
-|  - PyO3 Integration    |
-+-----------+------------+
-            |
-            ▼
-+-----------+------------+
-|     Python Backend     |
-|  - toolboxv2.mods      |
-|  - toolboxv2.utils     |
-+------------------------+
-```
+![ToolBoxV2 Architecture](architecture-diagram.svg)
 
 ---
 
@@ -83,35 +57,141 @@ Deploy ToolBoxV2 as a customizable internal management system for:
 
 ## 🚀 Installation
 
-### 🐍 Python Package (Core Library)
+We offer several ways to install ToolBoxV2, choose the one that best suits your needs!
 
-To install the core Python library directly via PyPI:
+### 🥇 Recommended: Zero the Hero Universal Installer (Easiest)
+
+This is the recommended method for most users on **Linux, macOS, and Windows (via WSL or Git Bash)**. The "Zero the Hero" script intelligently handles Python installation (if needed), sets up a dedicated virtual environment, installs ToolBoxV2 Core, and makes the `tb` command available.
+
+1.  **Download the installer:**
+    ```bash
+    # Using curl
+    curl -sSL -o install_toolbox.sh https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/installer.sh
+    # Or using wget
+    wget -qO install_toolbox.sh https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/installer.sh
+    ```
+2.  **Make it executable:**
+    ```bash
+    chmod +x install_toolbox.sh
+    ```
+
+3.  **Run the installer:**
+    ```bash
+    ./install_toolbox.sh
+    ```
+
+4.  **Follow on-screen instructions.** The script will:
+    *   ✅ Check for and offer to install required Python version (default: 3.11).
+    *   ✅ Create an isolated environment for ToolBoxV2 (usually in `~/.local/share/ToolBoxV2` or `~/Applications/ToolBoxV2`).
+    *   ✅ Install ToolBoxV2 Core using `pip` by default.
+    *   ✅ Expose the `tb` command (usually via a symlink in `~/.local/bin/`).
+    *   🎉 Run `tb -init` to finalize setup.
+
+    **Customization:**
+    The script accepts optional arguments (e.g., `--version=0.5.0`, `--source=git`, `--manager=uv`, `--isaa`, `--dev`). If no arguments are given, it looks for an `init.config` file in the same directory. For details, run:
+    ```bash
+    ./install_toolbox.sh --help
+    ```
+
+---
+
+### 💻 Advanced / Alternative Methods
+
+#### 1. Python Package (Direct Installation)
+
+For users who prefer to manage their Python environments manually.
+
+**Using `pip`:**
 ```bash
-  pip install ToolBoxV2
+    # Ensure you have Python 3.9+ and pip installed
+    # Recommended: Create and activate a virtual environment first!
+    # python -m venv .venv && source .venv/bin/activate
+
+    pip install ToolBoxV2
+    # To install with optional extras (e.g., isaa, dev):
+    # pip install "ToolBoxV2[isaa,dev]"
 ```
 
-For development or to get the latest version of the Python components:
+**Using `uv` (a fast Python package installer & resolver):**
 ```bash
-  git clone https://github.com/MarkinHaus/ToolBoxV2.git
-  cd ToolBoxV2
-  # Recommended: Set up and activate a Python virtual environment here
-  pip install -e .
-  # or use
-  uv pip install -e .
-  # or use to install python and setup the env for you
-  chmod +x install_python_env.sh
-  ./install_python_env.sh
+    # Ensure you have uv installed (pip install uv)
+    # Recommended: Create and activate a virtual environment first!
+    # python -m venv .venv && uv -e .venv # (or use uv venv)
+    # source .venv/bin/activate
 
-  # init hooks
-  bash .github/hooks/setup_hooks.sh
+    uv pip install ToolBoxV2
+    # To install with optional extras:
+    # uv pip install "ToolBoxV2[isaa,dev]"
 ```
+
+After installation with pip or uv, you may need to initialize ToolBoxV2 manually:
+```bash
+    tb -init
+```
+Ensure the directory containing the `tb` script (e.g., `~/.local/bin` for user installs, or your venv's `bin` directory) is in your system's `PATH`.
+
+#### 2. From Source (For Developers / Bleeding Edge)
+
+If you want to contribute or use the very latest (potentially unstable) code:
+
+```bash
+    git clone https://github.com/MarkinHaus/ToolBoxV2.git
+    cd ToolBoxV2
+
+    # IMPORTANT: Set up and activate a Python virtual environment
+    # Example using Python's built-in venv:
+    # python3 -m venv .venv
+    # source .venv/bin/activate
+    #
+    # Example using uv:
+    # uv venv .venv --python 3.11 # or your desired Python version
+    # source .venv/bin/activate
+
+    # Install in editable mode:
+    echo "Choose your preferred installation method:"
+
+    echo "  Option A: Using pip"
+    echo "    pip install -e \".[dev,isaa]\"  # Install with dev and isaa extras"
+    echo "    # or just: pip install -e ."
+
+    echo "  Option B: Using uv"
+    echo "    uv pip install -e \".[dev,isaa]\" # Install with dev and isaa extras"
+    echo "    # or just: uv pip install -e ."
+
+    # Your existing script for Python environment setup (if it offers more specific dev setup):
+    # If you have specific Python dev environment needs beyond a simple venv, you can use:
+    # chmod +x install_python_env.sh
+    # ./install_python_env.sh
+
+    # Initialize Git hooks (for contributors)
+    bash .github/hooks/setup_hooks.sh
+
+    # Initialize ToolBoxV2
+    tb -init
+```
+
+---
+
+### 📦 Platform-Specific Installers (Desktop Application)
+
+If ToolBoxV2 includes a bundled desktop application, look for platform-specific installers (e.g., `.dmg`, `.exe`, `.deb`, `.rpm`) on our [**GitHub Releases Page**](https://github.com/MarkinHaus/ToolBoxV2/releases).
+
+These installers typically bundle everything needed and provide a native installation experience.
+
+1.  Go to the [Releases Page](https://github.com/MarkinHaus/ToolBoxV2/releases).
+2.  Download the appropriate installer for your operating system (e.g., `simple-core_0.1.0_aarch64.dmg` for macOS, `simple-core_0.1.0_x64-setup.exe
+` for Windows).
+3.  Run the installer and follow the on-screen instructions.
+
+---
+
 
 ### 🖥️ Full Stack Desktop/Web Application (Tauri + Web)
 
 This setup includes the Python backend, Rust server, and Tauri/Web frontend.
 
 **Prerequisites:**
-*   Python 3.10 or higher
+*   Python 3.11 or higher
 *   [Rust and Cargo](https://www.rust-lang.org/tools/install)
 *   [Node.js](https://nodejs.org/) (which includes npm)
 *   Tauri CLI: `cargo install tauri-cli`

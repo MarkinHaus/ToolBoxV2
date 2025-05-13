@@ -259,7 +259,21 @@ jobs:
                   path: |
                       release-artifacts/toolboxv2-docker-image-${{ steps.version.outputs.version }}.tar
                       release-artifacts/bin/toolbox-server
+  upload-assets:
+    name: Upload Additional Assets to GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-docker]  # Wait for build-docker or other jobs if needed
+    steps:
+      - uses: actions/checkout@v4
 
+      - name: Upload init.config and installer.sh to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ./init.config
+            ./installer.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   notify:
     name: Notify Webhook Server
