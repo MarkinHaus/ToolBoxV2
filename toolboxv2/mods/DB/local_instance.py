@@ -19,7 +19,7 @@ class MiniDictDB:
         if not self.data:
             return []
         search = search.replace('*', '')
-        return [key for key in self.data.keys() if key.startswith(search)]
+        return [key for key in self.data if key.startswith(search)]
 
     def initialize(self, location, key):
         if os.path.exists(os.path.join(location, 'MiniDictDB.json')):

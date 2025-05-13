@@ -35,10 +35,7 @@ def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None, sync=
     if app_con is None:
         from ... import App
         app_con = App
-    if name:
-        app = app_con(name, args=args)
-    else:
-        app = app_con()
+    app = app_con(name, args=args) if name else app_con()
     logger.info(Style.Bold(f"App instance, returned ID: {app.id}"))
 
     registered_apps[0] = app

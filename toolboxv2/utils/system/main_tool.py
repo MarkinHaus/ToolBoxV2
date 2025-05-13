@@ -10,7 +10,8 @@ from .types import Result, ToolBoxError, ToolBoxInfo, ToolBoxInterfaces, ToolBox
 try:
     from .all_functions_enums import CLOUDM_AUTHMANAGER
 except ImportError:
-    CLOUDM_AUTHMANAGER = lambda: None
+    def CLOUDM_AUTHMANAGER():
+        return None
     CLOUDM_AUTHMANAGER.GET_USER_BY_NAME = ("CLOUDM_AUTHMANAGER", "GET_USER_BY_NAME".lower())
 
 def get_version_from_pyproject(pyproject_path='../pyproject.toml'):

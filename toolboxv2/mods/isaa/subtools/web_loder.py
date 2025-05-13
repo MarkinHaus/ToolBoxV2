@@ -27,7 +27,8 @@ def get_markdown_from_url(url, **kwargs):
     if 'api_key' not in kwargs:
         kwargs['api_key'] = os.environ.get('TOMARKDOWN')
     loader = ToMarkdownLoader(url=url, **kwargs)
-    docs = lambda: loader.load()
+    def docs():
+        return loader.load()
     return loader, docs
 
 
@@ -35,7 +36,8 @@ def get_text_from_urls_a_h(urls: list or str, **kwargs):
     if isinstance(urls, str):
         urls = [urls]
     loader = AsyncHtmlLoader(urls, **kwargs)
-    docs = lambda: loader.load()
+    def docs():
+        return loader.load()
     return loader, docs
 
 
@@ -43,13 +45,15 @@ def get_text_from_urls_play(urls: list or str, **kwargs):
     if isinstance(urls, str):
         urls = [urls]
     loader = PlaywrightURLLoader(urls, **kwargs)
-    docs = lambda: loader.load()
+    def docs():
+        return loader.load()
     return loader, docs
 
 
 def get_wiki_data(query, **kwargs):
     loader = WikipediaLoader(query=query, **kwargs)
-    docs = lambda: loader.load()
+    def docs():
+        return loader.load()
     return loader, docs
 
 
@@ -80,7 +84,8 @@ def read_git_repo(repo_path: str,
 
 def get_pdf_from_url(url: str):
     loader = PyPDFLoader(url)
-    docs = lambda: loader.load()
+    def docs():
+        return loader.load()
     return loader, docs
 
 
@@ -91,7 +96,8 @@ def get_data_from_web(urls: list or str, **kwargs):
         post_fix = urls.split('.')[-1]
     if len(post_fix) == 3 and post_fix in ["lxml", "xml"]:
         loader.default_parser = post_fix  # `parser` must be one of html.parser, lxml, xml, lxml-xml, html5lib.
-    docs = lambda: loader.load()
+    def docs():
+        return loader.load()
     return loader, docs
 
 

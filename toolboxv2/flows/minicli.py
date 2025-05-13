@@ -10,6 +10,8 @@ try:
 except ImportError:
     psutil = None
     IS_PSUTIL = False
+import contextlib
+
 from prompt_toolkit import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.shortcuts import set_title
@@ -34,10 +36,7 @@ def run_in_console(buff, fh, pw=False):
     fh.append_string(buff)
     print(Style.BEIGE2('## ') + buff)
     _ = ""
-    if pw:
-        _ = "powershell -Command "
-    else:
-        _ = "bash -c "
+    _ = "powershell -Command " if pw else "bash -c "
     os.system(_ + buff)
 
 
@@ -68,10 +67,8 @@ def run_in_terminal(app, buff, fh):
 
 
 async def run(app: App, args):
-    try:
+    with contextlib.suppress(Exception):
         set_title(f"ToolBox : {app.version}")
-    except:
-        pass
     threaded = [False]
 
     def bottom_toolbar():
@@ -331,8 +328,6 @@ async def run(app: App, args):
             print(running_instance)
         print("Done")
 
-    try:
+    with contextlib.suppress(Exception):
         set_title("")
-    except:
-        pass
     await app.a_exit()

@@ -384,7 +384,6 @@ def runner(request: str or list,
         return new code or cahnsed and eddetet file pathes
     """
     # dsd
-    new_code = ""
     return sup_sulotns
 
 

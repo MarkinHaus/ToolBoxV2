@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import os
 import sys
@@ -8,7 +9,6 @@ from datetime import datetime, timedelta
 
 # from toolboxv2.__main__ import setup_app
 from functools import partial, wraps
-from inspect import signature
 
 import fastapi
 import httpx
@@ -51,7 +51,7 @@ debug = False
 for i in sys.argv[2:]:
     if i.startswith('data'):
         d = i.split(':')
-        debug = True if d[1] == "True" else False
+        debug = d[1] == "True"
         id_name = d[2]
 args = AppArgs().default()
 args.name = id_name
@@ -499,14 +499,14 @@ async def add_process_time_header(request: Request, call_next):
 @app.middleware("http")
 async def session_protector(request: Request, call_next):
     response = await call_next(request)
-    if 'session' in request.scope.keys() and 'live_data' in request.session.keys():
+    if 'session' in request.scope and 'live_data' in request.session:
         del request.session['live_data']
     return response
 
 
 def protect_level_test(request):
 
-    if 'live_data' not in request.session.keys():
+    if 'live_data' not in request.session:
         return None
 
     user_level = request.session['live_data'].get('level', -1)
@@ -519,7 +519,7 @@ def protect_level_test(request):
     modul_name = request.url.path.split('/')[2]
     fuction_name = request.url.path.split('/')[3]
     print(tb_app.functions.get(modul_name, {}).keys())
-    if not (modul_name in tb_app.functions.keys() and fuction_name in tb_app.functions.get(modul_name, {}).keys()):
+    if not (modul_name in tb_app.functions and fuction_name in tb_app.functions.get(modul_name, {})):
         request.session['live_data']['RUN'] = False
         tb_app.logger.warning(
             f"Path is not for level testing {request.url.path} Function {modul_name}.{fuction_name} dos not exist")
@@ -593,11 +593,10 @@ async def protector(request: Request, call_next):
 async def request_to_request_session(request):
     jk = request.json()
     if asyncio.iscoroutine(jk):
-        try:
+        with contextlib.suppress(Exception):
             jk = await jk
-        except Exception:
-            pass
-    js = lambda :jk
+    def js():
+        return jk
     return RequestSession(
         session=request.session,
         body=request.body,
@@ -972,7 +971,7 @@ async def helper(id_name):
     tb_app.sprint("loading CloudM")
     tb_app.get_mod("CloudM")
     # all_mods = tb_app.get_all_mods()
-    provider = os.environ.get("MOD_PROVIDER", default="http://127.0.0.1:5000/")
+    os.environ.get("MOD_PROVIDER", default="http://127.0.0.1:5000/")
 
     def get_d(name="CloudM"):
         return tb_app.get_mod("CloudM").get_mod_snapshot(name)
@@ -1009,7 +1008,7 @@ async def helper(id_name):
                 continue
             add = True
             params: list = function_data.get('params')
-            sig: signature = function_data.get('signature')
+            function_data.get('signature')
             state: bool = function_data.get('state')
             api_methods: list[str] = function_data.get('api_methods', ["AUTO"])
 

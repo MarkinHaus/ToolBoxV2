@@ -10,7 +10,7 @@ from toolboxv2.utils.system.file_handler import FileHandler
 class TestFileHandler(unittest.TestCase):
     def setUp(self):
         # Create a temporary directory for test files
-        logger = setup_logging(10)
+        setup_logging(10)
         self.test_dir = tempfile.mkdtemp()
 
         # Patch the file prefix to use the temp directory
@@ -32,8 +32,8 @@ class TestFileHandler(unittest.TestCase):
 
     def test_initialization(self):
         # Test valid filename extensions
-        valid_config = FileHandler('test.config')
-        valid_data = FileHandler('test.data')
+        FileHandler('test.config')
+        FileHandler('test.data')
 
         # Test invalid filename extension
         with self.assertRaises(AssertionError):

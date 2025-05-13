@@ -1,12 +1,12 @@
 import json
 import time
-from collections.abc import Callable
 from typing import Any
 
 try:
     import redis
 except ImportError:
-    redis: Callable[[], None] = lambda: None
+    def redis() -> None:
+        return None
     redis.Redis = None
 
 from toolboxv2 import Result, get_logger

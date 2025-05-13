@@ -138,7 +138,7 @@ class VerificationSystem:
             raise ValueError("Invalid configuration template")
 
         template_dict = templates[template_id]
-        template = ConfigTemplate(**template_dict)
+        ConfigTemplate(**template_dict)
 
         # Generate a random code with max 16 characters
         code = secrets.token_urlsafe(10)[:16]

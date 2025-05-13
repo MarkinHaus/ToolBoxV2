@@ -32,7 +32,8 @@ from .CodingAgent.auto_runner import ProjectManager
 try:
     import gpt4all
 except Exception:
-    gpt4all = lambda : None
+    def gpt4all():
+        return None
     gpt4all.GPT4All = None
 
 import json
@@ -259,10 +260,7 @@ class Tools(MainTool, FileHandler):
     def crun_task(self, prompt):
         chain_name = self.crate_task_chain(prompt)
 
-        if chain_name:
-            out = self.run_task(prompt, chain_name)
-        else:
-            out = "No chain generated"
+        out = self.run_task(prompt, chain_name) if chain_name else "No chain generated"
 
         return out, chain_name
 
@@ -335,42 +333,6 @@ class Tools(MainTool, FileHandler):
 
     def init_tools(self, tools, model_name: str, agent: Agent | None = None):  # not  in unit test
 
-        plugins = [
-            # SceneXplain
-            # "https://scenex.jina.ai/.well-known/ai-plugin.json",
-            # Weather Plugin for getting current weather information.
-            #    "https://gptweather.skirano.repl.co/.well-known/ai-plugin.json",
-            # Transvribe Plugin that allows you to ask any YouTube video a question.
-            #    "https://www.transvribe.com/.well-known/ai-plugin.json",
-            # ASCII Art Convert any text to ASCII art.
-            #    "https://chatgpt-plugin-ts.transitive-bullshit.workers.dev/.well-known/ai-plugin.json",
-            # DomainsGPT Check the availability of a domain and compare prices across different registrars.
-            # "https://domainsg.pt/.well-known/ai-plugin.json",
-            # PlugSugar Search for information from the internet
-            #    "https://websearch.plugsugar.com/.well-known/ai-plugin.json",
-            # FreeTV App Plugin for getting the latest news, include breaking news and local news
-            #    "https://www.freetv-app.com/.well-known/ai-plugin.json",
-            # Screenshot (Urlbox) Render HTML to an image or ask to see the web page of any URL or organisation.
-            # "https://www.urlbox.io/.well-known/ai-plugin.json",
-            # OneLook Thesaurus Plugin for searching for words by describing their meaning, sound, or spelling.
-            # "https://datamuse.com/.well-known/ai-plugin.json", -> long loading time
-            # Shop Search for millions of products from the world's greatest brands.
-            # "https://server.shop.app/.well-known/ai-plugin.json",
-            # Zapier Interact with over 5,000+ apps like Google Sheets, Gmail, HubSpot, Salesforce, and thousands more.
-            "https://nla.zapier.com/.well-known/ai-plugin.json",
-            # Remote Ambition Search millions of jobs near you
-            # "https://remoteambition.com/.well-known/ai-plugin.json",
-            # Kyuda Interact with over 1,000+ apps like Google Sheets, Gmail, HubSpot, Salesforce, and more.
-            # "https://www.kyuda.io/.well-known/ai-plugin.json",
-            # GitHub (unofficial) Plugin for interacting with GitHub repositories, accessing file structures, and modifying code. @albfresco for support.
-            #     "https://gh-plugin.teammait.com/.well-known/ai-plugin.json",
-            # getit Finds new plugins for you
-            "https://api.getit.ai/.well_known/ai-plugin.json",
-            # WOXO VidGPT Plugin for create video from prompt
-            "https://woxo.tech/.well-known/ai-plugin.json",
-            # Semgrep Plugin for Semgrep. A plugin for scanning your code with Semgrep for security, correctness, and performance issues.
-            # "https://semgrep.dev/.well-known/ai-plugin.json",
-        ]
 
         # tools = {  # Todo save tools to file and loade from usaage data format : and isaa_extras
         #    "lagChinTools": ["ShellTool", "ReadFileTool", "CopyFileTool",
@@ -383,11 +345,11 @@ class Tools(MainTool, FileHandler):
         if agent is None:
             agent = self.get_agent("self")
 
-        if 'Plugins' not in tools.keys():
+        if 'Plugins' not in tools:
             tools['Plugins'] = []
-        if 'lagChinTools' not in tools.keys():
+        if 'lagChinTools' not in tools:
             tools['lagChinTools'] = []
-        if 'huggingTools' not in tools.keys():
+        if 'huggingTools' not in tools:
             tools['huggingTools'] = []
 
         llm_fuctions = []
@@ -420,16 +382,16 @@ class Tools(MainTool, FileHandler):
         for agent_name, agent_data in data.items():
             for e in exclude:
                 del agent_data[e]
-            if 'taskstack' in agent_data.keys():
+            if 'taskstack' in agent_data:
                 del agent_data['taskstack']
-            if 'amd' in agent_data.keys() and 'provider' in agent_data['amd'].keys():
+            if 'amd' in agent_data and 'provider' in agent_data['amd']:
                 if isinstance(agent_data['amd'].get('provider'), Enum):
                     agent_data['amd']['provider'] = str(agent_data['amd'].get('provider').name).upper()
             data[agent_name] = agent_data
         return data
 
     def deserialize_all(self, data):
-        for key, agent_data in data.items():
+        for key, _agent_data in data.items():
             _ = self.get_agent(key)
 
     def init_isaa(self, name='self', build=False, only_v=False, **kwargs):
@@ -533,7 +495,7 @@ class Tools(MainTool, FileHandler):
         global PIPLINE
         if PIPLINE is None:
             from transformers import pipeline as PIPLINE
-        if p_type not in self.initstate.keys():
+        if p_type not in self.initstate:
             self.initstate[p_type + model] = False
 
         if not self.initstate[p_type + model]:
@@ -559,7 +521,7 @@ class Tools(MainTool, FileHandler):
 
     def load_llm_models(self, names: list[str]):
         for model in names:
-            if f'LLM-model-{model}-init' not in self.initstate.keys():
+            if f'LLM-model-{model}-init' not in self.initstate:
                 self.initstate[f'LLM-model-{model}-init'] = False
 
             if not self.initstate[f'LLM-model-{model}-init']:
@@ -584,7 +546,7 @@ class Tools(MainTool, FileHandler):
                     self.print(f'Initialized OpenAi : {model}')
 
     def get_llm_models(self, name: str):
-        if f'LLM-model-{name}' not in self.config.keys():
+        if f'LLM-model-{name}' not in self.config:
             self.load_llm_models([name])
         return self.config[f'LLM-model-{name}']
 
@@ -592,7 +554,7 @@ class Tools(MainTool, FileHandler):
 
         if tools is None:
             tools = []
-        for key in self.lang_chain_tools_dict.keys():
+        for key in self.lang_chain_tools_dict:
             self.print(f"Adding tool for loading : {key}")
             tools += [key]
 
@@ -860,11 +822,11 @@ class Tools(MainTool, FileHandler):
 
     def get_agent(self, agent_name="Normal", model=None) -> Agent:
 
-        if "agents-name-list" not in self.config.keys():
+        if "agents-name-list" not in self.config:
             self.config["agents-name-list"] = []
 
         # self.config["agents-name-list"] = [k.replace('agent-config-', '') for k in self.config.keys() if k.startswith('agent-config-')])
-        if f'agent-config-{agent_name}' in self.config.keys():
+        if f'agent-config-{agent_name}' in self.config:
             agent = self.config[f'agent-config-{agent_name}']
             if model:
                 agent.amd.model = model
@@ -880,7 +842,7 @@ class Tools(MainTool, FileHandler):
                     try:
                         agent = agent_builder.build()
                     except Exception:
-                        process = subprocess.Popen("wsl -e ollama serve", shell=True, stdout=subprocess.PIPE,
+                        subprocess.Popen("wsl -e ollama serve", shell=True, stdout=subprocess.PIPE,
                                                    stderr=subprocess.PIPE)
                         time.sleep(5)
                         agent = agent_builder.build()
@@ -1188,7 +1150,6 @@ class Tools(MainTool, FileHandler):
         agent.print_verbose(f"Running task {text[:200]}")
         # self.print(f"Running agent {name}")
 
-        out = "Invalid configuration\n"
         stream = agent.stream
         self.app.logger.info(f"stream: {stream}")
 

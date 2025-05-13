@@ -189,10 +189,7 @@ def reload_widget_system(app, user, WidgetID):
 async def load_widget(app, display_name="Cud be ur name", WidgetID=str(uuid.uuid4())[:4]):
     if display_name != "Cud be ur name":
         user = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=display_name, get_results=True)
-        if user.is_error():
-            user = User()
-        else:
-            user = user.get()
+        user = User() if user.is_error() else user.get()
     else:
         user = User()
 

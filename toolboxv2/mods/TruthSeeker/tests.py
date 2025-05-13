@@ -58,7 +58,7 @@ class TestRobustPDFDownloader(unittest.TestCase):
         test_pdf_path = os.path.join(self.temp_dir.name, 'test.pdf')
         with open(test_pdf_path, 'wb') as f:
             pdf_writer = PyPDF2.PdfWriter()
-            page = pdf_writer.add_blank_page(width=72, height=72)
+            pdf_writer.add_blank_page(width=72, height=72)
             pdf_writer.write(f)
 
         result = self.downloader.extract_text_from_pdf(test_pdf_path)
@@ -69,7 +69,7 @@ class TestRobustPDFDownloader(unittest.TestCase):
         test_pdf_path = os.path.join(self.temp_dir.name, 'test_with_image.pdf')
         with open(test_pdf_path, 'wb') as f:
             pdf_writer = PyPDF2.PdfWriter()
-            page = pdf_writer.add_blank_page(width=72, height=72)
+            pdf_writer.add_blank_page(width=72, height=72)
             pdf_writer.write(f)
 
         result = self.downloader.extract_images_from_pdf(test_pdf_path)
@@ -196,7 +196,8 @@ class TestArXivPDFProcessor(unittest.TestCase):
                 with patch.object(self.mock_tools, 'format_class') as mock_format_class:
                     mock_download.return_value = "test.pdf"
                     mock_extract.return_value = [{'page_number': 1, 'text': 'test content'}]
-                    x = lambda :None
+                    def x():
+                        return None
                     x.queries = [""]
                     mock_format_class.return_value = x
 

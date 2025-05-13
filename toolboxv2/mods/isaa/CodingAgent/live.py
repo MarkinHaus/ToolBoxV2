@@ -5,6 +5,7 @@ import io
 import json
 import os
 import pickle
+import re
 import shutil
 import subprocess
 import sys
@@ -13,6 +14,7 @@ import textwrap
 import time
 import traceback
 from collections import defaultdict
+from contextlib import redirect_stderr, redirect_stdout
 from copy import deepcopy
 from dataclasses import dataclass
 
@@ -133,7 +135,7 @@ class VerboseFormatter:
 
     async def process_with_spinner(self, message: str, coroutine):
         """Execute a coroutine with a spinner indicator"""
-        with Spinner(message, symbols=self.spinner_style) as spinner:
+        with Spinner(message, symbols=self.spinner_style):
             result = await coroutine
             return result
 
@@ -250,10 +252,6 @@ class PipelineResult:
     message: list[dict[str, str]]
 
 
-import re
-from contextlib import redirect_stderr, redirect_stdout
-from typing import Any
-
 
 class CargoRustInterface:
     '''Usage :
@@ -315,7 +313,7 @@ await cargo_interface.test()
             result = subprocess.run(
                 ['cargo', 'new', str(project_path)],
                 capture_output=True,
-                text=True
+                text=True, check=True
             )
 
             if result.returncode != 0:
@@ -345,7 +343,7 @@ await cargo_interface.test()
                 cmd,
                 cwd=self.current_project,
                 capture_output=True,
-                text=True
+                text=True,check=True
             )
 
             return result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
@@ -385,7 +383,7 @@ await cargo_interface.test()
                 ['cargo', 'test'],
                 cwd=self.current_project,
                 capture_output=True,
-                text=True
+                text=True, check=True
             )
 
             return result.stdout if result.returncode == 0 else f"Test error: {result.stderr}"
@@ -713,7 +711,7 @@ class AsyncCodeDetector(ast.NodeVisitor):
         parent = node
         while hasattr(parent, 'parent'):
             parent = parent.parent
-            if isinstance(parent, (ast.AsyncFunctionDef, ast.FunctionDef)):
+            if isinstance(parent, ast.AsyncFunctionDef | ast.FunctionDef):
                 break
         else:
             self.has_top_level_await = True
@@ -1428,7 +1426,7 @@ Cargo run (execution result):
 """
         else:
             # Assume it's a single file project
-            main_file = next((f for f in files.keys() if f.endswith('.rs')), None)
+            main_file = next((f for f in files if f.endswith('.rs')), None)
             if main_file:
                 file_path = os.path.join(temp_dir, main_file)
 
@@ -1585,7 +1583,8 @@ class BrowserWrapper:
         import os
 
         from pydantic import SecretStr
-        pars = lambda x: x.split('/')[-1] if '/' in x else x
+        def pars(x):
+            return x.split('/')[-1] if '/' in x else x
         if llm is None:
             llm = 'google/gemini-2.0-flash-exp'
         if not isinstance(llm, str):
@@ -1690,7 +1689,7 @@ class BrowserWrapper:
             browser_state = await self.context.get_state()
             if not browser_state or not browser_state.tabs:
                 # If no tabs exist, create a new page
-                playwright_browser = await self.browser.get_playwright_browser()
+                await self.browser.get_playwright_browser()
                 browser_context = await self.context.get_playwright_context()
                 self.page = await browser_context.new_page()
             else:
@@ -2312,9 +2311,9 @@ class Pipeline:
         def format_value_preview(var: Any) -> str:
             """Format preview of variable contents"""
             try:
-                if isinstance(var, (int, float, bool, str)):
+                if isinstance(var, int | float | bool | str):
                     return f"`{repr(var)}`"
-                elif isinstance(var, (list, tuple, set)):
+                elif isinstance(var, list | tuple | set):
                     preview = str(list(var)[:3])[:-1] + ", ...]"
                     return f"{len(var)} items: {preview}"
                 elif isinstance(var, dict):
@@ -2839,7 +2838,6 @@ note : for the final result only toke information from the <execution_result>. i
 Ensure that your evaluation is thorough, constructive, and provides actionable insights for improving future task executions.
 Add guidance based on the the last execution result"""
         code_follow_up_prompt_ = [code_follow_up_prompt]
-        py_chane_prompt = ""
         initial_prompt = f"""
 You are an AI py coding agent specializing in iterative development and code refinement, designed to perform tasks that involve thinking. Your goal is to complete the given task while demonstrating a clear thought process throughout the execution.
 SYSTEM STATE:
@@ -3076,10 +3074,7 @@ Next Action Required:
                     workflow: str
                     text: str
                 # Format the agent's thoughts into a structured response
-                if self.v_agent is not None:
-                    _agent = self.v_agent
-                else:
-                    _agent = self.agent
+                _agent = self.v_agent if self.v_agent is not None else self.agent
                 next_dict = await self.verbose_output.process(state.name, _agent.a_format_class(
                     Next,
                     code_follow_up_prompt_[0],
@@ -3152,7 +3147,6 @@ Next Action Required:
             files: dict[str, str]
         state = ThinkState.ACTION
         result = None
-        original_task = task
         vfs = VirtualFileSystem(self._session_dir / f"project_{lang}")
 
         project_prompt = f"""
@@ -3400,7 +3394,7 @@ report = sync_globals_to_vars(
         patterns = []
 
     # Normalize include_types
-    if include_types and not isinstance(include_types, (list, tuple, set)):
+    if include_types and not isinstance(include_types, list | tuple | set):
         include_types = [include_types]
     def get_type_info(var: Any) -> str:
         """Helper to get detailed type information"""

@@ -99,7 +99,8 @@ try:
         # Erstellen eines Streams für die Profilergebnisse
 
 except ImportError:
-    profile_execute_all_functions = lambda *args: print(args)
+    def profile_execute_all_functions(*args):
+        return print(args)
     raise ValueError("Failed to import function for profiling")
 
 try:
@@ -775,7 +776,7 @@ async def main():
             setup_service_linux()
         if tb_app.system_flag == "Windows":
             await setup_service_windows()
-        user_name = tb_app.get_username(get_input=True)
+        tb_app.get_username(get_input=True)
         m_link = input("M - Link: ")
         if m_link:
             await command_runner(tb_app, ['CloudM', 'login', m_link])
@@ -837,10 +838,10 @@ async def main():
             await tb_app.rrun_flows(args.modi, **args.kwargs[0])
 
         flows_dict = flows_dict_func(remote=False)
-        if args.modi not in flows_dict.keys():
+        if args.modi not in flows_dict:
             flows_dict = {**flows_dict, **flows_dict_func(s=args.modi, remote=True)}
         tb_app.set_flows(flows_dict)
-        if args.modi not in flows_dict.keys():
+        if args.modi not in flows_dict:
             raise ValueError(
                 f"Modi : [{args.modi}] not found on device installed modi : {list(flows_dict.keys())}")
         # open(f"./config/{args.modi}.pid", "w").write(app_pid)
@@ -850,7 +851,7 @@ async def main():
 
         flows_dict = flows_dict_func('docker')
 
-        if 'docker' not in flows_dict.keys():
+        if 'docker' not in flows_dict:
             print("No docker")
             return 1
 
@@ -1029,7 +1030,7 @@ def start_ipython_session(argv):
     from IPython import start_ipython
     config = configure_ipython(argv)
 
-    shell = start_ipython(argv=None, config=config)
+    start_ipython(argv=None, config=config)
 
 import toml
 

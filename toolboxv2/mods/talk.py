@@ -239,7 +239,7 @@ async def upload_audio_isaa(websocket: WebSocket, context="F", all_c="F", v_name
     # try:
     while True:
         data = await websocket.receive()
-        if 'bytes' in data.keys():
+        if 'bytes' in data:
             print("received audio data ", workers[0])
             # Perform real-time transcription
             if format_bytes[0] == b'':
@@ -249,7 +249,7 @@ async def upload_audio_isaa(websocket: WebSocket, context="F", all_c="F", v_name
             workers[0] += 1
             threading.Thread(target=async_test(worker_transcribe), args=(data['bytes'],), daemon=True).start()
 
-        elif 'text' in data.keys():
+        elif 'text' in data:
             print("s", workers[0])
             message = json.loads(data.get('text'))
             if message.get("action") == "process":
@@ -277,7 +277,7 @@ async def upload_audio_isaa(websocket: WebSocket, context="F", all_c="F", v_name
 async def main_web_talk_entry(app: App = None, request: Request or None = None, modi=None):
     if request is None:
         return
-    spec_ = get_spec(request).get()
+    get_spec(request).get()
     user = await get_user_from_request(app, request)
     if user.name == "":
         return HTMLResponse(content="<p>Invalid User Pleas Log In <a href='/'>Home</a></p>")

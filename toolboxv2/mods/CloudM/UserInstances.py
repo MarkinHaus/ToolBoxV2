@@ -41,7 +41,7 @@ def close_user_instance(uid: str):
     if uid is None:
         return
     si_id = UserInstances.get_si_id(uid).get()
-    if si_id not in UserInstances().live_user_instances.keys():
+    if si_id not in UserInstances().live_user_instances:
         logger.warning("User instance not found")
         return "User instance not found"
     instance = UserInstances().live_user_instances[si_id]
@@ -92,9 +92,9 @@ def delete_user_instance(uid: str):
     if uid is None:
         return
     si_id = UserInstances.get_si_id(uid).get()
-    if si_id not in UserInstances().user_instances.keys():
+    if si_id not in UserInstances().user_instances:
         return "User instance not found"
-    if si_id in UserInstances().live_user_instances.keys():
+    if si_id in UserInstances().live_user_instances:
         del UserInstances().live_user_instances[si_id]
 
     del UserInstances().user_instances[si_id]
@@ -140,15 +140,14 @@ def get_user_instance(uid: str,
         'VtID': UserInstances.get_vt_id(uid).get()
     }
 
-    if instance['SiID'] in UserInstances().live_user_instances.keys():
+    if instance['SiID'] in UserInstances().live_user_instances:
         instance_live = UserInstances().live_user_instances.get(instance['SiID'], {})
-        if 'live' in instance_live.keys():
+        if 'live' in instance_live:
             if instance_live['live'] and instance_live['save']['mods']:
                 logger.info(Style.BLUEBG2("Instance returned from live"))
                 return instance_live
     chash = {}
-    if instance['SiID'] in UserInstances().user_instances.keys(
-    ):  # der nutzer ist der server instanz bekannt
+    if instance['SiID'] in UserInstances().user_instances:  # der nutzer ist der server instanz bekannt
         instance['webSocketID'] = UserInstances().user_instances[instance['SiID']]
     else:
         chash_data = app.run_any('DB', 'get', query=f"User::Instance::{uid}", get_results=True)

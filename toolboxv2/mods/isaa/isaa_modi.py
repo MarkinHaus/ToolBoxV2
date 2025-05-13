@@ -131,10 +131,7 @@ def run_agent_cmd(isaa, user_text, self_agent_config, step, spek):
 def stop_helper(imp):
     if "Question:" in imp:
         return True
-    if "User:" in imp:
-        return True
-
-    return False
+    return "User:" in imp
 
 
 def split_todo_list(todo_string):
@@ -806,7 +803,7 @@ def add_skills(isaa, self_agent_config):
     copy_file_tool = CopyFileTool()
     delete_file_tool = DeleteFileTool()
     move_file_tool = MoveFileTool()
-    write_file_tool = WriteFileTool()
+    WriteFileTool()
     list_directory_tool = ListDirectoryTool()
 
     plugins = [
@@ -1012,7 +1009,7 @@ def adsadsadsadasd():
 
     def describe_all_chains(self):
 
-        for chain_name in self.agent_chain.chains.keys():
+        for chain_name in self.agent_chain.chains:
             if self.agent_chain.get_discr(chain_name):
                 continue
             self.describe_chain(chain_name)
@@ -1029,7 +1026,7 @@ def adsadsadsadasd():
 
         all_description = ""
 
-        for key in self.agent_chain.chains.keys():
+        for key in self.agent_chain.chains:
             if "Task Generator" in key or "Task-Generator" in key:
                 continue
             des = self.agent_chain.get_discr(key)
@@ -1138,11 +1135,11 @@ def adsadsadsadasd():
 
     def init_cli(self):
         self.load_keys_from_env()
-        if "augment" in self.config.keys():
+        if "augment" in self.config:
             self.init_from_augment(self.config['augment'],
                                    exclude=['task_list', 'task_list_done', 'step_between', 'pre_task', 'task_index'])
             self.print("Initialized from config augment")
-            if 'tools' in self.config['augment'].keys():
+            if 'tools' in self.config['augment']:
                 if self.config['augment']['tools']:
                     return
         else:
@@ -1201,7 +1198,7 @@ def adsadsadsadasd():
 
         self_agent = self.get_agent_config_class('self')
 
-        agent_context_de = f"""
+        f"""
 Handle als Entscheidungsagenten du sollst, basierend auf einer Auswahl an Aufgaben und dem Kontext entscheiden, ob und welche Aufgabe für das Subjekt X angewendet werden soll. Wenn keine Aufgabe eine Erfolgswahrscheinlichkeit von über 80% für die beste Aufgabe aufweist, soll der Agent angeben, dass keine Aufgabe das Ziel erreicht, und das System wird eine passende Aufgabe erstellen.
 Befehl: Entscheide, welche Aufgabe für {subject} basierend auf dem Kontext {context} {variables} angewendet werden soll. Wenn keine Aufgabe eine Erfolgswahrscheinlichkeit von über 80% für die beste Aufgabe aufweist, gib an, dass keine Aufgabe das Ziel erreicht, und erstelle eine passende Aufgabe.
 Verfügbare aufgaben : {str(self.agent_chain)}
@@ -1313,15 +1310,15 @@ Aufgaben Name oder None:"""
                     #    continue
 
                     try:
-                        if "type" in data.keys():
-                            if 'id' not in data.keys():
+                        if "type" in data:
+                            if 'id' not in data:
                                 continue
                             # if data['id'] != widget_id:
                             #    continue
                             if data["type"] == "textWidgetData":
                                 chain_data[data["context"]] = data["text"]
                                 sender.put({"ChairData": True, "data": {'res': f"Text in {data['context']}"}})
-                        elif 'task' in data.keys() and 'IChain' in data.keys():
+                        elif 'task' in data and 'IChain' in data:
                             chain_ret, chain_data, uesd_mem = self.execute_thought_chain(data['task'], [data["IChain"]],
                                                                                          chain_ret=chain_ret,
                                                                                          chain_data=chain_data,
@@ -1331,7 +1328,7 @@ Aufgaben Name oder None:"""
                                                                                              "self"))
 
                             sender.put({"ChairData": True, "data": {'res': chain_ret[-1][-1]}})
-                        elif 'subject' in data.keys():
+                        elif 'subject' in data:
                             context = self.get_memory().query(data['subject'])
                             res = self.generate_task(data['subject'], str(chain_data), context)
                             sender.put({"ChairData": True, "data": {'res': res}})

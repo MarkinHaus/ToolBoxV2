@@ -12,8 +12,10 @@ try:
     from whatsapp import Message, WhatsApp
 except ImportError:
     print("NO Whatsapp installed")
-    WhatsApp = lambda :None
-    Message = lambda :None
+    def WhatsApp():
+        return None
+    def Message():
+        return None
 import json
 import logging
 import threading
@@ -1568,7 +1570,7 @@ Profi-Tipps:
             print(f"No ID to add to history: {res}")
 
 def connect(app, phone_number_id):
-    key = app.config_fh.one_way_hash(phone_number_id, "WhatsappAppManager",
+    app.config_fh.one_way_hash(phone_number_id, "WhatsappAppManager",
                                      AppManager.pepper)
 
     messenger, s_callbacks = AppManager().online("main")

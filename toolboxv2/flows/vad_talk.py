@@ -10,6 +10,7 @@ logger = get_logger()
 
 
 import asyncio
+import contextlib
 import queue
 
 # Import needed for random debugging logs
@@ -358,7 +359,7 @@ class VADModule:
                 if not self.speech_active and self.speech_frames >= self.min_speech_frames:
                     # More reliable speech start detection
                     self.speech_active = True
-                    combined_buffer = b"".join(self.prev_frames) + frame  # Include previous frames for context
+                    b"".join(self.prev_frames) + frame  # Include previous frames for context
                     if self.config.DEBUG:
                         self.logger.debug(f"Speech start detected: frames={self.speech_frames}, energy={avg_energy}")
                     return "start", None
@@ -628,10 +629,8 @@ class SpeechDeserializerModule:
             # Extract timestamp for live segments (for chronological ordering)
             timestamp = float('inf')  # Default high value
             if '_live_' in key and len(key.split('_')) >= 4:
-                try:
+                with contextlib.suppress(ValueError):
                     timestamp = int(key.split('_')[-1])
-                except ValueError:
-                    pass
             elif '_window_' in key:
                 # Window segments come after live segments but before final
                 timestamp = float('inf') - 100
@@ -1701,7 +1700,6 @@ class SpeechProcessingSystem:
                         elif vad_result == "end" and segment:
                             # Speech ended with a segment to process
                             segment_active = False
-                            segment_id = current_segment_id  # Use the current utterance ID
                             current_segment_id = None
 
                             # Process final segment with high priority
@@ -1956,7 +1954,7 @@ async def main():
     if not debug_mode:
         logging.disable(logging.CRITICAL)
     await get_app().get_mod("isaa")
-    agent = get_app().get_mod("isaa").init_isaa(build=True)
+    get_app().get_mod("isaa").init_isaa(build=True)
 
     # Create and start the speech processing system
     try:

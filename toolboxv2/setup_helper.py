@@ -219,7 +219,7 @@ def build_tauri():
 
     # Try to locate the bundle
     found = False
-    for root, dirs, files in os.walk(target_dir):
+    for root, _dirs, files in os.walk(target_dir):
         for f in files:
             if f.endswith(binary_ext[system]):
                 print(f"📦 Gefundene Release-Datei: {f}")

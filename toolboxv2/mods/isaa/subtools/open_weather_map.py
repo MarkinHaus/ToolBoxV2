@@ -4,7 +4,9 @@ import os
 
 from langchain_community.document_loaders import WeatherDataLoader
 
-_api_key_ = lambda: os.environ.get('OPENWEATHERMAP')
+
+def _api_key_():
+    return os.environ.get('OPENWEATHERMAP')
 
 
 def get_weather_data(places: list, api_key=_api_key_()):
@@ -12,6 +14,7 @@ def get_weather_data(places: list, api_key=_api_key_()):
         places = [places]
 
     loader = WeatherDataLoader.from_params(places=places, openweathermap_api_key=api_key)
-    docs = lambda: loader.load()
+    def docs():
+        return loader.load()
     return loader, docs
 

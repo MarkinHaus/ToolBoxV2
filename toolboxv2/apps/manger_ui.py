@@ -87,36 +87,35 @@ def main():
         # Apps in Karten darstellen
         cols = st.columns(3)
         for idx, app in enumerate(apps):
-            with cols[idx % 3]:
-                with st.container():
-                    st.markdown(f"### {app['name']}")
-                    st.text(f"Status: {'Aktiv' if app['running'] else 'Gestoppt'}")
-                    st.text(f"Port: {app['port']}")
+            with cols[idx % 3], st.container():
+                st.markdown(f"### {app['name']}")
+                st.text(f"Status: {'Aktiv' if app['running'] else 'Gestoppt'}")
+                st.text(f"Port: {app['port']}")
 
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if not app['running']:
-                            if st.button("Start", key=f"start_{app['name']}"):
-                                response = client.start_app(app['name'])
-                                st.success(response['message'])
-                                st.rerun()
-                        else:
-                            if st.button("Stop", key=f"stop_{app['name']}"):
-                                response = client.stop_app(app['name'])
-                                st.success(response['message'])
-                                st.rerun()
-
-                    with col2:
-                        if st.button("Löschen", key=f"delete_{app['name']}"):
-                            response = client.delete_app(app['name'])
+                col1, col2 = st.columns(2)
+                with col1:
+                    if not app['running']:
+                        if st.button("Start", key=f"start_{app['name']}"):
+                            response = client.start_app(app['name'])
+                            st.success(response['message'])
+                            st.rerun()
+                    else:
+                        if st.button("Stop", key=f"stop_{app['name']}"):
+                            response = client.stop_app(app['name'])
                             st.success(response['message'])
                             st.rerun()
 
-                    if app['running']:
-                        st.markdown(f"🔗 [App öffnen](http://localhost:{app['port']})")
+                with col2:
+                    if st.button("Löschen", key=f"delete_{app['name']}"):
+                        response = client.delete_app(app['name'])
+                        st.success(response['message'])
+                        st.rerun()
 
-                    # Trennlinie
-                    st.markdown("---")
+                if app['running']:
+                    st.markdown(f"🔗 [App öffnen](http://localhost:{app['port']})")
+
+                # Trennlinie
+                st.markdown("---")
 
     except requests.exceptions.RequestException as e:
         st.error(f"Fehler beim Laden der Apps: {str(e)}")

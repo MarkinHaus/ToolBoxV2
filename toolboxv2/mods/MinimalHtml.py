@@ -48,7 +48,7 @@ class Tools(MainTool, FileHandler):
         if file_path is None:
             return ""
 
-        if file_path in self.file_chas.keys():
+        if file_path in self.file_chas:
             self.print("Returning from chash")
             return self.file_chas[file_path]
 
@@ -81,19 +81,19 @@ class Tools(MainTool, FileHandler):
             return self.return_result(help_text="Invalid Input")
         if collection is None:
             return self.return_result(help_text="Invalid Input")
-        if group_name not in self.groups.keys():
+        if group_name not in self.groups:
             raise ValueError(f"add Group '{group_name}' not found in {list(self.groups.keys())}")
 
         self.groups[group_name][collection['name']] = collection['group']
 
     def generate_html(self, group_name: str, collection_name: str):
-        if group_name not in self.groups.keys():
+        if group_name not in self.groups:
             if 'test' not in self.app.id:
                 self.logger.error(f"Group '{group_name}' not found in {self.groups.keys()}")
             return f"Group '{group_name}' not found in {self.groups.keys()}"
 
         groups = self.groups[group_name]
-        if collection_name not in groups.keys():
+        if collection_name not in groups:
             if 'test' not in self.app.id:
                 self.logger.error(f"Section '{collection_name}' not found in group '{group_name}'")
             return f"Section '{collection_name}' not found in group '{group_name}'"

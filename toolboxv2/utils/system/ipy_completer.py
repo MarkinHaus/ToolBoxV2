@@ -21,7 +21,7 @@ def create_completions_from_classes(classes: list[type]) -> dict[str, list[str]]
     for cls in classes:
         class_name = cls.__name__
         class_info = extract_class_info(cls)
-        completions[class_name] = [name for name in class_info.keys()]
+        completions[class_name] = [name for name in class_info]
     return completions
 
 
@@ -59,7 +59,7 @@ def get_dataclasses_from_file(file_path: str) -> list[type]:
 
     # Extract all classes from the module
     dataclasses = []
-    for name, obj in inspect.getmembers(module, inspect.isclass):
+    for _name, obj in inspect.getmembers(module, inspect.isclass):
         # Check if the class is defined in the current module
         if obj.__module__ == module.__name__:
             # Check if the class is a dataclass

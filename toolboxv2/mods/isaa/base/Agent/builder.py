@@ -111,7 +111,8 @@ except ImportError:
     class A2AServer: pass
     class A2AClient: pass
     class AgentCard: pass
-    run_a2a_server_func = lambda *a, **kw: None
+    def run_a2a_server_func(*a, **kw):
+        return None
 
 
 # MCP
@@ -133,7 +134,8 @@ except ImportError:
     print("CRITICAL ERROR: LiteLLM not found. Agent functionality will be severely limited.")
     LITELLM_AVAILABLE = False
     class BudgetManager: pass
-    get_max_tokens = lambda *a, **kw: 4096 # Dummy fallback
+    def get_max_tokens(*a, **kw):
+        return 4096 # Dummy fallback
 
 # OpenTelemetry
 try:
@@ -744,7 +746,7 @@ class EnhancedAgentBuilder:
         if self._otel_trace_provider_instance and OTEL_AVAILABLE:
             trace.set_tracer_provider(self._otel_trace_provider_instance)
             logger.info("Global OpenTelemetry TracerProvider set from provided instance.")
-        elif self._config.telemetry_config.get('enabled') and not self._config.telemetry_config.get('type') == 'custom_instance' and OTEL_AVAILABLE:
+        elif self._config.telemetry_config.get('enabled') and self._config.telemetry_config.get('type') != 'custom_instance' and OTEL_AVAILABLE:
              # Basic provider setup from config (can be expanded)
              logger.info("Setting up basic OpenTelemetry based on config (ConsoleExporter example).")
              from opentelemetry.sdk.trace.export import (

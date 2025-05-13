@@ -305,14 +305,7 @@ class DynamicFunctionApp:
 
     def _get_card_color(self, func_name, solo=False):
         """Dynamic color based on function characteristics"""
-        category = func_name.split('_')[0]
-        color_map = {
-            'system': ("lightblue", "darkblue"),
-            'network': ("lightgreen", "darkgreen"),
-            'data': ("lightyellow", "orange"),
-            'cli': ("lightyellow", "orange"),
-            # Add more categories
-        }
+        func_name.split('_')[0]
         if solo:
             return ("magenta", "darkmagenta")[ctk.get_appearance_mode() == "Dark"]
         return ("gray90", "gray20")[ctk.get_appearance_mode() == "Dark"]
@@ -363,7 +356,7 @@ class DynamicFunctionApp:
         current_row = 0
         current_column = 0
 
-        for category, funcs in self._categorize_functions().items():
+        for _category, funcs in self._categorize_functions().items():
             current_column += 1
 
             for func_name in funcs:

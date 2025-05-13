@@ -88,7 +88,7 @@ def process_files(directory: str) -> TbState:
     app = {}
     scann_dirs = ["utils", "mods", "runnable", "api", "app", "mods_sto"]
     for s_dir in scann_dirs:
-        for root, dirs, files in os.walk(directory+'/'+s_dir):
+        for root, _dirs, files in os.walk(directory+'/'+s_dir):
             for file_name in files:
                 if file_name.endswith(".zip") and 'mods_sto' in root:
                     file_path = os.path.join(root, file_name)

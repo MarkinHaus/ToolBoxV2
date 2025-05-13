@@ -31,7 +31,9 @@ __author__ = "Markin Hausmanns"
 __status__ = "Demo"
 
 import os
-import sys
+
+# Ensure AsyncIterator is imported correctly depending on Python version
+from collections.abc import AsyncIterator
 
 import litellm
 
@@ -51,14 +53,6 @@ from tenacity import (
 )
 
 from toolboxv2 import get_logger
-
-# Ensure AsyncIterator is imported correctly depending on Python version
-if sys.version_info < (3, 9):
-    from collections.abc import AsyncIterator
-else:
-    from collections.abc import AsyncIterator
-
-
 
 
 @retry(

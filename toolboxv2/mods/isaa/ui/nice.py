@@ -1,5 +1,6 @@
 
 import asyncio
+import contextlib
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -68,10 +69,8 @@ class IsaaWebSocketUI(metaclass=Singleton):
 
     async def disconnect_websocket(self, client_id: str):
         if client_id in self.active_connections:
-            try:
+            with contextlib.suppress(Exception):
                 await self.active_connections[client_id].close()
-            except:
-                pass
             del self.active_connections[client_id]
             if client_id in self.agent_states:
                 del self.agent_states[client_id]
@@ -1106,7 +1105,7 @@ from fastapi import Request
 @export(mod_name="isaa", request_as_kwarg=True, level=1, api=True,
         name="handle_websocket_audio", row=True)
 async def chat_websocket(websocket: WebSocket, spec: str = "main"):
-    chat_widget = IsaaWebSocketUI(get_app('chat.websocket').get_mod("isaa", spec=spec))
+    IsaaWebSocketUI(get_app('chat.websocket').get_mod("isaa", spec=spec))
     # await chat_widget.handle_websocket_audio(websocket)
 
 

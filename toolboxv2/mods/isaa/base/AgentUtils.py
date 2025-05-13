@@ -271,10 +271,7 @@ class IsaaQuestionBinaryTree:
         for path_key in path:
             node = self.root
             for direction in path_key:
-                if direction == 'L':
-                    node = node and node.left
-                else:
-                    node = node and node.right
+                node = node and node.left if direction == 'L' else node and node.right
             if node is not None:
                 questions.append(node.question)
         return questions
@@ -407,12 +404,12 @@ class AgentChain:
 
     def add_discr(self, name, dis):
         name = self.format_name(name)
-        if name in self.chains.keys():
+        if name in self.chains:
             self.chains_dis[name + '-dis'] = dis
 
     def get_discr(self, name):
         name = self.format_name(name)
-        if name + '-dis' in self.chains_dis.keys():
+        if name + '-dis' in self.chains_dis:
             return self.chains_dis[name + '-dis']
         return None
 
@@ -494,11 +491,11 @@ class AgentChain:
                 chain_name = os.path.splitext(file)[0]
                 print(f"Loading : {chain_name}")
                 self.add(chain_name, chain_data["tasks"])
-                if 'dis' in chain_data.keys():
+                if 'dis' in chain_data:
                     self.add_discr(chain_name, chain_data['dis'])
             except Exception as e:
                 print(Style.RED(f"Beim Laden der Datei '{file_path}' ist ein Fehler aufgetreten: {e}"))
-        if "toolRunner" not in self.chains.keys():
+        if "toolRunner" not in self.chains:
             print("loading default chain toolRunner")
             self.add("toolRunner", [
                 {
@@ -510,7 +507,7 @@ class AgentChain:
                     "running_mode": "invoke"
                 }
             ])
-        if "toolRunnerMission" not in self.chains.keys():
+        if "toolRunnerMission" not in self.chains:
             print("loading default chain toolRunnerMission")
             self.add("toolRunnerMission", [
                 {
@@ -525,7 +522,7 @@ class AgentChain:
                     "running_mode": "lineIs"
                 }
             ])
-        if "liveRunner" not in self.chains.keys():
+        if "liveRunner" not in self.chains:
             print("loading default chain liveRunner")
             self.add("liveRunner", [
                 {
@@ -535,7 +532,7 @@ class AgentChain:
                     "return": "$return"
                 }
             ])
-        if "SelfRunner" not in self.chains.keys():
+        if "SelfRunner" not in self.chains:
             print("loading default chain SelfRunner")
             self.add("SelfRunner", [
                 {
@@ -546,7 +543,7 @@ class AgentChain:
                     "return": "$return"
                 }
             ])
-        if "liveRunnerMission" not in self.chains.keys():
+        if "liveRunnerMission" not in self.chains:
             print("loading default chain liveRunnerMission")
             self.add("liveRunnerMission", [
                 {
@@ -578,7 +575,7 @@ class AgentChain:
             if self.test_chain(chain_data) != 0:
                 print(f"Error Loading : {chain_name}")
             self.add(chain_name, chain_data)
-            if 'dis' in chain.keys():
+            if 'dis' in chain:
                 self.add_discr(chain_name, chain['dis'])
 
         return self
@@ -845,10 +842,7 @@ class AISemanticMemory(metaclass=Singleton):
         if not memory_names:
             return list(self.memories.items())
 
-        if isinstance(memory_names, str):
-            names = [memory_names]
-        else:
-            names = memory_names
+        names = [memory_names] if isinstance(memory_names, str) else memory_names
 
         targets = []
         for name in names:
@@ -1113,15 +1107,15 @@ def get_str_response(chunk):
     if isinstance(chunk, dict):
         data = chunk['choices'][0]
 
-        if "delta" in data.keys():
+        if "delta" in data:
             message = chunk['choices'][0]['delta']
             if isinstance(message, dict):
                 message = message['content']
-        elif "text" in data.keys():
+        elif "text" in data:
             message = chunk['choices'][0]['text']
-        elif "message" in data.keys():
+        elif "message" in data:
             message = chunk['choices'][0]['message']['content']
-        elif "content" in data['delta'].keys():
+        elif "content" in data['delta']:
             message = chunk['choices'][0]['delta']['content']
         else:
             message = ""
@@ -1153,11 +1147,11 @@ def get_token_mini(text: str, model_name=None, isaa=None, only_len=True):
 
     if isinstance(text, list):
         text = '\n'.join(
-            str(msg['content']) if 'content' in msg.keys() else str(msg['output']) if 'output' in msg.keys() else '' for msg in
+            str(msg['content']) if 'content' in msg else str(msg['output']) if 'output' in msg else '' for msg in
             text)
 
     if isinstance(text, dict):
-        text = str(text['content']) if 'content' in text.keys() else str(text['output']) if 'output' in text.keys() else ''
+        text = str(text['content']) if 'content' in text else str(text['output']) if 'output' in text else ''
 
     if not isinstance(text, str):
         raise ValueError(f"text must be a string text is {type(text)}, {text}")
@@ -1183,7 +1177,7 @@ def get_token_mini(text: str, model_name=None, isaa=None, only_len=True):
 
     def _get_gpt4all_encode():
         if isaa:
-            if f"LLM-model-{model_name}" not in isaa.config.keys():
+            if f"LLM-model-{model_name}" not in isaa.config:
                 isaa.load_llm_models([model_name])
             return isaa.config[f"LLM-model-{model_name}"].model.generate_embedding
         encode_, _ = get_encoding(model_name)
@@ -1369,7 +1363,7 @@ def get_max_token_fom_model_name(model: str) -> int:
     model_dict = _get_all_model_dict_price_token_limit_approximation()
     fit = 16000
 
-    for model_name in model_dict.keys():
+    for model_name in model_dict:
         if model_name in model:
             fit = model_dict[model_name]
             break
@@ -1383,7 +1377,7 @@ def get_price(fit: int) -> list[float]:
     model_dict = _get_all_model_dict_price_token_limit_approximation()
     ppt = [0.0004, 0.0016]
 
-    for model_name in model_dict.keys():
+    for model_name in model_dict:
         if str(fit) == model_name:
             ppt = model_dict[model_name]
     ppt = [ppt[0] / 10, ppt[1] / 10]
@@ -1443,7 +1437,7 @@ def parse_json_with_auto_detection(json_data):
             # logging.warning(f"Failed to parse value as JSON: {value}. Exception: {e}")
             return value
 
-    logging = get_logger()
+    get_logger()
 
     if isinstance(json_data, dict):
         return {key: parse_json_with_auto_detection(value) for key, value in json_data.items()}
@@ -1491,11 +1485,11 @@ def extract_json_objects(text: str, matches_only=False):
                     print(e)
                     try:
                         y = json.loads(fixed_match.replace("\n", "#New-Line#"))
-                        for k in y.keys():
+                        for k in y:
                             if isinstance(y[k], str):
                                 y[k] = y[k].replace("#New-Line#", "\n")
                             if isinstance(y[k], dict):
-                                for k1 in y[k].keys():
+                                for k1 in y[k]:
                                     if isinstance(y[k][k1], str):
                                         y[k][k1] = y[k][k1].replace("#New-Line#", "\n")
                         json_objects.append(y)
@@ -1608,12 +1602,12 @@ def fix_json(json_str, current_index=0, max_index=10):
         # Füge fehlende schließende Klammern ein
         count_open = json_str.count('{')
         count_close = json_str.count('}')
-        for i in range(count_open - count_close):
+        for _i in range(count_open - count_close):
             json_str += '}'
 
         count_open = json_str.count('[')
         count_close = json_str.count(']')
-        for i in range(count_open - count_close):
+        for _i in range(count_open - count_close):
             json_str += ']'
 
         return fix_json(json_str, current_index + 1)
@@ -1654,13 +1648,10 @@ def anything_from_str_to_dict(data: str, expected_keys: dict = None, mini_task=l
 
     result = []
     json_objects = find_json_objects_in_str(data)
-    if not json_objects:
-        if data.startswith('[') and data.endswith(']'):
-            json_objects = eval(data)
-    if json_objects:
-        if len(json_objects) > 0:
-            if isinstance(json_objects[0], dict):
-                result.extend([{**expected_keys, **ob} for ob in json_objects])
+    if not json_objects and data.startswith('[') and data.endswith(']'):
+        json_objects = eval(data)
+    if json_objects and len(json_objects) > 0 and isinstance(json_objects[0], dict):
+        result.extend([{**expected_keys, **ob} for ob in json_objects])
     if not result:
         completed_object = complete_json_object(data, mini_task)
         if completed_object is not None:
@@ -1668,9 +1659,8 @@ def anything_from_str_to_dict(data: str, expected_keys: dict = None, mini_task=l
     if len(result) == 0 and expected_keys:
         result = [{list(expected_keys.keys())[0]: data}]
     for res in result:
-        if isinstance(res, list):
-            if len(res) > 0:
-                res = res[0]
+        if isinstance(res, list) and len(res) > 0:
+            res = res[0]
         for key, value in expected_keys.items():
             if key not in res:
                 res[key] = value

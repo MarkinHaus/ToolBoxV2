@@ -284,10 +284,10 @@ class ArXivPDFProcessor:
 
     async def search_and_process_papers(self, queries: list[str]) -> list[Paper]:
         """Search for and process papers based on queries.
-        
+
         Args:
             queries: List of search queries
-        
+
         Returns:
             List of processed papers
         """
@@ -432,7 +432,7 @@ class ArXivPDFProcessor:
                      config['overlap']
                      ).approximate(config['chunk_size'] * processed_chunks)
         # Time estimation (seconds)
-        processing_time_per_char = .75 / config['chunk_size']  # Hypothetical time per chunk in seconds
+        .75 / config['chunk_size']  # Hypothetical time per chunk in seconds
         w = (config.get('num_workers', 16) if config.get('num_workers', 16) is not None else 16 / 10)
         # Processing_ time - Insights Genration - Insights Query   -   Indexing Time     -    Download Time     -       workers   -   Query Genration time - Ui - Init Db
         estimated_time = ((8+total_papers*0.012)+(total_chunks/20000) * .005 + (total_chunks/2) * .0003 + total_papers * 2.8 ) / w + (0.25 * config['max_search']) + 6 + 4

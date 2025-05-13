@@ -24,7 +24,7 @@ def create_import_usage_graph(folder_path):
                     tree = ast.parse(f.read(), filename=node_name)
 
                     for node in ast.walk(tree):
-                        if isinstance(node, ast.Import) or isinstance(node, ast.ImportFrom):
+                        if isinstance(node, ast.Import | ast.ImportFrom):
                             for alias in node.names:
                                 imported_module = alias.name
                                 graph.add_edge(imported_module, node_name)
@@ -162,7 +162,7 @@ def analyze_function_usage(folder_path):
 
 def combine_usage(import_graph, class_graph, function_graph, sorted_files, sorted_classes, sorted_functions,
                   import_usage, class_usage_locations, class_sources, function_usage_locations, function_sources):
-    combined_graph = nx.compose_all([import_graph, class_graph, function_graph])
+    nx.compose_all([import_graph, class_graph, function_graph])
 
     # Erstelle eine detaillierte Ausgabe für Dateien, Klassen und Funktionen mit Verwendungsstellen und Quellen
     relevance_report = {
@@ -510,7 +510,7 @@ def generate_llm_prompt(data_chunk, context):
     """
     Formats a prompt for an LLM based on the provided data and context.
     """
-    keywords = extract_keywords_and_entities(data_chunk)
+    extract_keywords_and_entities(data_chunk)
     context_str = " ".join(context)
     prompt = f"Analyze the following codebase context: {context_str}. Then analyze this chunk of data: {data_chunk}. Identify key concepts, relations in the knowledge base."
     return prompt
@@ -639,8 +639,9 @@ def process_tree_for_knowledge_base(tree, mini_task_completion=None):
 def python_code_to_tree_represent(folder_path, row=False):
     documentation_data = generate_usage_documentation(folder_path)
     docs_linear_path = create_linear_analysis_path(documentation_data)
-    retiver = lambda doc, get_ref: compare_with_generated_doc(doc, documentation_data,
-                                                              get_ref) if doc in docs_linear_path else None
+    def retiver(doc, get_ref):
+        return compare_with_generated_doc(doc, documentation_data,
+                                                                  get_ref) if doc in docs_linear_path else None
 
     def helper(get_ref=None):
         for l_doc in docs_linear_path:

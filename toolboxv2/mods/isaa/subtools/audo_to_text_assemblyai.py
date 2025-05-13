@@ -9,7 +9,8 @@ try:
 except ImportError as e:
     Audio_Avalabel = e
 
-_api_key_ = lambda: os.environ.get('ASSEMBLYAI_API_KEY')
+def _api_key_():
+    return os.environ.get('ASSEMBLYAI_API_KEY')
 
 
 def translate(filename_url, transcript_format=TranscriptFormat.TEXT, api_key=_api_key_()):
@@ -18,6 +19,7 @@ def translate(filename_url, transcript_format=TranscriptFormat.TEXT, api_key=_ap
     loader = AssemblyAIAudioTranscriptLoader(file_path=filename_url, transcript_format=transcript_format,
                                              api_key=api_key)
 
-    docs = lambda: loader.load()
+    def docs():
+        return loader.load()
     return loader, docs
 

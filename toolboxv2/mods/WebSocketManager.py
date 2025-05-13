@@ -97,7 +97,7 @@ class Tools(MainTool, FileHandler):
         return self.version
 
     def get_instances(self, name):
-        if name not in self.active_connections.keys():
+        if name not in self.active_connections:
             self.print(Style.RED("Pleas Create an instance before calling it!"))
             return None
         return self.active_connections[name]
@@ -204,7 +204,7 @@ class Tools(MainTool, FileHandler):
 
     def close_websocket(self, websocket_id):
         self.print("close_websocket called")
-        if websocket_id not in self.active_connections_client.keys():
+        if websocket_id not in self.active_connections_client:
             self.print("websocket not found")
         self.active_connections_client[websocket_id].close()
         del self.active_connections_client[websocket_id]
@@ -216,7 +216,7 @@ class Tools(MainTool, FileHandler):
 
         data = self.app.run_any("cloudM", "validate_ws_id", [websocket_id])
         valid, key = False, ''
-        if isinstance(data, list) or isinstance(data, tuple):
+        if isinstance(data, list | tuple):
             if len(data) == 2:
                 valid, key = data
             else:
@@ -229,7 +229,7 @@ class Tools(MainTool, FileHandler):
         if valid:
             self.validated_instances[websocket_id_sto] = key
 
-        if websocket_id_sto in self.active_connections.keys():
+        if websocket_id_sto in self.active_connections:
             print(f"Active connection - added nums {len(self.active_connections[websocket_id_sto])}")
             await self.send_message(json.dumps({"res": f"New connection : {websocket_id}"}), websocket, websocket_id)
             self.active_connections[websocket_id_sto].append(websocket)
@@ -265,9 +265,10 @@ class Tools(MainTool, FileHandler):
     def add_server_action(self, action_name, function=None):
 
         if function is None:
-            function = lambda x: str(x)
+            def function(x):
+                return str(x)
 
-        if action_name in self.server_actions.keys():
+        if action_name in self.server_actions:
             return f"Server Action {action_name} already exists"
 
         self.server_actions[action_name] = function
@@ -278,10 +279,10 @@ class Tools(MainTool, FileHandler):
             return "websocket not set"
         websocket_id_sto = await valid_id(websocket_id, self.app_id)
 
-        if websocket_id_sto not in self.active_connections.keys():
+        if websocket_id_sto not in self.active_connections:
             return '{"res": "No websocket connection pleas Log in"}'
 
-        if websocket_id_sto not in self.validated_instances.keys():
+        if websocket_id_sto not in self.validated_instances:
             content = self.construct_render(content="""<p id="infoText" color: style="color:var(--error-color);">Pleas Log in
             </p>
             """, element_id="infoText")
@@ -377,7 +378,7 @@ class Tools(MainTool, FileHandler):
                     await websocket.send_text(installer_content)
                 elif action == "addConfig":
                     user_instance = self.app.run_any("cloudM", "wsGetI", [si_id])
-                    if data["name"] in user_instance['live'].keys():
+                    if data["name"] in user_instance['live']:
                         user_instance['live'][data["name"]].add_str_to_config([data["key"], data["value"]])
                     else:
                         await websocket.send_text('{"res": "Mod nod installed or available"}')
@@ -412,7 +413,7 @@ class Tools(MainTool, FileHandler):
                     if data['name'] not in user_instance['save']['mods']:
                         user_instance['save']['mods'].append(data['name'])
 
-                    if data['name'] not in user_instance['live'].keys():
+                    if data['name'] not in user_instance['live']:
                         self.logger.info(f"'Crating live module:{data['name']}'")
                         self.app.new_ac_mod("cloudM")
                         self.app.AC_MOD.hydrate_instance(user_instance)

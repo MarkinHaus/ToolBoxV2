@@ -77,7 +77,8 @@ def read_bibtex(filename):
 
 def python_code_folder_loder(path, glob: str = "**/[!.]*", **kwargs):
     loader = DirectoryLoader(path, glob=glob, loader_cls=PythonLoader, show_progress=True, **kwargs)
-    docs = lambda: loader.load()
+    def docs():
+        return loader.load()
     return loader, docs
 
 
@@ -85,7 +86,8 @@ def load_from_file_system(path, glob: str = "**/[!.]*", **kwargs):
     if ConcurrentLoader_ac is not True:
         raise ImportError(ConcurrentLoader_ac)
     loader = ConcurrentLoader.from_filesystem(path, glob=glob, **kwargs)
-    docs = lambda: loader.load()
+    def docs():
+        return loader.load()
     return loader, docs
 
 
@@ -93,7 +95,8 @@ def obsidian_loder(path):
     if ObsidianLoader_ac is not True:
         raise ImportError(ObsidianLoader_ac)
     loader = ObsidianLoader(path)
-    docs = lambda: loader.load()
+    def docs():
+        return loader.load()
     return loader, docs
 
 
@@ -105,7 +108,8 @@ def image_loder(image_directory: str, **kwargs):
     if UnstructuredImageLoader_ac is not True:
         raise ImportError(UnstructuredImageLoader_ac)
     loader = UnstructuredImageLoader(image_directory, **kwargs)
-    docs = lambda: loader.load()
+    def docs():
+        return loader.load()
     return loader, docs
 
 
@@ -113,7 +117,8 @@ def caption_image_urls(list_image_urls: list, **kwargs):
     if ImageCaptionLoader_ac is not True:
         raise ImportError(ImageCaptionLoader_ac)
     loader = ImageCaptionLoader(path_images=list_image_urls, **kwargs)
-    docs = lambda: loader.load()
+    def docs():
+        return loader.load()
     return loader, docs
 
 
@@ -121,7 +126,8 @@ def pdf_loder(file_path: str, extract_images: bool = False):
     if PyPDFLoader_ac is not True:
         raise ImportError(PyPDFLoader_ac)
     loader = PyPDFLoader(file_path=file_path, extract_images=extract_images)
-    docs = lambda: loader.load()
+    def docs():
+        return loader.load()
     return loader, docs
 
 
@@ -129,7 +135,8 @@ def odt_loder(file_path: str, extract_images: bool = False, **kwargs):
     if UnstructuredODTLoader_ac is not True:
         raise ImportError(UnstructuredODTLoader_ac)
     loader = UnstructuredODTLoader(file_path=file_path, extract_images=extract_images, **kwargs)
-    docs = lambda: loader.load()
+    def docs():
+        return loader.load()
     return loader, docs
 
 

@@ -106,7 +106,7 @@ select = [
     # "C4", # flake8-comprehensions
     "SIM",# flake8-simplify
 ]
-ignore = ["E501", "S101", "E701", "E702"]
+ignore = ["E501", "S101", "S603","S607", "E701", "E702"]
 # Optional: Bestimmte Regeln ignorieren (können auch Sicherheitsregeln sein)
 # ignore = [
 #   "S101",  # assert wird verwendet

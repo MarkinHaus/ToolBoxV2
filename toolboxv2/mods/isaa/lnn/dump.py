@@ -16,7 +16,8 @@ from test import (
 
 def decimalToBinary(n, ziel_laenge=4):
     x = bin(n).replace("0b", "")
-    auffuellen = lambda sublist, laenge: [0] * (laenge - len(sublist)) + sublist
+    def auffuellen(sublist, laenge):
+        return [0] * (laenge - len(sublist)) + sublist
     return auffuellen([int(_) for _ in x][:ziel_laenge], ziel_laenge)
 
 
@@ -72,7 +73,7 @@ def lern_ninary(ff_lsm: NeuralSystem, t_data, epoch=100):
         #     break
         losses = 0
         ___ = []
-        for i, (inp, out) in enumerate(t_data):
+        for _i, (inp, out) in enumerate(t_data):
             # vis.liquid_state = LNN
             # lnn_output = ff_lsm.forward(inp, frozen=False)
             # loss = 0
@@ -173,7 +174,7 @@ def run_dummyv2(epochs=10, targets=None):
         targets = [0.5, -0.5]
     targets = [round(target, 3) for target in targets]
 
-    for i in range(epochs):
+    for _i in range(epochs):
         losses = 0
         losses_ = 0
         for target in targets:
@@ -197,31 +198,36 @@ def run_binary(epochs, start=0, end=16, exclude=None, i_len=2, o_len=4):
         exclude = [190, 200, 240, 1, 32, 7, 94, 123]
 
     def generate_data(start_=0, end_=1, list_=None, ex=None):
-        auffuellen = lambda sublist, laenge: [0] * (laenge - len(sublist)) + sublist
+        def auffuellen(sublist, laenge):
+            return [0] * (laenge - len(sublist)) + sublist
         if ex is None:
             ex = []
         if list_ is None:
             list_ = range(start_, end_)
-        ret_helper = lambda: [[[float(_) for _ in auffuellen(list(str(x))[:i_len], i_len)],
-                               auffuellen([float(_) for _ in bin(x).replace("0b", "")][:o_len], o_len)] for x in
-                              list_ if x not in ex]
+        def ret_helper():
+            return [[[float(_) for _ in auffuellen(list(str(x))[:i_len], i_len)],
+                                       auffuellen([float(_) for _ in bin(x).replace("0b", "")][:o_len], o_len)] for x in
+                                      list_ if x not in ex]
         return ret_helper()
 
     def generate_data_classes(start_=0, end_=1, list_=None, ex=None):
-        g_let = lambda max_len: [0] * max_len
+        def g_let(max_len):
+            return [0] * max_len
 
         def classes(max_len, ind):
             a = g_let(max_len)
             a.insert(ind, 1)
             return a
 
-        auffuellen = lambda sublist, laenge: [0] * (laenge - len(sublist)) + sublist
+        def auffuellen(sublist, laenge):
+            return [0] * (laenge - len(sublist)) + sublist
         if ex is None:
             ex = []
         if list_ is None:
             list_ = range(start_, end_)
-        ret_helper = lambda: [[[float(_) for _ in auffuellen(list(str(x))[:i_len], i_len)], classes(end, x)] for x in
-                              list_ if x not in ex]
+        def ret_helper():
+            return [[[float(_) for _ in auffuellen(list(str(x))[:i_len], i_len)], classes(end, x)] for x in
+                                      list_ if x not in ex]
         return ret_helper()
 
     # get_training date
@@ -290,9 +296,9 @@ def _test_dummy(test_range=10, start=0, til=12, start_til=0):
     for i in range(start_til, til):
         p = FF_LSM.forward([i / til], None, frozen=False).item()
         if abs(p - i / til) > 1e-3:
-            p1 = FF_LSM.forward([i / til], [p], frozen=False).item()
+            FF_LSM.forward([i / til], [p], frozen=False).item()
         else:
-            p1 = FF_LSM.forward([p], None, frozen=False).item()
+            FF_LSM.forward([p], None, frozen=False).item()
         # print(p - p1, FF_LSM.last_ff_losses)
         # print(f"in/out: {i/100}/{out[0]}  err: {(i/10)-out[0]}")
     print("Live: Lerining test")

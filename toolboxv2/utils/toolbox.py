@@ -129,9 +129,8 @@ class App(AppType, metaclass=Singleton):
         print("================================")
         self.logger.info("Logger initialized")
         get_logger().info(Style.GREEN("Starting Application instance"))
-        if args.init and args.init is not None:
-            if self.start_dir not in sys.path:
-                sys.path.append(self.start_dir)
+        if args.init and args.init is not None and self.start_dir not in sys.path:
+            sys.path.append(self.start_dir)
 
 
         __version__ = get_version_from_pyproject()
@@ -272,9 +271,9 @@ class App(AppType, metaclass=Singleton):
 
     async def run_flows(self, name, **kwargs):
         from ..flows import flows_dict as flows_dict_func
-        if name not in self.flows.keys():
+        if name not in self.flows:
             self.flows = {**self.flows, **flows_dict_func(s=name, remote=True)}
-        if name in self.flows.keys():
+        if name in self.flows:
             if asyncio.iscoroutinefunction(self.flows[name]):
                 return await self.flows[name](get_app(from_="runner"), self.args_sto, **kwargs)
             else:
@@ -489,7 +488,7 @@ class App(AppType, metaclass=Singleton):
 
         self.logger.info(f"getting function : {specification}.{modular_id}.{function_id}")
 
-        if modular_id not in self.functions.keys():
+        if modular_id not in self.functions:
             if r == 0:
                 self.save_load(modular_id, spec=specification)
                 return self.get_function(name=(modular_id, function_id),
@@ -926,9 +925,7 @@ class App(AppType, metaclass=Singleton):
                 return False
             if _mod.startswith("."):
                 return False
-            if _mod.startswith("test_"):
-                return False
-            return True
+            return not _mod.startswith("test_")
 
         def r_endings(word: str):
             if word.endswith(".py"):
@@ -1092,10 +1089,9 @@ class App(AppType, metaclass=Singleton):
                 except KeyboardInterrupt:
                     print("Unsave Exit")
                     break
-        if hasattr(self, 'loop'):
-            if self.loop is not None:
-                with Spinner("closing Event loop:", symbols="+"):
-                    self.loop.stop()
+        if hasattr(self, 'loop') and self.loop is not None:
+            with Spinner("closing Event loop:", symbols="+"):
+                self.loop.stop()
 
     async def a_exit(self):
         await self.a_remove_all_modules()
@@ -1582,7 +1578,7 @@ class App(AppType, metaclass=Singleton):
     def get_mod(self, name, spec='app') -> ModuleType or MainToolType:
         if spec != "app":
             self.print(f"Getting Module {name} spec: {spec}")
-        if name not in self.functions.keys():
+        if name not in self.functions:
             mod = self.save_load(name, spec=spec)
             if mod is False or (isinstance(mod, Result) and mod.is_error()):
                 self.logger.warning(f"Could not find {name} in {list(self.functions.keys())}")
@@ -1622,7 +1618,8 @@ class App(AppType, metaclass=Singleton):
     def reload_mod(self, mod_name, spec='app', is_file=True, loc="toolboxv2.mods."):
         self.remove_mod(mod_name, delete=True)
         if hasattr(self.modules[mod_name], 'reload_save') and self.modules[mod_name].reload_save:
-            reexecute_module_code = lambda x: x
+            def reexecute_module_code(x):
+                return x
         else:
             def reexecute_module_code(module_name):
                 if isinstance(module_name, str):
@@ -1652,7 +1649,7 @@ class App(AppType, metaclass=Singleton):
 
                 # First, reload all submodules
                 if hasattr(package, '__path__'):
-                    for finder, name, ispkg in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
+                    for _finder, name, _ispkg in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
                         try:
                             mod = import_module(name)
                             reexecute_module_code(mod)
@@ -1997,7 +1994,7 @@ class App(AppType, metaclass=Singleton):
 
     def save_autocompletion_dict(self):
         autocompletion_dict = {}
-        for module_name, module in self.functions.items():
+        for module_name, _module in self.functions.items():
             data = {}
             for function_name, function_data in self.functions[module_name].items():
                 if not isinstance(function_data, dict):

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import inspect
 import os
 from collections.abc import Callable
@@ -229,11 +230,10 @@ class NiceGUIManager(metaclass=Singleton):
         async def request_to_request_session(request):
             jk = request.json()
             if asyncio.iscoroutine(jk):
-                try:
+                with contextlib.suppress(Exception):
                     jk = await jk
-                except Exception:
-                    pass
-            js = lambda: jk
+            def js():
+                return jk
             return RequestSession(
                 session=request.session,
                 body=request.body,
@@ -241,7 +241,7 @@ class NiceGUIManager(metaclass=Singleton):
                 row=request,
             )
 
-        tb_app = get_app()
+        get_app()
 
         @ui.page(path)
         async def wrapped_gui(request: Request):

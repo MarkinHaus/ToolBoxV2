@@ -36,7 +36,7 @@ export = get_app("SocketManager.Export").tb
 def zip_folder_to_bytes(folder_path):
     bytes_buffer = BytesIO()
     with zipfile.ZipFile(bytes_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(folder_path):
+        for root, _dirs, files in os.walk(folder_path):
             for file in files:
                 file_path = os.path.join(root, file)
                 arcname = os.path.relpath(file_path, folder_path)
@@ -57,7 +57,7 @@ def zip_folder_to_bytes(folder_path):
 def zip_folder_to_file(folder_path):
     output_path = f"{folder_path.replace('_', '_').replace('-', '_')}_{uuid.uuid4().hex}.zip"
     with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(folder_path):
+        for root, _dirs, files in os.walk(folder_path):
             for file in files:
                 file_path = os.path.join(root, file)
                 arcname = os.path.relpath(file_path, folder_path)
@@ -348,9 +348,9 @@ class Tools(MainTool, FileHandler):
             sock.bind(('0.0.0.0', port))
             sock.sendto(b'k', (host, endpoint_port))
 
-            server = await self.a_create_server(name, endpoint_port, '0.0.0.0', False)
+            await self.a_create_server(name, endpoint_port, '0.0.0.0', False)
 
-            clinet = await self.a_create_client(name, port, host, False)
+            await self.a_create_client(name, port, host, False)
 
             self.print(f"Peer:{name} sending to on {host}:{port}")
             return Result.ok((sock, r_socket))
@@ -395,11 +395,11 @@ class Tools(MainTool, FileHandler):
             else:
                 addr = connection[1].getsockname()
             connection_key = addr[0] + str(addr[1])
-            if connection_key in self.sockets[name]["client_sockets_dict"].keys():
+            if connection_key in self.sockets[name]["client_sockets_dict"]:
                 pass
             elif addr[0] == "127.0.0.1":
                 connection_key = "localhost]" + str(addr[1])
-                if connection_key in self.sockets[name]["client_sockets_dict"].keys():
+                if connection_key in self.sockets[name]["client_sockets_dict"]:
                     pass
                 else:
                     connection_key = None
@@ -408,11 +408,11 @@ class Tools(MainTool, FileHandler):
         elif isinstance(connection, socket.socket):
             addr = connection.getpeername()
             connection_key = addr[0] + str(addr[1])
-            if connection_key in self.sockets[name]["client_sockets_dict"].keys():
+            if connection_key in self.sockets[name]["client_sockets_dict"]:
                 pass
             elif addr[0] == "127.0.0.1":
                 connection_key = "localhost" + str(addr[1])
-                if connection_key in self.sockets[name]["client_sockets_dict"].keys():
+                if connection_key in self.sockets[name]["client_sockets_dict"]:
                     pass
                 else:
                     connection_key = None
@@ -846,10 +846,7 @@ class Tools(MainTool, FileHandler):
         if self.local_ip is None:
             self.local_ip = await self.set_print_local_ip()
 
-        if unix_file:
-            socket_type = socket.AF_UNIX
-        else:
-            socket_type = socket.AF_INET
+        socket_type = socket.AF_UNIX if unix_file else socket.AF_INET
 
         def close_helper():
             return lambda: self.a_exit_socket(name)
@@ -1054,7 +1051,7 @@ class Tools(MainTool, FileHandler):
 
         self.print("Stopping server closing open clients")
 
-        for client_name, client_ob in clients.items():
+        for _client_name, client_ob in clients.items():
             client_port, client_ip, client_socket = client_ob.get('port', None), client_ob.get('ip',
                                                                                                None), client_ob.get(
                 'client_socket', None)

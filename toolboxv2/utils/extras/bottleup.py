@@ -91,7 +91,7 @@ def bottle_up(tb_app, user='root', main_route=None, threaded=False, **kwargs):
 
             try:
                 with open(os.path.join(self.tb_app.start_dir, 'dist', 'helper.html')) as f:
-                    helper_str = f.read()
+                    f.read()
             except Exception:
                 self.tb_app.debug_rains(RuntimeError(f"pleas build the main app or the (js) and save in {os.path.join(self.tb_app.start_dir, 'dist', 'helper.html')}"))
 
@@ -121,9 +121,11 @@ def bottle_up(tb_app, user='root', main_route=None, threaded=False, **kwargs):
                     if 'main' in func_name and 'web' in func_name:
 
                         if request_as_kwarg:
-                            tb_func_ = lambda **kw: open(os.path.join(self.tb_app.start_dir, 'dist', 'helper.html')).read()+tb_func(**kw)
+                            def tb_func_(**kw):
+                                return open(os.path.join(self.tb_app.start_dir, 'dist', 'helper.html')).read()+tb_func(**kw)
                         else:
-                            tb_func_ = lambda: open(os.path.join(self.tb_app.start_dir, 'dist', 'helper.html')).read() + tb_func()
+                            def tb_func_():
+                                return open(os.path.join(self.tb_app.start_dir, 'dist', 'helper.html')).read() + tb_func()
                         self.route(f'/{mod_name}', method='GET')(tb_func_)
                         print("adding root:", f'/{mod_name}')
                         if mod_name == main_rout:

@@ -50,13 +50,16 @@ class DaemonUtil:
         self.test_override = test_override
         self._name = name
         if on_register is None:
-            on_register = lambda *args: None
+            def on_register(*args):
+                return None
         self._on_register = on_register
         if on_client_exit is None:
-            on_client_exit = lambda *args: None
+            def on_client_exit(*args):
+                return None
         self.on_client_exit = on_client_exit
         if on_server_exit is None:
-            on_server_exit = lambda: None
+            def on_server_exit():
+                return None
         self.on_server_exit = on_server_exit
         self.unix_socket = unix_socket
         self.online = None
@@ -224,7 +227,7 @@ class DaemonUtil:
                                         res_ = await res.aget()
                                         res.result.data = res_
                                     res = json.loads(res.to_api_result().json())
-                                elif isinstance(res, bytes) or isinstance(res, dict):
+                                elif isinstance(res, bytes | dict):
                                     pass
                                 else:
                                     res = {'data': 'unsupported type', 'type': str(type(res))}
@@ -246,7 +249,7 @@ class DaemonUtil:
                         await self.runner_co(self.on_client_exit,  identifier)
             await asyncio.sleep(0.1)
         running_dict["server_receiver"] = False
-        for x in running_dict["receive"].keys():
+        for x in running_dict["receive"]:
             running_dict["receive"][x] = False
         running_dict["keep_alive_var"] = False
         await self.runner_co(self.on_server_exit)

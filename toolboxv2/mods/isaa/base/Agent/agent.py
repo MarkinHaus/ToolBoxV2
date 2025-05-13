@@ -185,13 +185,15 @@ try:
 except ImportError as e:
     print(f"WARN: MCP components not found or import error ({e}). MCP features disabled (client usage relies on ADK's MCPToolset).")
     MCP_AVAILABLE = False
-    adk_to_mcp_tool_type = lambda *a,**k:None
+    def adk_to_mcp_tool_type(*a, **k):
+        return None
     # Define dummy types
     class ClientSession: pass
     class FastMCP: pass
     class MCPServerBase: pass
     def mcp_sse_client(*args, **kwargs): pass
-    mcp_types = lambda :None
+    def mcp_types():
+        return None
 
 
     class TextContent(BaseModel):
@@ -1106,7 +1108,7 @@ class EnhancedAgent(*_AgentBaseClass):
         try:
             # get_event_loop() is deprecated in 3.10+, use get_running_loop() or new_event_loop()
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
                 # If loop is running, cannot use asyncio.run. Need to schedule and wait.
                 # This is complex to get right universally (e.g., in notebooks vs servers).
                 # Simplest approach for sync call from sync context is asyncio.run()
@@ -1136,10 +1138,10 @@ class EnhancedAgent(*_AgentBaseClass):
         # 2. Check Agent Capabilities (Tools, Servers, Clients)
         has_adk_tools = ADK_AVAILABLE and isinstance(self, LlmAgent) and bool(self.tools)
         has_adk_code_executor = ADK_AVAILABLE and isinstance(self, LlmAgent) and self.code_executor is not None
-        can_do_adk_search = any(isinstance(t, (type(adk_google_search), AdkVertexAiSearchTool)) for t in getattr(self, 'tools', []))
+        can_do_adk_search = any(isinstance(t, type(adk_google_search) | AdkVertexAiSearchTool) for t in getattr(self, 'tools', []))
         can_do_a2a = A2A_AVAILABLE and bool(self.a2a_clients) # Check if clients configured
         # MCP check relies on tools being added via MCPToolset in ADK
-        can_do_mcp = has_adk_tools and any(isinstance(t, BaseTool) and getattr(t, '_is_mcp_tool', False) for t in self.tools) # Heuristic
+        has_adk_tools and any(isinstance(t, BaseTool) and getattr(t, '_is_mcp_tool', False) for t in self.tools) # Heuristic
 
 
         # --- Strategy Logic ---
@@ -1529,7 +1531,7 @@ class EnhancedAgent(*_AgentBaseClass):
         if ADK_AVAILABLE and isinstance(self, LlmAgent):
             if self.tools: caps.append("ADK Tools (including potential MCP/A2A wrappers)")
             if self.code_executor: caps.append("ADK Code Execution")
-            if any(isinstance(t, (type(adk_google_search), AdkVertexAiSearchTool)) for t in getattr(self, 'tools', [])):
+            if any(isinstance(t, type(adk_google_search) | AdkVertexAiSearchTool) for t in getattr(self, 'tools', [])):
                  caps.append("ADK Search")
         if A2A_AVAILABLE and self.a2a_clients: caps.append("A2A Client (delegate to other agents)")
         if self.mcp_server: caps.append("MCP Server (exposes capabilities)")

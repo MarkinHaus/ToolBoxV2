@@ -421,7 +421,8 @@ class E2EEncryption:
         self.device_key = self.code.DK()
         self.session_key = None
         self.remote_public_key = None
-        r_send = lambda *args, **kwargs: None if r_send is None else r_send
+        def r_send(*args, **kwargs):
+            return None if r_send is None else r_send
         r_recv: queue.Queue = queue.Queue() if r_recv is None else r_recv
         self.row_function = [r_send, r_recv]
 
@@ -438,7 +439,7 @@ class E2EEncryption:
             return
         self.remote_public_key = "REMOTE_PUBLIC_KEY_PLACEHOLDER"
         self.session_key = self.code.generate_symmetric_key()
-        encrypted_session_key = self.code.encrypt_asymmetric(self.session_key, self.remote_public_key)
+        self.code.encrypt_asymmetric(self.session_key, self.remote_public_key)
         # Send encrypted_session_key to the remote party
         # Again, this is a placeholder and should be replaced with actual sending logic
 

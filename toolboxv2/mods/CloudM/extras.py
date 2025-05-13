@@ -99,11 +99,10 @@ def show_version(_, app: App):
 
     # self.get_version()
 
-    if self.api_version != '404':
-        if self.download(["", mod_name]):
-            self.print(
-                Style.Bold(Style.RED("MODULE exists-on-api pleas use a other name")))
-            return False
+    if self.api_version != '404' and self.download(["", mod_name]):
+        self.print(
+            Style.Bold(Style.RED("MODULE exists-on-api pleas use a other name")))
+        return False
 
     self.print("NEW MODULE: " + mod_name, end=" ")
     if os.path.exists("mods/" + mod_name +
@@ -178,15 +177,14 @@ def update_core(self, backup=False, name=""):
 
     def is_pip_installed(package_name):
         try:
-            output = subprocess.check_output(['pip', 'show', package_name]).decode('utf-8')
+            subprocess.check_output(['pip', 'show', package_name]).decode('utf-8')
             return True
         except subprocess.CalledProcessError:
             return False
 
     def get_package_installation_method(package_name):
-        if is_git_installed():
-            if is_git_repository():
-                return 'git'
+        if is_git_installed() and is_git_repository():
+            return 'git'
         if is_pip_installed(package_name):
             return 'pip'
         return None

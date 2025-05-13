@@ -166,10 +166,7 @@ async def set_sto_by_name(app: App = None, sto_name: str | None = None, request:
         return user_result
 
     user: User = user_result.get()
-    if isinstance(request.body, bytes):
-        data = request.body
-    else:
-        data = request.body()
+    data = request.body if isinstance(request.body, bytes) else request.body()
     sto_data_result = set_sto(app, sto_name=sto_name, user_name=user.name, user_id=user.uid, data=data)
     if sto_data_result.is_error() or not sto_data_result.is_data():
         return sto_data_result

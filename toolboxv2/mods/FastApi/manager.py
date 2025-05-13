@@ -382,7 +382,7 @@ class Tools(MainTool, FileHandler):
         self.on_start()
         running_list = []
         print(self.api_config)
-        for api_name in self.api_config.keys():
+        for api_name in self.api_config:
 
             # Get stored process info
             process_info = self.get_file_handler(f"pr{api_name}")

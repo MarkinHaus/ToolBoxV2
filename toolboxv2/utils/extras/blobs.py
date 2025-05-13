@@ -88,7 +88,7 @@ class BlobStorage(metaclass=Singleton):
 
         recovery_keys = []
 
-        for key, value in sorted_link.items():
+        for _key, value in sorted_link.items():
             if "#404#" in value:
                 continue
             recovery_keys.append(''.join(value))
@@ -138,7 +138,7 @@ class BlobStorage(metaclass=Singleton):
 
     def _get_all_blob_ids(self):
         filenames = []
-        for root, dirs, files in os.walk(self.storage_directory):
+        for _root, _dirs, files in os.walk(self.storage_directory):
             for file in files:
                 if file.endswith('.blob'):
                     filenames.append(file.replace('.blob', ''))

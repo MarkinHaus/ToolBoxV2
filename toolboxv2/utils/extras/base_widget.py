@@ -4,12 +4,14 @@ import uuid
 try:
     from ..system.all_functions_enums import CLOUDM_AUTHMANAGER
 except ImportError:
-    CLOUDM_AUTHMANAGER = lambda: None
+    def CLOUDM_AUTHMANAGER():
+        return None
     CLOUDM_AUTHMANAGER.GET_USER_BY_NAME = ("CLOUDM_AUTHMANAGER", "GET_USER_BY_NAME".lower())
 try:
     from ..system.all_functions_enums import MINIMALHTML
 except ImportError:
-    MINIMALHTML = lambda: None
+    def MINIMALHTML():
+        return None
     MINIMALHTML.ADD_GROUP = ("MINIMALHTML", "ADD_GROUP".lower())
     MINIMALHTML.GENERATE_HTML = ("MINIMALHTML", "GENERATE_HTML".lower())
     MINIMALHTML.ADD_COLLECTION_TO_GROUP = ("MINIMALHTML", "ADD_COLLECTION_TO_GROUP".lower())
@@ -68,7 +70,8 @@ class BaseWidget:
 
     def register2reload(self, *functions):
         for fuction in functions:
-            x = lambda r: fuction(request=r)
+            def x(r):
+                return fuction(request=r)
             self.onReload.append(x)
 
     def reload_guard(self, function):
@@ -98,7 +101,7 @@ class BaseWidget:
     def group_generator(self, asset_name: str, iterator: iter, template=None, file_path=None, a_kwargs=None):
         groups = []
         work_kwargs = a_kwargs
-        for i, data in enumerate(iterator):
+        for _i, data in enumerate(iterator):
             if isinstance(data, dict):
                 work_kwargs = {**a_kwargs, **data}
             groups.append(self.get_a_group(asset_name, template=template, file_path=file_path, a_kwargs=work_kwargs))
@@ -255,5 +258,5 @@ class BaseWidget:
             iframe_id: ID des registrierten iframes
             asset_id: Optional, spezifische Asset-ID
         """
-        asset = self.create_iframe_asset(app, iframe_id, asset_id)
+        self.create_iframe_asset(app, iframe_id, asset_id)
         return self.generate_html(app, f"iframe-{iframe_id}", asset_id)[0]['html_element']

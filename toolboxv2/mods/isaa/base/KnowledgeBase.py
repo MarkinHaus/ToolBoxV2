@@ -877,7 +877,7 @@ class KnowledgeBase:
                 meta = metadata[idx] if metadata else {}
                 if isinstance(meta, list):
                     meta = meta[0]
-                for i, chunk in enumerate(chunks):
+                for i, _chunk in enumerate(chunks):
                     chunk_meta = meta.copy()
                     chunk_meta.update({
                         'chunk_index': i,

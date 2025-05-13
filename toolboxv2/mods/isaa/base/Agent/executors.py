@@ -13,7 +13,8 @@ try:
     RESTRICTEDPYTHON_AVAILABLE = True
 except ImportError:
     RESTRICTEDPYTHON_AVAILABLE = False
-    restrictedpython = lambda :None
+    def restrictedpython():
+        return None
 
     def _print_(*args, **kwargs):
         print(*args, **kwargs)

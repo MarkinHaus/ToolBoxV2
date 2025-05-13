@@ -22,7 +22,7 @@ def start_client(host_ip: int, port: int=44667) -> None:
     while alive:
         # Thanks @seym45 for a fix
         data, addr = client.recvfrom(1024)
-        print("received message: %s" % data)
+        print(f"received message: {data}")
         data = data.decode('utf')
         info_t, name = data.split(':')[0], data.split(':')[1]
         known[name] = addr

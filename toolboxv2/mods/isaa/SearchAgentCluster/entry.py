@@ -123,7 +123,7 @@ class SemanticSearchEngine:
             if not content:
                 continue
 
-            analysis = self.analyzer.analyze_content(content, url)
+            self.analyzer.analyze_content(content, url)
             categories = self.analyzer.categorize_result(content)
 
             results.append(SearchResult(
@@ -140,7 +140,7 @@ class SemanticSearchEngine:
             for linked_url in linked_urls[:2]:  # Limit to 2 linked URLs per source
                 linked_content = await self.data_layer.fetch_content(linked_url, 1)
                 if linked_content:
-                    linked_analysis = self.analyzer.analyze_content(linked_content, linked_url)
+                    self.analyzer.analyze_content(linked_content, linked_url)
                     results.append(SearchResult(
                         content=linked_content,
                         url=linked_url,
@@ -173,10 +173,7 @@ class SemanticSearchEngine:
         """
 
         score = self.isaa.mini_task_completion_format(relevance_prompt, format_=float)
-        if score:
-            score = float(score)
-        else:
-            score = 0
+        score = float(score) if score else 0
         return min(max(score, 0.0), 1.0)
 
     def _create_summary(self, results: list[SearchResult]) -> SearchSummary:

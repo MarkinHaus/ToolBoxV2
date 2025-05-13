@@ -1,9 +1,11 @@
 try:
     import numba
 except ImportError:
-    numba = lambda :None
+    def numba():
+        return None
     numba.jit =lambda **_:lambda x:x
     numba.njit =lambda **_:lambda x:x
+import contextlib
 import json
 import os
 import pickle
@@ -21,10 +23,14 @@ try:
     from redis.commands.search.indexDefinition import IndexDefinition
     from redis.commands.search.query import Query
 except ImportError:
-    VectorField = lambda *a, **k: None
-    TextField = lambda *a, **k: None
-    Query = lambda *a, **k: None
-    IndexDefinition = lambda *a, **k: None
+    def VectorField(*a, **k):
+        return None
+    def TextField(*a, **k):
+        return None
+    def Query(*a, **k):
+        return None
+    def IndexDefinition(*a, **k):
+        return None
 @dataclass(slots=True)
 class Chunk:
     """Represents a chunk of text with its embedding and metadata"""
@@ -418,10 +424,8 @@ class RedisVectorStore(AbstractVectorStore):
         keys = self.redis_client.keys(f"{self.prefix}*")
         if keys:
             self.redis_client.delete(*keys)
-        try:
+        with contextlib.suppress(Exception):
             self.redis_client.ft(self.index_name).dropindex(delete_documents=False)
-        except:
-            pass
         self._create_index_if_not_exists()
 
     def rebuild_index(self) -> None:
@@ -643,10 +647,8 @@ class EnhancedVectorStore(AbstractVectorStore):
             if self.mmap_file:
                 self.mmap_file.close()
                 self.mmap_array = None
-                try:
+                with contextlib.suppress(Exception):
                     os.remove(self.mmap_file.name)
-                except:
-                    pass
 
     def rebuild_index(self) -> None:
         pass  # HNSW index is built incrementally

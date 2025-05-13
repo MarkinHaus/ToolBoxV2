@@ -78,7 +78,7 @@ class TicTacToeAgent:
     def train(self, state, action, next_state, reward, done):
         state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
         next_state_tensor = torch.tensor(next_state, dtype=torch.float32).unsqueeze(0)
-        action_tensor = torch.tensor([action], dtype=torch.long)
+        torch.tensor([action], dtype=torch.long)
         reward_tensor = torch.tensor([reward], dtype=torch.float32)
         done_tensor = torch.tensor([done], dtype=torch.float32)
 

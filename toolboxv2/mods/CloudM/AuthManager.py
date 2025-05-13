@@ -87,7 +87,7 @@ def db_valid_invitation(app: App, invitation: str):
 def db_crate_invitation(app: App):
     invitation = Code.generate_symmetric_key()
     inv_key = Code.encrypt_symmetric(invitation, invitation)
-    res = app.run_any(TBEF.DB.SET, query=f"invitation::{invitation}", data=inv_key, get_results=True)
+    app.run_any(TBEF.DB.SET, query=f"invitation::{invitation}", data=inv_key, get_results=True)
     return invitation
 
 
@@ -295,7 +295,7 @@ def create_user(app: App, data: CreateUserObject = None, username: str = 'test-u
     if web_data:
         return initialize_and_return(app, user)
 
-    result_s = db_helper_save_user(app, asdict(user))
+    db_helper_save_user(app, asdict(user))
 
     return Result.ok(info=f"User created successfully: {username}",
                      data=Code().encrypt_asymmetric(str(user.name), pub_key)
@@ -384,7 +384,7 @@ def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 
     if web_data:
         return initialize_and_return(app, user)
 
-    result_s = db_helper_save_user(app, asdict(user))
+    db_helper_save_user(app, asdict(user))
 
     return Result.ok(info=f"User created successfully: {username}",
                      data=Code().encrypt_asymmetric(str(user.name), pub_key)
@@ -431,7 +431,7 @@ async def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
 
     user: User = user_result.get()
 
-    if not challenge == to_base64(user.challenge).decode():
+    if challenge != to_base64(user.challenge).decode():
         return Result.default_user_error(info="Invalid challenge returned", data=user)
 
     if not Code.verify_signature(signature=from_base64(data.sing), message=user.challenge, public_key_str=user.pub_key,
@@ -494,7 +494,8 @@ def crate_local_account(app: App, username: str, email: str = '', invitation: st
     if invitation == '':
         return Result.default_user_error(info="No Invitation key provided")
 
-    create_user_ = lambda *args: create_user(app, None, *args)
+    def create_user_(*args):
+        return create_user(app, None, *args)
     if create is not None:
         create_user_ = create
 
@@ -714,7 +715,8 @@ async def get_user_sync_key_local(app: App, username: str, ausk=None) -> Result:
     sing_r = await get_to_sing_data(app, username=username)
     signature = Code.create_signature(sing_r.get('challenge'), user_pri)
 
-    authenticate_user_get_sync_key_ = lambda *args: authenticate_user_get_sync_key(*args)
+    def authenticate_user_get_sync_key_(*args):
+        return authenticate_user_get_sync_key(*args)
     if ausk is not None:
         authenticate_user_get_sync_key_ = ausk
 

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import os
 import shutil
 import subprocess
@@ -171,7 +172,7 @@ def create_and_pack_module(path, module_name='', version='-.-.-', additional_dir
 
     # Modul in eine ZIP-Datei packen
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(temp_dir):
+        for root, _dirs, files in os.walk(temp_dir):
             for file in files:
                 file_path = os.path.join(root, file)
                 zipf.write(file_path, os.path.relpath(file_path, temp_dir))
@@ -213,7 +214,7 @@ def uninstall_module(path, module_name='', version='-.-.-', additional_dirs=None
     shutil.rmtree(module_path)
 
     # Zusätzliche Verzeichnisse hinzufügen
-    for dir_name, dir_paths in additional_dirs.items():
+    for _dir_name, dir_paths in additional_dirs.items():
         if isinstance(dir_paths, str):
             dir_paths = [dir_paths]
         for dir_path in dir_paths:
@@ -397,13 +398,11 @@ async def installer(app: App | None, module_name: str, build_state=True):
         # Korrigiere Dateinamen
         zip_name = mod_url.split('/')[-1]
         clean_name = zip_name.replace("$", '').replace("&", '').replace("§", '')
-        try:
+        with contextlib.suppress(FileExistsError):
             os.rename(
                 str(download_path / clean_name),
                 str(download_path / zip_name)
             )
-        except FileExistsError:
-            pass
 
         with Spinner("Installing from zip"):
             report = install_from_zip(app, zip_name)
@@ -488,7 +487,7 @@ def install_from_zip(app, zip_name, no_dep=True, auto_dep=False):
 
 def run_command(command, cwd=None):
     """Führt einen Befehl aus und gibt den Output zurück."""
-    result = subprocess.run(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True,
+    result = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=True,
                             encoding='cp850')
     return result.stdout
 

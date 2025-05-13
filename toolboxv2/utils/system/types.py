@@ -893,10 +893,7 @@ class Result:
 
     def lazy_return(self, _=0, data=None, **kwargs):
         flags = ['raise', 'logg', 'user', 'intern']
-        if isinstance(_, int):
-            flag = flags[_]
-        else:
-            flag = _
+        flag = flags[_] if isinstance(_, int) else _
         if self.info.exec_code == 0:
             return self if data is None else data if _test_is_result(data) else self.ok(data=data, **kwargs)
         if flag == 'raise':
@@ -1471,7 +1468,6 @@ class AppType:
 
     def print_functions(self, name=None):
 
-        modules = []
 
         if not self.functions:
             print("Nothing to see")
@@ -1619,7 +1615,6 @@ class AppType:
         complexity_results = cc_visit(code)
         i = -1
         avg_complexity = 0
-        rang_complexity = 0
         for block in complexity_results:
             complexity = block.complexity
             i += 1

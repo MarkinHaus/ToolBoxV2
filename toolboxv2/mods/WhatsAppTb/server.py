@@ -12,8 +12,10 @@ try:
     from whatsapp import Message, WhatsApp
 except ImportError:
     print("NO Whatsapp installed")
-    WhatsApp = lambda :None
-    Message = lambda :None
+    def WhatsApp():
+        return None
+    def Message():
+        return None
 import asyncio
 import logging
 

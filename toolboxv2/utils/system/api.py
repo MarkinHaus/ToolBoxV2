@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import platform
@@ -211,7 +212,7 @@ def check_and_run_local_release(do_run=True):
 def check_cargo_installed():
     """Check if Cargo (Rust package manager) is installed on the system."""
     try:
-        subprocess.run(["cargo", "--version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(["cargo", "--version"], check=True, capture_output=True)
         return True
     except Exception:
         return False
@@ -239,7 +240,7 @@ def run_with_hot_reload():
 
     # Check if cargo-watch is installed
     try:
-        subprocess.run(["cargo", "watch", "--version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(["cargo", "watch", "--version"], check=True, capture_output=True)
     except Exception:
         print("cargo-watch is not installed. Installing now...")
         try:
@@ -530,8 +531,7 @@ def ensure_socket_and_fd_file_posix(host, port, backlog, fd_file_path) -> tuple[
             return None, fd
         except Exception as e:
             print(f"[POSIX] Persistent FD file {fd_file_path} exists but FD invalid/unreadable: {e}. Will create new.")
-            try: os.remove(fd_file_path)
-            except OSError: pass
+            with contextlib.suppress(OSError): os.remove(fd_file_path)
 
     try:
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -709,8 +709,7 @@ def manage_server(action: str, executable_path: str = None, version_str: str = "
                 print("[POSIX] Rust server failed to start, cleaning up socket and FD file.")
                 server_socket_obj.close()
                 if os.path.exists(PERSISTENT_FD_FILE):
-                    try: os.remove(PERSISTENT_FD_FILE)
-                    except OSError: pass
+                    with contextlib.suppress(OSError): os.remove(PERSISTENT_FD_FILE)
 
 
         if process:

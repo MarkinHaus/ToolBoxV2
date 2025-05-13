@@ -326,7 +326,7 @@ async def helper_session_invalid():
     print(t)
     t1 = await s.login()
     print(t1)
-    assert t1 == False
+    assert not t1
 
 
 def test_session_invalid():
@@ -341,7 +341,7 @@ def test_session_invalid_log_in():
         s = Session('root')
         t1 = await s.login()
         print(t1)
-        assert t1 == False
+        assert not t1
 
     asyncio.run(helper())
 

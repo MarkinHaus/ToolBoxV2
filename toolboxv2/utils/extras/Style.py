@@ -23,10 +23,7 @@ def stram_print(text):
 
 
 def print_prompt(msg_data):
-    if isinstance(msg_data, dict):
-        messages = msg_data.get('massages', [])
-    else:
-        messages = msg_data
+    messages = msg_data.get('massages', []) if isinstance(msg_data, dict) else msg_data
     if len(messages) == 0:
         print(Style.YELLOW("NO PROMPT to print"))
         return
@@ -323,7 +320,7 @@ class Style:
         return self._END
 
     def color_demo(self):
-        for color in self.style_dic.keys():
+        for color in self.style_dic:
             print(f"{color} -> {self.style_dic[color]}Effect{self._END}")
 
     @property

@@ -25,7 +25,7 @@ def get_all_widget_mods(app: App):
     global all_widgets
     if len(all_widgets) != 0:
         return all_widgets
-    all_widget = [widget_mod for widget_mod in app.functions.keys() if 'widget' in widget_mod.lower()]
+    all_widget = [widget_mod for widget_mod in app.functions if 'widget' in widget_mod.lower()]
     valid_widgets = []
     for widget_mod in all_widget:
         _, error = app.get_function((widget_mod, "get_widget"))

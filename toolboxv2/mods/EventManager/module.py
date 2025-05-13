@@ -375,7 +375,7 @@ class EventManagerClass:
                 id_ = eval(id_)
                 c_host, c_pot = id_
                 print(f"Registering: new client {id_data} : {c_host, c_pot}")
-                if id_data not in self.routes_client.keys():
+                if id_data not in self.routes_client:
                     await self.add_mini_client(id_data, (c_host, c_pot))
                     self.routes[str((c_host, c_pot))] = id_data
 
@@ -601,7 +601,7 @@ class EventManagerClass:
         if result is None:
             result = Result.default_user_error("Invalid Event ID")
 
-        if isinstance(result, bytes) or isinstance(result, dict):
+        if isinstance(result, bytes | dict):
             pass
         elif isinstance(result, Result):
             result.result.data_info = str(event_id)

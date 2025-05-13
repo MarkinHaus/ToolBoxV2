@@ -19,8 +19,8 @@ def python_exists(target_dir, version):
             if version in output:
                 print(f"Python {version} already installed.")
                 return python_exe
-        except Exception:
-            pass
+        except Exception as e:
+            print("ERROR", e)
     return None
 
 
@@ -43,7 +43,7 @@ def install_python(target_dir, version="3.12.9"):
         archive_path = os.path.join(target_dir, "python.tgz")
         download_file(python_url, archive_path)
         with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(target_dir)
+            tar.extractall(target_dir) # nosec: S202
         os.remove(archive_path)
         python_extracted = os.path.join(target_dir, f"Python-{version}")
         subprocess.run(["./configure", "--prefix=" + target_dir], cwd=python_extracted)

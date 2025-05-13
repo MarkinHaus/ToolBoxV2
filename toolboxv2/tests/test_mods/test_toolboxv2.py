@@ -66,7 +66,6 @@ class TestToolboxv2Mods(unittest.TestCase):
         self.app.logger.info(Style.WHITE("Test if test_string and out_string are equal"))
         self.assertEqual(test_string, out_string)
 
-        seed0 = 0
         seed = code.generate_seed()
         seed2 = code.generate_seed()
 
@@ -296,7 +295,7 @@ class TestToolboxv2Mods(unittest.TestCase):
         # Testen der remove_all_modules-Funktion
         self.app.remove_all_modules(delete=True)
         # Überprüfen Sie, ob alle Module entfernt wurden
-        for i in self.app.functions.keys():
+        for i in self.app.functions:
             print(i)
         self.assertEqual(self.app.functions, {})
 

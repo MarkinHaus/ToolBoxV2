@@ -124,10 +124,7 @@ def update_dependencies(env_name: str) -> bool:
         print(f"No dependency registry found for environment {env_name}")
         return False
     for key in tqdm(registry):
-        if isinstance(key, str):
-            name = key
-        else:
-            name = key.get('name')
+        name = key if isinstance(key, str) else key.get('name')
         command = f"conda update -n {env_name} {name} -y"
         o = run_command(command)
         print(o)

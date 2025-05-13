@@ -134,7 +134,7 @@ class CodeUpdater(ast.NodeTransformer):
                 key = type(new_item).__name__ + '_' + getattr(new_item, 'name', '')
 
                 # If item already exists, keep the existing implementation
-                if key in existing_items and isinstance(new_item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if key in existing_items and isinstance(new_item, ast.FunctionDef | ast.AsyncFunctionDef):
                     merged_body.append(existing_items[key])
                     self.updated_nodes.add(key)
                 else:

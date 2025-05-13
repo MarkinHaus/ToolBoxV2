@@ -14,7 +14,7 @@ from toolboxv2.utils.system.session import Session
 
 def ensure_test_user(user_name="testUser"):
     app = get_app(name="test")
-    res = app.get_mod("DB").edit_cli("LC")
+    app.get_mod("DB").edit_cli("LC")
     user = get_user_by_name(app, user_name)
     if user.is_error():
         crate_local_account(app, user_name, user_name + "@simpleCore.app", get_invitation(app).get())
@@ -29,7 +29,7 @@ start_urls_init = [None, None]
 
 def ensure_web_server_online():
     app = get_app(name="test")
-    if 'test_api' not in app.get_mod("FastApi").running_apis.keys():
+    if 'test_api' not in app.get_mod("FastApi").running_apis:
         start_urls_init[0] = ensure_test_user("loot")
         start_urls_init[1] = ensure_test_user("testUser")
         app.run_any(("FastApi", "startDUG"), api_name="test_api", get_results=True).print()

@@ -21,7 +21,8 @@ def get_videos2audio_files(urls, save_dir):
     if isinstance(urls, str):
         urls = [urls]
     loader = YoutubeAudioLoader(urls=urls, save_dir=save_dir)
-    blobs = lambda: loader.yield_blobs()
+    def blobs():
+        return loader.yield_blobs()
     return loader, blobs
 
 
@@ -35,5 +36,6 @@ def get_video2transcription(url, add_video_info=False
                                             , transcript_format=None
                                             , continue_on_failure=TranscriptFormat.TEXT
                                             )
-    blobs = lambda: loader.load()
+    def blobs():
+        return loader.load()
     return loader, blobs

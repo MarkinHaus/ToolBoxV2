@@ -112,9 +112,9 @@ def codes(app = None, request: RequestSession or None = None):
         return
     data = request.json()
     print(data)
-    timeEstimations = lambda x:[f'< {x}min', f'= {x}min', f'> {x}min']
+    def timeEstimations(x):
+        return [f'< {x}min', f'= {x}min', f'> {x}min']
     query, depth, promoCode, ontimeCode = data.get('query'), data.get('depth'), data.get('promoCode'), data.get('ontimeCode')
-    valid = True
     promo = 1
     depth = depth.upper()
     price = 0 + len(query)//250 + [0, 250, 1200, 1500, 50][["Q","I", "E", "P", depth[0]].index(depth[0])]
@@ -166,7 +166,7 @@ def process(app = None, request: RequestSession or None = None):
 
     print(data)
 
-    query, depth, ontimeKey, email =  data.get('query', ''), data.get('depth', ''), data.get('ontimeKey', ''), data.get('email', '')
+    query, depth, ontimeKey, _email =  data.get('query', ''), data.get('depth', ''), data.get('ontimeKey', ''), data.get('email', '')
     data_key = app.run_any(("CodeVerification", "validate"), scope=Name, code=ontimeKey)
     error = False
     if data_key is None:
@@ -226,9 +226,9 @@ def main_web_entry(app: App = None, abut=None, request: RequestSession or None =
         return HTMLResponse(content=abut_content)
     if hasattr(request, 'row'):
         if sid := request.row.query_params.get('session_id'):
-            return RedirectResponse(url="/gui/open-Seeker.seek?session_id=%s" % sid)
+            return RedirectResponse(url=f"/gui/open-Seeker.seek?session_id={sid}")
     if hasattr(request, 'query_params'):
         if sid := request.query_params.get('session_id'):
-            return RedirectResponse(url="/gui/open-Seeker.seek?session_id=%s" % sid)
+            return RedirectResponse(url=f"/gui/open-Seeker.seek?session_id={sid}")
     return RedirectResponse(url="/gui/open-Seeker")
 

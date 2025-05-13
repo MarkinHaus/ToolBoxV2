@@ -43,9 +43,11 @@ from toolboxv2.mods.isaa.extras.filter import after_format, filter_relevant_text
 try:
     import gpt4all
 except Exception:
-    gpt4all = lambda : None
+    def gpt4all():
+        return None
     gpt4all.GPT4All = None
 
+import contextlib
 import json
 from dataclasses import asdict
 
@@ -326,9 +328,7 @@ class LLMFunctionRunner:
     def validate(self):
         if self.llm_function is None:
             return False
-        if (self.llm_function.parameters is not None) and (self.args is None) and (self.kwargs is None):
-            return False
-        return True
+        return not (self.llm_function.parameters is not None and self.args is None and self.kwargs is None)
 
     def __call__(self):
         if not self.validate():
@@ -555,7 +555,7 @@ class Agent:
 
                 try:
                     # Run the main agent logic
-                    result = asyncio.run(self.run(task))
+                    asyncio.run(self.run(task))
 
                 except Exception as e:
                     status.status = "error"
@@ -939,10 +939,8 @@ class Agent:
     def format_helper(self, resp):
         c = None
         if not self.stream:
-            try:
+            with contextlib.suppress(ValueError):
                 c = resp.choices[0].message.tool_calls[0].function.arguments
-            except ValueError:
-                pass
         if c is None:
             c = self.parse_completion(resp)
         return c
@@ -1837,9 +1835,8 @@ class Agent:
                 s[x] = None
             arg_dict = anything_from_str_to_dict(command, expected_keys=s)
 
-            if isinstance(arg_dict, list):
-                if len(arg_dict) >= 1:
-                    arg_dict = arg_dict[0]
+            if isinstance(arg_dict, list) and len(arg_dict) >= 1:
+                arg_dict = arg_dict[0]
 
             # Überprüfung, ob es nur einen falschen Schlüssel und einen fehlenden gültigen Schlüssel gibt
 

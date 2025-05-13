@@ -116,7 +116,8 @@ class SchedulerManagerClass:
             return Result.default_internal_error("Both job and func are specified. Please specify either job or func.")
 
         if job is not None:
-            func = lambda x: x
+            def func(x):
+                return x
             return self._save_job(job_id=job_id,
                                   job=job,
                                   save=save,
@@ -274,7 +275,7 @@ class SchedulerManagerClass:
             return "No tasks registered."
 
         # Calculate the maximum width for each column
-        id_width = max(len("Task ID"), max(len(job_id) for job_id in self.jobs.keys()))
+        id_width = max(len("Task ID"), max(len(job_id) for job_id in self.jobs))
         next_run_width = len("Next Execution")
         interval_width = len("Interval")
 

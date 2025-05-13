@@ -391,7 +391,8 @@ def user_input(app: App,
     if app is None:
         app = get_app("cli_functions.user_input")
     if get_rprompt is None:
-        get_rprompt = lambda: ""
+        def get_rprompt():
+            return ""
     sm = app.get_mod("SchedulerManager")
 
     def bottom_toolbar():
@@ -593,7 +594,7 @@ async def co_evaluate(app: App,
             print(f"\n~> result{app.locals['user']['res_id']} = ")
             app.locals['user']['res_id'] += 1
 
-            if isinstance(result, Result) or isinstance(result, ApiResult):
+            if isinstance(result, Result | ApiResult):
                 result.print()
             else:
                 print(result)

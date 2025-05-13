@@ -34,5 +34,4 @@ def make_known(name: str, get_flag: bytes = b"R", port=44667) -> Any | None:
     finally:
         server.close()
 
-    out: dict[str, int | str] | None = None
     return json.loads(data.decode())

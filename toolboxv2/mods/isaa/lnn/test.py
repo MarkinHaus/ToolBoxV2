@@ -259,13 +259,13 @@ class LiquidStateVisualizer:
             return im,
 
         from matplotlib.animation import FuncAnimation
-        anim = FuncAnimation(fig, update, frames=200, interval=50, blit=True)
+        FuncAnimation(fig, update, frames=200, interval=50, blit=True)
         plt.show(block=False)
 
 
 class SuperLoss(nn.Module):
     def __init__(self, name="mse"):
-        super(SuperLoss, self).__init__()
+        super().__init__()
         self.loss_functions = {
             'mse': nn.MSELoss(),
             'mae': nn.L1Loss(),
@@ -331,7 +331,7 @@ class SuperLoss(nn.Module):
 
 class NeuralSystem(nn.Module):
     def __init__(self, input_size, hidden_sizes, output_size, liquid_state_hidden_size, liquid_state_num_layers, loss_fn='mse'):
-        super(NeuralSystem, self).__init__()
+        super().__init__()
 
         self.ff_network = ForwardForwardNetwork(input_size, hidden_sizes, input_size)
         self.liquid_state = LiquidState(input_size=input_size, output_size=output_size,
@@ -531,7 +531,7 @@ class NeuralSystem(nn.Module):
 
 class LiquidState(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, num_liquid_layers=3):
-        super(LiquidState, self).__init__()
+        super().__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
@@ -584,7 +584,7 @@ class LiquidState(nn.Module):
 
 class LiquidLayer(nn.Module):
     def __init__(self, hidden_size):
-        super(LiquidLayer, self).__init__()
+        super().__init__()
         self.hidden_size = hidden_size
         self.W = nn.Linear(hidden_size, hidden_size, bias=False)
         self.U = nn.Linear(hidden_size, hidden_size, bias=False)
@@ -602,7 +602,7 @@ class LiquidLayer(nn.Module):
 
 class ForwardForwardNetwork(nn.Module):
     def __init__(self, input_size, hidden_sizes, output_size, threshold=2.0):
-        super(ForwardForwardNetwork, self).__init__()
+        super().__init__()
         self.layers = nn.ModuleList()
         self.layers.append(nn.Sequential(
             nn.Linear(input_size, hidden_sizes[0]),

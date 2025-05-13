@@ -44,7 +44,7 @@ def on_start(app: App):
         def start(WHATSAPP_PHONE_NUMBER_ID=None, RECIPIENT_PHONE=None):
             if not nm.init:
                 return
-            waa = runner(app, os.getenv("WHATSAPP_PHONE_NUMBER_ID"), to=os.getenv("RECIPIENT_PHONE"))
+            runner(app, os.getenv("WHATSAPP_PHONE_NUMBER_ID"), to=os.getenv("RECIPIENT_PHONE"))
             return "Online"
         if nm.init:
             nm.register_gui("WhatsAppTb", manager.create_manager_ui(start_assistant=start), only_root=True)

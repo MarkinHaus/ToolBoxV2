@@ -8,7 +8,8 @@ from ..extras.Style import Spinner
 try:
     from ..system.all_functions_enums import SOCKETMANAGER
 except ImportError:
-    SOCKETMANAGER = lambda: None
+    def SOCKETMANAGER():
+        return None
     SOCKETMANAGER.CREATE_SOCKET = ("SOCKETMANAGER", "CREATE_SOCKET".lower())
 from ... import get_app
 from ..system.types import ApiResult, AppType, Result

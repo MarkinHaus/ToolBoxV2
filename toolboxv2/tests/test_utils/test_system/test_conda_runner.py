@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import shutil
@@ -30,10 +31,8 @@ class TestCondaRunner(unittest.TestCase):
     def tearDown(self):
         """Clean up after each test method."""
         # Remove the test conda environment if it exists
-        try:
+        with contextlib.suppress(Exception):
             delete_conda_env(self.test_env_name)
-        except:
-            pass
 
         # Remove the temporary directory
         shutil.rmtree(self.test_dir, ignore_errors=True)

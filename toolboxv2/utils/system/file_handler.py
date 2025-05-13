@@ -108,7 +108,7 @@ class FileHandler(Code):
                 )
             )
             return False
-        if key not in self.file_handler_load.keys():
+        if key not in self.file_handler_load:
             if key in self.file_handler_key_mapper:
                 key = self.file_handler_key_mapper[key]
 
@@ -120,9 +120,9 @@ class FileHandler(Code):
         if key == 'Pka7237327':
             print("Cant remove Root Key")
             return
-        if key in self.file_handler_load.keys():
+        if key in self.file_handler_load:
             del self.file_handler_load[key]
-        if key in self.file_handler_save.keys():
+        if key in self.file_handler_save:
             del self.file_handler_save[key]
 
     def load_file_handler(self):
@@ -163,7 +163,7 @@ class FileHandler(Code):
 
     def get_file_handler(self, obj: str, default=None) -> str or None:
         logger = get_logger()
-        if obj not in self.file_handler_load.keys():
+        if obj not in self.file_handler_load:
             if obj in self.file_handler_key_mapper:
                 obj = self.file_handler_key_mapper[obj]
         logger.info(Style.ITALIC(Style.GREY(f"Collecting data from storage key : {obj}")))

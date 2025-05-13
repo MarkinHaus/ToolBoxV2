@@ -24,15 +24,13 @@ class ForwardForwardModel(keras.Model):
         """
         input_dim should include the extra label dimensions (e.g. 784+10 for MNIST)
         """
-        super(ForwardForwardModel, self).__init__()
+        super().__init__()
         self.threshold = threshold
         self.ff_layers = []
         # Build hidden layers
-        prev_dim = input_dim
         for h in hidden_dims:
             self.ff_layers.append(layers.Dense(h, activation='relu'))
             self.ff_layers.append(layers.LayerNormalization())
-            prev_dim = h
         # Final layer (linear output; the network is trained with a local objective)
         self.ff_layers.append(layers.Dense(output_dim))
 
@@ -142,7 +140,7 @@ class LiquidStateMachine(layers.Layer):
         threshold: spiking threshold
         connectivity: probability of a connection in the recurrent weight matrix
         """
-        super(LiquidStateMachine, self).__init__()
+        super().__init__()
         self.input_dim = input_dim
         self.reservoir_size = reservoir_size
         self.time_steps = time_steps
@@ -194,7 +192,7 @@ class LiquidStateMachine(layers.Layer):
 # Define an SNN model that uses Poisson encoding, the LSM, and a trainable readout.
 class SNNModel(keras.Model):
     def __init__(self, input_dim, reservoir_size, time_steps, num_classes):
-        super(SNNModel, self).__init__()
+        super().__init__()
         self.time_steps = time_steps
         self.lsm = LiquidStateMachine(input_dim, reservoir_size, time_steps)
         self.readout = layers.Dense(num_classes)  # only the readout is trainable
@@ -216,7 +214,7 @@ class SNNModel(keras.Model):
 # to the LSM reservoir. Finally, a second FF layer acts as the readout.
 class CombinedModel(keras.Model):
     def __init__(self, input_dim, ff_hidden_dim, reservoir_size, time_steps, num_classes):
-        super(CombinedModel, self).__init__()
+        super().__init__()
         self.ff_pre = layers.Dense(ff_hidden_dim, activation='relu')
         self.lsm = LiquidStateMachine(ff_hidden_dim, reservoir_size, time_steps)
         self.ff_post = layers.Dense(num_classes)

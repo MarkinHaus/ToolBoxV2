@@ -162,7 +162,7 @@ class MVPPipeline:
         """Save generated files to disk"""
         try:
             # Create directories_files
-            for dir_type, paths in structure.directories_files.items():
+            for _dir_type, paths in structure.directories_files.items():
                 for path in paths:
                     full_path = os.path.join('data', structure.root_dir, path)
                     os.makedirs(full_path, exist_ok=True)
@@ -243,7 +243,7 @@ async def run_tests(test_files: list[CodeFile], impl_files: list[CodeFile]) -> l
             return results
 
     except FileNotFoundError as e:
-        raise Exception(f"pytest not found. Please install pytest and pytest-json-report : {str(e)}")
+        raise FileNotFoundError(f"pytest not found. Please install pytest and pytest-json-report : {str(e)}")
     except Exception as e:
         raise Exception(f"Error running tests: {str(e)}")
 
