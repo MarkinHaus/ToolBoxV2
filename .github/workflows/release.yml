@@ -58,7 +58,7 @@ jobs:
           python -m pip install "$WHEEL_FILE"
 
       - name: Run tests
-        run: python -m tb --test -n test
+        run: tb --test -n test
 
   pypi-publish:
       name: Upload Release to PyPI
