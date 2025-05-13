@@ -33,20 +33,26 @@ TEMP_CHECK_OUTPUT_DIR="$GIT_DIR_TOPLEVEL/tmp_check_outputs"
 # Args: $1: Command string, $2: Check Name, $3: Temp output file base
 run_single_check_and_store() {
   _cmd="$1"
-  _name="$2"
-  _output_base="$3" # e.g., $TEMP_CHECK_OUTPUT_DIR/$_name
+  _name="$2" # Check name (e.g., "Ruff Linter & Security")
+  _output_base_path="$3" # FULL base path (e.g., $TEMP_CHECK_OUTPUT_DIR/Ruff Linter & Security)
 
   echo "[check-runner] Running $_name..."
-  # Using 'sh -c' for eval-like behavior but slightly more contained for simple commands
-  # If commands are complex with pipes, etc., 'eval' might be needed, or structure them differently.
-  # For now, assuming simple commands or commands that handle their own complexity.
+  echo "[check-runner] CMD: [$_cmd]"
+  echo "[check-runner] Output base path: [$_output_base_path]" # DEBUG
+
+  # Create directory for the output files if _name contains slashes (though unlikely here)
+  # dirname_output_base_path=$(dirname "$_output_base_path")
+  # mkdir -p "$dirname_output_base_path" # Usually $TEMP_CHECK_OUTPUT_DIR is already created
+
   output_content=$(sh -c "$_cmd" 2>&1)
   _exit_code=$?
 
-  echo "$output_content" > "${_output_base}.output"
-  echo "$_exit_code" > "${_output_base}.exitcode"
+  echo "$output_content" > "${_output_base_path}.output"
+  if [ $? -ne 0 ]; then echo "ERROR writing to ${_output_base_path}.output" >&2; fi
 
-  # Return the exit code of the check
+  echo "$_exit_code" > "${_output_base_path}.exitcode"
+  if [ $? -ne 0 ]; then echo "ERROR writing to ${_output_base_path}.exitcode" >&2; fi
+
   return $_exit_code
 }
 
