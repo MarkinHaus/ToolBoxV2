@@ -66,9 +66,9 @@ This is the recommended method for most users on **Linux, macOS, and Windows (vi
 1.  **Download the installer:**
     ```bash
     # Using curl
-    curl -sSL -o install_toolbox.sh https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/installer.sh
+    curl -sSL -o install_toolbox.sh https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/installer.sh
     # Or using wget
-    wget -qO install_toolbox.sh https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/installer.sh
+    wget -qO install_toolbox.sh https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/installer.sh
     ```
 2.  **Make it executable:**
     ```bash
@@ -103,7 +103,7 @@ For users who prefer to manage their Python environments manually.
 
 **Using `pip`:**
 ```bash
-    # Ensure you have Python 3.9+ and pip installed
+    # Ensure you have Python 3.11 and pip installed
     # Recommended: Create and activate a virtual environment first!
     # python -m venv .venv && source .venv/bin/activate
 
@@ -114,10 +114,6 @@ For users who prefer to manage their Python environments manually.
 
 **Using `uv` (a fast Python package installer & resolver):**
 ```bash
-    # Ensure you have uv installed (pip install uv)
-    # Recommended: Create and activate a virtual environment first!
-    # python -m venv .venv && uv -e .venv # (or use uv venv)
-    # source .venv/bin/activate
 
     uv pip install ToolBoxV2
     # To install with optional extras:
@@ -231,7 +227,6 @@ ToolBoxV2 can be used to build a wide range of applications, including:
 *   [🐙 GitHub Repository](https://github.com/MarkinHaus/ToolBoxV2)
 
 ---
-![image.png](docs/image.png)
 ## 📄 License
 
 This project is distributed under a custom license. Please refer to the [LICENSE](./LICENSE) file in the repository for detailed terms and conditions.
