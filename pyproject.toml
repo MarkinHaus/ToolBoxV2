@@ -54,7 +54,14 @@ dev-dependencies = [
     "Faker",
     "playwright",
     "radon",
-    "setuptools"
+    "setuptools",
+    "mkdocs-material>=9.6.13",
+    "mkdocs>=1.6.1",
+    "mkdocstrings[python]>=0.29.1",
+    "mkdocstrings-python-legacy>=0.2.6",
+    "mkdocs-git-revision-date-plugin>=0.3.2",
+    "mkdocs-jupyter>=0.25.1",
+    "ipykernel>=6.29.5",
 ]
 
 [tool.uv.workspace]
