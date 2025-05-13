@@ -43,5 +43,5 @@ nav:
     -   Changelog: changelog.md
     -   Report Issues: https://github.com/MarkinHaus/ToolBoxV2/issues
     -   API Reference:
-            -   toolboxv2 module: toolboxv2.md
+            -   toolboxv2: toolboxv2.md
             -   utils: utils.md
