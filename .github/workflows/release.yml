@@ -2,7 +2,7 @@ name: Release Flow
 
 on:
   release:
-    types: [published, created]
+    types: [published, created, prereleased]
 
 jobs:
   build:
