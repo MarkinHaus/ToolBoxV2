@@ -26,8 +26,17 @@ install_requires = [x.strip() for x in all_reqs if "git+" not in x]
 dependency_links = [x.strip().replace("git+", "") for x in all_reqs if "git+" not in x]
 
 
-with io.open(path.join(here, "requirements_dev.txt"), encoding="utf-8") as f:
-    all_reqs = f.read().split("\n")
+all_reqs = """fastapi
+starlette
+webauthn
+mailjet_rest
+redis
+watchfiles
+SQLAlchemy
+Faker
+playwright
+radon
+setuptools""".split("\n")
 
 install_requires_dev = [x.strip() for x in all_reqs if "git+" not in x]
 all_reqs = """langchain-experimental

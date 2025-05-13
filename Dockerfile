@@ -46,9 +46,6 @@ COPY ./toolboxv2/index.js ./toolboxv2/index.js
 COPY ./toolboxv2/package.json ./toolboxv2/package.json
 COPY ./toolboxv2/tbState.yaml ./toolboxv2/tbState.yaml
 COPY ./toolboxv2/toolbox.yaml ./toolboxv2/toolbox.yaml
-# COPY ./toolboxv2/mods_sto ./toolboxv2/mods_sto
-COPY ./requirements_dev.txt ./requirements_dev.txt
-COPY ./requirements_isaa.txt ./requirements_isaa.txt
 
 # Install the local application using pip.
 
@@ -56,7 +53,7 @@ COPY ./requirements_isaa.txt ./requirements_isaa.txt
 RUN npm install --prefix ./toolboxv2/web/
 RUN npm install --save-dev webpack-merge --prefix ./toolboxv2/web
 
-RUN pip install -e .[dev]
+RUN pip install -e .[isaa]
 # Expose the port that the application listens on.
 
 EXPOSE 5000/tcp
@@ -76,4 +73,4 @@ EXPOSE 17334/udp
 
 
 # Run the application.
-CMD tb -fg -c FastApi start main -p 5000 -w 0.0.0.0 -m idle
+CMD tb api start

@@ -70,7 +70,32 @@ jobs:
           cargo build --release
           cargo test
 
+  check-tauri:
+    runs-on: ubuntu-latest
+    outputs:
+        should_build: ${{ steps.eval.outputs.should_build }}
+    steps:
+      -   uses: actions/checkout@v4
+      -   name: Get release commit message
+          id: commit_msg
+          run: |
+              tag_sha=$(git rev-list -n 1 ${{ github.event.release.tag_name }})
+              message=$(git log -1 --pretty=%B "$tag_sha")
+              echo "commit_message=$message" >> $GITHUB_OUTPUT
+
+      -   name: Evaluate Tauri flag
+          id: eval
+          run: |
+              msg="${{ steps.commit_msg.outputs.commit_message }}"
+              if echo "$msg" | grep -qi "Tauri=True"; then
+                echo "should_build=true" >> $GITHUB_OUTPUT
+              else
+                echo "should_build=false" >> $GITHUB_OUTPUT
+              fi
+
   publish-tauri:
+    needs: check-tauri
+    if: ${{ needs.check-tauri.outputs.should_build == 'true' }}
     name: Build Tauri App
     permissions:
       contents: write

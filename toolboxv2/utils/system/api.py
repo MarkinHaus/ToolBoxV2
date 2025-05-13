@@ -172,6 +172,8 @@ def run_executable(file_path):
         subprocess.run([os.path.abspath(file_path)], check=True)
     except subprocess.CalledProcessError as e:
         print(f"Failed to execute {file_path}: {e}")
+    except KeyboardInterrupt:
+        print("Exiting call from:", file_path)
 
 
 def check_and_run_local_release(do_run=True):
@@ -845,9 +847,8 @@ def cli_api_runner():
         help="Version string for logging and update tracking."
     )
     print("hey")
-    if 'tb' in sys.argv[0] and len(sys.argv) < 3:
+    if 'tb' in sys.argv[0] and len(sys.argv) < 2:
         sys.argv.append("help")
-    print(sys.argv)
     args = parser.parse_args()
     print(args.action, "sdad")
     if args.action == "help":
