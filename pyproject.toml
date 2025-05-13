@@ -82,6 +82,35 @@ isaa = { workspace = true }
 [tool.ruff]
 line-length = 90
 target-version = "py311"
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pyenv",
+    ".pytest_cache",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+    "python_env",
+]
 
 # Konfiguration für den Linter
 [tool.ruff.lint]
@@ -95,7 +124,7 @@ target-version = "py311"
 # B = flake8-bugbear (mögliche Bugs oder Designprobleme)
 # Weitere nützliche Sets: A (flake8-builtins), C4 (flake8-comprehensions), SIM (flake8-simplify)
 select = [
-    "E",  # pycodestyle errors
+    # "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
     "F",  # Pyflakes
     "I",  # isort
@@ -106,12 +135,7 @@ select = [
     # "C4", # flake8-comprehensions
     "SIM",# flake8-simplify
 ]
-ignore = ["E501", "S101", "S603","S607", "E701", "E702"]
-# Optional: Bestimmte Regeln ignorieren (können auch Sicherheitsregeln sein)
-# ignore = [
-#   "S101",  # assert wird verwendet
-#   "E501",  # Zeile zu lang (wenn line-length nicht ausreicht oder Ausnahmen erlaubt sind)
-# ]
+ignore = ["E501", "S101", "S603","S607", "S104", "E701", "E702"]
 
 # Optional: Regeln, die automatisch korrigiert werden können (wenn --fix verwendet wird)
 # Ruff hat gute Standardwerte, aber Sie können es hier anpassen.

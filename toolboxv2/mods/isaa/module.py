@@ -27,7 +27,6 @@ from toolboxv2.mods.isaa.types import TaskChain
 from toolboxv2.utils.system import FileCache
 
 from ...utils.toolbox import stram_print
-from .CodingAgent.auto_runner import ProjectManager
 
 try:
     import gpt4all
@@ -1003,27 +1002,6 @@ class Tools(MainTool, FileHandler):
 
         return final_messages
 
-    async def code(self, project_name:str, task:str="", iterations:int=3):
-
-        if project_name not in self.coding_projects:
-            self.coding_projects[project_name] = ProjectManager(project_name, self.working_directory, self)
-            task = task if task else project_name.replace('_', ' ')
-        manager = self.coding_projects[project_name]
-        if iterations == 0:
-            return await manager.iterative_function_fixer(task=task)
-        elif iterations == 1:
-            return await manager.coding_step(task=task, iterations=iterations)
-        else:
-            return await manager.auto_coder(task=task, iterations=iterations)
-
-
-    async def code_add_data(self, project_name, data_name, date):
-        if project_name not in self.coding_projects:
-            self.coding_projects[project_name] = ProjectManager(project_name, self.working_directory, self)
-
-        await self.coding_projects[project_name].process_code_block(date, data_name)
-
-        return "ADDED"
 
     async def run_agent_in_environment(self, task,
                                  agent_or_name: (str or Agent) | None = None,
