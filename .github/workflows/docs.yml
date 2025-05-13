@@ -32,11 +32,11 @@ jobs:
             -   name: fix docs live
                 run: |
                     python -c "import pathlib; globals()['PosixPath'] = pathlib.PosixPath; import mkdocs.__main__" gh-deploy --force --verbose
-                    pip install mkdocs-material mkdocstrings mkdocstrings-python-legacy mkdocs-git-revision-date-plugin mkdocs-jupyter ipykernel
+                    pip install mkdocs-material mkdocs mkdocstrings[python] mkdocstrings-python-legacy mkdocs-git-revision-date-plugin mkdocs-jupyter ipykernel
             -   name: build --clean
                 run: |
                     python -c "import pathlib; globals()['PosixPath'] = pathlib.PosixPath; import mkdocs.__main__" gh-deploy --force --verbose
-                    mkdocs build --clean  --verbose
+                    mkdocs build --clean --verbose
             -   name: Deploy
                 uses: peaceiris/actions-gh-pages@v4
                 with:

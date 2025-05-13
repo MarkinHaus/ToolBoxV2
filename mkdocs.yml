@@ -8,7 +8,7 @@ repo_name: ToolBoxV2
 theme:
     palette:
         scheme: preference
-    name: mkdocs
+    name: material
     icon:
         repo: fontawesome/brands/github
     features:
@@ -25,6 +25,15 @@ markdown_extensions:
             linenums: true
     -   toc:
             permalink: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["toolboxv2"]
+
+
 nav:
     -   Home: index.md
     -   Installation: installation.md
