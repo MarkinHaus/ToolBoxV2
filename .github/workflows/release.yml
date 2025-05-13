@@ -56,7 +56,7 @@ jobs:
           pip install dist/*.whl
 
       - name: Run tests
-        run: pytest /toolboxv2/tests/
+        run: pytest ./toolboxv2/tests/
 
   pypi-publish:
       name: Upload Release to PyPI
@@ -94,31 +94,25 @@ jobs:
       -   name: Save Rust server binary
           run: |
               mkdir -p release-artifacts/bin
-              cp ./toolboxv2/src-core/target/release/toolbox-server release-artifacts/bin/
-
+              cp ./toolboxv2/src-core/target/release/simple-core-server release-artifacts/bin/
 
   check-tauri:
-    runs-on: ubuntu-latest
-    outputs:
+      runs-on: ubuntu-latest
+      outputs:
         should_build: ${{ steps.eval.outputs.should_build }}
-    steps:
-      -   uses: actions/checkout@v4
-      -   name: Get release commit message
-          id: commit_msg
-          run: |
-              tag_sha=$(git rev-list -n 1 ${{ github.event.release.tag_name }})
-              message=$(git log -1 --pretty=%B "$tag_sha")
-              echo "commit_message=$message" >> $GITHUB_OUTPUT
+      steps:
+        - uses: actions/checkout@v4
 
-      -   name: Evaluate Tauri flag
+        - name: Evaluate build flag from tag name
           id: eval
           run: |
-              msg="${{ steps.commit_msg.outputs.commit_message }}"
-              if echo "$msg" | grep -qi "Tauri=True"; then
-                echo "should_build=true" >> $GITHUB_OUTPUT
-              else
-                echo "should_build=false" >> $GITHUB_OUTPUT
-              fi
+            tag="${{ github.event.release.tag_name }}"
+            echo "Tag-Name: $tag"
+            if [[ "$tag" == *"App"* ]]; then
+              echo "should_build=true" >> $GITHUB_OUTPUT
+            else
+              echo "should_build=false" >> $GITHUB_OUTPUT
+            fi
 
   publish-tauri:
     needs: check-tauri
@@ -247,7 +241,7 @@ jobs:
                   files: |
                       Dockerfile
                       release-artifacts/toolboxv2-docker-image-${{ steps.version.outputs.version }}.tar
-                      release-artifacts/bin/toolbox-server
+                      release-artifacts/bin/simple-core-server
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -258,7 +252,7 @@ jobs:
                   name: docker-artifacts
                   path: |
                       release-artifacts/toolboxv2-docker-image-${{ steps.version.outputs.version }}.tar
-                      release-artifacts/bin/toolbox-server
+                      release-artifacts/bin/simple-core-server
   upload-assets:
     name: Upload Additional Assets to GitHub Release
     runs-on: ubuntu-latest
