@@ -1,7 +1,23 @@
 #!/bin/sh
 
-# GIT HOOK: prepare-commit-msg
-# ... (initial parts of the script up to sourcing common_quality_utils.sh) ...
+echo "--------------------------------------------------" >&2
+echo "prepare-commit-msg ARGS:" >&2
+echo "  \$1 (COMMIT_MSG_FILE): [$1]" >&2
+echo "  \$2 (COMMIT_SOURCE):   [$2]" >&2
+echo "  \$3 (SHA1):            [$3]" >&2
+echo "--------------------------------------------------" >&2
+
+COMMIT_MSG_FILE="$1"
+COMMIT_SOURCE="$2"
+# SHA1="$3" # Unused for now, but available
+
+# If COMMIT_MSG_FILE is empty, this hook cannot function. Exit.
+if [ -z "$COMMIT_MSG_FILE" ]; then
+    echo "CRITICAL ERROR in prepare-commit-msg: COMMIT_MSG_FILE (\$1) is empty. Aborting hook." >&2
+    exit 1 # Or exit 0 if you don't want to block the commit but just skip the hook.
+           # Exiting 1 is safer to indicate a problem.
+fi
+
 # Source the common utility functions
 HOOK_DIR=$(dirname "$0")
 # shellcheck source=./common_quality_utils.sh
@@ -12,28 +28,28 @@ else
   exit 1
 fi
 
-# --- Configuration (mostly from common_quality_utils.sh now, but placeholders are hook-specific) ---
-PLACEHOLDER_CHECKS_SUMMARY="<#>"      # Placeholder for check statuses
-PLACEHOLDER_AUTO_SUMMARY="<sum>"    # Placeholder for auto-generated summary
-APPEND_IF_NO_PLACEHOLDER_CHECKS=true # If true, append check summary if <#> not found
-APPEND_IF_NO_PLACEHOLDER_SUM=false   # If true, append auto-summary if <sum> not found
+# --- Configuration ---
+PLACEHOLDER_CHECKS_SUMMARY="<#>"
+PLACEHOLDER_AUTO_SUMMARY="<sum>"
+APPEND_IF_NO_PLACEHOLDER_CHECKS=true
+APPEND_IF_NO_PLACEHOLDER_SUM=false
 
 # --- Script State Variables ---
-ALL_CHECKS_OK=true          # Assume true initially
-ANY_CRITICAL_FAILED=false   # Assume false initially
-SUMMARY_LOG_MSG=""          # For building the summary text for the commit message
-VERSIONS_RAW_OUTPUT=""      # Initialize to avoid unbound variable errors later
-VERSIONS_EXIT_CODE=0        # Initialize
+ALL_CHECKS_OK=true
+ANY_CRITICAL_FAILED=false
+SUMMARY_LOG_MSG=""
+VERSIONS_RAW_OUTPUT=""
+VERSIONS_EXIT_CODE=0
 
 # --- Script Logic ---
 echo "[DEBUG prepare-commit-msg] Starting hook for source: '$COMMIT_SOURCE', file: '$COMMIT_MSG_FILE'"
 
 case "$COMMIT_SOURCE" in
-  message|template|"") # "" for -F option
+  message|template|"")
     echo "[DEBUG prepare-commit-msg] Proceeding for commit source: '$COMMIT_SOURCE'"
     ;;
   merge|squash|commit)
-    echo "[DEBUG prepare-commit-msg] Skipping modifications for commit source: '$COMMIT_SOURCE' (e.g. merge, squash, amend)"
+    echo "[DEBUG prepare-commit-msg] Skipping modifications for commit source: '$COMMIT_SOURCE'"
     cleanup_temp_check_outputs
     exit 0
     ;;
@@ -50,34 +66,42 @@ mkdir -p "$TEMP_CHECK_OUTPUT_DIR"
 if [ -z "$CHECKS_DEFINITIONS" ]; then
     echo "[DEBUG prepare-commit-msg] CHECKS_DEFINITIONS is empty. No checks to run." >&2
 else
-    echo "[DEBUG prepare-commit-msg] CHECKS_DEFINITIONS: [$CHECKS_DEFINITIONS]"
-    printf '%s\n' "$CHECKS_DEFINITIONS" | sed '/^[[:space:]]*$/d' | while IFS='|' read -r CMD_STR NAME_STR IS_CRITICAL_STR || [ -n "$CMD_STR" ]; do
-      CMD_STR_TRIMMED=$(echo "$CMD_STR" | awk '{$1=$1};1')
-      NAME_STR_TRIMMED=$(echo "$NAME_STR" | awk '{$1=$1};1')
-      IS_CRITICAL_TRIMMED=$(echo "$IS_CRITICAL_STR" | awk '{$1=$1};1')
+    echo "[DEBUG prepare-commit-msg] CHECKS_DEFINITIONS IS: [$CHECKS_DEFINITIONS]"
 
-      echo "[DEBUG prepare-commit-msg] Read Loop - CMD: [$CMD_STR_TRIMMED], NAME: [$NAME_STR_TRIMMED], CRITICAL: [$IS_CRITICAL_TRIMMED]"
+    INPUT_FOR_LOOP=$(printf '%s\n' "$CHECKS_DEFINITIONS" | sed '/^[[:space:]]*$/d')
+    echo "[DEBUG prepare-commit-msg] INPUT_FOR_LOOP after printf and sed: [$INPUT_FOR_LOOP]"
 
-      if [ -n "$CMD_STR_TRIMMED" ] && [ -n "$NAME_STR_TRIMMED" ]; then
-        run_single_check_and_store "$CMD_STR_TRIMMED" "$NAME_STR_TRIMMED" "$TEMP_CHECK_OUTPUT_DIR/$NAME_STR_TRIMMED"
-        check_exit_code=$?
-        echo "[DEBUG prepare-commit-msg] Check Ran: '$NAME_STR_TRIMMED', Exit: $check_exit_code"
+    if [ -z "$INPUT_FOR_LOOP" ]; then
+        echo "[DEBUG prepare-commit-msg] INPUT_FOR_LOOP is empty. Checks loop will not run."
+    else
+        echo "$INPUT_FOR_LOOP" | while IFS='|' read -r CMD_STR NAME_STR IS_CRITICAL_STR || [ -n "$CMD_STR" ]; do
+          CMD_STR_TRIMMED=$(echo "$CMD_STR" | awk '{$1=$1};1')
+          NAME_STR_TRIMMED=$(echo "$NAME_STR" | awk '{$1=$1};1')
+          IS_CRITICAL_TRIMMED=$(echo "$IS_CRITICAL_STR" | awk '{$1=$1};1')
 
-        if [ "$check_exit_code" -ne 0 ]; then
-          ALL_CHECKS_OK=false
-          SUMMARY_LOG_MSG="${SUMMARY_LOG_MSG}${SUMMARY_LOG_MSG:+, }$NAME_STR_TRIMMED❌"
-          if [ "$IS_CRITICAL_TRIMMED" = "true" ]; then
-            ANY_CRITICAL_FAILED=true
-            echo "[prepare-commit-msg] CRITICAL CHECK FAILED: $NAME_STR_TRIMMED" >&2
+          echo "[DEBUG prepare-commit-msg] Read Loop - CMD: [$CMD_STR_TRIMMED], NAME: [$NAME_STR_TRIMMED], CRITICAL: [$IS_CRITICAL_TRIMMED]"
+
+          if [ -n "$CMD_STR_TRIMMED" ] && [ -n "$NAME_STR_TRIMMED" ]; then
+            run_single_check_and_store "$CMD_STR_TRIMMED" "$NAME_STR_TRIMMED" "$TEMP_CHECK_OUTPUT_DIR/$NAME_STR_TRIMMED"
+            check_exit_code=$?
+            echo "[DEBUG prepare-commit-msg] Check Ran: '$NAME_STR_TRIMMED', Exit: $check_exit_code"
+
+            if [ "$check_exit_code" -ne 0 ]; then
+              ALL_CHECKS_OK=false
+              SUMMARY_LOG_MSG="${SUMMARY_LOG_MSG}${SUMMARY_LOG_MSG:+, }$NAME_STR_TRIMMED❌"
+              if [ "$IS_CRITICAL_TRIMMED" = "true" ]; then
+                ANY_CRITICAL_FAILED=true
+                echo "[prepare-commit-msg] CRITICAL CHECK FAILED: $NAME_STR_TRIMMED" >&2
+              fi
+            else
+              SUMMARY_LOG_MSG="${SUMMARY_LOG_MSG}${SUMMARY_LOG_MSG:+, }$NAME_STR_TRIMMED✅"
+            fi
+          else
+              echo "[DEBUG prepare-commit-msg] Skipped check processing due to empty CMD_STR_TRIMMED or NAME_STR_TRIMMED."
           fi
-        else
-          SUMMARY_LOG_MSG="${SUMMARY_LOG_MSG}${SUMMARY_LOG_MSG:+, }$NAME_STR_TRIMMED✅"
-        fi
-      else
-          echo "[DEBUG prepare-commit-msg] Skipped check processing due to empty CMD_STR_TRIMMED or NAME_STR_TRIMMED."
-      fi
-      echo "[DEBUG prepare-commit-msg] Intermediate SUMMARY_LOG_MSG: [$SUMMARY_LOG_MSG]"
-    done
+          echo "[DEBUG prepare-commit-msg] Intermediate SUMMARY_LOG_MSG: [$SUMMARY_LOG_MSG]"
+        done
+    fi
 fi
 
 # --- Run Versions Check ---
@@ -85,20 +109,16 @@ if [ -n "$VERSIONS_CMD" ]; then
     echo "[DEBUG prepare-commit-msg] Running Versions Check ($VERSIONS_CMD)..."
     VERSIONS_RAW_OUTPUT=$($VERSIONS_CMD 2>&1)
     VERSIONS_EXIT_CODE=$?
-    echo "[DEBUG prepare-commit-msg] VERSIONS_RAW_OUTPUT variable content: [$VERSIONS_RAW_OUTPUT]" # Added this
+    echo "[DEBUG prepare-commit-msg] VERSIONS_RAW_OUTPUT variable content: [$VERSIONS_RAW_OUTPUT]"
     echo "[DEBUG prepare-commit-msg] Versions Exit Code: $VERSIONS_EXIT_CODE"
 
     echo "$VERSIONS_RAW_OUTPUT" > "$TEMP_CHECK_OUTPUT_DIR/Versions.output"
     echo "$VERSIONS_EXIT_CODE" > "$TEMP_CHECK_OUTPUT_DIR/Versions.exitcode"
 
-    echo "[DEBUG prepare-commit-msg] Content of $TEMP_CHECK_OUTPUT_DIR/Versions.output IS:" # Added this block
+    echo "[DEBUG prepare-commit-msg] Content of $TEMP_CHECK_OUTPUT_DIR/Versions.output IS:"
     cat "$TEMP_CHECK_OUTPUT_DIR/Versions.output"
     echo "[DEBUG prepare-commit-msg] --- END OF Versions.output ---"
 
-    # IMPORTANT: Use the content from the file for parsing if variable might be incomplete
-    # However, for consistency, let's first ensure VERSIONS_RAW_OUTPUT is correctly populated.
-    # If it's confirmed empty while file has content, then we might need to read from file here.
-    # For now, assume $VERSIONS_RAW_OUTPUT *should* be the source of truth.
     VERSIONS_SUMMARY_PART_TEXT=$(get_versions_summary_part "$VERSIONS_RAW_OUTPUT")
     echo "[DEBUG prepare-commit-msg] Parsed Versions Summary (from VERSIONS_RAW_OUTPUT var): [$VERSIONS_SUMMARY_PART_TEXT]"
 
@@ -120,7 +140,7 @@ fi
 echo "[DEBUG prepare-commit-msg] Final SUMMARY_LOG_MSG before cleaning: [$SUMMARY_LOG_MSG]"
 
 # --- Update Commit Message File ---
-ORIGINAL_MSG_CONTENT=$(cat "$COMMIT_MSG_FILE")
+ORIGINAL_MSG_CONTENT=$(cat "$COMMIT_MSG_FILE") # This will fail if $COMMIT_MSG_FILE is empty
 NEW_MSG_CONTENT="$ORIGINAL_MSG_CONTENT"
 echo "[DEBUG prepare-commit-msg] Original commit message content: [$ORIGINAL_MSG_CONTENT]"
 
@@ -130,7 +150,6 @@ echo "[DEBUG prepare-commit-msg] CLEANED_SUMMARY_LOG_MSG: [$CLEANED_SUMMARY_LOG_
 ESCAPED_SUMMARY_FOR_SED=$(escape_for_sed "$CLEANED_SUMMARY_LOG_MSG")
 echo "[DEBUG prepare-commit-msg] ESCAPED_SUMMARY_FOR_SED: [$ESCAPED_SUMMARY_FOR_SED]"
 
-# Check the variable $NEW_MSG_CONTENT for the placeholder
 if echo "$NEW_MSG_CONTENT" | grep -qF "$PLACEHOLDER_CHECKS_SUMMARY"; then
   echo "[DEBUG prepare-commit-msg] Found placeholder '$PLACEHOLDER_CHECKS_SUMMARY' in NEW_MSG_CONTENT. Replacing."
   NEW_MSG_CONTENT=$(echo "$NEW_MSG_CONTENT" | sed "s|$PLACEHOLDER_CHECKS_SUMMARY|$ESCAPED_SUMMARY_FOR_SED|g")
@@ -142,7 +161,6 @@ else
 fi
 echo "[DEBUG prepare-commit-msg] NEW_MSG_CONTENT after <#> processing: [$NEW_MSG_CONTENT]"
 
-# Check the variable $NEW_MSG_CONTENT for the placeholder
 if [ -n "$AUTO_SUMMARY_CMD" ] && (echo "$NEW_MSG_CONTENT" | grep -qF "$PLACEHOLDER_AUTO_SUMMARY"); then
   if [ "$ALL_CHECKS_OK" = true ]; then
     echo "[DEBUG prepare-commit-msg] All checks passed. Generating auto-summary using '$AUTO_SUMMARY_CMD'..."
@@ -171,7 +189,6 @@ else
 fi
 echo "[DEBUG prepare-commit-msg] NEW_MSG_CONTENT after <sum> processing: [$NEW_MSG_CONTENT]"
 
-# ... (rest of the script: Write changes back, Final Decision) ...
 if [ "$NEW_MSG_CONTENT" != "$ORIGINAL_MSG_CONTENT" ]; then
   echo "[DEBUG prepare-commit-msg] Modifying commit message in $COMMIT_MSG_FILE."
   if [ -n "$NEW_MSG_CONTENT" ]; then

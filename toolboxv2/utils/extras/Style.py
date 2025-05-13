@@ -516,8 +516,11 @@ class SpinnerManager(metaclass=Singleton):
                         render_line += f" [{secondary_info}]"
 
                     # Clear line and write.
-                    sys.stdout.write("\r" + render_line + "\033[K")
-                    sys.stdout.flush()
+                    try:
+                        sys.stdout.write("\r" + render_line + "\033[K")
+                        sys.stdout.flush()
+                    except Exception:
+                        self._should_run = False
 
             time.sleep(0.1)  # Render interval.
 
