@@ -18,4 +18,4 @@ duration_minutes = 3600
 
 
 [env]
-PYO3_PYTHON={value = ".\\python_env\\python.exe" , relative = false, force = true }
+PYO3_PYTHON={value = "python3" , relative = false, force = true }

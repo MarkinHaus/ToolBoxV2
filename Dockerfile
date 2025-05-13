@@ -24,7 +24,7 @@ COPY ./toolboxv2/index.html ./toolboxv2/index.html
 COPY ./toolboxv2/index.js ./toolboxv2/index.js
 COPY ./toolboxv2/package.json ./toolboxv2/package.json
 COPY ./toolboxv2/src-core/src ./toolboxv2/src-core/src
-COPY ./toolboxv2/src-core/config.toml ./toolboxv2/src-core/config.toml
+COPY ./toolboxv2/src-core/config_template.toml ./toolboxv2/src-core/config.toml
 COPY ./toolboxv2/src-core/Cargo.toml ./toolboxv2/src-core/Cargo.toml
 
 # JS deps (cached if package.json unchanged)

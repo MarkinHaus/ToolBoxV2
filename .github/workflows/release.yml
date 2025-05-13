@@ -62,7 +62,7 @@ jobs:
 
       - name: Install from dist (core)
         run: |
-          WHEEL_FILE=$(ls dist/*.whl)
+          WHEEL_FILE=$(ls dist/*.tar.gz)
           echo "Installing $WHEEL_FILE (core)"
           python -m pip install "$WHEEL_FILE"[isaa]
 
