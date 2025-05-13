@@ -7,7 +7,6 @@ numpy
 tiktoken
 chromadb
 openai
-pyaudio
 whisper
 gtts
 pydub
