@@ -23,8 +23,8 @@ jobs:
                   pip install --user --no-cache-dir Cython
           -   name: Install toolboxv2 with ISAA
               run: |
-                  python -m uv pip install -e toolboxv2/mods/isaa --user
-                  python -m uv pip install . --user
+                  python -m uv pip install -e toolboxv2/mods/isaa --system
+                  python -m uv pip install . --system
               working-directory: ${{ github.workspace }}
           -   name: PKG-TEST
               run: |
@@ -67,7 +67,7 @@ jobs:
         run: |
           WHEEL_FILE=$(ls dist/*.tar.gz)
           echo "Installing $WHEEL_FILE (core)"
-          python -m uv pip install "$WHEEL_FILE"[isaa]
+          python -m uv pip install "$WHEEL_FILE"[isaa] --system
 
       - name: Run tests
         run: tb --test -n test
