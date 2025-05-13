@@ -11,7 +11,7 @@ A flexible modular framework for tools, functions, and complete applications –
 
 ToolBoxV2 combines a Python backend library with a Rust web/desktop server (Actix) and a cross-platform UI framework (Tauri + tbjs). This architecture enables the creation of versatile applications accessible through various interfaces.
 
-![ToolBoxV2 Architecture](architecture-diagram.svg)
+![ToolBoxV2 Architecture](https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/architecture-diagram.svg)
 
 ---
 
