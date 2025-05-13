@@ -65,7 +65,6 @@ get_versions_summary_part() {
       /------------------ Version ------------------/ { in_version_block = 1; next }
       in_version_block && (/^Building State data:/ || /^working on/) { in_version_block = 0; exit }
       in_version_block { print }
-'
   '
 }
 
