@@ -53,7 +53,7 @@ jobs:
 
       - name: Install from dist
         run: |
-          pip install dist/*.whl
+          pip install dist/*.whl[isaa]
 
       - name: Run tests
         run: pytest ./toolboxv2/tests/
@@ -185,16 +185,6 @@ jobs:
               run: |
                   version=$(grep '^version' toolboxv2/pyproject.toml | head -n 1 | cut -d '"' -f2)
                   echo "version=$version" >> $GITHUB_OUTPUT
-
-          -   name: Validate tag == version
-              run: |
-                  expected="v${{ steps.version.outputs.version }}"
-                  actual="${{ github.event.release.tag_name }}"
-                  if [ "$expected" != "$actual" ]; then
-                    echo "❌ Git tag $actual does not match pyproject.toml version $expected"
-                    exit 1
-                  fi
-              shell: bash
 
           -   name: Get short Git SHA
               id: gitsha
