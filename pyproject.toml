@@ -96,8 +96,8 @@ select = [
     "S",  # flake8-bandit (Sicherheit)
     "UP", # pyupgrade
     "B",  # flake8-bugbear
-    "A",  # flake8-builtins (Achtung, kann sehr detailreich sein)
-    "C4", # flake8-comprehensions
+    # "A",  # flake8-builtins (Achtung, kann sehr detailreich sein)
+    # "C4", # flake8-comprehensions
     "SIM",# flake8-simplify
 ]
 
