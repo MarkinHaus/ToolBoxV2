@@ -3,9 +3,7 @@ cachetools
 cryptography
 fastapi
 python-dotenv
-fuzzywuzzy
 ipython
-networkx
 numpy
 packaging
 PyYAML
@@ -13,9 +11,7 @@ qrcode
 radon
 reedsolo
 Requests
-scikit_learn
 tqdm
-transformers
 watchfiles
 PyJWT
 webauthn

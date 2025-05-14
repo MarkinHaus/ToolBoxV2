@@ -60,7 +60,7 @@ command_exists() { command -v "$1" &>/dev/null; }
 # Default values
 DEFAULT_TB_VERSION="latest"
 DEFAULT_INSTALL_SOURCE="pip" # git, pip
-DEFAULT_PKG_MANAGER="uv"    # pip, uv, poetry
+DEFAULT_PKG_MANAGER="pip"    # pip, uv, poetry
 DEFAULT_ENV_MANAGER="venv"   # venv (native)
 DEFAULT_PYTHON_VERSION_TARGET="3.11"
 DEFAULT_ISAA_EXTRA="false"
