@@ -705,9 +705,9 @@ step_07_finalize_installation() {
     # ... (same as v2.0.0) ...
     log_title "${E_PARTY} Step 7: Finalizing Installation"
     if [[ -z "$TB_CMD_FOR_INIT" ]]; then log_error "Path to 'tb' command for initialization is not set."; fi
-    log_info "Running ToolBoxV2 initialization: ${C_CYAN}$TB_CMD_FOR_INIT -init${C_RESET}"
-    if "$TB_CMD_FOR_INIT" -init; then log_success "ToolBoxV2 initialized successfully!"; else
-        log_error "ToolBoxV2 initialization failed. Please try running '${C_CYAN}$TB_CMD_FOR_INIT -init${C_RESET}' manually."; fi
+    log_info "Running ToolBoxV2 initialization: ${C_CYAN}$TB_CMD_FOR_INIT -init main${C_RESET}"
+    if "$TB_CMD_FOR_INIT" -init main; then log_success "ToolBoxV2 initialized successfully!"; else
+        log_error "ToolBoxV2 initialization failed. Please try running '${C_CYAN}$TB_CMD_FOR_INIT -init main${C_RESET}' manually."; fi
 }
 
 
