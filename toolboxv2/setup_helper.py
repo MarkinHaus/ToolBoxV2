@@ -38,6 +38,8 @@ def ask_choice(prompt, choices):
         print("Ungültige Auswahl.")
 
 def select_mode():
+    print("Dev - build local - installing cargo and node")
+    print("User - install pre build's server and app")
     return ask_choice("Wähle den Modus:", ["dev", "user"])
 
 def select_python_interpreter():
@@ -60,7 +62,14 @@ def setup_uv_api_env():
 
 def install_dev_tools():
     print("🔧 Installiere Dev-Tools...")
-    install_tools_parallel(["cargo", "node", "docker"], max_threads=3)
+    d = ["cargo", "node"]
+    if a := input("With docker (N/y)"):
+        if a.lower() == 'y':
+            d.append("docker")
+    for _d in d.copy():
+        if is_installed(_d):
+            d.remove(_d)
+    install_tools_parallel(d, max_threads=3)
 
 # === Platform groups ===
 PLATFORMS = {
@@ -173,6 +182,7 @@ def install_tools_parallel(tools, max_threads=3):
 def install_all_npm_deps():
     print("📦 Installiere npm-Abhängigkeiten...")
     from toolboxv2 import cwd as _cwd
+    print("Location : ", _cwd) # TODO: Loaction error
     tb_root = _cwd
     web_dir = os.path.join(tb_root, "web")
 
