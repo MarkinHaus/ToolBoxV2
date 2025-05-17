@@ -1,0 +1,45 @@
+/* tbjs/src/styles/tbjs-main.css */
+@import "tailwindcss/utilities";
+
+/* Optionale tbjs-spezifische Basis-Styles oder Komponenten-Layer hier */
+/* Definiere hier die CSS-Variablen für deine Farbpalette,
+   damit sie von der App überschrieben werden können, falls gewünscht. */
+:root {
+  --tb-color-primary-50: #eff6ff;
+  --tb-color-primary-100: #dbeafe;
+  /* ... alle primären Farben ... */
+  --tb-color-primary-500: #3b82f6;
+  --tb-color-primary-600: #2563eb;
+  --tb-color-primary-700: #1d4ed8;
+
+  --tb-color-background: #ffffff;
+  --tb-color-text: #1f2937; /* gray-800 */
+  --tb-color-border: #e5e7eb; /* gray-200 */
+  --tb-color-accent: var(--tb-color-primary-600);
+}
+
+html.dark { /* Oder data-theme="dark" wenn du das Attribut nutzt */
+  --tb-color-background: #1f2937; /* gray-800 */
+  --tb-color-text: #f3f4f6;       /* gray-100 */
+  --tb-color-border: #4b5563;     /* gray-600 */
+}
+
+
+/* Beispiel für einen globalen tbjs-Komponenten-Style, wenn nötig */
+/* .tb-button-custom { ... } */
+
+/* Styles für Komponenten, die nicht rein mit Tailwind gehen, z.B. der Loader-Spinner */
+/* Diese sollten idealerweise auch mit dem `tb-` Präfix versehen werden. */
+/* Beispiel aus Loader.js (angepasst mit tb- Präfix) */
+.tb-loader-spinner-default {
+    width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.3); /* Farbe anpassen für Themen */
+    border-top-color: var(--tb-color-primary-500); /* Nutzt deine Theme-Farbe */
+    border-radius: 50%; animation: tbjs_spin 1s linear infinite;
+}
+html.dark .tb-loader-spinner-default {
+    border-top-color: var(--tb-color-primary-500); /* Kann gleich bleiben oder angepasst werden */
+    border-color: rgba(255,255,255,0.2); /* Dunklerer transparenter Rand */
+}
+
+/* Sicherstellen, dass die Animation definiert ist */
+@keyframes tbjs_spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }

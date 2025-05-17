@@ -1,0 +1,46 @@
+{
+  "name": "tbjs",
+  "version": "0.1.0",
+  "description": "A mini frontend framework for ToolBoxV2",
+  "main": "dist/tbjs.js",
+  "style": "dist/tbjs.css",
+  "type": "module",
+  "scripts": {
+    "build": "webpack --mode production",
+    "dev": "webpack --mode development --watch",
+    "lint": "eslint src/**/*.js"
+  },
+  "keywords": [
+    "framework",
+    "frontend",
+    "toolboxv2"
+  ],
+  "author": "Markin Hausmanns",
+  "license": "MIT",
+  "devDependencies": {
+    "@babel/core": "^7.20.0",
+    "@babel/preset-env": "^7.20.0",
+    "babel-loader": "^9.0.0",
+    "clean-webpack-plugin": "^4.0.0",
+    "css-loader": "^7.1.0",
+    "eslint": "^8.0.0",
+    "mini-css-extract-plugin": "^2.7.0",
+    "postcss": "^8.4.0",
+    "postcss-loader": "^7.0.0",
+    "postcss-preset-env": "^9.0.0",
+    "webpack": "^5.80.0",
+    "webpack-cli": "^5.0.0",
+    "@tailwindcss/cli": "^4.1.7",
+    "tailwindcss": "^4.1.7"
+  },
+  "peerDependencies": {
+    "htmx.org": "^2.0.0",
+    "three": "^0.153.0"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+
+  }
+}

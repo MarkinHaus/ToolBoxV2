@@ -193,7 +193,7 @@ class App(AppType, metaclass=Singleton):
     def get_username(self, get_input=False, default="loot") -> str:
         user_name = self.config_fh.get_file_handler("ac_user:::")
         if get_input and user_name is None:
-            user_name = input("Input your username\nbe sure to make no typos: ")
+            user_name = input("Input your username: ")
             self.config_fh.add_to_save_file_handler("ac_user:::", user_name)
         if user_name is None:
             user_name = default
