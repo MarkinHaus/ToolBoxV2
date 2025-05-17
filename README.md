@@ -85,11 +85,12 @@ This is the recommended method for most users on **Linux, macOS, and Windows (vi
     *   ✅ Create an isolated environment for ToolBoxV2 (usually in `~/.local/share/ToolBoxV2` or `~/Applications/ToolBoxV2`).
     *   ✅ Install ToolBoxV2 Core using `pip` by default.
     *   ✅ Expose the `tb` command (usually via a symlink in `~/.local/bin/`).
-    *   🎉 Run `tb -init` to finalize setup.
+    *   🎉 Run `tb -init main` to finalize setup.
 
     **Customization:**
     The script accepts optional arguments (e.g., `--version=0.5.0`, `--source=git`, `--manager=uv`, `--isaa`, `--dev`). If no arguments are given, it looks for an `init.config` file in the same directory. For details, run:
     ```bash
+
     ./install_toolbox.sh --help
     ```
 
@@ -122,7 +123,7 @@ For users who prefer to manage their Python environments manually.
 
 After installation with pip or uv, you may need to initialize ToolBoxV2 manually:
 ```bash
-    tb -init
+    tb -init main
 ```
 Ensure the directory containing the `tb` script (e.g., `~/.local/bin` for user installs, or your venv's `bin` directory) is in your system's `PATH`.
 
@@ -163,7 +164,7 @@ If you want to contribute or use the very latest (potentially unstable) code:
     bash .github/hooks/setup_hooks.sh
 
     # Initialize ToolBoxV2
-    tb -init
+    tb -init main
 ```
 
 ---

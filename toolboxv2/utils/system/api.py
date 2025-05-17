@@ -187,8 +187,7 @@ def check_and_run_local_release(do_run=True):
         release_path = os.path.join(src_core_path, expected_name)
         if os.path.isfile(release_path):
             print("Found pre-built release executable.")
-            run_executable(release_path)
-            return True
+            return release_path if not do_run else run_executable(release_path)
         release_path = os.path.join(src_core_path, "target", "release", expected_name)
         if os.path.isfile(release_path):
             print("Found pre-built release executable.")
@@ -447,7 +446,7 @@ def main_api_runner(debug=False, run=True):
             return None
 
         # After successful build, try running the release executable again
-        if exe :=  check_and_run_local_release(run):
+        if exe := check_and_run_local_release(run):
             return exe
 
         print("Release executable missing even after build.")
@@ -720,7 +719,7 @@ def manage_server(action: str, executable_path: str = None, version_str: str = "
                 print(f"Server (v{version_str}) started. PID: {process.pid}.")
                 print("Python manager can now exit.")
             else:
-                print(f"Server process (PID {process.pid}) terminated quickly (exit code {process.poll()}). Check server logs.")
+                print(f"Server process (PID {process.pid}) terminated quickly (exit code {process.poll()}). Check logs.")
                 # If start failed, clear any potentially written state
                 pid_check, _, _ = read_server_state()
                 if pid_check == process.pid:
@@ -774,7 +773,7 @@ def api_manager(action: str, debug, exe=None, version="v0.1"):
         return f"invalid action {action} valid ar ['start', 'stop', 'update', 'status', 'build', 'clean', 'remove-exe']"
 
     if action == 'build':
-        print("Build action placeholder...")  # Replace with actual build_cargo_project() call
+        build_cargo_project(debug)
         return None
     if action == 'clean':
         cleanup_build_files()
@@ -846,11 +845,9 @@ def cli_api_runner():
         default="unknown",
         help="Version string for logging and update tracking."
     )
-    print("hey")
     if 'tb' in sys.argv[0] and len(sys.argv) < 2:
         sys.argv.append("help")
     args = parser.parse_args()
-    print(args.action, "sdad")
     if args.action == "help":
         parser.print_help()
         return

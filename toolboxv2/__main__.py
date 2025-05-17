@@ -769,7 +769,7 @@ async def main():
                                         module_name=args.install, get_results=True)
         report.print()
 
-    if args.init:
+    if args.init == "main":
         from .setup_helper import setup_main
         setup_main()
         if tb_app.system_flag == "Linux":

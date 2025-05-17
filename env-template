@@ -10,6 +10,9 @@ GUI_COMMAND="wt new-tab powershell -NoExit -Command"
 
 ICON_FILE="./favicon.ico"
 
+PYO3_PYTHON=
+UV_BASE_ENV=
+
 DB_CONNACTION_URI=
 DB_MODE_KEY="RR"
 DB_MODE_KEY_TEST="LC"
