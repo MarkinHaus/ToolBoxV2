@@ -9,6 +9,7 @@ import env from './env.js';
 import events from './events.js';
 import logger from './logger.js';
 import * as crypto from './crypto.js';
+import * as graphics from './graphics.js';
 import sse from './sse.js';
 import * as utils from './utils.js';
 // Potentially a ServiceWorker manager: import sw from './sw.js';
@@ -24,5 +25,6 @@ export {
     crypto,
     sse,
     utils,
+    graphics,
     // sw
 };

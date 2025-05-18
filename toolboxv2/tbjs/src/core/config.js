@@ -5,7 +5,6 @@
 const defaultConfig = {
     appRootId: 'app-root',
     baseApiUrl: '/api',
-    baseWsUrl: '', // To be constructed
     baseFileUrl: '', // For fetching HTML views, defaults to origin
     logLevel: 'debug',
     isProduction: process.env.NODE_ENV === 'production',
@@ -20,13 +19,6 @@ const ConfigManager = {
 
         if (!currentConfig.baseFileUrl) {
             currentConfig.baseFileUrl = window.location.origin;
-        }
-        if (!currentConfig.baseWsUrl) {
-            const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-            const port = currentConfig.isProduction ? window.location.port : (userConfig.devWsPort || '5000'); // Allow override for dev
-            const host = window.location.hostname;
-            currentConfig.baseWsUrl = `${protocol}//${host}${port ? `:${port}` : ''}`;
-            // This replaces rpIdUrl_fs specifically for WebSocket
         }
         // Ensure baseApiUrl and baseFileUrl are absolute or correctly prefixed if relative
         if (currentConfig.baseApiUrl.startsWith('/') && !currentConfig.baseApiUrl.startsWith(window.location.origin)) {

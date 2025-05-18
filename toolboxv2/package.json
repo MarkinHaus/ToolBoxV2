@@ -10,8 +10,12 @@
     "tauri-mobilB": "npm run tauri android build --prefix ./simple-core",
     "dev": "tb api start --debug && webpack --mode development --watch",
     "live": "tb api start",
-    "build": "webpack --mode production",
-    "watch": "webpack --mode development --watch"
+    "build-web": "webpack --mode production",
+    "watch-web": "webpack --mode development --watch",
+    "build-tbjs": "npm run build --prefix ./tbjs",
+    "watch-tbjs": "npm run watch --prefix ./tbjs",
+    "watch": "npm run watch --prefix ./tbjs && webpack --mode development --watch",
+    "build": "npm run build --prefix ./tbjs && webpack --mode production"
   },
   "dependencies": {
     "@babel/core": "^7.25.7",

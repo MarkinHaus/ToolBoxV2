@@ -69,7 +69,6 @@ export default {
     ],
   },
   plugins: [
-    new BomPlugin(false),
     new CleanWebpackPlugin(),
     new HtmlWebpackPlugin({
       template: './index.html',
@@ -211,6 +210,7 @@ export default {
     new webpack.ProgressPlugin({
       percentBy: 'entries',
     }),
+    // new BomPlugin(true),
   ],
   optimization: {
     splitChunks: {

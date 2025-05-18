@@ -5,11 +5,15 @@ const DEFAULT_NAVMENU_OPTIONS = {
     triggerSelector: '#links', // Selector for the menu toggle button
     menuContentHtml: `
         <ul class="space-y-2 p-4">
-            <li><a href="/" class="block px-3 py-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">Home</a></li>
-            <li><a href="/web/mainContent.html" class="block px-3 py-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">Apps</a></li>
-            <hr class="my-2 border-gray-300 dark:border-gray-600"/>
-            <li><a href="/web/assets/login.html" class="block px-3 py-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">Login</a></li>
-            {/* Add more default items or make this configurable */}
+            <li><a href="/">Home</a></li>
+                <li><a href="/web/mainContent.html">Apps</a></li>
+                <hr style="margin: -0.25vh 0"/>
+                <li><a href="/web/assets/login.html">Login</a></li>
+                <li><a href="/web/assets/signup.html">Sign Up</a></li>
+                <li><a href="/web/core0/Poffer/PublicDashboard.html">Offer</a></li>
+                <hr style="margin: -0.25vh 0"/>
+                <li><a href="/web/assets/terms.html">Terms and Conditions</a></li>
+                <li><a href="/web/core0/kontakt.html">Contact</a></li>
         </ul>
     `,
     menuId: 'tb-nav-menu-modal',
@@ -75,7 +79,7 @@ class NavMenu {
 
 
         document.body.appendChild(this.menuOverlayElement);
-        document.body.appendChild(this.menuContainerElement);
+        document.getElementById("Nav-Main").appendChild(this.menuContainerElement);
 
         TB.ui.processDynamicContent(this.menuContainerElement); // Process links for router etc.
     }
@@ -121,6 +125,7 @@ class NavMenu {
     openMenu() {
         if (this.isOpen) return;
         if (!this.menuContainerElement) this._createMenuDom();
+        this.menuContainerElement.style.display = 'block';
 
         // Force reflow for transitions
         void this.menuOverlayElement.offsetWidth;
@@ -145,6 +150,7 @@ class NavMenu {
 
     closeMenu() {
         if (!this.isOpen || !this.menuContainerElement) return;
+        this.menuContainerElement.style.display = 'none';
 
         this.menuOverlayElement.style.opacity = '0';
         this.menuOverlayElement.style.pointerEvents = 'none';
@@ -160,13 +166,13 @@ class NavMenu {
         document.removeEventListener('click', this._boundHandleDocumentClick, true);
 
         // Optionally remove DOM after transition to save resources if not frequently used
-        // setTimeout(() => {
-        //     if (!this.isOpen && this.menuContainerElement && this.menuContainerElement.parentNode) {
-        //         this.menuContainerElement.parentNode.removeChild(this.menuContainerElement);
-        //         this.menuOverlayElement.parentNode.removeChild(this.menuOverlayElement);
-        //         this.menuContainerElement = null; this.menuOverlayElement = null;
-        //     }
-        // }, 300); // Match transition duration
+        setTimeout(() => {
+            if (!this.isOpen && this.menuContainerElement && this.menuContainerElement.parentNode) {
+                this.menuContainerElement.parentNode.removeChild(this.menuContainerElement);
+                this.menuOverlayElement.parentNode.removeChild(this.menuOverlayElement);
+                this.menuContainerElement = null; this.menuOverlayElement = null;
+            }
+        }, 300); // Match transition duration
 
         TB.logger.log('[NavMenu] Closed.');
         TB.events.emit('navMenu:closed', this);

@@ -19,16 +19,18 @@ const TB = {
      * @param {object} config - Configuration options for the framework.
      * @param {string} [config.appRootId='app-root'] - The ID of the main DOM element for the app.
      * @param {string} config.baseApiUrl - Base URL for API calls (e.g., '/api').
-     * @param {string} config.baseWsUrl - Base URL for WebSocket connections.
      * @param {string} [config.baseFileUrl] - Base URL for fetching static HTML files for routing. (Derived from window.location if not set)
      * @param {object} [config.initialState={}] - Initial state for the application.
      * @param {object} [config.themeSettings={}] - Settings for UI theme (e.g., defaultMode: 'dark').
      * @param {Array<object>} [config.routes=[]] - Predefined routes for the router.
      */
     init: function(config = {}) { // Use 'function' to ensure 'this' refers to TB object if needed later
+
         this.config.init(config); // Must be first to set up base URLs etc.
                                      // Original: rpIdUrl_f, rpIdUrl_fs from original index.js
-
+        if(!document.getElementById(this.config.get('appRootId'))){
+             window.location.href = '/'
+        }
         this.logger.init({ logLevel: config.logLevel || (this.config.get('isProduction') ? 'warn' : 'debug') });
         this.logger.log(`tbjs v${this.VERSION} initializing...`);
 
@@ -40,6 +42,7 @@ const TB = {
 
         this.ui.theme.init(config.themeSettings); // Sets up dark/light mode
                                                 // Original: initDome dark mode part, loadDarkModeState from original index.js & scripts.js
+
 
         this.router.init(
             document.getElementById(this.config.get('appRootId')),

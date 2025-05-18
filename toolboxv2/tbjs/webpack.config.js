@@ -3,8 +3,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import MiniCssExtractPlugin from 'mini-css-extract-plugin';
 import { CleanWebpackPlugin } from 'clean-webpack-plugin';
-// import webpack from 'webpack'; // Wenn du z.B. DefinePlugin brauchst
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -21,6 +19,7 @@ export default {
     library: {
         name: 'TB', // Globaler Name, wenn als <script> Tag geladen (optional)
         type: 'umd', // Universal Module Definition, macht es kompatibel
+        export: 'default'
     },
     globalObject: 'this', // Wichtig für UMD
     clean: true, // Ersetzt CleanWebpackPlugin in Webpack 5+ für output.path
@@ -63,10 +62,6 @@ export default {
     new MiniCssExtractPlugin({
       filename: '[name].css', // Wird zu tbjs.css
     }),
-    // Optional: DefinePlugin für Umgebungsvariablen im tbjs-Bundle
-    // new webpack.DefinePlugin({
-    //   'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV),
-    // }),
   ],
   // Externe Abhängigkeiten, die nicht gebündelt werden sollen
   // (wenn sie als peerDependencies deklariert sind und von der App bereitgestellt werden)

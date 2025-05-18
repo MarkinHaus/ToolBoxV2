@@ -1,80 +1,188 @@
 // toolboxv2/index.js
 
 // Importiere die tbjs Bibliothek und ihr CSS
-import TB from 'tbjs';
-import 'tbjs/dist/tbjs.css'; // Stellt sicher, dass das CSS von tbjs geladen wird
+import TB from 'tbjs/src/index.js';
+import 'tbjs/dist/tbjs.css';
+import {NavMenu} from "tbjs/src/ui/index.js"; // Stellt sicher, dass das CSS von tbjs geladen wird
 
-// Importiere das Haupt-CSS deiner Anwendung (falls vorhanden und von Webpack verarbeitet)
-// import './styles/main.css'; // Beispielpfad
+// Optional: Importiere das Haupt-CSS deiner Anwendung, wenn es separat existiert
+// import './styles/main.css';
 
-// Globale Bereitstellung von Three.js und htmx, falls nicht schon durch <script> Tags geschehen
-// Da tbjs 'three' als 'THREE' und 'htmx.org' als 'htmx' externalisiert,
-// müssen diese global verfügbar sein, BEVOR TB.init() versucht, darauf zuzugreifen.
-// Deine toolboxv2/index.html lädt htmx bereits per <script>.
-// Für Three.js: Entweder auch per <script> in den HTML-Templates laden,
-// oder wenn du es über Webpack in der Haupt-App importierst, global machen:
-// import * as THREE_MODULE from 'three'; // oder from deinem Alias 'Three'
-// window.THREE = THREE_MODULE;
-// Besser ist es, wenn die HTML-Templates Three.js laden, wenn tbjs es so erwartet.
+// Globale Abhängigkeiten (htmx, Three.js):
+// Stelle sicher, dass htmx und THREE global verfügbar sind, BEVOR dieser Code ausgeführt wird.
+// Das erreichst du am besten, indem du sie über <script defer src="..."></script>
+// in deinen HTML-Templates (die von HtmlWebpackPlugin verarbeitet werden) einbindest.
+// Die 'defer'-Attribute sorgen für die richtige Ausführungsreihenfolge.
 
-// Warte, bis der DOM vollständig geladen ist
-document.addEventListener('DOMContentLoaded', () => {
-    // Hol dir die Konfiguration für TB.init
-    // Diese Werte müssen ggf. dynamisch gesetzt oder aus einer globalen Konfig gelesen werden
+// Definiere eine Funktion für die Initialisierung, um den globalen Scope sauber zu halten
+function initializeApp() {
+    const isProduction = false;
+    console.log('isProduction: ', isProduction);
     const tbjsConfig = {
-        appRootId: 'MainContent', // Die ID des Elements, das tbjs verwalten soll.
-                                  // Deine toolboxv2/index.html hat <main id="MainContent">.
-                                  // Stelle sicher, dass alle deine HTML-Dateien,
-                                  // die von HtmlWebpackPlugin generiert werden und tbjs nutzen sollen,
-                                  // ein solches Element haben.
-        baseApiUrl: '/api',       // Entsprechend deiner Proxy-Config im devServer
-        baseWsUrl: (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host + "/talk", // Beispiel für WS
-        // baseFileUrl: '/web/core0', // Basis für das Laden von HTML-Partials durch den tbjs-Router
+        appRootId: 'MainContent', // ID des Haupt-Containers für tbjs
+        baseApiUrl: '/api',       // Für API-Aufrufe
+
+        // baseFileUrl: '/web/core0', // Optional: Wenn tbjs HTML-Partials von einem bestimmten Pfad laden soll
+                                    // Ansonsten leitet es sich oft von window.location ab oder ist nicht nötig.
+
         initialState: {
-            // Dein initialer App-State
+            // Hier den Anwendungs-spezifischen initialen Zustand definieren
+            // z.B. userInfo: null, preferences: {}
         },
         themeSettings: {
-            defaultMode: 'light', // oder 'dark'
-            // Weitere Theme-Einstellungen
+
+            defaultPreference: 'system', // 'light', 'dark', oder 'system'
+            background: {
+                type: '3d', // '3d', 'image', 'color', 'none'
+                light: {
+                    color: '#E0E0E0',
+                    image: '/assets/backgrounds/light-bg.jpg', // Beispielpfad
+                },
+                dark: {
+                    color: '#212121',
+                    image: '/assets/backgrounds/dark-bg.jpg',   // Beispielpfad
+                },
+                placeholder: {
+                    image: '/assets/backgrounds/placeholder-loading.gif', // Beispiel
+                    displayUntil3DReady: true // true: Placeholder bis 3D bereit, false: Placeholder wird durch konfig. Typ ersetzt
+                }
+            }
         },
         routes: [
-            // Definiere hier Routen für den tbjs-Router, falls er welche benötigt
-            // z.B. { path: '/', component: 'home-component' },
-            //      { path: '/login', component: 'login-component' }
+            // Definiere hier die Haupt-Routen deiner Anwendung, die tbjs verwalten soll
+            // Beispiel:
+            // { path: '/', view: 'views/home.html', controller: async () => (await import('./controllers/homeController.js')).default },
+            // { path: '/login', view: 'views/login.html', controller: async () => (await import('./controllers/loginController.js')).default },
+            // { path: '/dashboard', view: 'views/dashboard.html', requiresAuth: true, controller: async () => (await import('./controllers/dashboardController.js')).default },
+            // Die Struktur von 'routes' hängt davon ab, wie dein TB.router.init sie erwartet.
         ],
-        logLevel: process.env.NODE_ENV === 'production' ? 'warn' : 'debug'
+        logLevel: isProduction ? 'warn' : 'debug', // Im Produktivbetrieb weniger gesprächig
+        // Füge hier weitere Konfigurationen hinzu, die TB.init erwartet oder deine App benötigt
     };
 
     // Initialisiere tbjs
-    TB.init(tbjsConfig);
+    // Es ist gut, die TB-Instanz zu speichern, falls sie später direkt benötigt wird,
+    // obwohl die meisten Interaktionen über ihre Module erfolgen sollten.
 
-    TB.logger.log('TB.js wurde in der Hauptanwendung initialisiert.');
+        // Event-Listener für erfolgreiche Initialisierung (optional, aber nützlich für Debugging oder nachgelagerte Schritte)
+    TB.events.on('tbjs:initialized', (initializedTB) => {
+        if (!isProduction) {
+            initializedTB.logger.log('Event tbjs:initialized empfangen. Framework ist bereit.');
+        }
+        // Hier könnten weitere Initialisierungsschritte der Hauptanwendung erfolgen,
+        // die darauf warten, dass TB vollständig bereit ist.
+          // Initialisiere das Navigationsmenü, nachdem TB bereit ist  // <--- HINZUGEFÜGT
+        // Die Standardoptionen in NavMenu.js verwenden '#links' als Trigger, was zu deinem HTML passt.
+        const mainNavMenu = NavMenu.init({
+            // Du kannst hier Optionen überschreiben, falls nötig:
+            // menuContentHtml: `
+            //     <ul>
+            //         <li><a href="/custom-page" class="block px-3 py-2">Custom Page</a></li>
+            //         <li><a hx-get="/htmx-content" hx-target="#MainContent" class="block px-3 py-2">HTMX Link</a></li>
+            //     </ul>
+            // `,
+            // openIconClass: 'menu_open', // Falls du ein anderes Icon möchtest
+            // customClasses: { // Um die Tailwind-ähnlichen Klassen zu überschreiben, falls dein CSS andere Namen verwendet
+            //    overlay: 'my-custom-overlay-class',
+            //    menuContainer: 'my-custom-menu-container-class'
+            // }
+        });
 
-    // Deine restliche Anwendungslogik der Haupt-App kann hier starten
-    // oder auf tbjs:initialized Event hören.
-    // TB.events.on('tbjs:initialized', () => {
-    //    console.log('TB.js ist jetzt voll einsatzbereit!');
-    //    // Weitere Initialisierungsschritte der Haupt-App
-    // });
+        // Annahme: TB.core.threeSetup ist ein Modul/Funktion, die Three.js initialisiert
+        // und ein Objekt mit { renderer, scene, ambientLight, pointLights } zurückgibt oder speichert
+         if (initializedTB.ui.darkModeToggle) {
+            initializedTB.ui.darkModeToggle.init('#darkModeToggleContainer');
+        }
+        // Optional: Speichere die Instanz, wenn du später darauf zugreifen musst
+        // initializedTB.mainNavMenu = mainNavMenu;
+        initializedTB.logger.info('[App] NavMenu initialized.'); // <--- HINZUGEFÜGT
+        loadPlatformSpecificFeatures(initializedTB);
+        console.log("NavMenu initialized");
+    });
 
-    // Plattformspezifische Logik kann hier oder in TB.js Modulen erfolgen
-    if (TB.env.isTauri()) {
-        TB.logger.log('Läuft in Tauri-Umgebung. Desktop-spezifische Anpassungen laden...');
-        // Lade Desktop-spezifische Komponenten/Assets
-        // z.B. initialisiere den 3D Hintergrund
-        // if (typeof TB.ui.initializeGlobalBackground === 'function') {
-        //     TB.ui.initializeGlobalBackground(document.getElementById('threeDScene'));
+    window.AppTB = TB.init(tbjsConfig); // window.AppTB ist optional, TB selbst ist ja schon importiert
+
+    if (!isProduction) {
+        AppTB.logger.log('TB.js wurde in der Hauptanwendung initialisiert (Development Mode).');
+    }
+
+    if (TB.ui.theme.getBackgroundConfig().type === '3d') {
+        TB.graphics.init('#threeDScene', { /* graphics options */ });
+    }
+
+    // Fehlerbehandlung für die Initialisierung (optional, aber gut für Robustheit)
+    // Dies hängt davon ab, ob TB.init Fehler wirft oder ein Fehler-Event auslöst
+    // try {
+    //     TB.init(tbjsConfig);
+    // } catch (error) {
+    //     console.error("Fehler bei der Initialisierung von TB.js:", error);
+    //     // Zeige eine Fehlermeldung im UI an, statt die App abstürzen zu lassen
+    //     document.body.innerHTML = '<p>Fehler beim Laden der Anwendung. Bitte versuchen Sie es später erneut.</p>';
+    // }
+}
+
+function loadPlatformSpecificFeatures(currentTB) {
+    const threeDSceneElement = document.getElementById('threeDScene');
+
+    if (currentTB.env.isTauri()) {
+        currentTB.logger.info('Tauri-Umgebung erkannt. Lade Desktop-spezifische Features...');
+        // Beispiel: 3D-Hintergrund immer für Desktop-Tauri
+        if (threeDSceneElement && typeof currentTB.ui.initializeGlobalBackground === 'function') {
+            currentTB.ui.initializeGlobalBackground(threeDSceneElement);
+        } else {
+            currentTB.logger.warn('initializeGlobalBackground Funktion nicht gefunden oder threeDSceneElement fehlt.');
+        }
+        // Weitere Tauri-spezifische Initialisierungen
+        // z.B. Einrichten von Event-Listenern für Tauri-Events
+        // async function setupTauriListeners() {
+        //   const { listen } = await import('@tauri-apps/api/event');
+        //   await listen('my-custom-event', (event) => {
+        //     currentTB.logger.log('Tauri event received:', event.payload);
+        //   });
         // }
-    } else if (TB.env.isMobile()) {
-        TB.logger.log('Läuft auf Mobile-Web. Mobile-spezifische Anpassungen laden...');
-        // Lade Mobile-spezifische Komponenten/Assets
-        // Evtl. 3D Hintergrund deaktivieren oder reduzierte Version
-    } else {
-        TB.logger.log('Läuft im Standard-Webbrowser. Web-spezifische Anpassungen laden...');
-        // Lade Web-spezifische Komponenten/Assets
-        // z.B. initialisiere den 3D Hintergrund
-        // if (typeof TB.ui.initializeGlobalBackground === 'function') {
-        //     TB.ui.initializeGlobalBackground(document.getElementById('threeDScene'));
+        // setupTauriListeners();
+
+    } else if (currentTB.env.isWeb()) {
+        currentTB.logger.info('Web-Umgebung erkannt.');
+        if (currentTB.env.isMobile()) {
+            currentTB.logger.info('Mobile Web-Client. Lade optimierte Features...');
+            // Für Mobile evtl. keinen oder einen einfacheren Hintergrund
+            if (threeDSceneElement) {
+                threeDSceneElement.style.display = 'none'; // Beispiel: 3D-Szene ausblenden
+            }
+            // Weitere Mobile-spezifische Anpassungen
+        } else {
+            currentTB.logger.info('Desktop Web-Client. Lade volle Features...');
+            // Für Desktop-Web den 3D-Hintergrund (wenn Performance es zulässt - evtl. hier eine zusätzliche Prüfung)
+            if (threeDSceneElement && typeof currentTB.ui.initializeGlobalBackground === 'function') {
+                // Optionale Performance-Prüfung für Web
+                // const canRun3D = !navigator.connection?.saveData && window.matchMedia('(min-width: 768px)').matches;
+                // if (canRun3D) {
+                //    currentTB.ui.initializeGlobalBackground(threeDSceneElement);
+                // } else {
+                //    currentTB.logger.info('3D background skipped due to performance considerations or small screen.');
+                //    if (threeDSceneElement) threeDSceneElement.style.display = 'none';
+                // }
+                currentTB.ui.initializeGlobalBackground(threeDSceneElement); // Vorerst immer laden
+            } else {
+                currentTB.logger.warn('initializeGlobalBackground Funktion nicht gefunden oder threeDSceneElement fehlt.');
+            }
+        }
+        // Allgemeine Web-spezifische Initialisierungen (z.B. Service Worker, falls genutzt)
+        // if ('serviceWorker' in navigator && isProduction) {
+        //   window.addEventListener('load', () => {
+        //     navigator.serviceWorker.register('/service-worker.js')
+        //       .then(registration => currentTB.logger.info('ServiceWorker registration successful: ', registration.scope))
+        //       .catch(err => currentTB.logger.error('ServiceWorker registration failed: ', err));
+        //   });
         // }
     }
-});
+}
+
+// Stelle sicher, dass der DOM geladen ist, bevor die App initialisiert wird
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeApp);
+} else {
+    // DOMContentLoaded wurde bereits ausgelöst
+    initializeApp();
+}
