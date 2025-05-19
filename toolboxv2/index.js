@@ -74,20 +74,9 @@ function initializeApp() {
         // die darauf warten, dass TB vollständig bereit ist.
           // Initialisiere das Navigationsmenü, nachdem TB bereit ist  // <--- HINZUGEFÜGT
         // Die Standardoptionen in NavMenu.js verwenden '#links' als Trigger, was zu deinem HTML passt.
-        const mainNavMenu = NavMenu.init({
-            // Du kannst hier Optionen überschreiben, falls nötig:
-            // menuContentHtml: `
-            //     <ul>
-            //         <li><a href="/custom-page" class="block px-3 py-2">Custom Page</a></li>
-            //         <li><a hx-get="/htmx-content" hx-target="#MainContent" class="block px-3 py-2">HTMX Link</a></li>
-            //     </ul>
-            // `,
-            // openIconClass: 'menu_open', // Falls du ein anderes Icon möchtest
-            // customClasses: { // Um die Tailwind-ähnlichen Klassen zu überschreiben, falls dein CSS andere Namen verwendet
-            //    overlay: 'my-custom-overlay-class',
-            //    menuContainer: 'my-custom-menu-container-class'
-            // }
-        });
+        if (initializedTB.ui.NavMenu) {
+            initializedTB.ui.NavMenu.init();
+        }
 
         // Annahme: TB.core.threeSetup ist ein Modul/Funktion, die Three.js initialisiert
         // und ein Objekt mit { renderer, scene, ambientLight, pointLights } zurückgibt oder speichert

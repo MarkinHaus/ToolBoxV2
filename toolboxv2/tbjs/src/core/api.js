@@ -1,6 +1,7 @@
 // tbjs/core/api.js
 // Handles all backend communication (HTTP, Tauri invoke).
 // Original: httpSender.js, AuthHttpPostData, parts of router's fetch logic.
+import TB from '../index.js'; // Access TB.api, TB.config, TB.logger
 
 import config from './config.js';
 import env from './env.js';
@@ -35,28 +36,37 @@ const Api = {
         if (isJson) {
             headers['Content-Type'] = 'application/json';
         }
-        // Add Auth token if available
-        // const token = TB.state.get('session.token'); // Example state path
-        // if (token) headers['Authorization'] = `Bearer ${token}`;
+        // Add Auth token if available and NOT for an auth-specific path that shouldn't have it
+        // This logic needs to be more nuanced if some auth paths need the token and others don't.
+        const token = TB.state.get('user.token'); // Assuming user state is under 'user' namespace
+        if (token) {
+            // Check if the current operation is one that should *not* receive a token
+            // For now, let's assume validateSession might be one such case if it's establishing a new session from a claim.
+            // This needs to be decided based on your backend's requirements.
+            // if ( !(moduleName === 'AuthManager' && functionName === 'validateSession') ) { // Example exclusion
+                 headers['Authorization'] = `Bearer ${token}`;
+            // }
+        }
         return headers;
     },
 
     /**
      * Makes a request to the backend.
-     * @param {string} moduleName - The backend module name.
-     * @param {string} functionName - The backend function name.
+     * @param {string} moduleName - The backend module name, OR a full path starting with '/' for special routes.
+     * @param {string} functionName - The backend function name (ignored if moduleName is a full path).
      * @param {object|string} [payload=null] - Data to send. If string, used as query params for GET/POST-URL.
      * @param {string} [method='POST'] - HTTP method.
      * @param {string} [useTauri='auto'] - 'auto', 'force', or 'never'.
+     * @param {boolean} [isSpecialAuthRoute=false] - Indicates if this is a special auth route that might have different token handling.
      * @returns {Promise<Result>} - A promise resolving to a Result object.
      */
-    request: async (moduleName, functionName, payload = null, method = 'POST', useTauri = 'auto') => {
-        const command = `${moduleName}.${functionName}`; // For Tauri invoke
+    request: async (moduleName, functionName, payload = null, method = 'POST', useTauri = 'auto', isSpecialAuthRoute = false) => {
+        let command = `${moduleName}.${functionName}`; // For Tauri invoke
+        let isFullPath = moduleName.startsWith('/');
 
-        if ((useTauri === 'auto' || useTauri === 'force') && env.isTauri()) {
+        if (!isFullPath && (useTauri === 'auto' || useTauri === 'force') && env.isTauri()) {
             try {
                 logger.debug(`[API] Attempting Tauri invoke: ${command}`, payload);
-                // const tauriPayload = method === 'GET' && typeof payload === 'string' ? Api.parseQueryParams(payload) : payload;
                 const tauriPayload = {};
                 if(payload){
                     if(typeof payload === 'string'){
@@ -79,17 +89,38 @@ const Api = {
         }
 
         // HTTP Fetch
-        let url = `${config.get('baseApiUrl')}/${moduleName}/${functionName}`;
+        let url;
+        if (isFullPath) {
+            url = `${config.get('baseApiUrl')}${moduleName}`; // moduleName is the path itself
+             if (functionName && typeof functionName === 'string' && functionName.length > 0 && (method.toUpperCase() === 'GET' || method.toUpperCase() === 'DELETE')) {
+                // If functionName is provided for a full path GET/DELETE, treat it as query string
+                url += `?${functionName}`;
+            } else if (functionName && typeof functionName === 'object' && (method.toUpperCase() === 'GET' || method.toUpperCase() === 'DELETE')) {
+                 url += `?${new URLSearchParams(functionName).toString()}`;
+            }
+
+        } else {
+            url = `${config.get('baseApiUrl')}/${moduleName}/${functionName}`;
+        }
+
         const options = {
             method,
-            headers: Api._getRequestHeaders(),
+            // Headers now depend on whether it's a special auth route.
+            // For AuthHttpPostData, it passed its own headers. We can mimic this by not adding auth token for it.
+            headers: Api._getRequestHeaders(true), // Let _getRequestHeaders handle token logic generally
         };
 
+        // Special handling for AuthHttpPostData which originally had its own Content-Type and Accept.
+        // And it didn't send Authorization Bearer token.
+        // This is tricky to generalize. If `isSpecialAuthRoute` is true, we might want different header logic.
+        // For now, _getRequestHeaders handles token addition. If /validateSession should NOT have it,
+        // the backend should simply ignore it, or _getRequestHeaders needs more specific rules.
+
         if (method.toUpperCase() === 'GET' || method.toUpperCase() === 'DELETE') {
-            if (payload && typeof payload === 'string') url += `?${payload}`;
-            else if (payload && typeof payload === 'object') url += `?${new URLSearchParams(payload).toString()}`;
+            if (payload && typeof payload === 'string' && !isFullPath) url += `?${payload}`; // Only add payload as query if not already handled by functionName for full paths
+            else if (payload && typeof payload === 'object' && !isFullPath) url += `?${new URLSearchParams(payload).toString()}`;
         } else { // POST, PUT, PATCH
-            if (payload && typeof payload === 'string' && method.toUpperCase() === 'POST') { // POST with URL-encoded form style params in URL
+            if (payload && typeof payload === 'string' && method.toUpperCase() === 'POST' && !isFullPath) {
                  url += `?${payload}`;
             } else if (payload) {
                 options.body = JSON.stringify(payload);
@@ -100,13 +131,32 @@ const Api = {
         logger.debug(`[API] HTTP ${method} request to: ${url}`, payload);
         try {
             const response = await fetch(url, options);
-            const responseData = await response.json(); // Assuming JSON response
+            // Handle cases where response might not be JSON (e.g. logout might return 204 No Content)
+            let responseData;
+            const contentType = response.headers.get("content-type");
+            if (contentType && contentType.includes("application/json")) {
+                responseData = await response.json();
+            } else if (response.status === 204 || response.status === 205) { // No Content / Reset Content
+                responseData = { success: true }; // Create a minimal success object
+            } else {
+                // Attempt to read as text if not JSON and not empty
+                const textResponse = await response.text();
+                try {
+                    responseData = JSON.parse(textResponse); // Try parsing if it happens to be JSON anyway
+                } catch (e) {
+                     responseData = { message: textResponse }; // Fallback to text message
+                }
+            }
+
+
             if (!response.ok) {
                 logger.error(`[API] HTTP error ${response.status} for ${url}:`, responseData);
-                return wrapApiResponse(responseData || {
-                    error: ToolBoxError.internal_error,
-                    info: { exec_code: response.status, help_text: response.statusText },
-                    result: {}
+                // Ensure wrapApiResponse can handle responseData that might not be a full Result structure
+                const errorPayload = (responseData && typeof responseData === 'object') ? responseData : {};
+                return wrapApiResponse({
+                    error: errorPayload.error || ToolBoxError.internal_error,
+                    info: errorPayload.info || { exec_code: response.status, help_text: response.statusText || (responseData?.message || "HTTP Error") },
+                    result: errorPayload.result || {}
                 });
             }
             logger.debug(`[API] HTTP success for ${url}:`, responseData);
@@ -117,6 +167,7 @@ const Api = {
             return new Result(['http', 'error'], ToolBoxError.internal_error, new ToolBoxResult(), new ToolBoxInfo(-1, `Network error: ${error.message || error}`));
         }
     },
+
 
     /**
      * Fetches HTML content for a given path.
@@ -151,31 +202,43 @@ const Api = {
     },
 
     // Specific methods from original httpSender.js can be mapped here:
-    httpPostUrl: (module_name, function_name, params, from_string = false) => {
+    httpPostUrl: (module_name, function_name, params= null, from_string = false) => {
         // The `request` method is more generic. This specific mapping might be less needed.
         // If `from_string` is true, it implies the backend returns a string that needs to be parsed as Result.
         // This is complex. Better for backend to always return structured JSON for API calls.
         // For now, let's assume standard JSON response.
         return Api.request(module_name, function_name, params, 'POST');
     },
-    httpPostData: (module_name, function_name, data) => {
+    httpPostData: (module_name, function_name, data= null) => {
         return Api.request(module_name, function_name, data, 'POST');
     },
-    AuthHttpPostData: (username) => { // Original AuthHttpPostData
-        const endpoint = '/validateSession'; // Not module/function based
-        const url = `${config.get('baseApiUrl')}${endpoint}`;
+    // Updated AuthHttpPostData to use the new `request` method with a full path
+    AuthHttpPostData: (username) => {
+        const endpoint = '/validateSession'; // This is the full path relative to baseApiUrl
         const payload = {
-            'Jwt_claim': localStorage.getItem('jwt_claim_device'), // Direct localStorage access, consider moving to TB.state
+            'Jwt_claim': localStorage.getItem('jwt_claim_device'), // Consider getting from TB.state if populated
             'Username': username
         };
-        logger.debug(`[API] Auth request to: ${url}`, payload);
-        return fetch(url, { method: 'POST', headers: Api._getRequestHeaders(), body: JSON.stringify(payload) })
-            .then(res => res.json().then(data => wrapApiResponse(data)))
-            .catch(error => {
-                logger.error(`[API] Auth fetch error for ${url}:`, error);
-                return new Result(['auth', 'error'], ToolBoxError.internal_error, new ToolBoxResult(), new ToolBoxInfo(-1, `Auth Network error: ${error.message}`));
-            });
+        // Call `request` with moduleName as the path, and functionName as null or empty.
+        // Set isSpecialAuthRoute if specific header handling is needed (e.g. no auth token).
+        return Api.request(endpoint, null, payload, 'POST', 'never', true);
+    },
+
+    // Example for /web/logoutS which might be a GET or POST without a body
+    logoutServer: async () => {
+        const endpoint = '/web/logoutS'; // Or whatever the actual path is
+        // Assuming it's a POST request that needs the current token to invalidate it on the server.
+        // If it's GET and token is in cookie/header automatically, payload might be empty.
+        const token = TB.state.get('user.token');
+        if (!token) {
+            logger.warn('[API] No token found for server logout.');
+            // Still return a successful-like result for client-side logout to proceed
+            return new Result(['logout', 'client-only'], ToolBoxError.none, new ToolBoxResult(), new ToolBoxInfo(0, "Client logout, no token for server."));
+        }
+        // The `request` method's _getRequestHeaders should add the token.
+        return Api.request(endpoint, null, { token: token } /* or empty if server gets token from header/cookie */, 'POST', 'never', true);
     }
 };
 
 export default Api;
+

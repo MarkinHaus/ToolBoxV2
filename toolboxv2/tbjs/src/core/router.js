@@ -56,9 +56,6 @@ const Router = {
         }
         if (!cleanPath.startsWith('/')) cleanPath = '/' + cleanPath;
 
-        if (cleanPath === "/" || cleanPath === "" || cleanPath === "/web" || cleanPath === "/web/") {
-            cleanPath = "/web/core0/index.html";
-        }
 
         logger.log(`[Router] Navigating to: ${cleanPath}`);
         events.emit('router:beforeNavigation', { from: currentPath, to: cleanPath });
@@ -120,6 +117,16 @@ const Router = {
                     appRootElement.innerHTML = '<h1>401 - Unauthorized (and 401.html is also missing)</h1>';
                  }
                 return;
+            }
+
+            if (htmlContent.includes("<title>Simple</title>")){
+                logger.warn(`[Router] Root content fetch for ${cleanPath}`);
+                if (cleanPath === "/" || cleanPath === "" || cleanPath === "/web" || cleanPath === "/web/"|| cleanPath === "/index.html" ) {
+                    return;
+                }else{
+                     window.location.href = '/web/assets/404.html';
+                    return;
+                }
             }
 
             appRootElement.innerHTML = htmlContent;

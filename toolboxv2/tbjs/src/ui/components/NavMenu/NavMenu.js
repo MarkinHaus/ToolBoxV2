@@ -6,6 +6,7 @@ const DEFAULT_NAVMENU_OPTIONS = {
     triggerSelector: '#links', // Selector for the menu toggle button
     menuContentHtml: `
         <ul class="space-y-2 p-4">
+                <li><a href="/web/core0/index.html">Home</a></li>
                 <li><a href="/web/mainContent.html">Apps</a></li>
                 <li><a href="/web/assets/login.html">Login</a></li>
                 <li><a href="/web/core0/kontakt.html">Contact</a></li>

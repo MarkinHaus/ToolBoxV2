@@ -94,6 +94,12 @@ export default {
       filename: './web/core0/MainIdea.html',
       chunks: ['main']
     }),
+    // For kontakt.html
+    new HtmlWebpackPlugin({
+      template: './web/core0/kontakt.html',
+      filename: './web/core0/kontakt.html',
+      chunks: ['main']
+    }),
     // For roadmap.html
     new HtmlWebpackPlugin({
       template: './web/core0/roadmap.html',
@@ -140,12 +146,6 @@ export default {
     new HtmlWebpackPlugin({
       template: './web/assets/terms.html',
       filename: './web/assets/terms.html',
-      chunks: ['main']
-    }),
-    // For /web/assets/offline.html
-    new HtmlWebpackPlugin({
-      template: './web/assets/offline.html',
-      filename: './web/assets/offline.html',
       chunks: ['main']
     }),
     // For dashboard

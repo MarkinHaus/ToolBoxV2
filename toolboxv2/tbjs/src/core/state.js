@@ -8,6 +8,7 @@ import logger from './logger.js'; // Use TB.logger
 const PERSISTENCE_KEY_PREFIX = 'tbjs_app_state_';
 
 const AppState = {
+    _hooks: new Set(),
     _currentState: {},
     _persistentKeys: new Set(), // Keys to automatically persist to localStorage
 

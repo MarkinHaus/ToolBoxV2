@@ -11,7 +11,6 @@ import Toast from './components/Toast/Toast.js';
 import Loader from './components/Loader/Loader.js';
 import Button from './components/Button/Button.js';
 import DarkModeToggle from './components/DarkModeToggle/darkModeToggle.js';
-import ThreeDeeBackground from './components/ThreeDeeBackground/ThreeDeeBackground.js';
 import CookieBanner from './components/CookieBanner/CookieBanner.js';
 import MarkdownRenderer from './components/MarkdownRenderer/MarkdownRenderer.js';
 import AutocompleteWidget from './components/Autocomplete/Autocomplete.js'; // Renamed to avoid conflict with core util
@@ -98,7 +97,6 @@ export {
     Toast,
     Loader,
     Button,
-    ThreeDeeBackground,
     CookieBanner,
     MarkdownRenderer,
     AutocompleteWidget,

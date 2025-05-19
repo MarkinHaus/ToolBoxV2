@@ -9,9 +9,8 @@ let isPaused = false;
 let animationFrameId;
 let themeChangeHandler = null;
 
-let subGroupsToAnimate = []; // To store sub-groups for independent animation
+let subGroupsToAnimate = [];
 
-// Constants from old script & merged
 const INITIAL_CAMERA_Z = 10;
 const INITIAL_CAMERA_Y = 3.2;
 let currentSierpinskiDepth = 5;
@@ -20,22 +19,30 @@ const CAMERA_ZOOM_MIN = -2;
 const CAMERA_ZOOM_MAX = 12;
 const ZOOM_STEP_FACTOR = 0.08;
 
-// Animation parameters
 let animParams = {
-    factor: 21,         // Default: animantionFactorIdeal
+    factor: 21,
     factorIdeal: 21,
-    factorClick: 12,     // animantionFactorKlick
-    x: 0.002,           // Default animationX (base speed for rotation)
-    y: 0.002,           // Default animationY
-    z: 0.002,           // Default animationZ
+    factorClick: 12,
+    x: 0.002,
+    y: 0.002,
+    z: 0.002,
     isMouseDown: false,
     startX: 0,
     startY: 0,
-    // Store the interactive rotation speeds separately
     interactiveX: 0,
     interactiveY: 0,
     interactiveZ: 0,
+    // For programmed animations
+    programmedRotationX: 0,
+    programmedRotationY: 0,
+    programmedRotationZ: 0,
+    isProgrammedAnimationActive: false,
 };
+
+// For managing animation sequences
+let currentAnimationSequenceQueue = [];
+let programmedAnimationTimeoutId = null;
+
 
 const milkGlassMaterial = new THREE.MeshPhysicalMaterial({
     color: 0xffffff,
@@ -71,7 +78,7 @@ export function init(canvasContainerSelector, options = {}) {
     camera.position.set(0, options.cameraY || INITIAL_CAMERA_Y, options.cameraZ || INITIAL_CAMERA_Z);
 
     currentSierpinskiDepth = options.sierpinskiDepth || currentSierpinskiDepth;
-    _buildSierpinski(); // Builds mainGroup and populates subGroupsToAnimate
+    _buildSierpinski();
 
     ambientLightInstance = new THREE.AmbientLight(0xffffff, 0.5);
     scene.add(ambientLightInstance);
@@ -99,7 +106,6 @@ export function init(canvasContainerSelector, options = {}) {
     themeChangeHandler = (eventData) => { if (isInitialized) updateTheme(eventData.mode); };
     TB.events.on('theme:changed', themeChangeHandler);
 
-    if (options.uninstallServiceWorkers !== false) _uninstallServiceWorkers();
     setTimeout(() => {
         const loader = document.querySelector('.loaderCenter');
         if (loader) loader.style.display = 'none';
@@ -112,10 +118,9 @@ export function init(canvasContainerSelector, options = {}) {
 function _buildSierpinski() {
     if (mainGroup) {
         scene.remove(mainGroup);
-        // No need to traverse and dispose geometry here if _disposeMainGroup handles it
-        _disposeMainGroup(); // Clear old group and its contents
+        _disposeMainGroup();
     }
-    subGroupsToAnimate = []; // Reset sub-groups
+    subGroupsToAnimate = [];
     mainGroup = createSierpinski(currentSierpinskiDepth, SIERPINSKI_SIZE, milkGlassMaterial);
     scene.add(mainGroup);
 }
@@ -124,14 +129,11 @@ function _disposeMainGroup() {
     if (mainGroup) {
         mainGroup.traverse(object => {
             if (object.geometry) object.geometry.dispose();
-            // Materials are more complex; the shared milkGlassMaterial is disposed in main dispose()
         });
         mainGroup = null;
     }
     subGroupsToAnimate = [];
 }
-
-
 export function getContext() {
     if (!isInitialized) return null;
     return { renderer, scene, camera, ambientLightInstance, pointLightInstances, mainGroup };
@@ -148,7 +150,7 @@ export function updateTheme(theme) {
     renderer.setClearColor(clearColorHex, 1);
     if (ambientLightInstance) ambientLightInstance.color.setHex(ambientColorHex);
     pointLightInstances.forEach(pl => pl.color.setHex(pointColorHex));
-    TB.logger.log(`[Graphics] Theme updated to "${theme}". Clear: #${clearColorHex.toString(16)}, Amb: #${ambientColorHex.toString(16)}, Point: #${pointColorHex.toString(16)}`);
+    TB.logger.log(`[Graphics] Theme updated to "${theme}".`);
 }
 
 function _animate() {
@@ -158,25 +160,32 @@ function _animate() {
     let currentAnimX = animParams.x;
     let currentAnimY = animParams.y;
     let currentAnimZ = animParams.z;
+    let currentFactor = animParams.factor;
 
-    if (animParams.isMouseDown) {
-        // During interaction, use the values derived from mouse/touch movement
+    if (animParams.isProgrammedAnimationActive) {
+        currentAnimX = animParams.programmedRotationX;
+        currentAnimY = animParams.programmedRotationY;
+        currentAnimZ = animParams.programmedRotationZ;
+        // Factor for programmed animation could be different or fixed
+        currentFactor = animParams.programmedFactor || animParams.factorIdeal;
+    } else if (animParams.isMouseDown) {
         currentAnimX = animParams.interactiveX;
         currentAnimY = animParams.interactiveY;
         currentAnimZ = animParams.interactiveZ;
+        currentFactor = animParams.factorClick;
     }
+
 
     if (mainGroup) {
-        mainGroup.rotation.x += currentAnimX / animParams.factor;
-        mainGroup.rotation.y += currentAnimY / animParams.factor;
-        mainGroup.rotation.z += currentAnimZ / animParams.factor;
+        mainGroup.rotation.x += currentAnimX / currentFactor;
+        mainGroup.rotation.y += currentAnimY / currentFactor;
+        mainGroup.rotation.z += currentAnimZ / currentFactor;
     }
 
-    // Animate sub-groups if any (replicating old script's groops animation)
     for (let i = 0; i < subGroupsToAnimate.length; i++) {
-        subGroupsToAnimate[i].rotation.x += currentAnimX / animParams.factor;
-        subGroupsToAnimate[i].rotation.y += currentAnimY / animParams.factor;
-        subGroupsToAnimate[i].rotation.z += currentAnimZ / animParams.factor;
+        subGroupsToAnimate[i].rotation.x += currentAnimX / currentFactor;
+        subGroupsToAnimate[i].rotation.y += currentAnimY / currentFactor;
+        subGroupsToAnimate[i].rotation.z += currentAnimZ / currentFactor;
     }
 
     renderer.render(scene, camera);
@@ -334,17 +343,136 @@ function _removeEventListeners() {
     document.body.removeEventListener('touchend', _handleMouseUp);
 }
 
-function _uninstallServiceWorkers() {
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(registrations => {
-            registrations.forEach(registration => {
-                registration.unregister().then(success => {
-                    TB.logger.log(`[Graphics] ServiceWorker ${registration.scope} ${success ? 'unregistered' : 'unregistration failed'}.`);
-                });
-            });
-        }).catch(err => TB.logger.error('[Graphics] Error getting ServiceWorker registrations:', err));
+// --- ANIMATION SEQUENCE LOGIC ---
+function _parseAnimationInput(inputString) {
+    // Format: Type, Repeat, Direction, Speed, Complexity/Duration
+    // Example: "R1+32" (Type R, Repeat 1, Dir +, Speed 3, Compl 2)
+    const regex = /^([RPYZ])(\d+)([+-])(\d)(\d)$/; // Speed and Complexity are single digits
+    const match = inputString.match(regex);
+    if (match) {
+        return {
+            type: match[1],
+            repeat: parseInt(match[2]),
+            direction: match[3] === "+" ? 1 : -1,
+            speed: parseInt(match[4]),
+            complexity: parseInt(match[5]) // Renamed from 'duration' in your example parse
+        };
     }
+    TB.logger.warn(`[Graphics] Invalid animation step string: ${inputString}`);
+    return null;
 }
+
+function _executeNextAnimationStep() {
+    if (currentAnimationSequenceQueue.length === 0) {
+        animParams.isProgrammedAnimationActive = false;
+        animParams.programmedRotationX = 0; // Reset programmed speeds
+        animParams.programmedRotationY = 0;
+        animParams.programmedRotationZ = 0;
+        TB.logger.debug('[Graphics] Animation sequence finished.');
+        return;
+    }
+
+    const stepData = currentAnimationSequenceQueue.shift();
+    const parsedStep = _parseAnimationInput(stepData.sequence);
+
+    if (!parsedStep) {
+        TB.logger.error(`[Graphics] Failed to parse animation step: ${stepData.sequence}. Skipping.`);
+        if (stepData.onComplete) stepData.onComplete();
+        _executeNextAnimationStep(); // Try next step
+        return;
+    }
+
+    animParams.isProgrammedAnimationActive = true;
+    const baseSpeed = stepData.baseSpeed || 0.005; // Default base speed for programmed anim
+    const speedFactor = stepData.speedFactor || 1; // Default speed factor
+
+    // Reset programmed rotations for this step
+    animParams.programmedRotationX = 0;
+    animParams.programmedRotationY = 0;
+    animParams.programmedRotationZ = 0;
+    animParams.programmedFactor = animParams.factorIdeal; // Use ideal factor or a specific one
+
+    const calculatedSpeed = parsedStep.direction * parsedStep.speed * baseSpeed * speedFactor;
+
+    switch (parsedStep.type) {
+        case 'R': animParams.programmedRotationX = calculatedSpeed; break;
+        case 'P': animParams.programmedRotationZ = calculatedSpeed; break; // Pan/Yaw around object's Z
+        case 'Y': animParams.programmedRotationY = calculatedSpeed; break; // Yaw/Pitch around object's Y
+        case 'Z':
+            // Zoom is discrete steps, not continuous rotation like R, P, Y
+            // The duration will cover the time for these steps.
+            // We can implement zoom steps within the timeout or simply use the duration for visual effect.
+            // For simplicity, let's make zoom 'pulsate' the camera during the step's duration
+            // This needs a more complex handling if actual stepped zoom is needed within one step's duration.
+            // For now, Z type will just set a rotation for visual feedback if needed or do nothing specific for rotation.
+            // The 'repeat' for Z could mean number of zoom pulses.
+            // For actual zoom, it's better handled by direct calls to adjustCameraZoom.
+            // Let's assume 'Z' in sequence string primarily affects duration or is a placeholder for now.
+            TB.logger.debug(`[Graphics] Zoom step type '${parsedStep.type}' in sequence. Action TBD or handled by duration.`);
+            // Example: could trigger a small, quick camera FOV change or position nudge
+            break;
+        default:
+            TB.logger.warn(`[Graphics] Unknown animation type: ${parsedStep.type}`);
+            break;
+    }
+
+    // Duration (ms) = (Complexity_Value * 10 + 1 + Repeat_Value * 1000).
+    // Your example calculation: parseInt(match[5]) *10 + parseInt(match[2]) * 1000
+    // Using my parsedStep: (parsedStep.complexity * 10) + (parsedStep.repeat * 1000)
+    // The `+1` seems arbitrary unless it's to prevent 0ms duration. Let's ensure min duration.
+    const duration = Math.max(10, (parsedStep.complexity * 10) + (parsedStep.repeat * 1000));
+
+    TB.logger.debug(`[Graphics] Executing animation step: ${stepData.sequence}, Duration: ${duration}ms, Speed: ${calculatedSpeed.toFixed(4)}`);
+
+    programmedAnimationTimeoutId = setTimeout(() => {
+        if (stepData.onComplete) {
+            try {
+                stepData.onComplete();
+            } catch (e) {
+                TB.logger.error("[Graphics] Error in onComplete callback for animation step:", e);
+            }
+        }
+        _executeNextAnimationStep(); // Proceed to next step
+    }, duration);
+}
+
+export function playAnimationSequence(sequenceString, onSequenceComplete = null, baseSpeedOverride = null, speedFactorOverride = null) {
+    if (!isInitialized) {
+        TB.logger.warn('[Graphics] Cannot play animation sequence, not initialized.');
+        if (onSequenceComplete) onSequenceComplete(); // Call complete if not initialized
+        return;
+    }
+    TB.logger.log('[Graphics] Playing animation sequence:', sequenceString);
+
+    if (programmedAnimationTimeoutId) {
+        clearTimeout(programmedAnimationTimeoutId);
+        programmedAnimationTimeoutId = null;
+    }
+
+    const animationSteps = sequenceString.split(':');
+    currentAnimationSequenceQueue = animationSteps.map((step, index) => ({
+        sequence: step,
+        onComplete: index === animationSteps.length - 1 ? onSequenceComplete : null,
+        baseSpeed: baseSpeedOverride,
+        speedFactor: speedFactorOverride
+    }));
+
+    _executeNextAnimationStep();
+}
+
+export function stopAnimationSequence() {
+    if (programmedAnimationTimeoutId) {
+        clearTimeout(programmedAnimationTimeoutId);
+        programmedAnimationTimeoutId = null;
+    }
+    currentAnimationSequenceQueue = []; // Clear the queue
+    animParams.isProgrammedAnimationActive = false;
+    animParams.programmedRotationX = 0;
+    animParams.programmedRotationY = 0;
+    animParams.programmedRotationZ = 0;
+    TB.logger.log('[Graphics] Animation sequence stopped.');
+}
+
 
 export function dispose() {
     if (!isInitialized) return;

@@ -3,6 +3,7 @@ import logger from './logger.js'; // Ensure logger is imported if used here
 
 let _config = {};
 
+
 const Config = {
     init: (initialUserConfig = {}) => {
         const defaultConfig = {
@@ -77,7 +78,6 @@ const Config = {
         if (_config.baseApiUrl && _config.baseApiUrl.startsWith('/')) {
              _config.baseApiUrl = new URL(_config.baseApiUrl, window.location.origin).href;
         }
-
 
         // After logger is initialized in TB.init, this can be moved there or use a preliminary log.
         // For now, console.log is fine for config init.

@@ -48,8 +48,7 @@
         </div>
 
         <hr style="margin: 20px 0; border-color: var(--border-color, #ccc);"/>
-        <a href="/web/assets/waiting_list.html" style="color: var(--link-color, blue);">Email waiting list</a><br/>
-        <a href="/" style="color: var(--link-color, blue);">Landing page</a>
+        <a href="/web/core0/Installer.html" style="color: var(--link-color, blue);">Installer</a><br/>
     </div>
 
     <script unsave="true">
@@ -68,7 +67,7 @@
             try {
                 // Assuming TB_INSTANCE.api.fetch returns the JSON parsed response directly
                 // or the response object which then needs .json()
-                const responseData = await TB_INSTANCE.api.fetch('/api/CloudM/openui');
+                const responseData = await TB_INSTANCE.api.httpPostUrl('CloudM', 'openui');
 
                 // Adjust based on what TB_INSTANCE.api.fetch returns
                 // If it returns a Response object: const data = await responseData.json();

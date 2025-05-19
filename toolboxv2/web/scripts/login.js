@@ -1,144 +1,77 @@
+// /web/scripts/login.js (Refactored with Animation)
 
-import {httpPostData, httpPostUrl, AuthHttpPostData} from "/web/scripts/httpSender.js";
-import {authorisazeUser, signMessage, retrievePrivateKey, decryptAsymmetric} from "/web/scripts/cryp.js";
+function setupLogin() {
+    const loginForm = document.getElementById('loginForm');
+    const usernameInput = document.getElementById('username');
+    const registerDeviceCheckbox = document.getElementById('register-device');
+    const infoPopup = document.getElementById('infoPopup');
+    const infoText = document.getElementById('infoText');
 
-let base64_privat_key = null
-let checked = [false]
-let caunter = 0
-let username
+    let next_url = "/web/mainContent.html";
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('next')) next_url = urlParams.get('next');
 
-let next_url = "/web/mainContent.html"
-getKeyFromURL()
-
-function getKeyFromURL() {
-    // Create a URL object based on the current window location
-    const url = new URL(window.location.href);
-    console.log("URL:", url)
-    // Use URLSearchParams to get the 'key' query parameter
-    const next_ = url.searchParams.get('next');
-
-    if (next_) {
-        next_url = next_;
-    }
-
-}
-
-
-function get_handleLoginError(id) {
-    function handleLoginError(data) {
-        console.log("[handleCreateUserError data]:",id, data)
-        window.TBf.animator("R2+102")
-        if (data.info.help_text){
-            document.getElementById('infoText').textContent = data.info.help_text;
-        }else {
-            document.getElementById('infoText').textContent = "Unknown error"
-        }
-        document.getElementById('infoPopup').style.display = 'block';
-        return data
-    }
-    return handleLoginError
-}
-
-function handleLoginSMK(data) {
-    window.TBf.animator("R2-203")
-    console.log("[handleLoginSMK data]:", data)
-    document.getElementById('infoText').textContent = "Bitte schauen sie in ihre Emails";
-    document.getElementById('infoPopup').style.display = 'block';
-    return data
-}
-
-function rr(){
-    setTimeout(async () => {
-        localStorage.setItem("local_ws.onopen:installMod-welcome", 'false');
-        window.TBf.animator("Y2+203")
-        await AuthHttpPostData(username, get_handleLoginError("Session Error"), (_)=>{
-            window.TBf.router(next_url)
-        })
-    }, 200);
-}
-
-async function handleLoginSuccessVP(data) {
-    console.log("[handleLoginSuccessVP data]:", data)
-    window.TBf.animator("Y1+101")
-    document.getElementById('infoText').textContent = data.info.help_text;
-    document.getElementById('infoPopup').style.display = 'block';
-    setTimeout(() => {
-        if (data.get()){
-            localStorage.setItem("local_ws.onopen:installMod-welcome", 'false');
-            window.TBf.router(data.get())
-        }
-    }, 200);
-
-    return data
-}
-
-async function handleLoginSuccessVD(data) {
-    console.log("[handleLoginSuccessVD data]:", data)
-    window.TBf.animator("Y2-101")
-    document.getElementById('infoText').textContent = data.info.help_text;
-    document.getElementById('infoPopup').style.display = 'block';
-
-    if (data.get().toPrivat){
-        try {
-            const claim = await decryptAsymmetric(data.get().key, privateKey_base64, true)
-            localStorage.setItem('jwt_claim_device', claim);
-            rr()
-        }catch (e){
-            console.log("Error handleLoginSuccessVP", e)
-        }
-    }else {
-        if (base64_privat_key === null){
-            document.getElementById('infoText').textContent = "Sie erhalten in kürze eine Email zum einloggen"
-            httpPostUrl('CloudM.AuthManager', 'get_magic_link_email', 'username='+username, get_handleLoginError("mk"), handleLoginSMK);
-            return data
-        }else{
-            localStorage.setItem('jwt_claim_device', data.get().key);
-            rr()
+    function showInfo(message, isError = false, animationSequence = null) {
+        infoText.textContent = message;
+        infoPopup.style.display = 'block';
+        if (isError) {
+            TB.ui.Toast.show(message, 'error', 5000);
+            if (TB.graphics && TB.graphics.playAnimationSequence) TB.graphics.playAnimationSequence(animationSequence || "R0-31"); // Default error animation
+        } else {
+            TB.ui.Toast.show(message, 'success', 3000);
+            if (TB.graphics && TB.graphics.playAnimationSequence) TB.graphics.playAnimationSequence(animationSequence || "P0+21"); // Default success animation
         }
     }
 
-    return data
-}
+    if (loginForm) {
+        loginForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const username = usernameInput.value.trim();
+            if (!username) {
+                showInfo("Username is required.", true, "Y0-22"); // Yaw shake for error
+                return;
+            }
 
+            const wantsWebAuthn = !registerDeviceCheckbox.classList.contains('none');
+            let result;
 
-async function handleLoginSuccess(data) {
-    window.TBf.animator("Y2+101")
-    console.log("[handleLoginSuccess data]:", data)
-    document.getElementById('infoText').textContent = "Login in progress";
-    document.getElementById('infoPopup').style.display = 'block';
+            // Play a 'working' animation
+            if (TB.graphics && TB.graphics.playAnimationSequence) TB.graphics.playAnimationSequence("R1+11:P1-11"); // Gentle alternating rotation
 
-    console.log("[checked]:", document.getElementById("register-device").classList.contains('none'))
+            try {
+                if (wantsWebAuthn) {
+                    showInfo("Attempting WebAuthn login...");
+                    result = await TB.user.loginWithWebAuthn(username);
+                } else {
+                    showInfo("Attempting device key login...");
+                    result = await TB.user.loginWithDeviceKey(username);
+                    if (!result.success && result.message && result.message.includes("No device key found")) {
+                        showInfo(result.message + " Would you like to request a magic link?", true, "Y1-32");
+                        return;
+                    }
+                }
 
-    if (document.getElementById("register-device").classList.contains('none')){
-        if(await authorisazeUser(data.get().rowId, data.get().challenge, document.getElementById('username').value, get_handleLoginError("authorisazeUser"), handleLoginSuccessVP)){
-            document.getElementById('infoText').textContent = "Validate user successful";
-        }
-    }else{
-        base64_privat_key = await retrievePrivateKey(username)
+                if (result.success) {
+                    showInfo(result.message || "Login successful!", false, "Z1+32:R0+50"); // Zoom in, fast spin success
+                    setTimeout(() => TB.router.navigateTo(next_url), 800); // Give animation time
+                } else {
+                    showInfo(result.message || "Login failed.", true, "P2-42"); // Sharp pan for failure
+                }
+            } catch (error) {
+                TB.logger.error('[Login Page] Login submission error:', error);
+                showInfo(error.message || "An unexpected error occurred.", true, "R2-52:P2-52"); // Tumbling error
+            } finally {
 
-        if (base64_privat_key === "Invalid user name device not registered"){
-            document.getElementById('infoText').textContent = "Invalid user name device not registered on '"+document.getElementById('username').value+"'";
-            document.getElementById('infoPopup').style.display = 'block';
-            caunter++;
-        }else{
-            const signature = await signMessage(base64_privat_key, data.get().challenge)
-            httpPostData('CloudM.AuthManager', 'validate_device', { username:document.getElementById('username').value, signature},
-                get_handleLoginError("signMessage"), handleLoginSuccessVD);
-        }
-
+                if (TB.graphics && TB.graphics.stopAnimationSequence) TB.graphics.stopAnimationSequence();
+            }
+        });
+    } else {
+        TB.logger.warn('[Login Page] Login form not found.');
     }
-
-    return data
 }
 
-function loginDevice(username) {
-    window.TBf.animator("P2-101")
-    httpPostUrl('CloudM.AuthManager', 'get_to_sing_data', 'username='+username + '&personal_key='+document.getElementById("register-device").classList.contains('none').toString(), get_handleLoginError("loginDevice"), handleLoginSuccess);
+if (window.TB && window.TB.user && window.TB.user.init) {
+    setupLogin();
+} else {
+    window.addEventListener('tbjs:initialized', setupLogin, { once: true });
 }
-
-document.getElementById('loginForm').addEventListener('submit', function(event) {
-    event.preventDefault();
-
-    username = document.getElementById('username').value;
-    loginDevice(username);
-});

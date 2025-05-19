@@ -50,6 +50,10 @@ const TB = {
     this.state.init(this.config.get('initialState')); // Get from config
     this.ui.theme.init(this.config.get('themeSettings')); // Get from config
 
+    setTimeout(async () => {
+        await this.user.init();
+    }, 1);
+
     // Router.init will navigate to the current window.location.pathname + search + hash
     this.router.init(
         document.getElementById(this.config.get('appRootId')),
@@ -63,7 +67,7 @@ const TB = {
         this.router.navigateTo(intendedPath, true, false); // replace, not initialLoad
     } else {
         const currentRouterPath = this.router.getCurrentPath();
-        const defaultAppPath = "/web/core0/index.html"; // Your default content page
+        const defaultAppPath = "/index.html"; // Your default content page
         const rootPaths = ['/', '/index.html'];
 
         // Add baseFileUrl variations to rootPaths if baseFileUrl is set and not just "/"

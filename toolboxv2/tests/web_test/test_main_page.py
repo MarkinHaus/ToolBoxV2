@@ -92,7 +92,7 @@ def installer_interactions(self):
         {"type": "screenshot", "path": "installer_interactions/os_selection_web.png"},
 
         # Check home link navigation
-        {"type": "click", "selector": "a[href='/web/core0/index.html']"},
+        {"type": "click", "selector": "a[href='/index.html']"},
         {"type": "screenshot", "path": "installer_interactions/home_link_click.png"},
 
         {"type": "goback"},

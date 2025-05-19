@@ -1,179 +1,89 @@
+// /web/scripts/m_link.js (Refactored with Animation)
 
-import
-    {
-        httpPostData, httpPostUrl, AuthHttpPostData
-    }
-    from
-    "/web/scripts/httpSender.js";
-import
-    {
-        generateAsymmetricKeys, signMessage, decryptAsymmetric, storePrivateKey
-    }
-    from
-    "/web/scripts/cryp.js";
+function setupMagicLinkLogin() {
+    const usernameInput = document.getElementById('username');
+    const infoPopup = document.getElementById('infoPopup');
+    const infoText = document.getElementById('infoText');
+    const mainContent = document.getElementById('Main-content');
+    const errorContent = document.getElementById('error-content');
+    const errorInfoText = document.getElementById('EinfoText');
 
-setTimeout(()=> {if(window.history.state && window.history.state.TB) {
-    let privateKey_base64 = null
-    let username
-    // Save the key in a variable
-    let [invitation, NL] = getKeyFromURL();
-
-
-    async function startMkLink() {
-
-        if (!username) {
-            username = document.getElementById('username').value;
-            document.getElementById('username').classList.add('none')
+    function showGeneralInfo(message, isError = false, animationSequence = null) {
+        if (infoPopup && infoText) {
+            infoText.textContent = message;
+            infoPopup.style.display = 'block';
         }
-        localStorage.setItem("StartMLogIN", "True")
-        await generateAsymmetricKeys().then(async keys => {
-            privateKey_base64 = keys.privateKey_base64
-            await storePrivateKey(privateKey_base64, username)
-            await registerUserDevice(username, keys.publicKey)
-        }, 600);
-
+        if (isError) {
+            TB.ui.Toast.show(message, 'error', 5000);
+            if (TB.graphics?.playAnimationSequence) TB.graphics.playAnimationSequence(animationSequence || "R0-31");
+        } else {
+            TB.ui.Toast.show(message, 'success', 3000);
+            if (TB.graphics?.playAnimationSequence) TB.graphics.playAnimationSequence(animationSequence || "P0+21");
+        }
     }
 
-    function show_error(from) {
-        console.log("ERROR", from)
-        document.getElementById('infoText').textContent = from;
-        document.getElementById("Main-content").classList.add("none")
-        document.getElementById("error-content").classList.remove("none")
+    function showErrorPage(message, animationSequence = "Y2-52:P2-52") {
+        if (mainContent) mainContent.classList.add('none');
+        if (errorContent) errorContent.classList.remove('none');
+        if (errorInfoText) errorInfoText.textContent = message;
+        TB.ui.Toast.show(message, 'error', 0);
+        if (TB.graphics?.playAnimationSequence) TB.graphics.playAnimationSequence(animationSequence);
     }
-
-    // Log the key to the console (for daemonstration purposes)
 
     function getKeyFromURL() {
-        // Create a URL object based on the current window location
-        const url = new URL(window.location.href);
-        console.log("URL:", url)
-        // Use URLSearchParams to get the 'key' query parameter
-        const key = url.searchParams.get('key');
-        const nl = url.searchParams.get('nl');
-        const name = url.searchParams.get('name');
-        console.log("key:", key)
-        console.log("nl:", nl)
-        console.log("name:", name)
-        console.log("!nl && !name:", !nl && !name, !nl, !name)
-        if (!key) {
-            show_error("No key in url fund")
+        const urlParams = new URLSearchParams(window.location.search);
+        const key = urlParams.get('key');
+        const nl = urlParams.get('nl'); // name length?
+        const name = urlParams.get('name');
+        return { key, nl, name };
+    }
+
+    async function processMagicLink() {
+        const { key: invitationKey, name: usernameFromUrl } = getKeyFromURL();
+        let username = usernameFromUrl;
+
+        if (!invitationKey) {
+            showErrorPage("No invitation key found in URL.", "R1-42");
+            return;
         }
-        if (name) {
-            username = name;
-            document.getElementById('username').classList.add("none")
+        if (!username && usernameInput && usernameInput.offsetParent !== null) {
+            showGeneralInfo("Please enter your username.", false, "Y0+10"); // Gentle prompt
+            // Add listener to usernameInput to call processMagicLink again or a specific handler
+            usernameInput.addEventListener('change', async (e) => { // Or 'blur' or a button click
+                username = e.target.value.trim();
+                if (username) await processMagicLink(); // Re-trigger with username
+            }, {once: true});
+            return;
         }
-        if (!nl && !name) {
-            show_error("No name found in url or name length")
+        if (!username) {
+            showErrorPage("Username not provided.", "P1-32");
+            return;
         }
-        return [key, nl];
-    }
+        if (usernameInput) usernameInput.classList.add('none');
 
-    function get_handleLoginError(id) {
-        function handleLoginError(data) {
-            console.log("[handleCreateUserError data]:", id, data)
-            document.getElementById('infoText').textContent = data.info.help_text;
-            document.getElementById('infoPopup').style.display = 'block';
-            show_error(id + " handleLoginError")
-            return data
-        }
-
-        return handleLoginError
-    }
-
-    function rr() {
-
-        setTimeout(async () => {
-            localStorage.setItem("local_ws.onopen:installMod-welcome", 'false');
-            await AuthHttpPostData(username, get_handleLoginError("Session Error"), (_) => {
-                window.TBf.router("/web/mainContent.html");
-                localStorage.removeItem("StartMLogIN")
-            })
-
-        }, 200);
-    }
-
-    async function handleLoginSuccessVD(data) {
-        console.log("[handleLoginSuccessVD data]:", data)
-        document.getElementById('infoText').textContent = data.info.help_text;
-        document.getElementById('infoPopup').style.display = 'block';
-        if (data.get().toPrivat) {
-            try {
-                const claim = await decryptAsymmetric(data.get().key, privateKey_base64, true)
-                localStorage.setItem('jwt_claim_device', claim);
-                rr()
-            } catch (e) {
-                console.log("Error handleLoginSuccessVP", e)
-                show_error("handleLoginSuccessVD claim saveing")
-            }
-        } else {
-            localStorage.setItem('jwt_claim_device', data.get().key);
-            rr()
-        }
+        showGeneralInfo(`Processing magic link for ${username}...`, false, "R1+11:P1-11:Y1+11");
+        if (TB.graphics?.playAnimationSequence) TB.graphics.playAnimationSequence("R1+11:P1-11:Y1+11");
 
 
-        return data
-    }
-
-    async function handleLoginSuccess(data) {
-        document.getElementById('infoText').textContent = "Login in progress for " + username;
-        document.getElementById('infoPopup').style.display = 'block';
-
-        const signature = await signMessage(privateKey_base64, data.get().challenge)
-        await httpPostData('CloudM.AuthManager', 'validate_device', {username, signature},
-            get_handleLoginError("signMessage"), handleLoginSuccessVD);
-
-        return data
-    }
-
-    async function registerUserDevice(name, pub_key) {
-        return httpPostData('CloudM.AuthManager',
-            'add_user_device',
-            {
-                name: username, pub_key, invitation,
-                web_data: true, as_base64: false
-            },
-            get_handleLoginError("registerUserDevice"), handleCreateUserSuccess);
-    }
-
-    async function handleCreateUserSuccess(data) {
-        console.log("[handleCreateUserSuccess data]:", data)
-        document.getElementById('infoText').textContent = data.info.help_text;
-        document.getElementById('infoPopup').style.display = 'block';
         try {
-            const deviceID = await decryptAsymmetric(data.get().dSync, privateKey_base64, true)
-            await window.sessionStorage.setItem("SKey", deviceID)
-            await storePrivateKey(privateKey_base64, username)
-            loginDevice(username)
-        } catch (e) {
-            show_error("Invalid privat key")
-        }
-        return data
-    }
-
-
-    function loginDevice(username) {
-        httpPostUrl('CloudM.AuthManager', 'get_to_sing_data', 'username=' + username + '&personal_key=False', get_handleLoginError("loginDevice"), handleLoginSuccess);
-    }
-
-    if (username) {
-        startMkLink()
-    }
-
-    const userInput = document.getElementById("username")
-
-    if (userInput) {
-        userInput.addEventListener("oninput", (e) => {
-
-            if (e.value.length >= NL) {
-                startMkLink();
+            const result = await TB.user.registerDeviceWithInvitation(username, invitationKey);
+            if (result.success) {
+                showGeneralInfo(result.message || `Device registered for ${username}!`, false, "Z2+52:R0+50");
+                setTimeout(() => TB.router.navigateTo('/web/dashboard'), 1000);
+            } else {
+                showErrorPage(result.message || "Failed to process magic link.", "R2-42:P1-31");
             }
-
-        })
-    } else {
-        console.log("Invalid no addEventListener")
+        } catch (error) {
+            TB.logger.error('[MagicLink] Error processing magic link:', error);
+            showErrorPage(error.message || "An unexpected error occurred.");
+        }
     }
-}else{
-    console.log("OFLINE")
+
+    processMagicLink();
 }
-}, 2500
-)
+
+if (window.TB?.user?.init) {
+    setupMagicLinkLogin();
+} else {
+    window.addEventListener('tbjs:initialized', setupMagicLinkLogin, { once: true });
+}

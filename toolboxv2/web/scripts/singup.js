@@ -1,126 +1,87 @@
-import {httpPostData} from "/web/scripts/httpSender.js";
-import {registerUser, generateAsymmetricKeys, storePrivateKey, decryptAsymmetric, signMessage} from "/web/scripts/cryp.js";
+// /web/scripts/signup.js (Refactored with Animation)
 
-let UserData = undefined
-let registrationData = undefined
-let privateKey_base64 = null
-let username
+function setupSignup() {
+    const signupForm = document.getElementById('signupForm');
+    const usernameInput = document.getElementById('username');
+    const emailInput = document.getElementById('email');
+    const initiationKeyInput = document.getElementById('initiation');
+    const skipPersonaButton = document.getElementById('skip-persona-button');
+    const infoPopup = document.getElementById('infoPopup');
+    const infoText = document.getElementById('infoText');
 
-function handleCreateUserError(data) {
-    console.log("[handleCreateUserError data]:", data)
-    document.getElementById('infoText').textContent = data.info.help_text;
-    document.getElementById('infoPopup').style.display = 'block';
-    UserData = undefined
-    document.getElementById('titel-h2').textContent = "Sing Up"
-    document.getElementById('username').classList.remove('none')
-    document.getElementById('email').classList.remove('none')
-    document.getElementById('initiation').classList.remove('none')
-    return data
-}
-
-async function handleCreateUserSuccess(data) {
-    console.log("[handleCreateUserSuccess data]:", data)
-    registrationData = data.get()
-    UserData = true
-    document.getElementById('submit-button').textContent = "Retry";
-    document.getElementById('infoText').textContent = "Now we linke your account with your Persona. A pop-up window should appear. If it does not appear, please click on 'Retry' manually.";
-    document.getElementById('infoPopup').style.display = 'block';
-    document.getElementById('titel-h2').textContent = "Sing Up for "+document.getElementById('username').value
-    document.getElementById('username').classList.add('none')
-    document.getElementById('email').classList.add('none')
-    document.getElementById('initiation').classList.add('none')
-
-    console.log("[registrationData--]:", registrationData)
-    console.log("[registrationData.dSync, keys.privateKey_base64]:", registrationData.dSync, privateKey_base64)
-    const deviceID = await decryptAsymmetric(registrationData.dSync, privateKey_base64, true)
-    await window.sessionStorage.setItem("SKey", deviceID)
-    await storePrivateKey(privateKey_base64, username)
-    await registrate_user_personal(await signMessage(privateKey_base64, registrationData.challenge))
-
-    return data
-}
-function handleCreateUserErrorPersona(data) {
-    console.log("[handleCreateUserError data]:", data)
-    document.getElementById('infoText').textContent = data.info.help_text;
-    document.getElementById('infoPopup').style.display = 'block';
-    UserData = undefined
-    return data
-}
-
-async function handleCreateUserSuccessPersona(data) {
-    console.log("[handleCreateUserSuccess data]:", data)
-    setTimeout(()=>{
-        window.location.href = "/web/login";}, 120)
-    return data
-}
-
-async function createUser(name, email, invitation, pub_key) {
-    return httpPostData('CloudM.AuthManager',
-        'create_user',
-        {
-            name, email ,pub_key ,invitation,
-            web_data:true, as_base64:false
-        },
-        handleCreateUserError, handleCreateUserSuccess);
-}
-
-async function registrate_user_personal(sing){
-    const done = await registerUser(registrationData, sing, handleCreateUserErrorPersona, handleCreateUserSuccessPersona)
-    UserData = !done
-    if (done){
-        sessionStorage.setItem("local_ws.onopen:installMod-welcome", 'true')
-        UserData = false
-        document.getElementById('titel-h2').textContent = "Welcome to SimpleCore "+document.getElementById('username').value
-        document.getElementById('submit-button').textContent = "Go to dashboard";
-        document.getElementById('infoText').textContent = "Verification Done";
-        document.getElementById('infoPopup').style.display = 'block';
-    }else{
-        document.getElementById('infoText').textContent = "Pleas press on 'Retry'";
-        document.getElementById('infoPopup').style.display = 'block';
-    }
-}
-
-document.getElementById('signupForm').addEventListener('submit',async function(event) {
-    event.preventDefault();
-
-    if (document.getElementById('submit-button').textContent === "Retry"){
-        document.getElementById('skip-persona-button').classList.remove('none')
-        document.getElementById('infoText').textContent = "If the web auth interface is not working you can add the personal data letter. To continue press on 'Only Device'";
-    }
-
-    if (UserData === false) {
-        window.location.href = "/web/login";
-        return
-    }
-
-    if (UserData === undefined){
-        username = document.getElementById('username').value;
-        const email = document.getElementById('email').value;
-        const invitation = document.getElementById('initiation').value;
-        document.getElementById('infoText').textContent = "Validate information's";
-        document.getElementById('infoPopup').style.display = 'block';
-        await generateAsymmetricKeys().then(async keys => {
-            await createUser(username, email, invitation, keys.publicKey)
-            privateKey_base64 =  keys.privateKey_base64
-        }, 600);
-        return
-    }
-    console.log("[registrationData]:", registrationData)
-    try {
-        if (UserData === true && registrationData !== {}){
-            console.log("[registrationData--]:", registrationData)
-            if (privateKey_base64 !== undefined && privateKey_base64 !== null){
-                console.log("[registrationData.dSync, keys.privateKey_base64]:", registrationData.dSync, privateKey_base64)
-                const deviceID = await decryptAsymmetric(registrationData.dSync, privateKey_base64, true)
-                await window.sessionStorage.setItem("SKey", deviceID)
-                await storePrivateKey(privateKey_base64, username)
-                await window.sessionStorage.removeItem('temp_base64_key')
-            }
-            await registrate_user_personal(await signMessage(privateKey_base64, registrationData.challenge))
-            return
+    function showInfo(message, isError = false, animationSequence = null) {
+        infoText.textContent = message;
+        infoPopup.style.display = 'block';
+        if (isError) {
+            TB.ui.Toast.show(message, 'error', 5000);
+            if (TB.graphics?.playAnimationSequence) TB.graphics.playAnimationSequence(animationSequence || "R0-31");
+        } else {
+            TB.ui.Toast.show(message, 'success', 3000);
+            if (TB.graphics?.playAnimationSequence) TB.graphics.playAnimationSequence(animationSequence || "P0+21");
         }
     }
-    catch (e) {
-        console.log(e)
+
+    async function handleSignup(registerAsPersona) {
+        const username = usernameInput.value.trim();
+        const email = emailInput.value.trim();
+        const initiationKey = initiationKeyInput.value.trim();
+
+        if (!username || !email) {
+            showInfo("Username and Email are required.", true, "Y0-22");
+            return;
+        }
+
+        showInfo(`Attempting to sign up ${username}...`);
+        if (TB.graphics?.playAnimationSequence) TB.graphics.playAnimationSequence("Y1+11:R1-11");
+
+
+        try {
+            const result = await TB.user.signup(username, email, initiationKey, registerAsPersona);
+
+            if (result.success) {
+                let successMessage = result.message || "Signup successful!";
+                let successAnimation = "Z1+32:Y0+50"; // Default success
+
+                if (registerAsPersona && result.data && result.data.needsWebAuthnRegistration) {
+                    successMessage = "Signup successful. Now, register your security key/device (WebAuthn).";
+                    // Potentially a different animation for this pending step
+                    successAnimation = "P1+21:Y1+21";
+                    showInfo(successMessage, false, successAnimation);
+                    // const webAuthnRegResult = await TB.user.registerWebAuthnForCurrentUser(username);
+                    // showInfo(webAuthnRegResult.message, !webAuthnRegResult.success, webAuthnRegResult.success ? "Z1+42" : "R2-42");
+                    // if (webAuthnRegResult.success) setTimeout(() => TB.router.navigateTo('/web/dashboard'), 800);
+                } else if (result.data && result.data.token) {
+                    showInfo(successMessage, false, successAnimation);
+                    setTimeout(() => TB.router.navigateTo('/web/dashboard'), 800);
+                } else {
+                    showInfo("Signup successful. Please log in.", false, "P0+31");
+                    setTimeout(() => TB.router.navigateTo('/web/assets/login.html'), 800);
+                }
+            } else {
+                showInfo(result.message || "Signup failed.", true, "R2-42");
+            }
+        } catch (error) {
+            TB.logger.error('[Signup Page] Signup submission error:', error);
+            showInfo(error.message || "An unexpected error occurred.", true, "P2-52:Y2-52");
+        }
     }
-});
+
+    if (signupForm) {
+        signupForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            await handleSignup(true);
+        });
+    }
+    if (skipPersonaButton) {
+        skipPersonaButton.addEventListener('click', async (event) => {
+            event.preventDefault();
+            await handleSignup(false);
+        });
+    }
+}
+
+if (window.TB?.user?.init) { // Simpler check for TB readiness
+    setupSignup();
+} else {
+    window.addEventListener('tbjs:initialized', setupSignup, { once: true });
+}
