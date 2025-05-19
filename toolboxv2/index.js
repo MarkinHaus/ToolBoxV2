@@ -68,6 +68,7 @@ function initializeApp() {
     TB.events.on('tbjs:initialized', (initializedTB) => {
         if (!isProduction) {
             initializedTB.logger.log('Event tbjs:initialized empfangen. Framework ist bereit.');
+            initializedTB.router.clearCache()
         }
         // Hier könnten weitere Initialisierungsschritte der Hauptanwendung erfolgen,
         // die darauf warten, dass TB vollständig bereit ist.
@@ -90,14 +91,12 @@ function initializeApp() {
 
         // Annahme: TB.core.threeSetup ist ein Modul/Funktion, die Three.js initialisiert
         // und ein Objekt mit { renderer, scene, ambientLight, pointLights } zurückgibt oder speichert
-         if (initializedTB.ui.darkModeToggle) {
-            initializedTB.ui.darkModeToggle.init('#darkModeToggleContainer');
+         if (initializedTB.ui.DarkModeToggle) {
+            initializedTB.ui.DarkModeToggle.init();
         }
         // Optional: Speichere die Instanz, wenn du später darauf zugreifen musst
         // initializedTB.mainNavMenu = mainNavMenu;
-        initializedTB.logger.info('[App] NavMenu initialized.'); // <--- HINZUGEFÜGT
         loadPlatformSpecificFeatures(initializedTB);
-        console.log("NavMenu initialized");
     });
 
     window.AppTB = TB.init(tbjsConfig); // window.AppTB ist optional, TB selbst ist ja schon importiert
@@ -126,12 +125,7 @@ function loadPlatformSpecificFeatures(currentTB) {
 
     if (currentTB.env.isTauri()) {
         currentTB.logger.info('Tauri-Umgebung erkannt. Lade Desktop-spezifische Features...');
-        // Beispiel: 3D-Hintergrund immer für Desktop-Tauri
-        if (threeDSceneElement && typeof currentTB.ui.initializeGlobalBackground === 'function') {
-            currentTB.ui.initializeGlobalBackground(threeDSceneElement);
-        } else {
-            currentTB.logger.warn('initializeGlobalBackground Funktion nicht gefunden oder threeDSceneElement fehlt.');
-        }
+
         // Weitere Tauri-spezifische Initialisierungen
         // z.B. Einrichten von Event-Listenern für Tauri-Events
         // async function setupTauriListeners() {
@@ -154,19 +148,7 @@ function loadPlatformSpecificFeatures(currentTB) {
         } else {
             currentTB.logger.info('Desktop Web-Client. Lade volle Features...');
             // Für Desktop-Web den 3D-Hintergrund (wenn Performance es zulässt - evtl. hier eine zusätzliche Prüfung)
-            if (threeDSceneElement && typeof currentTB.ui.initializeGlobalBackground === 'function') {
-                // Optionale Performance-Prüfung für Web
-                // const canRun3D = !navigator.connection?.saveData && window.matchMedia('(min-width: 768px)').matches;
-                // if (canRun3D) {
-                //    currentTB.ui.initializeGlobalBackground(threeDSceneElement);
-                // } else {
-                //    currentTB.logger.info('3D background skipped due to performance considerations or small screen.');
-                //    if (threeDSceneElement) threeDSceneElement.style.display = 'none';
-                // }
-                currentTB.ui.initializeGlobalBackground(threeDSceneElement); // Vorerst immer laden
-            } else {
-                currentTB.logger.warn('initializeGlobalBackground Funktion nicht gefunden oder threeDSceneElement fehlt.');
-            }
+
         }
         // Allgemeine Web-spezifische Initialisierungen (z.B. Service Worker, falls genutzt)
         // if ('serviceWorker' in navigator && isProduction) {

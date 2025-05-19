@@ -12,7 +12,7 @@ import * as crypto from './crypto.js';
 import * as graphics from './graphics.js';
 import sse from './sse.js';
 import * as utils from './utils.js';
-// Potentially a ServiceWorker manager: import sw from './sw.js';
+import sw from './sw.js';
 
 export {
     config,
@@ -26,5 +26,5 @@ export {
     sse,
     utils,
     graphics,
-    // sw
+    sw
 };

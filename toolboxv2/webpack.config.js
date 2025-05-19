@@ -142,6 +142,12 @@ export default {
       filename: './web/assets/terms.html',
       chunks: ['main']
     }),
+    // For /web/assets/offline.html
+    new HtmlWebpackPlugin({
+      template: './web/assets/offline.html',
+      filename: './web/assets/offline.html',
+      chunks: ['main']
+    }),
     // For dashboard
     new HtmlWebpackPlugin({
       template: './web/dashboards/dashboard.html',

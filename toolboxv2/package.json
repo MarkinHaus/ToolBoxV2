@@ -8,13 +8,13 @@
     "tauriB": "npm run tauri build --prefix ./simple-core",
     "tauri-mobil": "npm run tauri android dev --prefix ./simple-core",
     "tauri-mobilB": "npm run tauri android build --prefix ./simple-core",
-    "dev": "tb api start --debug && webpack --mode development --watch",
+    "dev": "concurrently \"tb api start --debug\" \"npm run watch\"",
     "live": "tb api start",
     "build-web": "webpack --mode production",
-    "watch-web": "webpack --mode development --watch",
+    "watch-web": "webpack --mode production --watch",
     "build-tbjs": "npm run build --prefix ./tbjs",
     "watch-tbjs": "npm run watch --prefix ./tbjs",
-    "watch": "npm run watch --prefix ./tbjs && webpack --mode development --watch",
+    "watch": "concurrently \"npm run watch-tbjs\" \"npm run watch-web\"",
     "build": "npm run build --prefix ./tbjs && webpack --mode production"
   },
   "dependencies": {
@@ -37,6 +37,7 @@
   },
   "devDependencies": {
     "compression-webpack-plugin": "^11.1.0",
+    "concurrently": "^9.1.2",
     "html-loader": "^5.1.0",
     "string-replace-loader": "^3.1.0",
     "webpack-utf8-bom": "^1.4.0"

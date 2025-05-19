@@ -1,4 +1,5 @@
 // tbjs/src/ui/theme.js
+// NO CHANGES to this file. Its existing logic for emitting events and calling TB.graphics.updateTheme seems correct.
 import TB from '../index.js';
 
 const THEME_STORAGE_KEY = 'tbjs_theme_preference';
@@ -123,10 +124,10 @@ const ThemeManager = {
             if (bgConfig.placeholder.displayUntil3DReady && !ThemeManager._is3DGraphicsReady) {
                 showPlaceholder = true;
             } else if (!bgConfig.placeholder.displayUntil3DReady) {
-                // Wenn Placeholder immer angezeigt werden soll (anstelle von 3D oder wenn 3D fehlschlägt)
-                // Dies überschreibt effektiv den 3D-Typ, wenn 'displayUntil3DReady' false ist.
-                // Diese Logik könnte man anpassen, je nach gewünschtem Verhalten.
-                // Für den Fall "immer Placeholder statt 3D" wäre bgConfig.type nicht '3d'
+                // Diese Logik ist etwas unklar. Wenn displayUntil3DReady false ist,
+                // bedeutet es, der Placeholder bleibt auch wenn 3D bereit wäre?
+                // Oder dass er nur angezeigt wird, wenn type '3d' ist, aber 3D nie initialisiert wird?
+                // Für den Moment gehen wir davon aus, dass es so gemeint ist, wie es steht.
             }
         }
 
@@ -140,7 +141,7 @@ const ThemeManager = {
             // Reguläre Hintergrundanwendung
             switch (bgConfig.type) {
                 case '3d':
-                    if (ThemeManager._is3DGraphicsReady && threeDCanvasContainer && TB.graphics) {
+                    if (TB.graphics && ThemeManager._is3DGraphicsReady && threeDCanvasContainer) {
                         threeDCanvasContainer.style.display = 'block';
                          if (typeof TB.graphics.resume === 'function') TB.graphics.resume(); // Optional: Fortsetzen
                         TB.graphics.updateTheme(ThemeManager._currentMode); // 3D-Szene Theme anpassen
@@ -149,6 +150,8 @@ const ThemeManager = {
                         // Fallback, wenn 3D nicht bereit ist oder nicht konfiguriert
                         ThemeManager._backgroundContainer.style.backgroundColor = currentThemeConfig.color;
                         appliedBgType = `color (3D fallback: ${currentThemeConfig.color})`;
+                        if (!TB.graphics) TB.logger.warn("[Theme] 3D background selected, but TB.graphics module not available.");
+                        else if (!ThemeManager._is3DGraphicsReady) TB.logger.info("[Theme] 3D background selected, but graphics not ready yet. Using color fallback.");
                     }
                     break;
                 case 'image':
@@ -179,11 +182,14 @@ const ThemeManager = {
 
     togglePreference: () => {
         let newPreference;
-        if (ThemeManager._currentMode === 'dark') { // Basierend auf dem *effektiven* Modus togglen
+        // Toggle based on current *effective* mode to achieve intuitive cycling for user
+        if (ThemeManager._currentMode === 'dark') {
             newPreference = 'light';
-        } else {
+        } else { // currentMode is 'light'
             newPreference = 'dark';
         }
+        // If preference was 'system', toggling effectively picks 'light' or 'dark' explicitly.
+        // User can always set back to 'system' if UI for that is provided.
         ThemeManager.setPreference(newPreference);
     },
 

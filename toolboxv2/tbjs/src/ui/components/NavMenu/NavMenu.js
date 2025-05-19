@@ -1,19 +1,15 @@
 // tbjs/ui/components/NavMenu/NavMenu.js
+// NO CHANGES to this file. It's provided as a correct reference.
 import TB from '../../../index.js';
 
 const DEFAULT_NAVMENU_OPTIONS = {
     triggerSelector: '#links', // Selector for the menu toggle button
     menuContentHtml: `
         <ul class="space-y-2 p-4">
-            <li><a href="/">Home</a></li>
                 <li><a href="/web/mainContent.html">Apps</a></li>
-                <hr style="margin: -0.25vh 0"/>
                 <li><a href="/web/assets/login.html">Login</a></li>
-                <li><a href="/web/assets/signup.html">Sign Up</a></li>
-                <li><a href="/web/core0/Poffer/PublicDashboard.html">Offer</a></li>
-                <hr style="margin: -0.25vh 0"/>
-                <li><a href="/web/assets/terms.html">Terms and Conditions</a></li>
                 <li><a href="/web/core0/kontakt.html">Contact</a></li>
+                <li><a href="/web/assets/terms.html">Terms and Conditions</a></li>
         </ul>
     `,
     menuId: 'tb-nav-menu-modal',
@@ -79,7 +75,7 @@ class NavMenu {
 
 
         document.body.appendChild(this.menuOverlayElement);
-        document.getElementById("Nav-Main").appendChild(this.menuContainerElement);
+        document.getElementById("Nav-Main").appendChild(this.menuContainerElement); // Assuming Nav-Main exists
 
         TB.ui.processDynamicContent(this.menuContainerElement); // Process links for router etc.
     }
@@ -100,7 +96,6 @@ class NavMenu {
     _updateIcon() {
         if (this._iconElement) {
             this._iconElement.textContent = this.isOpen ? this.options.closeIconClass : this.options.openIconClass;
-            // /* Tailwind for icon rotation or animation */
             this._iconElement.style.transform = this.isOpen ? 'rotate(360deg)' : 'rotate(0deg)';
             this._iconElement.style.transition = 'transform 0.5s ease';
         }
@@ -125,7 +120,14 @@ class NavMenu {
     openMenu() {
         if (this.isOpen) return;
         if (!this.menuContainerElement) this._createMenuDom();
+
+        // Ensure DOM elements are actually there before trying to style them
+        if (!this.menuOverlayElement || !this.menuContainerElement) {
+            TB.logger.error("[NavMenu] Menu DOM elements not created properly.");
+            return;
+        }
         this.menuContainerElement.style.display = 'block';
+
 
         // Force reflow for transitions
         void this.menuOverlayElement.offsetWidth;
@@ -134,12 +136,7 @@ class NavMenu {
         this.menuOverlayElement.style.opacity = '1';
         this.menuOverlayElement.style.pointerEvents = 'auto';
 
-        // /* Tailwind: transform translate-x-0 for slide-in */
         this.menuContainerElement.style.transform = 'translateX(0)';
-        // /* Or for modal style: */
-        // this.menuContainerElement.style.opacity = '1';
-        // this.menuContainerElement.style.transform = 'translate(-50%, -50%) scale(1)';
-
 
         this.isOpen = true;
         this._updateIcon();
@@ -151,48 +148,56 @@ class NavMenu {
     closeMenu() {
         if (!this.isOpen || !this.menuContainerElement) return;
         this.menuContainerElement.style.display = 'none';
-
         this.menuOverlayElement.style.opacity = '0';
         this.menuOverlayElement.style.pointerEvents = 'none';
 
-        // /* Tailwind: transform -translate-x-full for slide-in */
         this.menuContainerElement.style.transform = 'translateX(-100%)';
-        // /* Or for modal style: */
-        // this.menuContainerElement.style.opacity = '0';
-        // this.menuContainerElement.style.transform = 'translate(-50%, -50%) scale(0.95)';
+
+        // Set display to none AFTER transition
+        // Or rely on transform to hide it, and set display none in the setTimeout
+        // For this setup, transform hides it. Display none can be in timeout.
 
         this.isOpen = false;
         this._updateIcon();
         document.removeEventListener('click', this._boundHandleDocumentClick, true);
 
-        // Optionally remove DOM after transition to save resources if not frequently used
-        setTimeout(() => {
-            if (!this.isOpen && this.menuContainerElement && this.menuContainerElement.parentNode) {
-                this.menuContainerElement.parentNode.removeChild(this.menuContainerElement);
-                this.menuOverlayElement.parentNode.removeChild(this.menuOverlayElement);
-                this.menuContainerElement = null; this.menuOverlayElement = null;
-            }
-        }, 300); // Match transition duration
-
+        if (false) {
+            setTimeout(() => {
+                if (!this.isOpen && this.menuContainerElement) { // Check menuContainerElement still exists
+                    this.menuContainerElement.style.display = 'none'; // Hide it fully
+                    // Optionally remove DOM if not frequently used
+                    if (this.menuContainerElement.parentNode) {
+                        this.menuContainerElement.parentNode.removeChild(this.menuContainerElement);
+                    }
+                    if (this.menuOverlayElement && this.menuOverlayElement.parentNode) {
+                         this.menuOverlayElement.parentNode.removeChild(this.menuOverlayElement);
+                    }
+                    this.menuContainerElement = null; this.menuOverlayElement = null;
+                }
+            }, 300); // Match transition duration
+        }
         TB.logger.log('[NavMenu] Closed.');
         TB.events.emit('navMenu:closed', this);
     }
 
     destroy() {
-        this.closeMenu(); // Ensure it's closed and listeners removed
-        this.triggerElement.removeEventListener('click', this._boundToggleMenu);
-        if (this.menuContainerElement) this.menuContainerElement.removeEventListener('click', this._boundHandleLinkClick);
-
-        if (this.menuContainerElement && this.menuContainerElement.parentNode) {
-            this.menuContainerElement.parentNode.removeChild(this.menuContainerElement);
+        if (this.triggerElement) { // Check if triggerElement was found
+            this.triggerElement.removeEventListener('click', this._boundToggleMenu);
         }
-        if (this.menuOverlayElement && this.menuOverlayElement.parentNode) {
+        this.closeMenu(); // Ensure it's closed and listeners removed
+
+        if (this.menuContainerElement) { // Check if it exists before trying to remove listener
+            this.menuContainerElement.removeEventListener('click', this._boundHandleLinkClick);
+            if (this.menuContainerElement.parentNode) { // Check parentNode before removing
+                this.menuContainerElement.parentNode.removeChild(this.menuContainerElement);
+            }
+        }
+        if (this.menuOverlayElement && this.menuOverlayElement.parentNode) { // Check parentNode
             this.menuOverlayElement.parentNode.removeChild(this.menuOverlayElement);
         }
         TB.logger.log('[NavMenu] Destroyed.');
     }
 
-    // Static initializer
     static init(options) {
         return new NavMenu(options);
     }

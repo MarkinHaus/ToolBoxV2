@@ -10,7 +10,7 @@ import Modal from './components/Modal/Modal.js';
 import Toast from './components/Toast/Toast.js';
 import Loader from './components/Loader/Loader.js';
 import Button from './components/Button/Button.js';
-import * as darkModeToggle from './components/DarkModeToggle/darkModeToggle.js';
+import DarkModeToggle from './components/DarkModeToggle/darkModeToggle.js';
 import ThreeDeeBackground from './components/ThreeDeeBackground/ThreeDeeBackground.js';
 import CookieBanner from './components/CookieBanner/CookieBanner.js';
 import MarkdownRenderer from './components/MarkdownRenderer/MarkdownRenderer.js';
@@ -94,7 +94,7 @@ export {
     processDynamicContent,
     // Components
     Modal,
-    darkModeToggle,
+    DarkModeToggle,
     Toast,
     Loader,
     Button,

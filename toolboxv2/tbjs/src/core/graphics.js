@@ -1,38 +1,42 @@
 // tbjs/src/core/graphics.js
-import * as THREE from 'three'; // Importiere THREE.js direkt
-                                // Stelle sicher, dass 'three' in tbjs/package.json (peer)Dependencies
-                                // und in tbjs/webpack.config.js als 'external' deklariert ist.
-import TB from '../index.js'; // Zugriff auf TB-Core
+import * as THREE from 'three';
+import TB from '../index.js';
 
-// Private Modulvariablen
 let renderer, scene, camera, mainGroup;
 let ambientLightInstance, pointLightInstances = [];
 let isInitialized = false;
 let isPaused = false;
 let animationFrameId;
+let themeChangeHandler = null;
 
-// Konfigurierbare Parameter (könnten über TB.config oder init-Optionen kommen)
+let subGroupsToAnimate = []; // To store sub-groups for independent animation
+
+// Constants from old script & merged
 const INITIAL_CAMERA_Z = 10;
 const INITIAL_CAMERA_Y = 3.2;
-const SIERPINSKI_DEPTH = 5;
+let currentSierpinskiDepth = 5;
 const SIERPINSKI_SIZE = 12;
 const CAMERA_ZOOM_MIN = -2;
 const CAMERA_ZOOM_MAX = 12;
-const ZOOM_STEP_FACTOR = 0.08; // Ersetzt 'sk' und 'sk2'
+const ZOOM_STEP_FACTOR = 0.08;
 
-// Animationsparameter
+// Animation parameters
 let animParams = {
-    factor: 12, // animantionFactorIdeal
-    factorClick: 8,
-    x: 0.002,
-    y: 0.002,
-    z: 0.002,
+    factor: 21,         // Default: animantionFactorIdeal
+    factorIdeal: 21,
+    factorClick: 12,     // animantionFactorKlick
+    x: 0.002,           // Default animationX (base speed for rotation)
+    y: 0.002,           // Default animationY
+    z: 0.002,           // Default animationZ
     isMouseDown: false,
     startX: 0,
     startY: 0,
+    // Store the interactive rotation speeds separately
+    interactiveX: 0,
+    interactiveY: 0,
+    interactiveZ: 0,
 };
 
-// Material
 const milkGlassMaterial = new THREE.MeshPhysicalMaterial({
     color: 0xffffff,
     metalness: 0.5,
@@ -44,248 +48,235 @@ const milkGlassMaterial = new THREE.MeshPhysicalMaterial({
     reflectivity: 0.4,
 });
 
-/**
- * Initialisiert die 3D-Grafikszene.
- * @param {string} canvasContainerSelector - CSS-Selektor des DOM-Elements, das den Canvas enthalten soll.
- * @param {object} [options={}] - Zusätzliche Konfigurationsoptionen.
- */
 export function init(canvasContainerSelector, options = {}) {
     if (isInitialized) {
-        TB.logger.warn('Graphics: Bereits initialisiert.');
+        TB.logger.warn('[Graphics] Already initialized.');
         return getContext();
     }
 
     const container = document.querySelector(canvasContainerSelector);
     if (!container) {
-        TB.logger.error(`Graphics: Container "${canvasContainerSelector}" nicht gefunden.`);
+        TB.logger.error(`[Graphics] Container "${canvasContainerSelector}" not found.`);
         return null;
     }
 
-    // 1. Renderer erstellen
-    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); // alpha: true für transparenten Hintergrund
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(window.devicePixelRatio); // Für schärfere Darstellung auf HiDPI-Displays
-    container.innerHTML = ''; // Vorherigen Inhalt leeren
+    renderer.setPixelRatio(window.devicePixelRatio);
+    container.innerHTML = '';
     container.appendChild(renderer.domElement);
 
-    // 2. Szene erstellen
     scene = new THREE.Scene();
-
-    // 3. Kamera erstellen
     camera = new THREE.PerspectiveCamera(90, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.set(0, options.cameraY || INITIAL_CAMERA_Y, options.cameraZ || INITIAL_CAMERA_Z);
-    scene.add(camera); // Kamera zur Szene hinzufügen, falls sie sich bewegt oder fokussiert
 
-    // 4. Hauptgeometrie (Sierpinski) erstellen und hinzufügen
-    mainGroup = createSierpinski(SIERPINSKI_DEPTH, SIERPINSKI_SIZE);
-    scene.add(mainGroup);
+    currentSierpinskiDepth = options.sierpinskiDepth || currentSierpinskiDepth;
+    _buildSierpinski(); // Builds mainGroup and populates subGroupsToAnimate
 
-    // 5. Lichter erstellen (initial für den aktuellen Theme-Modus)
-    // Die eigentliche Farbsetzung der Lichter wird vom darkModeToggle-Modul gesteuert
-    // Hier nur Platzhalter oder Standardlichter
-    ambientLightInstance = new THREE.AmbientLight(0xffffff, 0.5); // Temporäre Farbe/Intensität
+    ambientLightInstance = new THREE.AmbientLight(0xffffff, 0.5);
     scene.add(ambientLightInstance);
 
-    const pl1 = new THREE.PointLight(0xffffff, 0.8, 100); // Temporäre Farbe/Intensität
-    pl1.position.set(5, 5, 5);
+    const pl1 = new THREE.PointLight(0xffffff, 1, 100);
+    pl1.position.set(2, 2, 2);
     scene.add(pl1);
     pointLightInstances.push(pl1);
 
-    const pl2 = new THREE.PointLight(0xffffff, 0.8, 100); // Temporäre Farbe/Intensität
-    pl2.position.set(-5, -5, -5);
+    const pl2 = new THREE.PointLight(0xffffff, 1, 100);
+    pl2.position.set(2, -2, 2);
     scene.add(pl2);
     pointLightInstances.push(pl2);
 
-    // 6. Event-Listener für Interaktionen und Fenstergröße
     _addEventListeners();
-
     isInitialized = true;
-    TB.logger.log('Graphics: Initialisiert.');
-
-    // 7. Animationsloop starten
+    TB.logger.log('[Graphics] Initialized.');
     _animate();
 
-    // 8. Kontext für darkModeToggle bereitstellen und Theme anwenden
-    const currentTheme = TB.ui.theme ? TB.ui.theme.getCurrentMode() : 'light'; // Annahme: TB.ui.theme existiert
-    updateTheme(currentTheme); // Wende das initiale Theme an
+    const currentTheme = (TB.ui && TB.ui.theme && typeof TB.ui.theme.getCurrentMode === 'function')
+        ? TB.ui.theme.getCurrentMode()
+        : 'light';
+    updateTheme(currentTheme);
 
-    // Service Worker Deinstallation (wenn wirklich gewünscht)
-    if (options.uninstallServiceWorkers) {
-        _uninstallServiceWorkers();
-    }
+    themeChangeHandler = (eventData) => { if (isInitialized) updateTheme(eventData.mode); };
+    TB.events.on('theme:changed', themeChangeHandler);
 
-    // Loader ausblenden (sollte idealerweise über TB.events gesteuert werden)
+    if (options.uninstallServiceWorkers !== false) _uninstallServiceWorkers();
     setTimeout(() => {
-        const loader = document.querySelector('.loaderCenter'); // Sei spezifischer mit dem Selektor
+        const loader = document.querySelector('.loaderCenter');
         if (loader) loader.style.display = 'none';
-    }, options.loaderHideDelay || 150);
-
+    }, options.loaderHideDelay || 122);
 
     TB.events.emit('graphics:initialized', getContext());
     return getContext();
 }
 
-/**
- * Gibt den aktuellen Grafikkontext zurück.
- */
+function _buildSierpinski() {
+    if (mainGroup) {
+        scene.remove(mainGroup);
+        // No need to traverse and dispose geometry here if _disposeMainGroup handles it
+        _disposeMainGroup(); // Clear old group and its contents
+    }
+    subGroupsToAnimate = []; // Reset sub-groups
+    mainGroup = createSierpinski(currentSierpinskiDepth, SIERPINSKI_SIZE, milkGlassMaterial);
+    scene.add(mainGroup);
+}
+
+function _disposeMainGroup() {
+    if (mainGroup) {
+        mainGroup.traverse(object => {
+            if (object.geometry) object.geometry.dispose();
+            // Materials are more complex; the shared milkGlassMaterial is disposed in main dispose()
+        });
+        mainGroup = null;
+    }
+    subGroupsToAnimate = [];
+}
+
+
 export function getContext() {
     if (!isInitialized) return null;
-    return {
-        renderer,
-        scene,
-        camera,
-        ambientLightInstance,
-        pointLightInstances,
-    };
+    return { renderer, scene, camera, ambientLightInstance, pointLightInstances, mainGroup };
 }
 
-/**
- * Passt die 3D-Szene an das gegebene Theme an (hell/dunkel).
- * Diese Funktion wird vom darkModeToggle-Modul aufgerufen.
- * @param {string} theme - 'light' oder 'dark'
- */
 export function updateTheme(theme) {
     if (!isInitialized) return;
-
-    let clearColor, ambientColorHex, pointColorHex;
-
+    let clearColorHex, ambientColorHex, pointColorHex;
     if (theme === 'dark') {
-        clearColor = 0x000000;
-        ambientColorHex = 0x181823;
-        pointColorHex = 0x404060; // Gedämpfter für dunklen Modus
-    } else { // light
-        clearColor = 0xcccccc;
-        ambientColorHex = 0x7070B0; // Heller, leicht bläulich
-        pointColorHex = 0xffffff;
+        clearColorHex = 0x000000; ambientColorHex = 0x181823; pointColorHex = 0x404060;
+    } else {
+        clearColorHex = 0xcccccc; ambientColorHex = 0x537FE7; pointColorHex = 0xffffff;
     }
-
-    renderer.setClearColor(clearColor);
-
-    if (ambientLightInstance) {
-        ambientLightInstance.color.setHex(ambientColorHex);
-    }
-
-    pointLightInstances.forEach(pl => {
-        pl.color.setHex(pointColorHex);
-    });
-
-    TB.logger.log(`Graphics: Theme auf "${theme}" aktualisiert.`);
+    renderer.setClearColor(clearColorHex, 1);
+    if (ambientLightInstance) ambientLightInstance.color.setHex(ambientColorHex);
+    pointLightInstances.forEach(pl => pl.color.setHex(pointColorHex));
+    TB.logger.log(`[Graphics] Theme updated to "${theme}". Clear: #${clearColorHex.toString(16)}, Amb: #${ambientColorHex.toString(16)}, Point: #${pointColorHex.toString(16)}`);
 }
 
-
-/**
- * Interne Animationsfunktion.
- */
 function _animate() {
-    if (isPaused) return;
+    if (isPaused || !isInitialized) return;
     animationFrameId = requestAnimationFrame(_animate);
 
+    let currentAnimX = animParams.x;
+    let currentAnimY = animParams.y;
+    let currentAnimZ = animParams.z;
+
+    if (animParams.isMouseDown) {
+        // During interaction, use the values derived from mouse/touch movement
+        currentAnimX = animParams.interactiveX;
+        currentAnimY = animParams.interactiveY;
+        currentAnimZ = animParams.interactiveZ;
+    }
+
     if (mainGroup) {
-        mainGroup.rotation.x += animParams.x / animParams.factor;
-        mainGroup.rotation.y += animParams.y / animParams.factor;
-        mainGroup.rotation.z += animParams.z / animParams.factor;
+        mainGroup.rotation.x += currentAnimX / animParams.factor;
+        mainGroup.rotation.y += currentAnimY / animParams.factor;
+        mainGroup.rotation.z += currentAnimZ / animParams.factor;
+    }
+
+    // Animate sub-groups if any (replicating old script's groops animation)
+    for (let i = 0; i < subGroupsToAnimate.length; i++) {
+        subGroupsToAnimate[i].rotation.x += currentAnimX / animParams.factor;
+        subGroupsToAnimate[i].rotation.y += currentAnimY / animParams.factor;
+        subGroupsToAnimate[i].rotation.z += currentAnimZ / animParams.factor;
     }
 
     renderer.render(scene, camera);
 }
 
-/**
- * Erstellt die Sierpinski-Tetraeder-Geometrie.
- */
-function createSierpinski(depth, size) {
+function createSierpinski(depth, size, material) {
     const rootGroup = new THREE.Group();
-    let collectedSubGroups = []; // Für die alte 'groops' Logik, falls noch benötigt
 
-    function subdivide(currentDepth, currentSize, parentGroup) {
+    function subdivide(currentDepth, currentSize, parentGroup, isRootCall = false) {
         if (currentDepth === 0) {
             const tetra = new THREE.TetrahedronGeometry(currentSize * 0.6);
-            const mesh = new THREE.Mesh(tetra, milkGlassMaterial);
+            const mesh = new THREE.Mesh(tetra, material);
             parentGroup.add(mesh);
-            // mashs.push(mesh); // Globale 'mashs' vermeiden, wenn möglich
             return;
         }
 
         const newSize = currentSize / 2;
         const newDepth = currentDepth - 1;
-        const offsetFactor = Math.sqrt(3) / 4; // Anpassung für Tetraeder-Layout
-
-        // Positionen der 4 Kind-Tetraeder
         const positions = [
-            new THREE.Vector3(-newSize * offsetFactor, -newSize * offsetFactor / Math.sqrt(3), -newSize * offsetFactor / Math.sqrt(6)),
-            new THREE.Vector3( newSize * offsetFactor, -newSize * offsetFactor / Math.sqrt(3), -newSize * offsetFactor / Math.sqrt(6)),
-            new THREE.Vector3( 0,                      2*newSize * offsetFactor / Math.sqrt(3), -newSize * offsetFactor / Math.sqrt(6)),
-            new THREE.Vector3( 0,                      0,                                       3*newSize * offsetFactor / Math.sqrt(6))
+            new THREE.Vector3(-newSize * Math.sqrt(3) / 4, 0, -newSize / 4),
+            new THREE.Vector3( newSize * Math.sqrt(3) / 4, 0, -newSize / 4),
+            new THREE.Vector3(0,                           0,  newSize / 2),
+            new THREE.Vector3(0, newSize * Math.sqrt(2/3),  0)
         ];
-
 
         positions.forEach(pos => {
             const subGroup = new THREE.Group();
             subGroup.position.copy(pos);
-            subdivide(newDepth, newSize, subGroup);
+            subdivide(newDepth, newSize, subGroup); // Recursive call
             parentGroup.add(subGroup);
-            if (currentDepth > 1) { // Wie deine alte Bedingung, falls für spezifische Animationen
-                collectedSubGroups.push(subGroup);
+
+            // Collect sub-groups for animation, similar to old script's `if (depth !== 1)`
+            // This collects all groups that are not the final tetrahedrons themselves.
+            if (newDepth > 0) { // If this subGroup will itself contain more subdivisions
+                subGroupsToAnimate.push(subGroup);
             }
         });
     }
 
-    subdivide(depth, size, rootGroup);
-    // Hier könntest du collectedSubGroups an eine andere Stelle im Modul übergeben,
-    // falls die Subgruppen separat animiert werden sollen.
-    // Aktuell rotiert nur `mainGroup`.
+    subdivide(depth, size, rootGroup, true);
     return rootGroup;
 }
 
-/**
- * Setzt die Animationsparameter für die Rotation.
- * @param {number} x - Rotationsgeschwindigkeit um X.
- * @param {number} y - Rotationsgeschwindigkeit um Y.
- * @param {number} z - Rotationsgeschwindigkeit um Z.
- * @param {number} [factor] - Animationsfaktor.
- */
+export function setSierpinskiDepth(newDepth) {
+    if (!isInitialized || newDepth === currentSierpinskiDepth || newDepth < 0) return;
+    TB.logger.log(`[Graphics] Changing Sierpinski depth from ${currentSierpinskiDepth} to ${newDepth}`);
+    currentSierpinskiDepth = newDepth;
+    _buildSierpinski(); // Rebuilds mainGroup and populates subGroupsToAnimate
+}
+
 export function setAnimationSpeed(x, y, z, factor) {
-    animParams.x = x;
-    animParams.y = y;
-    animParams.z = z;
-    if (factor !== undefined) {
-        animParams.factor = factor;
+    animParams.x = x; animParams.y = y; animParams.z = z;
+    if (factor !== undefined) animParams.factor = factor;
+    // If setting base speed, also reset interactive if not interacting
+    if (!animParams.isMouseDown) {
+        animParams.interactiveX = 0; animParams.interactiveY = 0; animParams.interactiveZ = 0;
     }
 }
 
-/**
- * Passt den Kamera-Zoom an.
- * @param {number} deltaZoom - Änderung des Zoomlevels.
- */
-export function adjustCameraZoom(deltaZoom) {
+export function adjustCameraZoom(deltaZoomAmount) {
     if (!isInitialized) return;
-    camera.position.z += deltaZoom * ZOOM_STEP_FACTOR;
-    // Zoom-Grenzen einhalten
-    camera.position.z = Math.max(CAMERA_ZOOM_MIN, Math.min(CAMERA_ZOOM_MAX, camera.position.z));
+    camera.position.z += deltaZoomAmount;
+    if (camera.position.z <= CAMERA_ZOOM_MIN) camera.position.z = CAMERA_ZOOM_MAX;
+    else if (camera.position.z > CAMERA_ZOOM_MAX) camera.position.z = CAMERA_ZOOM_MIN;
     camera.updateProjectionMatrix();
 }
 
+export function setCameraZoom(absoluteZoomValue) {
+    if (!isInitialized) return;
+    camera.position.z = absoluteZoomValue;
+    if (camera.position.z <= CAMERA_ZOOM_MIN) camera.position.z = CAMERA_ZOOM_MAX;
+    else if (camera.position.z > CAMERA_ZOOM_MAX) camera.position.z = CAMERA_ZOOM_MIN;
+    camera.updateProjectionMatrix();
+}
 
 function _handleResize() {
     if (!isInitialized) return;
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
-    TB.logger.log('Graphics: Fenstergröße angepasst.');
+    TB.logger.log('[Graphics] Window resized.');
 }
 
 function _handleMouseDown(event) {
+    if (!isInitialized) return;
     animParams.isMouseDown = true;
-    animParams.factor = animParams.factorClick;
+    animParams.factor = animParams.factorClick; // Use faster factor for interaction
     const { clientX, clientY } = (event.touches ? event.touches[0] : event);
     animParams.startX = clientX;
     animParams.startY = clientY;
 
     const normX = (clientX / window.innerWidth) * 2 - 1;
     const normY = -((clientY / window.innerHeight) * 2 - 1);
-    animParams.x = normY * 0.02; // Initial rotation
-    animParams.y = normX * 0.02;
-    animParams.z = (normX + normY) * 0.01;
-    event.preventDefault(); // Verhindert Scrollen bei Touch auf Canvas
+
+    // Set interactive rotation speeds based on initial click
+    animParams.interactiveX = normY * 0.02;
+    animParams.interactiveY = normX * 0.02;
+    animParams.interactiveZ = (normX + normY) * 0.01;
+
+    // if (event.cancelable && event.type.includes('touch')) event.preventDefault();
 }
 
 function _handleMouseMove(event) {
@@ -294,60 +285,53 @@ function _handleMouseMove(event) {
     const deltaX = clientX - animParams.startX;
     const deltaY = clientY - animParams.startY;
 
-    animParams.x = (deltaY / window.innerHeight) * Math.PI / 20; // Skalierung angepasst
-    animParams.y = (deltaX / window.innerWidth) * Math.PI / 20;
-    animParams.z = ((deltaX + deltaY) / (window.innerWidth + window.innerHeight)) * Math.PI / 20;
+    // Update interactive rotation speeds based on mouse/touch delta
+    animParams.interactiveX = (deltaY / window.innerHeight) * (Math.PI / 25);
+    animParams.interactiveY = (deltaX / window.innerWidth) * (Math.PI / 25);
+    animParams.interactiveZ = ((deltaX + deltaY) / (window.innerWidth + window.innerHeight)) * (Math.PI / 25);
+
+    TB.logger.debug(`[Graphics] Interactive anim: X=${animParams.interactiveX.toFixed(3)}, Y=${animParams.interactiveY.toFixed(3)}, Z=${animParams.interactiveZ.toFixed(3)}`);
+
+    // if (event.cancelable && event.type.includes('touch')) event.preventDefault();
 }
 
 function _handleMouseUp() {
-    if (!isInitialized) return;
+    if (!isInitialized || !animParams.isMouseDown) return;
     animParams.isMouseDown = false;
-    animParams.factor = 12; // animantionFactorIdeal
-    animParams.x = 0.002; // Reset to default spin
-    animParams.y = 0.002;
-    animParams.z = 0.002;
+    animParams.factor = animParams.factorIdeal; // Reset to ideal factor
+    // Interactive params will be ignored by _animate loop when isMouseDown is false
+    // The base animParams.x,y,z will take over for the gentle spin.
 }
 
 function _handleWheel(event) {
     if (!isInitialized) return;
-    const delta = event.deltaY > 0 ? -1 : 1; // Umgekehrte Richtung für Zoom-Effekt
-    adjustCameraZoom(delta);
-    event.preventDefault();
+    const zoomAmount = (event.deltaY > 0 ? -1 : 1) * ZOOM_STEP_FACTOR;
+    adjustCameraZoom(zoomAmount);
+    // if (event.cancelable) event.preventDefault();
 }
 
 function _addEventListeners() {
     window.addEventListener('resize', _handleResize);
-
-    const canvasElement = renderer.domElement;
-    canvasElement.addEventListener('mousedown', _handleMouseDown);
-    canvasElement.addEventListener('touchstart', _handleMouseDown, { passive: false });
-
-    // Mousemove und mouseup auf document, um Bewegung außerhalb des Canvas zu erfassen
-    document.addEventListener('mousemove', _handleMouseMove);
-    document.addEventListener('touchmove', _handleMouseMove, { passive: false });
-
-    document.addEventListener('mouseup', _handleMouseUp);
-    document.addEventListener('touchend', _handleMouseUp);
-
-    canvasElement.addEventListener('wheel', _handleWheel, { passive: false });
-
-    // Alte Slider-Logik (Beispiel, wie man sie integrieren könnte, wenn sie noch gebraucht wird)
-    // Diese müssten Events auslösen, auf die dieses Modul hört, oder direkt Funktionen aufrufen
-    // document.getElementById('slideX')?.addEventListener('change', (e) => updateRotation('x', e.target.value));
+    document.body.addEventListener('mousedown', _handleMouseDown);
+    document.body.addEventListener('wheel', _handleWheel, { passive: true });
+    document.body.addEventListener('mousemove', _handleMouseMove);
+    document.body.addEventListener('mouseup', _handleMouseUp);
+    document.body.addEventListener('touchstart', _handleMouseDown, { passive: true });
+    document.body.addEventListener('touchmove', _handleMouseMove, { passive: true });
+    document.body.addEventListener('touchend', _handleMouseUp);
 }
 
 function _removeEventListeners() {
     window.removeEventListener('resize', _handleResize);
-    if (renderer && renderer.domElement) {
-        const canvasElement = renderer.domElement;
-        canvasElement.removeEventListener('mousedown', _handleMouseDown);
-        canvasElement.removeEventListener('touchstart', _handleMouseDown);
-        canvasElement.removeEventListener('wheel', _handleWheel);
-    }
-    document.removeEventListener('mousemove', _handleMouseMove);
-    document.removeEventListener('touchmove', _handleMouseMove);
-    document.removeEventListener('mouseup', _handleMouseUp);
-    document.removeEventListener('touchend', _handleMouseUp);
+
+    document.body.removeEventListener('mousedown', _handleMouseDown);
+    document.body.removeEventListener('wheel', _handleWheel);
+    document.body.removeEventListener('touchstart', _handleMouseDown);
+
+    document.body.removeEventListener('mousemove', _handleMouseMove);
+    document.body.removeEventListener('mouseup', _handleMouseUp);
+    document.body.removeEventListener('touchmove', _handleMouseMove);
+    document.body.removeEventListener('touchend', _handleMouseUp);
 }
 
 function _uninstallServiceWorkers() {
@@ -355,71 +339,33 @@ function _uninstallServiceWorkers() {
         navigator.serviceWorker.getRegistrations().then(registrations => {
             registrations.forEach(registration => {
                 registration.unregister().then(success => {
-                    if (success) {
-                        TB.logger.log(`ServiceWorker ${registration.scope} erfolgreich entfernt.`);
-                    } else {
-                        TB.logger.warn(`Fehler beim Entfernen von ServiceWorker ${registration.scope}.`);
-                    }
+                    TB.logger.log(`[Graphics] ServiceWorker ${registration.scope} ${success ? 'unregistered' : 'unregistration failed'}.`);
                 });
             });
-        }).catch(err => TB.logger.error('Fehler beim Abrufen der ServiceWorker-Registrierungen:', err));
+        }).catch(err => TB.logger.error('[Graphics] Error getting ServiceWorker registrations:', err));
     }
 }
 
-
-/**
- * Räumt die Grafikressourcen auf und entfernt Event-Listener.
- */
 export function dispose() {
     if (!isInitialized) return;
-
+    if (themeChangeHandler) { TB.events.off('theme:changed', themeChangeHandler); themeChangeHandler = null; }
     _removeEventListeners();
-    cancelAnimationFrame(animationFrameId);
+    cancelAnimationFrame(animationFrameId); animationFrameId = null;
 
-    if (scene) {
-        // Alle Objekte aus der Szene entfernen und disposen
-        scene.traverse(object => {
-            if (object.geometry) object.geometry.dispose();
-            if (object.material) {
-                if (Array.isArray(object.material)) {
-                    object.material.forEach(material => material.dispose());
-                } else {
-                    object.material.dispose();
-                }
-            }
-        });
-        scene.clear(); // Entfernt alle Objekte
-    }
+    _disposeMainGroup(); // Dispose current main group and clear subGroupsToAnimate
+    if (scene) scene.clear();
+    milkGlassMaterial.dispose();
 
     if (renderer) {
         renderer.dispose();
-        renderer.domElement.remove(); // DOM-Element entfernen
+        if (renderer.domElement.parentElement) renderer.domElement.parentElement.removeChild(renderer.domElement);
     }
-
-    // Variablen zurücksetzen
-    renderer = null;
-    scene = null;
-    camera = null;
-    mainGroup = null;
-    ambientLightInstance = null;
-    pointLightInstances = [];
-    isInitialized = false;
-    TB.events.emit('graphics:disposed'); // Neues Event
-    TB.logger.log('Graphics: Ressourcen freigegeben und Modul deinitialisiert.');
+    renderer = null; scene = null; camera = null;
+    ambientLightInstance = null; pointLightInstances = [];
+    isInitialized = false; isPaused = false;
+    TB.events.emit('graphics:disposed');
+    TB.logger.log('[Graphics] Disposed.');
 }
 
-// Optionale Pause/Resume-Funktionen
-export function pause() {
-    if (isInitialized && !isPaused) {
-        cancelAnimationFrame(animationFrameId);
-        isPaused = true;
-        TB.logger.log('Graphics: Rendering paused.');
-    }
-}
-export function resume() {
-    if (isInitialized && isPaused) {
-        isPaused = false;
-        _animate(); // Animationsloop neu starten
-        TB.logger.log('Graphics: Rendering resumed.');
-    }
-}
+export function pause() { if (isInitialized && !isPaused) { isPaused = true; TB.logger.log('[Graphics] Rendering paused.'); } }
+export function resume() { if (isInitialized && isPaused) { isPaused = false; _animate(); TB.logger.log('[Graphics] Rendering resumed.'); } }

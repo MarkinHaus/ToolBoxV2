@@ -5,49 +5,73 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Contact Me</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            line-height: 1.6;
-            margin: 20px;
+
+        .container {
+            max-width: 700px;
+            margin: 40px auto; /* Center the container */
+            padding: 20px;
         }
         .contact-form {
-            max-width: 600px;
-            margin: 0 auto;
-            padding: 20px;
-            border: 1px solid #ccc;
+            background-color: var(--background-color);
+            padding: 30px;
+            border: 1px solid var(--theme-accent);
             border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .contact-form h2 {
+            text-align: center;
+            margin-bottom: 20px;
+            color: var(--text-color);
         }
         .contact-form label {
             display: block;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color:var(--text-color);
         }
-        .contact-form input,
+        .contact-form input[type="text"],
+        .contact-form input[type="email"],
         .contact-form textarea {
             width: 100%;
-            padding: 10px;
+            padding: 12px;
             margin-bottom: 20px;
-            border: 1px solid #ccc;
+            border: 1px solid var(--text-color);
             border-radius: 5px;
+            box-sizing: border-box; /* Important for padding and width */
         }
-        .contact-form button {
-            padding: 10px 20px;
-            border: none;
-            background-color: #333;
-            color: white;
+        .contact-form textarea {
+            resize: vertical; /* Allow vertical resize */
+        }
+        #form-status {
+            margin-top: 15px;
+            padding: 10px;
             border-radius: 5px;
-            cursor: pointer;
+            text-align: center;
+            font-weight: bold;
         }
+        #form-status.success {
+            background-color: #dff0d8;
+            color: var(--susess-color);
+            border: 1px solid #d6e9c6;
+        }
+        #form-status.error {
+            background-color: #f2dede;
+            color: var(--error-color);
+            border: 1px solid #ebccd1;
+        }
+
     </style>
 </head>
 <body>
-
-    <section>
-        <form class="contact-form" onsubmit="openEmailClient(event)">
+    <div class="container">
+        <form id="contactForm" class="contact-form">
+            <h2>Get in Touch</h2>
             <label for="name">Name:</label>
             <input type="text" id="name" name="name" required>
 
-            <label for="email">Email:</label>
-            <input type="email" id="email" name="email" required>
+            <!-- Use name="_replyto" for Formspree to set the Reply-To header -->
+            <label for="email">Your Email:</label>
+            <input type="email" id="email" name="_replyto" required>
 
             <label for="subject">Subject:</label>
             <input type="text" id="subject" name="subject" required>
@@ -55,31 +79,53 @@
             <label for="message">Message:</label>
             <textarea id="message" name="message" rows="6" required></textarea>
 
-            <button type="submit">Send</button>
+            <button type="submit">Send Message</button>
+            <div id="form-status"></div> <!-- For displaying success/error messages -->
         </form>
-
-        <footer style="position: relative;padding-top: 35%;">
-    <h3><a href="/web/core0/index.html">Home</a></h3>
-    <h4>Weitere Informationen</h4>
-    <h5>
-        <p>Entdecken Sie, wo wir momentan stehen und was unsere nächsten Ziele sind auf unserer <a href="/web/core0/roadmap.html">Routenplanung</a>.</p>
-        <p>Unterstützen Sie uns auf <a href="https://www.buymeacoffee.com/markinhaus" target="_blank">BuyMeACoffee</a> oder <a href="https://www.patreon.com/de-DE" target="_blank">Patreon</a>.</p>
-    </h5>
-</footer>
-    </section>
+    </div>
 
     <script>
-        function openEmailClient(event) {
-            event.preventDefault();
-            const name = document.getElementById('name').value;
-            const email = document.getElementById('email').value;
-            const subject = document.getElementById('subject').value;
-            const message = document.getElementById('message').value;
+        const contactForm = document.getElementById('contactForm');
+        const formStatus = document.getElementById('form-status');
 
-            const mailtoLink = `mailto:your-email@example.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(`Name: ${name}\nEmail: ${email}\n\nMessage:\n${message}`)}`;
+        // IMPORTANT: Replace with your own Formspree endpoint URL!
+        const FORMSPREE_ENDPOINT = "https://formspree.io/f/mqaqjzdkE"; // <--- REPLACE THIS
 
-            window.location.href = mailtoLink;
-        }
+        contactForm.addEventListener('submit', function(event) {
+            event.preventDefault(); // Prevent default browser submission
+
+            const formData = new FormData(contactForm);
+            formStatus.innerHTML = 'Sending...';
+            formStatus.className = ''; // Reset classes
+
+            fetch(FORMSPREE_ENDPOINT, {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'Accept': 'application/json'
+                }
+            })
+            .then(response => {
+                if (response.ok) {
+                    return response.json();
+                } else {
+                    // Try to get error message from Formspree if available
+                    return response.json().then(data => {
+                        throw new Error(data.error || 'Network response was not ok.');
+                    });
+                }
+            })
+            .then(data => {
+                formStatus.innerHTML = "Thanks for your message! I'll get back to you soon.";
+                formStatus.classList.add('success');
+                contactForm.reset(); // Clear the form fields
+            })
+            .catch(error => {
+                console.error('Error sending form:', error);
+                formStatus.innerHTML = `Oops! There was a problem sending your message: ${error.message}. Please try again.`;
+                formStatus.classList.add('error');
+            });
+        });
     </script>
 
 </body>

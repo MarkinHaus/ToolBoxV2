@@ -1,53 +1,135 @@
-// tbjs/core/config.js
-// Manages framework configuration.
-// Original: Parts of rpIdUrl_f, rpIdUrl_fs, and implicit configurations in original index.js
+// tbjs/src/core/config.js
+import logger from './logger.js'; // Ensure logger is imported if used here
 
-const defaultConfig = {
-    appRootId: 'app-root',
-    baseApiUrl: '/api',
-    baseFileUrl: '', // For fetching HTML views, defaults to origin
-    logLevel: 'debug',
-    isProduction: process.env.NODE_ENV === 'production',
-    defaultTheme: 'system', // 'light', 'dark', or 'system'
-};
+let _config = {};
 
-let currentConfig = { ...defaultConfig };
+const Config = {
+    init: (initialUserConfig = {}) => {
+        const defaultConfig = {
+            appRootId: 'app-root',
+            baseApiUrl: '/api',
+            baseFileUrl: window.location.origin,
+            initialState: {},
+            themeSettings: {
+                defaultPreference: 'system',
+                background: {
+                    type: 'color',
+                    light: { color: '#FFFFFF', image: '' },
+                    dark: { color: '#121212', image: '' },
+                    placeholder: { image: '', displayUntil3DReady: true }
+                }
+            },
+            routes: [],
+            logLevel: 'info',
+            // isProduction: process.env.NODE_ENV === 'production', // Better set by user config
+            serviceWorker: {
+                enabled: false,
+                url: '/sw.js',
+                scope: '/'
+            }
+        };
 
-const ConfigManager = {
-    init: (userConfig = {}) => {
-        currentConfig = { ...defaultConfig, ...userConfig };
+        // Simple deep merge for specific known nested objects
+        _config = {
+            ...defaultConfig,
+            ...initialUserConfig,
+            themeSettings: {
+                ...(defaultConfig.themeSettings || {}),
+                ...(initialUserConfig.themeSettings || {}),
+                background: {
+                    ...(defaultConfig.themeSettings?.background || {}),
+                    ...(initialUserConfig.themeSettings?.background || {}),
+                    light: {
+                        ...(defaultConfig.themeSettings?.background?.light || {}),
+                        ...(initialUserConfig.themeSettings?.background?.light || {}),
+                    },
+                    dark: {
+                        ...(defaultConfig.themeSettings?.background?.dark || {}),
+                        ...(initialUserConfig?.themeSettings?.background?.dark || {}),
+                    },
+                    placeholder: {
+                        ...(defaultConfig.themeSettings?.background?.placeholder || {}),
+                        ...(initialUserConfig.themeSettings?.background?.placeholder || {}),
+                    }
+                }
+            },
+            serviceWorker: {
+                ...(defaultConfig.serviceWorker || {}),
+                ...(initialUserConfig.serviceWorker || {})
+            }
+        };
 
-        if (!currentConfig.baseFileUrl) {
-            currentConfig.baseFileUrl = window.location.origin;
+        if (typeof _config.isProduction === 'undefined') {
+            // Infer if not explicitly set, e.g. based on hostname or a global var
+             _config.isProduction = !(window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
         }
-        // Ensure baseApiUrl and baseFileUrl are absolute or correctly prefixed if relative
-        if (currentConfig.baseApiUrl.startsWith('/') && !currentConfig.baseApiUrl.startsWith(window.location.origin)) {
-            currentConfig.baseApiUrl = `${window.location.origin}${currentConfig.baseApiUrl}`;
+
+
+        // Ensure baseFileUrl ends with a slash if it's not just the origin and contains a path
+        if (_config.baseFileUrl && new URL(_config.baseFileUrl).pathname !== '/' && !_config.baseFileUrl.endsWith('/')) {
+            _config.baseFileUrl += '/';
         }
-         if (currentConfig.baseFileUrl.startsWith('/') && !currentConfig.baseFileUrl.startsWith(window.location.origin)) {
-            currentConfig.baseFileUrl = `${window.location.origin}${currentConfig.baseFileUrl}`;
+         // Ensure baseApiUrl is absolute
+        if (_config.baseApiUrl && !_config.baseApiUrl.startsWith('http') && !_config.baseApiUrl.startsWith('/')) {
+            _config.baseApiUrl = '/' + _config.baseApiUrl;
+        }
+        // If baseApiUrl is relative, make it absolute from baseFileUrl or origin
+        if (_config.baseApiUrl && _config.baseApiUrl.startsWith('/')) {
+             _config.baseApiUrl = new URL(_config.baseApiUrl, window.location.origin).href;
         }
 
 
-        console.log("Initialized Config:", currentConfig); // Use TB.logger once available
+        // After logger is initialized in TB.init, this can be moved there or use a preliminary log.
+        // For now, console.log is fine for config init.
+        console.log('[Config] Initialized Config:', JSON.parse(JSON.stringify(_config))); // Use JSON stringify/parse for clean log
     },
 
     get: (key) => {
-        if (key in currentConfig) {
-            return currentConfig[key];
-        }
-        console.warn(`[Config] Key "${key}" not found.`); // Use TB.logger
-        return undefined;
-    },
+        if (!key) return undefined;
 
-    set: (key, value) => {
-        currentConfig[key] = value;
-        // Potentially emit an event: TB.events.emit('config:updated', { key, value });
+        if (key.includes('.')) {
+            const keys = key.split('.');
+            let current = _config;
+            for (let i = 0; i < keys.length; i++) {
+                if (current && typeof current === 'object' && keys[i] in current) {
+                    current = current[keys[i]];
+                } else {
+                    // logger.warn(`[Config] Key "${key}" not found (path: ${keys.slice(0, i+1).join('.')})`);
+                    // console.warn(`[Config] GET: Key "${key}" not found (path: ${keys.slice(0, i+1).join('.')}). Available config:`, _config);
+                    return undefined;
+                }
+            }
+            return current;
+        }
+
+        const value = _config[key];
+        // if (value === undefined) {
+            // logger.warn(`[Config] Key "${key}" not found.`);
+            // console.warn(`[Config] GET: Key "${key}" not found. Available config:`, _config);
+        // }
+        return value;
     },
 
     getAll: () => {
-        return { ...currentConfig };
+        return { ..._config };
+    },
+
+    set: (key, value) => {
+        if (key.includes('.')) {
+            const keys = key.split('.');
+            let current = _config;
+            for (let i = 0; i < keys.length - 1; i++) {
+                if (!current[keys[i]] || typeof current[keys[i]] !== 'object') {
+                    current[keys[i]] = {};
+                }
+                current = current[keys[i]];
+            }
+            current[keys[keys.length - 1]] = value;
+        } else {
+            _config[key] = value;
+        }
+        logger.debug(`[Config] Set: ${key} =`, value);
     }
 };
 
-export default ConfigManager;
+export default Config;
