@@ -207,8 +207,8 @@ const user = {
         try {
             // 1. Get challenge and credential ID (rawId) from server
             // The original 'get_to_sing_data' with personal_key=true needs to return 'rowId' (rawId) and 'challenge'
-            const challengeResult = await TB.api.request('CloudM.AuthManager', 'get_to_sing_data', { username, personal_key: true }, 'POST');
-            if (challengeResult.error !== TB.ToolBoxError.none || !challengeResult.get()?.challenge || !challengeResult.get()?.rowId) {
+            const challengeResult = await TB.api.request('/CloudM.AuthManager/get_to_sing_data', 'username='+username+'&personal_key=true', {}, 'GET');
+            if (challengeResult.error !== TB.ToolBoxError.none || !challengeResult.get()?.challenge) {
                 return { success: false, message: challengeResult.info.help_text || "Failed to get WebAuthn login challenge." };
             }
             const { rowId, challenge } = challengeResult.get();

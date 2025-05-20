@@ -186,6 +186,7 @@ export default {
              '**/web/core0/Installer.html',
              '**/web/core0/MainIdea.html',
              '**/web/core0/roadmap.html',
+                '**/web/core0/kontakt.html',
              '**/web/assets/404.html',
              '**/web/assets/401.html',
              '**/web/assets/m_log_in.html',

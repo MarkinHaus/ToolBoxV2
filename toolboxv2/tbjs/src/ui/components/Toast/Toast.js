@@ -16,7 +16,7 @@ const DEFAULT_TOAST_OPTIONS = {
         progressBar: '', // Custom class for the progress bar itself
         // Note: toastHost for the main container holding all toasts is still available
     },
-    icon: false, // Show default icon based on type (less prominent in balloon style)
+    icon: true, // Show default icon based on type (less prominent in balloon style)
     closable: true,
     showDotOnHide: true, // New option to control dot behavior
     dotDuration: 10000, // How long the dot stays visible (ms)
@@ -137,7 +137,7 @@ class Toast {
         let contentHtml = '';
 
         // "From" label (title) - styled like speech_balloon-from
-        contentHtml += `<div class="tb-speech-balloon-from tb-absolute tb--top-2.5 tb-left-1/2 tb--translate-x-1/2 tb-bg-background-color tb-px-2 tb-py-0.5 tb-text-xs tb-font-semibold tb-rounded tb-shadow ${this.options.customClasses.title}">${fromLabel}</div>`;
+        contentHtml += `<div class="tb-speech-balloon-from tb-absolute tb--top-2.5 tb-left-1/2 tb--translate-x-1/2 tb-bg-background-color tb-px-2 tb-py-0.5 tb-text-xs tb-font-semibold tb-rounded tb-shadow ${this.options.customClasses.title}">${fromLabel}`;
 
         // Close button
         if (this.options.closable) {
@@ -147,7 +147,7 @@ class Toast {
         }
 
         // Main content (icon + message)
-        contentHtml += `<div class="tb-speech-balloon-content tb-w-full tb-text-sm tb-mt-2 ${this.options.customClasses.message}">`; // Added mt-2 for spacing from "from" label
+        contentHtml += `</div><div class="tb-speech-balloon-content tb-w-full tb-text-sm tb-mt-2 ${this.options.customClasses.message}">`; // Added mt-2 for spacing from "from" label
         // Icon (optional and less prominent)
         if (this.options.icon) {
             let iconName = 'info';

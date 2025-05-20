@@ -156,6 +156,13 @@ html.dark .tb-speech-balloon-from {
 }
 /* No CSS animation needed for progress bar as JS handles width update */
 
+.tb-speech-balloon-close-button {
+    padding: 0;
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    cursor: pointer;
+}
 
 /* Close Button */
 .tb-speech-balloon-close-button .material-symbols-outlined {

@@ -13,7 +13,7 @@ function setupLogin() {
         next_url = urlParams.get('next');
     }
 
-    function showInfo(message, isError = false, animationSequence = null) {
+    function showInfo(message, isError = null, animationSequence = null) {
         if (infoPopup && infoText) { // For local popups
             infoText.textContent = message;
             infoPopup.style.display = 'block';
@@ -23,6 +23,11 @@ function setupLogin() {
             window.TB.ui.Toast.showError(message);
             if (window.TB.graphics?.playAnimationSequence) {
                 window.TB.graphics.playAnimationSequence(animationSequence || "R0-31"); // Default error animation
+            }
+        } else if (isError === null) {
+            window.TB.ui.Toast.showInfo(message);
+            if (window.TB.graphics?.playAnimationSequence) {
+                window.TB.graphics.playAnimationSequence(animationSequence || "R0+31"); // Default error animation
             }
         } else {
             window.TB.ui.Toast.showSuccess(message);
@@ -60,6 +65,7 @@ function setupLogin() {
                     // The TB.user.loginWithWebAuthn(username) itself handles getting the challenge.
                     showInfo("Attempting WebAuthn login..."); // Local info
                     result = await window.TB.user.loginWithWebAuthn(username);
+                    console.log("[result]:", result)
                 } else {
                     showInfo("Attempting device key login..."); // Local info
                     result = await window.TB.user.loginWithDeviceKey(username);

@@ -62,15 +62,32 @@ const Router = {
 
         const loadingView = Loader ? Loader.show() : null;
 
-        // --- SCRIPT CLEANUP ---
+        // --- SCRIPT CLEANUP (Handles global attribute) ---
+        const survivingGlobalScripts = new Set();
         activeViewScripts.forEach(scriptElement => {
-            if (scriptElement.src && scriptElement.src.startsWith('blob:')) {
-                URL.revokeObjectURL(scriptElement.src);
-                logger.debug(`[Router] Revoked Blob URL: ${scriptElement.src}`);
+            if (scriptElement.getAttribute('global') === 'true') {
+                // This script is global. Keep its reference in survivingGlobalScripts.
+                // Its DOM element might be removed by the subsequent innerHTML update if it was part of appRootElement.
+                survivingGlobalScripts.add(scriptElement);
+                logger.debug(`[Router] Global script ${scriptElement.src || 'inline (global attr)'} from previous view is noted. It will not be explicitly removed by cleanup.`);
+            } else {
+                // This is a page-specific script (no global="true" attribute). Attempt to remove and stop it.
+                if (scriptElement.src && scriptElement.src.startsWith('blob:')) {
+                    URL.revokeObjectURL(scriptElement.src);
+                    logger.debug(`[Router] Revoked Blob URL for page-specific script: ${scriptElement.src}`);
+                }
+                // Remove the script element from the DOM if it's still there.
+                if (scriptElement.parentNode) {
+                    scriptElement.remove();
+                    logger.debug(`[Router] Removed page-specific script DOM element: ${scriptElement.src || 'inline (page-specific)'}`);
+                } else {
+                    logger.debug(`[Router] Page-specific script ${scriptElement.src || 'inline (page-specific)'} was already removed from DOM or not attached.`);
+                }
             }
-            scriptElement.remove();
         });
-        activeViewScripts.clear();
+        // activeViewScripts will now track scripts for the new page.
+        // It starts with surviving global scripts, and new scripts from the loaded content will be added.
+        activeViewScripts = survivingGlobalScripts;
         // --- END SCRIPT CLEANUP ---
 
         try {
@@ -119,82 +136,140 @@ const Router = {
                 return;
             }
 
+
             if (htmlContent.includes("<title>Simple</title>")){
-                logger.warn(`[Router] Root content fetch for ${cleanPath}`);
-                if (cleanPath === "/" || cleanPath === "" || cleanPath === "/web" || cleanPath === "/web/"|| cleanPath === "/index.html" ) {
-                    return;
-                }else{
-                     window.location.href = '/web/assets/404.html';
-                    return;
+                logger.warn(`[Router] Content for ${cleanPath} might be root content.`);
+                // This check aims to prevent incorrect content rendering for sub-pages.
+                // If it's the initial load and it's a root path, this content is expected.
+                // Otherwise, if a non-root path gets this "Simple" title content, it's likely an issue.
+                const isRootPath = cleanPath === "/" || cleanPath === "" || cleanPath === "/index.html" || cleanPath === "/web" || cleanPath === "/web/";
+                if (!isInitialLoad && !isRootPath) {
+                     logger.warn(`[Router] Content for non-root path ${cleanPath} unexpectedly contains '<title>Simple</title>'. Redirecting to 404 as a precaution.`);
+                     window.location.href = config.get('baseUrl', '/') + 'web/assets/404.html'; // Hard redirect
+                     return;
+                } else if (isInitialLoad && !isRootPath && cleanPath !== '/web/assets/404.html' && cleanPath !== '/web/assets/401.html') {
+                    // If initial load is for a specific sub-page but it serves index.html content
+                    logger.warn(`[Router] Initial load for ${cleanPath} served root content. This might indicate a server misconfiguration if ${cleanPath} was meant to be a deep link.`);
+                    // Potentially redirect to 404, or let it render if this is acceptable fallback for deep links on fresh load
+                    // For now, let it render, but the warning is important.
                 }
             }
 
             appRootElement.innerHTML = htmlContent;
 
-            // --- SCRIPT PROCESSING (with guard for main bundles) ---
+            // --- SCRIPT PROCESSING (with guard for main bundles and improved global handling) ---
             const scriptsInNewContent = Array.from(appRootElement.querySelectorAll("script"));
+            const tempNewActiveScripts = new Set(); // To collect scripts that actually run from this new content
+
             scriptsInNewContent.forEach(oldScriptNode => {
                 const newScriptElement = document.createElement('script');
                 Array.from(oldScriptNode.attributes).forEach(attr => {
                     newScriptElement.setAttribute(attr.name, attr.value);
                 });
 
-                let scriptShouldExecute = false;
-                let scriptIdentifier;
+                let scriptShouldExecute = false; // Default: do not execute unless conditions met
+                let scriptIdentifier; // Used for scriptCache key (src) or blob URL
+
+                const isGlobalCandidate = newScriptElement.getAttribute('global') === 'true';
+                const scriptTextContent = oldScriptNode.textContent; // Capture for inline/unsave
+
+                // Store original text content on newScriptElement for potential matching if it's inline/unsave
+                if (!oldScriptNode.src) {
+                    newScriptElement.originalTextContent = scriptTextContent;
+                }
 
                 if (oldScriptNode.src) {
-                    const scriptUrl = new URL(oldScriptNode.src, window.location.origin); // Resolve to absolute URL
+                    const scriptUrl = new URL(oldScriptNode.src, window.location.origin);
                     const scriptPathName = scriptUrl.pathname.substring(scriptUrl.pathname.lastIndexOf('/') + 1);
 
-                    // GUARD: Skip main application bundle scripts
                     if (MAIN_BUNDLE_FILENAMES.some(bn => scriptPathName.startsWith(bn))) {
-                        // logger.warn(`[Router] SKIPPING execution of potential main bundle script found in loaded content: ${scriptUrl.href}`);
-                        oldScriptNode.remove(); // Remove it to prevent browser default loading
-                        return; // Go to the next script
+                        oldScriptNode.remove();
+                        return; // Skip main bundles
                     }
 
-                    newScriptElement.src = scriptUrl.href; // Use the full resolved URL
+                    newScriptElement.src = scriptUrl.href;
                     scriptIdentifier = newScriptElement.src;
+                    let alreadyActiveGlobal = false;
 
-                    if (!scriptCache.has(scriptIdentifier)) {
+                    if (isGlobalCandidate) {
+                        for (const activeGlobalScript of activeViewScripts) { // Check against surviving globals
+                            if (activeGlobalScript.src === scriptIdentifier) {
+                                alreadyActiveGlobal = true;
+                                // The activeGlobalScript (from previous view) is the one we want to keep.
+                                // newScriptElement (from new HTML) is a duplicate declaration.
+                                tempNewActiveScripts.add(activeGlobalScript); // Ensure it's tracked for this view
+                                logger.debug(`[Router] Global script ${scriptIdentifier} instance from previous page carried over.`);
+                                break;
+                            }
+                        }
+                    }
+
+                    if (alreadyActiveGlobal) {
+                        oldScriptNode.remove(); // Remove duplicate declaration from new HTML
+                        scriptShouldExecute = false;
+                    } else if (!scriptCache.has(scriptIdentifier)) {
                         scriptShouldExecute = true;
                     } else {
-                        logger.debug(`[Router] Script ${scriptIdentifier} already in global cache, skipping execution.`);
+                        logger.debug(`[Router] Script ${scriptIdentifier} (src) already in global cache, skipping execution.`);
+                        oldScriptNode.remove(); // Remove if not executed due to cache
+                        // If it was global and cached, it means it ran once. If not in activeViewScripts,
+                        // its previous instance is gone. We don't re-run from cache alone if it's not an "active survivor".
                     }
-                } else if (oldScriptNode.getAttribute('unsave') === 'true') {
-                    const blob = new Blob([oldScriptNode.textContent], { type: 'application/javascript' });
-                    newScriptElement.src = URL.createObjectURL(blob);
-                    scriptIdentifier = newScriptElement.src;
-                    scriptShouldExecute = true;
-                    logger.debug(`[Router] Processing 'unsave' script as Blob: ${scriptIdentifier}`);
-                } else { // Inline script, not "unsave"
-                    newScriptElement.text = oldScriptNode.textContent;
-                    scriptShouldExecute = true;
+
+                } else { // Inline or unsave script
+                    let alreadyActiveGlobal = false;
+                    if (isGlobalCandidate) {
+                        for (const activeGlobalScript of activeViewScripts) { // Check against surviving globals
+                            if (activeGlobalScript.originalTextContent === scriptTextContent &&
+                                (oldScriptNode.hasAttribute('unsave') === activeGlobalScript.hasAttribute('unsave'))) {
+                                alreadyActiveGlobal = true;
+                                tempNewActiveScripts.add(activeGlobalScript); // Carry over existing instance
+                                logger.debug(`[Router] Global inline/unsave script instance with identical content carried over.`);
+                                break;
+                            }
+                        }
+                    }
+
+                    if (alreadyActiveGlobal) {
+                        oldScriptNode.remove(); // Remove duplicate declaration
+                        scriptShouldExecute = false;
+                    } else { // Not an already active global instance
+                        scriptShouldExecute = true; // Inline/unsave scripts execute if not a duplicate active global
+                        if (oldScriptNode.getAttribute('unsave') === 'true') {
+                            const blob = new Blob([scriptTextContent], { type: 'application/javascript' });
+                            newScriptElement.src = URL.createObjectURL(blob);
+                            scriptIdentifier = newScriptElement.src; // Blob URL
+                            logger.debug(`[Router] Processing 'unsave' script as Blob: ${scriptIdentifier}`);
+                        } else {
+                            newScriptElement.text = scriptTextContent;
+                            // scriptIdentifier remains undefined for plain inline
+                        }
+                    }
                 }
 
                 if (scriptShouldExecute) {
                     oldScriptNode.parentNode.replaceChild(newScriptElement, oldScriptNode);
-                    activeViewScripts.add(newScriptElement);
+                    tempNewActiveScripts.add(newScriptElement); // Track this newly executed script
 
-                    if (newScriptElement.src && !newScriptElement.src.startsWith('blob:')) {
+                    if (newScriptElement.src && !newScriptElement.src.startsWith('blob:')) { // External, non-blob
                         newScriptElement.onload = () => {
-                            if (!scriptCache.has(scriptIdentifier)) { // Double check before adding
+                            if (!scriptCache.has(scriptIdentifier)) {
                                 scriptCache.add(scriptIdentifier);
                                 logger.log(`[Router] Loaded and globally cached script: ${scriptIdentifier}`);
                             }
                         };
                         newScriptElement.onerror = () => {
                             logger.error(`[Router] Error loading script: ${scriptIdentifier}`);
-                            activeViewScripts.delete(newScriptElement);
-                            newScriptElement.remove();
+                            tempNewActiveScripts.delete(newScriptElement); // Untrack failed script
+                            if(newScriptElement.parentNode) newScriptElement.remove();
                         };
                     }
-                } else {
-                     if (!MAIN_BUNDLE_FILENAMES.some(bn => oldScriptNode.src && oldScriptNode.src.endsWith(bn))) {
-                        oldScriptNode.remove(); // Remove if not executed and not a main bundle (which was already handled)
-                    }
                 }
+                // If scriptShouldExecute is false, oldScriptNode was already removed (or was a main bundle).
             });
+
+            // Update activeViewScripts with all scripts now active for this view
+            activeViewScripts = tempNewActiveScripts;
             // --- END SCRIPT PROCESSING ---
 
             // Process other dynamic content like HTMX attributes, web components etc.
@@ -263,13 +338,14 @@ const Router = {
             sessionStorage.removeItem(cacheKey);
             logger.log(`[Router] Cleared cache for path: ${path}`);
         } else {
-            for (let i = 0; i < sessionStorage.length; i++) {
+            for (let i = sessionStorage.length - 1; i >= 0; i--) { // Iterate backwards when removing
                 const key = sessionStorage.key(i);
-                if (key.startsWith(ROUTER_CACHE_PREFIX)) {
+                if (key && key.startsWith(ROUTER_CACHE_PREFIX)) {
                     sessionStorage.removeItem(key);
                 }
             }
-            logger.log('[Router] Cleared all router page cache from sessionStorage.');
+            scriptCache.clear(); // Also clear the JS script src cache
+            logger.log('[Router] Cleared all router page cache from sessionStorage and internal script cache.');
         }
     }
 };

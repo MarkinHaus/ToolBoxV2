@@ -548,8 +548,7 @@ async def get_to_sing_data(app: App, username, personal_key=False):
     if personal_key:
         data['rowId'] = user.user_pass_pub_persona.get("rawId")
     app.print(f"END {time.perf_counter()-t0}",)
-    return Result.ok(data=data)
-
+    return Result.ok(data=data, info="Challenge returned")
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.native, api=False, level=999, test=False)
 def get_invitation(app: App) -> Result:
