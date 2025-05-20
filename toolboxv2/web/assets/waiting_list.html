@@ -1,17 +1,50 @@
-<script src="/index.js" type="module"></script>
-<script type="module" src="/web/scripts/emailWlist.js"></script>
-<div>
-    <div class="main-content frosted-glass">
-        <h1>Email Waiting List For Sing up</h1>
+<!-- --- START OF FILE waiting_list.html --- -->
+ <style>
+        /* Additional page-specific styles if needed, or inline them if very minor */
+        /* The .form-container from your main CSS should style the form adequately */
+        /* Ensure the #email-subscription-form elements pick up styles from Section 4 of your CSS */
 
-        <div id="infoPopup" class="form-container" style="display: none; z-index: 1000;">
-            <p id="infoText"></p>
+        /* Styling for the direct children of .main-content on this page */
+        .waiting-list-page-content > h1 {
+            text-align: center;
+            margin-bottom: var(--spacing); /* Use CSS var */
+        }
+        #email-subscription-form { /* Already has .form-container potentially */
+            margin-top: var(--spacing);
+            margin-bottom: calc(var(--spacing) * 2);
+            width: 100%;
+            max-width: 450px; /* Or adjust as needed */
+            margin-left: auto;
+            margin-right: auto;
+        }
+        #email-subscription-form input[type="email"] {
+             margin-bottom: calc(var(--spacing) * 0.5); /* Reduce bottom margin if button is next */
+        }
+        #email-subscription-form button[type="submit"] {
+            width: 100%; /* Make button full width of its container within the form */
+        }
+
+        /* If #email-subscription-form is not a flex column by default from .form-container */
+        /* #email-subscription-form {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        } */
+
+    </style>
+
+ <div class="main-content waiting-list-page-content"> <!-- .frosted-glass is inherent to .main-content from your CSS -->
+            <h1>Join Our Email Waiting List</h1>
+
+            <!-- The form elements will pick up styles from Section 4 of your CSS -->
+            <form id="email-subscription-form" class="form"> <!-- Added .form class for styling -->
+                <label for="email" class="hidden">Email Address:</label> <!-- Hidden label for accessibility -->
+                <input type="email" id="email" name="email" placeholder="your.email@example.com" required>
+                <button type="submit">Subscribe</button>
+            </form>
+            <!-- User feedback will be handled by TB.ui.Toast -->
         </div>
 
-        <form id="email-subscription-form" class="form-container">
-            <input type="email" id="email" placeholder="test@test.com" required>
-            <button type="submit">Subscribe</button>
-        </form>
-        <p id="success-message" hidden>Thank you for subscribing!</p>
-    </div>
-</div>
+<!-- Ensure this script is loaded AFTER tbjs.js (your framework) -->
+<script type="module" src="/web/scripts/emailWlist.js" defer></script>
+<!-- --- END OF FILE waiting_list.html --- -->

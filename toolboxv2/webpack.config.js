@@ -130,6 +130,12 @@ export default {
       filename: './web/assets/logout.html',
       chunks: ['main']
     }),
+    // For /web/assets/waiting_list.html
+    new HtmlWebpackPlugin({
+      template: './web/assets/waiting_list.html',
+      filename: './web/assets/waiting_list.html',
+      chunks: ['main']
+    }),
     // For /web/assets/login.html
     new HtmlWebpackPlugin({
       template: './web/assets/login.html',
@@ -191,6 +197,7 @@ export default {
              '**/web/assets/401.html',
              '**/web/assets/m_log_in.html',
              '**/web/assets/logout.html',
+             '**/web/assets/waiting_list.html.html',
              '**/web/mainContent.html',
              '**/web/dashboards/dashboard.html',
              '**/web/dashboards/user_dashboard.html',

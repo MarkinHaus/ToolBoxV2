@@ -117,12 +117,16 @@ const Api = {
         // the backend should simply ignore it, or _getRequestHeaders needs more specific rules.
 
         if (method.toUpperCase() === 'GET' || method.toUpperCase() === 'DELETE') {
-            if (payload && typeof payload === 'string' && !isFullPath) url += `?${payload}`; // Only add payload as query if not already handled by functionName for full paths
+            if (payload && typeof payload === 'string' && !isFullPath)
+                url += `?${payload}`; // Only add payload as query if not already handled by functionName for full paths
             else if (payload && typeof payload === 'object' && !isFullPath) url += `?${new URLSearchParams(payload).toString()}`;
         } else { // POST, PUT, PATCH
-            if (payload && typeof payload === 'string' && method.toUpperCase() === 'POST' && !isFullPath) {
+             if (payload && typeof payload === 'string' && payload.includes('=')) { // Simple check for key=value pairs
+            options.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+            options.body = payload;
+            } else if (payload && typeof payload === 'string' && method.toUpperCase() === 'POST' && !isFullPath) {
                  url += `?${payload}`;
-            } else if (payload) {
+            }  else if (payload) {
                 options.body = JSON.stringify(payload);
             }
         }
