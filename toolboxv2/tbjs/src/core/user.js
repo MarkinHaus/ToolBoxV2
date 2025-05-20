@@ -46,7 +46,7 @@ const user = {
                 // Using the updated TB.api.AuthHttpPostData which calls the special route
                 const result = await TB.api.AuthHttpPostData(mergedState.username);
 
-                if (result.error === TB.api.ToolBoxError.none && result.get()) {
+                if (result.error === TB.ToolBoxError.none && result.get()) {
                     TB.logger.info(`[User] Session for ${mergedState.username} is valid.`);
                     const serverData = result.get(); // This should be the full user object from server
                     const serverTimestamp = serverData.lastModified || Date.now(); // Server should provide a timestamp
@@ -87,9 +87,7 @@ const user = {
                 localStorage.setItem(USER_STATE_KEY, JSON.stringify(newState));
                 // Update timestamp on any change to userData specifically
                 // More sophisticated would be deep watching userData, but this is simpler.
-                if (JSON.stringify(newState.userData) !== JSON.stringify(TB.state.getPrevious('user.userData'))) {
-                    localStorage.setItem(USER_DATA_TIMESTAMP_KEY, Date.now().toString());
-                }
+                localStorage.setItem(USER_DATA_TIMESTAMP_KEY, Date.now().toString());
             } catch (e) {
                 TB.logger.error('[User] Failed to save user session to localStorage:', e);
             }
@@ -126,7 +124,7 @@ const user = {
             const payload = { username, email, initiation_key: initiationKey, as_persona: registerAsPersona };
             const result = await TB.api.request('CloudM.AuthManager', 'signupUser', payload, 'POST'); // Adjust endpoint
 
-            if (result.error === TB.api.ToolBoxError.none && result.get()) {
+            if (result.error === TB.ToolBoxError.none && result.get()) {
                 const responseData = result.get();
                 TB.logger.info(`[User] Signup successful for ${username}. Data:`, responseData);
 
@@ -166,7 +164,7 @@ const user = {
 
             // 1. Get challenge from server
             const challengeResult = await TB.api.request('CloudM.AuthManager', 'get_to_sing_data', { username, personal_key: false }, 'POST'); // Original was GET with params in URL
-            if (challengeResult.error !== TB.api.ToolBoxError.none || !challengeResult.get()?.challenge) {
+            if (challengeResult.error !== TB.ToolBoxError.none || !challengeResult.get()?.challenge) {
                 return { success: false, message: challengeResult.info.help_text || "Failed to get login challenge." };
             }
             const challenge = challengeResult.get().challenge;
@@ -178,7 +176,7 @@ const user = {
             const validationPayload = { username, signature };
             const validationResult = await TB.api.request('CloudM.AuthManager', 'validate_device', validationPayload, 'POST');
 
-            if (validationResult.error === TB.api.ToolBoxError.none && validationResult.get()) {
+            if (validationResult.error === TB.ToolBoxError.none && validationResult.get()) {
                 const responseData = validationResult.get();
                 let token = responseData.key;
                 if (responseData.toPrivat && token) { // Assuming 'toPrivat' means the key is encrypted
@@ -210,7 +208,7 @@ const user = {
             // 1. Get challenge and credential ID (rawId) from server
             // The original 'get_to_sing_data' with personal_key=true needs to return 'rowId' (rawId) and 'challenge'
             const challengeResult = await TB.api.request('CloudM.AuthManager', 'get_to_sing_data', { username, personal_key: true }, 'POST');
-            if (challengeResult.error !== TB.api.ToolBoxError.none || !challengeResult.get()?.challenge || !challengeResult.get()?.rowId) {
+            if (challengeResult.error !== TB.ToolBoxError.none || !challengeResult.get()?.challenge || !challengeResult.get()?.rowId) {
                 return { success: false, message: challengeResult.info.help_text || "Failed to get WebAuthn login challenge." };
             }
             const { rowId, challenge } = challengeResult.get();
@@ -220,7 +218,7 @@ const user = {
 
             // 3. Send assertion to server for validation
             const validationResult = await TB.api.request('CloudM.AuthManager', 'validate_persona', assertionPayload, 'POST');
-            if (validationResult.error === TB.api.ToolBoxError.none && validationResult.get()) {
+            if (validationResult.error === TB.ToolBoxError.none && validationResult.get()) {
                 const responseData = validationResult.get();
                 // Assuming server returns token and user data upon successful WebAuthn validation
                 this._updateUserState({
@@ -248,7 +246,7 @@ const user = {
         TB.logger.info(`[User] Requesting magic link for ${username}`);
         try {
             const result = await TB.api.request('CloudM.AuthManager', 'get_magic_link_email', { username }, 'POST'); // Assuming POST, adjust if GET
-            if (result.error === TB.api.ToolBoxError.none) {
+            if (result.error === TB.ToolBoxError.none) {
                 TB.logger.info(`[User] Magic link request successful for ${username}.`);
                 return { success: true, message: result.info.help_text || "Magic link email sent." };
             } else {
@@ -276,7 +274,7 @@ const user = {
             };
             const result = await TB.api.request('CloudM.AuthManager', 'add_user_device', payload, 'POST');
 
-            if (result.error === TB.api.ToolBoxError.none && result.get()) {
+            if (result.error === TB.ToolBoxError.none && result.get()) {
                 const responseData = result.get();
                 // The response dSync was decrypted in original code, assuming it's part of device setup
                 // If it's a session key or similar, handle it.
@@ -309,7 +307,7 @@ const user = {
             // The old 'create_user_with_init_key_personal' might not be it.
             // Let's assume an endpoint 'getWebAuthnRegistrationChallengeForUser'
             const challengeRes = await TB.api.request('CloudM.AuthManager', 'getWebAuthnRegistrationChallenge', { username }, 'POST');
-            if (challengeRes.error !== TB.api.ToolBoxError.none || !challengeRes.get()?.challengeInfo) {
+            if (challengeRes.error !== TB.ToolBoxError.none || !challengeRes.get()?.challengeInfo) {
                 return { success: false, message: challengeRes.info.help_text || "Failed to get WebAuthn registration challenge."};
             }
             const { challenge, userId } = challengeRes.get().challengeInfo; // Server provides challenge and its internal userId for WebAuthn
@@ -322,7 +320,7 @@ const user = {
 
             // 3. Send new WebAuthn credential to server
             const result = await TB.api.request('CloudM.AuthManager', 'register_user_personal_key', registrationPayload, 'POST');
-            if (result.error === TB.api.ToolBoxError.none) {
+            if (result.error === TB.ToolBoxError.none) {
                 TB.logger.info(`[User] WebAuthn (Persona) registration successful for ${username}`);
                 return { success: true, message: result.info.help_text || "WebAuthn credential registered." };
             } else {
@@ -342,7 +340,7 @@ const user = {
         if (!this.isAuthenticated() || !this.getToken()) return false;
         try {
             const result = await TB.api.request('/IsValidSession', null, { token: this.getToken() }, 'POST', 'never', true);
-            return result.error === TB.api.ToolBoxError.none && result.get()?.isValid;
+            return result.error === TB.ToolBoxError.none && result.get()?.isValid;
         } catch (e) {
             TB.logger.error("[User] Error checking session validity", e);
             return false;
@@ -356,7 +354,7 @@ const user = {
             try {
                 // Use the new TB.api.logoutServer()
                 const logoutResult = await TB.api.logoutServer();
-                if (logoutResult.error !== TB.api.ToolBoxError.none) {
+                if (logoutResult.error !== TB.ToolBoxError.none) {
                      TB.logger.warn('[User] Server logout returned an error/warning:', logoutResult.info.help_text);
                 } else {
                      TB.logger.info('[User] Server logout acknowledged.');
@@ -416,7 +414,7 @@ const user = {
             // The server endpoint should ideally handle partial updates and timestamp checking.
             // Send localModTime so server can decide if it has newer data.
             const result = await TB.api.request('UserManager', 'updateUserData', { data: userDataToSync, lastModified: localModTime }, 'POST');
-            if (result.error === TB.api.ToolBoxError.none) {
+            if (result.error === TB.ToolBoxError.none) {
                 TB.logger.info('[User] User data sync acknowledged by server.');
                 // Server might return its own 'lastModified' timestamp if it made further changes
                 const serverResponse = result.get();
@@ -441,7 +439,7 @@ const user = {
         try {
             TB.logger.debug('[User] Fetching user data from server.');
             const result = await TB.api.request('UserManager', 'getUserData', {}, 'GET'); // Adjust endpoint
-            if (result.error === TB.api.ToolBoxError.none && result.get()) {
+            if (result.error === TB.ToolBoxError.none && result.get()) {
                 this._updateUserState({ userData: result.get() });
                 TB.logger.info('[User] User data fetched successfully.');
                 return { success: true, data: result.get() };

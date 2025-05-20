@@ -1,25 +1,28 @@
 // tbjs/ui/components/Toast/Toast.js
 import TB from '../../../index.js';
-
+let activeToasts = new Map();
 const DEFAULT_TOAST_OPTIONS = {
     message: '',
     type: 'info', // 'info', 'success', 'warning', 'error'
-    duration: 5000, // milliseconds, 0 for sticky
+    duration: 15000, // milliseconds, 0 for sticky
     position: 'top-right', // 'top-right', 'top-center', 'top-left', 'bottom-right', ...
-    title: '', // Optional title
+    title: '', // Optional title, will be used as the "from" label
     actions: [], // [{ text: 'Undo', action: () => {} }]
     customClasses: {
         container: '', // For the individual toast
         title: '',
         message: '',
         actionButton: '',
+        progressBar: '', // Custom class for the progress bar itself
+        // Note: toastHost for the main container holding all toasts is still available
     },
-    icon: true, // Show default icon based on type
+    icon: false, // Show default icon based on type (less prominent in balloon style)
     closable: true,
+    showDotOnHide: true, // New option to control dot behavior
+    dotDuration: 10000, // How long the dot stays visible (ms)
 };
 
-let toastContainer = null; // Single container for all toasts at a specific position
-const activeToasts = new Map(); // To manage active toasts
+let toastContainers = {}; // Store containers by position
 
 class Toast {
     constructor(options = {}) {
@@ -28,68 +31,95 @@ class Toast {
         this.id = TB.utils.uniqueId('tb-toast-');
         this._toastElement = null;
         this._timeoutId = null;
+        this._progressIntervalId = null;
+        this._progressBarElement = null;
+        this._dotElement = null; // To manage the dot
+        this._dotTimeoutId = null; // For auto-removing the dot
+        this._isPermanentlyHidden = false; // Flag to prevent dot re-creation
     }
 
     _getToastContainer() {
         const positionClass = this._getPositionClass();
-        const containerId = `tb-toast-container-${this.options.position.replace('-', '')}`;
-        if (!toastContainer || toastContainer.id !== containerId) {
-             // Remove old container if position changed (simple approach)
-            if(toastContainer && toastContainer.parentNode) toastContainer.parentNode.removeChild(toastContainer);
+        const containerId = `tb-toast-container-${this.options.position.replace(/-/g, '')}`;
 
-            toastContainer = document.getElementById(containerId);
-            if (!toastContainer) {
-                toastContainer = document.createElement('div');
-                toastContainer.id = containerId;
-                // /* Tailwind: fixed z-[1100] flex flex-col space-y-2 */
-                // /* Add position classes based on this.options.position */
-                toastContainer.className = `fixed z-[1100] flex flex-col gap-2 p-4 ${positionClass} ${this.options.customClasses.toastHost || ''}`;
-                document.body.appendChild(toastContainer);
+        if (!toastContainers[this.options.position]) {
+            let container = document.getElementById(containerId);
+            if (!container) {
+                container = document.createElement('div');
+                container.id = containerId;
+                // Tailwind: fixed z-[1100] flex flex-col items-end p-4 gap-3 (for top-right)
+                // Adjust alignment based on position
+                let alignmentClasses = 'items-end'; // Default for right positions
+                if (this.options.position.includes('left')) alignmentClasses = 'items-start';
+                if (this.options.position.includes('center')) alignmentClasses = 'items-center';
+
+                container.className = `tb-fixed tb-z-[1100] tb-flex tb-flex-col tb-p-4 tb-gap-3 ${positionClass} ${alignmentClasses} ${this.options.customClasses.toastHost || ''}`;
+                document.body.appendChild(container);
             }
+            toastContainers[this.options.position] = container;
         }
-        return toastContainer;
+        return toastContainers[this.options.position];
     }
 
     _getPositionClass() {
+        // These classes position the container itself
         switch (this.options.position) {
-            case 'top-right': return 'top-0 right-0';
-            case 'top-center': return 'top-0 left-1/2 -translate-x-1/2';
-            case 'top-left': return 'top-0 left-0';
-            case 'bottom-right': return 'bottom-0 right-0';
-            case 'bottom-center': return 'bottom-0 left-1/2 -translate-x-1/2';
-            case 'bottom-left': return 'bottom-0 left-0';
-            default: return 'top-0 right-0';
+            case 'top-right': return 'tb-top-0 tb-right-0';
+            case 'top-center': return 'tb-top-0 tb-left-1/2 tb--translate-x-1/2';
+            case 'top-left': return 'tb-top-0 tb-left-0';
+            case 'bottom-right': return 'tb-bottom-0 tb-right-0';
+            case 'bottom-center': return 'tb-bottom-0 tb-left-1/2 tb--translate-x-1/2';
+            case 'bottom-left': return 'tb-bottom-0 tb-left-0';
+            default: return 'tb-top-0 tb-right-0';
         }
     }
 
-    _getTypeClassesAndIcon() {
-        // /* Tailwind: Define base, then type-specific styles */
-        // Base: bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 shadow-lg rounded-md
-        const baseClasses = 'bg-background-color text-text-color shadow-lg rounded-md p-4 flex items-start gap-3';
-        let typeClasses = '';
-        let iconHtml = '';
-        // Icons using Material Symbols Outlined
+    _getAppearanceStyles() {
+        let baseWrapperClasses = `tb-relative tb-flex tb-flex-col tb-items-center tb-bg-background-color/60 dark:tb-bg-background-color/60 tb-backdrop-blur-md tb-rounded-lg tb-p-5 tb-shadow-xl tb-min-w-[250px] tb-max-w-xs md:tb-max-w-sm`; // Removed tb-border, will add specific below
+        baseWrapperClasses += ' tb-speech-balloon-toast';
+
+
+        let borderColorClass = 'tb-border-gray-400 dark:tb-border-gray-600';
+        let accentColorClass = 'tb-text-blue-500 dark:tb-text-blue-400'; // For icon and progress bar
+        let fromLabel = this.options.title || 'Notification';
+        let dotColorClass = 'tb-toast-dot-info';
+
+
         switch (this.options.type) {
             case 'success':
-                // /* Tailwind: border-l-4 border-green-500 */
-                typeClasses = 'border-l-4 border-green-500';
-                iconHtml = this.options.icon ? '<span class="material-symbols-outlined text-green-500">check_circle</span>' : '';
+                borderColorClass = 'tb-border-green-500 dark:tb-border-green-400';
+                accentColorClass = 'tb-text-green-500 dark:tb-text-green-400';
+                dotColorClass = 'tb-toast-dot-success';
+                if (!this.options.title) fromLabel = 'Success';
                 break;
             case 'warning':
-                typeClasses = 'border-l-4 border-yellow-500';
-                iconHtml = this.options.icon ? '<span class="material-symbols-outlined text-yellow-500">warning</span>' : '';
+                borderColorClass = 'tb-border-yellow-500 dark:tb-border-yellow-400';
+                accentColorClass = 'tb-text-yellow-500 dark:tb-text-yellow-400';
+                dotColorClass = 'tb-toast-dot-warning';
+                if (!this.options.title) fromLabel = 'Warning';
                 break;
             case 'error':
-                typeClasses = 'border-l-4 border-red-500';
-                iconHtml = this.options.icon ? '<span class="material-symbols-outlined text-red-500">error</span>' : '';
+                borderColorClass = 'tb-border-red-500 dark:tb-border-red-400';
+                accentColorClass = 'tb-text-red-500 dark:tb-text-red-400';
+                dotColorClass = 'tb-toast-dot-error';
+                if (!this.options.title) fromLabel = 'Error';
                 break;
             case 'info':
             default:
-                typeClasses = 'border-l-4 border-blue-500';
-                iconHtml = this.options.icon ? '<span class="material-symbols-outlined text-blue-500">info</span>' : '';
+                accentColorClass = 'tb-text-blue-500 dark:tb-text-blue-400'; // Ensure this is set for info
+                dotColorClass = 'tb-toast-dot-info';
+                if (!this.options.title) fromLabel = 'Info';
                 break;
         }
-        return { wrapper: `${baseClasses} ${typeClasses}`, icon: iconHtml };
+        baseWrapperClasses += ` ${borderColorClass}`; // Add border directly
+
+        return {
+            wrapper: baseWrapperClasses,
+            accentColorClass: accentColorClass,
+            fromLabel: fromLabel,
+            borderColorClass: borderColorClass, // Pass this for the tail
+            dotColorClass: dotColorClass,     // Pass this for the dot
+        };
     }
 
     _createDom() {
@@ -98,108 +128,244 @@ class Toast {
         this._toastElement.id = this.id;
         activeToasts.set(this.id, this);
 
-        const { wrapper: wrapperClasses, icon: iconHtml } = this._getTypeClassesAndIcon();
-        // /* Tailwind: min-w-[250px] max-w-md opacity-0 translate-y-2 transition-all duration-300 ease-out */
-        this._toastElement.className = `min-w-[250px] max-w-xs opacity-0 transform transition-all duration-300 ease-out ${this.options.position.includes('bottom-') ? 'translate-y-2' : '-translate-y-2'} ${wrapperClasses} ${this.options.customClasses.container}`;
+        const { wrapper: wrapperClasses, accentColorClass, fromLabel, borderColorClass, dotColorClass } = this._getAppearanceStyles();
 
-        let contentHtml = iconHtml ? `<div class="flex-shrink-0">${iconHtml}</div>` : '';
-        contentHtml += '<div class="flex-grow">';
+        // Tailwind: opacity-0 translate-y-2 transition-all duration-300 ease-out
+        // Adjust translate based on position for entry animation
+        const initialTransform = this.options.position.includes('bottom-') ? 'tb-translate-y-2' : 'tb--translate-y-2';
+        this._toastElement.className = `tb-opacity-0 ${initialTransform} tb-transition-all tb-duration-300 tb-ease-out ${wrapperClasses} ${this.options.customClasses.container}`
+        let contentHtml = '';
 
-        if (this.options.title) {
-            // /* Tailwind: font-semibold */
-            contentHtml += `<h4 class="font-semibold ${this.options.customClasses.title}">${this.options.title}</h4>`;
+        // "From" label (title) - styled like speech_balloon-from
+        contentHtml += `<div class="tb-speech-balloon-from tb-absolute tb--top-2.5 tb-left-1/2 tb--translate-x-1/2 tb-bg-background-color tb-px-2 tb-py-0.5 tb-text-xs tb-font-semibold tb-rounded tb-shadow ${this.options.customClasses.title}">${fromLabel}</div>`;
+
+        // Close button
+        if (this.options.closable) {
+            contentHtml += `<button class="tb-speech-balloon-close-button tb-absolute tb-top-1 tb-right-1 tb-p-1 tb-text-text-color/70 hover:tb-text-text-color tb-rounded-full" data-close-btn="true">
+                                <span class="material-symbols-outlined tb-text-base">close</span>
+                           </button>`;
         }
-        // /* Tailwind: text-sm */
-        contentHtml += `<p class="text-sm ${this.options.customClasses.message}">${this.options.message}</p>`;
 
+        // Main content (icon + message)
+        contentHtml += `<div class="tb-speech-balloon-content tb-w-full tb-text-sm tb-mt-2 ${this.options.customClasses.message}">`; // Added mt-2 for spacing from "from" label
+        // Icon (optional and less prominent)
+        if (this.options.icon) {
+            let iconName = 'info';
+            if (this.options.type === 'success') iconName = 'check_circle';
+            if (this.options.type === 'warning') iconName = 'warning';
+            if (this.options.type === 'error') iconName = 'error';
+            // contentHtml += `<span class="material-symbols-outlined tb-mr-2 tb-align-middle ${accentColorClass}">${iconName}</span>`;
+        }
+        contentHtml += this.options.message; // Message directly
+        contentHtml += `</div>`;
+
+        // Actions
         if (this.options.actions.length > 0) {
-            // /* Tailwind: mt-2 space-x-2 */
-            contentHtml += '<div class="mt-2 flex gap-2">';
-            this.options.actions.forEach(action => {
-                // /* Tailwind: text-xs font-medium text-blue-600 hover:text-blue-500 */
-                contentHtml += `<button class="text-xs font-medium text-accent-color hover:underline ${this.options.customClasses.actionButton}" data-action-idx="${this.options.actions.indexOf(action)}">${action.text}</button>`;
+            contentHtml += '<div class="tb-speech-balloon-options tb-mt-3 tb-flex tb-flex-wrap tb-gap-2 tb-justify-center tb-w-full">';
+            this.options.actions.forEach((action, idx) => {
+                contentHtml += `<button class="tb-px-3 tb-py-1 tb-text-xs tb-font-medium tb-rounded tb-border tb-border-current hover:tb-bg-text-color/10 ${accentColorClass} ${this.options.customClasses.actionButton}" data-action-idx="${idx}">${action.text}</button>`;
             });
             contentHtml += '</div>';
         }
-        contentHtml += '</div>'; // flex-grow
 
-        if (this.options.closable) {
-            // /* Tailwind: ml-auto flex-shrink-0 */
-            contentHtml += `<div class="ml-auto flex-shrink-0"><button class="material-symbols-outlined text-gray-400 hover:text-gray-600 text-base p-1 -m-1 rounded" data-close-btn="true">close</button></div>`;
+        // Progress bar container & bar
+        if (this.options.duration > 0) {
+            contentHtml += `<div class="tb-speech-balloon-progress-bar-container tb-w-full tb-h-1.5 tb-bg-text-color/10 tb-mt-4 tb-rounded-full tb-overflow-hidden">
+                                <div class="tb-speech-balloon-progress-bar tb-h-full tb-rounded-full ${accentColorClass.replace('tb-text-', 'tb-bg-')} ${this.options.customClasses.progressBar}" style="width: 100%;"></div>
+                           </div>`;
         }
+        // Add balloon tail/arrow
+        contentHtml += `<div class="tb-speech-balloon-tail"></div>`;
+
 
         this._toastElement.innerHTML = contentHtml;
+        this._progressBarElement = this._toastElement.querySelector('.tb-speech-balloon-progress-bar');
+
 
         // Add event listeners for actions and close
         this._toastElement.querySelectorAll('[data-action-idx]').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const idx = parseInt(e.target.dataset.actionIdx);
                 this.options.actions[idx].action();
-                this.hide(); // Typically hide after action
+                this.hide();
             });
         });
+
+        const tail = this._toastElement.querySelector('.tb-speech-balloon-tail');
+        if (tail) {
+            if (this.options.position.startsWith('top-')) {
+                this._toastElement.classList.add('tb-toast-position-top');
+                // Extract the color from borderColorClass (e.g., "tb-border-green-500" -> "green-500")
+                // This is a bit hacky, ideally CSS variables would be better.
+                const colorName = borderColorClass.split('-').slice(2).join('-'); // e.g., green-500 or gray-400
+                tail.style.borderBottomColor = `var(--tb-color-${colorName}, ${TB.ui.theme?.tailwindResolvedColors?.[colorName] || 'currentColor'})`;
+            } else {
+                this._toastElement.classList.add('tb-toast-position-bottom');
+                const colorName = borderColorClass.split('-').slice(2).join('-');
+                tail.style.borderTopColor = `var(--tb-color-${colorName}, ${TB.ui.theme?.tailwindResolvedColors?.[colorName] || 'currentColor'})`;
+            }
+        }
+
         const closeBtn = this._toastElement.querySelector('[data-close-btn]');
         if (closeBtn) {
             closeBtn.addEventListener('click', () => this.hide());
         }
 
+        const toastContainerElement = this._getToastContainer();
         if (this.options.position.startsWith('top-')) {
-            container.appendChild(this._toastElement); // Add to bottom for top positions
+            toastContainerElement.appendChild(this._toastElement);
         } else {
-            container.prepend(this._toastElement); // Add to top for bottom positions
+            toastContainerElement.prepend(this._toastElement);
         }
     }
 
-    show() {
-        this._createDom();
+    _startProgressBar() {
+        if (!this._progressBarElement || this.options.duration <= 0) return;
 
-        // Force reflow for transition
-        void this._toastElement.offsetWidth;
+        const startTime = Date.now();
+        const duration = this.options.duration;
 
-        this._toastElement.style.opacity = '1';
-        this._toastElement.style.transform = 'translateY(0)';
+        this._progressIntervalId = setInterval(() => {
+            const elapsedTime = Date.now() - startTime;
+            const progress = Math.max(0, 100 - (elapsedTime / duration) * 100);
+            this._progressBarElement.style.width = `${progress}%`;
 
-        if (this.options.duration > 0) {
-            this._timeoutId = setTimeout(() => this.hide(), this.options.duration);
+            if (progress === 0) {
+                clearInterval(this._progressIntervalId);
+                this._progressIntervalId = null;
+            }
+        }, 50); // Update interval for smoother animation
+    }
+
+    _stopProgressBar() {
+        if (this._progressIntervalId) {
+            clearInterval(this._progressIntervalId);
+            this._progressIntervalId = null;
+        }
+    }
+
+
+ show() {
+        if (this._isPermanentlyHidden) return; // Don't reshow if dot was removed due to its own timeout
+
+        // If dot exists, remove it before showing toast again
+        if (this._dotElement && this._dotElement.parentNode) {
+            this._dotElement.parentNode.removeChild(this._dotElement);
+            this._dotElement = null;
+            if (this._dotTimeoutId) clearTimeout(this._dotTimeoutId);
         }
 
-        TB.logger.log(`[Toast] Shown: ${this.options.message}`);
+        if (!this._toastElement) { // Only create if it doesn't exist (e.g., first show or re-show after dot click)
+             this._createDom();
+        }
+        this._toastElement.classList.remove('tb-hidden'); // Ensure visible if re-showing
+        this._toastElement.classList.remove('tb-toast-hiding');
+
+
+        void this._toastElement.offsetWidth; // Force reflow
+
+        this._toastElement.style.opacity = '1';
+        this._toastElement.style.transform = 'translateY(0) translateX(0)';
+
+        if (this.options.duration > 0) {
+            this._startProgressBar();
+            this._timeoutId = setTimeout(() => this.hide(this.options.showDotOnHide), this.options.duration);
+        }
+
+        TB.logger.log(`[Toast] Shown: ${this.options.message.substring(0, 30)}...`);
         TB.events.emit('toast:shown', this);
     }
 
-    hide() {
-        if (!this._toastElement) return;
+ hide(showDot = this.options.showDotOnHide) {
+        if (!this._toastElement || this._toastElement.classList.contains('tb-toast-hiding')) return;
+        this._toastElement.classList.add('tb-toast-hiding');
 
         if (this._timeoutId) clearTimeout(this._timeoutId);
+        this._stopProgressBar();
 
         this._toastElement.style.opacity = '0';
-        this._toastElement.style.transform = this.options.position.includes('bottom-') ? 'translateY(0.5rem)' : 'translateY(-0.5rem)';
-        // Add other exit animations if needed (e.g., slide out)
+        const exitTransform = this.options.position.includes('bottom-') ? 'translateY(0.5rem)' : 'translateY(-0.5rem)';
+        this._toastElement.style.transform = exitTransform;
 
         setTimeout(() => {
-            if (this._toastElement && this._toastElement.parentNode) {
-                this._toastElement.parentNode.removeChild(this._toastElement);
-            }
-            activeToasts.delete(this.id);
-            this._toastElement = null;
-
-            // If container is empty, remove it
-            if (toastContainer && toastContainer.children.length === 0) {
-                toastContainer.parentNode.removeChild(toastContainer);
-                toastContainer = null;
+            if (this._toastElement) { // Check if it wasn't removed by another call
+                this._toastElement.classList.add('tb-hidden'); // Hide it instead of removing if dot is shown
+                this._toastElement.classList.remove('tb-toast-hiding');
             }
 
-            TB.logger.log(`[Toast] Hidden: ${this.options.message}`);
-            TB.events.emit('toast:hidden', this);
+            if (showDot && !this._isPermanentlyHidden) {
+                this._createDot();
+            } else {
+                this._removeToastCompletely();
+            }
+            // TB.logger.log(`[Toast] Hidden (transitioning or dot): ${this.options.message.substring(0, 30)}...`);
+            // TB.events.emit('toast:hidden', this); // Emit only when fully gone or dot is shown
         }, 300); // Match transition duration
     }
 
-    // Static convenience methods
+    _createDot() {
+        if (this._dotElement || !this._toastElement?.parentNode) return; // Already has a dot or toast is gone
+
+        const { dotColorClass } = this._getAppearanceStyles();
+        this._dotElement = document.createElement('div');
+        this._dotElement.className = `tb-toast-dot ${dotColorClass}`;
+        this._dotElement.title = `Re-open: ${this.options.title || this.options.message.substring(0,20) + '...'}`;
+
+
+        this._dotElement.addEventListener('click', () => {
+            if (this._dotTimeoutId) clearTimeout(this._dotTimeoutId);
+            if (this._dotElement && this._dotElement.parentNode) {
+                 this._dotElement.parentNode.removeChild(this._dotElement);
+            }
+            this._dotElement = null;
+            this.show(); // Re-show the toast
+        });
+
+        // Insert dot where the toast was, or in the container
+        const toastContainerElement = this._getToastContainer();
+        if (this.options.position.startsWith('top-')) {
+            toastContainerElement.appendChild(this._dotElement);
+        } else {
+            toastContainerElement.prepend(this._dotElement);
+        }
+
+        // Auto-remove dot after a while
+        this._dotTimeoutId = setTimeout(() => {
+            if (this._dotElement && this._dotElement.parentNode) {
+                this._dotElement.parentNode.removeChild(this._dotElement);
+            }
+            this._dotElement = null;
+            this._isPermanentlyHidden = true; // Mark that the dot expired
+            this._removeToastCompletely(); // Now fully remove the toast
+        }, this.options.dotDuration);
+    }
+
+    _removeToastCompletely() {
+        if (this._toastElement && this._toastElement.parentNode) {
+            this._toastElement.parentNode.removeChild(this._toastElement);
+        }
+        activeToasts.delete(this.id);
+        this._toastElement = null;
+
+        const container = toastContainers[this.options.position];
+        if (container && container.children.length === 0) {
+            if (container.parentNode) container.parentNode.removeChild(container);
+            delete toastContainers[this.options.position];
+        }
+        TB.logger.log(`[Toast] Permanently removed: ${this.options.message.substring(0, 30)}...`);
+        TB.events.emit('toast:hidden', this); // Emit here for permanent removal
+    }
+
     static showInfo(message, options = {}) { new Toast({ ...options, message, type: 'info' }).show(); }
     static showSuccess(message, options = {}) { new Toast({ ...options, message, type: 'success' }).show(); }
     static showWarning(message, options = {}) { new Toast({ ...options, message, type: 'warning' }).show(); }
     static showError(message, options = {}) { new Toast({ ...options, message, type: 'error' }).show(); }
-    static hideAll() { activeToasts.forEach(toast => toast.hide()); }
+    static hideAll() {
+        activeToasts.forEach(toast => {
+            toast._isPermanentlyHidden = true; // Ensure dots don't get created for hideAll
+            toast.hide(false); // Hide without creating a dot
+        });
+    }
 }
 
 export default Toast;

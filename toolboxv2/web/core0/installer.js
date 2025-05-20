@@ -25,7 +25,7 @@ setTimeout(() => {
 
     function displayError(message) {
         autoDownloadOptions.innerHTML = `<p>Error: ${message}. Please check the <a href="https://github.com/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/releases" target="_blank">GitHub Releases page</a> manually.</p>`;
-        window.AppTB.ui.processDynamicContent(autoDownloadOptions);
+        window.TB.ui.processDynamicContent(autoDownloadOptions);
     }
 
     async function fetchAndDisplayLinks(selectedOSKey = null) {
@@ -107,7 +107,7 @@ setTimeout(() => {
             console.error('Error fetching release info:', error);
             displayError(error.message);
         }
-        window.AppTB.ui.processDynamicContent(autoDownloadOptions);
+        window.TB.ui.processDynamicContent(autoDownloadOptions);
     }
 
 
@@ -140,7 +140,7 @@ setTimeout(() => {
             autoDownloadOptions.innerHTML = `<p>For iOS, you can use the <a onclick="window.TBf.registerServiceWorker()" style="cursor:pointer;">Web App (PWA)</a> or install the <a href="https://raw.githubusercontent.com/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/master/installer.sh" target="_blank">Core Engine</a> if you have a compatible environment (e.g., iSH Shell).</p>
                                             <p><small>Native iOS app requires App Store distribution.</small></p>`;
             osInfo.textContent = detectedOSName;
-            window.AppTB.ui.processDynamicContent(autoDownloadOptions);
+            window.TB.ui.processDynamicContent(autoDownloadOptions);
             return; // Early exit for iOS specific message
         }
 

@@ -3,6 +3,8 @@
 // Importiere die tbjs Bibliothek und ihr CSS
 import TB from 'tbjs/src/index.js';
 import 'tbjs/dist/tbjs.css';
+// import  '../toolboxv2/tbjs/dist/tbjs.js'; # for production fix THree errro
+import  '../toolboxv2/tbjs/dist/tbjs.css';
 import {NavMenu} from "tbjs/src/ui/index.js"; // Stellt sicher, dass das CSS von tbjs geladen wird
 
 // Optional: Importiere das Haupt-CSS deiner Anwendung, wenn es separat existiert
@@ -88,10 +90,9 @@ function initializeApp() {
         loadPlatformSpecificFeatures(initializedTB);
     });
 
-    window.AppTB = TB.init(tbjsConfig); // window.AppTB ist optional, TB selbst ist ja schon importiert
-
+    window.TB = TB.init(tbjsConfig); // window.AppTB ist optional, TB selbst ist ja schon importiert
     if (!isProduction) {
-        AppTB.logger.log('TB.js wurde in der Hauptanwendung initialisiert (Development Mode).');
+        TB.logger.log('TB.js wurde in der Hauptanwendung initialisiert (Development Mode).');
     }
 
     if (TB.ui.theme.getBackgroundConfig().type === '3d') {
@@ -141,7 +142,7 @@ function loadPlatformSpecificFeatures(currentTB) {
         }
         // Allgemeine Web-spezifische Initialisierungen (z.B. Service Worker, falls genutzt)
         // if ('serviceWorker' in navigator && isProduction) {
-        //   window.addEventListener('load', () => {
+        //   TB.events.on('load', () => {
         //     navigator.serviceWorker.register('/service-worker.js')
         //       .then(registration => currentTB.logger.info('ServiceWorker registration successful: ', registration.scope))
         //       .catch(err => currentTB.logger.error('ServiceWorker registration failed: ', err));

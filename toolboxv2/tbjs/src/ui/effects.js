@@ -53,7 +53,7 @@ const HtmxIntegration = {
             if(result.log) result.log();
 
 
-            if (result.error && result.error !== TB.api.ToolBoxError.none) {
+            if (result.error && result.error !== TB.ToolBoxError.none) {
                 TB.logger.error('[HTMX] Error in response:', result.info.help_text || result.error);
                 if (TB.ui.Toast) TB.ui.Toast.showError(result.info.help_text || `Error: ${result.error}`);
                 // Prevent HTMX from processing if it's a pure data error and not HTML
@@ -66,7 +66,7 @@ const HtmxIntegration = {
 
             // Specific handling for "REMOTE" or WebSocket render commands if applicable via HTMX
             // Original: rendererPipeline call in old handleHtmxAfterRequest
-            if (result.result && result.result.data_to === TB.api.ToolBoxInterfaces.remote && result.result.data && result.result.data.render) {
+            if (result.result && result.result.data_to === TB.ToolBoxInterfaces.remote && result.result.data && result.result.data.render) {
                  TB.logger.log('[HTMX] Remote render command received via HTMX response.');
                  // This assumes your WebSocket rendererPipeline is now part of TB, e.g., TB.sse.handleRenderCommand
                  // Or it could be a specific event

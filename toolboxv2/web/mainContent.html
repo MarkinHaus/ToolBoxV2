@@ -54,9 +54,8 @@
     <script unsave="true">
       // This script will be processed by the router's script handling logic.
       // It will execute in the global scope.
-      // Ensure TB object is available (e.g., window.AppTB or imported TB)
       (function() { // IIFE to keep scope clean
-        const TB_INSTANCE = window.AppTB || window.TB; // Prefer AppTB if set, else direct TB import
+        const TB_INSTANCE = window.TB;
 
         if (!TB_INSTANCE) {
             console.error("[mainContent.html] TB instance not found. App functionality may be limited.");

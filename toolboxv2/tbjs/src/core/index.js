@@ -14,6 +14,11 @@ import sse from './sse.js';
 import * as utils from './utils.js';
 import sw from './sw.js';
 import user from './user.js';
+import {ToolBoxError,
+ToolBoxInterfaces,
+ToolBoxResult,
+ToolBoxInfo,
+Result, }from './api.js';
 
 export {
     config,
@@ -28,5 +33,11 @@ export {
     utils,
     graphics,
     sw,
-    user
+    user,
+
+    ToolBoxError,
+    ToolBoxInterfaces,
+    ToolBoxResult,
+    ToolBoxInfo,
+    Result,
 };
