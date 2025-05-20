@@ -39,7 +39,7 @@ export default {
       },
       {
         test: /\.css$/,
-        include: path.resolve(__dirname, 'src/styles'), // Nur tbjs-main.css hier verarbeiten
+        exclude: /node_modules/,
         use: [
           MiniCssExtractPlugin.loader,
           'css-loader',

@@ -137,8 +137,33 @@ class Toast {
         let contentHtml = '';
 
         // "From" label (title) - styled like speech_balloon-from
-        contentHtml += `<div class="tb-speech-balloon-from tb-absolute tb--top-2.5 tb-left-1/2 tb--translate-x-1/2 tb-bg-background-color tb-px-2 tb-py-0.5 tb-text-xs tb-font-semibold tb-rounded tb-shadow ${this.options.customClasses.title}">${fromLabel}`;
+        let bgColor = '';
 
+        switch (this.options.type) {
+          case 'success':
+            bgColor = '#22c55e';
+            break;
+          case 'warning':
+            bgColor = '#eab308';
+            break;
+          case 'error':
+            bgColor = '#ef4444';
+            break;
+          case 'info':
+            bgColor = '#3b82f6';
+            break;
+          default:
+            bgColor = '#e5e7eb'; // fallback (e.g., gray-200)
+        }
+
+        contentHtml += `
+          <div
+            class="tb-speech-balloon-from tb-absolute tb--top-2.5 tb-left-1/2 tb--translate-x-1/2 tb-px-2 tb-py-0.5 tb-text-xs tb-font-semibold tb-rounded tb-shadow ${this.options.customClasses.title}"
+            style="background-color: ${bgColor};"
+          >
+            ${fromLabel}
+          </div>
+        `;
         // Close button
         if (this.options.closable) {
             contentHtml += `<button class="tb-speech-balloon-close-button tb-absolute tb-top-1 tb-right-1 tb-p-1 tb-text-text-color/70 hover:tb-text-text-color tb-rounded-full" data-close-btn="true">

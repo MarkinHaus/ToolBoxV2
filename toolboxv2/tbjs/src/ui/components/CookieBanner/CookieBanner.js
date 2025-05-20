@@ -1,5 +1,5 @@
 // tbjs/ui/components/CookieBanner/CookieBanner.js
-import TB from '../../../index.js';
+import TB from '../../../index.js'; // Assuming TB.ui.Modal is available via this import
 
 const STORAGE_KEY = 'tbjs_cookie_consent';
 const DEFAULT_COOKIE_BANNER_OPTIONS = {
@@ -10,183 +10,307 @@ const DEFAULT_COOKIE_BANNER_OPTIONS = {
     acceptMinimalText: 'Accept & Continue',
     showAdvancedOptions: true,
     advancedOptionsText: 'Customize Settings',
-    onConsent: null, // Callback: (consentSettings) => {}
+    onConsent: onConsentInitPostHog, // Callback: (consentSettings) => {}
     customClasses: {
-        banner: '',
-        modal: '',
-        // ... other elements
-    }
+        banner: '', // For the banner itself
+        modalContainer: '', // To be passed to TB.ui.Modal's customClasses.modalContainer
+        // Add other custom classes for banner internal elements if needed
+    },
+    // Default consent state for checkboxes if no saved settings
+    defaultPreferences: true,
+    defaultAnalytics: true,
 };
+
+function onConsentInitPostHog(consentSettings) {
+    // get mode ["none", "identified_only", "always"]
+    let _mode = ""
+    if (consentSettings.analytics) {
+        if(consentSettings.preferences){
+            _mode = "always"
+        } else {
+            _mode = "identified_only"
+        }
+    } else {
+        return;
+    }
+    function initPosthog(mode) {
+    !function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="init capture register register_once register_for_session unregister unregister_for_session getFeatureFlag getFeatureFlagPayload isFeatureEnabled reloadFeatureFlags updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures on onFeatureFlags onSessionId getSurveys getActiveMatchingSurveys renderSurvey canRenderSurvey getNextSurveyStep identify setPersonProperties group resetGroups setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags reset get_distinct_id getGroups get_session_id get_session_replay_url alias set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException loadToolbar get_property getSessionProperty createPersonProfile opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing clear_opt_in_out_capturing debug getPageViewId".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
+    posthog.init('phc_zsEwhB79hF41y7DjaAkGSExrJNuPffyOUKlU1bM0r3V', {api_host: 'https://eu.i.posthog.com', person_profiles: mode});
+  }
+    initPosthog(_mode)
+}
 
 class CookieBanner {
     constructor(options = {}) {
-        this.options = { ...DEFAULT_COOKIE_BANNER_OPTIONS, ...options };
-        this.options.customClasses = { ...DEFAULT_COOKIE_BANNER_OPTIONS.customClasses, ...options.customClasses };
+        this.options = {
+            ...DEFAULT_COOKIE_BANNER_OPTIONS,
+            ...options,
+            customClasses: { // Deep merge customClasses
+                ...DEFAULT_COOKIE_BANNER_OPTIONS.customClasses,
+                ...(options.customClasses || {}),
+            }
+        };
 
         this.bannerElement = null;
-        this.modalElement = null;
+        this.settingsModalInstance = null; // To hold the TB.ui.Modal instance
         this._init();
     }
 
     _init() {
-        const savedSettings = localStorage.getItem(STORAGE_KEY);
+        const savedSettings = this._getSavedSettings();
         if (savedSettings) {
-            const consent = JSON.parse(savedSettings);
-            this._triggerConsent(consent);
+            this._triggerConsent(savedSettings);
+            // Optionally, you might still want to provide a way to change settings later,
+            // e.g., via a link in the footer, not covered by this banner logic.
             return; // Don't show banner if already consented
         }
         this._createBanner();
-        if (this.options.showAdvancedOptions) {
-            this._createModal();
+    }
+
+    _getSavedSettings() {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) {
+            try {
+                return JSON.parse(saved);
+            } catch (e) {
+                TB.logger.error('[CookieBanner] Error parsing saved settings from localStorage:', e);
+                localStorage.removeItem(STORAGE_KEY); // Clear corrupted data
+            }
         }
+        return null;
+    }
+
+    _getInitialPreferenceState(type, defaultValue) {
+        const savedSettings = this._getSavedSettings();
+        if (savedSettings && savedSettings[type] !== undefined) {
+            return savedSettings[type];
+        }
+        return defaultValue;
     }
 
     _createBanner() {
+        if (this.bannerElement) return; // Already created
+
         this.bannerElement = document.createElement('div');
         this.bannerElement.id = 'tbjs-cookie-banner';
-        // /* Tailwind: fixed bottom-0 left-0 right-0 bg-gray-100 dark:bg-gray-800 p-4 shadow-md z-[1000] text-sm text-gray-700 dark:text-gray-200 */
-        this.bannerElement.className = `fixed bottom-0 inset-x-0 bg-gray-100 dark:bg-gray-900 p-4 border-t border-gray-300 dark:border-gray-700 shadow-lg z-[1000] text-sm text-text-color ${this.options.customClasses.banner}`;
-        // Original structure: close button, title, message, terms, accept, options
+        // this.bannerElement.className = `fixed bottom-0 inset-x-0 bg-gray-100 dark:bg-gray-900 p-4 border-t border-gray-300 dark:border-gray-700 shadow-lg z-[1000] text-sm text-text-color transition-all duration-300 ease-in-out transform translate-y-full opacity-0 ${this.options.customClasses.banner}`;
         this.bannerElement.innerHTML = `
             <div class="max-w-screen-lg mx-auto flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                 <div class="flex-grow">
-                    <button id="tb-cookie-banner-close" title="Accept Recommended" class="absolute top-2 right-2 material-symbols-outlined text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 text-xl p-1 -m-1">×</button>
+                    <span id="tb-cookie-banner-close" title="Accept Recommended & Close" class="absolute top-2 right-2 material-symbols-outlined text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-gray-400 text-xl p-1 -m-1 cursor-pointer">close</span>
                     <h3 class="font-semibold text-base">${this.options.title}</h3>
-                    <p class="mt-1">${this.options.message}
-                        ${this.options.termsLink ? `<a href="${this.options.termsLink}" class="underline hover:text-primary-500 ml-1" target="_blank">${this.options.termsLinkText}</a>` : ''}
+                    <p class="mt-1 text-xs sm:text-sm">
+                        ${this.options.message}
+                        ${this.options.termsLink ? `<a href="${this.options.termsLink}" class="underline hover:text-primary-500 ml-1" target="_blank" rel="noopener noreferrer">${this.options.termsLinkText}</a>` : ''}
                     </p>
                 </div>
                 <div class="flex-shrink-0 flex flex-wrap gap-2 items-center">
-                    ${this.options.showAdvancedOptions ? `<button id="tb-cookie-banner-show-complex" class="text-xs underline hover:text-primary-500">${this.options.advancedOptionsText}</button>` : ''}
-                    <button id="tb-cookie-banner-accept-minimal" class="px-4 py-2 rounded-md bg-primary-600 text-white text-xs font-medium hover:bg-primary-700">${this.options.acceptMinimalText}</button>
+                    ${this.options.showAdvancedOptions ? `<button id="tb-cookie-banner-show-settings" class="text-xs underline hover:text-primary-500">${this.options.advancedOptionsText}</button>` : ''}
+                    <button id="tb-cookie-banner-accept-minimal" class="px-3 py-1.5 sm:px-4 sm:py-2 rounded-md bg-primary-600 text-white text-xs font-medium hover:bg-primary-700">${this.options.acceptMinimalText}</button>
                 </div>
             </div>
         `;
         document.body.appendChild(this.bannerElement);
+
+        // Trigger enter animation
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                this.bannerElement.style.transform = 'translateY(0)';
+                this.bannerElement.style.opacity = '1';
+            });
+        });
+
         this._addBannerListeners();
+        TB.events.emit('cookieBanner:shown');
+        TB.logger.log('[CookieBanner] Banner shown.');
     }
 
     _addBannerListeners() {
-        this.bannerElement.querySelector('#tb-cookie-banner-accept-minimal').addEventListener('click', () => {
-            this._saveSettings({ analytics: true, preferences: true, essential: true, source: 'accept_minimal' }); // Example consent object
-            this._hide();
-        });
-        this.bannerElement.querySelector('#tb-cookie-banner-close').addEventListener('click', () => {
-            this._saveSettings({ analytics: true, preferences: true, essential: true, source: 'close_banner_implicit_accept' });
-            this._hide();
-        });
+        const acceptMinimalBtn = this.bannerElement.querySelector('#tb-cookie-banner-accept-minimal');
+        if (acceptMinimalBtn) {
+            acceptMinimalBtn.addEventListener('click', () => {
+                this._saveSettingsAndHide({
+                    analytics: true, preferences: true, essential: true, source: 'accept_minimal'
+                });
+            });
+        }
+
+        const closeBtn = this.bannerElement.querySelector('#tb-cookie-banner-close');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                // Implicitly accept recommended settings when "X" is clicked on banner
+                this._saveSettingsAndHide({
+                    analytics: true, preferences: true, essential: true, source: 'close_banner_implicit_accept'
+                });
+            });
+        }
 
         if (this.options.showAdvancedOptions) {
-            const showComplexBtn = this.bannerElement.querySelector('#tb-cookie-banner-show-complex');
-            if (showComplexBtn) showComplexBtn.addEventListener('click', () => this._showModal());
+            const showSettingsBtn = this.bannerElement.querySelector('#tb-cookie-banner-show-settings');
+            if (showSettingsBtn) {
+                showSettingsBtn.addEventListener('click', () => this._showSettingsModal());
+            }
         }
     }
 
-    _createModal() {
-        // This modal reuses TB.ui.Modal if available and preferred, or creates its own simple one.
-        // For simplicity, let's make a dedicated one based on original structure.
-        this.modalElement = document.createElement('div');
-        this.modalElement.id = 'tbjs-cookie-modal';
-        // /* Tailwind: fixed inset-0 bg-black bg-opacity-50 z-[1050] hidden items-center justify-center */
-        this.modalElement.className = `fixed inset-0 bg-black bg-opacity-50 z-[1050] hidden items-center justify-center p-4 ${this.options.customClasses.modal}`;
-        // Original: modal with steps
-        // This will be a simplified version for now, can be expanded with steps
-        this.modalElement.innerHTML = `
-            <div class="bg-background-color p-6 rounded-lg shadow-xl max-w-md w-full">
-                <h3 class="text-lg font-semibold mb-4">Cookie Settings</h3>
-                <p class="text-sm mb-4">Customize your cookie preferences below. Some cookies are essential for the website to function.</p>
-                <div class="space-y-3">
-                    <div><label class="flex items-center"><input type="checkbox" id="tb-cookie-essential" checked disabled class="form-checkbox h-4 w-4 text-primary-600 rounded"> <span class="ml-2 text-sm">Essential Cookies</span></label></div>
-                    <div><label class="flex items-center"><input type="checkbox" id="tb-cookie-preferences" checked class="form-checkbox h-4 w-4 text-primary-600 rounded"> <span class="ml-2 text-sm">Preferences & Customization</span></label></div>
-                    <div><label class="flex items-center"><input type="checkbox" id="tb-cookie-analytics" checked class="form-checkbox h-4 w-4 text-primary-600 rounded"> <span class="ml-2 text-sm">Analytics & Performance</span></label></div>
-                </div>
-                <div class="mt-6 flex justify-end gap-3">
-                    <button id="tb-cookie-modal-save" class="px-4 py-2 rounded-md bg-primary-600 text-white text-sm font-medium hover:bg-primary-700">Save Preferences</button>
-                    <button id="tb-cookie-modal-accept-all" class="px-4 py-2 rounded-md bg-gray-200 text-gray-800 text-sm font-medium hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600">Accept All</button>
+    _showSettingsModal() {
+        if (this.settingsModalInstance && this.settingsModalInstance.isOpen) {
+            TB.logger.log('[CookieBanner] Settings modal is already open.');
+            // Potentially focus the modal if Modal.js supports it: this.settingsModalInstance.focus();
+            return;
+        }
+
+        // Determine initial checkbox states
+        const initialPreferences = this._getInitialPreferenceState('preferences', this.options.defaultPreferences);
+        const initialAnalytics = this._getInitialPreferenceState('analytics', this.options.defaultAnalytics);
+
+        const modalContent = `
+            <div class="space-y-3">
+                <div>
+                    <label class="flex items-center">
+                        <input type="checkbox" id="tb-cookie-essential" checked disabled
+                               class="form-checkbox h-4 w-4 text-primary-600 rounded focus:ring-primary-500 dark:focus:ring-offset-neutral-800/20">
+                        <span class="ml-2 text-sm">Essential Cookies</span>
+                    </label>
+                   </div>
+                <div>
+                    <label class="flex items-center">
+                        <input type="checkbox" id="tb-cookie-preferences" ${initialPreferences ? 'checked' : ''}
+                               class="form-checkbox h-4 w-4 text-primary-600 rounded focus:ring-primary-500 dark:focus:ring-offset-neutral-800/20">
+                        <span class="ml-2 text-sm">Preferences & Customization</span>
+                    </label>
+                     </div>
+                <div>
+                    <label class="flex items-center">
+                        <input type="checkbox" id="tb-cookie-analytics" ${initialAnalytics ? 'checked' : ''}
+                               class="form-checkbox h-4 w-4 text-primary-600 rounded focus:ring-primary-500 dark:focus:ring-offset-neutral-800/20">
+                        <span class="ml-2 text-sm">Analytics & Performance</span>
+                    </label>
+                    <p class="text-xs text-neutral-600 dark:text-neutral-400 ml-6">Help us improve the website by collecting anonymous usage data.</p>
                 </div>
             </div>
         `;
-        document.body.appendChild(this.modalElement);
-        this._addModalListeners();
+
+        if (!TB.ui || !TB.ui.Modal) {
+            TB.logger.error('[CookieBanner] TB.ui.Modal component is not available.');
+            alert('Error: Cookie settings cannot be displayed at the moment.'); // Basic fallback
+            return;
+        }
+
+        this.settingsModalInstance = TB.ui.Modal.show({
+            title: 'Customize Cookie Settings',
+            content: modalContent,
+            maxWidth: 'max-w-md',
+            closeOnOutsideClick: true, // Default for Modal.js, but can be explicit
+            closeOnEsc: true,        // Default for Modal.js
+            customClasses: {
+                modalContainer: this.options.customClasses.modalContainer || '', // Pass through custom class
+                // You could add other custom classes for header, body, footer of the modal if needed
+            },
+            buttons: [
+                {
+                    text: 'Save Preferences',
+                    action: (modal) => { // Modal instance is passed as 'this' or first arg by convention
+                        const preferencesChecked = modal._modalElement.querySelector('#tb-cookie-preferences').checked;
+                        const analyticsChecked = modal._modalElement.querySelector('#tb-cookie-analytics').checked;
+
+                        this._saveSettingsAndHide({
+                            essential: true,
+                            preferences: preferencesChecked,
+                            analytics: analyticsChecked,
+                            source: 'modal_save'
+                        });
+                        modal.close(); // Close the modal itself
+                    },
+                    variant: 'primary',
+                    // className: 'bg-primary-600 hover:bg-primary-700...' // Or rely on variant styling
+                },
+                {
+                    text: 'Accept All',
+                    action: (modal) => {
+                        this._saveSettingsAndHide({
+                            essential: true, preferences: true, analytics: true, source: 'modal_accept_all'
+                        });
+                        modal.close();
+                    },
+                    variant: 'secondary',
+                }
+            ],
+            onClose: () => {
+                TB.logger.log('[CookieBanner] Settings modal closed.');
+                this.settingsModalInstance = null; // Allow modal to be re-created with fresh state if opened again
+            }
+        });
+        TB.logger.log('[CookieBanner] Settings modal shown.');
     }
 
-    _addModalListeners() {
-        this.modalElement.addEventListener('click', (e) => { // Close on overlay click
-            if (e.target === this.modalElement) this._hideModal();
-        });
-        this.modalElement.querySelector('#tb-cookie-modal-save').addEventListener('click', () => {
-            const consent = {
-                essential: true, // Always true
-                preferences: this.modalElement.querySelector('#tb-cookie-preferences').checked,
-                analytics: this.modalElement.querySelector('#tb-cookie-analytics').checked,
-                source: 'modal_save'
-            };
-            this._saveSettings(consent);
-            this._hideModal();
-            this._hide();
-        });
-        this.modalElement.querySelector('#tb-cookie-modal-accept-all').addEventListener('click', () => {
-            this._saveSettings({ essential: true, preferences: true, analytics: true, source: 'modal_accept_all' });
-            this._hideModal();
-            this._hide();
-        });
-    }
-
-    _saveSettings(consentSettings) {
+    _saveSettingsAndHide(consentSettings) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(consentSettings));
         TB.logger.log('[CookieBanner] Consent saved:', consentSettings);
         this._triggerConsent(consentSettings);
+        this._hideBanner();
     }
 
-    _triggerConsent(consentSettings){
+    _triggerConsent(consentSettings) {
         TB.events.emit('cookieConsent:updated', consentSettings);
         if (this.options.onConsent) {
-            this.options.onConsent(consentSettings);
+            try {
+                this.options.onConsent(consentSettings);
+            } catch (e) {
+                TB.logger.error('[CookieBanner] Error in onConsent callback:', e);
+            }
         }
-        // Example: Initialize PostHog or other analytics based on consent
-        // if (consentSettings.analytics && typeof posthog !== 'undefined') {
-        //     posthog.init('YOUR_API_KEY', { api_host: 'YOUR_HOST', person_profiles: 'identified_only' });
-        // }
     }
 
-    _hide() {
+    _hideBanner() {
         if (this.bannerElement) {
-            // /* Tailwind: opacity-0 -translate-y-full or similar for exit animation */
-            this.bannerElement.style.opacity = '0';
             this.bannerElement.style.transform = 'translateY(100%)';
-            setTimeout(() => {
+            this.bannerElement.style.opacity = '0';
+            this.bannerElement.addEventListener('transitionend', () => {
                 if (this.bannerElement && this.bannerElement.parentNode) {
                     this.bannerElement.parentNode.removeChild(this.bannerElement);
                 }
                 this.bannerElement = null;
-            }, 300); // Animation duration
+                TB.events.emit('cookieBanner:hidden');
+                TB.logger.log('[CookieBanner] Banner hidden and removed.');
+            }, { once: true }); // Ensure listener is removed after firing
+
+            // Fallback in case transitionend doesn't fire
+            setTimeout(() => {
+                if (this.bannerElement && this.bannerElement.parentNode) {
+                    this.bannerElement.parentNode.removeChild(this.bannerElement);
+                    this.bannerElement = null;
+                    TB.events.emit('cookieBanner:hidden');
+                    TB.logger.log('[CookieBanner] Banner hidden and removed (fallback).');
+                }
+            }, 500); // Duration slightly longer than CSS transition
         }
     }
 
-    _showModal() {
-        if (this.modalElement) {
-            this.modalElement.classList.remove('hidden');
-            this.modalElement.classList.add('flex'); // If using flex for centering
-            // Add entry animation class if needed
-        }
-    }
-
-    _hideModal() {
-        if (this.modalElement) {
-            this.modalElement.classList.add('hidden');
-            this.modalElement.classList.remove('flex');
-            // Add exit animation class if needed
-        }
-    }
-
+    // Static method for convenience to initialize
     static show(options) {
         return new CookieBanner(options);
     }
 
-    // Method to get current consent status
+    // Static method to get current consent status
     static getConsent() {
         const saved = localStorage.getItem(STORAGE_KEY);
-        return saved ? JSON.parse(saved) : null;
+        if (saved) {
+            try {
+                return JSON.parse(saved);
+            } catch (e) {
+                // Don't log error here as it's a static getter, could be noisy
+                // Potentially return a specific error object or null
+            }
+        }
+        return null;
+    }
+
+    // Static method to clear consent (for testing or user action)
+    static clearConsent() {
+        localStorage.removeItem(STORAGE_KEY);
+        TB.logger.log('[CookieBanner] Consent cleared from localStorage.');
+        TB.events.emit('cookieConsent:cleared');
     }
 }
 

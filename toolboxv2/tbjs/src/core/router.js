@@ -16,7 +16,7 @@ let activeViewScripts = new Set(); // Stores script elements dynamically added f
 const ROUTER_CACHE_PREFIX = 'tb_router_cache_';
 const USE_SESSION_CACHE = false; // Set to false to disable HTML caching
 
-const MAIN_BUNDLE_FILENAMES = ['main.js', 'bundle.js', 'app.js', "vendor"];
+const MAIN_BUNDLE_FILENAMES = ['main.js', 'bundle.js', 'app.js', "vendor", 'main-'];
 
 const Router = {
     init: (rootElement, predefinedRoutes = []) => {
@@ -152,6 +152,8 @@ const Router = {
                     logger.warn(`[Router] Initial load for ${cleanPath} served root content. This might indicate a server misconfiguration if ${cleanPath} was meant to be a deep link.`);
                     // Potentially redirect to 404, or let it render if this is acceptable fallback for deep links on fresh load
                     // For now, let it render, but the warning is important.
+                }else{
+                    return;
                 }
             }
 

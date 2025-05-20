@@ -127,6 +127,10 @@ function loadPlatformSpecificFeatures(currentTB) {
         // setupTauriListeners();
 
     } else if (currentTB.env.isWeb()) {
+        if(!window.cookieConsentShown){
+            window.cookieConsentShown = true;
+            currentTB.ui.CookieBanner.show();
+        }
         currentTB.logger.info('Web-Umgebung erkannt.');
         if (currentTB.env.isMobile()) {
             currentTB.logger.info('Mobile Web-Client. Lade optimierte Features...');

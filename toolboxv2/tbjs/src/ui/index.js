@@ -1,6 +1,10 @@
 // tbjs/ui/index.js
 // Aggregates and exports all UI modules and components.
 
+import "../ui/components/CookieBanner/CookieBanner.css";
+import "../ui/components/Modal/Modal.css";
+import "../ui/components/Toast/Toast.css";
+
 import theme from './theme.js';
 import htmxIntegration from './htmx-integration.js';
 import * as effects from './effects.js'; // For page transitions etc.

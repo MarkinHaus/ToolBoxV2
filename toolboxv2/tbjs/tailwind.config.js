@@ -2,7 +2,8 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
-    './src/**/*.{html,js}', // Durchsucht alle JS-Dateien in tbjs/src nach Klassen
+    './src/**/*.{html,js,css}', // Durchsucht alle JS-Dateien in tbjs/src nach Klassen
+      "./tbjs/**/*.js",
   ],
   darkMode: 'class', // Oder 'media', je nach Präferenz (stimmt mit ui/theme.js überein)
   theme: {
@@ -27,7 +28,7 @@ export default {
     },
   },
   plugins: [
-    // require('@tailwindcss/forms'), // Wenn du Formular-Styling-Reset brauchst
+    require('@tailwindcss/forms'), // Wenn du Formular-Styling-Reset brauchst
   ],
   prefix: 'tb-', // SEHR EMPFOHLEN! Verhindert Klassenkonflikte mit der Hauptanwendung.
                  // Deine Komponenten-Klassen wären dann z.B. `tb-bg-primary-500`

@@ -163,7 +163,7 @@ const user = {
             }
 
             // 1. Get challenge from server
-            const challengeResult = await TB.api.request('CloudM.AuthManager', 'get_to_sing_data', { username, personal_key: false }, 'POST'); // Original was GET with params in URL
+            const challengeResult = await TB.api.request('/CloudM.AuthManager/get_to_sing_data', 'username='+username+'&personal_key=true', {}, 'GET');
             if (challengeResult.error !== TB.ToolBoxError.none || !challengeResult.get()?.challenge) {
                 return { success: false, message: challengeResult.info.help_text || "Failed to get login challenge." };
             }

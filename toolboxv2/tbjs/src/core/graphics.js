@@ -383,7 +383,7 @@ function _executeNextAnimationStep() {
     }
 
     animParams.isProgrammedAnimationActive = true;
-    const baseSpeed = stepData.baseSpeed || 0.005; // Default base speed for programmed anim
+    const baseSpeed = stepData.baseSpeed || 0.01; // Default base speed for programmed anim
     const speedFactor = stepData.speedFactor || 1; // Default speed factor
 
     // Reset programmed rotations for this step
@@ -393,7 +393,6 @@ function _executeNextAnimationStep() {
     animParams.programmedFactor = animParams.factorIdeal; // Use ideal factor or a specific one
 
     const calculatedSpeed = parsedStep.direction * parsedStep.speed * baseSpeed * speedFactor;
-
     switch (parsedStep.type) {
         case 'R': animParams.programmedRotationX = calculatedSpeed; break;
         case 'P': animParams.programmedRotationZ = calculatedSpeed; break; // Pan/Yaw around object's Z
@@ -415,14 +414,13 @@ function _executeNextAnimationStep() {
             TB.logger.warn(`[Graphics] Unknown animation type: ${parsedStep.type}`);
             break;
     }
-
     // Duration (ms) = (Complexity_Value * 10 + 1 + Repeat_Value * 1000).
     // Your example calculation: parseInt(match[5]) *10 + parseInt(match[2]) * 1000
     // Using my parsedStep: (parsedStep.complexity * 10) + (parsedStep.repeat * 1000)
     // The `+1` seems arbitrary unless it's to prevent 0ms duration. Let's ensure min duration.
-    const duration = Math.max(10, (parsedStep.complexity * 10) + (parsedStep.repeat * 1000));
+    const duration = Math.max(10, (parsedStep.complexity * 100) + (parsedStep.repeat * 1000));
 
-    TB.logger.debug(`[Graphics] Executing animation step: ${stepData.sequence}, Duration: ${duration}ms, Speed: ${calculatedSpeed.toFixed(4)}`);
+    TB.logger.info(`[Graphics] Executing animation step: ${stepData.sequence}, Duration: ${duration}ms, Speed: ${calculatedSpeed.toFixed(4)}`);
 
     programmedAnimationTimeoutId = setTimeout(() => {
         if (stepData.onComplete) {
@@ -456,7 +454,6 @@ export function playAnimationSequence(sequenceString, onSequenceComplete = null,
         baseSpeed: baseSpeedOverride,
         speedFactor: speedFactorOverride
     }));
-
     _executeNextAnimationStep();
 }
 
