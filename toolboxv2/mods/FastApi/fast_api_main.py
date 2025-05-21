@@ -432,12 +432,12 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
                     status_code=200,
                     content={"message": "Valid Session", "GRAY_LIST": self.GRAY_LIST, "BLACK_LIST": self.BLACK_LIST}
                 )
-            elif request.url.path == '/IsValiSession':
+            elif request.url.path == '/IsValidSession':
                 return JSONResponse(
                     status_code=200,
                     content={"message": "Valid Session", "valid": True}
                 )  # .set_cookie(self.cookie_key, value=request.cookies.get('session'))
-        elif request.url.path == '/IsValiSession':
+        elif request.url.path == '/IsValidSession':
             return JSONResponse(
                 status_code=401,
                 content={"message": "Invalid Auth data.", "valid": False}

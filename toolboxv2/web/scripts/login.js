@@ -1,6 +1,12 @@
 // /web/scripts/login.js (Refactored with tbjs Framework)
 
-function setupLogin() {
+function setupLogin(){
+    window.TB.graphics.playAnimationSequence("Z0+12")
+    setTimeout(async () => {
+        await setupLogin_()
+    }, 100);
+}
+async function setupLogin_() {
     const loginForm = document.getElementById('loginForm');
     const usernameInput = document.getElementById('username');
     const registerDeviceCheckbox = document.getElementById('register-device');
@@ -12,7 +18,14 @@ function setupLogin() {
     if (urlParams.get('next')) {
         next_url = urlParams.get('next');
     }
-    console.log("next_url", next_url)
+    if (await window.TB.user.checkSessionValidity()) {
+        window.TB.ui.Toast.showInfo("Session is valid. "+window.TB.user.getUsername()+" go to "+ next_url, {actions: [{
+                text: "OK",
+                action: () => window.TB.router.navigateTo(next_url)
+            }]});
+    }else {
+        window.TB.logger.info('[Login Page] Session is not valid.');
+    }
 
     function showInfo(message, isError = null, animationSequence = null) {
         if (infoPopup && infoText) { // For local popups

@@ -52,7 +52,7 @@ function initEmailWaitingList() {
                 // The original httpPostUrl in api.js doesn't fully handle the string params for Tauri.
                 // Let's use `request` and assume backend expects JSON or Tauri handles string payload correctly.
                 const responseResult = await TB.api.request(
-                    "/email_waiting_list/add", // moduleName
+                    "/CloudM.email_services/add", // moduleName
                     "email="+email,                // functionName
                     { },       // payload as object
                     'GET'                // method

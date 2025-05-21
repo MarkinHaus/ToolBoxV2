@@ -21,6 +21,7 @@ from toolboxv2 import TBEF, App, Result, ToolBox_over, get_app, get_logger
 from toolboxv2.mods.DB.types import DatabaseModes
 from toolboxv2.utils.security.cryp import Code
 from toolboxv2.utils.system.types import ApiResult, ToolBoxInterfaces
+from .email_services import send_magic_link_email
 
 from .types import User, UserCreator
 
@@ -321,6 +322,7 @@ async def get_magic_link_email(app: App, username=None):
 
     invitation = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
     nl = len(user.name)
+    send_magic_link_email(app, user.email, os.getenv("APP_BASE_URL", "http://localhost:8080")+f"/web/assets/m_log_in.html?key={invitation}&nl={nl}", user.name)
     email_data_result = await app.a_run_any(TBEF.EMAIL_WAITING_LIST.CRATE_MAGIC_LICK_DEVICE_EMAIL,
                                     user_email=user.email,
                                     user_name=user.name,

@@ -30,7 +30,7 @@ export default {
     open: true,
     proxy: [
       {
-        context: ['/web/', '/index.js', '/api', '/validateSession', '/IsValiSession'],
+        context: ['/web/', '/index.js', '/api', '/validateSession', '/IsValidSession'],
         target:  'http://0.0.0.0:5000', // isProduction ?  process.env.TOOLBOXV2_REMOTE_BASE : 'http://0.0.0.0:5000',
       },{
         context: ['/talk'], // Proxy für index.js

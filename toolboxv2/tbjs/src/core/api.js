@@ -91,7 +91,11 @@ const Api = {
         // HTTP Fetch
         let url;
         if (isFullPath) {
-            url = `${config.get('baseApiUrl')}${moduleName}`; // moduleName is the path itself
+            if (moduleName.includes("IsValidSession") ||moduleName.includes("validateSession")){
+                url = `${config.get('baseApiUrl').replace('/api', '')}${moduleName}`;
+            }else{
+                url = `${config.get('baseApiUrl')}${moduleName}`;
+            }// moduleName is the path itself
              if (functionName && typeof functionName === 'string' && functionName.length > 0 && (method.toUpperCase() === 'GET' || method.toUpperCase() === 'DELETE')) {
                 // If functionName is provided for a full path GET/DELETE, treat it as query string
                 url += `?${functionName}`;

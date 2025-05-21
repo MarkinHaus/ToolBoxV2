@@ -47,6 +47,7 @@ class Toast {
             if (!container) {
                 container = document.createElement('div');
                 container.id = containerId;
+                container.classList.add("tb-toast-container-mini-button");
                 // Tailwind: fixed z-[1100] flex flex-col items-end p-4 gap-3 (for top-right)
                 // Adjust alignment based on position
                 let alignmentClasses = 'items-end'; // Default for right positions

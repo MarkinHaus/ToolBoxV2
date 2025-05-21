@@ -141,6 +141,11 @@ html.dark .tb-speech-balloon-from {
     cursor: pointer;
 }
 
+.tb-toast-container-mini-button{
+    padding: 0;
+    cursor: pointer;
+}
+
 /* Close Button */
 .tb-speech-balloon-close-button .material-symbols-outlined {
     font-size: 1.125rem; /* Slightly smaller than default 24px for a less intrusive button */

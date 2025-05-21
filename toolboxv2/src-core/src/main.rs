@@ -2390,7 +2390,7 @@ async fn main() -> std::io::Result<()> {
             .service(web::resource("/validateSession")
                 .route(web::post().to(validate_session_handler))
                 )
-            .service(web::resource("/IsValiSession")
+            .service(web::resource("/IsValidSession")
                 .route(web::get().to(is_valid_session_handler))
                 )
             .service(web::resource("/web/logoutS")
