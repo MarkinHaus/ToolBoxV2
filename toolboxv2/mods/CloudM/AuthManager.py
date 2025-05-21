@@ -662,7 +662,7 @@ async def validate_device(app: App, data: VdUSER) -> ApiResult:
     db_helper_save_user(app, asdict(user))
 
     claim = {
-        "u-key": user.uid,
+        "u-key": Code.one_way_hash(user.uid, Name)[:16],
     }
 
     row_jwt_claim = crate_jwt(claim, user.user_pass_pri)
@@ -759,7 +759,7 @@ async def jwt_get_claim(app: App, username: str, signature: str or bytes, web=Fa
 
     channel_key, userdata = res.get()
     claim = {
-        "u-key": userdata.get("uid"),
+        "u-key": Code.one_way_hash(userdata.get("uid"), Name)[:16],
     }
 
     row_jwt_claim = crate_jwt(claim, userdata.get("user_pass_pri"))
