@@ -38,14 +38,15 @@ function initializeApp() {
                 type: '3d', // '3d', 'image', 'color', 'none'
                 light: {
                     color: '#E0E0E0',
-                    image: '/assets/backgrounds/light-bg.jpg', // Beispielpfad
+                    image: '/web/assets/backgrounds/light-bg.png', // Beispielpfad
                 },
                 dark: {
                     color: '#212121',
-                    image: '/assets/backgrounds/dark-bg.jpg',   // Beispielpfad
+                    image: '/web/assets/backgrounds/dark-bg.png',   // Beispielpfad
                 },
                 placeholder: {
-                    image: '/assets/backgrounds/placeholder-loading.gif', // Beispiel
+                    image_light: '/web/assets/backgrounds/placeholder-loading_light.gif', // Beispiel
+                    image_dark: '/web/assets/backgrounds/placeholder-loading_dark.gif', // Beispiel
                     displayUntil3DReady: true // true: Placeholder bis 3D bereit, false: Placeholder wird durch konfig. Typ ersetzt
                 }
             }

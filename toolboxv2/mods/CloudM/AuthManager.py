@@ -246,6 +246,9 @@ class AddUserDeviceObject(BaseModel):
     as_base64: bool = True
 
 
+@export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=False, test=False)
+def get_new_user_invitation_key(username):
+    return Code.one_way_hash(username, "00#", os.getenv("TB_R_KEY", "pepper123"))[:12] + str(uuid.uuid4())[:6]
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True, test=False)
 def create_user(app: App, data: CreateUserObject = None, username: str = 'test-user',
                       email: str = 'test@user.com',
@@ -267,7 +270,7 @@ def create_user(app: App, data: CreateUserObject = None, username: str = 'test-u
         return Result.default_user_error(info=f"Username '{username}' already taken",
                                          interface=ToolBoxInterfaces.remote)
 
-    if not invitation.startswith("00#"):  # not db_valid_invitation(app, invitation):
+    if not invitation.startswith(Code.one_way_hash(username, "00#", os.getenv("TB_R_KEY", "pepper123"))[:12]):  # not db_valid_invitation(app, invitation):
         return Result.default_user_error(info="Invalid invitation", interface=ToolBoxInterfaces.remote)
 
     test_bub_key = "Invalid"
@@ -303,7 +306,7 @@ def create_user(app: App, data: CreateUserObject = None, username: str = 'test-u
 
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True, test=False)
-async def get_magic_link_email(app: App, username):
+async def get_magic_link_email(app: App, username=None):
     if app is None:
         app = get_app(Name + '.get_magic_link_email')
 
@@ -326,12 +329,19 @@ async def get_magic_link_email(app: App, username):
     if email_data_result.is_error() and not email_data_result.is_data():
         return email_data_result
 
-    email_data = email_data_result.get()
+    subject, body, recipient_emails = email_data_result.get()
 
-    return await app.a_run_any(TBEF.EMAIL_WAITING_LIST.SEND_EMAIL, data=email_data, get_results=True)
+    res = await app.a_run_any(TBEF.EMAIL_WAITING_LIST.SEND_EMAIL, subject=subject, body=body, recipient_emails=recipient_emails, get_results=True)
+    if res.result.data_info is None:
+        res.result.data_info = ""
+    res.result.data = {}
+    if not res.is_error():
+        res.info.help_text += ": "+user.email[:4]+'...'+user.email[-12:]
+    else:
+        res.print()
+    return res
 
     # if not invitation.endswith(user.challenge[12:]):
-
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True, test=False)
 def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 'test-user',

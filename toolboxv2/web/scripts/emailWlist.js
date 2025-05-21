@@ -52,10 +52,10 @@ function initEmailWaitingList() {
                 // The original httpPostUrl in api.js doesn't fully handle the string params for Tauri.
                 // Let's use `request` and assume backend expects JSON or Tauri handles string payload correctly.
                 const responseResult = await TB.api.request(
-                    "email_waiting_list", // moduleName
-                    "add",                // functionName
-                    { email: email },       // payload as object
-                    'POST'                // method
+                    "/email_waiting_list/add", // moduleName
+                    "email="+email,                // functionName
+                    { },       // payload as object
+                    'GET'                // method
                 );
 
                 // responseResult is an instance of the Result class from api.js

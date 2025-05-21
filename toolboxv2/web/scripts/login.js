@@ -7,11 +7,12 @@ function setupLogin() {
     const infoPopup = document.getElementById('infoPopup'); // Assuming this is a local UI element for direct messages
     const infoText = document.getElementById('infoText');   // Assuming this is a local UI element
 
-    let next_url = "/web/dashboard"; // Default to dashboard or a main content page
+    let next_url = "/web/mainContent.html";
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('next')) {
         next_url = urlParams.get('next');
     }
+    console.log("next_url", next_url)
 
     function showInfo(message, isError = null, animationSequence = null) {
         if (infoPopup && infoText) { // For local popups

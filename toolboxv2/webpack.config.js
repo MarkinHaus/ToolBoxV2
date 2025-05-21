@@ -197,7 +197,7 @@ export default {
              '**/web/assets/401.html',
              '**/web/assets/m_log_in.html',
              '**/web/assets/logout.html',
-             '**/web/assets/waiting_list.html.html',
+             '**/web/assets/waiting_list.html',
              '**/web/mainContent.html',
              '**/web/dashboards/dashboard.html',
              '**/web/dashboards/user_dashboard.html',

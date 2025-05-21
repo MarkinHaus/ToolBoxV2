@@ -1,17 +1,22 @@
 import os
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
-from mailjet_rest import Client
+# Gmail-Konfiguration
+GMAIL_EMAIL = os.environ.get("GOOGLE_APP_EMAIL")
+GMAIL_PASSWORD = os.environ.get("GOOGLE_APP_PASSWORD")
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 465  # SSL-Port
 
-from toolboxv2 import App, MainTool, Result, get_app
+from toolboxv2 import App, MainTool, Result, get_app, get_logger
 from toolboxv2.utils.system.types import ApiResult, ToolBoxError, ToolBoxInterfaces
 
 Name = "email_waiting_list"
-version = '0.0.0'
+version = '0.0.1'
 export = get_app("email_waiting_list.email_waiting_list.EXPORT").tb
 s_export = export(mod_name=Name, version=version, state=False, test=False)
-api_key = os.environ.get('MJ_APIKEY_PUBLIC')
-api_secret = os.environ.get('MJ_APIKEY_PRIVATE')
-mailjet = Client(auth=(api_key, api_secret), version='v3.1')
+
 
 
 @export(mod_name=Name, api=True, interface=ToolBoxInterfaces.api, state=True, test=False)
@@ -58,54 +63,46 @@ def send_email_to_all():
 
 
 @s_export
-def send_email(data):
-    result = mailjet.send.create(data=data)
-    if result.status_code != 0:
-        return Result.default_internal_error(exec_code=result.status_code, data=result.json())
-    return Result.custom_error(exec_code=result.status_code, data=result.json())
+def send_email(subject, body, recipient_emails):
+    """
+    Sendet eine E-Mail über Gmail SMTP.
+
+    Args:
+        data (tuple):
+            subject (str): Betreff der E-Mail.
+            body (str): Inhalt der E-Mail.
+            recipient_emails (list): Liste der Empfänger-E-Mail-Adressen.
+    """
+    if not isinstance(subject, str):
+        if isinstance(subject, tuple) or isinstance(subject, list):
+            subject, *_ = subject
+            subject += ' '.join(_)
+    get_logger().info(f"{subject=}, {recipient_emails=}")
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = GMAIL_EMAIL
+        msg['To'] = ', '.join(recipient_emails) if isinstance(recipient_emails, list) else recipient_emails
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
+            server.login(GMAIL_EMAIL, GMAIL_PASSWORD)
+            server.sendmail(GMAIL_EMAIL, recipient_emails, msg.as_string())
+
+        return Result.ok(info="E-Mail erfolgreich gesendet. ")
+    except Exception as e:
+        get_logger().error(f"Fehler beim Senden der E-Mail: {e}")
+        return Result.default_internal_error(info=f"Fehler beim Senden der E-Mail {e}")
 
 
 @s_export
-def crate_sing_in_email(user_email, user_name):
-    return {
-        'Messages': [
-            {
-                "From": {
-                    "Email": "Markin@simplecore.app",
-                    "Name": "Me"
-                },
-                "To": [
-                    {
-                        "Email": user_email,
-                        "Name": user_name
-                    }
-                ],
-                "Subject": "Welcome to SimpleCore!",
-                "TextPart": f"Hi {user_name}",
-                "HTMLPart": "<h3>Dear passenger 1, welcome to <a href=\"https://www.mailjet.com/\">Mailjet</a>!</h3><br />May the delivery force be with you!"
-            }
-        ]
-    }
+def create_welcome_email(user_email, user_name):
+    subject = "Willkommen bei SimpleCore!"
+    body = f"Hallo {user_name},\n\nWillkommen bei SimpleCore! Wir freuen uns, dich an Bord zu haben."
+    return subject, body, [user_email]
 
 
 @s_export
 def crate_magic_lick_device_email(user_email, user_name, link_id, nl=-1):
-    return {
-        'Messages': [
-            {
-                "From": {
-                    "Email": "Markin@simplecore.app",
-                    "Name": "Me"
-                },
-                "To": [
-                    {
-                        "Email": user_email,
-                        "Name": user_name
-                    }
-                ],
-                "Subject": "Welcome to SimpleCore!",
-                "TextPart": f"Hi {user_name}",
-                "HTMLPart": f"<h3>Log in with : <a href=\"https://simplecore.app/web/assets/m_log_in.html?key={link_id}&nl={nl}\">Magic link</a> don't chair!</h3><br />Must enter ur user name on the next page to log in."
-            }
-        ]
-    }
+    subject = "Welcome to SimpleCore!",
+    body = f"<h3>Log in with : <a href=\"https://simplecore.app/web/assets/m_log_in.html?key={link_id}&nl={nl}\">Magic link</a> don't chair!</h3><br/>Must enter ur user name on the next page to log in."
+    return subject, body, [user_email]

@@ -143,7 +143,7 @@ class Modal {
             // **MODIFIED FOOTER CLASSES:** Added padding. `flex-shrink-0`
             footer.className = `mt-auto p-4 md:p-6 flex flex-wrap justify-end gap-3 border-t border-neutral-300/50 dark:border-neutral-700/50 flex-shrink-0 ${this.options.customClasses.footer}`;
             this.options.buttons.forEach(btnConfig => {
-                const button = TB.ui.Button.create(btnConfig.text, btnConfig.action || (() => this.close()), {
+                const button = TB.ui.Button.create(btnConfig.text, (() => btnConfig.action(this)) || (() => this.close()), {
                     variant: btnConfig.variant || 'primary',
                     customClasses: btnConfig.className,
                     size: btnConfig.size

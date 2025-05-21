@@ -122,22 +122,32 @@ const user = {
             // This is a placeholder for your actual signup logic
             // It likely involves one or two API calls.
             const payload = { username, email, initiation_key: initiationKey, as_persona: registerAsPersona };
-            const result = await TB.api.request('CloudM.AuthManager', 'signupUser', payload, 'POST'); // Adjust endpoint
+            const result = await TB.api.request('CloudM.AuthManager', 'create_user', payload, 'POST'); // Adjust endpoint
 
             if (result.error === TB.ToolBoxError.none && result.get()) {
                 const responseData = result.get();
                 TB.logger.info(`[User] Signup successful for ${username}. Data:`, responseData);
 
                 // If signup immediately logs in or provides a token:
-                if (responseData.token) {
-                    this._updateUserState({
+                if (typeof responseData === 'string') {
+                     this._updateUserState({
                         isAuthenticated: true,
                         username: responseData.username || username,
-                        userLevel: responseData.userLevel || 'user',
+                        userLevel: responseData.userLevel || 0,
+                        token: responseData.token || null,
+                        userData: responseData.userData || {}
+                    }, true);
+                    await this.registerWebAuthnForCurrentUser(username, responseData);
+                } else if (responseData.token) {
+                    return this._updateUserState({
+                        isAuthenticated: true,
+                        username: responseData.username || username,
+                        userLevel: responseData.userLevel || 0,
                         token: responseData.token,
                         userData: responseData.userData || {}
                     }, true);
                 }
+
                 // If signup requires separate login or WebAuthn registration:
                 // The responseData should guide the next step.
                 // e.g., if (registerAsPersona && responseData.webAuthnChallenge) {
@@ -186,7 +196,7 @@ const user = {
                 this._updateUserState({
                     isAuthenticated: true,
                     username: responseData.username || username,
-                    userLevel: responseData.userLevel || 'user',
+                    userLevel: responseData.userLevel || 0,
                     token: token,
                     isDeviceRegisteredWithKey: true,
                     userData: responseData.userData || {}
@@ -224,7 +234,7 @@ const user = {
                 this._updateUserState({
                     isAuthenticated: true,
                     username: responseData.username || username,
-                    userLevel: responseData.userLevel || 'user',
+                    userLevel: responseData.userLevel || 0,
                     token: responseData.token, // Server must provide the session token
                     userData: responseData.userData || {}
                 }, true);
@@ -245,7 +255,7 @@ const user = {
     async requestMagicLink(username) {
         TB.logger.info(`[User] Requesting magic link for ${username}`);
         try {
-            const result = await TB.api.request('CloudM.AuthManager', 'get_magic_link_email', { username }, 'POST'); // Assuming POST, adjust if GET
+            const result = await TB.api.request('/CloudM.AuthManager/get_magic_link_email', 'username='+username, {}, 'GET');
             if (result.error === TB.ToolBoxError.none) {
                 TB.logger.info(`[User] Magic link request successful for ${username}.`);
                 return { success: true, message: result.info.help_text || "Magic link email sent." };
@@ -306,11 +316,11 @@ const user = {
             // This endpoint needs to be specific for adding a new WebAuthn credential to an *existing, authenticated* user.
             // The old 'create_user_with_init_key_personal' might not be it.
             // Let's assume an endpoint 'getWebAuthnRegistrationChallengeForUser'
-            const challengeRes = await TB.api.request('CloudM.AuthManager', 'getWebAuthnRegistrationChallenge', { username }, 'POST');
-            if (challengeRes.error !== TB.ToolBoxError.none || !challengeRes.get()?.challengeInfo) {
+            const challengeRes = await TB.api.request('/CloudM.AuthManager/get_to_sing_data', 'username='+username+'&personal_key=true', {  }, 'POST');
+            if (challengeRes.error !== TB.ToolBoxError.none || !challengeRes.get()?.challenge) {
                 return { success: false, message: challengeRes.info.help_text || "Failed to get WebAuthn registration challenge."};
             }
-            const { challenge, userId } = challengeRes.get().challengeInfo; // Server provides challenge and its internal userId for WebAuthn
+            const { challenge, userId } = challengeRes.get().challenge; // Server provides challenge and its internal userId for WebAuthn
 
             // 2. Perform WebAuthn registration
             // The 'sing' parameter's purpose from original cryp.js unclear, may need token or specific server data.
@@ -349,7 +359,7 @@ const user = {
 
     async logout(notifyServer = true) {
         const currentUser = TB.state.get('user');
-        TB.logger.info(`[User] Logging out ${currentUser.username || 'user'}. Notify server: ${notifyServer}`);
+        TB.logger.info(`[User] Logging out ${currentUser.username || 0}. Notify server: ${notifyServer}`);
         if (notifyServer && currentUser.isAuthenticated && currentUser.token) {
             try {
                 // Use the new TB.api.logoutServer()

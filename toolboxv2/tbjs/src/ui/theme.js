@@ -18,7 +18,8 @@ const DEFAULT_BACKGROUND_CONFIG = {
         image: null,      // Pfad zum dunklen Hintergrundbild
     },
     placeholder: {        // Optionales Placeholder-Bild während 3D lädt
-        image: null,      // Pfad zum Placeholder-Bild
+        image_dark: null,      // Pfad zum Placeholder-Bild
+        image_light: null,      // Pfad zum Placeholder-Bild
         displayUntil3DReady: true, // true: Placeholder bis 3D bereit, false: Placeholder bleibt
     }
 };
@@ -117,7 +118,7 @@ const ThemeManager = {
         let appliedBgType = 'none';
 
         // Placeholder-Logik
-        const placeholderImage = bgConfig.placeholder.image;
+        const placeholderImage = ThemeManager._currentMode === 'dark' ?  bgConfig.placeholder.image_dark: bgConfig.placeholder.image_light;
         let showPlaceholder = false;
 
         if (placeholderImage && bgConfig.type === '3d') {
