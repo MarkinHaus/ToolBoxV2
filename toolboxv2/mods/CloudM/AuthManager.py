@@ -322,20 +322,11 @@ async def get_magic_link_email(app: App, username=None):
 
     invitation = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
     nl = len(user.name)
-    send_magic_link_email(app, user.email, os.getenv("APP_BASE_URL", "http://localhost:8080")+f"/web/assets/m_log_in.html?key={invitation}&nl={nl}", user.name)
-    email_data_result = await app.a_run_any(TBEF.EMAIL_WAITING_LIST.CRATE_MAGIC_LICK_DEVICE_EMAIL,
-                                    user_email=user.email,
-                                    user_name=user.name,
-                                    link_id=invitation, nl=nl, get_results=True)
+    res = send_magic_link_email(app, user.email, os.getenv("APP_BASE_URL", "http://localhost:8080")+f"/web/assets/m_log_in.html?key={invitation}&nl={nl}", user.name)
 
-    if email_data_result.is_error() and not email_data_result.is_data():
-        return email_data_result
+    if res.is_error() and not res.is_data():
+        return res
 
-    subject, body, recipient_emails = email_data_result.get()
-
-    res = await app.a_run_any(TBEF.EMAIL_WAITING_LIST.SEND_EMAIL, subject=subject, body=body, recipient_emails=recipient_emails, get_results=True)
-    if res.result.data_info is None:
-        res.result.data_info = ""
     res.result.data = {}
     if not res.is_error():
         res.info.help_text += ": "+user.email[:4]+'...'+user.email[-12:]
