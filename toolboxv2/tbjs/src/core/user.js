@@ -46,9 +46,10 @@ const user = {
                 // Using the updated TB.api.AuthHttpPostData which calls the special route
                 const result = await TB.api.AuthHttpPostData(mergedState.username);
 
-                if (result.error === TB.ToolBoxError.none && result.get()) {
+                if (result.error === TB.ToolBoxError.none) {
                     TB.logger.info(`[User] Session for ${mergedState.username} is valid.`);
-                    const serverData = result.get(); // This should be the full user object from server
+                    if (!forceServerFetch){return;}
+                    const serverData = result.get(); // new request needed !!!
                     const serverTimestamp = serverData.lastModified || Date.now(); // Server should provide a timestamp
 
                     // Compare timestamps for userData synchronization
@@ -192,17 +193,29 @@ const user = {
                 if (responseData.toPrivat && token) { // Assuming 'toPrivat' means the key is encrypted
                     token = await crypto.decryptAsymmetric(token, privateKeyBase64, true);
                 }
-
                 this._updateUserState({
-                    isAuthenticated: true,
+                    isAuthenticated: false,
                     username: responseData.username || username,
                     userLevel: responseData.userLevel || 0,
                     token: token,
-                    isDeviceRegisteredWithKey: true,
+                    isDeviceRegisteredWithKey: false,
                     userData: responseData.userData || {}
                 }, true);
-                TB.logger.info(`[User] Device key login successful for ${username}`);
-                return { success: true, message: "Login successful.", data: responseData };
+                const validationResult_ = await window.TB.api.AuthHttpPostData(username);
+                if (validationResult_.error === TB.ToolBoxError.none) {
+                    this._updateUserState({
+                        isAuthenticated: true,
+                        username: responseData.username || username,
+                        userLevel: responseData.userLevel || 0,
+                        token: token,
+                        isDeviceRegisteredWithKey: true,
+                        userData: responseData.userData || {}
+                    }, true);
+                    TB.logger.info(`[User] Device key login successful for ${username}`);
+                    return {success: true, message: "Login successful.", data: responseData};
+                } else {
+                return { success: false, message: validationResult.info.help_text || "Device key login failed." };
+            }
             } else {
                 return { success: false, message: validationResult.info.help_text || "Device key login failed." };
             }
@@ -230,15 +243,7 @@ const user = {
             const validationResult = await TB.api.request('CloudM.AuthManager', 'validate_persona', assertionPayload, 'POST');
             if (validationResult.error === TB.ToolBoxError.none && validationResult.get()) {
                 const responseData = validationResult.get();
-                // Assuming server returns token and user data upon successful WebAuthn validation
-                this._updateUserState({
-                    isAuthenticated: true,
-                    username: responseData.username || username,
-                    userLevel: responseData.userLevel || 0,
-                    token: responseData.token, // Server must provide the session token
-                    userData: responseData.userData || {}
-                }, true);
-                TB.logger.info(`[User] WebAuthn login successful for ${username}`);
+                await window.TB.router.navigateTo(responseData);
                 return { success: true, message: "WebAuthn login successful.", data: responseData };
             } else {
                 return { success: false, message: validationResult.info.help_text || "WebAuthn login failed." };

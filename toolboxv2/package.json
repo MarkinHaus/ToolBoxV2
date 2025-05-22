@@ -3,19 +3,27 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "scripts": {
-    "tauri": "npm run tauri dev --prefix ./simple-core",
-    "tauriB": "npm run tauri build --prefix ./simple-core",
-    "tauri-mobil": "npm run tauri android dev --prefix ./simple-core",
-    "tauri-mobilB": "npm run tauri android build --prefix ./simple-core",
-    "dev": "concurrently \"tb api start --debug\" \"npm run watch\"",
-    "live": "tb api start",
-    "build-web": "webpack --mode production",
-    "watch-web": "webpack --mode production --watch",
-    "build-tbjs": "npm run build --prefix ./tbjs",
-    "watch-tbjs": "npm run watch --prefix ./tbjs",
-    "watch": "concurrently \"npm run watch-tbjs\" \"npm run watch-web\"",
-    "build": "npm run build --prefix ./tbjs && webpack --mode production"
+    "scripts": {
+
+    "init":       "npm install --save-dev concurrently && npm run init:dev",
+    "init:dev":   "npm install && concurrently -k \"npm install --prefix ./web\" \"npm install --prefix ./tbjs\" \"npm install --prefix ./simple-core\"",
+    "init:prod":  "npm ci --omit=dev && concurrently -k \"npm ci --omit=dev --prefix ./web\" \"npm ci --omit=dev --prefix ./tbjs\" \"npm ci --omit=dev --prefix ./simple-core\"",
+
+    "tauri":          "npm run tauri dev   --prefix ./simple-core",
+    "tauriB":         "npm run tauri build --prefix ./simple-core",
+    "tauri-mobile":   "npm run tauri android dev   --prefix ./simple-core",
+    "tauri-mobileB":  "npm run tauri android build --prefix ./simple-core",
+
+    "watch:web":   "webpack --mode development --watch",
+    "watch:tbjs":  "npm run watch --prefix ./tbjs",
+    "watch":       "concurrently -k -r \"npm run watch:web\" \"npm run watch:tbjs\" \"npm run tauri\"",
+
+    "build:web":   "webpack --mode production",
+    "build:tbjs":  "npm run build --prefix ./tbjs",
+    "build":       "npm run build:web && npm run build:tbjs && npm run tauriB",
+
+    "dev":   "concurrently -k -r \"tb api start --debug\" \"npm run watch\"",
+    "test":  "npm run test --prefix ./tbjs"
   },
   "dependencies": {
     "@babel/core": "^7.25.7",

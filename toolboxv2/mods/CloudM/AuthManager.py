@@ -323,15 +323,6 @@ async def get_magic_link_email(app: App, username=None):
     invitation = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
     nl = len(user.name)
     res = send_magic_link_email(app, user.email, os.getenv("APP_BASE_URL", "http://localhost:8080")+f"/web/assets/m_log_in.html?key={invitation}&nl={nl}", user.name)
-
-    if res.is_error() and not res.is_data():
-        return res
-
-    res.result.data = {}
-    if not res.is_error():
-        res.info.help_text += ": "+user.email[:4]+'...'+user.email[-12:]
-    else:
-        res.print()
     return res
 
     # if not invitation.endswith(user.challenge[12:]):
@@ -659,7 +650,7 @@ async def validate_device(app: App, data: VdUSER) -> ApiResult:
     row_jwt_claim = crate_jwt(claim, user.user_pass_pri)
 
     encrypt_jwt_claim = Code.encrypt_asymmetric(row_jwt_claim, user.pub_key)
-    print(encrypt_jwt_claim, len(user.user_pass_pub_devices))
+
     if encrypt_jwt_claim != "Invalid":
         data = {'key': encrypt_jwt_claim, 'toPrivat': True}
     else:

@@ -121,7 +121,7 @@ base_template_jinja = jinja_env.from_string(BASE_HTML_TEMPLATE)
 class EmailSender:
     def __init__(self, app_context: App = None):
         self.app = app_context if app_context else get_app(Name)  # Get default app if not provided
-        self.logger = self.app.get_logger() if hasattr(self.app, 'get_logger') else get_logger(Name)
+        self.logger = get_logger()
 
         if not all([GMAIL_EMAIL, GMAIL_PASSWORD, SMTP_SERVER, SMTP_PORT, SENDER_EMAIL_ADDRESS]):
             self.logger.error("SMTP configuration is incomplete. Set GMAIL_EMAIL, GMAIL_PASSWORD, SENDER_EMAIL.")
@@ -177,7 +177,7 @@ class EmailSender:
                 return Result.default_internal_error(info=err_msg)
 
             self.logger.info(f"Email sent to {', '.join(recipient_emails)} with subject: {subject}")
-            return Result.ok(info=f"Email successfully sent to {', '.join(recipient_emails)}.")
+            return Result.ok(info=f"Email successfully sent to {', '.join([email[:4]+'...'+email[-12:] for email in recipient_emails])}.")
         except smtplib.SMTPAuthenticationError as e:
             self.logger.error(f"SMTP Authentication Error for user {GMAIL_EMAIL}: {e}")
             return Result.default_internal_error(info=f"SMTP Authentication Error: {e}")
@@ -356,7 +356,7 @@ if __name__ == "__main__":
 
     if GMAIL_EMAIL and GMAIL_PASSWORD:
         test_app = get_app("TestEmailApp")  # Create a dummy app for testing
-        test_logger = test_app.get_logger()
+        test_logger = get_logger()
         test_logger.info("Starting email tests...")
 
         test_recipient = "your_test_email@example.com"  # <--- !!! REPLACE THIS !!!

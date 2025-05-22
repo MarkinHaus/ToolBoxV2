@@ -3,6 +3,10 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+    "scripts": {
+    "build": "webpack --mode production",
+    "watch": "webpack --mode development --watch"
+  },
   "dependencies": {
     "highlight.js": "^11.8.0",
     "htmx.org": "^2.0.0",

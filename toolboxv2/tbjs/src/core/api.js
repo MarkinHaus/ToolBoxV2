@@ -29,6 +29,7 @@ function wrapApiResponse(data, source = "http") {
 
 
 const Api = {
+    wrapApiResponse: wrapApiResponse,
     _getRequestHeaders: (isJson = true) => {
         const headers = {
             'Accept': isJson ? 'application/json' : 'text/html',
@@ -91,8 +92,11 @@ const Api = {
         // HTTP Fetch
         let url;
         if (isFullPath) {
-            if (moduleName.includes("IsValidSession") ||moduleName.includes("validateSession")){
+            if (moduleName.includes("IsValidSession") ||moduleName.includes("validateSession") || moduleName.startsWith("/web/")){
                 url = `${config.get('baseApiUrl').replace('/api', '')}${moduleName}`;
+                if (method==="POST" && moduleName.includes("IsValidSession")){
+                    method = "GET"
+                }
             }else{
                 url = `${config.get('baseApiUrl')}${moduleName}`;
             }// moduleName is the path itself
@@ -163,7 +167,7 @@ const Api = {
                 const errorPayload = (responseData && typeof responseData === 'object') ? responseData : {};
                 return wrapApiResponse({
                     error: errorPayload.error || ToolBoxError.internal_error,
-                    info: errorPayload.info || { exec_code: response.status, help_text: response.statusText || (responseData?.message || "HTTP Error") },
+                    info: errorPayload.info || { exec_code: response.status, help_text: (errorPayload?.message || response.statusText || "HTTP Error") },
                     result: errorPayload.result || {}
                 });
             }
@@ -222,9 +226,13 @@ const Api = {
     },
     // Updated AuthHttpPostData to use the new `request` method with a full path
     AuthHttpPostData: (username) => {
+        const token = TB.state.get('user.token');
+        if (!token) {
+            return new Result(['token', 'error'], ToolBoxError.internal_error, new ToolBoxResult(), new ToolBoxInfo(-1, `no token found for ${username}`));
+        }
         const endpoint = '/validateSession'; // This is the full path relative to baseApiUrl
         const payload = {
-            'Jwt_claim': localStorage.getItem('jwt_claim_device'), // Consider getting from TB.state if populated
+            'Jwt_claim': token, // Consider getting from TB.state if populated
             'Username': username
         };
         // Call `request` with moduleName as the path, and functionName as null or empty.
