@@ -1,110 +1,138 @@
-# tbjs Mini Framework Documentation
+## tbjs Framework: Comprehensive Guide & Documentation
 
-**Version:** 0.1.0-alpha
+**Table of Contents**
 
-`tbjs` is a lightweight, modular JavaScript framework designed for building modern web applications, with a focus on integrating with tools like HTMX and Three.js. It provides core functionalities such as routing, state management, API communication, and a UI component system.
-
-## Table of Contents
-1.  [Introduction](#introduction)
-2.  [Getting Started](#getting-started)
-    *   [Prerequisites](#prerequisites)
-    *   [Installation](#installation)
-    *   [HTML Setup](#html-setup)
-    *   [Initialization](#initialization)
-3.  [Core Modules](#core-modules)
-    *   [Configuration (`TB.config`)](#configuration-tbconfig)
-    *   [State Management (`TB.state`)](#state-management-tbstate)
-    *   [Routing (`TB.router`)](#routing-tbrouter)
-    *   [API Communication (`TB.api`)](#api-communication-tbapi)
-    *   [Event System (`TB.events`)](#event-system-tbevents)
-    *   [Logging (`TB.logger`)](#logging-tblogger)
-    *   [Environment Detection (`TB.env`)](#environment-detection-tbenv)
-    *   [Cryptography (`TB.crypto`)](#cryptography-tbcrypto)
-    *   [User Management (`TB.user`)](#user-management-tbuser)
-    *   [Server-Sent Events (`TB.sse`)](#server-sent-events-tbsse)
-    *   [Service Worker (`TB.sw`)](#service-worker-tbsw)
-    *   [Utilities (`TB.utils`)](#utilities-tbutils)
-4.  [UI System (`TB.ui`)](#ui-system-tbui)
-    *   [Theme Management (`TB.ui.theme`)](#theme-management-tbuitheme)
-    *   [Graphics (`TB.graphics`)](#graphics-tbgraphics)
-    *   [HTMX Integration (`TB.ui.htmxIntegration`)](#htmx-integration-tbuihtmxintegration)
-    *   [Dynamic Content Processing](#dynamic-content-processing)
-    *   [Components](#components)
-        *   [Modal (`TB.ui.Modal`)](#modal-tbuimodal)
-        *   [Toast (`TB.ui.Toast`)](#toast-tbuitoast)
-        *   [Loader (`TB.ui.Loader`)](#loader-tbuiloader)
-        *   [Button (`TB.ui.Button`)](#button-tbuibutton)
-        *   [DarkModeToggle (`TB.ui.DarkModeToggle`)](#darkmodetoggle-tbuidarkmodetoggle)
-        *   [CookieBanner (`TB.ui.CookieBanner`)](#cookiebanner-tbuicookiebanner)
-        *   [MarkdownRenderer (`TB.ui.MarkdownRenderer`)](#markdownrenderer-tbuimarkdownrenderer)
-        *   [AutocompleteWidget (`TB.ui.AutocompleteWidget`)](#autocompletewidget-tbuiautocompletewidget)
-        *   [NavMenu (`TB.ui.NavMenu`)](#navmenu-tbuinavmenu)
-5.  [Usage Examples](#usage-examples)
-    *   [Basic Application Setup](#basic-application-setup)
-    *   [Fetching Data and Updating State](#fetching-data-and-updating-state)
-    *   [Client-Side Routing](#client-side-routing)
-    *   [Displaying a Modal](#displaying-a-modal)
-    *   [User Authentication Flow](#user-authentication-flow)
-6.  [Styling with Tailwind CSS](#styling-with-tailwind-css)
-7.  [Building tbjs (For Developers)](#building-tbjs-for-developers)
+1.  **Introduction**
+    *   Key Design Principles & Features
+2.  **Getting Started**
+    *   Prerequisites
+    *   Installation
+    *   HTML Setup
+    *   Application Initialization (`TB.init`)
+3.  **Core Modules (`TB.*`)**
+    *   `TB.config`: Configuration Management
+    *   `TB.logger`: Logging Utility
+    *   `TB.state`: Global State Management
+    *   `TB.events`: Event Bus / Pub/Sub
+    *   `TB.env`: Environment Detection
+    *   `TB.api`: Backend Communication
+    *   `TB.router`: SPA Routing
+    *   `TB.crypto`: Cryptographic Utilities
+    *   `TB.user`: User Session & Authentication
+    *   `TB.sse`: Server-Sent Events
+    *   `TB.sw`: Service Worker Management
+    *   `TB.utils`: General Utilities
+    *   `TB.graphics`: 3D Graphics (THREE.js)
+4.  **UI System (`TB.ui.*`)**
+    *   `TB.ui.theme`: Theming (Light/Dark Mode, Backgrounds)
+    *   `TB.ui.htmxIntegration`: HTMX Event Handling
+    *   `TB.ui.processDynamicContent`: Handling New DOM Content
+    *   **UI Components:**
+        *   `TB.ui.Modal`
+        *   `TB.ui.Toast`
+        *   `TB.ui.Loader`
+        *   `TB.ui.Button`
+        *   `TB.ui.DarkModeToggle`
+        *   `TB.ui.CookieBanner`
+        *   `TB.ui.MarkdownRenderer`
+        *   `TB.ui.NavMenu`
+        *   `TB.ui.AutocompleteWidget`
+5.  **Styling with Tailwind CSS**
+    *   Prefixing and CSS Variables
+    *   Using `tbjs` Tailwind Config in Your Project
+6.  **Advanced Topics**
+    *   Tauri Integration
+    *   Working with 3D Graphics
+7.  **Example: Login Flow Walkthrough**
+8.  **Building `tbjs` (For Developers)**
 
 ---
 
-## 1. Introduction
-`tbjs` aims to provide a solid foundation for single-page applications (SPAs) and dynamic web experiences. It's built with modularity in mind, allowing you to use only the parts you need. Key features include:
+### 1. Introduction
 
-*   **Configuration-driven**: Easily customize framework behavior.
-*   **State Management**: Centralized application state.
-*   **SPA Router**: Handles client-side navigation and view loading.
-*   **API Abstraction**: Simplifies backend communication (HTTP & Tauri).
-*   **Event Bus**: Decoupled communication between modules.
-*   **UI System**: Includes theme management and reusable components.
-*   **3D Graphics**: Integration with Three.js for dynamic backgrounds or scenes.
-*   **User Authentication**: Built-in support for various authentication flows, including WebAuthn.
-*   **HTMX Friendly**: Designed to work alongside HTMX for enhancing HTML.
+`tbjs` is a modular frontend framework designed for building modern web applications, with special consideration for integration with Tauri for desktop applications and tools like HTMX and Three.js. It provides a comprehensive set of tools for managing configuration, state, API communication, routing, UI components, user authentication, and more.
+
+**Key Design Principles & Features:**
+
+*   **Modularity:** Clear separation of concerns into `core` and `ui` modules. You can use only the parts you need.
+*   **Event-Driven:** Facilitates decoupled communication between modules via an event bus.
+*   **Configuration-Centric:** Application behavior is heavily influenced by a central configuration object.
+*   **State Management:** Centralized application state with optional persistence.
+*   **SPA Router:** Handles client-side navigation and view loading.
+*   **API Abstraction:** Simplifies backend communication, supporting both HTTP and Tauri `invoke` calls.
+*   **UI System:** Includes theme management (light/dark mode), dynamic backgrounds, and reusable UI components.
+*   **3D Graphics Integration:** Built-in support for THREE.js for dynamic backgrounds or scenes, managed by `TB.graphics`.
+*   **User Authentication:** Robust support for various authentication flows, including device key (asymmetric crypto) and WebAuthn (passkeys).
+*   **HTMX Friendly:** Designed to work seamlessly alongside HTMX for enhancing HTML with dynamic behaviors.
+*   **Tauri-Aware:** Core functionalities can adapt to run optimally in a Tauri environment.
+*   **Modern Tooling:** Built with Webpack, Babel, PostCSS, and Tailwind CSS.
 
 ---
 
-## 2. Getting Started
+### 2. Getting Started
 
-### Prerequisites
-Before using `tbjs`, ensure you have the following:
+#### Prerequisites
 
-1.  **HTMX**: `tbjs` is designed to work well with HTMX. Include HTMX in your project.
+Before using `tbjs`, ensure you have the following (or plan to include them if using related features):
+
+1.  **HTMX** (Recommended): `tbjs` integrates well with HTMX for server-rendered partials and dynamic updates.
     ```html
-    <script src="https://unpkg.com/htmx.org@2.0.0/dist/htmx.min.js"></script>
+    <script defer src="https://unpkg.com/htmx.org@2.0.2/dist/htmx.min.js"></script>
     ```
 2.  **Three.js** (Optional, if using `TB.graphics`):
     ```html
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.153.0/three.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.153.0/three.min.js"></script>
     ```
-3.  **Marked & Highlight.js** (Optional, if using `TB.ui.MarkdownRenderer`): These should be available globally.
+3.  **Marked & Highlight.js** (Optional, if using `TB.ui.MarkdownRenderer`): For rendering Markdown to HTML with syntax highlighting.
     ```html
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
-    <!-- Optional: Styles for highlight.js -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/default.min.css">
-    <!-- If using marked-highlight extension -->
-    <script src="https://cdn.jsdelivr.net/npm/marked-highlight/lib/index.umd.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/marked-highlight/lib/index.umd.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css">
     ```
-    *Note: Ensure `window.marked` and `window.hljs` (and `window.markedHighlight` if using the extension) are available before `TB.ui.MarkdownRenderer.init()` is called or any markdown rendering is attempted.*
+    *Ensure `window.marked`, `window.markedHighlight`, and `window.hljs` are available before `TB.ui.MarkdownRenderer` is used.*
 
-### Installation
-`tbjs` is distributed as `tbjs.js` and `tbjs.css`.
+4.  **Material Symbols** (Optional, used by some default UI components):
+    ```html
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    ```
 
-1.  **Build `tbjs`**: If you have the source, run `npm run build` to generate the `dist/` folder.
-2.  **Include files in your HTML**:
+#### Installation
+
+1.  **Add `tbjs` to your project:**
+    If `tbjs` were published to npm:
+    ```bash
+    npm install tbjs
+    # or
+    yarn add tbjs
+    ```
+    Since it's often used locally or as part of a larger monorepo, you'd typically:
+    *   Build `tbjs` from source (see [Building `tbjs`](#8-building-tbjs-for-developers)) to get `dist/tbjs.js` and `dist/tbjs.css`.
+    *   Or, if integrating into a build system, import directly from its source path (e.g., `import TB from 'path/to/tbjs/src/index.js';`).
+
+2.  **Include files in your HTML (if using pre-built dist files):**
     ```html
     <link rel="stylesheet" href="path/to/your/tbjs/dist/tbjs.css">
-    <script type="module" src="path/to/your/tbjs/dist/tbjs.js"></script>
-    ```
-    If you are using `tbjs` as a module in your own build system, you can import it:
-    ```javascript
-    import TB from 'path/to/your/tbjs/src/index.js'; // Or from dist/tbjs.js if UMD
+    <!-- Load tbjs.js as a module or a global script depending on its build -->
+    <script defer type="module" src="path/to/your/tbjs/dist/tbjs.js"></script> <!-- If ES Module build -->
+    <!-- <script defer src="path/to/your/tbjs/dist/tbjs.js"></script> --> <!-- If UMD build -->
     ```
 
-### HTML Setup
-Your main HTML file (`index.html`) should have a root element for your application content and optionally, containers for background effects or 3D graphics.
+3.  **Peer Dependencies (Reminder):**
+    Ensure you have `htmx.org` and `three` installed/included if you plan to use features that depend on them.
+    ```bash
+    npm install htmx.org three # Or yarn add
+    ```
+
+#### HTML Setup
+
+Your main HTML file (e.g., `index.html`) should include:
+
+*   The root element for your application (defined in `tbjsConfig.appRootId`).
+*   The container for the 3D graphics scene (if used, e.g., `#threeDScene`).
+*   A container for image/color backgrounds (if used, e.g., `#appBackgroundContainer`).
+*   Script tags for `tbjs` and its dependencies.
+*   The main CSS file for `tbjs` and your application.
 
 ```html
 <!DOCTYPE html>
@@ -112,1527 +140,790 @@ Your main HTML file (`index.html`) should have a root element for your applicati
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My tbjs App</title>
+    <title>My TBJS App</title>
 
-    <!-- tbjs CSS -->
-    <link rel="stylesheet" href="path/to/tbjs/dist/tbjs.css">
+    <!-- TBJS CSS (and potentially your app's main CSS) -->
+    <link rel="stylesheet" href="path/to/your/tbjs/dist/tbjs.css">
+    <link rel="stylesheet" href="path/to/your/app-styles.css">
 
-    <!-- Tailwind (if you're using it directly in your app) -->
-    <!-- <script src="https://cdn.tailwindcss.com"></script> -->
-    <!-- Or your compiled Tailwind CSS -->
-    <link rel="stylesheet" href="path/to/your/app.css">
-
-    <!-- HTMX -->
-    <script src="https://unpkg.com/htmx.org@2.0.0/dist/htmx.min.js"></script>
-
-    <!-- Three.js (if using graphics module) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.153.0/three.min.js"></script>
-
-    <!-- Marked & Highlight.js (if using MarkdownRenderer) -->
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked-highlight/lib/index.umd.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/atom-one-dark.min.css">
-
-
-    <!-- Material Symbols (used by some components) -->
+    <!-- Icons (Example: Material Symbols) -->
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
 
-    <!-- tbjs Script (type="module" if loading the ES module directly) -->
-    <!-- Option 1: Loading tbjs as a module -->
-    <!-- <script type="module" src="path/to/tbjs/src/index.js"></script> -->
-    <!-- Option 2: Loading the UMD build -->
-    <script src="path/to/tbjs/dist/tbjs.js"></script>
+    <!-- Defer ensures scripts execute after DOM parsing and in order -->
+    <!-- HTMX -->
+    <script defer src="https://unpkg.com/htmx.org@2.0.2/dist/htmx.min.js"></script>
+    <!-- THREE.js (if using TB.graphics) -->
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.153.0/three.min.js"></script>
+    <!-- Marked and Highlight.js (if using MarkdownRenderer with syntax highlighting) -->
+    <script defer src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/marked-highlight/lib/index.umd.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css">
+
+    <!-- Your Application Entry Point (where TB.init is called) -->
+    <script defer type="module" src="path/to/your/app/index.js"></script>
 </head>
 <body>
-    <!-- Dedicated background container (used by TB.ui.theme) -->
-    <div id="appBackgroundContainer"></div>
-
-    <!-- Optional: Container for 3D graphics (used by TB.graphics) -->
+    <!-- Container for image/color backgrounds (used by TB.ui.theme) -->
+    <div id="appBackgroundContainer" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -20;"></div>
+    <!-- Container for 3D Graphics (if used by TB.ui.theme or TB.graphics) -->
     <div id="threeDScene" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -10;"></div>
 
-    <!-- Main application root -->
-    <div id="app-root">
-        <!-- Initial content or loader can go here -->
-        <div class="loaderCenter" style="display: flex; justify-content: center; align-items: center; height: 100vh;">
-            Loading application...
+    <!-- Header for Nav Controls (Example, adjust as per your layout) -->
+    <header>
+     <div id="Nav-Controls">
+        <div id="Nav-Main"> <!-- This is what NavMenu.js might expect -->
+            <div class="circle" id="links"> <!-- Default trigger for NavMenu -->
+                <span class="material-symbols-outlined">menu</span>
+            </div>
+        </div>
+         <div id="darkModeToggleContainer"> <!-- Default container for DarkModeToggle -->
+            <label for="darkModeSwitch" class="tb-cursor-pointer">
+                <span class="tb-toggle-icon material-symbols-outlined">light_mode</span>
+            </label>
+            <input type="checkbox" id="darkModeSwitch" class="tb-sr-only"> <!-- Visually hidden -->
         </div>
     </div>
+    </header>
 
-    <!-- Your main application script -->
-    <script type="module">
-        // Import TB if using ES Modules and not UMD global
-        // import TB from 'path/to/tbjs/src/index.js'; // or from 'path/to/tbjs/dist/tbjs.js' if it's an ES module build
+    <!-- Main Application Content Root -->
+    <main id="MainContent" class="hide-scrollbar">
+        <!-- Content will be rendered here by TB.router -->
+        <div class="loaderCenter" style="display: flex; justify-content: center; align-items: center; height: 80vh;">
+            Loading application... <!-- Initial placeholder -->
+        </div>
+    </main>
 
-        // Wait for the DOM to be fully loaded
-        document.addEventListener('DOMContentLoaded', () => {
-            // Access TB (it's global if you included the UMD build)
-            if (window.TB) {
-                window.TB.init({
-                    appRootId: 'app-root', // Matches the div above
-                    baseApiUrl: '/api',    // Your backend API base URL
-                    // baseFileUrl: window.location.origin + '/app/', // If HTML files are in a subfolder
-                    initialState: {
-                        appName: 'My Awesome App'
-                    },
-                    themeSettings: {
-                        defaultPreference: 'system', // 'light', 'dark', or 'system'
-                        background: {
-                            type: 'color', // 'color', 'image', or '3d'
-                            light: { color: '#f0f0f0' },
-                            dark: { color: '#202020' },
-                            // placeholder: { image: '/path/to/placeholder.jpg', displayUntil3DReady: true }
-                        }
-                    },
-                    routes: [
-                        // You can predefine routes, though router primarily fetches HTML
-                        // { path: '/home', component: 'views/home.html' }
-                    ],
-                    logLevel: 'debug', // 'debug', 'info', 'warn', 'error'
-                    serviceWorker: {
-                        enabled: false, // Set to true to enable
-                        url: '/sw.js'
-                    }
-                });
-            } else {
-                console.error("TB object not found. Ensure tbjs.js is loaded correctly.");
-            }
-        });
-    </script>
+    <div id="overlay"></div> <!-- Used by some components like Modal -->
 </body>
 </html>
 ```
 
-### Initialization
-Initialize `tbjs` by calling `TB.init()` with your application's configuration. This is typically done in a `<script type="module">` tag at the end of your `<body>` or after the `DOMContentLoaded` event.
+#### Application Initialization (`TB.init`)
+
+In your application's main JavaScript file (e.g., `app/index.js` or an inline module script):
 
 ```javascript
-// In your main application script (e.g., app.js or inline script)
-document.addEventListener('DOMContentLoaded', () => {
-    TB.init({
-        appRootId: 'app-root',
-        baseApiUrl: '/api/v1', // Example: your backend API
-        // baseFileUrl: window.location.origin, // Default
+// app/index.js or similar
+import TB from 'path/to/tbjs/src/index.js'; // Adjust path to your tbjs source or dist
+import 'path/to/tbjs/dist/tbjs.css';      // Import tbjs styles if not linked in HTML
+
+function initializeApp() {
+    const isProduction = process.env.NODE_ENV === 'production'; // Or your own flag
+
+    const tbjsConfig = {
+        appRootId: 'MainContent',    // Matches <main id="MainContent">
+        baseApiUrl: '/api',          // Your backend API prefix
+        baseFileUrl: '/web/pages',   // Base path for HTML views (router prepends this)
+                                     // e.g., router.navigateTo('/home') fetches '/web/pages/home.html'
         initialState: {
-            userPreferences: {
-                notifications: true
-            }
+            appName: 'My Awesome App',
+            // ... other initial global state
         },
         themeSettings: {
-            defaultPreference: 'dark', // 'light', 'dark', or 'system'
+            defaultPreference: 'system', // 'light', 'dark', or 'system'
             background: {
-                type: '3d', // 'color', 'image', '3d'
-                light: { color: '#FFFFFF' }, // Fallback if 3D fails or not used
-                dark: { color: '#121212' },  // Fallback
-                placeholder: { image: '/images/background-placeholder.jpg', displayUntil3DReady: true }
+                type: '3d', // '3d', 'image', 'color', 'none'
+                light: { color: '#E0E0E0' }, // Fallback for 3D, or color for 'color' type
+                dark: { color: '#212121' },  // Fallback for 3D, or color for 'color' type
+                placeholder: { // Optional: Displayed while 3D scene loads
+                    image_light: '/path/to/placeholder-light.gif',
+                    image_dark: '/path/to/placeholder-dark.gif',
+                    displayUntil3DReady: true
+                }
             }
         },
         routes: [
-             // Example: Define a route that maps to an HTML file.
-             // { path: '/dashboard', view: '/web/pages/dashboard.html' }, // Not directly used by current router.navigateTo structure
+            // Example: { path: '/', view: '/index.html' }
+            // TB.router primarily fetches HTML based on convention (baseFileUrl + path + .html)
+            // This array could be used for more complex route definitions or metadata in future.
         ],
-        logLevel: 'info', // 'debug', 'info', 'warn', 'error', 'none'
-        isProduction: false, // Manually set or let tbjs infer
+        logLevel: isProduction ? 'warn' : 'debug',
         serviceWorker: {
-            enabled: true,
-            url: '/custom-sw.js',
+            enabled: isProduction, // Only enable SW in production
+            url: '/sw.js',
             scope: '/'
         }
-    });
+        // isProduction: isProduction, // Can be set explicitly, otherwise inferred
+    };
 
-    // Example: Listen for tbjs initialization completion
-    TB.events.on('tbjs:initialized', (tbInstance) => {
-        console.log('tbjs is ready!', tbInstance.VERSION);
-        // You can now safely use all TB modules
-        // Example: TB.router.navigateTo('/home');
+    // Initialize tbjs and store the instance if needed
+    window.AppTB = TB.init(tbjsConfig); // AppTB is optional, you can just use TB
+
+    // Initialize 3D graphics if configured
+    if (AppTB.config.get('themeSettings.background.type') === '3d') {
+        AppTB.graphics.init('#threeDScene', { // Target the #threeDScene div
+            cameraY: 5,
+            sierpinskiDepth: 4,
+            loaderHideDelay: 500 // Delay for hiding .loaderCenter
+        });
+    }
+
+    // Initialize UI components that are part of the static shell
+    // These might also be auto-initialized if they use data-attributes
+    if (AppTB.ui.NavMenu) AppTB.ui.NavMenu.init({ triggerSelector: '#links' });
+    if (AppTB.ui.DarkModeToggle) AppTB.ui.DarkModeToggle.init({ containerSelector: '#darkModeToggleContainer' });
+
+    // Event listener for when tbjs is fully up
+    AppTB.events.on('tbjs:initialized', (initializedTB) => {
+        initializedTB.logger.log('TB.js Framework Ready!', initializedTB.VERSION);
+
+        // Further app-specific setup that depends on TB being ready
+        if (!initializedTB.config.get('isProduction')) {
+            initializedTB.router.clearCache(); // Clear router cache in dev for easier testing
+        }
+
+        // Example: Initial navigation if not handled by router automatically
+        // The router will attempt to load the current window.location.pathname by default.
+        // If you want to force a specific page on root load:
+        if(window.location.pathname === '/' || window.location.pathname === '/index.html'){
+             initializedTB.router.navigateTo("/home", false, true); // Navigates to baseFileUrl + /home.html
+        }
     });
-});
+}
+
+// Ensure DOM is ready before initializing
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeApp);
+} else {
+    initializeApp();
+}
 ```
 If the `appRootId` element is not found on the page when `TB.init()` is called, `tbjs` will attempt to redirect to `/index.html` after storing the intended path in `sessionStorage`. This helps handle deep linking when the main HTML shell hasn't loaded yet.
 
 ---
 
-## 3. Core Modules
+### 3. Core Modules (`TB.*`)
 
-### Configuration (`TB.config`)
-The configuration module (`TB.config`) manages all framework and application settings. It's initialized by `TB.init()` with default values merged with your provided configuration.
+#### `TB.config`: Configuration Management
 
-**Default Configuration Structure:**
-```javascript
-{
-    appRootId: 'app-root',
-    baseApiUrl: '/api',
-    baseFileUrl: window.location.origin, // Base URL for HTML views
-    initialState: {},
-    themeSettings: {
-        defaultPreference: 'system', // 'light', 'dark', 'system'
-        background: {
-            type: 'color', // '3d', 'image', 'color', 'none'
-            light: { color: '#FFFFFF', image: '' },
-            dark: { color: '#121212', image: '' },
-            placeholder: { image: '', displayUntil3DReady: true }
-        }
-    },
-    routes: [], // Primarily for reference, router fetches HTML directly
-    logLevel: 'info',
-    isProduction: /* inferred or user-set */,
-    serviceWorker: {
-        enabled: false,
-        url: '/sw.js',
-        scope: '/'
-    }
-}
-```
+Manages application-wide settings. It's initialized by `TB.init()` with default values merged with your provided configuration.
 
-**Methods:**
-*   `TB.config.init(initialUserConfig)`: Called internally by `TB.init()`. Merges user config with defaults.
-    *   `baseApiUrl` is made absolute. If relative (e.g., `/api`), it's prepended with `window.location.origin`. If just `api`, it becomes `/api`.
-    *   `baseFileUrl` ensures it ends with a `/` if it contains a path.
-    *   `isProduction` is inferred based on hostname (`localhost`, `127.0.0.1`) if not explicitly set.
-*   `TB.config.get(key)`: Retrieves a configuration value. Supports dot notation for nested properties (e.g., `TB.config.get('themeSettings.background.type')`).
-*   `TB.config.getAll()`: Returns a copy of the entire configuration object.
-*   `TB.config.set(key, value)`: Sets a configuration value. Supports dot notation. *Note: Use with caution after initialization, as not all modules may react to live changes.*
+*   **Initialization:** `TB.config.init(userAppConfig)` is called by `TB.init`.
+    *   `userAppConfig` options:
+        *   `appRootId` (string): ID of the main DOM element for router views. Default: `app-root`.
+        *   `baseApiUrl` (string): Base URL for API calls. Default: `/api`. Normalized to be absolute (e.g., `/api` becomes `window.location.origin/api`).
+        *   `baseFileUrl` (string): Base URL for fetching static HTML files for routing. Default: `window.location.origin`. Normalized to end with `/` if it has a path, and ensures it doesn't include file names.
+        *   `initialState` (object): Initial state for `TB.state`.
+        *   `themeSettings` (object): See `TB.ui.theme` section.
+        *   `routes` (array): Predefined routes for `TB.router` (currently for reference/future use).
+        *   `logLevel` (string): `debug`, `info`, `warn`, `error`, `none`. Default: `info`.
+        *   `isProduction` (boolean): Inferred based on hostname (`localhost`, `127.0.0.1`) if not explicitly set.
+        *   `serviceWorker` (object): `{ enabled: boolean, url: string, scope: string }`.
+*   **Getting Configuration:**
+    ```javascript
+    const apiUrl = TB.config.get('baseApiUrl');
+    const logLevel = TB.config.get('logLevel');
+    const themePref = TB.config.get('themeSettings.defaultPreference'); // Dot notation for nested
+    const allConfig = TB.config.getAll(); // Returns a copy of the entire config
+    ```
+*   **Setting Configuration (dynamically, use with caution after init):**
+    ```javascript
+    TB.config.set('myCustomSetting', 'someValue');
+    TB.config.set('featureFlags.newFeature', true);
+    ```
 
-**Example:**
-```javascript
-const apiUrl = TB.config.get('baseApiUrl');
-console.log('API URL:', apiUrl);
+#### `TB.logger`: Logging Utility
 
-const isProd = TB.config.get('isProduction');
-if (isProd) {
-    TB.logger.setLevel('warn');
-}
-```
+Provides leveled, prefixed, and timestamped logging to the console.
 
-### State Management (`TB.state`)
-`TB.state` provides a simple, centralized store for your application's state.
+*   **Initialization:** `TB.logger.init({ logLevel: '...' })` is called by `TB.init` based on `TB.config`.
+*   **Setting Log Level:**
+    ```javascript
+    TB.logger.setLevel('debug'); // 'debug', 'info', 'warn', 'error', 'none'
+    ```
+*   **Logging Messages:**
+    ```javascript
+    TB.logger.debug('Detailed debug message:', { data: 123 });
+    TB.logger.info('Informational message.'); // Alias: TB.logger.log()
+    TB.logger.warn('Potential issue warning.');
+    TB.logger.error('An error occurred:', new Error('Something went wrong'));
+    ```
+    Output includes a timestamp, `[tbjs]`, and the log level (e.g., `[DEBUG]`).
 
-**Methods:**
-*   `TB.state.init(initialState)`: Called internally by `TB.init()`. Loads any persisted state from `localStorage`.
-*   `TB.state.get(key)`: Retrieves a state value. Supports dot notation. If `key` is undefined, returns a copy of the entire state.
-*   `TB.state.set(key, value, options = { persist: false })`: Sets a state value.
-    *   `options.persist`: If `true`, the top-level key of this state will be saved to `localStorage` and reloaded on next init.
+#### `TB.state`: Global State Management
+
+A simple key-value store for global application state with optional persistence to `localStorage`.
+
+*   **Initialization:** `TB.state.init(initialState)` is called by `TB.init` with `TB.config.get('initialState')`. Loads any persisted state.
+*   **Getting State:**
+    ```javascript
+    const username = TB.state.get('user.username'); // Dot notation for nested
+    const allState = TB.state.get(); // Returns a copy of the entire state
+    ```
+*   **Setting State:**
+    ```javascript
+    // Set a simple value
+    TB.state.set('ui.darkMode', true);
+
+    // Set a nested value, creating intermediate objects if they don't exist
+    TB.state.set('user.profile.avatarUrl', '/path/to/avatar.png');
+
+    // Persist the top-level key 'user' to localStorage
+    TB.state.set('user.isLoggedIn', true, { persist: true });
+    // Any change under 'user' (e.g., 'user.settings.notifications') will now persist 'user'.
+    ```
     *   Emits `state:changed` event with `{ key, value, fullState }`.
-    *   Emits `state:changed:your:key` (dots replaced with colons) for more specific listeners.
-*   `TB.state.delete(key, options = { persist: false })`: Deletes a key from the state. Handles persisted state removal.
-*   Legacy methods for simple key-value persistence (discouraged for new code, prefer structured state with `persist` option):
-    *   `TB.state.initVar(v_name, v_value)`: Initializes if not set, persists.
-    *   `TB.state.delVar(v_name)`: Deletes, persists change.
-    *   `TB.state.getVar(v_name)`: Gets value.
-    *   `TB.state.setVar(v_name, v_value)`: Sets value, persists.
+    *   Emits specific event like `state:changed:user:profile:avatarUrl` with the `value`.
+*   **Deleting State:**
+    ```javascript
+    TB.state.delete('user.profile.temporaryToken');
+    TB.state.delete('featureFlags.oldFlag', { persist: true }); // Will update persisted 'featureFlags'
+    ```
+*   **Legacy "Var" Methods (for simple key-value persistence, prefer structured state with `persist` option):**
+    *   `TB.state.initVar('myVar', 'defaultValue')`: Sets if not already defined, persists.
+    *   `TB.state.delVar('myVar')`: Deletes and updates persisted state.
+    *   `TB.state.getVar('myVar')`: Gets value.
+    *   `TB.state.setVar('myVar', 'newValue')`: Sets value, persists.
 
-**Example:**
-```javascript
-// Set initial user data (e.g., after login)
-TB.state.set('user.profile', { name: 'Alice', theme: 'dark' }, { persist: true });
+#### `TB.events`: Event Bus / Pub/Sub
 
-// Get user name
-const userName = TB.state.get('user.profile.name'); // Alice
+Allows modules to communicate without direct dependencies.
 
-// Listen for changes to a specific part of the state
-TB.events.on('state:changed:user:profile:theme', (newTheme) => {
-    console.log('User theme changed to:', newTheme);
-    // Update UI or apply theme
-});
+*   **Subscribing to Events:**
+    ```javascript
+    function handleThemeChange(eventData) {
+        console.log('Theme changed to:', eventData.mode);
+    }
+    TB.events.on('theme:changed', handleThemeChange);
 
-// Update the theme
-TB.state.set('user.profile.theme', 'light'); // Listener above will be triggered
-```
+    // Subscribe only once
+    TB.events.once('app:firstLogin', (userData) => { /* ... */ });
+    ```
+*   **Unsubscribing from Events:**
+    ```javascript
+    TB.events.off('theme:changed', handleThemeChange);
+    ```
+*   **Emitting Events:**
+    ```javascript
+    TB.events.emit('user:loggedIn', { userId: 123, username: 'testuser' });
+    ```
+    If a listener throws an error, `TB.logger.error` is called, and other listeners still execute.
+*   **Common Framework Events:** `tbjs:initialized`, `state:changed`, `router:navigationSuccess`, `theme:changed`, `api:networkError`, `graphics:initialized`, `user:loggedOut`, etc.
 
-### Routing (`TB.router`)
-`TB.router` handles client-side navigation for your SPA. It fetches HTML content for views and updates the DOM.
+#### `TB.env`: Environment Detection
 
-**Key Features:**
-*   Loads HTML content from `TB.config.get('baseFileUrl') + path`.
-*   Updates browser history (`pushState`, `replaceState`).
-*   Handles `popstate` events (browser back/forward).
-*   Intercepts clicks on local links.
-*   Manages script execution for dynamically loaded content:
-    *   Scripts with `src` are loaded and executed once (cached by URL).
-    *   Inline scripts are executed.
-    *   Inline scripts with `unsave="true"` are executed via a Blob URL (fresh execution each time).
-    *   **Important**: It attempts to prevent re-execution of main application bundle scripts (e.g., `main.js`, `bundle.js`) if they are found within fetched HTML.
-*   Optional session-based caching for HTML content.
-*   Emits router events (`router:beforeNavigation`, `router:navigationSuccess`, `router:navigationError`, `router:contentProcessed`).
+Provides information about the runtime environment.
 
-**Methods:**
-*   `TB.router.init(rootElement, predefinedRoutes)`: Initializes the router.
-    *   `rootElement`: The DOM element where views will be rendered.
-    *   `predefinedRoutes`: (Currently for reference) Array of route objects.
-    *   Automatically navigates to the initial URL.
-*   `TB.router.navigateTo(path, replace = false, isInitialLoad = false)`: Navigates to the given path.
-    *   `path`: The URL path (e.g., `/about`, `/users/123?param=value#section`). Can be absolute or relative.
-    *   `replace`: If `true`, uses `history.replaceState` instead of `history.pushState`.
-    *   `isInitialLoad`: Internal flag for the first navigation.
+*   **Initialization:** `TB.env.detect()` is called by `TB.init`.
+*   **Checking Environment:**
+    ```javascript
+    if (TB.env.isTauri()) {
+        console.log('Running in Tauri environment.');
+    } else if (TB.env.isWeb()) {
+        console.log('Running in a web browser.');
+    }
+    if (TB.env.isMobile()) { // Currently implies Tauri mobile if detected
+        console.log('Running on a mobile platform (Tauri).');
+    }
+    ```
+
+#### `TB.api`: Backend Communication
+
+Handles all HTTP and Tauri `invoke` calls, standardizing responses.
+
+*   **Core `Result` Object:** All `TB.api` methods (and Tauri invokes) aim to return or be wrapped into a `Result` object:
+    ```javascript
+    // Structure of a Result object (simplified)
+    // const result = {
+    //   origin: Array<string>,    // e.g., ['http'], ['tauri']
+    //   error: string,           // From TB.api.ToolBoxError (e.g., 'none', 'InternalError')
+    //   result: {                // Instance of ToolBoxResult
+    //     data_to: string,       // From TB.api.ToolBoxInterfaces (e.g., 'API', 'NATIVE')
+    //     data_info: string|null,// Additional info
+    //     data: any              // The actual payload
+    //   },
+    //   info: {                  // Instance of ToolBoxInfo
+    //     exec_code: number,     // HTTP status or custom code (0 for success)
+    //     help_text: string      // Descriptive message
+    //   },
+    //   get: function() { return this.result.data; }, // Helper to get payload
+    //   log: function() { /* console logs details */ },
+    //   html: function() { /* returns an HTML representation for debugging */ }
+    // };
+    ```
+*   **`TB.api.request(moduleName, functionName, payload, method, useTauri, isSpecialAuthRoute)`:**
+    The primary method for making backend requests.
+    *   `moduleName` (string): Backend module/class OR full path (e.g., `/validateSession`).
+    *   `functionName` (string|object): Backend function/method OR query params object if `moduleName` is a full path (for GET/DELETE).
+    *   `payload` (object|string|null): Data to send. Object for JSON POST/PUT; string can be form-urlencoded or query params.
+    *   `method` (string): HTTP method (`GET`, `POST`, etc.). Default: `POST`.
+    *   `useTauri` (string): `auto` (default), `force` (Tauri only), `never` (HTTP only).
+    *   `isSpecialAuthRoute` (boolean): If `true`, influences token handling (rarely needed).
+
+    **URL Construction (HTTP):**
+    *   Standard: `baseApiUrl/moduleName/functionName`
+    *   Full path: `baseApiUrl` + `moduleName` (where `moduleName` starts with `/`, e.g., `/custom/endpoint`)
+
+    ```javascript
+    // POST request (HTTP or Tauri if available and 'auto')
+    const userData = { name: 'John Doe', email: 'john@example.com' };
+    let response = await TB.api.request('UserModule', 'createUser', userData); // Defaults to POST
+
+    if (response.error === TB.api.ToolBoxError.none) {
+        console.log('User created:', response.get());
+    } else {
+        TB.logger.error('Failed to create user:', response.info.help_text);
+    }
+
+    // GET request with query parameters from an object
+    response = await TB.api.request('ProductModule', 'getProduct', { id: 123 }, 'GET');
+    // URL: /api/ProductModule/getProduct?id=123
+
+    // Full path GET (functionName is query params object)
+    response = await TB.api.request('/custom/data', { type: 'summary' }, null, 'GET');
+    // URL: /api/custom/data?type=summary (if baseApiUrl is /api)
+    ```
+*   **`TB.api.fetchHtml(path)`:** Fetches HTML content, typically for router views. Path is relative to `baseFileUrl`.
+    ```javascript
+    const htmlResult = await TB.api.fetchHtml('/about.html'); // Fetches /web/pages/about.html
+    if (!htmlResult.startsWith('HTTP error!')) { /* ... */ }
+    ```
+*   **`TB.api.AuthHttpPostData(username)`:** Specific method for validating a session. Calls `/validateSession`.
+*   **`TB.api.logoutServer()`:** Notifies the backend to invalidate the current user's session token (calls `/web/logoutS`).
+*   **Events:**
+    *   `api:networkError`: Emitted on fetch network failures. Payload: `{ url, error }`.
+
+#### `TB.router`: SPA Routing
+
+Manages client-side navigation and view rendering.
+
+*   **Initialization:** `TB.router.init(rootElement, predefinedRoutes)` called by `TB.init`.
+    *   `rootElement`: The DOM element where views will be rendered (from `TB.config.appRootId`).
+    *   Automatically navigates to the initial URL (or `/index.html`).
+*   **Navigating:**
+    ```javascript
+    // Navigate to a new path, updating browser history
+    TB.router.navigateTo('/products/123'); // Fetches baseFileUrl + /products/123.html
+
+    // Navigate and replace current history entry
+    TB.router.navigateTo('/profile/settings', true);
+    ```
+    *   Fetches HTML from `TB.config.get('baseFileUrl') + path + '.html'` (by default, unless path includes an extension).
+    *   Handles script loading within new views (external once, inline executed, `unsave` attribute for fresh execution, `global="true"` for potential preservation).
+    *   Updates `appRootElement.innerHTML` with fetched content.
+    *   Calls `TB.ui.processDynamicContent()` on the new content.
     *   Handles 404 errors by trying to navigate to `/web/assets/404.html`.
     *   Handles 401 errors by trying to navigate to `/web/assets/401.html`.
-*   `TB.router.getCurrentPath()`: Returns the current normalized path.
-*   `TB.router.clearCache(path)`: Clears the sessionStorage cache for a specific path or all cached pages if `path` is omitted. (Only if `USE_SESSION_CACHE` is true in `router.js`).
+*   **Getting Current Path:** `TB.router.getCurrentPath()`
+*   **Cache Management:**
+    *   `TB.router.clearCache(path)`: Clears HTML cache for a specific path or all if `path` is omitted (uses `sessionStorage` if `USE_SESSION_CACHE` is true in router.js).
+    *   `scriptCache` (Set of script `src` URLs) prevents re-fetching external scripts.
+*   **Events:**
+    *   `router:beforeNavigation`: `{ from, to }`
+    *   `router:navigationSuccess`: `{ path, contentSource }` ('cache' or 'fetched')
+    *   `router:navigationError`: `{ path, error }`
+    *   `router:contentProcessed`: `{ path, element }`
 
-**Example: Navigating and Handling Events**
-```html
-<!-- In your main HTML -->
-<nav>
-    <a href="/home">Home</a>
-    <a href="/products">Products</a>
-    <a href="/web/assets/contact.html">Contact (relative to baseFileUrl)</a>
-</nav>
-<div id="app-root"></div>
-```
+#### `TB.crypto`: Cryptographic Utilities
 
-```javascript
-// Initialize router (typically done in TB.init)
-// TB.router.init(document.getElementById('app-root'));
+Provides functions for various cryptographic operations, including WebAuthn. Relies on browser's Web Crypto API.
 
-// Programmatic navigation
-TB.router.navigateTo('/home');
+*   **Key Management & Signing:**
+    *   `TB.crypto.generateAsymmetricKeys()`: Generates RSA-OAEP key pair (PEM & Base64).
+    *   `TB.crypto.decryptAsymmetric(encryptedBase64Data, privateKeyBase64, convertHex = false)`: Decrypts RSA-OAEP encrypted data.
+    *   `TB.crypto.signMessage(privateKeyBase64, message)`: Signs a message using RSA-PSS.
+    *   `TB.crypto.storePrivateKey(privateKeyBase64, username)`: Stores private key in `localStorage`.
+    *   `TB.crypto.retrievePrivateKey(username)`: Retrieves private key.
+*   **Symmetric Encryption/Decryption:**
+    *   `TB.crypto.generateSymmetricKey()`: Generates an AES-GCM key (Base64 of raw key).
+    *   `TB.crypto.decryptSymmetric(encryptedDataB64, password)`: Decrypts AES-GCM data (assumes IV is prepended to ciphertext, password used for key derivation via PBKDF2).
+*   **WebAuthn (Passkeys):**
+    *   The Relying Party ID (`rpId`) is determined from `window.location.hostname` (or "localhost").
+    *   `TB.crypto.registerWebAuthnCredential(registrationData, singData)`:
+        *   `registrationData`: `{ challenge, userId, username }` from server.
+        *   `singData`: Additional data (e.g., session token) to associate.
+        *   Calls `navigator.credentials.create()`. Returns payload for server verification.
+    *   `TB.crypto.authorizeWebAuthnCredential(rawIdAsBase64, challenge, username)`:
+        *   `rawIdAsBase64`, `challenge`, `username` from server.
+        *   Calls `navigator.credentials.get()`. Returns assertion payload for server verification.
+*   **Data Conversions:** `arrayBufferToBase64`, `base64ToArrayBuffer`, `strToBase64`, etc.
 
-TB.events.on('router:navigationSuccess', ({ path, contentSource }) => {
-    console.log(`Navigated to ${path} (from ${contentSource})`);
-    // TB.ui.processDynamicContent is called internally by the router for the appRootElement
-    // but if you load content into other areas, you might call it manually:
-    // TB.ui.processDynamicContent(document.getElementById('some-other-area'));
-});
+#### `TB.user`: User Session & Authentication
 
-TB.events.on('router:navigationError', ({ path, error }) => {
-    console.error(`Failed to navigate to ${path}:`, error);
-    TB.ui.Toast.showError(`Could not load page: ${path}`);
-});
-```
+Manages user state, authentication flows, and user-specific data. User state is stored under `TB.state.get('user')`.
 
-### API Communication (`TB.api`)
-`TB.api` is responsible for all backend communication, supporting standard HTTP requests and Tauri `invoke` calls.
+*   **Initialization:** `TB.user.init(forceServerFetch = false)`:
+    *   Called by `TB.init`. Loads session, validates with backend, synchronizes user data.
+*   **Authentication State:** `TB.user.isAuthenticated()`, `TB.user.getUsername()`, `TB.user.getToken()`, etc.
+*   **Login Methods:**
+    *   `async TB.user.signup(username, email, initiationKey, registerAsPersona = false)`: Initiates user creation.
+    *   `async TB.user.loginWithDeviceKey(username)`: Login using locally stored asymmetric key.
+    *   `async TB.user.loginWithWebAuthn(username)`: Login using WebAuthn (passkey).
+    *   `async TB.user.requestMagicLink(username)`: Requests a magic link email.
+    *   `async TB.user.registerDeviceWithInvitation(username, invitationKey)`: Registers a new device.
+    *   `async TB.user.registerWebAuthnForCurrentUser(username)`: Adds a WebAuthn credential for an authenticated user.
+*   **Session Management:**
+    *   `async TB.user.checkSessionValidity()`: Validates current token with server.
+    *   `async TB.user.logout(notifyServer = true)`: Clears local session, notifies server.
+*   **User-Specific Data:** `TB.user.getUserData(key)`, `TB.user.setUserData(keyOrObject, value, syncToServer = false)`, `async TB.user.syncUserData()`, `async TB.user.fetchUserData()`.
+*   **Events:** `user:stateChanged`, `user:loggedOut`.
 
-**Key Structures:**
-*   **`Result` Object**: Standardized wrapper for API responses.
-    *   `origin`: Source of the data (e.g., `['http']`, `['tauri']`).
-    *   `error`: Error type (e.g., `TB.api.ToolBoxError.none`, `TB.api.ToolBoxError.input_error`).
-    *   `result`: A `ToolBoxResult` object.
-        *   `data_to`: Interface target (e.g., `TB.api.ToolBoxInterfaces.api`, `.cli`).
-        *   `data_info`: Additional info about the data.
-        *   `data`: The actual payload.
-    *   `info`: A `ToolBoxInfo` object.
-        *   `exec_code`: Execution code (e.g., HTTP status or custom code).
-        *   `help_text`: Descriptive message.
-    *   Methods: `.log()`, `.html()`, `.get()` (returns `result.data`).
-*   `ToolBoxError`: Enum for error types.
-*   `ToolBoxInterfaces`: Enum for data destinations.
+#### `TB.sse`: Server-Sent Events
 
-**Main Method: `TB.api.request()`**
-```javascript
-async TB.api.request(
-    moduleName,      // string: Backend module/class OR full path (e.g., '/special/endpoint')
-    functionName,    // string: Backend function/method (ignored if moduleName is full path)
-                     // OR object: Query parameters for GET/DELETE if moduleName is full path
-    payload = null,  // object|string: Data to send. If string, used as query params for GET/POST-URL.
-    method = 'POST', // string: HTTP method ('GET', 'POST', 'PUT', 'DELETE', etc.)
-    useTauri = 'auto', // string: 'auto', 'force' (Tauri only), or 'never' (HTTP only)
-    isSpecialAuthRoute = false // boolean: For routes with custom auth header handling (rarely needed)
-)
-```
-*   **Tauri Integration**: If `env.isTauri()` is true and `useTauri` is 'auto' or 'force', it attempts `window.__TAURI__.invoke("moduleName.functionName", payload)`. Falls back to HTTP if 'auto' and invoke fails.
-*   **HTTP Requests**:
-    *   URL construction:
-        *   Standard: `baseApiUrl/moduleName/functionName`
-        *   Full path: `baseApiUrl/moduleName` (where `moduleName` is e.g., `/login`)
-    *   Headers:
-        *   `Content-Type: application/json` and `Accept: application/json` by default for JSON.
-        *   `Authorization: Bearer <token>` is added if `TB.state.get('user.token')` exists (unless `isSpecialAuthRoute` has special handling, though current `_getRequestHeaders` adds it generally).
-    *   Payload:
-        *   GET/DELETE: Payload (object or string) becomes URL query parameters.
-        *   POST/PUT/PATCH: Object payload is JSON.stringified. String payload for POST can be query params if URL doesn't already have them.
-    *   Response Handling:
-        *   Automatically parses JSON responses.
-        *   Handles non-JSON responses (e.g., 204 No Content) gracefully.
-        *   Wraps responses (or errors) in a `Result` object.
+Manages connections to Server-Sent Event streams.
 
-**Helper Methods:**
-*   `TB.api.fetchHtml(path)`: Fetches HTML content, typically used by the router. Path is relative to `baseFileUrl`.
-*   `TB.api.httpPostData(module_name, function_name, data)`: Alias for `request(..., 'POST')`.
-*   `TB.api.AuthHttpPostData(username)`: Specific method for session validation. Calls `/validateSession` with `jwt_claim_device` and `Username`.
-*   `TB.api.logoutServer()`: Calls `/web/logoutS` to notify the server of logout.
-
-**Example: Making a GET Request**
-```javascript
-async function fetchProducts() {
-    TB.ui.Loader.show('Fetching products...');
-    try {
-        // GET /api/ProductManager/getProductsList?category=electronics&limit=10
-        const result = await TB.api.request(
-            'ProductManager',
-            'getProductsList',
-            { category: 'electronics', limit: 10 },
-            'GET'
-        );
-
-        if (result.error === TB.api.ToolBoxError.none) {
-            const products = result.get(); // products === result.result.data
-            console.log('Products:', products);
-            TB.state.set('products.list', products);
-        } else {
-            TB.logger.error('Failed to fetch products:', result.info.help_text);
-            TB.ui.Toast.showError(result.info.help_text || 'Could not load products.');
+*   **Connecting:** `TB.sse.connect(url, options = {})`
+    *   `options`: `{ onOpen, onError, onMessage, listeners: { eventName: handler }, eventSourceOptions }`.
+    ```javascript
+    TB.sse.connect('/api/sse/updates', {
+        listeners: {
+            'user-update': (data) => TB.state.set('user.profile', data),
+            'new-notification': (data) => TB.ui.Toast.showInfo(data.message)
         }
-    } catch (error) { // Network errors or other exceptions
-        TB.logger.error('Network error fetching products:', error);
-        TB.ui.Toast.showError('Network error. Please try again.');
-    } finally {
-        TB.ui.Loader.hide();
-    }
-}
+    });
+    ```
+*   **Disconnecting:** `TB.sse.disconnect(url)`, `TB.sse.disconnectAll()`
+*   **Getting Connection:** `TB.sse.getConnection(url)`
+*   **Events Emitted:** `sse:open:<url>`, `sse:error:<url>`, `sse:event:<url>:<eventName>`, etc.
 
-fetchProducts();
-```
+#### `TB.sw`: Service Worker Management
 
-**Example: Tauri Invoke or HTTP POST**
-```javascript
-async function saveData(dataToSave) {
-    const result = await TB.api.request(
-        'DataManager',  // Tauri: DataManager.save_data
-        'save_data',    // HTTP: /api/DataManager/save_data
-        dataToSave,     // Payload
-        'POST',         // HTTP Method
-        'auto'          // Try Tauri first, then HTTP
-    );
+Handles registration and communication with your application's service worker.
 
-    result.log(); // Logs the structured result to console
-
-    if (result.error === TB.api.ToolBoxError.none) {
-        TB.ui.Toast.showSuccess('Data saved successfully!');
-        return result.get(); // Return the data from server response
-    } else {
-        TB.ui.Toast.showError(`Save failed: ${result.info.help_text}`);
-        return null;
-    }
-}
-```
-
-### Event System (`TB.events`)
-A simple publish/subscribe system for decoupled communication.
-
-**Methods:**
-*   `TB.events.on(eventName, callback)`: Subscribes to an event.
-*   `TB.events.off(eventName, callback)`: Unsubscribes from an event.
-*   `TB.events.emit(eventName, data)`: Publishes an event with optional data.
-*   `TB.events.once(eventName, callback)`: Subscribes to an event for a single occurrence.
-
-**Example:**
-```javascript
-// Module A
-function doSomething() {
-    // ...
-    TB.events.emit('user:actionCompleted', { action: 'saveSettings', status: 'success' });
-}
-
-// Module B
-TB.events.on('user:actionCompleted', (eventData) => {
-    if (eventData.action === 'saveSettings' && eventData.status === 'success') {
-        console.log('User settings saved!');
-    }
-});
-```
-Framework Core Events (Examples):
-*   `state:changed`
-*   `state:changed:path:to:key`
-*   `router:beforeNavigation`, `router:navigationSuccess`, `router:navigationError`, `router:contentProcessed`
-*   `theme:changed`
-*   `tbjs:initialized`
-*   `api:networkError`
-*   `graphics:initialized`, `graphics:disposed`
-*   `cookieConsent:updated`
-*   `user:stateChanged`, `user:loggedOut`
-
-### Logging (`TB.logger`)
-Provides prefixed and timestamped console logging with different levels.
-
-**Methods:**
-*   `TB.logger.init({ logLevel })`: Called internally.
-*   `TB.logger.setLevel(levelName)`: Sets the minimum log level ('debug', 'info', 'warn', 'error', 'none').
-*   `TB.logger.debug(...args)`
-*   `TB.logger.log(...args)` (alias for `info`)
-*   `TB.logger.info(...args)`
-*   `TB.logger.warn(...args)`
-*   `TB.logger.error(...args)`
-
-**Example:**
-```javascript
-TB.logger.debug('This is a debug message with an object:', { id: 1, name: 'Test' });
-TB.logger.info('Application started.');
-TB.logger.warn('Something might be wrong here.');
-TB.logger.error('A critical error occurred!', new Error('Oops'));
-```
-Log level is configured via `TB.config.logLevel` during `TB.init`.
-
-### Environment Detection (`TB.env`)
-Detects the current runtime environment.
-
-**Methods:**
-*   `TB.env.detect()`: Called internally by `TB.init()`.
-*   `TB.env.isTauri()`: Returns `true` if running in a Tauri environment.
-*   `TB.env.isWeb()`: Returns `true` if running in a standard web browser environment.
-*   `TB.env.isMobile()`: (Placeholder) Intended for Tauri mobile detection, currently may not be fully implemented.
-
-**Example:**
-```javascript
-if (TB.env.isTauri()) {
-    TB.logger.log('Running in Tauri, specific Tauri features can be used.');
-    // Example: window.__TAURI__.fs.readTextFile(...)
-} else if (TB.env.isWeb()) {
-    TB.logger.log('Running in a web browser.');
-}
-```
-
-### Cryptography (`TB.crypto`)
-Provides various cryptographic utilities, including WebAuthn support.
-
-**Key Management:**
-*   `TB.crypto.generateAsymmetricKeys()`: Generates RSA-OAEP key pair (PEM and base64).
-*   `TB.crypto.decryptAsymmetric(encryptedTextBase64, privateKeyBase64, convertHex = false)`: Decrypts RSA-OAEP encrypted text.
-*   `TB.crypto.signMessage(privateKeyBase64, message)`: Signs a message using RSA-PSS with the private key.
-*   `TB.crypto.storePrivateKey(privateKeyBase64, username)`: Stores private key in `localStorage`.
-*   `TB.crypto.retrievePrivateKey(username)`: Retrieves private key from `localStorage`.
-
-**Symmetric Encryption (Example - requires careful IV handling):**
-*   `TB.crypto.generateSymmetricKey()`: Generates an AES-GCM key (base64 raw).
-*   `TB.crypto.decryptSymmetric(encryptedDataB64, password)`: Decrypts AES-GCM data. *Note: This implementation assumes the IV is prepended to the ciphertext (first 12 bytes). The `password` is used to derive the key via PBKDF2.*
-
-**WebAuthn:**
-*   **`getRpId()` (internal, used by WebAuthn functions):** Determines the Relying Party ID based on `TB.config.get('baseAppUrl')` or `window.location.hostname`. For localhost, it's "localhost".
-*   `TB.crypto.registerWebAuthnCredential(registrationData, sing)`:
-    *   `registrationData`: `{ challenge, userId, username }`.
-        *   `challenge`: Server-provided challenge (string, base64url encoded then decoded to ArrayBuffer).
-        *   `userId`: Server-provided user ID (string, base64url encoded then decoded to ArrayBuffer).
-        *   `username`: User's display name.
-    *   `sing`: Additional data (e.g., session token) that might be included in the payload sent to the server.
-    *   Calls `navigator.credentials.create()`.
-    *   Returns a promise resolving to the payload object to be sent to the server for `/register_user_personal_key` (or similar endpoint).
-*   `TB.crypto.authorizeWebAuthnCredential(rawIdAsBase64, challenge, username)`:
-    *   `rawIdAsBase64`: Base64 representation of the credential's rawId (from server).
-    *   `challenge`: Server-provided challenge string.
-    *   `username`: User's display name.
-    *   Calls `navigator.credentials.get()`.
-    *   Returns a promise resolving to the payload object to be sent to the server for `/validate_persona` (or similar endpoint).
-
-**Helper Functions:**
-*   `arrayBufferToBase64(buffer)`
-*   `base64ToArrayBuffer(base64)`
-*   `strToArrayBuffer(str)`
-*   `arrayBufferToStr(arrayBuffer)`
-*   And others...
-
-**Example: Registering a WebAuthn Credential (Passkey)**
-```javascript
-// Assuming 'username' is known and user is authenticated to add a new key
-async function registerNewPasskey(username) {
-    try {
-        // 1. Client requests challenge from server for this user
-        const challengeRes = await TB.api.request('AuthManager', 'getWebAuthnRegistrationChallenge', { username }, 'POST');
-        if (challengeRes.error !== TB.api.ToolBoxError.none || !challengeRes.get()?.challengeInfo) {
-            throw new Error(challengeRes.info.help_text || "Failed to get registration challenge.");
+*   **Configuration (`TB.config.get('serviceWorker')`):** `enabled`, `url`, `scope`.
+*   **Registration:** Called automatically by `TB.init` if enabled. Manual: `await TB.sw.register()`.
+*   **Unregistration:** `await TB.sw.unregister()`
+*   **Sending Messages:** `await TB.sw.sendMessage({ type: 'GET_VERSION' })`
+*   **Events Emitted:** `sw:updateAvailable`, `sw:contentCached`.
+    ```javascript
+    TB.events.on('sw:updateAvailable', ({ registration }) => {
+        if (confirm('New version available. Reload?')) {
+            registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+            // Listen for controllerchange to reload
+            navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload());
         }
-        const { challenge, userId } = challengeRes.get().challengeInfo; // Server provides its internal userId for WebAuthn
+    });
+    ```
 
-        // 2. Client uses TB.crypto to create credential
-        const currentSessionToken = TB.user.getToken(); // Example for 'sing' parameter
-        const webAuthnPayload = await TB.crypto.registerWebAuthnCredential(
-            { challenge, userId, username },
-            currentSessionToken
-        );
+#### `TB.utils`: General Utilities
 
-        // 3. Client sends new credential to server for verification and storage
-        const registrationResult = await TB.api.request('AuthManager', 'completeWebAuthnRegistration', webAuthnPayload, 'POST');
+A collection of helper functions.
 
-        if (registrationResult.error === TB.api.ToolBoxError.none) {
-            TB.ui.Toast.showSuccess('Passkey registered successfully!');
-        } else {
-            TB.ui.Toast.showError(`Passkey registration failed: ${registrationResult.info.help_text}`);
-        }
-    } catch (error) {
-        TB.logger.error('[WebAuthnDemo] Registration error:', error);
-        TB.ui.Toast.showError(error.message || 'An error occurred during passkey registration.');
-    }
-}
-```
+*   `TB.utils.autocomplete(inputElement, arrayOrFunctionSource)`: Basic autocomplete (prefer `TB.ui.AutocompleteWidget`).
+*   `TB.utils.debounce(func, delay)`
+*   `TB.utils.throttle(func, limit)`
+*   `TB.utils.uniqueId(prefix = 'id-')`
+*   `TB.utils.deepClone(obj)`
+*   `TB.utils.cleanUrl(url)`: Basic URL cleaning.
 
-### User Management (`TB.user`)
-Manages user authentication state, sessions, and user-specific data.
+#### `TB.graphics`: 3D Graphics (THREE.js)
 
-**State:** The user's state (isAuthenticated, username, token, etc.) is stored under `TB.state.get('user')`.
+Manages a THREE.js scene, typically for background effects.
 
-**Methods:**
-*   `TB.user.init(forceServerFetch = false)`: Initializes the user module.
-    *   Loads session from `localStorage` (`tbjs_user_session`).
-    *   If authenticated, validates the session with the server (`TB.api.AuthHttpPostData`).
-    *   Synchronizes `userData` based on timestamps (`tbjs_user_data_timestamp`) if `forceServerFetch` is true or server data is newer.
-*   `TB.user.signup(username, email, initiationKey, registerAsPersona = false)`: Placeholder for signup flow.
-*   `TB.user.loginWithDeviceKey(username)`: Performs login using a locally stored asymmetric key.
-    1.  Retrieves private key using `TB.crypto.retrievePrivateKey()`.
-    2.  Requests challenge from `CloudM.AuthManager.get_to_sing_data`.
-    3.  Signs challenge using `TB.crypto.signMessage()`.
-    4.  Validates signature with `CloudM.AuthManager.validate_device`.
-    5.  If successful, updates user state with token and user data.
-*   `TB.user.loginWithWebAuthn(username)`: Performs WebAuthn (passkey) login.
-    1.  Requests challenge & rawId from `CloudM.AuthManager.get_to_sing_data` (`personal_key: true`).
-    2.  Calls `TB.crypto.authorizeWebAuthnCredential()`.
-    3.  Sends assertion to `CloudM.AuthManager.validate_persona`.
-*   `TB.user.requestMagicLink(username)`: Requests a magic link email via `CloudM.AuthManager.get_magic_link_email`.
-*   `TB.user.registerDeviceWithInvitation(username, invitationKey)`: Registers a new device using an invitation key.
-    1.  Generates new asymmetric keys (`TB.crypto.generateAsymmetricKeys()`).
-    2.  Stores private key (`TB.crypto.storePrivateKey()`).
-    3.  Sends public key and invitation to `CloudM.AuthManager.add_user_device`.
-    4.  Attempts login via `loginWithDeviceKey()` upon success.
-*   `TB.user.registerWebAuthnForCurrentUser(username)`: Registers a WebAuthn credential for an already authenticated user.
-*   `TB.user.logout(notifyServer = true)`: Logs out the user, clears local session, and optionally notifies the server via `TB.api.logoutServer()`.
-*   `TB.user.checkSessionValidity()`: Checks if current session token is valid via `/IsValidSession`.
-*   **Getters:**
-    *   `TB.user.isAuthenticated()`
-    *   `TB.user.getUsername()`
-    *   `TB.user.getUserLevel()`
-    *   `TB.user.getToken()`
-    *   `TB.user.isDeviceRegisteredWithKey()`
-*   **User Data Management:**
-    *   `TB.user.getUserData(key)`: Gets a specific piece of user data from `TB.state.get('user.userData')`.
-    *   `TB.user.setUserData(keyOrObject, value, syncToServer = false)`: Sets user data locally. If `syncToServer` is true, calls `syncUserData`.
-    *   `TB.user.syncUserData(updatedFields = null)`: Syncs `userData` (or specified fields) to the server via `UserManager.updateUserData`.
-    *   `TB.user.fetchUserData()`: Fetches all user data from `UserManager.getUserData`.
-
-**Example: Login and Accessing User Info**
-```javascript
-async function handleLogin(username) {
-    const loginResult = await TB.user.loginWithDeviceKey(username);
-    if (loginResult.success) {
-        TB.ui.Toast.showSuccess(`Welcome, ${TB.user.getUsername()}!`);
-        TB.router.navigateTo('/dashboard');
-    } else {
-        TB.ui.Toast.showError(loginResult.message);
-    }
-}
-
-// Check if user is logged in before accessing a protected route
-if (!TB.user.isAuthenticated()) {
-    TB.router.navigateTo('/login');
-} else {
-    console.log('User Level:', TB.user.getUserLevel());
-}
-```
-
-### Server-Sent Events (`TB.sse`)
-Manages Server-Sent Event (SSE) connections.
-
-**Methods:**
-*   `TB.sse.connect(url, options = {})`: Establishes an SSE connection.
-    *   `url`: The SSE endpoint URL.
-    *   `options`:
-        *   `eventSourceOptions`: Options passed directly to the `EventSource` constructor (e.g., `{ withCredentials: true }`).
-        *   `onOpen`: Callback for `open` event.
-        *   `onError`: Callback for `error` event.
-        *   `onMessage`: Callback for generic `message` events.
-        *   `listeners`: An object of `{ eventName: handlerFunction }` for custom named SSE events.
-    *   Emits events like `sse:open:<url>`, `sse:error:<url>`, `sse:message:<url>`, `sse:event:<url>:<eventName>`.
-*   `TB.sse.disconnect(url)`: Closes a specific SSE connection.
-*   `TB.sse.disconnectAll()`: Closes all active SSE connections.
-*   `TB.sse.getConnection(url)`: Returns the `EventSource` object for a given URL.
-
-**Example:**
-```javascript
-const sseConnection = TB.sse.connect('/api/notifications', {
-    onOpen: () => TB.logger.info('SSE connection for notifications opened.'),
-    onError: (err) => TB.logger.error('SSE notifications error:', err),
-    listeners: {
-        'new_message': (data) => {
-            TB.ui.Toast.showInfo(`New message: ${data.text}`);
-        },
-        'user_update': (data) => {
-            TB.state.set('userDetails', data);
-        }
-    }
-});
-
-// To close
-// TB.sse.disconnect('/api/notifications');
-```
-
-### Service Worker (`TB.sw`)
-Manages the registration and communication with your application's Service Worker.
-
-**Configuration (`TB.config.serviceWorker`):**
-*   `enabled`: (boolean) Master switch for SW registration.
-*   `url`: (string) Path to your `sw.js` file (default: `/sw.js`).
-*   `scope`: (string) Scope for the Service Worker (default: `/`).
-
-**Methods:**
-*   `TB.sw.register()`: Registers the Service Worker based on configuration.
-    *   Handles `updatefound` and state changes of the installing worker.
-    *   Emits `sw:updateAvailable` or `sw:contentCached`.
-*   `TB.sw.unregister()`: Unregisters all active Service Workers for the current origin.
-*   `TB.sw.sendMessage(message)`: Sends a message to the active Service Worker controller and returns a Promise for the response.
-
-**Example:**
-```javascript
-// In TB.init config:
-// serviceWorker: { enabled: true, url: '/my-app-sw.js' }
-
-// tbjs will attempt to register it automatically.
-
-// Listening for updates
-TB.events.on('sw:updateAvailable', ({ registration }) => {
-    if (confirm('A new version is available. Reload to update?')) {
-        // Logic to skip waiting and activate new SW
-        registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-        // Usually, you'd listen for 'controllerchange' event then reload
-        navigator.serviceWorker.addEventListener('controllerchange', () => {
-            window.location.reload();
-        });
-    }
-});
-
-// Sending a message to SW
-async function clearAppCacheViaSW() {
-    try {
-        const response = await TB.sw.sendMessage({ type: 'CLEAR_CACHE', cacheName: 'app-data-v1' });
-        console.log('SW Cache Clear Response:', response);
-        TB.ui.Toast.showSuccess('App cache cleared by Service Worker.');
-    } catch (error) {
-        TB.ui.Toast.showError(`Error communicating with SW: ${error}`);
-    }
-}
-```
-
-### Utilities (`TB.utils`)
-A collection of general-purpose helper functions.
-
-**Methods:**
-*   `TB.utils.autocomplete(inputElement, array)`: Adds basic autocomplete to an input field.
-*   `TB.utils.debounce(func, delay)`: Debounces a function.
-*   `TB.utils.throttle(func, limit)`: Throttles a function.
-*   `TB.utils.uniqueId(prefix = 'id-')`: Generates a simple unique ID.
-*   `TB.utils.deepClone(obj)`: Deep clones an object or array.
-*   `TB.utils.cleanUrl(url)`: Removes protocol from a URL.
-
-**Example:**
-```javascript
-const myInput = document.getElementById('search');
-const suggestions = ['Apple', 'Banana', 'Orange', 'Apricot'];
-TB.utils.autocomplete(myInput, suggestions);
-
-const debouncedSave = TB.utils.debounce((data) => {
-    console.log('Saving data:', data);
-    // TB.api.request(...) to save
-}, 500);
-
-myInput.addEventListener('input', (e) => debouncedSave(e.target.value));
-```
+*   **Initialization:** `TB.graphics.init(canvasContainerSelector, options = {})`
+    *   `canvasContainerSelector`: CSS selector for the DOM element (e.g., `'#threeDScene'`).
+    *   `options`: `{ cameraY, cameraZ, sierpinskiDepth, loaderHideDelay }`.
+    *   Typically called if `themeSettings.background.type` is `'3d'`.
+*   **Control Methods:**
+    *   `TB.graphics.dispose()`, `TB.graphics.pause()`, `TB.graphics.resume()`.
+    *   `TB.graphics.updateTheme(themeMode)`: Called by `TB.ui.theme`.
+    *   `TB.graphics.setSierpinskiDepth(newDepth)`.
+    *   `TB.graphics.setAnimationSpeed(x, y, z, factor)`.
+    *   `TB.graphics.adjustCameraZoom(delta)`, `TB.graphics.setCameraZoom(absoluteZoomValue)`.
+*   **Programmed Animation Sequences:**
+    *   `TB.graphics.playAnimationSequence(sequenceString, onCompleteCallback, baseSpeedOverride, speedFactorOverride)`
+        *   `sequenceString`: e.g., `"R1+32:P2-14"` (Type, Repeat, Direction, Speed, Complexity).
+    *   `TB.graphics.stopAnimationSequence()`.
+*   **Events:** `graphics:initialized`, `graphics:disposed`.
 
 ---
 
-## 4. UI System (`TB.ui`)
-The `TB.ui` namespace contains modules and components for managing the user interface.
+### 4. UI System (`TB.ui.*`)
 
-### Theme Management (`TB.ui.theme`)
-Manages application themes (light/dark mode) and dynamic backgrounds.
+#### `TB.ui.theme`: Theming
 
-**Configuration (`TB.config.themeSettings`):**
-*   `defaultPreference`: 'light', 'dark', or 'system'.
-*   `background`: Object defining background types and sources.
-    *   `type`: 'color', 'image', '3d', 'none'.
-    *   `light`: `{ color: '#hex', image: 'path/to/image.jpg' }`
-    *   `dark`: `{ color: '#hex', image: 'path/to/image.jpg' }`
-    *   `placeholder`: `{ image: 'path/to/placeholder.jpg', displayUntil3DReady: true }` (used when `type` is '3d').
+Manages light/dark mode and application background.
 
-**Initialization:**
-`TB.ui.theme.init()` is called by `TB.init()` using `TB.config.get('themeSettings')`. It:
-*   Loads user preference from `localStorage` or defaults.
-*   Sets up a background container div (`#appBackgroundContainer`) if not present.
-*   Applies the initial theme and background.
-*   Listens for system theme changes and `graphics:initialized`/`graphics:disposed` events to update the background.
+*   **Initialization:** `TB.ui.theme.init(themeSettings)` called by `TB.init`.
+    *   `themeSettings`: `{ defaultPreference ('light'|'dark'|'system'), background: { type, light, dark, placeholder } }`.
+    *   `background.type`: `'3d'`, `'image'`, `'color'`, `'none'`.
+    *   `background.light/dark`: `{ color: string, image: string|null }`.
+    *   `background.placeholder`: `{ image_light, image_dark, displayUntil3DReady }`.
+*   **Interacting with Theme:**
+    *   `TB.ui.theme.setPreference('dark')`, `TB.ui.theme.togglePreference()`.
+    *   `TB.ui.theme.getCurrentMode()` ('light' or 'dark').
+    *   `TB.ui.theme.getPreference()` ('light', 'dark', or 'system').
+*   **Background Management:**
+    *   Uses `#appBackgroundContainer` for image/color and `#threeDScene` for 3D.
+*   **Events:** `theme:changed` (payload: `{ mode: 'light' | 'dark' }`).
 
-**Methods:**
-*   `TB.ui.theme.setPreference(preference)`: Sets the theme preference ('light', 'dark', 'system') and saves to `localStorage`. Updates the theme immediately.
-*   `TB.ui.theme.togglePreference()`: Toggles between 'light' and 'dark' modes. If current preference is 'system', it effectively picks the opposite of the current *effective* mode.
-*   `TB.ui.theme.getCurrentMode()`: Returns the current active mode ('light' or 'dark').
-*   `TB.ui.theme.getPreference()`: Returns the user's set preference ('light', 'dark', or 'system').
-*   `TB.ui.theme.getBackgroundConfig()`: Returns the current background configuration.
+#### `TB.ui.htmxIntegration`: HTMX Event Handling
 
-**Events:**
-*   `theme:changed`: Emitted with `{ mode: 'light'|'dark' }` when the effective theme changes.
-*   The `TB.graphics.updateTheme(mode)` method is called internally when the theme changes and graphics are active.
+Listens to HTMX events to integrate `tbjs` functionalities.
 
-**Example:**
-```javascript
-// In your app initialization (TB.init config)
-// themeSettings: {
-//   defaultPreference: 'system',
-//   background: {
-//     type: 'image',
-//     light: { image: '/images/bg-light.jpg', color: '#E0E0E0' },
-//     dark: { image: '/images/bg-dark.jpg', color: '#303030' }
-//   }
-// }
+*   **Initialization:** `TB.ui.htmxIntegration.init()` is called by `TB.init`.
+*   **`htmx:afterSwap`:** Calls `TB.ui.processDynamicContent` on the new HTMX target element.
+*   **`htmx:afterRequest`:**
+    *   Inspects XHR response. If JSON, wraps in `TB.api.Result`, shows toasts for errors.
+    *   Handles `REMOTE` render commands.
+    *   Emits `htmx:jsonResponse`.
 
-// Toggle theme with a button
-const themeToggleButton = document.getElementById('theme-toggle-btn');
-themeToggleButton.addEventListener('click', () => {
-    TB.ui.theme.togglePreference();
-});
+#### `TB.ui.processDynamicContent(parentElement, options = {})`
 
-// Listen for theme changes to update other UI elements
-TB.events.on('theme:changed', (eventData) => {
-    console.log('Theme is now:', eventData.mode);
-    // Update icons, specific component styles, etc.
-});
-```
-The background container `#appBackgroundContainer` is styled to be fixed and behind all other content (`z-index: -1`). The 3D graphics, if used as a background, are expected to render into `#threeDScene`.
+Initializes `tbjs` features/components within newly added DOM content.
 
-### Graphics (`TB.graphics`)
-Manages 3D rendering using Three.js, often used for dynamic backgrounds.
+*   `parentElement`: The container of the new content.
+*   `options`: `{ addScripts (default true), scriptCache }`.
+*   **Actions:** Calls `window.htmx.process()`, handles scripts, calls `TB.ui.MarkdownRenderer.renderAllIn()`, initializes data-attribute driven components like `AutocompleteWidget`.
 
-**Initialization:**
-`TB.graphics.init(canvasContainerSelector, options = {})`
-*   `canvasContainerSelector`: A CSS selector for the DOM element where the Three.js canvas will be appended (e.g., `#threeDScene`).
-*   `options`:
-    *   `cameraY`, `cameraZ`: Initial camera position.
-    *   `sierpinskiDepth`: Depth for the default Sierpinski tetrahedron animation.
-    *   `loaderHideDelay`: Delay in ms before hiding a `.loaderCenter` element after graphics init.
+#### UI Components
 
-**Key Features & Methods:**
-*   Creates a WebGLRenderer, Scene, and PerspectiveCamera.
-*   Builds a default Sierpinski tetrahedron fractal.
-*   Adds ambient and point lights.
-*   `TB.graphics.updateTheme(themeMode)`: Adjusts light colors based on 'light' or 'dark' mode. Called automatically by `TB.ui.theme`.
-*   `TB.graphics.setSierpinskiDepth(newDepth)`: Rebuilds the fractal with new depth.
-*   `TB.graphics.setAnimationSpeed(x, y, z, factor)`: Controls the rotation speed of the main 3D object.
-*   `TB.graphics.adjustCameraZoom(delta)` / `TB.graphics.setCameraZoom(value)`: Controls camera Z position.
-*   Interactive rotation via mouse/touch drag.
-*   **Animation Sequences:**
-    *   `TB.graphics.playAnimationSequence(sequenceString, onComplete, baseSpeed, speedFactor)`: Plays a predefined animation sequence.
-        *   `sequenceString`: Colon-separated steps, e.g., `"R1+32:P2-51:Y1+15"`.
-            *   Format: `Type(1)Repeat(N)Direction(1)Speed(1)Complexity(1)`
-            *   Type: `R` (Roll/X), `P` (Pan/Z), `Y` (Yaw/Y), `Z` (Zoom - placeholder).
-            *   Repeat: Number of repetitions.
-            *   Direction: `+` or `-`.
-            *   Speed: 1-9.
-            *   Complexity: 1-9 (influences duration).
-    *   `TB.graphics.stopAnimationSequence()`: Stops the current sequence.
-*   `TB.graphics.pause()` / `TB.graphics.resume()`: Pause/resume rendering loop.
-*   `TB.graphics.dispose()`: Cleans up Three.js resources and removes event listeners.
+##### `TB.ui.Modal`
 
-**Events:**
-*   `graphics:initialized`: Emitted when graphics setup is complete. `TB.ui.theme` listens to this.
-*   `graphics:disposed`: Emitted on cleanup.
+Displays modal dialogs.
 
-**Example: Initializing 3D Background**
-```html
-<!-- In your HTML -->
-<div id="myThreeCanvasContainer" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -10;"></div>
-```
-```javascript
-// In your TB.init config:
-// themeSettings: {
-//   background: {
-//     type: '3d'
-//   }
-// }
+*   **Static Usage:** `TB.ui.Modal.show({ title, content, maxWidth, buttons, onOpen, onClose, ... })`
+    *   `buttons`: `[{ text, action: (modalInstance) => {}, variant, className }]`
+*   **Styling:** Uses Tailwind CSS, "milk glass" effect.
+*   **Events:** `modal:shown`, `modal:closed`.
 
-// If TB.ui.theme is configured with type '3d', it will attempt to initialize graphics automatically.
-// However, you might need to ensure the container exists and is ready.
-// Or, initialize manually if you don't use themeSettings.background for it:
-document.addEventListener('DOMContentLoaded', () => {
-    if (TB.config.get('themeSettings.background.type') === '3d') {
-        const graphicsContext = TB.graphics.init('#myThreeCanvasContainer', {
-            sierpinskiDepth: 4,
-            cameraZ: 8
-        });
-        if (graphicsContext) {
-            console.log('3D Graphics initialized for background.');
-        }
-    }
-});
+##### `TB.ui.Toast`
 
-// Example: Play an animation sequence
-// TB.graphics.playAnimationSequence("R5+55:P2-22", () => console.log("Sequence done!"));
-```
+Displays "speech balloon" style toast notifications.
 
-### HTMX Integration (`TB.ui.htmxIntegration`)
-Manages interactions with HTMX.
+*   **Static Usage:**
+    *   `TB.ui.Toast.showInfo(message, options)`
+    *   `TB.ui.Toast.showSuccess(message, options)`
+    *   `TB.ui.Toast.showWarning(message, options)`
+    *   `TB.ui.Toast.showError(message, options)`
+*   **Options:** `{ title, duration, position, actions, icon, closable, showDotOnHide, dotDuration }`.
+*   **Events:** `toast:shown`, `toast:hidden`.
 
-**Initialization:**
-`TB.ui.htmxIntegration.init()` is called by `TB.init()`. It sets up global event listeners for HTMX events.
+##### `TB.ui.Loader`
 
-**Event Handling:**
-*   **`htmx:afterSwap`**:
-    *   Triggered after HTMX swaps content into the DOM.
-    *   Calls `TB.ui.processDynamicContent(event.detail.target)` to initialize `tbjs` components, run scripts, and apply Markdown rendering on the newly added content.
-*   **`htmx:afterRequest`**:
-    *   Triggered after an HTMX AJAX request completes.
-    *   If the response is JSON:
-        *   It attempts to wrap the JSON data in a `TB.api.Result` object.
-        *   Logs errors and shows a `TB.ui.Toast` if the `Result` indicates an error.
-        *   If the `Result.result.data_to` is `TB.api.ToolBoxInterfaces.remote` and contains a `render` command, it emits a `ws:renderCommand` event (for potential WebSocket/SSE driven rendering updates).
-        *   Emits an `htmx:jsonResponse` event with the processed data.
-    *   If the response is HTML, HTMX handles the swap, and `htmx:afterSwap` will subsequently fire.
-
-**Usage:** This module works mostly in the background. Ensure your HTMX-powered components return appropriate HTML fragments or structured JSON that `tbjs` can understand.
-
-**Example: HTMX with JSON Response**
-Backend (Python/Flask example) returning JSON that might trigger a toast or update state:
-```python
-@app.route('/htmx/submit-form', methods=['POST'])
-def submit_form_htmx():
-    # ... process form ...
-    if success:
-        return jsonify({
-            "error": "none",
-            "result": {
-                "data_to": "API", # Or "CLIENT"
-                "data_info": "Form submitted successfully.",
-                "data": {"new_id": 123, "message": "Item created."}
-            },
-            "info": {"exec_code": 0, "help_text": "Success"}
-        })
-    else:
-        return jsonify({
-            "error": "InputError",
-            "result": {},
-            "info": {"exec_code": 1, "help_text": "Invalid data provided."}
-        }), 400
-```
-JavaScript to listen for custom JSON processing:
-```javascript
-TB.events.on('htmx:jsonResponse', ({ detail, data: tbResult }) => {
-    console.log('HTMX JSON Response:', tbResult.get());
-    if (tbResult.get() && tbResult.get().message) {
-        TB.ui.Toast.showInfo(tbResult.get().message);
-    }
-});
-```
-
-### Dynamic Content Processing
-`TB.ui.processDynamicContent(parentElement, options = {})`
-
-This function is crucial when new HTML is added to the DOM, for example, by `TB.router` or HTMX after an `hx-swap`.
-
-*   `parentElement`: The DOM element (or a wrapper around) the newly added content.
-*   `options`:
-    *   `addScripts` (boolean, default `true`): Whether to process `<script>` tags.
-    *   `scriptCache` (Set, default `new Set()`): A Set to keep track of loaded script URLs to prevent re-execution. `TB.router` passes its cache.
-
-**Actions Performed:**
-1.  Calls `window.htmx.process(parentElement)` to initialize HTMX attributes on the new content.
-2.  Handles `<script>` tags (see `TB.router` script handling for details).
-3.  Initializes `tbjs` UI components found within `parentElement` (e.g., by looking for specific data attributes or classes).
-4.  Calls `TB.ui.MarkdownRenderer.renderAllIn(parentElement)` if applicable.
-
-**Usage:**
-Generally, you don't need to call this manually if content is loaded via `TB.router` or standard HTMX swaps, as `TB.router` and `TB.ui.htmxIntegration` handle it. However, if you manually inject HTML that needs `tbjs` processing:
-```javascript
-const newContentContainer = document.getElementById('dynamic-area');
-newContentContainer.innerHTML = '... new HTML with tbjs components, markdown, or scripts ...';
-TB.ui.processDynamicContent(newContentContainer);
-```
-
-### Components
-
-`tbjs` provides a set of pre-built UI components. They generally use Tailwind CSS classes for styling (often prefixed with `tb-` as per `tailwind.config.js`) and can be initialized programmatically or sometimes via data attributes.
-
-#### Modal (`TB.ui.Modal`)
-Displays content in a modal dialog.
-
-**Options:**
-*   `content`: HTML string or HTMLElement for the modal body.
-*   `title`: (string) Optional modal title.
-*   `closeOnOutsideClick`: (boolean, default `true`)
-*   `closeOnEsc`: (boolean, default `true`)
-*   `buttons`: Array of button config objects: `{ text, action, variant, className, size }`.
-*   `onOpen`, `onClose`, `beforeClose`: Callbacks. `beforeClose` can return `false` to prevent closing.
-*   `maxWidth`: (string, Tailwind class, default `'max-w-lg'`)
-*   `modalId`: Custom ID for the modal element.
-*   `customClasses`: Object to override default Tailwind classes for `overlay`, `modalContainer`, etc.
-
-**Methods:**
-*   `modal.show()`: Displays the modal.
-*   `modal.close()`: Closes the modal.
-
-**Static Method:**
-*   `TB.ui.Modal.show(options)`: Creates and shows a modal.
-
-**Example:**
-```javascript
-TB.ui.Modal.show({
-    title: 'Confirm Action',
-    content: '<p>Are you sure you want to delete this item?</p>',
-    maxWidth: 'max-w-md', // Tailwind class
-    buttons: [
-        {
-            text: 'Cancel',
-            variant: 'secondary', // Uses TB.ui.Button styling
-            action: (modal) => modal.close()
-        },
-        {
-            text: 'Delete',
-            variant: 'danger',
-            action: (modal) => {
-                console.log('Item deleted!');
-                modal.close();
-                TB.ui.Toast.showSuccess('Item deleted successfully.');
-            }
-        }
-    ],
-    onOpen: () => console.log('Confirmation modal opened.'),
-    onClose: () => console.log('Confirmation modal closed.')
-});
-```
-
-#### Toast (`TB.ui.Toast`)
-Displays small, non-blocking notification messages.
-
-**Options:**
-*   `message`: (string) The message content.
-*   `type`: `'info'`, `'success'`, `'warning'`, `'error'` (default `'info'`).
-*   `duration`: (number) Milliseconds to display (0 for sticky, default `5000`).
-*   `position`: `'top-right'`, `'top-center'`, etc. (default `'top-right'`).
-*   `title`: (string) Optional title.
-*   `actions`: Array of action objects: `[{ text: 'Undo', action: () => { /* ... */ } }]`.
-*   `icon`: (boolean, default `true`) Show type-specific icon.
-*   `closable`: (boolean, default `true`) Show a close button.
-*   `customClasses`: For overriding default styling of toast elements.
-
-**Static Methods:**
-*   `TB.ui.Toast.showInfo(message, options)`
-*   `TB.ui.Toast.showSuccess(message, options)`
-*   `TB.ui.Toast.showWarning(message, options)`
-*   `TB.ui.Toast.showError(message, options)`
-*   `TB.ui.Toast.hideAll()`
-
-**Example:**
-```javascript
-TB.ui.Toast.showSuccess('Profile updated successfully!', {
-    duration: 3000,
-    position: 'bottom-center'
-});
-
-TB.ui.Toast.showError('Failed to connect to server.', {
-    title: 'Network Error',
-    duration: 0, // Sticky
-    actions: [
-        { text: 'Retry', action: () => console.log('Retry clicked!') }
-    ]
-});
-```
-
-#### Loader (`TB.ui.Loader`)
 Displays a loading indicator.
 
-**Options:**
-*   `text`: (string, default `'Loading...'`) Text displayed below the spinner.
-*   `fullscreen`: (boolean, default `true`) If true, covers the whole page.
-*   `customSpinnerHtml`: (string) Custom HTML for the spinner.
-*   `customClasses`: For overriding default styling of overlay, spinner container, text.
+*   **Static Usage (Global Page Loader):**
+    *   `const loaderElement = TB.ui.Loader.show('Processing...');`
+    *   `TB.ui.Loader.hide(loaderElement);` (or `TB.ui.Loader.hide()` for default).
+*   **Options:** `{ text, fullscreen, customSpinnerHtml }`.
 
-**Static Methods:**
-*   `TB.ui.Loader.show(textOrOptions)`: Shows a fullscreen loader. Returns the loader DOM element.
-*   `TB.ui.Loader.hide(loaderElement)`: Hides a specific loader element or the default fullscreen loader.
+##### `TB.ui.Button`
 
-**Example:**
-```javascript
-// Show default fullscreen loader
-const myLoader = TB.ui.Loader.show('Processing your request...');
+Creates styled button elements programmatically.
 
-// Simulate an async operation
-setTimeout(() => {
-    TB.ui.Loader.hide(myLoader); // Hide the specific loader instance
-    // Or TB.ui.Loader.hide(); to hide the default ID loader
-}, 2000);
-```
-*Note: The Loader component injects its own minimal CSS for the spinner animation (`tbjs_spin`) and basic layout if not overridden by Tailwind classes.*
+*   **Static Usage:** `const myButtonElement = TB.ui.Button.create(text, onClickCallback, options)`
+*   **Options:** `{ variant, size, iconLeft, iconRight, type, disabled, isLoading, ... }`.
+*   **Instance Methods:** `setLoading(true)`, `setDisabled(true)`.
 
-#### Button (`TB.ui.Button`)
-A class to create styled button elements programmatically.
+##### `TB.ui.DarkModeToggle`
 
-**Options:**
-*   `text`: (string, default `'Button'`)
-*   `action`: (function) Click handler `(event, buttonInstance) => {}`.
-*   `variant`: `'primary'`, `'secondary'`, `'danger'`, `'outline'`, `'ghost'`, `'link'` (default `'primary'`).
-*   `size`: `'sm'`, `'md'`, `'lg'` (default `'md'`).
-*   `type`: `'button'`, `'submit'`, `'reset'` (default `'button'`).
-*   `disabled`: (boolean, default `false`)
-*   `isLoading`: (boolean, default `false`)
-*   `iconLeft`, `iconRight`: HTML string for icons (e.g., Material Symbol span).
-*   `customClasses`: Additional CSS classes.
-*   `attributes`: Object of custom attributes.
+UI component for switching themes, syncing with `TB.ui.theme`.
 
-**Instance Methods:**
-*   `setText(text)`
-*   `setLoading(isLoading, updateDom = true)`
-*   `setDisabled(isDisabled, updateDom = true)`
-*   `element`: The DOM element of the button.
-
-**Static Method:**
-*   `TB.ui.Button.create(text, action, options)`: Creates a button and returns its DOM element.
-
-**Example:**
-```javascript
-const submitBtnElement = TB.ui.Button.create('Submit Form', async (event, btnInstance) => {
-    btnInstance.setLoading(true);
-    try {
-        // await someApiCall();
-        TB.ui.Toast.showSuccess('Form submitted!');
-    } catch (e) {
-        TB.ui.Toast.showError('Submission failed.');
-    } finally {
-        btnInstance.setLoading(false);
-    }
-}, {
-    variant: 'primary',
-    size: 'lg',
-    iconLeft: '<span class="material-symbols-outlined">save</span>',
-    attributes: { 'data-form-id': 'user-reg-form' }
-});
-
-document.getElementById('form-actions').appendChild(submitBtnElement);
-```
-
-#### DarkModeToggle (`TB.ui.DarkModeToggle`)
-Manages a dark mode toggle button/UI element, syncing with `TB.ui.theme`.
-
-**Options (passed to constructor or `TB.ui.DarkModeToggle.init()`):**
-*   `containerSelector`: (string, default `'#darkModeToggleContainer'`) The main clickable element or wrapper.
-*   `iconSelector`: (string, default `.tb-toggle-icon'`) Selector for the icon element (e.g., a `<span>` for Material Symbols).
-*   `checkboxSelector`: (string, default `'#darkModeSwitch'`) Selector for an optional underlying `<input type="checkbox">`.
-*   `lightModeIconClass`, `darkModeIconClass`: Text content for the icon (e.g., Material Symbol names like `'light_mode'`, `'dark_mode'`).
-*   `rotationActiveDeg`, `rotationInactiveDeg`, `rotationTransition`: For icon rotation animation.
-
-**Initialization:**
-*   `new TB.ui.DarkModeToggle(options)`
-*   `TB.ui.DarkModeToggle.init(optionsOrSelector)`: Static convenience method.
-
-**HTML Structure Examples:**
-
-1.  **Icon-only Toggle (recommended):**
+*   **HTML (Example):**
     ```html
-    <button id="darkModeToggleContainer" aria-label="Toggle dark mode" class="tb-p-2 tb-rounded-full hover:tb-bg-gray-200 dark:hover:tb-bg-gray-700">
-        <span class="material-symbols-outlined tb-toggle-icon"></span>
-    </button>
+    <div id="darkModeToggleContainer">
+        <label for="darkModeSwitch"><span class="tb-toggle-icon material-symbols-outlined">light_mode</span></label>
+        <input type="checkbox" id="darkModeSwitch" class="tb-sr-only">
+    </div>
     ```
-    Initialize with: `TB.ui.DarkModeToggle.init();` (uses default selectors) or `TB.ui.DarkModeToggle.init('#darkModeToggleContainer');`
+*   **Initialization:** `TB.ui.DarkModeToggle.init({ containerSelector, iconSelector, checkboxSelector, ... })`. Default init uses common selectors.
+*   Updates icon and checkbox based on `theme:changed` event.
 
-2.  **Checkbox-driven Toggle:**
+##### `TB.ui.CookieBanner`
+
+Displays a cookie consent banner and settings modal.
+
+*   **Static Usage:** `TB.ui.CookieBanner.show({ title, message, termsLink, onConsent, ... })`
+*   `onConsent` callback receives `{ essential, preferences, analytics, source }`.
+*   **Methods:** `CookieBanner.getConsent()`, `CookieBanner.clearConsent()`.
+*   **Events:** `cookieConsent:updated`, `cookieBanner:shown`/`hidden`.
+
+##### `TB.ui.MarkdownRenderer`
+
+Renders Markdown to HTML, with optional `highlight.js` syntax highlighting.
+
+*   **Dependencies:** `marked`, `highlight.js`, `marked-highlight` (global or loaded).
+*   **Methods:**
+    *   `TB.ui.MarkdownRenderer.render(markdownString)`
+    *   `TB.ui.MarkdownRenderer.renderAllIn(parentElement)` (for elements with `.markdown` class)
+    *   `TB.ui.MarkdownRenderer.renderElement(element)`
+*   Adds Tailwind Prose classes (`prose dark:prose-invert`) for styling.
+
+##### `TB.ui.NavMenu`
+
+A slide-in (or modal-style) navigation menu.
+
+*   **HTML Trigger (Example):**
     ```html
-    <label for="darkModeSwitch" id="darkModeToggleContainer" class="tb-inline-flex tb-items-center tb-cursor-pointer">
-        <input type="checkbox" id="darkModeSwitch" class="tb-sr-only tb-peer">
-        <div class="tb-relative tb-w-11 tb-h-6 tb-bg-gray-200 peer-focus:tb-outline-none peer-focus:tb-ring-4 peer-focus:tb-ring-blue-300 dark:peer-focus:tb-ring-blue-800 tb-rounded-full peer dark:tb-bg-gray-700 peer-checked:tb-after:tb-translate-x-full rtl:peer-checked:tb-after:-tb-translate-x-full peer-checked:tb-after:tb-border-white tb-after:tb-content-[''] tb-after:tb-absolute tb-after:tb-top-[2px] tb-after:tb-start-[2px] tb-after:tb-bg-white tb-after:tb-border-gray-300 tb-after:tb-border tb-after:tb-rounded-full tb-after:tb-h-5 tb-after:tb-w-5 tb-after:tb-transition-all dark:tb-border-gray-600 peer-checked:tb-bg-blue-600"></div>
-        <span class="material-symbols-outlined tb-toggle-icon tb-ml-3 tb-text-gray-900 dark:tb-text-gray-300"></span>
-    </label>
+    <div id="Nav-Main"> <!-- Menu is appended here -->
+        <div id="links"><span class="material-symbols-outlined">menu</span></div>
+    </div>
     ```
-    Initialize with: `TB.ui.DarkModeToggle.init({ containerSelector: '#darkModeToggleContainer', iconSelector: '.tb-toggle-icon', checkboxSelector: '#darkModeSwitch' });`
+*   **Initialization:** `TB.ui.NavMenu.init({ triggerSelector, menuContentHtml, ... })`.
+*   **Events:** `navMenu:opened`, `navMenu:closed`.
 
-**Functionality:**
-*   Updates its visual state (icon, checkbox checked status) based on `TB.ui.theme.getCurrentMode()`.
-*   Listens for clicks (on container or changes on checkbox) to call `TB.ui.theme.setPreference()` or `TB.ui.theme.togglePreference()`.
-*   Reacts to `theme:changed` events to keep its visual state synchronized.
+##### `TB.ui.AutocompleteWidget`
 
-#### CookieBanner (`TB.ui.CookieBanner`)
-Displays a cookie consent banner and optional settings modal.
+Provides autocomplete suggestions for input fields.
 
-**Options:**
-*   `title`, `message`, `termsLink`, `termsLinkText`, `acceptMinimalText`, `showAdvancedOptions`, `advancedOptionsText`: Text and behavior customization.
-*   `onConsent`: Callback `(consentSettings) => {}` triggered when consent is given/updated.
-*   `customClasses`: For styling banner, modal, etc.
-
-**Static Method:**
-*   `TB.ui.CookieBanner.show(options)`: Creates and displays the banner if no consent is found in `localStorage` (`tbjs_cookie_consent`).
-*   `TB.ui.CookieBanner.getConsent()`: Retrieves current consent status from `localStorage`.
-
-**Functionality:**
-*   Shows a banner at the bottom of the page.
-*   Allows accepting recommended settings or opening a modal for granular control (Essential, Preferences, Analytics).
-*   Saves consent to `localStorage`.
-*   Emits `cookieConsent:updated` event with consent settings: `{ essential, preferences, analytics, source }`.
-
-**Example:**
-```javascript
-// This can be called early in your application setup
-TB.ui.CookieBanner.show({
-    title: 'Our Cookie Policy',
-    message: 'We use cookies to improve your experience. By clicking "Accept", you agree to our use of cookies.',
-    termsLink: '/privacy-policy',
-    onConsent: (settings) => {
-        console.log('Cookie consent given:', settings);
-        if (settings.analytics) {
-            // Initialize analytics tools
-        }
-    }
-});
-
-// Check consent later
-const consent = TB.ui.CookieBanner.getConsent();
-if (consent && consent.analytics) {
-    // ...
-}
-```
-
-#### MarkdownRenderer (`TB.ui.MarkdownRenderer`)
-Renders Markdown content to HTML, with optional syntax highlighting using `highlight.js`.
-
-**Prerequisites:**
-*   `marked.js` (e.g., `window.marked`) must be globally available.
-*   `highlight.js` (e.g., `window.hljs`) must be globally available for syntax highlighting.
-*   `marked-highlight` (e.g., `window.markedHighlight`) if using the extension for `hljs`.
-
-**Methods:**
-*   `TB.ui.MarkdownRenderer.init()`: Initializes `marked` with `highlight.js`. Called automatically on first render if needed, or can be called explicitly.
-*   `TB.ui.MarkdownRenderer.render(markdownString)`: Converts a Markdown string to HTML.
-*   `TB.ui.MarkdownRenderer.renderElement(element)`: Renders the content of a DOM element (if it has class `.markdown` and not already rendered). Adds Tailwind Prose classes.
-*   `TB.ui.MarkdownRenderer.renderAllIn(parentElement)`: Finds all elements with class `.markdown` within `parentElement` (that haven't been rendered yet) and renders them.
-
-**Usage:**
-Typically used by `TB.ui.processDynamicContent` when new HTML containing elements with the class `markdown` is added to the DOM.
-
-**Example:**
-HTML:
-```html
-<div class="markdown">
-# My Markdown Title
-
-This is some **bold** text and a [link](https://example.com).
-
-```javascript
-console.log('This is JavaScript code');
-```
-</div>
-```
-JavaScript (rendering is often automatic after content swap):
-```javascript
-// If you add markdown content dynamically outside of router/HTMX swaps:
-const myDiv = document.createElement('div');
-myDiv.className = 'markdown';
-myDiv.textContent = '## Subtitle\n* Item 1\n* Item 2';
-document.body.appendChild(myDiv);
-TB.ui.MarkdownRenderer.renderElement(myDiv); // Or TB.ui.MarkdownRenderer.renderAllIn(document.body);
-```
-The rendered output will be styled with Tailwind Prose classes (`prose dark:prose-invert max-w-none`).
-
-#### AutocompleteWidget (`TB.ui.AutocompleteWidget`)
-Provides autocomplete functionality for input fields.
-
-**Options:**
-*   `source`: Array of strings, or a function `(inputValue) => Promise<string[]>` or `(inputValue) => string[]`.
-*   `minLength`: (number, default `1`) Minimum characters to type before suggestions appear.
-*   `onSelect`: Callback `(value, inputElement) => {}` when an item is selected.
-*   `customClasses`: Object to customize Tailwind classes for `list`, `item`, `activeItem`, `highlight`.
-
-**Initialization:**
-*   `new TB.ui.AutocompleteWidget(inputElement, options)`
-*   `TB.ui.AutocompleteWidget.initAll(selector = 'input[data-tb-autocomplete]')`: Initializes for all matching elements.
-    *   Uses `data-tb-autocomplete-source` attribute (JSON array or global function name) if present.
-
-**Example:**
-HTML:
-```html
-<div class="tb-relative"> <!-- Autocomplete list will be positioned relative to this -->
-    <input type="text" id="myAutocompleteInput" class="tb-border tb-p-2 tb-w-full" placeholder="Search...">
-</div>
-<div class="tb-relative">
-    <input type="text" data-tb-autocomplete data-tb-autocomplete-source='["Apple", "Banana", "Cherry"]' class="tb-border tb-p-2 tb-w-full" placeholder="Fruit Search...">
-</div>
-```
-JavaScript:
-```javascript
-const acInput = document.getElementById('myAutocompleteInput');
-const mySourceFunction = async (term) => {
-    // In a real app, fetch from an API
-    const items = ['JavaScript', 'Java', 'Python', 'PHP', 'Perl'];
-    return items.filter(item => item.toLowerCase().includes(term.toLowerCase()));
-};
-
-new TB.ui.AutocompleteWidget(acInput, {
-    source: mySourceFunction,
-    minLength: 2,
-    onSelect: (value, el) => {
-        console.log(`Selected: ${value} from input:`, el);
-    }
-});
-
-// Initialize declarative autocomplete inputs
-TB.ui.AutocompleteWidget.initAll();
-```
-
-#### NavMenu (`TB.ui.NavMenu`)
-Manages a responsive navigation menu, typically a slide-in or modal menu for mobile.
-
-**Options:**
-*   `triggerSelector`: (string, default `'#links'`) Selector for the menu toggle button.
-*   `menuContentHtml`: (string) HTML content for the menu.
-*   `menuId`: (string, default `'tb-nav-menu-modal'`) ID for the menu container.
-*   `openIconClass`, `closeIconClass`: Material Symbols class names for the toggle icon.
-*   `customClasses`: For styling `overlay`, `menuContainer`, `iconContainer`.
-
-**HTML Structure Expectation (for default trigger):**
-The trigger element (e.g., `#links`) should ideally contain a `<span>` (often with `class="material-symbols-outlined"`) for the icon. If empty, the component will append one. The menu itself is appended to an element with `id="Nav-Main"`.
-
-**Example HTML:**
-```html
-<nav id="Nav-Main" class="tb-bg-gray-800 tb-text-white tb-p-4 tb-flex tb-justify-between tb-items-center">
-    <a href="/" class="tb-text-xl tb-font-bold">MyApp</a>
-    <button id="menuTrigger" class="tb-p-2 md:tb-hidden"> <!-- md:hidden to hide on larger screens -->
-        <span class="material-symbols-outlined">menu</span>
-    </button>
-    <ul class="hidden md:tb-flex tb-space-x-4"> <!-- Desktop links -->
-        <li><a href="/page1">Page 1</a></li>
-        <li><a href="/page2">Page 2</a></li>
-    </ul>
-</nav>
-```
-**Example JavaScript:**
-```javascript
-// Initialize the NavMenu
-const navMenu = TB.ui.NavMenu.init({
-    triggerSelector: '#menuTrigger', // Custom trigger
-    menuContentHtml: `
-        <ul class="tb-space-y-2 tb-p-4">
-            <li><a href="/home" class="tb-block tb-p-2 hover:tb-bg-gray-700 tb-rounded">Home</a></li>
-            <li><a href="/about" class="tb-block tb-p-2 hover:tb-bg-gray-700 tb-rounded">About</a></li>
-            <li><a href="/contact" class="tb-block tb-p-2 hover:tb-bg-gray-700 tb-rounded">Contact</a></li>
-        </ul>
-    `,
-    // customize classes if needed, e.g., for a different background:
-    // customClasses: {
-    //   menuContainer: 'fixed top-0 left-0 h-full w-64 sm:w-72 bg-neutral-800 shadow-xl z-[1041] transform -translate-x-full transition-transform duration-300 ease-in-out text-white',
-    // }
-});
-
-// The menu links will automatically close the menu upon navigation if handled by TB.router.
-```
+*   **HTML (Declarative):**
+    ```html
+    <input type="text" data-tb-autocomplete data-tb-autocomplete-source='["Apple", "Banana"]'>
+    <!-- Or data-tb-autocomplete-source="myGlobalFunctionName" -->
+    ```
+*   **Initialization:**
+    *   Automatic: `TB.ui.AutocompleteWidget.initAll()` (called by `processDynamicContent`).
+    *   Manual: `new TB.ui.AutocompleteWidget(inputEl, { source, minLength, onSelect, ... })`.
+*   **Features:** Keyboard navigation, ARIA attributes.
 
 ---
 
-## 5. Usage Examples
+### 5. Styling with Tailwind CSS
 
-### Basic Application Setup
-This example shows a minimal setup to get `tbjs` running with a simple home page.
+`tbjs` components are primarily styled using Tailwind CSS utility classes.
 
-**`index.html`:**
-```html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>tbjs App</title>
-    <link rel="stylesheet" href="path/to/tbjs/dist/tbjs.css">
-    <link rel="stylesheet" href="your-app-styles.css"> <!-- Your app specific styles -->
-    <script src="https://unpkg.com/htmx.org@2.0.0/dist/htmx.min.js"></script>
-    <script src="path/to/tbjs/dist/tbjs.js"></script>
-</head>
-<body>
-    <header>
-        <nav>
-            <a href="/home">Home</a>
-            <a href="/about">About</a>
-        </nav>
-    </header>
-    <main id="app-root"></main>
+#### Prefixing and CSS Variables
 
-    <script type="module">
-        document.addEventListener('DOMContentLoaded', () => {
-            TB.init({
-                appRootId: 'app-root',
-                baseApiUrl: '/api',
-                logLevel: 'debug',
-                // Default initial navigation will be to current path or /index.html handled by router
-            });
-        });
-    </script>
-</body>
-</html>
-```
+*   **Prefix:** `tbjs`'s internal Tailwind configuration uses a `tb-` prefix (e.g., `tb-bg-primary-500`, `tb-text-lg`). This is crucial to avoid conflicts if your main application also uses Tailwind without a prefix or with a different one.
+*   **Main CSS (`tbjs.css` or `tbjs-main.css`):**
+    *   Imports Tailwind utilities generated with the `tb-` prefix.
+    *   Defines CSS custom properties (variables) for theming (e.g., `--tb-color-primary-500`, `--theme-bg`, `--glass-bg`). These are used by the prefixed Tailwind classes.
+    *   Includes light and dark theme definitions typically applied to `body[data-theme="dark"]` or `body.dark-mode`.
+    *   Provides base styles and some component-specific styles hard to achieve with utilities alone (e.g., toast speech balloon tail).
+*   **Customization:**
+    *   Applications can override the CSS variables defined in `tbjs.css` in their own stylesheets to customize the look and feel.
+    *   For deeper Tailwind customization (new colors, variants specific to `tbjs`), you would edit `tbjs/tailwind.config.js` and rebuild `tbjs`.
 
-**`/web/pages/home.html`** (assuming `baseFileUrl` allows fetching this via `/home` or similar)
-```html
-<h1>Welcome to the Home Page!</h1>
-<p>This content was loaded by tbjs router.</p>
-<button hx-get="/api/time" hx-target="#time-div">Get Server Time</button>
-<div id="time-div"></div>
-```
-*   `TB.init()` sets up the router, which loads the initial page content (e.g., based on URL, or defaults to `/index.html` which might then redirect or show base content).
-*   Router intercepts clicks on `<a>` tags.
-*   HTMX integration is active.
+#### Using `tbjs` Tailwind Config in Your Project
 
-### Fetching Data and Updating State
-```javascript
-// products.js
-async function loadAndDisplayProducts() {
-    TB.ui.Loader.show('Loading products...');
-    const result = await TB.api.request('products', 'list', { limit: 5 }, 'GET');
-    TB.ui.Loader.hide();
+If your project also uses Tailwind CSS, you have a few options:
 
-    if (result.error === TB.api.ToolBoxError.none) {
-        const products = result.get();
-        TB.state.set('shop.products', products);
-        renderProductList(products);
-    } else {
-        TB.ui.Toast.showError('Failed to load products: ' + result.info.help_text);
-    }
-}
+1.  **Separate Builds (Recommended for Isolation):**
+    *   Build `tbjs.css` using its own Tailwind configuration (with the `tb-` prefix).
+    *   Build your application's CSS using its Tailwind configuration.
+    *   Include both CSS files in your HTML. The `tb-` prefix prevents most conflicts.
 
-function renderProductList(products) {
-    const container = document.getElementById('product-list-container');
-    if (!container) return;
-    container.innerHTML = `
-        <ul class="tb-list-disc tb-pl-5">
-            ${products.map(p => `<li class="tb-mb-2">${p.name} - $${p.price}</li>`).join('')}
-        </ul>
-    `;
-}
+2.  **Merging Configurations (Advanced):**
+    If you want a single Tailwind build process, you might try to merge configurations. This can be complex due to prefixing and potential conflicts.
+    *   You would need to ensure your main `tailwind.config.js` includes the `content` paths for `tbjs` source files.
+    *   You'd also need to decide how to handle the `tb-` prefix. If your app doesn't use a prefix, `tbjs` components might not be styled correctly unless you manually adapt their classes or adjust the `tbjs` source.
+    *   A simpler merge might involve including `tbjs`'s Tailwind plugin or preset if it were structured that way, but this is not the default.
 
-// Listen for state changes to re-render if needed elsewhere
-TB.events.on('state:changed:shop.products', (newProducts) => {
-    // Potentially update other parts of the UI, or just log
-    console.log('Product list updated in state:', newProducts);
-});
-
-// Initial load
-// loadAndDisplayProducts(); // Call this when the relevant view is loaded
-```
-
-### Client-Side Routing
-The router automatically handles link clicks and browser navigation.
-
-**`/web/pages/about.html`:**
-```html
-<h2>About Us</h2>
-<p>This is the about page, loaded dynamically by the router.</p>
-<script>
-    // This script will be executed when about.html is loaded
-    console.log('About page script executed!');
-    TB.logger.info('[AboutPage] Loaded and script ran.');
-</script>
-```
-*   When a user clicks `<a href="/about">About</a>`, `TB.router` fetches `/web/pages/about.html` (assuming `baseFileUrl` + `/about` maps to it) and injects its content into `#app-root`.
-*   The inline script in `about.html` is executed.
-
-### Displaying a Modal
-```javascript
-document.getElementById('show-info-modal').addEventListener('click', () => {
-    TB.ui.Modal.show({
-        title: 'Important Information',
-        content: `
-            <p>This is some important information presented in a modal.</p>
-            <p>Current time from state: ${TB.state.get('app.currentTime') || 'Not set'}</p>
-        `,
-        buttons: [
-            { text: 'OK', action: (modal) => modal.close(), variant: 'primary' }
-        ]
-    });
-});
-```
-
-### User Authentication Flow
-A simplified example of a device key login.
-
-**HTML for Login:**
-```html
-<!-- login.html -->
-<h2>Login with Device Key</h2>
-<input type="text" id="username" placeholder="Username" class="tb-border tb-p-2">
-<button id="loginButton" class="tb-bg-blue-500 tb-text-white tb-p-2 tb-rounded">Login</button>
-<div id="login-status"></div>
-```
-
-**JavaScript for login.html (or global script managing this view):**
-```javascript
-// Assuming this script runs when login.html is loaded
-document.addEventListener('DOMContentLoaded', () => { // Or use TB.events router:contentProcessed
-    const loginButton = document.getElementById('loginButton');
-    const usernameInput = document.getElementById('username');
-    const statusDiv = document.getElementById('login-status');
-
-    if (loginButton) {
-        loginButton.addEventListener('click', async () => {
-            const username = usernameInput.value.trim();
-            if (!username) {
-                statusDiv.textContent = 'Please enter a username.';
-                return;
-            }
-
-            statusDiv.textContent = 'Attempting login...';
-            TB.ui.Loader.show('Logging in...');
-
-            try {
-                const result = await TB.user.loginWithDeviceKey(username);
-                TB.ui.Loader.hide();
-
-                if (result.success) {
-                    statusDiv.textContent = `Login successful! Welcome ${TB.user.getUsername()}.`;
-                    TB.ui.Toast.showSuccess('Login successful!');
-                    TB.router.navigateTo('/dashboard'); // Navigate to a protected area
-                } else {
-                    statusDiv.textContent = `Login failed: ${result.message}`;
-                    TB.ui.Toast.showError(result.message);
-                }
-            } catch (error) {
-                TB.ui.Loader.hide();
-                statusDiv.textContent = `Login error: ${error.message}`;
-                TB.logger.error('Login process error:', error);
-            }
-        });
-    }
-});
-```
-
----
-
-## 6. Styling with Tailwind CSS
-`tbjs` components are designed to be styled with Tailwind CSS. The framework includes a `tailwind.config.js` and `postcss.config.js`.
-
-**Key Points:**
-*   **Prefix:** The provided `tailwind.config.js` uses `prefix: 'tb-'`. This means all Tailwind utility classes used internally by `tbjs` components will be prefixed (e.g., `tb-bg-blue-500`, `tb-text-lg`). This helps avoid conflicts with your application's own Tailwind classes if it doesn't use a prefix or uses a different one.
-*   **CSS Variables:** The configuration defines CSS variables for theming (e.g., `--tb-color-primary-500`, `--tb-color-background`). These are used in the `theme.extend.colors` section of `tailwind.config.js` and in `tbjs-main.css`. This allows themes (light/dark) to be easily applied and customized.
-*   **`tbjs-main.css`:** This file imports Tailwind utilities and defines the base CSS variables and some default styles for components like the Loader.
-*   **Customization:** You can customize the `tbjs` Tailwind configuration (`tbjs/tailwind.config.js`) or integrate its plugin settings into your main application's Tailwind config.
-
-**Using `tbjs` Tailwind Config in Your Project:**
-If your project also uses Tailwind CSS, you can either:
-1.  **Run two PostCSS processes**: One for `tbjs` (using its config) and one for your app (using your app's config).
-2.  **Merge configurations**: If your app's Tailwind setup can consume the `tbjs` Tailwind config (e.g., as a preset or by merging `content` paths and `theme` extensions).
-
-    Example of merging in your app's `tailwind.config.js`:
+    Example (Conceptual - requires careful setup):
     ```javascript
     // your-app/tailwind.config.js
-    import tbjsTailwindConfig from 'path/to/tbjs/tailwind.config.js';
+    // const tbjsTailwindConfig = require('path/to/tbjs/tailwind.config.js'); // If CJS
 
     export default {
       content: [
-        './src/**/*.{html,js}', // Your app's content
-        './node_modules/tbjs/src/**/*.{html,js}', // Include tbjs components for scanning
+        './src/**/*.{html,js,svelte,vue,jsx,tsx}', // Your app's content
+        './node_modules/tbjs/src/**/*.{html,js}', // Or path to tbjs source
       ],
-      darkMode: 'class', // Ensure consistency
-      prefix: '', // Or your app's prefix
+      // If your app uses a prefix, it might conflict or work alongside tb-
+      // prefix: 'app-',
       theme: {
         extend: {
-          // Merge tbjs theme extensions if needed, being mindful of prefix differences
-          colors: {
-            ...tbjsTailwindConfig.theme.extend.colors, // May need adjustment if your app doesn't use 'tb-' prefix
-            // Your app-specific colors
-          },
-          // ... other extensions
+          // You might try to extend with tbjs colors if they are defined without prefix in its config
+          // This part is tricky due to the 'tb-' prefix baked into tbjs's own build
         },
       },
-      plugins: [
-        // Your app's plugins
-      ],
+      plugins: [],
     };
     ```
-    *The key is to ensure Tailwind processes the classes used in `tbjs` components.* Using the `tb-` prefix in `tbjs` helps isolate its styles.
+    *Generally, keeping `tbjs.css` separate with its `tb-` prefix is the most straightforward way to avoid styling conflicts.*
 
 ---
 
-## 7. Building `tbjs` (For Developers)
-If you are modifying the `tbjs` framework itself:
+### 6. Advanced Topics
 
-*   **Dependencies**: Install development dependencies: `npm install`
-*   **Build**: `npm run build` (creates production build in `dist/`)
-*   **Watch**: `npm run watch` (watches for changes and rebuilds in production mode)
-*   **Lint**: `npm run lint` (checks JavaScript code style)
+#### Tauri Integration
 
-The build process uses Webpack, configured in `webpack.config.js`. It bundles the JavaScript into `dist/tbjs.js` (UMD format) and extracts CSS into `dist/tbjs.css`.
+*   **Environment Check:** Use `TB.env.isTauri()` to execute Tauri-specific code.
+*   **API Calls:** `TB.api.request()` automatically uses `window.__TAURI__.invoke` if `useTauri` is `'auto'` (default) or `'force'` and the environment is Tauri.
+    *   The Tauri command invoked is typically `moduleName.functionName` (e.g., `MyRustModule.my_function`).
+    ```javascript
+    if (TB.env.isTauri()) {
+        const result = await TB.api.request('my_rust_command', 'sub_command_or_payload_key', { data: 'payload' });
+        // Effective Tauri invoke: window.__TAURI__.invoke('my_rust_command.sub_command_or_payload_key', { data: 'payload' });
+    }
+    ```
+*   **Platform-Specific Features:** The `initializeApp` function shows a pattern for loading Tauri-specific listeners or UI adjustments.
+
+#### Working with 3D Graphics
+
+*   The `TB.graphics` module manages a THREE.js scene, typically for background effects.
+*   **Integration with Theme:** If `themeSettings.background.type` is `'3d'`, `TB.ui.theme` will initialize `TB.graphics` (targeting `#threeDScene`) and call `TB.graphics.updateTheme()` on light/dark mode changes.
+*   **Manual Control:**
+    ```javascript
+    TB.graphics.setSierpinskiDepth(3);
+    TB.graphics.playAnimationSequence("R2+52:P1-31", () => console.log("3D Animation done!"));
+    // Mouse/touch drag for interaction is usually enabled by default.
+    ```
 
 ---
+
+### 7. Example: Login Flow Walkthrough
+
+This conceptual example (based on a typical `login.js` implementation with `tbjs`) demonstrates how various modules work together:
+
+1.  **Initialization (e.g., in a `setupLogin` function called when the login page loads):**
+    *   Wait for `tbjs:initialized` or check `TB.isInitialized`.
+    *   Optionally, play an initial graphics animation: `TB.graphics.playAnimationSequence("Z0+12")`.
+    *   Check session validity: `TB.user.checkSessionValidity()`. If valid, show a toast and offer navigation to a dashboard.
+
+2.  **Form Submission (e.g., on login button click):**
+    *   Prevent default form submission.
+    *   Get username from input. Validate locally (show info/toast on error).
+    *   Play a "login attempt" graphics animation: `TB.graphics.playAnimationSequence("R1+11:P1-11")`.
+    *   Show a global loader: `TB.ui.Loader.show('Attempting login...')`.
+    *   **Authentication Logic (Conditional):**
+        *   If user opts for WebAuthn/Passkey: `await TB.user.loginWithWebAuthn(username)`.
+        *   Else (e.g., device key): `await TB.user.loginWithDeviceKey(username)`.
+            *   If `loginWithDeviceKey` fails due to no key: Show a sticky error toast with actions:
+                *   "Try Passkey/WebAuthn": Calls `TB.user.loginWithWebAuthn()`.
+                *   "Register with Invitation": Prompts for key, calls `TB.user.registerDeviceWithInvitation()`.
+                *   "Send Magic Link": Calls `TB.user.requestMagicLink()`.
+                *   Each action would have its own loader management and graphics animations.
+
+3.  **Result Handling:**
+    *   Based on `result.success` from `TB.user` login methods:
+        *   **Success:**
+            *   Show success toast: `TB.ui.Toast.showSuccess('Login successful!')`.
+            *   Play success animation: `TB.graphics.playAnimationSequence("Z1+32:R0+50")`.
+            *   Navigate: `TB.router.navigateTo('/dashboard')`.
+        *   **Failure:**
+            *   Show error toast: `TB.ui.Toast.showError(result.message)`.
+            *   Play failure animation: `TB.graphics.playAnimationSequence("P2-42")`.
+    *   Use `TB.logger` for detailed console logging throughout the process.
+    *   Hide loader (`TB.ui.Loader.hide()`) and stop animations (`TB.graphics.stopAnimationSequence()`) in a `finally` block or after completion.
+
+This flow showcases:
+*   **Event-driven UI:** Graphics and toasts respond to login states.
+*   **Module Orchestration:** `TB.user`, `TB.graphics`, `TB.ui.Toast`, `TB.ui.Loader`, `TB.router`, `TB.logger` working in concert.
+*   **User Feedback:** Clear messages and visual cues for different scenarios.
+
+---
+
+### 8. Building `tbjs` (For Developers)
+
+If you are modifying the `tbjs` framework itself or need to build it from source:
+
+1.  **Prerequisites:**
+    *   Node.js and npm (or yarn) installed.
+2.  **Install Dependencies:**
+    Navigate to the `tbjs` root directory in your terminal and run:
+    ```bash
+    npm install
+    # or
+    # yarn install
+    ```
+3.  **Build Scripts (examples from a typical `package.json`):**
+    *   **Production Build:**
+        ```bash
+        npm run build
+        ```
+        This usually creates optimized, minified files in a `dist/` directory (e.g., `dist/tbjs.js` and `dist/tbjs.css`). The build process uses Webpack, configured in `webpack.config.js`.
+    *   **Development Watch Mode:**
+        ```bash
+        npm run watch
+        # or npm run dev
+        ```
+        This watches source files for changes and automatically rebuilds, often in a non-minified format for easier debugging.
+    *   **Linting:**
+        ```bash
+        npm run lint
+        ```
+        Checks the JavaScript code for style consistency and potential errors using a linter like ESLint.
+

@@ -90,9 +90,6 @@ jobs:
     test-root:
         name: Test Root (tbjs only for now)
         runs-on: ubuntu-latest
-        defaults:
-            run:
-                working-directory: toolboxv2/tbjs
         steps:
             - name: Checkout code
               uses: actions/checkout@v4
@@ -103,8 +100,10 @@ jobs:
                 node-version: 'lts/*'
 
             - name: Install tbjs dependencies
+              working-directory: ./toolboxv2/tbjs
               run: npm install
             - name: Run tbjs tests
+              working-directory: ./toolboxv2/tbjs
               run: npm run test
 
     publish-tauri:
