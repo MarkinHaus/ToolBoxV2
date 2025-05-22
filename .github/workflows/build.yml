@@ -77,10 +77,9 @@ jobs:
                     npm install
                     npm install --prefix ./tbjs
                     npm install --prefix ./web
-                    npm install --prefix ./simple-core
 
             -   name: Build all
-                run: npm run build
+                run: npm run build:tbjs && npm run build:web
 
             -   name: Upload dist folder
                 uses: actions/upload-artifact@v4
@@ -93,7 +92,7 @@ jobs:
         runs-on: ubuntu-latest
         defaults:
             run:
-                working-directory: toolboxv2
+                working-directory: toolboxv2/tbjs
         steps:
             - name: Checkout code
               uses: actions/checkout@v4
