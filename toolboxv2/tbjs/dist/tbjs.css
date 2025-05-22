@@ -1,0 +1,1336 @@
+@import url(https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200);
+@tailwind utilities;
+
+/* tbjs/src/styles/tbjs-main.css */
+
+/* Optionale tbjs-spezifische Basis-Styles oder Komponenten-Layer hier */
+/* Definiere hier die CSS-Variablen für deine Farbpalette,
+   damit sie von der App überschrieben werden können, falls gewünscht. */
+
+
+/* ==========================================================================
+   1. Core Variables & Themes
+   ========================================================================== */
+:root {
+  --tb-color-primary-50: #eff6ff;
+  --tb-color-primary-100: #dbeafe;
+  /* ... alle primären Farben ... */
+  --tb-color-primary-500: #3b82f6;
+  --tb-color-primary-600: #2563eb;
+  --tb-color-primary-700: #1d4ed8;
+
+  --tb-color-background: #ffffff;
+  --tb-color-text: #1f2937; /* gray-800 */
+  --tb-color-border: #e5e7eb; /* gray-200 */
+  --tb-color-accent: var(--tb-color-primary-600);
+    /* Base Font & Sizing */
+    --font-family-sans: 'Roboto', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+    --font-family-serif: Georgia, Cambria, 'Times New Roman', Times, serif;
+    --font-family-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+    --font-family-base: var(--font-family-sans); /* Hauptschriftart */
+
+    /* Fluid Font Sizes (adjust base clamp value if needed) */
+    --font-size-xs: clamp(0.75rem, 0.7rem + 0.25vw, 0.875rem);
+    --font-size-sm: clamp(0.875rem, 0.8rem + 0.375vw, 1rem);
+    --font-size-base: clamp(1rem, 0.9rem + 0.5vw, 1.125rem); /* Base */
+    --font-size-lg: clamp(1.125rem, 1rem + 0.625vw, 1.3rem); /* Slightly larger L */
+    --font-size-xl: clamp(1.3rem, 1.125rem + 0.75vw, 1.6rem); /* Slightly larger XL */
+    --font-size-2xl: clamp(1.6rem, 1.375rem + 1vw, 2.1rem); /* etc. */
+    --font-size-3xl: clamp(2rem, 1.75rem + 1.25vw, 2.7rem);
+    --font-size-4xl: clamp(2.5rem, 2rem + 1.5vw, 3.3rem);
+
+    /* Font Weights */
+    --font-weight-light: 300;
+    --font-weight-regular: 400;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
+
+    /* Line Heights */
+    --line-height-tight: 1.2;
+    --line-height-snug: 1.375;
+    --line-height-normal: 1.6; /* Slightly increased for readability */
+    --line-height-relaxed: 1.75;
+    --line-height-loose: 2;
+
+    /* Letter Spacing */
+    --letter-spacing-tight: -0.02em;
+    --letter-spacing-normal: 0em;
+    --letter-spacing-wide: 0.02em;
+
+    /* Spacing Unit */
+    --spacing: 1rem; /* Base spacing unit */
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 16px;
+
+    /* Transitions */
+    --transition-fast: 0.15s ease-in-out;
+    --transition-medium: 0.3s ease-in-out;
+
+    /* Scrollbar Base (can be overridden by theme) */
+    --scrollbar-width: 8px;
+    --scrollbar-height: 8px;
+
+    /* Z-Index */
+    --z-background: -1;
+    --z-content: 1;
+    --z-navigation: 100;
+    --z-overlay: 500;
+    --z-modal: 10000;
+    --z-cookie-banner: 10010;
+    --z-nav-controls: 10001;
+    --z-nav-dropdown: 10005;
+
+    --button-hover-bg: var(--link-hover-color); --text-shadow-current: var(--text-shadow-light); /* Shadow for text on glass */
+    /* Font Smoothing */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+
+
+    --primary-color: rgba(0,0,0,0);
+    --FILL: 0;
+    --wght: 200;
+    --GRAD: 50;
+    --opsz: 24;
+    --letter-spacing-wider: 0.05em;
+
+    /* Text Shadow for Readability over Glass */
+    --text-shadow-light: 0 1px 3px rgba(0, 0, 0, 0.3); /* For light text */
+    --text-shadow-dark: 0 1px 3px rgba(255, 255, 255, 0.2); /* For dark text */
+
+    /* Default to Light Theme */
+    --theme-bg: #f8f9fa;
+    --theme-text: #181823;
+    --theme-primary: #3a5fcd; /* Slightly modern blue */
+    --theme-secondary: #537FE7; /* Existing secondary, maybe adjust */
+    --theme-accent: #045fab;
+    --theme-border: rgba(0, 0, 0, 0.1);
+    --theme-text-muted: #6c757d;
+    --theme-text-on-primary: #ffffff; /* Text on primary background */
+
+    /* Glass Effect */
+    --glass-bg: rgba(255, 255, 255, 0.6); /* Light theme glass */
+    --glass-blur: 10px;
+    --glass-border: rgba(255, 255, 255, 0.3);
+    --glass-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+
+
+    /* Interaction Colors */
+    --link-color: var(--theme-primary);
+    --link-hover-color: color-mix(in srgb, var(--theme-primary) 80%, black);
+    --button-bg: var(--theme-primary);
+    --button-text: var(--theme-text-on-primary);
+
+    --input-bg: #ffffff;
+    --input-border: var(--theme-border);
+    --input-focus-border: var(--theme-primary);
+
+    /* Status Colors */
+    --color-error: #dc3545;
+    --color-success: #198754;
+    --color-warning: #ffc107;
+    --color-info: #0dcaf0;
+
+    /* Scrollbar Theme */
+    --scrollbar-track-color: color-mix(in srgb, var(--theme-bg) 90%, black);
+    --scrollbar-thumb-color: var(--theme-secondary);
+    --scrollbar-thumb-hover-color: var(--theme-primary);
+
+    --secondary-color: #537FE7;
+    --text-color: #000;
+
+
+    --background-color: #f8f9fa;
+    --dark-primary-color: #181823;
+    --dark-secondary-color: #E9F8F9;
+    --dark-background-color: #181823;
+    --dark-text-color: #E9F8F9;
+
+    --dark-nav-link-color: darkblue;
+    --dark-nav-link-hover-color: #C0EEF2;
+    --dark-toggle-bg-color: #181823;
+
+    --toggle-bg-checked-color: var(--primary-color);
+
+    --error-color: #9c1079;
+    --fatal-error-color: #9c1010;
+    --info-color: #107b9c;
+    --susess-color: #109c41;
+    --worning-color: #9c6b10;
+
+    --decision-color: #75235e;
+    --no-decision-color: #3f9f5a;
+
+    --anti-text-clor: #fff;
+    --light-acent: #045fab;
+    --dark-acent: #011b33;
+
+    --scrollbar-thumb-active-color: var(--dark-acent);
+
+    --primary: var(--primary-color);
+    --primary-hover:  var(--secondary-color);
+    --primary-focus: rgba(var(--secondary-color), 0.25);
+    --primary-inverse: var(--text-color);
+
+
+}
+
+/* Dark Theme
+:root[data-theme="light"],*/
+:root[data-theme="dark"] {
+    /* Oder data-theme="dark" wenn du das Attribut nutzt */
+      --tb-color-background: #1f2937; /* gray-800 */
+      --tb-color-text: #f3f4f6;       /* gray-100 */
+      --tb-color-border: #4b5563;     /* gray-600 */
+    --theme-bg: #181823;
+    --theme-text: #E9F8F9;
+    --theme-primary: #6c8ee8; /* Lighter blue for dark mode */
+    --theme-secondary: #7ba3ff;
+    --theme-accent: #1a8cff;
+    --theme-border: rgba(255, 255, 255, 0.15);
+    --theme-text-muted: #adb5bd;
+    --theme-text-on-primary: #181823; /* Dark text on light primary */
+
+    /* Glass Effect */
+    --glass-bg: rgba(2, 2, 3, 0.35); /* Dark theme glass */
+    --glass-blur: 12px; /* Slightly more blur might look good */
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    --text-shadow-current: var(--text-shadow-dark); /* Shadow for text on glass */
+
+    /* Interaction Colors */
+    --link-color: var(--theme-primary);
+    --link-hover-color: color-mix(in srgb, var(--theme-primary) 80%, white);
+    --button-bg: var(--theme-primary);
+    --button-text: var(--theme-text-on-primary);
+    --button-hover-bg: var(--link-hover-color);
+    --input-bg: #2a2a3a; /* Darker input background */
+    --input-border: var(--theme-border);
+    --input-focus-border: var(--theme-primary);
+
+    /* Scrollbar Theme */
+    --scrollbar-track-color: color-mix(in srgb, var(--theme-bg) 80%, white);
+    --scrollbar-thumb-color: var(--theme-secondary);
+    --scrollbar-thumb-hover-color: var(--theme-primary);
+
+    --primary-color: #181823;
+    --secondary-color: #E9F8F9;
+    --background-color: #f8f9fa;
+    --text-color: #fff;
+
+    --nav-link-hover-color: #fff;
+
+    --nav-link-color: var(--dark-nav-link-color);
+
+
+    --toggle-bg-color: var(--background-color);
+    --toggle-bg-checked-color: var(--dark-text-color);
+
+    --primary:  var(--primary-color);
+    --primary-hover:  var(--secondary-color);
+    --primary-focus: rgba(var(--secondary-color), 0.25);
+    --primary-inverse: var(--text-color);
+
+    --scrollbar-thumb-active-color: var(--dark-nav-link-color);
+}
+
+
+
+/* ==========================================================================
+   2. Reset & Base Styles
+   ========================================================================== */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border-width: 0; /* Reset borders defined via attributes */
+    border-style: solid;
+    border-color: var(--theme-border); /* Default border color */
+}
+
+html {
+    font-size: 110%; /* Slightly larger base size -> ~17.6px if browser default is 16px */
+    line-height: var(--line-height-normal);
+    scroll-behavior: smooth;
+    /* Apply scrollbar styles globally (Firefox) */
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb-color) var(--scrollbar-track-color);
+    height: 100%; /* Ensure html takes full height */
+}
+
+body {
+    font-family: var(--font-family-base), ui-monospace;
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-regular);
+    color: var(--theme-text);
+    background-color: transparent; /* Body is transparent, 3D scene is the true background */
+    min-height: 100%;
+    position: relative; /* Needed for absolute positioning of children like nav */
+    transition: color var(--transition-medium), background-color var(--transition-medium);
+    overflow-x: hidden; /* Prevent horizontal scroll on body */
+}
+
+body.dark-mode {
+    --background-color: var(--dark-background-color);
+    --text-color: var(--dark-text-color);
+    --primary-color: var(--dark-primary-color);
+
+    --primary:  var(--dark-primary-color);
+    --primary-hover:  var(--dark-secondary-color);
+    --primary-focus: rgba(var(--secondary-color), 0.25);
+    --primary-inverse: var(--dark-text-color);
+
+    --secondary-color: var(--dark-secondary-color);
+    --nav-link-color: lightblue;
+
+    --theme-bg: #181823;
+    --theme-text: #E9F8F9;
+    --theme-primary: #6c8ee8; /* Lighter blue for dark mode */
+    --theme-secondary: #7ba3ff;
+    --theme-accent: #1a8cff;
+    --theme-border: rgba(255, 255, 255, 0.15);
+    --theme-text-muted: #adb5bd;
+    --theme-text-on-primary: #181823; /* Dark text on light primary */
+
+    /* Glass Effect */
+    --glass-bg: rgba(10, 10, 15, 0.85); /* Dark theme glass */
+    --glass-blur: 12px; /* Slightly more blur might look good */
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    --text-shadow-current: var(--text-shadow-dark); /* Shadow for text on glass */
+
+    /* Interaction Colors */
+    --link-color: var(--theme-primary);
+    --link-hover-color: color-mix(in srgb, var(--theme-primary) 80%, white);
+    --button-bg: var(--theme-primary);
+    --button-text: var(--theme-text-on-primary);
+    --button-hover-bg: var(--link-hover-color);
+    --input-bg: #2a2a3a; /* Darker input background */
+    --input-border: var(--theme-border);
+    --input-focus-border: var(--theme-primary);
+
+    /* Scrollbar Theme */
+    --scrollbar-track-color: color-mix(in srgb, var(--theme-bg) 80%, white);
+    --scrollbar-thumb-color: var(--theme-secondary);
+    --scrollbar-thumb-hover-color: var(--theme-primary);
+
+    --nav-link-hover-color: #fff;
+
+    --toggle-bg-color: var(--background-color);
+    --toggle-bg-checked-color: var(--dark-text-color);
+
+
+    --scrollbar-thumb-active-color: var(--dark-nav-link-color);
+}
+
+/* Make sure 3D Scene is behind everything */
+#threeDScene {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: var(--z-background);
+}
+
+/* Main Content Wrapper */
+.Mcontent {
+    position: relative;
+    z-index: var(--z-content);
+    width: 100%;
+    height: 100vh; /* Full viewport height */
+    overflow-x: hidden;
+    overflow-y: auto; /* Allow scrolling */
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    /* MODIFIED: Reduced padding-top, just enough for fixed controls */
+    padding-top: calc(var(--spacing) * 5); /* Adjust as needed based on toggle size */
+    padding-bottom: var(--spacing);
+    padding-left: var(--spacing); /* Add side padding if needed */
+    padding-right: var(--spacing);
+}
+
+/* The actual content area */
+.main-content { /* Ensure your <main> tag has this class! */
+    max-width: 85vw;
+    width: 100%;
+    min-height: min-content;
+    margin: 0 auto;
+    padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2);
+
+    /* THE GLASS EFFECT */
+    background-color: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+    text-shadow: var(--text-shadow-current);
+}
+
+/* Fallback (Keep as is) */
+@supports not (backdrop-filter: blur(10px)) {
+  .main-content, .widget, #Nav-Controls, .links-form, #cookie-banner, .modal-screen {
+    background-color: color-mix(in srgb, var(--theme-bg) 95%, var(--theme-text));
+  }
+}
+
+/* ==========================================================================
+   3. Basic HTML Element Styling (Keep as is)
+   ========================================================================== */
+/* ... h1-h6, p, a, ul, ol, blockquote, code, pre, table, hr, img etc. ... */
+h1, h2, h3, h4, h5, h6 {
+    color: var(--text-color);
+    margin-bottom: calc(var(--spacing) * 0.75);
+    font-family: var(--font-family-base), ui-monospace;
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-tight);
+    letter-spacing: var(--letter-spacing-tight);
+    text-wrap: balance;
+}
+h1 { font-size: var(--font-size-4xl); font-weight: var(--font-weight-bold); }
+h2 { font-size: var(--font-size-3xl); font-weight: var(--font-weight-bold); }
+h3 { font-size: var(--font-size-2xl); }
+h4 { font-size: var(--font-size-xl); }
+h5 { font-size: var(--font-size-lg); }
+h6 { font-size: var(--font-size-base); font-weight: var(--font-weight-medium); }
+p { margin-bottom: var(--spacing); line-height: var(--line-height-normal); max-width: 75ch; }
+a { color: var(--link-color); text-decoration: none; transition: color var(--transition-fast); font-weight: var(--font-weight-medium); }
+a:hover, a:focus { color: var(--link-hover-color); text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
+a:focus-visible { outline: 2px solid var(--link-color); outline-offset: 2px; border-radius: var(--radius-sm); }
+ul, ol { margin-bottom: var(--spacing); padding-left: calc(var(--spacing) * 1.5); }
+li { margin-bottom: calc(var(--spacing) * 0.4); }
+ul { list-style-type: disc; }
+ol { list-style-type: decimal; }
+li ul, li ol { margin-top: calc(var(--spacing) * 0.4); margin-bottom: 0; }
+blockquote { margin: var(--spacing) 0 var(--spacing) calc(var(--spacing) * 1.5); padding: calc(var(--spacing) * 0.75) var(--spacing); border-left: 4px solid var(--theme-accent); background-color: color-mix(in srgb, var(--theme-bg) 80%, transparent); font-style: italic; color: var(--theme-text-muted); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+blockquote p:last-child { margin-bottom: 0; }
+code, pre { font-family: var(--font-family-mono), sans-serif; font-size: var(--font-size-sm); background-color: color-mix(in srgb, var(--theme-text) 5%, transparent); border-radius: var(--radius-sm); padding: 0.1em 0.3em; }
+pre { padding: var(--spacing); margin-bottom: var(--spacing); overflow-x: auto; white-space: pre-wrap; border: 1px solid var(--theme-border); }
+pre code { background-color: transparent; padding: 0; border-radius: 0; }
+table { width: 100%; margin-bottom: var(--spacing); border-collapse: collapse; border: 1px solid var(--theme-border); font-size: var(--font-size-sm); }
+th, td { padding: calc(var(--spacing) * 0.6) var(--spacing); text-align: left; border: 1px solid var(--theme-border); }
+th { font-weight: var(--font-weight-semibold); background-color: color-mix(in srgb, var(--theme-text) 3%, transparent); }
+tbody tr:nth-child(odd) { background-color: color-mix(in srgb, var(--theme-text) 1.5%, transparent); }
+hr { border: 0; margin: calc(var(--spacing) * 1.5) 0; }
+img, svg, video, canvas, picture { display: block; max-width: 100%; height: auto; }
+figure { margin: 0 0 var(--spacing); }
+figcaption { font-size: var(--font-size-sm); color: var(--theme-text-muted); margin-top: calc(var(--spacing) * 0.5); text-align: center; }
+
+
+/* ==========================================================================
+   4. Form Elements Styling (Keep as is)
+   ========================================================================== */
+/* ... label, input, textarea, select, button, form etc. ... */
+label { display: block; margin-bottom: calc(var(--spacing) * 0.3); font-weight: var(--font-weight-medium); font-size: var(--font-size-sm); }
+input, input[type="text"], input[type="email"], input[type="password"], input[type="number"], input[type="search"], input[type="tel"], input[type="url"], textarea, select { display: block; width: 100%; padding: calc(var(--spacing) * 0.6) var(--spacing); font-family: inherit; font-size: var(--font-size-base); line-height: var(--line-height-normal); color: var(--theme-text); background-color: var(--input-bg); background-clip: padding-box; border: 1px solid var(--input-border); border-radius: var(--radius-md); transition: border-color var(--transition-fast), box-shadow var(--transition-fast); appearance: none; margin-bottom: var(--spacing); }
+input:focus, textarea:focus, select:focus { outline: none; border-color: var(--input-focus-border); box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-primary) 25%, transparent); }
+textarea { resize: vertical; min-height: 120px; }
+select { background-image: url("data:image/svg+xml,%3csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3e%3cpath fill=%27none%27 stroke=%27%23343a40%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27 stroke-width=%272%27 d=%27m2 5 6 6 6-6%27/%3e%3c/svg%3e"); background-repeat: no-repeat; background-position: right var(--spacing) center; background-size: 16px 12px; padding-right: calc(var(--spacing) * 2.5); }
+[data-theme="dark"] select { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2016%2016%27%3E%3Cpath%20fill%3D%27none%27%20stroke%3D%27%23343a40%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20stroke-width%3D%272%27%20d%3D%27m2%205%206%206%206-6%27%2F%3E%3C%2Fsvg%3E"); }
+input[type="checkbox"], input[type="radio"] { appearance: none; width: 1.1em; height: 1.1em; border: 1px solid var(--input-border); border-radius: var(--radius-sm); display: inline-block; vertical-align: middle; position: relative; cursor: pointer; margin-right: calc(var(--spacing) * 0.3); padding: 0; }
+input[type="radio"] { border-radius: 50%; }
+input[type="checkbox"]:checked, input[type="radio"]:checked { background-color: var(--theme-primary); border-color: var(--theme-primary); }
+input[type="checkbox"]:checked::before { content: '✔'; color: var(--theme-text-on-primary); font-size: 0.8em; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); line-height: 1; }
+input[type="radio"]:checked::before { content: ''; display: block; width: 0.5em; height: 0.5em; background-color: var(--theme-text-on-primary); border-radius: 50%; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+label > input[type="checkbox"], label > input[type="radio"] { margin-top: -0.1em; }
+button, input[type="button"], input[type="submit"], input[type="reset"] { display: inline-block; padding: calc(var(--spacing) * 0.6) calc(var(--spacing) * 1.2); font-family: inherit; font-size: var(--font-size-base); font-weight: var(--font-weight-medium); line-height: var(--line-height-normal); color: var(--button-text); background-color: var(--button-bg); border: 1px solid transparent; border-radius: var(--radius-md); cursor: pointer; text-align: center; vertical-align: middle; user-select: none; transition: color var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast); margin: 0 calc(var(--spacing) * 0.25) calc(var(--spacing) * 0.5) 0; }
+button:hover, input[type="button"]:hover, input[type="submit"]:hover, input[type="reset"]:hover { background-color: var(--button-hover-bg); border-color: var(--button-hover-bg); text-decoration: none; }
+button:focus-visible, input[type="button"]:focus-visible, input[type="submit"]:focus-visible, input[type="reset"]:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-primary) 35%, transparent); }
+button:disabled, input:disabled { opacity: 0.65; cursor: not-allowed; }
+form { display: flex; flex-direction: column; gap: calc(var(--spacing) * 0.8); margin: var(--spacing) 0; }
+.form-container { display: flex; justify-content: center; gap: calc(var(--spacing) * 2); flex-wrap: wrap; }
+.form { width: 100%; max-width: 400px; display: flex; flex-direction: column; gap: calc(var(--spacing) * 0.8); }
+form button, form input[type="submit"] { align-self: center; min-width: 120px; }
+
+/* ==========================================================================
+   5. Component Styling (Navigation & Others)
+   ========================================================================== */
+
+/* REMOVED: header styling (now just a container) */
+header {
+    /* No background, shadow, or explicit height needed anymore */
+    z-index: var(--z-nav-controls); /* Ensure it's interactive */
+    width: auto; /* Only as wide as its content */
+    padding: 0; /* Remove padding */
+}
+
+/* NEW: Fixed container for Nav Toggles */
+#Nav-Controls {
+    position: fixed;
+    top: var(--spacing);
+    left: var(--spacing);
+    z-index: var(--z-nav-controls); /* Wichtig! */
+    display: flex;
+    align-items: center;
+    gap: var(--spacing);
+    padding: calc(var(--spacing) * 0.5);
+    background-color: var(--glass-bg);
+    backdrop-filter: blur(calc(var(--glass-blur) * 0.5));
+    -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.5));
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+    pointer-events: auto;
+}
+
+#Nav-Main { /* Container für die Toggles */
+    display: flex;
+    align-items: center;
+    gap: var(--spacing);
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    position: relative; /* !! WICHTIG für die Positionierung des Dropdowns !! */
+}
+/* Menu Toggle Button (#links) */
+#links.circle {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: calc(var(--spacing) * 0.3);
+    border-radius: 50%;
+    transition: background-color var(--transition-fast), transform var(--transition-medium);
+}
+
+#links.circle:hover {
+    background-color: color-mix(in srgb, var(--theme-text) 10%, transparent);
+}
+#links .material-symbols-outlined {
+    font-size: var(--font-size-xl); /* Icon size */
+    color: var(--theme-text);
+    display: block;
+}
+
+/* Links Form (Dropdown Menu) */
+.links-form { /* Oder nav.links-form wenn du das Tag änderst */
+    position: absolute; /* Bezieht sich jetzt auf #Nav-Main */
+    top: calc(100% + 10px); /* Position unterhalb von #Nav-Main (effektiv unter #Nav-Controls) */
+    left: 0; /* Bündig mit #Nav-Main */
+    z-index: var(--z-nav-dropdown); /* Sicherstellen, dass es über Controls ist */
+    min-width: 200px;
+    max-width: 300px;
+    padding: calc(var(--spacing) * 0.75);
+    list-style: none;
+    background-color: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--glass-shadow);
+    color: var(--nav-link-color);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-10px) scale(0.95);
+    transform-origin: top left;
+    transition: opacity var(--transition-fast), visibility var(--transition-fast), transform var(--transition-fast);
+    text-align: left;
+}
+
+.links-form.is-active {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0) scale(1);
+}
+
+.links-form hr {
+    border-top: 1px solid var(--theme-border); /* Verwende Theme-Border */
+    margin: calc(var(--spacing) * 0.5) 0; /* Vertikaler Abstand */
+}
+
+.links-form ul { padding: 0; margin: 0; list-style: none; }
+.links-form li { margin: 0; }
+.links-form a {
+    display: block;
+    padding: calc(var(--spacing) * 0.7) var(--spacing); /* Increase padding */
+    color: var(--nav-link-color);
+    text-decoration: none;
+    border-radius: var(--radius-sm);
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+    white-space: nowrap;
+    background-color: transparent;
+    font-weight: var(--font-weight-regular); /* Normal weight */
+}
+
+.links-form a:hover,
+.links-form a:focus {
+    background-color: var(--theme-primary);
+    color: var(--nav-link-hover-color);
+    text-decoration: none;
+}
+.links-form a:focus-visible { /* Add focus style */
+    outline: 2px solid var(--theme-primary);
+    outline-offset: 1px;
+}
+
+/* Dark Mode Toggle (Styles should be mostly correct now) */
+#darkModeToggle { /* The actual checkbox */
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute;
+    /* display: none; REMOVE THIS if you use the checkbox state */
+}
+#toggleLabel { /* The label acting as the button */
+    cursor: pointer;
+    padding: calc(var(--spacing) * 0.3); /* Click area */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: background-color var(--transition-fast), transform var(--transition-medium); /* Keep existing transform */
+}
+#toggleLabel:hover {
+    background-color: color-mix(in srgb, var(--theme-text) 10%, transparent);
+}
+#toggleLabel .material-symbols-outlined {
+    font-size: var(--font-size-xl); /* Icon size */
+    color: var(--theme-text);
+    display: block;
+    transition: transform var(--transition-medium); /* Icon transition */
+    scale: 1.6;
+}
+/* Rotate icon on toggle (example using :checked) */
+#darkModeToggle:checked + #toggleLabel {
+    /* Optional: visual feedback on label itself */
+    /* background-color: var(--theme-primary); */
+}
+#darkModeToggle:checked + #toggleLabel .material-symbols-outlined {
+    transform: rotate(180deg); /* Keep rotation */
+    /* color: var(--theme-text-on-primary); */ /* If label background changes */
+}
+
+/* Cards, Widgets, Cookie Banner, Modal, Overlay, Markdown (Keep as is) */
+/* ... .card, .widget, #cookie-banner, #cookie-modal, #overlay, .markdown ... */
+.card { background-color: color-mix(in srgb, var(--glass-bg) 80%, transparent); border: 1px solid var(--glass-border); border-radius: var(--radius-md); padding: calc(var(--spacing) * 1.2); margin-bottom: var(--spacing); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07); transition: transform var(--transition-fast), box-shadow var(--transition-fast); color: inherit; text-shadow: var(--text-shadow-current); }
+.card:hover { transform: translateY(-3px); box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1); }
+.card-title { font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); color: inherit; margin-bottom: calc(var(--spacing) * 0.5); }
+.card-content { color: inherit; line-height: var(--line-height-normal); font-size: var(--font-size-base); }
+.card-content p:last-child { margin-bottom: 0; }
+.widget { position: absolute; display: flex; flex-direction: column; align-items: stretch; background-color: var(--glass-bg); backdrop-filter: blur(var(--glass-blur)); -webkit-backdrop-filter: blur(var(--glass-blur)); border: 1px solid var(--glass-border); border-radius: var(--radius-md); box-shadow: var(--glass-shadow); padding: var(--spacing); padding-top: calc(var(--spacing) * 1.8); animation: widget-fadeIn 0.3s ease-out; resize: both; overflow: hidden; min-width: 200px; min-height: 100px; max-height: 80vh; height: fit-content; color: var(--theme-text); text-shadow: var(--text-shadow-current); }
+.widget-from { position: absolute; top: 5px; left: var(--spacing); color: var(--theme-text-muted); padding: 2px 6px; border-radius: var(--radius-sm); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); z-index: 2; }
+.widget-content { padding: 0; margin: 0; overflow-y: auto; flex-grow: 1; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb-color) var(--scrollbar-track-color); }
+.widget-content::-webkit-scrollbar { width: var(--scrollbar-width); height: var(--scrollbar-height); }
+.widget-content::-webkit-scrollbar-track { background: transparent; }
+.widget-content::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb-color); border-radius: calc(var(--scrollbar-width) / 2); border: 2px solid transparent; }
+.widget-content::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover-color); }
+.widget-close-button, .widget-action-button { position: absolute; top: 5px; background: none; border: none; padding: 4px; cursor: pointer; color: var(--theme-text-muted); transition: color var(--transition-fast); z-index: 2; display: flex; align-items: center; justify-content: center; border-radius: 50%; }
+.widget-close-button:hover, .widget-action-button:hover { color: var(--theme-text); background-color: color-mix(in srgb, var(--theme-text) 10%, transparent); }
+.widget-close-button { right: 5px; }
+.widget-action-button { right: 30px; }
+.widget-resize-handle { position: absolute; bottom: 2px; right: 2px; width: 16px; height: 16px; cursor: nwse-resize; z-index: 3; opacity: 0.4; transition: opacity var(--transition-fast); }
+.widget-resize-handle::after { content: ''; position: absolute; bottom: 3px; right: 3px; width: 6px; height: 6px; border-bottom: 2px solid currentColor; border-right: 2px solid currentColor; transform: rotate(45deg); }
+.widget:hover .widget-resize-handle { opacity: 1; }
+#cookie-banner { position: fixed; bottom: var(--spacing); right: var(--spacing); z-index: var(--z-cookie-banner); max-width: 350px; padding: var(--spacing); background-color: var(--glass-bg); backdrop-filter: blur(var(--glass-blur)); -webkit-backdrop-filter: blur(var(--glass-blur)); border: 1px solid var(--glass-border); border-radius: var(--radius-md); box-shadow: var(--glass-shadow); color: var(--theme-text); text-shadow: var(--text-shadow-current); font-size: var(--font-size-sm); }
+#cookie-banner p { margin-bottom: calc(var(--spacing) * 0.75); max-width: none; }
+#cookie-banner a { font-weight: var(--font-weight-semibold); }
+#cookie-banner a:hover { text-decoration: underline; }
+.cookie-actions { display: flex; gap: var(--spacing); justify-content: flex-end; }
+#close-banner { background: none; border: none; color: var(--theme-text-muted); cursor: pointer; padding: 0; font-size: 1.5em; position: absolute; top: calc(var(--spacing) / 2); right: calc(var(--spacing) / 2); line-height: 1; }
+#close-banner:hover { color: var(--theme-text); }
+#cookie-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: var(--z-modal); display: flex; align-items: center; justify-content: center; padding: var(--spacing); opacity: 0; visibility: hidden; transition: opacity var(--transition-medium), visibility var(--transition-medium); }
+#cookie-modal.is-visible { opacity: 1; visibility: visible; }
+.modal-screen { display: none; width: 100%; max-width: 550px; margin: 0; padding: calc(var(--spacing) * 1.5); border-radius: var(--radius-lg); position: relative; background-color: var(--glass-bg); backdrop-filter: blur(var(--glass-blur)); -webkit-backdrop-filter: blur(var(--glass-blur)); border: 1px solid var(--glass-border); box-shadow: var(--glass-shadow); color: var(--theme-text); text-shadow: var(--text-shadow-current); max-height: 90vh; overflow-y: auto; }
+.modal-screen.active { display: block; }
+.modal-screen h2 { margin-top: 0; }
+#overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: var(--z-overlay); opacity: 0; visibility: hidden; transition: opacity var(--transition-medium), visibility var(--transition-medium); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+#overlay.active { opacity: 1; visibility: visible; }
+.markdown { text-align: left; background: color-mix(in srgb, var(--theme-bg) 90%, transparent); padding: var(--spacing); border-radius: var(--radius-md); border: 1px solid var(--theme-border); font-size: var(--font-size-base); max-width: 100%; color: inherit; text-shadow: none; }
+.markdown > *:first-child { margin-top: 0; }
+.markdown > *:last-child { margin-bottom: 0; }
+.markdown h1 { font-size: var(--font-size-2xl); }
+.markdown h2 { font-size: var(--font-size-xl); }
+
+/* ==========================================================================
+   6. Utility Classes & Responsiveness (Keep as is)
+   ========================================================================== */
+/* ... .text-*, .font-*, .none, .hidden, media queries ... */
+.text-small { font-size: var(--font-size-sm); }
+.text-large { font-size: var(--font-size-lg); }
+.text-display { font-size: var(--font-size-4xl); line-height: var(--line-height-tight); font-weight: var(--font-weight-bold); letter-spacing: var(--letter-spacing-tight); }
+.font-light { font-weight: var(--font-weight-light); }
+.font-regular { font-weight: var(--font-weight-regular); }
+.font-medium { font-weight: var(--font-weight-medium); }
+.font-semibold { font-weight: var(--font-weight-semibold); }
+.font-bold { font-weight: var(--font-weight-bold); }
+.text-center { text-align: center; }
+.text-left { text-align: left; }
+.text-right { text-align: right; }
+.none, .hidden { display: none !important; }
+@media screen and (max-width: 1024px) { html { font-size: 105%; } .main-content { max-width: 90vw; padding: calc(var(--spacing) * 1.2) calc(var(--spacing) * 1.5); } }
+@media screen and (max-width: 767px) { html { font-size: 100%; } .main-content { max-width: 95vw; padding: var(--spacing); border-radius: var(--radius-md); } .Mcontent { padding-top: calc(var(--spacing) * 6); } /* Adjust padding for mobile */ h1 { font-size: var(--font-size-3xl); } h2 { font-size: var(--font-size-2xl); } h3 { font-size: var(--font-size-xl); } .form-container { flex-direction: column; gap: var(--spacing); } .form { max-width: 100%; } button, input[type="button"], input[type="submit"], input[type="reset"] { padding: calc(var(--spacing) * 0.7) calc(var(--spacing) * 1.4); width: 100%; max-width: 300px; margin-right: 0; } form button, form input[type="submit"] { align-self: stretch; max-width: none; } }
+
+/* ==========================================================================
+   7. Scrollbar Styles (Webkit) & Icons (Keep as is)
+   ========================================================================== */
+/* ... ::-webkit-scrollbar*, .hide-scrollbar, .material-symbols-outlined ... */
+::-webkit-scrollbar { width: var(--scrollbar-width); height: var(--scrollbar-height); }
+::-webkit-scrollbar-track { background: var(--scrollbar-track-color); border-radius: calc(var(--scrollbar-width) / 2); }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb-color); border-radius: calc(var(--scrollbar-width) / 2); border: 2px solid var(--scrollbar-track-color); transition: background-color var(--transition-fast); }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover-color); }
+::-webkit-scrollbar-corner { background: var(--scrollbar-track-color); }
+.hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.hide-scrollbar::-webkit-scrollbar { display: none; }
+.material-symbols-outlined { font-variation-settings: 'FILL' var(--FILL, 0), 'wght' var(--wght, 300), 'GRAD' var(--GRAD, 0), 'opsz' var(--opsz, 24); vertical-align: middle; line-height: 1; flex-shrink: 0; }
+
+/* ==========================================================================
+   8. Animations (Keep as is)
+   ========================================================================== */
+@keyframes fadeInFromLeft { 0% { opacity: 0; transform: translateX(-10px); } 100% { opacity: 1; transform: translateX(0); } }
+@keyframes fadeOutToLeft { 0% { opacity: 1; transform: translateX(0); } 100% { opacity: 0; transform: translateX(-10px); } }
+@keyframes widget-fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+.fade-inH { animation: fadeInFromLeft 0.5s ease forwards; }
+.fade-outH { animation: fadeOutToLeft 0.5s ease forwards; }
+
+
+/* Select specific styling for dropdown arrow */
+select {
+    background-image: url("data:image/svg+xml,%3csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3e%3cpath fill=%27none%27 stroke=%27%23343a40%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27 stroke-width=%272%27 d=%27m2 5 6 6 6-6%27/%3e%3c/svg%3e");
+    background-repeat: no-repeat;
+    background-position: right var(--spacing) center;
+    background-size: 16px 12px;
+    padding-right: calc(var(--spacing) * 2.5); /* Space for arrow */
+}
+/* Dark mode arrow */
+[data-theme="dark"] select {
+     background-image: url("data:image/svg+xml,%3csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3e%3cpath fill=%27none%27 stroke=%27%23dee2e6%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27 stroke-width=%272%27 d=%27m2 5 6 6 6-6%27/%3e%3c/svg%3e");
+}
+
+
+/* Ensure Material Symbols are loaded if not already globally available for icons */
+
+.material-symbols-outlined {
+  font-variation-settings:
+  'FILL' 0,
+  'wght' 400,
+  'GRAD' 0,
+  'opsz' 24;
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+}
+
+
+#tbjs-cookie-banner {
+    /* Core Positioning & Sizing (from Tailwind: fixed bottom-0 inset-x-0 z-[1000]) */
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+
+    /* Background & Border (from Tailwind: bg-gray-100 p-4 border-t border-gray-300 shadow-lg) */
+    background-color:var(--theme-bg); /* Equivalent to bg-gray-100 */
+    padding: 1rem; /* Equivalent to p-4 */
+    border-top: 1px solid var(--secondary-color); /* Equivalent to border-t border-gray-300 */
+    box-shadow: 0 -10px 15px -3px rgba(var(--text-color), 0.1), 0 -4px 6px -2px rgba(var(--text-color), 0.05); /* Equivalent to shadow-lg (applied from bottom) */
+
+    /* Text (from Tailwind: text-sm text-text-color) */
+    font-size: 0.875rem; /* Equivalent to text-sm */
+    line-height: 1.25rem;
+    color: var(--text-color); /* Example: text-gray-700. Replace with your actual 'text-text-color' */
+
+    /* Animation - Initial State (from Tailwind: transition-all duration-300 ease-in-out transform translate-y-full opacity-0) */
+    opacity: 0;
+    transform: translateY(100%);
+    transition-property: opacity, transform;
+    transition-timing-function: ease-in-out;
+    transition-duration: 300ms;
+
+    /* --- FOR DEBUGGING: Uncomment this to make it VERY obvious if CSS is applying at all --- */
+    /* border: 5px solid red !important;
+    background-color: yellow !important; */
+}
+
+/* Styles for when the banner is active/visible (JS will set opacity to 1 and transform to translateY(0)) */
+/* (No specific CSS needed here if JS directly manipulates these styles for the 'shown' state) */
+
+
+/* Dark Mode Styles (mimicking Tailwind dark: variants) */
+/* Add a class like "dark" to your <html> or <body> tag to enable these */
+.dark #tbjs-cookie-banner {
+    background-color: var(--theme-bg); /* Equivalent to dark:bg-gray-800 or dark:bg-gray-900 */
+    border-top-color:var(--secondary-color); /* Equivalent to dark:border-gray-700 */
+    color: var(--text-color); /* Example: dark:text-gray-200. Replace with your dark 'text-text-color' */
+}
+
+/* --- CSS for the inner container of #tbjs-cookie-banner --- */
+/* This is the div that gets 'max-w-screen-lg mx-auto ...' */
+#tbjs-cookie-banner > div:first-child {
+    max-width: 1024px; /* Equivalent to max-w-screen-lg */
+    margin-left: auto;
+    margin-right: auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1rem; /* Approximates gap-y-2 gap-x-4 */
+}
+
+/* Optional: Specific styles for elements inside the banner if needed */
+#tbjs-cookie-banner #tb-cookie-banner-close {
+    position: absolute; /* Tailwind: absolute */
+    top: 0.5rem;      /* Tailwind: top-2 */
+    right: 0.5rem;     /* Tailwind: right-2 */
+    color: #6b7280;   /* Tailwind: text-gray-500 */
+    font-size: 1.25rem;/* Tailwind: text-xl (adjust if material icon needs different sizing) */
+    padding: 0.25rem;  /* Tailwind: p-1 */
+    margin: -0.25rem;  /* Tailwind: -m-1 */
+    cursor: pointer;
+    line-height: 1; /* Ensure icon aligns well */
+}
+.dark #tbjs-cookie-banner #tb-cookie-banner-close {
+    color: var(--theme-accent);   /* Tailwind: dark:text-gray-300 */
+}
+#tbjs-cookie-banner #tb-cookie-banner-close:hover {
+    color: var(--secondary-color);   /* Tailwind: hover:text-gray-700 */
+}
+.dark #tbjs-cookie-banner #tb-cookie-banner-close:hover {
+    color: var(--theme-accent);   /* Tailwind: dark:hover:text-gray-400 */
+}
+
+
+#tbjs-cookie-banner h3 {
+    font-weight: 600; /* Tailwind: font-semibold */
+    font-size: 1rem;   /* Tailwind: text-base */
+    line-height: 1.5rem;
+}
+
+#tbjs-cookie-banner p {
+    margin-top: 0.25rem; /* Tailwind: mt-1 */
+    font-size: 0.75rem; /* Tailwind: text-xs */
+    /* sm:text-sm equivalent would require a media query */
+}
+
+@media (min-width: 640px) { /* sm breakpoint */
+    #tbjs-cookie-banner p {
+        font-size: 0.875rem; /* Tailwind: sm:text-sm */
+    }
+    #tbjs-cookie-banner #tb-cookie-banner-accept-minimal {
+        padding-left: 1rem;    /* Tailwind: sm:px-4 */
+        padding-right: 1rem;   /* Tailwind: sm:px-4 */
+        padding-top: 0.5rem;   /* Tailwind: sm:py-2 */
+        padding-bottom: 0.5rem;/* Tailwind: sm:py-2 */
+    }
+}
+
+
+#tbjs-cookie-banner #tb-cookie-banner-show-settings {
+    font-size: 0.75rem; /* Tailwind: text-xs */
+    text-decoration: underline;
+}
+#tbjs-cookie-banner #tb-cookie-banner-show-settings:hover {
+    color: var(--secondary-color); /* Example: hover:text-primary-500, replace with your primary color */
+}
+
+#tbjs-cookie-banner #tb-cookie-banner-accept-minimal {
+    padding: 0.375rem 0.75rem; /* Tailwind: px-3 py-1.5 */
+    border-radius: 0.375rem; /* Tailwind: rounded-md */
+    background-color:  var(--theme-bg); /* Example: bg-primary-600, replace with your primary color */
+    color: var(--text-color);
+    font-size: 0.75rem; /* Tailwind: text-xs */
+    font-weight: 500; /* Tailwind: font-medium */
+}
+#tbjs-cookie-banner #tb-cookie-banner-accept-minimal:hover {
+    background-color:var(--theme-bg); /* Example: hover:bg-primary-700 */
+}
+
+/* --- START OF FILE Modal.css --- */
+
+/*
+    CSS for TB.ui.Modal Component
+    This CSS aims to replicate the Tailwind CSS classes defined in Modal.js.
+    If Tailwind CSS is properly configured and working, these explicit CSS rules
+    might not be necessary, or can serve as a fallback/reference.
+*/
+
+/* --- General Modal Variables (Optional - for easier theming) --- */
+:root {
+    --tb-modal-overlay-bg-light: rgba(0, 0, 0, 0.3);          /* bg-black/30 */
+    --tb-modal-overlay-bg-dark: rgba(0, 0, 0, 0.6);           /* dark:bg-black/60 */
+    --tb-modal-backdrop-blur: blur(2px);                      /* backdrop-blur-sm on overlay */
+
+    --tb-modal-bg-light: rgba(255, 255, 255, 0.6);            /* bg-white/60 */
+    --tb-modal-bg-dark: rgba(38, 38, 38, 0.7);              /* dark:bg-neutral-800/70 (approx) */
+    --tb-modal-text-light: #171717;                         /* text-neutral-900 (approx) */
+    --tb-modal-text-dark: #f5f5f5;                          /* text-neutral-100 (approx) */
+    --tb-modal-border-light: rgba(255, 255, 255, 0.4);        /* border-white/40 */
+    --tb-modal-border-dark: rgba(64, 64, 64, 0.5);           /* dark:border-neutral-600/50 (approx) */
+    --tb-modal-container-blur: blur(8px);                    /* backdrop-blur-lg */
+    --tb-modal-container-blur-dark: blur(12px);              /* dark:backdrop-blur-xl */
+
+    --tb-modal-header-border-light: rgba(229, 229, 229, 0.5); /* border-neutral-300/50 (approx) */
+    --tb-modal-header-border-dark: rgba(64, 64, 64, 0.5);    /* dark:border-neutral-700/50 (approx) */
+
+    --tb-modal-close-btn-text-light: #525252;               /* text-neutral-600 */
+    --tb-modal-close-btn-text-dark: #a3a3a3;                /* dark:text-neutral-400 */
+    --tb-modal-close-btn-hover-bg-light: rgba(82, 82, 82, 0.2); /* hover:bg-neutral-500/20 */
+    --tb-modal-close-btn-hover-bg-dark: rgba(212, 212, 212, 0.2);/* dark:hover:bg-neutral-300/20 */
+
+    --tb-modal-transition-duration: 300ms;
+    --tb-modal-transition-timing: ease-in-out;
+    --tb-modal-z-index-overlay: 1050;
+}
+
+/* --- Modal Overlay --- */
+/* Targets elements with IDs like "tb-modal-xxxx-overlay" */
+[id^="tb-modal-"][id$="-overlay"] {
+    /* Core Positioning & Sizing (fixed inset-0 z-[1050]) */
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: var(--tb-modal-z-index-overlay);
+
+    /* Background & Blur (bg-black/30 dark:bg-black/60 backdrop-blur-sm) */
+    background-color: var(--tb-modal-overlay-bg-light);
+    backdrop-filter: var(--tb-modal-backdrop-blur);
+    -webkit-backdrop-filter: var(--tb-modal-backdrop-blur); /* Safari */
+
+    /* Centering Content (flex items-center justify-center) */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    /* Padding (p-4) */
+    padding: 1rem;
+
+    /* Animation - Initial State (opacity-0 transition-opacity duration-300 ease-in-out) */
+    opacity: 0;
+    transition-property: opacity;
+    transition-duration: var(--tb-modal-transition-duration);
+    transition-timing-function: var(--tb-modal-transition-timing);
+}
+
+.dark [id^="tb-modal-"][id$="-overlay"] {
+    background-color: var(--tb-modal-overlay-bg-dark);
+}
+
+/* --- Modal Container --- */
+/* Targets elements with IDs like "tb-modal-xxxx" BUT NOT "tb-modal-xxxx-overlay" */
+[id^="tb-modal-"]:not([id$="-overlay"]) {
+    /* Background & Glass Effect (bg-white/60 dark:bg-neutral-800/70 backdrop-blur-lg dark:backdrop-blur-xl) */
+    background-color: var(--tb-modal-bg-light);
+    backdrop-filter: var(--tb-modal-container-blur);
+    -webkit-backdrop-filter: var(--tb-modal-container-blur); /* Safari */
+
+    /* Border (border border-white/40 dark:border-neutral-600/50) */
+    border: 1px solid var(--text-color);
+
+    /* Text Color (text-neutral-900 dark:text-neutral-100) */
+    color: var(--tb-modal-text-light);
+
+    /* Shape & Shadow (rounded-2xl shadow-xl) */
+    border-radius: 1rem; /* rounded-2xl */
+    box-shadow: 0 20px 25px -5px rgba(var(--text-color),0.1), 0 10px 10px -5px rgba(var(--text-color),0.04); /* shadow-xl */
+
+    /* Sizing & Layout (w-full ${this.options.maxWidth} p-0 max-h-[90vh] overflow-y-auto flex flex-col) */
+    width: 100%; /* w-full */
+    /* max-width is applied by Tailwind class from options.maxWidth in JS */
+    padding: 0; /* p-0 */
+    max-height: 90vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+
+    /* Animation - Initial State (transform transition-all duration-300 ease-in-out scale-95 opacity-0) */
+    opacity: 0;
+    transform: scale(0.95);
+    transition-property: opacity, transform;
+    transition-duration: var(--tb-modal-transition-duration);
+    transition-timing-function: var(--tb-modal-transition-timing);
+}
+
+.dark [id^="tb-modal-"]:not([id$="-overlay"]) {
+    background-color: var(--tb-modal-bg-dark);
+    backdrop-filter: var(--tb-modal-container-blur-dark);
+    -webkit-backdrop-filter: var(--tb-modal-container-blur-dark); /* Safari */
+    border-color: var(--tb-modal-border-dark);
+    color: var(--tb-modal-text-dark);
+}
+
+/* --- Modal Header --- */
+/* Targets the first div child of the modal container IF it's used for the header */
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child { /* This selector assumes header is the first div */
+    /* Layout (flex justify-between items-center flex-shrink-0) */
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+
+    /* Padding (p-4 md:p-6) */
+    padding: 1rem; /* p-4 */
+
+    /* Border (border-b border-neutral-300/50 dark:border-neutral-700/50) */
+    border-bottom: 1px solid var(--tb-modal-header-border-light);
+}
+
+.dark [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child {
+    border-bottom-color: var(--tb-modal-header-border-dark);
+}
+
+@media (min-width: 768px) { /* md breakpoint */
+    [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child {
+        padding: 1.5rem; /* md:p-6 */
+    }
+}
+
+/* --- Modal Title (within header) --- */
+/* Targets h3 with id like "tb-modal-xxxx-title" */
+[id^="tb-modal-"][id$="-title"] {
+    /* Typography (text-lg font-semibold) */
+    font-size: 1.125rem; /* text-lg */
+    line-height: 1.75rem;
+    font-weight: 600; /* font-semibold */
+}
+
+/* --- Modal Close Button (within header) --- */
+/* Targets button.material-symbols-outlined within the header-like div */
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child button.material-symbols-outlined {
+    /* Icon specific styles are assumed to be handled by .material-symbols-outlined global class */
+    padding: 0.25rem; /* p-1 */
+    border-radius: 0.25rem; /* rounded */
+    color: var(--tb-modal-close-btn-text-light);
+    transition-property: background-color, color;
+    transition-duration: 150ms; /* Common transition duration for interactive elements */
+    background-color: transparent;
+    border: none;
+    cursor: pointer;
+}
+
+.dark [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child button.material-symbols-outlined {
+    color: var(--tb-modal-close-btn-text-dark);
+}
+
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child button.material-symbols-outlined:hover {
+    background-color: var(--tb-modal-close-btn-hover-bg-light);
+}
+
+.dark [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child button.material-symbols-outlined:hover {
+    background-color: var(--tb-modal-close-btn-hover-bg-dark);
+}
+
+
+/* --- Modal Body --- */
+/* This styling relies on the body being the second div if a header exists,
+   or the first if no header. A more specific class from JS would be better.
+   For now, targeting a div that is a direct child and likely the body:
+*/
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:not(:first-child):not(:last-child), /* If header and footer exist */
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:last-child, /* If only body */
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:not(:last-child):nth-child(1) ~ div:nth-child(2), /* If header exists, body is 2nd */
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:only-child /* If body is the only child, no header/footer via JS options */
+{
+    /* Layout (flex-grow overflow-y-auto) */
+    flex-grow: 1;
+    /* overflow-y: auto; /* Already on modal container, maybe not needed here unless specific */
+
+    /* Padding (p-4 md:p-6) */
+    padding: 1rem; /* p-4 */
+}
+/* More robust if body gets a specific class via `customClasses.body` option */
+[id^="tb-modal-"]:not([id$="-overlay"]) .tb-modal-body-js-applied-class { /* Example if you add a class in JS */
+    flex-grow: 1;
+    padding: 1rem;
+}
+
+
+@media (min-width: 768px) { /* md breakpoint */
+    [id^="tb-modal-"]:not([id$="-overlay"]) > div:not(:first-child):not(:last-child),
+    [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:last-child,
+    [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:not(:last-child):nth-child(1) ~ div:nth-child(2),
+    [id^="tb-modal-"]:not([id$="-overlay"]) > div:only-child,
+    [id^="tb-modal-"]:not([id$="-overlay"]) .tb-modal-body-js-applied-class {
+        padding: 1.5rem; /* md:p-6 */
+    }
+}
+
+/* --- Modal Footer --- */
+/* Targets the last div child of the modal container IF it's used for the footer */
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:last-child { /* This selector assumes footer is the last div */
+    /* Layout (mt-auto flex flex-wrap justify-end gap-3 flex-shrink-0) */
+    margin-top: auto; /* Pushes footer to bottom if modal body doesn't fill height */
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.75rem; /* gap-3 */
+    flex-shrink: 0;
+
+    /* Padding (p-4 md:p-6) */
+    padding: 1rem; /* p-4 */
+
+    /* Border (border-t border-neutral-300/50 dark:border-neutral-700/50) */
+    border-top: 1px solid var(--tb-modal-header-border-light); /* Reusing header border color var */
+}
+
+.dark [id^="tb-modal-"]:not([id$="-overlay"]) > div:last-child {
+    border-top-color: var(--tb-modal-header-border-dark);
+}
+
+@media (min-width: 768px) { /* md breakpoint */
+    [id^="tb-modal-"]:not([id$="-overlay"]) > div:last-child {
+        padding: 1.5rem; /* md:p-6 */
+    }
+}
+
+
+/* --- Material Symbols Outlined (Ensure this is globally available or defined here) --- */
+.material-symbols-outlined {
+  font-variation-settings:
+  'FILL' 0,
+  'wght' 400,
+  'GRAD' 0,
+  'opsz' 24; /* Default size, can be overridden */
+  font-family: 'Material Symbols Outlined'; /* Ensure this font is loaded in your project */
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;  /* Default icon size */
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+  NOTE:
+  - Max width for the modal container ([id^="tb-modal-"]:not([id$="-overlay"]))
+    is intended to be applied via a Tailwind class (e.g., 'max-w-lg')
+    passed in `this.options.maxWidth` and added directly to the element's class list in JS.
+    If you remove that from JS, you'd need to add max-width here or via specific classes.
+  - Button styling for buttons within the footer is assumed to be handled by TB.ui.Button.create()
+    and its own styling (variants, custom classes).
+  - The actual animation (changing opacity and transform values) is handled by JavaScript in the
+    show() and close() methods. This CSS sets up the initial state and transition properties.
+  - For more robust styling of header, body, and footer, consider adding specific classes to them
+    via the `customClasses` option in `Modal.js` (e.g., `this.options.customClasses.header`, etc.)
+    and targeting those classes here. The current selectors are based on DOM structure which can be fragile.
+*/
+
+/* --- FOR DEBUGGING: Uncomment this to make elements very obvious if CSS is applying --- */
+/*
+[id^="tb-modal-"][id$="-overlay"] { border: 3px solid blue !important; }
+[id^="tb-modal-"]:not([id$="-overlay"]) { border: 3px solid red !important; }
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child { border: 2px dashed green !important; } // Header
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:last-child { border: 2px dashed purple !important; } // Footer
+*/
+
+/* --- END OF FILE Modal.css --- */
+
+
+/* Beispiel für einen globalen tbjs-Komponenten-Style, wenn nötig */
+/* .tb-button-custom { ... } */
+
+/* Styles für Komponenten, die nicht rein mit Tailwind gehen, z.B. der Loader-Spinner */
+/* Diese sollten idealerweise auch mit dem `tb-` Präfix versehen werden. */
+/* Beispiel aus Loader.js (angepasst mit tb- Präfix) */
+.tb-loader-spinner-default {
+    width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.3); /* Farbe anpassen für Themen */
+    border-top-color: var(--tb-color-primary-500); /* Nutzt deine Theme-Farbe */
+    border-radius: 50%; animation: tbjs_spin 1s linear infinite;
+}
+html.dark .tb-loader-spinner-default {
+    border-top-color: var(--tb-color-primary-500); /* Kann gleich bleiben oder angepasst werden */
+    border-color: rgba(255,255,255,0.2); /* Dunklerer transparenter Rand */
+}
+
+/* Sicherstellen, dass die Animation definiert ist */
+@keyframes tbjs_spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+/* Main Toast Container (already has Tailwind for layout, bg, shadow, rounding) */
+.tb-speech-balloon-toast {
+    /* Ensure backdrop-filter is applied if supported by browser (already in JS) */
+    /* -webkit-backdrop-filter: blur(10px); */ /* Example if not handled by Tailwind */
+    /* backdrop-filter: blur(10px); */      /* Example if not handled by Tailwind */
+    position: relative; /* Needed for absolute positioning of "from" label and tail */
+    /* padding: 20px; -- from speech_balloon.css, in Toast.js it's tb-p-5 */
+    /* margin: 15px; -- applied by the toast container's gap */
+    animation: tb-toast-fadeIn 0.3s ease-out; /* Entry animation */
+}
+
+/* Type-specific border colors (JS already adds tb-border-...)
+   These are mostly illustrative if your JS handles border colors via Tailwind.
+   If not, you'd uncomment and use them.
+.tb-toast-type-info { border-color: var(--tb-color-primary-500, #3b82f6); }
+.tb-toast-type-success { border-color: var(--tb-color-green-500, #22c55e); }
+.tb-toast-type-warning { border-color: var(--tb-color-yellow-500, #eab308); }
+.tb-toast-type-error { border-color: var(--tb-color-red-500, #ef4444); }
+*/
+
+/* "From" Label (Title) */
+.tb-speech-balloon-from { /* This class is added in Toast.js */
+    /* position: absolute; - already set by Tailwind in Toast.js */
+    /* top: -10px; / tb--top-2.5 in Toast.js */
+    /* left: 50%; / tb-left-1/2 in Toast.js */
+    /* transform: translateX(-50%); / tb--translate-x-1/2 in Toast.js */
+    /* background: var(--tb-color-background, white); / tb-bg-background-color in Toast.js */
+    /* backdrop-filter: blur(10px); */ /* Could be added if desired, but might be too much with main blur */
+    /* padding: 0 5px; / tb-px-2 tb-py-0.5 in Toast.js */
+    /* z-index: 1; / Tailwind z-10 could be used in JS if needed */
+    /* border-radius: 5px; / tb-rounded in Toast.js */
+    /* font-size: 0.75rem; / tb-text-xs in Toast.js */
+    /* font-weight: 600; / tb-font-semibold in Toast.js */
+    /* box-shadow: 0 1px 3px rgba(0,0,0,0.1); / tb-shadow in Toast.js */
+    /* These styles from speech_balloon.css are mostly covered by Tailwind in Toast.js */
+    /* We can ensure the background is distinct if needed */
+    background-color: var(--tb-color-background); /* Ensure it's opaque over the blurred toast body */
+    border: 1px solid var(--tb-color-border, #e5e7eb); /* Match general border style */
+}
+html.dark .tb-speech-balloon-from {
+    border-color: var(--tb-color-border, #4b5563);
+}
+
+
+/* Speech Balloon Tail */
+.tb-speech-balloon-tail {
+    content: "";
+    position: absolute;
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 8px; /* Size of the tail */
+    left: 50%;
+    transform: translateX(-50%);
+    /* Will be dynamically set by JS or specific CSS for top/bottom */
+}
+
+/* Tail pointing DOWN (for toasts at the top of the screen) */
+.tb-toast-position-top .tb-speech-balloon-tail {
+    top: -16px; /* (2 * border-width) */
+    border-left-color: transparent;
+    border-right-color: transparent;
+    border-top-color: transparent;
+    /* border-bottom-color is set by JS based on type's border color for consistency */
+}
+
+/* Tail pointing UP (for toasts at the bottom of the screen) */
+.tb-toast-position-bottom .tb-speech-balloon-tail {
+    bottom: -16px; /* (2 * border-width) */
+    border-left-color: transparent;
+    border-right-color: transparent;
+    border-bottom-color: transparent;
+    /* border-top-color is set by JS based on type's border color for consistency */
+}
+/* Note: The actual color of the tail (border-top/bottom-color) should match the toast's border color.
+   This logic will be added to Toast.js _createDom to apply the correct border color. */
+
+
+/* Fade Animations */
+@keyframes tb-toast-fadeIn {
+    from { opacity: 0; transform: translateY(-10px) scale(0.95); } /* Example entry */
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes tb-toast-fadeOut { /* Used for the dot */
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+/* The main toast fade-out is handled by direct style manipulation in JS for opacity and transform */
+
+.tb-speech-balloon-content{
+    background-color: var(--theme-bg);
+}
+
+/* Content Area - already styled by Tailwind in Toast.js */
+.tb-speech-balloon-content p { /* If you want specific styling for p tags inside */
+    /* font-size: 1rem; */ /* Example, already tb-text-sm in Toast.js */
+    margin-bottom: 0.5em; /* Add some spacing between paragraphs */
+}
+.tb-speech-balloon-content p:last-child {
+    margin-bottom: 0;
+}
+
+
+/* Progress Bar Container & Bar */
+/* Container style (tb-bg-text-color/10 tb-rounded-full tb-overflow-hidden) is good from JS */
+.tb-speech-balloon-progress-bar-container {
+    height: 5px; /* Explicit height matching speech_balloon.css */
+}
+.tb-speech-balloon-progress-bar {
+    /* height: 100%; tb-h-full from JS */
+    /* background-color is set by JS using accentColorClass.replace('tb-text-', 'tb-bg-') */
+    /* border-radius: 9999px; tb-rounded-full from JS */
+    transition: width 0.1s linear; /* Smoothness for JS-driven updates */
+}
+/* No CSS animation needed for progress bar as JS handles width update */
+
+.tb-speech-balloon-close-button {
+    padding: 0;
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    cursor: pointer;
+}
+
+.tb-toast-container-mini-button{
+    padding: 0;
+    cursor: pointer;
+}
+
+/* Close Button */
+.tb-speech-balloon-close-button .material-symbols-outlined {
+    font-size: 1.125rem; /* Slightly smaller than default 24px for a less intrusive button */
+    line-height: 1;
+}
+.tb-speech-balloon-close-button:hover .material-symbols-outlined {
+    /* color: var(--tb-color-primary-500); */ /* Or use text-color from JS */
+}
+
+
+/* Dot (after toast closes) */
+.tb-toast-dot {
+    position: relative; /* So it sits in the flow of the toast container */
+    /* display: inline-block; /* Or flex if content inside */
+    width: 10px;  /* Larger than speech_balloon's dot for better visibility */
+    height: 10px;
+    border-radius: 50%;
+    cursor: pointer;
+    /* background-color set by JS based on toast type */
+    margin: 5px; /* Spacing from where the toast was */
+    opacity: 0; /* Start hidden */
+    animation: tb-toast-dot-fadeIn 0.3s forwards, tb-toast-dot-autoHide 15s 0.5s forwards; /* Fade in, then auto hide */
+    transition: transform 0.2s ease-out, background-color 0.2s;
+    z-index: 1090; /* Below toast container (1100) but above most page content */
+}
+
+.tb-toast-dot:hover {
+    transform: scale(1.2);
+    /* background-color: var(--tb-color-accent, #2563eb); /* Example hover color */
+}
+
+@keyframes tb-toast-dot-fadeIn {
+    from { opacity: 0; transform: scale(0.5); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes tb-toast-dot-autoHide {
+    0% { opacity: 1; }
+    90% { opacity: 1; } /* Hold visibility for most of the duration */
+    100% { opacity: 0; transform: scale(0.5); }
+}
+
+/* Specific dot colors (applied by JS) */
+.tb-toast-dot-success { background-color:  #22c55e; }
+.tb-toast-dot-warning { background-color:  #eab308; }
+.tb-toast-dot-error   { background-color:  #ef4444; }
+.tb-toast-dot-info    { background-color:  #3b82f6; }
+

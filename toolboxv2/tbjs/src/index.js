@@ -1,4 +1,4 @@
-// tbjs/index.js
+// tbjs/src/index.js
 // Original: This file orchestrates the initialization of the entire tbjs framework.
 // It replaces the top-level IIFE and global setup in the original index.js.
 
