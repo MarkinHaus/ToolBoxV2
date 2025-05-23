@@ -60,7 +60,7 @@ function initEmailWaitingList() {
 
                 // responseResult is an instance of the Result class from api.js
                 if (responseResult && responseResult.info) {
-                    if (responseResult.info.exec_code >= 0 && responseResult.error === TB.api.ToolBoxError.none) { // Assuming exec_code >= 0 is success
+                    if (responseResult.info.exec_code >= 0 && responseResult.error === TB.ToolBoxError.none) { // Assuming exec_code >= 0 is success
                         TB.logger.info('[EmailWList] Subscription successful:', responseResult.info.help_text, responseResult);
                         TB.ui.Toast.showSuccess(responseResult.info.help_text || 'Thank you for subscribing!', { title: 'Success' });
                         emailInput.value = ''; // Clear the input

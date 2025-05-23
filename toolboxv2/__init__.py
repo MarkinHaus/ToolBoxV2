@@ -128,9 +128,10 @@ __email__ = 'Markinhausmanns@gmail.com'
 from pathlib import Path
 from platform import node, system
 
-__cwd__ = cwd = Path.cwd()
+__init_cwd__ = init_cwd = Path.cwd()
 
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
+__tb_root_dir__ = tb_root_dir = Path(__file__).parent
+os.chdir(__tb_root_dir__)
 __version__ = get_version_from_pyproject()
 
 ToolBox_over: str = "root"
@@ -154,7 +155,8 @@ __all__ = [
     "RequestData",  # ADD
     "Code",
     "show_console",  # ADD
-    "cwd",
+    "init_cwd",
+    "tb_root_dir",
 
     "MainToolType",
     "AppType",

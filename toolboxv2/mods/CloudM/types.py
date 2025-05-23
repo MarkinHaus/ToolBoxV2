@@ -30,6 +30,9 @@ class User:
     is_persona: bool = field(default=False)
     level: int = field(default=0)
 
+    log_level: str = field(default="INFO")  # Example log levels: DEBUG, INFO, WARNING, ERROR
+    settings: dict[str, any] = field(default_factory=dict)  # For general app settings
+
 
 @dataclass
 class UserCreator(User):

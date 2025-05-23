@@ -800,6 +800,7 @@ def cli_api_runner():
         pass
 
     parser = argparse.ArgumentParser(
+        usage="tb api {start,stop,update,status,build,clean,remove-exe,help} [-h] [--exe EXE] [--debug] [-w] [--version VERSION]",
         description=textwrap.dedent("""
             🚀 Platform-Agnostic Rust Server Manager
 
@@ -837,8 +838,15 @@ def cli_api_runner():
     parser.add_argument(
         '--debug',
         action='store_true',
-        help="Enable debug mode with hot reloading support."
+        help="Enable debug mode with server hot reloading support."
     )
+
+    parser.add_argument(
+        '-w', '--watch',
+        action='store_true',
+        help="Enable watch mode for js html and css."
+    )
+
     parser.add_argument(
         '--version',
         type=str,
@@ -851,7 +859,15 @@ def cli_api_runner():
     if args.action == "help":
         parser.print_help()
         return
+    if args.watch:
+        from toolboxv2 import tb_root_dir
+        try:
+            subprocess.run("npm run dev", cwd=tb_root_dir, shell=True)
+        except Exception as e:
+            pass
+        return
     api_manager(args.action, args.debug, args.exe, args.version)
+
 
 if __name__ == "__main__":
     cli_api_runner()

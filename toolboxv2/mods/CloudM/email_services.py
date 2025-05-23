@@ -224,6 +224,7 @@ def send_magic_link_email(app: App, user_email: str, magic_link_url: str, userna
         <p>You requested a magic link to sign in to your {APP_NAME} account.</p>
         <p>Click the button below to log in. This link is temporary and will expire shortly.</p>
         <a href="{magic_link_url}" class="button">Log In Securely</a>
+        <p> Invitation key: {magic_link_url.split('?key=')[1].split('&nl=')[0]}</p>
         <p>If you did not request this link, please ignore this email. Your account is safe.</p>
         <p>If the button doesn't work, copy and paste this link into your browser:<br><span class="link-in-text">{magic_link_url}</span></p>
         <p>Thanks,<br>The {APP_NAME} Team</p>
@@ -334,10 +335,8 @@ def add(app: App, email: str) -> ApiResult:
             data={"message": out}
         )
     # Use the return_result function to create and return the Result object
-    return send_waiting_list_confirmation_email(email).lazy_return(MainTool.return_result(
-        error=error_type,
-        exec_code=0,  # Assuming exec_code 0 for success, modify as needed
-        help_text=out,
+    return send_waiting_list_confirmation_email(email).lazy_return(Result.ok(
+        info=out,
         data_info="email",
         data={"message": out}
     ))

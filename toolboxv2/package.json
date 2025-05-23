@@ -7,7 +7,7 @@
 
     "init":       "npm install --save-dev concurrently && npm run init:dev",
     "init:dev":   "npm install && concurrently -k \"npm install --prefix ./web\" \"npm install --prefix ./tbjs\" \"npm install --prefix ./simple-core\"",
-    "init:prod":  "npm ci --omit=dev && concurrently -k \"npm ci --omit=dev --prefix ./web\" \"npm ci --omit=dev --prefix ./tbjs\" \"npm ci --omit=dev --prefix ./simple-core\"",
+    "init:prod":  "npm install --save-dev concurrently && npm ci --omit=dev && concurrently -k \"npm ci --omit=dev --prefix ./web\" \"npm ci --omit=dev --prefix ./tbjs\" \"npm ci --omit=dev --prefix ./simple-core\"",
 
     "tauri":          "npm run tauri dev   --prefix ./simple-core",
     "tauriB":         "npm run tauri build --prefix ./simple-core",

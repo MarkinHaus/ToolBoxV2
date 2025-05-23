@@ -1515,6 +1515,10 @@ class App(AppType, metaclass=Singleton):
         if args_ is not None and not args:
             args = args_
 
+        if isinstance(mod_function_name, str) and backwords_compability_variabel_string_holder is None:
+            backwords_compability_variabel_string_holder = mod_function_name.split('.')[-1]
+            mod_function_name = mod_function_name.replace(f".{backwords_compability_variabel_string_holder}", "")
+
         if isinstance(mod_function_name, str) and isinstance(backwords_compability_variabel_string_holder, str):
             mod_function_name = (mod_function_name, backwords_compability_variabel_string_holder)
 
@@ -1549,6 +1553,10 @@ class App(AppType, metaclass=Singleton):
         if args_ is not None and not args:
             args = args_
 
+        if isinstance(mod_function_name, str) and backwords_compability_variabel_string_holder is None:
+            backwords_compability_variabel_string_holder = mod_function_name.split('.')[-1]
+            mod_function_name = mod_function_name.replace(f".{backwords_compability_variabel_string_holder}", "")
+
         if isinstance(mod_function_name, str) and isinstance(backwords_compability_variabel_string_holder, str):
             mod_function_name = (mod_function_name, backwords_compability_variabel_string_holder)
 
@@ -1563,7 +1571,7 @@ class App(AppType, metaclass=Singleton):
             self.run_bg_task(res.bg_task)
 
         if self.debug:
-            res.log(show_data=False)
+            res.log(show_data=False) if isinstance(res, Result) else self.logger.debug(res)
         if not get_results and isinstance(res, Result):
             return res.get()
 
