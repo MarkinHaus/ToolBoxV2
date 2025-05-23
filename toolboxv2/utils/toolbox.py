@@ -1625,6 +1625,9 @@ class App(AppType, metaclass=Singleton):
 
     def reload_mod(self, mod_name, spec='app', is_file=True, loc="toolboxv2.mods."):
         self.remove_mod(mod_name, delete=True)
+        if mod_name not in self.modules:
+            self.logger.warning(f"Module '{mod_name}' is not found")
+            return
         if hasattr(self.modules[mod_name], 'reload_save') and self.modules[mod_name].reload_save:
             def reexecute_module_code(x):
                 return x

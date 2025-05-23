@@ -187,3 +187,14 @@ export function cleanUrl(url) {
     // cleaned = cleaned.replace(/\/{2,}/g, '/');
     return cleaned;
 }
+
+
+export function escapeHtml (unsafe) {
+        if (typeof unsafe !== 'string') return '';
+        return unsafe
+            .replace(/&/g, "&")
+            .replace(/</g, "<")
+            .replace(/>/g, ">")
+            .replace(/"/g, '"')
+            .replace(/'/g, "'");
+    };

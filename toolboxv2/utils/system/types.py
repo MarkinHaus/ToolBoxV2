@@ -313,6 +313,14 @@ class RequestData:
             'session_id': self.session_id
         }
 
+    def __getattr__(self, name: str) -> Any:
+        """Delegate unknown attributes to the `request` object."""
+        # Nur wenn das Attribut nicht direkt in RequestData existiert
+        # und auch nicht `session` oder `session_id` ist
+        if hasattr(self.request, name):
+            return getattr(self.request, name)
+        raise AttributeError(f"'RequestData' object has no attribute '{name}'")
+
 
 # Example usage:
 def parse_request_data(data: dict[str, Any]) -> RequestData:

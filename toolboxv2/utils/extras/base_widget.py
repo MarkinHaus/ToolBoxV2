@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 
+
 try:
     from ..system.all_functions_enums import CLOUDM_AUTHMANAGER
 except ImportError:
@@ -22,7 +23,10 @@ def get_s_id(request):
     from ..system.types import Result
     if request is None:
         return Result.default_internal_error("No request specified")
-    sID_ = request.session.get('ID', '')
+    if hasattr(request, "session_id"):
+        sID_ = request.session.SiID
+    else:
+        sID_ = request.session.get('ID', '')
     return Result.ok(sID_)
 
 
@@ -30,13 +34,19 @@ def get_spec(request):
     from ..system.types import Result
     if request is None:
         return Result.default_internal_error("No request specified")
-    spec_ = request.session.get('live_data', {}).get('spec')
+    if hasattr(request, "session_id"):
+        spec_ = request.session.spec
+    else:
+        spec_ = request.session.get('live_data', {}).get('spec')
     return Result.ok(spec_)
 
 
 async def get_user_from_request(app, request):
     from ...mods.CloudM.types import User
-    name = request.session.get('live_data', {}).get('user_name')
+    if hasattr(request, "session_id"):
+        name = request.session.user_name
+    else:
+        name = request.session.get('live_data', {}).get('user_name')
     if name:
         user = await app.a_run_any(CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=app.config_fh.decode_code(name))
     else:
