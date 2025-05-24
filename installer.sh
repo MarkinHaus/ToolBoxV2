@@ -68,9 +68,7 @@ USER_BIN_DIR=""
 SYSTEM_PKG_INSTALLER_CMD="" # For auto-installing Python/Git
 SUDO_CMD="sudo" # Assume sudo, can be empty if root or not needed
 
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
+command_exists() { command -v "$1" &>/dev/null; }
 
 # Detect if running as root
 if [[ "$(id -u)" -eq 0 ]]; then
