@@ -50,7 +50,7 @@ use std::path::Path;
 use std::net::TcpListener;
 
 #[cfg(unix)]
-use std::os::unix::io::{FromRawFd, IntoRawFd};
+use std::os::unix::io::{FromRawFd, RawFd};
 
 // Define a helper struct for file data representation
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -2309,14 +2309,16 @@ async fn main() -> std::io::Result<()> {
             match fd_str.parse::<RawFd>() {
                 Ok(fd) => {
                     info!("[UNIX] Found PERSISTENT_LISTENER_FD={}, attempting to use it.", fd);
-                    match unsafe { TcpListener::from_raw_fd(fd) } {
-                        Ok(listener) => {
+                    match unsafe { TcpListener::from_raw_fd(fd) } { // This returns std::io::Result<TcpListener>
+                        Ok(listener) => { // listener here is std::net::TcpListener
                             info!("[UNIX] Successfully created TcpListener from FD {}.", fd);
                             inherited_listener = Some(listener);
                             used_persistent_fd = true;
                         }
-                        Err(e) => {
+                        Err(e) => { // e here is std::io::Error
                             error!("[UNIX] FAILED to create TcpListener from FD {}: {}. THIS IS LIKELY THE PROBLEM.", fd, e);
+                            // inherited_listener remains None
+                            // used_persistent_fd remains false
                         }
                     }
                 }
