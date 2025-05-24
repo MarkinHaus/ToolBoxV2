@@ -568,6 +568,7 @@ def start_rust_server_posix(executable_path: str, persistent_fd: int):
             [str(abs_executable_path)],
             cwd=abs_executable_path.parent,
             env=env,
+            pass_fds=[persistent_fd],
         )
         return process
     except Exception as e:

@@ -209,6 +209,8 @@ async def load_widget(app, display_name="Cud be ur name", WidgetID=str(uuid.uuid
 
 
 async def get_user_from_request(app, request):
+    if request is None:
+        return User()
     name = request.session.user_name
     if name:  # Check if decoding was successful
         user_res = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=name)
