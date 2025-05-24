@@ -560,7 +560,7 @@ def start_rust_server_posix(executable_path: str, persistent_fd: int):
     abs_executable_path = Path(executable_path).resolve()
     env = os.environ.copy()
     env["PERSISTENT_LISTENER_FD"] = str(persistent_fd)
-    env["LISTEN_FDS"] = str(persistent_fd) # Also set for listenfd standard mechanism
+    env["LISTEN_FDS"] = "1" if  persistent_fd != 4 else str(persistent_fd)# Also set for listenfd standard mechanism
     env["LISTEN_PID"] = str(os.getpid())
     print(f"[POSIX] Starting Rust server: {abs_executable_path} using FD {persistent_fd}")
     try:
@@ -689,7 +689,7 @@ def manage_server(action: str, executable_path: str = None, version_str: str = "
         print(f"Resolved executable path: {executable_path}")
 
 
-        if platform.system().lower() == "windows":
+        if platform.system().lower() == "windows" or True:
             process = start_rust_server_windows(executable_path)
         else: # POSIX
             # This script instance creates the socket and FD file if they don't exist
@@ -711,7 +711,6 @@ def manage_server(action: str, executable_path: str = None, version_str: str = "
                 server_socket_obj.close()
                 if os.path.exists(PERSISTENT_FD_FILE):
                     with contextlib.suppress(OSError): os.remove(PERSISTENT_FD_FILE)
-
 
         if process:
             # Wait briefly to see if it dies immediately

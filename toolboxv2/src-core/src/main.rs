@@ -2298,59 +2298,6 @@ async fn main() -> std::io::Result<()> {
     let dist_path = config.server.dist_path.clone(); // Clone the dist_path here
     let open_modules = Arc::new(config.server.open_modules.clone());
 
-
-
-    let mut inherited_listener: Option<TcpListener> = None;
-    let mut used_persistent_fd = false;
-
-    #[cfg(unix)]
-    {
-        if let Ok(fd_str) = env::var("PERSISTENT_LISTENER_FD") {
-            match fd_str.parse::<RawFd>() {
-                Ok(fd) => {
-                    info!("[UNIX] Found PERSISTENT_LISTENER_FD={}, attempting to use it.", fd);
-                    match unsafe { TcpListener::from_raw_fd(fd) } { // This returns std::io::Result<TcpListener>
-                        Ok(listener) => { // listener here is std::net::TcpListener
-                            info!("[UNIX] Successfully created TcpListener from FD {}.", fd);
-                            inherited_listener = Some(listener);
-                            used_persistent_fd = true;
-                        }
-                        Err(e) => { // e here is std::io::Error
-                            error!("[UNIX] FAILED to create TcpListener from FD {}: {}. THIS IS LIKELY THE PROBLEM.", fd, e);
-                            // inherited_listener remains None
-                            // used_persistent_fd remains false
-                        }
-                    }
-                }
-                Err(_) => {
-                    warn!("[UNIX] PERSISTENT_LISTENER_FD ('{}') is set but not a valid integer.", fd_str);
-                }
-            }
-        } else {
-            info!("[UNIX] PERSISTENT_LISTENER_FD environment variable not found.");
-        }
-
-        if inherited_listener.is_none() && !used_persistent_fd {
-            info!("[UNIX] PERSISTENT_LISTENER_FD not used or failed, trying ListenFd::from_env().");
-            match ListenFd::from_env().take_tcp_listener(0) {
-                Ok(Some(l)) => {
-                    info!("[UNIX] Successfully took TCP listener from ListenFd (systemd/listenfd compatible).");
-                    inherited_listener = Some(l);
-                }
-                Ok(None) => {
-                    info!("[UNIX] ListenFd::from_env() did not find any inherited listeners.");
-                }
-                Err(e) => {
-                    warn!("[UNIX] Error trying to use ListenFd::from_env(): {}", e);
-                }
-            }
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        info!("[Windows/Non-Unix] Not attempting FD handover. Will bind directly.");
-    }
     let server_handle: Server = {
         let mut http_server  = HttpServer::new(move || {
         let dist_path = dist_path.clone(); // Move the cloned dist_path into the closure
@@ -2468,20 +2415,13 @@ async fn main() -> std::io::Result<()> {
             )
     });
 
-     if let Some(listener) = inherited_listener {
-            info!("Using an inherited listener (POSIX only). Server will .listen() on this.");
-            // .listen() consumes http_server and returns a Result<HttpServer, std::io::Error>
-            // The ? operator will get the HttpServer if Ok, or return Err early.
-            // Then .run() is called on the HttpServer, which returns the Server handle.
-            http_server.listen(listener)?.run()
-        } else {
-            let bind_addr = format!("{}:{}", config.server.ip, config.server.port);
-            info!("[Manual Bind] No inherited listener was successfully acquired. Binding to new TCP listener on {}.", bind_addr);
-            // .bind() consumes http_server and returns a Result<HttpServer, std::io::Error>
-            // The ? operator will get the HttpServer if Ok, or return Err early.
-            // Then .run() is called on the HttpServer, which returns the Server handle.
-            http_server.bind(bind_addr)?.run()
-        }
+        let bind_addr = format!("{}:{}", config.server.ip, config.server.port);
+        info!("[Manual Bind] No inherited listener was successfully acquired. Binding to new TCP listener on {}.", bind_addr);
+        // .bind() consumes http_server and returns a Result<HttpServer, std::io::Error>
+        // The ? operator will get the HttpServer if Ok, or return Err early.
+        // Then .run() is called on the HttpServer, which returns the Server handle.
+        http_server.bind(bind_addr)?.run()
+
     }; // The semicolon here is important; server_handle is now the dev::Server
 
     info!("Server setup complete. Starting server (dev::Server handle obtained).");
