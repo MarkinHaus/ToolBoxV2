@@ -10,7 +10,7 @@ from toolboxv2.mods.SocketManager import get_local_ip
 
 from ..types import User
 # Import the Name constant from user_account_manager to use in TBEF calls
-from .UserAccountManager import Name as UAM_ModuleName
+
 
 Name = 'CloudM.UI.widget'
 export = get_app(f"{Name}.Export").tb
@@ -128,6 +128,7 @@ async def reload_widget_info(app: App, user: User, WidgetID: str):
     html_devices_str = app.run_any(TBEF.MINIMALHTML.FUSE_TO_STRING, html_elements=html_devices_result)
 
     # Call the new account management HTML generator
+    from .UserAccountManager import Name as UAM_ModuleName
     account_mgmt_html_result = await app.a_run_any(
         f"{UAM_ModuleName}.get_account_management_section_html",  # Use imported Name
         user=user,
