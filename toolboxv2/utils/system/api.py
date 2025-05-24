@@ -515,43 +515,44 @@ def stop_process(pid, timeout=10):
         return False
 
 # --- Platform-Specific Socket and Process Starting ---
-
 def ensure_socket_and_fd_file_posix(host, port, backlog, fd_file_path) -> tuple[socket.socket | None, int | None]:
     """POSIX: Ensures a listening socket exists and its FD is in the fd_file."""
+    # ALWAYS remove the old FD file if it exists. This script invocation
+    # will create its own socket. This means any previous server using that
+    # address must be stopped, or we'll get AddrInUse.
     if os.path.exists(fd_file_path):
+        print(f"[POSIX] Stale FD file {fd_file_path} found. Removing to create a new socket.")
         try:
-            with open(fd_file_path) as f:
-                fd = int(f.read().strip())
-            # Basic check (less reliable than on-demand creation for ensuring liveness)
-            # This check is mostly to see if the FD *number* is plausible.
-            # The real test is when the Rust server tries to use it.
-            print(f"[POSIX] Found existing persistent FD {fd} in {fd_file_path}.")
-            # We don't return a socket object if FD exists, Rust will use the FD directly.
-            return None, fd
-        except Exception as e:
-            print(f"[POSIX] Persistent FD file {fd_file_path} exists but FD invalid/unreadable: {e}. Will create new.")
-            with contextlib.suppress(OSError): os.remove(fd_file_path)
+            os.remove(fd_file_path)
+        except OSError as e:
+            # This is not ideal, as binding might fail if the port is still in use
+            # by whatever process was associated with the old FD.
+            print(f"[POSIX] Warning: Could not remove old FD file {fd_file_path}: {e}")
 
+    # The rest of your socket creation logic
     try:
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        fd_num = server_socket.fileno()
         if hasattr(os, 'set_inheritable'): # Python 3.4+
-            os.set_inheritable(server_socket.fileno(), True)
+            os.set_inheritable(fd_num, True)
         else: # POSIX, Python < 3.4 (fcntl not on Windows)
-            import fcntl
-            fd_num = server_socket.fileno()
+            import fcntl # Import fcntl here as it's POSIX specific
             flags = fcntl.fcntl(fd_num, fcntl.F_GETFD)
-            fcntl.fcntl(fd_num, fcntl.F_SETFD, flags & ~fcntl.FD_CLOEXEC)
+            fcntl.fcntl(fd_num, fcntl.F_SETFD, flags & ~fcntl.FD_CLOEXEC) # Ensure inheritable
 
         server_socket.bind((host, port))
         server_socket.listen(backlog)
-        fd = server_socket.fileno()
-        with open(fd_file_path, 'w') as f: f.write(str(fd))
-        os.chmod(fd_file_path, 0o600)
-        print(f"[POSIX] Created new socket. FD {fd} saved to {fd_file_path}.")
-        return server_socket, fd # Return the socket object for the initial creator
+        # FD is now valid and owned by this Python process
+        with open(fd_file_path, 'w') as f: f.write(str(fd_num))
+        os.chmod(fd_file_path, 0o600) # Restrictive permissions
+        print(f"[POSIX] Created new socket. FD {fd_num} saved to {fd_file_path}.")
+        return server_socket, fd_num
     except Exception as e:
         print(f"[POSIX] Fatal: Could not create and save listening socket FD: {e}")
+        if 'server_socket' in locals():
+            server_socket.close()
         return None, None
 
 def start_rust_server_posix(executable_path: str, persistent_fd: int):

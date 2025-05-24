@@ -12,7 +12,7 @@ use serde_json;
 use base64::{engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
 use config::{Config, File, FileFormat};
-// use env_logger;
+use env_logger;
 use rand::{thread_rng, Rng};
 use std::collections::{HashMap};
 
@@ -2253,7 +2253,7 @@ const PERSISTENT_FD_FILE: &str = "server_socket.fd"; // File to store the FD on 
 async fn main() -> std::io::Result<()> {
 
     // Initialize logger
-    // env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
+    env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
 
     // Load configuration
     let config: ServerConfig = Config::builder()
@@ -2414,51 +2414,16 @@ async fn main() -> std::io::Result<()> {
             )
     });
 
-    // ---> MODIFIED: Platform-dependent Socket Activation Logic
-    let mut inherited_listener: Option<TcpListener> = None;
+    let mut listenfd = ListenFd::from_env();
 
-    #[cfg(unix)] // Logic for Linux/macOS using FD passing
-    {
-        // 1. Try PERSISTENT_LISTENER_FD (set by Python orchestrator after reading from file)
-        if let Ok(fd_str) = env::var("PERSISTENT_LISTENER_FD") {
-            if let Ok(fd) = fd_str.parse::<i32>() {
-                info!("[UNIX] Found PERSISTENT_LISTENER_FD={}, attempting to use it.", fd);
-                unsafe {
-                    // Safety: Python script MUST pass a valid listening socket FD.
-                    inherited_listener = Some(TcpListener::from_raw_fd(fd));
-                }
-            } else {
-                warn!("[UNIX] PERSISTENT_LISTENER_FD is set but not a valid integer: {}", fd_str);
-            }
-        }
-
-        // 2. If no persistent FD, try standard listenfd (for first launch via Python)
-        if inherited_listener.is_none() {
-            let mut listenfd = ListenFd::from_env(); // Looks for LISTEN_FDS, LISTEN_PID
-            if let Some(l) = listenfd.take_tcp_listener(0)? {
-                info!("[UNIX] Binding to inherited TCP listener (from LISTEN_FDS).");
-                inherited_listener = Some(l);
-            }
-        }
-    }
-
-    #[cfg(not(unix))] // Fallback logic for Windows (and other non-Unix)
-    {
-        // On Windows, listenfd::from_env() might not behave as expected for FD passing from Python.
-        // True socket duplication is via WSADuplicateSocket.
-        // For a simpler fallback, we'll just let Actix bind directly.
-        // The Python script on Windows will stop the old server THEN start the new one.
-        info!("[Windows/Non-Unix] Not attempting FD handover. Will bind directly.");
-        // No inherited listener is expected or easily usable here without FFI.
-    }
-
-    // 3. Bind or Listen
-    server = if let Some(listener) = inherited_listener {
-        info!("Using an inherited listener (POSIX only).");
+    server = if let Some(listener) = listenfd.take_tcp_listener(0).unwrap_or(None) {
+        info!("[Systemd/ListenFd] Binding to inherited TCP listener.");
         server.listen(listener)?
     } else {
+        // Fallback if not run under systemd socket activation or listenfd
+        // (e.g. local development without systemfd)
         let bind_addr = format!("{}:{}", config.server.ip, config.server.port);
-        info!("Binding to new TCP listener on {}", bind_addr);
+        info!("[Manual Bind] No inherited listener found. Binding to new TCP listener on {}.", bind_addr);
         server.bind(bind_addr)?
     };
 
