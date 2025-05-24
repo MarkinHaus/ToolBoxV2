@@ -30,6 +30,9 @@ async def get_user_data(app: App, username: str, data_key_prefix: str) -> List[D
     if not db_result.is_error() and db_result.is_data():
         try:
             data_json = db_result.get()
+            if isinstance(data_json, bytes):
+                data_json = data_json.decode()
+            app.logger.info(f"POA User data : {data_json}")
             if isinstance(data_json, list) and len(data_json) > 0:  # db.get kann eine Liste zurückgeben
                 return json.loads(data_json[0])
             elif isinstance(data_json, str):
@@ -521,7 +524,7 @@ async function handleNoteAction(event) {
                     action: async modal => {
                         TB.ui.Loader.show('Lösche...');
                         try {
-                            const delResponse = await TB.api.request('POA', `delete_note?e_id=${noteId}`, null, 'DELETE');
+                            const delResponse = await TB.api.request('POA', `delete_note?note_id=${noteId}`, null, 'DELETE');
                             if (delResponse.error === TB.ToolBoxError.none) {
                                 TB.ui.Toast.showSuccess('Notiz gelöscht!');
                                 await loadNotes();
@@ -579,7 +582,7 @@ function showEditNoteModal(note) { // note kann null sein für eine neue Notiz
                     try {
                         const payload = { title: newTitle, content: newContent };
                         const method = isEditing ? 'PUT' : 'POST';
-                        const endpoint = isEditing ? `update_note?&e_id=${note.id}` : `add_note?`;
+                        const endpoint = isEditing ? `update_note?&note_id=${note.id}` : `add_note?`;
 
                         const response = await TB.api.request('POA', endpoint, payload, method);
 
