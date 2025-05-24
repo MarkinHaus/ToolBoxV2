@@ -12,7 +12,7 @@ use serde_json;
 use base64::{engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
 use config::{Config, File, FileFormat};
-use env_logger;
+// use env_logger;
 use rand::{thread_rng, Rng};
 use std::collections::{HashMap};
 
@@ -2253,7 +2253,7 @@ const PERSISTENT_FD_FILE: &str = "server_socket.fd"; // File to store the FD on 
 async fn main() -> std::io::Result<()> {
 
     // Initialize logger
-    env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
+    // env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
 
     // Load configuration
     let config: ServerConfig = Config::builder()

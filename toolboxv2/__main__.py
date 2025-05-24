@@ -772,6 +772,7 @@ async def main():
     if args.init == "main":
         from .setup_helper import setup_main
         setup_main()
+        """
         if tb_app.system_flag == "Linux":
             setup_service_linux()
         if tb_app.system_flag == "Windows":
@@ -784,6 +785,7 @@ async def main():
         if 'y' in st_gui.lower():
             from toolboxv2.__gui__ import start as start_gui
             start_gui()
+        """
 
     if args.lm:
         edit_logs()
