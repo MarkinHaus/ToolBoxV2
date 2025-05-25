@@ -483,8 +483,8 @@ def crate_local_account(app: App, username: str, email: str = '', invitation: st
         return Result.default_user_error(info="User already registered on this device")
     pub, pri = Code.generate_asymmetric_keys()
     app.config_fh.add_to_save_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8], pri)
-    if ToolBox_over == 'root' and invitation == '':
-        invitation = db_crate_invitation(app)
+    # if ToolBox_over == 'root' and invitation == '':
+    #     invitation = Code.one_way_hash(username, "00#", os.getenv("TB_R_KEY", "pepper123"))[:12] # db_crate_invitation(app)
     if invitation == '':
         return Result.default_user_error(info="No Invitation key provided")
 
@@ -545,11 +545,11 @@ async def get_to_sing_data(app: App, username, personal_key=False):
     return Result.ok(data=data, info="Challenge returned")
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.native, api=False, level=999, test=False)
-def get_invitation(app: App) -> Result:
+def get_invitation(app: App, username='') -> Result:
     if app is None:
         app = get_app(Name + '.test_invations')
 
-    invitation = "00#" + str(Code.generate_seed())  # db_crate_invitation(app)
+    invitation = Code.one_way_hash(username, "00#", os.getenv("TB_R_KEY", "pepper123"))[:12]#"00#" + str(Code.generate_seed())  # db_crate_invitation(app)
     return Result.ok(data=invitation)
 
 
@@ -822,9 +822,9 @@ async def helper_test_user():
     email = "test_mainqmail.com"
     db_helper_delete_user(app, username, "*", matching=True)
     # Benutzer erstellen
-    r = crate_local_account(app, username, email, get_invitation(app).get())
+    r = crate_local_account(app, username, email, get_invitation(app, username).get())
     assert not r.is_error(), r.print(show=False)
-    r = crate_local_account(app, username, email, get_invitation(app).get())
+    r = crate_local_account(app, username, email, get_invitation(app, username).get())
     assert r.is_error(), r.print(show=False)
     # Aufräumen
     db_helper_delete_user(app, username, "*", matching=True)
@@ -838,7 +838,7 @@ async def helper_test_create_user_and_login():
     test_app, app = helper_gen_test_app().get()
     username = "testUser123" + uuid.uuid4().hex
     email = "test_mainqmail.com"
-    r = crate_local_account(app, username, email, get_invitation(app).get())
+    r = crate_local_account(app, username, email, get_invitation(app, username).get())
     r2 = await local_login(app, username)
     assert not r.is_error(), r.print(show=False)
     assert not r2.is_error(), r2.print(show=False)

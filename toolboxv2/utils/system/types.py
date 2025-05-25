@@ -815,6 +815,13 @@ class Result:
     def html(cls, data=None, data_info="", info="OK", interface=ToolBoxInterfaces.remote, data_type="html",status=200, headers=None):
         error = ToolBoxError.none
         info = ToolBoxInfo(exec_code=status, help_text=info)
+        from ...utils.system.getting_and_closing_app import get_app
+
+        if not '"<div class="main-content""' in data:
+            data = f'<div class="main-content frosted-glass">{data}<div>'
+        if not get_app().web_context() in data:
+            data = get_app().web_context() + data
+
 
         if isinstance(headers, dict):
             result = ToolBoxResult(data_to=interface, data={'html':data,'headers':headers}, data_info=data_info,

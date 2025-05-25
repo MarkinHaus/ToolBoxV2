@@ -1534,8 +1534,12 @@ class App(AppType, metaclass=Singleton):
 
         if self.debug:
             res.log(show_data=False)
+
         if not get_results and isinstance(res, Result):
             return res.get()
+
+        if get_results and not isinstance(res, Result):
+            return Result.ok(data=res)
 
         return res
 
@@ -1574,6 +1578,9 @@ class App(AppType, metaclass=Singleton):
             res.log(show_data=False) if isinstance(res, Result) else self.logger.debug(res)
         if not get_results and isinstance(res, Result):
             return res.get()
+
+        if get_results and not isinstance(res, Result):
+            return Result.ok(data=res)
 
         return res
 

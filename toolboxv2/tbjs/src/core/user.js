@@ -321,7 +321,7 @@ const user = {
             // This endpoint needs to be specific for adding a new WebAuthn credential to an *existing, authenticated* user.
             // The old 'create_user_with_init_key_personal' might not be it.
             // Let's assume an endpoint 'getWebAuthnRegistrationChallengeForUser'
-            const challengeRes = await TB.api.request('/CloudM.AuthManager/get_to_sing_data', 'username='+username+'&personal_key=true', {  }, 'POST');
+            const challengeRes = await TB.api.request('/CloudM.AuthManager/get_to_sing_data', 'username='+username+'&personal_key=true', {  }, 'GET');
             if (challengeRes.error !== TB.ToolBoxError.none || !challengeRes.get()?.challenge) {
                 return { success: false, message: challengeRes.info.help_text || "Failed to get WebAuthn registration challenge."};
             }

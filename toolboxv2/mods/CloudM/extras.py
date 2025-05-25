@@ -266,7 +266,7 @@ async def register_initial_loot_user(app: App, email=None, user_name="loot"):
 
     if email is None:
         email = input("enter ure Email:")
-    invitation = get_invitation(app=app).get()
+    invitation = get_invitation(app=app, username=user_name).get()
     ret = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
                       username=user_name,
                       email=email,
@@ -274,7 +274,7 @@ async def register_initial_loot_user(app: App, email=None, user_name="loot"):
     # awaiating user cration
     rport = await ret.aget()
     print(f"[{rport=}]")
-    if rport.is_error():
+    if rport.as_result().is_error():
         return rport
     await asyncio.sleep(1)
     user = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user_name)
@@ -340,7 +340,28 @@ async def login(m_link: str, app: App | None = None):
         return False
     return await app.session.init_log_in_mk_link(m_link)
 
+@export(mod_name=Name, version=version, initial=True)
+def initialize_admin_panel(app: App):
+    print(f"Admin Panel ({Name} v{version}) initialisiert.")
+    # Hier könnten Standard-DB-Strukturen geprüft oder erstellt werden, falls nötig.
+    # Beispiel: Sicherstellen, dass der DB-Client korrekt konfiguriert ist.
+    # db = app.get_mod("DB")
 
+    if app is None:
+        app = get_app()
+    app.run_any(("CloudM","add_ui"),
+                name=Name,
+                title=Name,
+                path=f"/api/CloudM.UI.widget/get_widget",
+                description="main",auth=True
+                )
+    app.run_any(("CloudM","add_ui"),
+                name="UserDashboard",
+                title="UserDashboard",
+                path=f"/api/CloudM.UserDashboard/main",
+                description="main",auth=True
+                )
+    return Result.ok(info="Admin Panel Online").set_origin("CloudM.initialize_admin_panel")
 
 #@test_only
 #async def tb_test_register_initial_root_user(app: App):

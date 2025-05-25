@@ -9,7 +9,7 @@ const DEFAULT_NAVMENU_OPTIONS = {
                 <li><a href="/web/core0/index.html">Home</a></li>
                 <li><a href="/web/mainContent.html">Apps</a></li>
                 <li><a href="/web/assets/login.html">Login</a></li>
-                <li><a href="/web/core0/kontakt.html">Contact</a></li>
+                <li><a href="/api/CloudM.UI.widget/get_widget">Config</a></li>
                 <li><a href="/web/assets/terms.html">Terms and Conditions</a></li>
         </ul>
     `,
