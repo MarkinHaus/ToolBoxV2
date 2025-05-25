@@ -23,9 +23,11 @@ PID_DIR = "./.info"  # Standardized PID directory
 
 async def _is_admin(app: App, request: RequestData) -> User | None:
     current_user = await get_current_user_from_request(app, request)
-    if not current_user or current_user.name != 'root' or current_user.name != 'loot':  # Level 0 is admin
+    if not current_user:  # Level 0 is admin
         return None
-    return current_user
+    if current_user.name == 'root' or current_user.name == 'loot':
+        return current_user
+    return None
 
 
 @export(mod_name=Name, api=True, version=version, name="main", api_methods=['GET'], request_as_kwarg=True, row=True)
