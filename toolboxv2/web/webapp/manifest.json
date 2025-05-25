@@ -11,8 +11,12 @@
       "sizes": "192X192"
     },
     {
-      "src": "piano-512",
+      "src": "icon-512.png",
       "sizes": "512X512"
+    },
+    {
+      "src": "icon-1024.png",
+      "sizes": "1024X1024"
     }
   ],
     "theme_color": "#537FE7",
