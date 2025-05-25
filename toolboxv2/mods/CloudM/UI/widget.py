@@ -52,7 +52,7 @@ async def get_widget(app: App | None = None, request: RequestData = None, **kwar
     user = await get_user_for_widget(app, request)
 
     if user:
-        if user.name == 'root':  # Admin
+        if user.name == 'root' or user.name == 'loot':  # Admin
             from ..AdminDashboard import Name as AdminDashboard_ModuleName
             dashboard_result = await app.a_run_any(
                 AdminDashboard_ModuleName + ".main", request=request, get_results=True
