@@ -269,18 +269,16 @@ async def register_initial_loot_user(app: App, email=None, user_name="loot"):
     root_key = app.config_fh.get_file_handler("Pk" + Code.one_way_hash(user_name, "dvp-k")[:8])
 
     if root_key is not None:
-        return Result.default_user_error(info="loot user already Registered")
+        return Result.default_user_error(info=user_name+" user already Registered")
 
     if email is None:
         email = input("enter ure Email:")
     invitation = get_invitation(app=app, username=user_name).get()
-    ret = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
+    rport = app.run_any(TBEF.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
                       username=user_name,
                       email=email,
                       invitation=invitation, get_results=True)
     # awaiating user cration
-    rport = await ret.aget()
-    print(f"[{rport=}]")
     if rport.as_result().is_error():
         return rport
     await asyncio.sleep(1)
