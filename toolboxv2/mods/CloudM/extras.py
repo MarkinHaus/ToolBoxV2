@@ -282,7 +282,7 @@ async def register_initial_loot_user(app: App, email=None, user_name="loot"):
     if rport.as_result().is_error():
         return rport
     await asyncio.sleep(1)
-    user = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user_name)
+    user = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user_name, get_results=True)
     print("User:")
     print(user)
     user = user.get()
