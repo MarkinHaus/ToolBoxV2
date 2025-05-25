@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -19,14 +20,19 @@ to_api = export(mod_name=Name, api=True, version=version)
 
 uis = {}
 @no_test
-def add_ui(name:str, title:str, path:str, description:str, auth=False):
-    global uis
+def add_ui(app: App, name:str, title:str, path:str, description:str, auth=False):
+    if app is None:
+        app = get_app("add_ui")
+    uis = json.loads(app.config_fh.get_file_handler("CloudM::UI", "{}"))
     print("ADDING", name)
     uis[name] = {"auth":auth,"path": path, "title": title, "description": description}
+    app.config_fh.add_to_save_file_handler("CloudM::UI", json.dumps(uis))
 
 @export(mod_name=Name, api=True, version=version)
-def openui():
-    global uis
+def openui(app:App):
+    if app is None:
+        app = get_app("openui")
+    uis = json.load(app.config_fh.get_file_handler("CloudM::UI", "{}"))
     return [uis[name] for name in uis]
 
 @export(mod_name=Name, api=True, version=version, row=True)

@@ -2,25 +2,28 @@
 
 import uuid
 from dataclasses import asdict
-import json  # For trying to parse user data as JSON first
+import json
 
 from toolboxv2 import TBEF, App, Result, get_app, RequestData
-from toolboxv2.mods.CloudM.AuthManager import db_helper_save_user, db_helper_delete_user, get_user_by_name
+from toolboxv2.mods.CloudM.AuthManager import db_helper_save_user, db_helper_delete_user, get_user_by_name, \
+    db_helper_test_exist
 from toolboxv2.mods.CloudM.mini import get_service_status
 from toolboxv2.mods.CloudM.ModManager import list_modules as list_all_modules
 from .types import User
 from .UserAccountManager import get_current_user_from_request
+# For Waiting List invites, we'll call CloudM.email_services.send_signup_invitation_email
+from .email_services import send_signup_invitation_email
 
 Name = 'CloudM.AdminDashboard'
 export = get_app(Name + ".Export").tb
-version = '0.1.0'
+version = '0.1.1'  # Incremented version
 
-PID_DIR = "./.info"
+PID_DIR = "./.info"  # Standardized PID directory
 
 
 async def _is_admin(app: App, request: RequestData) -> User | None:
     current_user = await get_current_user_from_request(app, request)
-    if not current_user or current_user.level > 0:
+    if not current_user or current_user.level > 0:  # Level 0 is admin
         return None
     return current_user
 
@@ -30,11 +33,10 @@ async def get_dashboard_main_page(app: App, request: RequestData):
     admin_user = await _is_admin(app, request)
     if not admin_user:
         return Result.html("<h1>Access Denied</h1><p>You do not have permission to view this page.</p>",
-                           status_code=403)
+                           status=403)
 
-    # Using Python's triple-quoted string for the main HTML, CSS, and JS block.
-    # JavaScript within this block will use its own template literals (backticks) for dynamic HTML.
-    html_content = """
+    # Main HTML structure for the admin dashboard
+    html_content =  """
 <style>
         body {
             margin: 0;
@@ -43,153 +45,112 @@ async def get_dashboard_main_page(app: App, request: RequestData):
             color: var(--theme-text, var(--tb-color-neutral-800, #333));
             transition: background-color 0.3s ease, color 0.3s ease;
         }
-
         #admin-dashboard { display: flex; flex-direction: column; min-height: 100vh; }
-
         #admin-header {
             background-color: var(--tb-color-neutral-800, #2c3e50);
             color: var(--tb-color-neutral-100, white);
-            padding: 1rem 1.5rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            padding: 1rem 1.5rem; display: flex; justify-content: space-between; align-items: center;
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
         #admin-header h1 { margin: 0; font-size: 1.6rem; font-weight: 600; display: flex; align-items: center;}
         #admin-header h1 .material-symbols-outlined { vertical-align: middle; font-size: 1.5em; margin-right: 0.3em; }
         #admin-header .header-actions { display: flex; align-items: center; }
-
         #admin-nav ul { list-style: none; padding: 0; margin: 0 0 0 1.5rem; display: flex; }
         #admin-nav li { margin-left: 1rem; cursor: pointer; padding: 0.6rem 1rem; border-radius: 6px; transition: background-color 0.2s ease; font-weight: 500; display: flex; align-items: center; }
         #admin-nav li .material-symbols-outlined { vertical-align: text-bottom; margin-right: 0.3em; }
         #admin-nav li:hover { background-color: var(--tb-color-neutral-700, #34495e); }
-
         #admin-container { display: flex; flex-grow: 1; }
-
         #admin-sidebar {
-            width: 230px;
-            background-color: var(--tb-color-neutral-100, #ffffff);
-            padding: 1.5rem 1rem;
-            border-right: 1px solid var(--tb-color-neutral-300, #e0e0e0);
-            box-shadow: 1px 0 3px rgba(0,0,0,0.05);
-            transition: background-color 0.3s ease, border-color 0.3s ease;
+            width: 240px; background-color: var(--sidebar-bg, var(--tb-color-neutral-100, #ffffff));
+            padding: 1.5rem 1rem; border-right: 1px solid var(--sidebar-border, var(--tb-color-neutral-300, #e0e0e0));
+            box-shadow: 1px 0 3px rgba(0,0,0,0.05); transition: background-color 0.3s ease, border-color 0.3s ease;
         }
         body[data-theme="dark"] #admin-sidebar {
-             background-color: var(--tb-color-neutral-850, #232b33);
-             border-right: 1px solid var(--tb-color-neutral-700, #374151);
+             background-color: var(--sidebar-bg-dark, var(--tb-color-neutral-850, #232b33));
+             border-right-color: var(--sidebar-border-dark, var(--tb-color-neutral-700, #374151));
         }
-
         #admin-sidebar ul { list-style: none; padding: 0; margin: 0; }
-        #admin-sidebar li {
-            padding: 0.9rem 1rem;
-            margin-bottom: 0.6rem;
-            cursor: pointer;
-            border-radius: 8px;
-            transition: background-color 0.2s ease, color 0.2s ease;
-            display: flex;
-            align-items: center;
-            font-weight: 500;
-            color: var(--tb-color-neutral-700, #333);
-        }
-        body[data-theme="dark"] #admin-sidebar li { color: var(--tb-color-neutral-200, #ccc); }
+        #admin-sidebar li { padding: 0.9rem 1rem; margin-bottom: 0.6rem; cursor: pointer; border-radius: 8px; display: flex; align-items: center; font-weight: 500; color: var(--sidebar-text, var(--tb-color-neutral-700, #333)); transition: background-color 0.2s ease, color 0.2s ease; }
+        body[data-theme="dark"] #admin-sidebar li { color: var(--sidebar-text-dark, var(--tb-color-neutral-200, #ccc)); }
         #admin-sidebar li .material-symbols-outlined { margin-right: 0.85rem; font-size: 1.4rem; }
-
-        #admin-sidebar li:hover { background-color: var(--tb-color-neutral-200, #e9ecef); }
-        body[data-theme="dark"] #admin-sidebar li:hover { background-color: var(--tb-color-neutral-700, #34495e); }
-
-        #admin-sidebar li.active {
-            background-color: var(--tb-color-primary-500, #007bff);
-            color: white !important;
-            font-weight: 600;
-            box-shadow: 0 2px 8px rgba(0, 123, 255, 0.3);
-        }
-        body[data-theme="dark"] #admin-sidebar li.active { background-color: var(--tb-color-primary-600, #0056b3); }
-
+        #admin-sidebar li:hover { background-color: var(--sidebar-hover-bg, var(--tb-color-neutral-200, #e9ecef)); }
+        body[data-theme="dark"] #admin-sidebar li:hover { background-color: var(--sidebar-hover-bg-dark, var(--tb-color-neutral-700, #34495e)); }
+        #admin-sidebar li.active { background-color: var(--theme-primary, var(--tb-color-primary-500, #007bff)); color: var(--sidebar-active-text, white) !important; font-weight: 600; box-shadow: 0 2px 8px rgba(0, 123, 255, 0.3); }
+        body[data-theme="dark"] #admin-sidebar li.active { background-color: var(--theme-primary-darker, var(--tb-color-primary-600, #0056b3)); }
         #admin-content { flex-grow: 1; padding: 2rem; }
-
         .content-section { display: none; }
         .content-section.active { display: block; animation: fadeIn 0.5s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-
-        .content-section h2 {
-            font-size: 2rem;
-            font-weight: 600;
-            color: var(--tb-color-neutral-700, #212529);
-            margin-bottom: 1.8rem;
-            padding-bottom: 1rem;
-            border-bottom: 1px solid var(--tb-color-neutral-300, #dee2e6);
-            display: flex;
-            align-items: center;
-        }
+        .content-section h2 { font-size: 2rem; font-weight: 600; color: var(--theme-text, var(--tb-color-neutral-700, #212529)); margin-bottom: 1.8rem; padding-bottom: 1rem; border-bottom: 1px solid var(--section-border, var(--tb-color-neutral-300, #dee2e6)); display: flex; align-items: center; }
         .content-section h2 .material-symbols-outlined { font-size: 1.3em; margin-right: 0.5em;}
-        body[data-theme="dark"] .content-section h2 { color: var(--tb-color-neutral-100, #f8f9fa); border-bottom-color: var(--tb-color-neutral-700, #495057); }
+        body[data-theme="dark"] .content-section h2 { color: var(--theme-text-dark, var(--tb-color-neutral-100, #f8f9fa)); border-bottom-color: var(--section-border-dark, var(--tb-color-neutral-700, #495057)); }
+        .content-section h3 { font-size: 1.5rem; font-weight: 500; margin-top: 2rem; margin-bottom: 1rem; color: var(--theme-text); }
+        body[data-theme="dark"] .content-section h3 { color: var(--theme-text-dark); }
 
         table { width: 100%; border-collapse: collapse; margin-top: 1.5rem; font-size: 0.9rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); border-radius: 8px; overflow: hidden; }
         th, td { border: 1px solid var(--tb-color-neutral-200, #e0e0e0); padding: 12px 15px; text-align: left; }
         body[data-theme="dark"] th, body[data-theme="dark"] td { border-color: var(--tb-color-neutral-700, #4a5568); }
         th { background-color: var(--tb-color-neutral-100, #f8f9fa); font-weight: 600; }
         body[data-theme="dark"] th { background-color: var(--tb-color-neutral-750, #323840); }
-
         .status-indicator { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
         .status-green { background-color: var(--tb-color-success-500, #28a745); }
         .status-yellow { background-color: var(--tb-color-warning-500, #ffc107); }
         .status-red { background-color: var(--tb-color-danger-500, #dc3545); }
-
         .action-btn { padding: 8px 15px; margin: 4px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.875rem; font-weight: 500; transition: background-color 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease; display: inline-flex; align-items: center; }
         .action-btn .material-symbols-outlined { margin-right: 6px; font-size: 1.2em; }
         .action-btn:hover { transform: translateY(-1px); box-shadow: 0 2px 5px rgba(0,0,0,0.1);}
         .action-btn:active { transform: translateY(0px); box-shadow: inset 0 1px 3px rgba(0,0,0,0.1); }
-
-        .btn-restart { background-color: var(--tb-color-warning-500, #ffc107); color: var(--tb-color-neutral-900, black); }
-        .btn-restart:hover { background-color: var(--tb-color-warning-600, #e0a800); }
-        .btn-edit { background-color: var(--tb-color-info-500, #17a2b8); color: white; }
-        .btn-edit:hover { background-color: var(--tb-color-info-600, #138496); }
-        .btn-delete { background-color: var(--tb-color-danger-500, #dc3545); color: white; }
-        .btn-delete:hover { background-color: var(--tb-color-danger-600, #c82333); }
+        .btn-restart { background-color: var(--tb-color-warning-500, #ffc107); color: var(--tb-color-neutral-900, black); } .btn-restart:hover { background-color: var(--tb-color-warning-600, #e0a800); }
+        .btn-edit { background-color: var(--tb-color-info-500, #17a2b8); color: white; } .btn-edit:hover { background-color: var(--tb-color-info-600, #138496); }
+        .btn-delete { background-color: var(--tb-color-danger-500, #dc3545); color: white; } .btn-delete:hover { background-color: var(--tb-color-danger-600, #c82333); }
+        .btn-send-invite { background-color: var(--tb-color-success-500, #28a745); color: white; } .btn-send-invite:hover { background-color: var(--tb-color-success-600, #218838); }
+        .btn-open-link { background-color: var(--tb-color-secondary-500, #6c757d); color: white; } .btn-open-link:hover { background-color: var(--tb-color-secondary-600, #5a6268); }
 
         .frosted-glass-pane {
             background: var(--glass-bg, rgba(255, 255, 255, 0.75));
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border-radius: 12px;
-            padding: 2rem;
+            backdrop-filter: blur(var(--glass-blur, 10px)); -webkit-backdrop-filter: blur(var(--glass-blur, 10px));
+            border-radius: 12px; padding: 2rem;
             border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+            box-shadow: var(--glass-shadow, 0 4px 15px rgba(0, 0, 0, 0.08));
         }
         body[data-theme="dark"] .frosted-glass-pane {
             background: var(--glass-bg-dark, rgba(30, 35, 40, 0.75));
             border-color: var(--glass-border-dark, rgba(255, 255, 255, 0.15));
         }
-
-        /* Basic tbjs utility classes for spacing, text, etc. (should be in tbjs.css or app can define) */
         .tb-input { padding: 0.75rem 1rem; border-radius: 6px; width: 100%; box-sizing: border-box; border: 1px solid var(--tb-color-neutral-300, #ced4da); background-color: var(--tb-color-neutral-0, #fff); color: var(--tb-color-neutral-700, #495057); }
         body[data-theme="dark"] .tb-input { border-color: var(--tb-color-neutral-600, #495057); background-color: var(--tb-color-neutral-800, #343a40); color: var(--tb-color-neutral-100, #f8f9fa); }
         .tb-label { font-weight: 500; margin-bottom: 0.5rem; display: block; }
         .tb-checkbox { margin-right: 0.5rem; }
-        .tb-btn { /* Assumed base styles from tbjs.css */ }
-        .tb-btn-primary { background-color: var(--tb-color-primary-500); color: white; } .tb-btn-primary:hover { background-color: var(--tb-color-primary-600); }
-        .tb-btn-success { background-color: var(--tb-color-success-500); color: white; } .tb-btn-success:hover { background-color: var(--tb-color-success-600); }
-        .tb-space-y-2 > *:not([hidden]) ~ *:not([hidden]) { margin-top: 0.5rem; }
-        .tb-space-y-4 > *:not([hidden]) ~ *:not([hidden]) { margin-top: 1rem; }
+        .tb-btn { display:inline-flex; align-items:center; justify-content:center; padding:0.6rem 1.2rem; border-radius:6px; font-weight:500; cursor:pointer; transition: background-color 0.2s ease, box-shadow 0.2s ease; border:none; }
+        .tb-btn .material-symbols-outlined { margin-right: 0.4em; font-size: 1.2em; }
+        .tb-btn-primary { background-color: var(--theme-primary, var(--tb-color-primary-500)); color: white; } .tb-btn-primary:hover { background-color: var(--theme-primary-darker, var(--tb-color-primary-600)); }
         .tb-space-y-6 > *:not([hidden]) ~ *:not([hidden]) { margin-top: 1.5rem; }
-        .tb-mt-1 { margin-top: 0.25rem; } .tb-mt-2 { margin-top: 0.5rem; }
-        .tb-mb-1 { margin-bottom: 0.25rem; } .tb-mb-2 { margin-bottom: 0.5rem; }
-        .tb-mr-1 { margin-right: 0.25rem; } .tb-mr-2 { margin-right: 0.5rem; }
-        .tb-w-full { width: 100%; }
-        .md\\:tb-w-2\\/3 { width: 66.666667%; } /* Adjusted for CSS literal */
-        .tb-text-red-500 { color: #ef4444; } .tb-text-green-500 { color: #22c55e; } .tb-text-green-600 { color: #16a34a; }
-        .tb-text-blue-500 { color: #3b82f6; } .tb-text-yellow-500 { color: #eab308; }
-        .tb-text-gray-500 { color: #6b7280; }
-        body[data-theme="dark"] .tb-text-gray-500 { color: #9ca3af; }
+        .tb-mt-2 { margin-top: 0.5rem; } .tb-mb-1 { margin-bottom: 0.25rem; } .tb-mb-2 { margin-bottom: 0.5rem; } .tb-mt-6 { margin-top: 1.5rem; } /* Added tb-mt-6 */
+        .tb-mr-1 { margin-right: 0.25rem; }
+        .md\\:tb-w-2\\/3 { width: 66.666667%; }
+        .tb-text-red-500 { color: #ef4444; } .tb-text-green-500 { color: #22c55e; } .tb-text-yellow-500 { color: #eab308; }
+        .tb-text-gray-500 { color: #6b7280; } body[data-theme="dark"] .tb-text-gray-500 { color: #9ca3af; }
         .tb-text-sm { font-size: 0.875rem; } .tb-text-md { font-size: 1rem; } .tb-text-lg { font-size: 1.125rem; }
         .tb-font-semibold { font-weight: 600; }
         .tb-flex { display: flex; } .tb-items-center { align-items: center; } .tb-cursor-pointer { cursor: pointer; }
+        #sidebar-toggle-btn { display: none; }
+         @media (max-width: 767.98px) {
+            #admin-sidebar { position: fixed; left: -250px; top: 0; bottom: 0; width: 240px; z-index: 1000; transition: left 0.3s ease-in-out; overflow-y: auto; background-color: var(--sidebar-bg, var(--tb-color-neutral-100, #ffffff)); border-right: 1px solid var(--sidebar-border, var(--tb-color-neutral-300, #e0e0e0)); }
+            body[data-theme="dark"] #admin-sidebar { background-color: var(--sidebar-bg-dark, var(--tb-color-neutral-850, #232b33)); border-right-color: var(--sidebar-border-dark, var(--tb-color-neutral-700, #374151));}
+            #admin-sidebar.open { left: 0; box-shadow: 2px 0 10px rgba(0,0,0,0.2); }
+            #sidebar-backdrop-admin { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); z-index: 999; opacity: 0; transition: opacity 0.3s ease-in-out; }
+            #sidebar-backdrop-admin.active { display: block; opacity: 1; }
+        }
     </style>
 </head>
 <body data-theme="system">
     <div id="admin-dashboard">
-        <header id="admin-header">
+        <div id="admin-header">
+
             <h1><span class="material-symbols-outlined">shield_person</span>CloudM Admin</h1>
+            <button id="sidebar-toggle-btn" class="tb-btn" style="margin-right: 1rem; background: none; border: none; color: white;">
+                <span class="material-symbols-outlined">menu</span>
+            </button>
             <div class="header-actions">
                  <div id="darkModeToggleContainer" style="display: inline-flex; align-items: center; margin-right: 1.5rem;"></div>
                 <nav id="admin-nav">
@@ -198,14 +159,14 @@ async def get_dashboard_main_page(app: App, request: RequestData):
                     </ul>
                 </nav>
             </div>
-        </header>
+        </div>
         <div id="admin-container">
             <aside id="admin-sidebar">
                  <ul>
                     <li data-section="system-status" class="active"><span class="material-symbols-outlined">monitoring</span>System Status</li>
                     <li data-section="user-management"><span class="material-symbols-outlined">group</span>User Management</li>
-                    <li data-section="module-management"><span class="material-symbols-outlined">extension</span>Modules</li>
-                    <li data-section="spp-management"><span class="material-symbols-outlined">deployed_code</span>SPPs</li>
+                    <li data-section="module-management"><span class="material-symbols-outlined">extension</span>Module Management</li>
+                    <li data-section="spp-management"><span class="material-symbols-outlined">web_stories</span>SPP Management</li>
                     <li data-section="my-account"><span class="material-symbols-outlined">manage_accounts</span>My Account</li>
                 </ul>
             </aside>
@@ -216,15 +177,17 @@ async def get_dashboard_main_page(app: App, request: RequestData):
                 </section>
                 <section id="user-management-section" class="content-section frosted-glass-pane">
                     <h2><span class="material-symbols-outlined">manage_history</span>User Management</h2>
-                    <div id="user-management-content"><p class="tb-text-gray-500">Loading user data...</p></div>
+                    <div id="user-management-content-main"><p class="tb-text-gray-500">Loading user data...</p></div>
+                    <h3 class="tb-mt-6"><span class="material-symbols-outlined">person_add</span>Users on Waiting List</h3>
+                    <div id="user-waiting-list-content"><p class="tb-text-gray-500">Loading waiting list...</p></div>
                 </section>
                 <section id="module-management-section" class="content-section frosted-glass-pane">
                     <h2><span class="material-symbols-outlined">view_module</span>Module Management</h2>
                     <div id="module-management-content"><p class="tb-text-gray-500">Loading module list...</p></div>
                 </section>
                 <section id="spp-management-section" class="content-section frosted-glass-pane">
-                    <h2><span class="material-symbols-outlined">memory</span>SPP Management (Placeholder)</h2>
-                    <div id="spp-management-content"><p class="tb-text-gray-500">Functionality for SPP management will be available here in a future update.</p></div>
+                    <h2><span class="material-symbols-outlined">apps</span>Registered SPPs / UI Panels</h2>
+                    <div id="spp-management-content"><p class="tb-text-gray-500">Loading registered SPPs...</p></div>
                 </section>
                 <section id="my-account-section" class="content-section frosted-glass-pane">
                     <h2><span class="material-symbols-outlined">account_circle</span>My Account Settings</h2>
@@ -232,33 +195,36 @@ async def get_dashboard_main_page(app: App, request: RequestData):
                 </section>
             </main>
         </div>
+        <div id="sidebar-backdrop-admin"></div>
     </div>
 
     <script type="module">
-        // Ensure tbjs (TB) is available
-        if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user) {
-            console.error('CRITICAL: TB (tbjs) or its core modules (ui, api, user) are not defined. Ensure tbjs.js is loaded correctly and before this script.');
-            document.body.innerHTML = '<div style="padding: 20px; text-align: center; font-size: 1.2em; color: red;">Critical Error: Frontend library (tbjs) failed to load essential components. Please contact support.</div>';
+        if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
+            console.error('CRITICAL: TB (tbjs) or its core modules are not defined.');
+            document.body.innerHTML = '<div style="padding:20px; text-align:center; font-size:1.2em; color:red;">Critical Error: Frontend library (tbjs) failed to load.</div>';
         } else {
-            console.log('TB object found. Proceeding with Admin Dashboard initialization.');
+            console.log('TB object found. Initializing Admin Dashboard.');
             let currentAdminUser = null;
+
+            function _waitForTbInitAdmin(callback) {
+                if (window.TB?.events && window.TB.config?.get('appRootId')) {
+                    callback();
+                } else {
+                    document.addEventListener('tbjs:initialized', callback, { once: true });
+                }
+            }
 
             async function initializeAdminDashboard() {
                 console.log("Admin Dashboard Initializing with tbjs...");
                 TB.ui.DarkModeToggle.init();
-                console.log("Dark Mode Toggle Initialized.");
                 setupNavigation();
-                console.log("Navigation Setup Complete.");
                 await setupLogout();
-                console.log("Logout Setup Complete.");
+                setupMobileSidebarAdmin();
 
                 try {
-                    console.log("Fetching current admin user...");
                     const userRes = await TB.api.request('CloudM.UserAccountManager', 'get_current_user_from_request_api_wrapper', null, 'GET');
-                    console.log("Admin user response:", userRes);
                     if (userRes.error === TB.ToolBoxError.none && userRes.get()) {
                         currentAdminUser = userRes.get();
-                        console.log("Current Admin User:", currentAdminUser);
                         if (currentAdminUser.name) {
                             const adminTitleElement = document.querySelector('#admin-header h1');
                             if (adminTitleElement) {
@@ -266,9 +232,7 @@ async def get_dashboard_main_page(app: App, request: RequestData):
                             }
                         }
                         await loadMyAccountSection();
-                        console.log("My Account Section Loaded.");
                         await showSection('system-status');
-                        console.log("Initial section 'system-status' shown.");
                     } else {
                         console.error("Failed to load current admin user:", userRes.info.help_text);
                         document.getElementById('admin-content').innerHTML = '<p class="tb-text-red-500">Error: Could not verify admin user. Please login.</p>';
@@ -277,197 +241,254 @@ async def get_dashboard_main_page(app: App, request: RequestData):
                     console.error("Error fetching current admin user:", e);
                     document.getElementById('admin-content').innerHTML = '<p class="tb-text-red-500">Network error verifying admin user.</p>';
                 }
-                 console.log("Admin Dashboard Initialization finished.");
+            }
+            _waitForTbInitAdmin(initializeAdminDashboard);
+
+            function setupMobileSidebarAdmin() {
+                // ... (Implementation from previous response, ensure it correctly uses 'admin-sidebar' and 'sidebar-backdrop-admin')
+                const sidebar = document.getElementById('admin-sidebar');
+                const toggleBtn = document.getElementById('sidebar-toggle-btn');
+                const backdrop = document.getElementById('sidebar-backdrop-admin');
+
+                if (!sidebar || !toggleBtn || !backdrop) {
+                    console.warn("Admin mobile sidebar elements not found. Mobile navigation might not work.");
+                    if(toggleBtn) toggleBtn.style.display = 'none'; // Ensure it's hidden if setup fails
+                    return;
+                }
+
+                function updateToggleBtnVisibility() {
+                    toggleBtn.style.display = window.innerWidth < 768 ? 'inline-flex' : 'none';
+                     if (window.innerWidth >= 768 && sidebar.classList.contains('open')) {
+                        sidebar.classList.remove('open');
+                        backdrop.classList.remove('active');
+                        document.body.style.overflow = '';
+                    }
+                }
+                updateToggleBtnVisibility();
+                window.addEventListener('resize', updateToggleBtnVisibility);
+
+                toggleBtn.addEventListener('click', (e) => {
+                    e.stopPropagation(); // Important to prevent unintended closes if backdrop is also under button somehow
+                    sidebar.classList.toggle('open');
+                    backdrop.classList.toggle('active');
+                    document.body.style.overflow = sidebar.classList.contains('open') ? 'hidden' : '';
+                });
+                backdrop.addEventListener('click', () => {
+                    sidebar.classList.remove('open');
+                    backdrop.classList.remove('active');
+                    document.body.style.overflow = '';
+                });
+                // Also close sidebar when a nav item is clicked on mobile
+                sidebar.querySelectorAll('li[data-section]').forEach(item => {
+                    item.addEventListener('click', () => {
+                        if (window.innerWidth < 768 && sidebar.classList.contains('open')) {
+                            sidebar.classList.remove('open');
+                            backdrop.classList.remove('active');
+                            document.body.style.overflow = '';
+                        }
+                    });
+                });
+                console.log("Admin mobile sidebar setup complete.");
             }
 
-            function _waitForTbInit(callback) {
-            if (window.TB?.events) {
-    if (window.TB.config?.get('appRootId')) { // A sign that TB.init might have run
-         callback();
-    } else {
-        window.TB.events.on('tbjs:initialized', callback, { once: true });
-    }
-} else {
-    // Fallback if TB is not even an object yet, very early load
-    document.addEventListener('tbjs:initialized', callback, { once: true }); // Custom event dispatch from TB.init
-}
-            }
+             // Using event delegation for dynamically added buttons inside content sections
+            document.getElementById('admin-content').addEventListener('click', async function(event) {
+                const target = event.target.closest('button.action-btn'); // Find closest action button
+                if (!target) return; // Not an action button click
 
-            _waitForTbInit(initializeAdminDashboard);
+                console.log("Action button clicked:", target.dataset);
 
+                // System Status Restart Button
+                if (target.classList.contains('btn-restart') && target.dataset.service) {
+                    const serviceName = target.dataset.service;
+                    TB.ui.Toast.showInfo(`Restart for ${serviceName} (placeholder).`);
+                }
+                // User Management Edit/Delete Buttons
+                else if (target.dataset.uid && target.classList.contains('btn-edit')) {
+                    const usersData = JSON.parse(target.closest('table').dataset.users || '[]'); // Requires storing users data on table
+                    showUserEditModal(target.dataset.uid, usersData);
+                }
+                else if (target.dataset.uid && target.classList.contains('btn-delete')) {
+                    handleDeleteUser(target.dataset.uid, target.dataset.name);
+                }
+                // Waiting List Buttons
+                else if (target.dataset.email && target.classList.contains('btn-send-invite')) {
+                    const email = target.dataset.email;
+                    const proposedUsername = prompt(`Enter a proposed username for ${email} (e.g., derived from email prefix):`, email.split('@')[0]);
+                    if (!proposedUsername) { TB.ui.Toast.showWarning("Username is required."); return; }
+                    TB.ui.Loader.show(`Sending invite...`);
+                    try {
+                        const inviteRes = await TB.api.request('CloudM.AdminDashboard', 'send_invite_to_waiting_list_user_admin', { email, username: proposedUsername }, 'POST');
+                        if (inviteRes.error === TB.ToolBoxError.none) {
+                            TB.ui.Toast.showSuccess(inviteRes.info.help_text || `Invite sent.`);
+                            await loadWaitingListUsers('user-waiting-list-content');
+                        } else { TB.ui.Toast.showError(`Invite failed: ${TB.utils.escapeHtml(inviteRes.info.help_text)}`); }
+                    } catch (err) { TB.ui.Toast.showError("Network error."); }
+                    finally { TB.ui.Loader.hide(); }
+                }
+                else if (target.dataset.email && target.classList.contains('btn-delete')) { // Waiting list remove
+                    const email = target.dataset.email;
+                    if (!confirm(`Remove ${email} from waiting list?`)) return;
+                    TB.ui.Loader.show(`Removing...`);
+                    try {
+                        const removeRes = await TB.api.request('CloudM.AdminDashboard', 'remove_from_waiting_list_admin', { email }, 'POST');
+                         if (removeRes.error === TB.ToolBoxError.none) {
+                            TB.ui.Toast.showSuccess(`${email} removed.`);
+                            await loadWaitingListUsers('user-waiting-list-content');
+                        } else { TB.ui.Toast.showError(`Failed: ${TB.utils.escapeHtml(removeRes.info.help_text)}`); }
+                    } catch (err) { TB.ui.Toast.showError("Network error."); }
+                    finally { TB.ui.Loader.hide(); }
+                }
+                // Module Management Reload Button
+                else if (target.dataset.module && target.classList.contains('btn-restart')) {
+                     const modName = target.dataset.module;
+                    TB.ui.Toast.showInfo(`Reloading ${modName}...`);
+                    TB.ui.Loader.show(`Reloading ${modName}...`);
+                    try {
+                        const res = await TB.api.request('CloudM.AdminDashboard', 'reload_module_admin', { module_name: modName }, 'POST');
+                        if (res.error === TB.ToolBoxError.none) { TB.ui.Toast.showSuccess(`${modName} reload: ${TB.utils.escapeHtml(res.get() || 'OK')}`); }
+                        else { TB.ui.Toast.showError(`Error reloading ${modName}: ${TB.utils.escapeHtml(res.info.help_text)}`); }
+                    } catch (err) { TB.ui.Toast.showError('Network error.'); }
+                    finally { TB.ui.Loader.hide(); }
+                }
+                // SPP Management Open Link Button
+                else if (target.dataset.path && target.classList.contains('btn-open-link')) {
+                    const path = target.dataset.path;
+                    if (path.startsWith("http") || path.startsWith("/api/")) { window.open(path, '_blank'); }
+                    else { TB.router.navigateTo(path); }
+                }
+            });
 
+            // Navigation, ShowSection, Logout Setup (Functions from previous responses, ensure they are complete)
             function setupNavigation() {
                 const navItems = document.querySelectorAll('#admin-sidebar li[data-section]');
-                if(navItems.length === 0) console.warn("No sidebar navigation items found for setupNavigation.");
                 navItems.forEach(item => {
                     item.addEventListener('click', async () => {
-                        console.log(`Sidebar navigation: Clicked ${item.dataset.section}`);
                         navItems.forEach(i => i.classList.remove('active'));
                         item.classList.add('active');
-                        const sectionId = item.getAttribute('data-section');
-                        await showSection(sectionId);
+                        await showSection(item.getAttribute('data-section'));
                     });
                 });
             }
 
-            async function showSection(sectionId) {
+                        async function showSection(sectionId) {
                 console.log(`Showing section: ${sectionId}`);
-                document.querySelectorAll('.content-section').forEach(section => section.classList.remove('active'));
-                const activeSection = document.getElementById(`${sectionId}-section`);
-                if (activeSection) {
-                    activeSection.classList.add('active');
-                    const contentDivId = `${sectionId}-content`;
-                    const contentDiv = document.getElementById(contentDivId);
-                    if (!contentDiv) {
-                        console.error(`Content div ${contentDivId} not found for section ${sectionId}`);
-                        return;
-                    }
+                document.querySelectorAll('#admin-content .content-section').forEach(s => s.classList.remove('active'));
+                const activeSectionElement = document.getElementById(`${sectionId}-section`); // The <section> element
 
-                    contentDiv.innerHTML = `<p class="tb-text-gray-500">Loading ${sectionId.replace(/-/g, " ")}...</p>`;
+                if (activeSectionElement) {
+                    activeSectionElement.classList.add('active');
 
-                    try {
-                        if (sectionId === 'system-status') await loadSystemStatus(contentDivId);
-                        else if (sectionId === 'user-management') await loadUserManagement(contentDivId);
-                        else if (sectionId === 'module-management') await loadModuleManagement(contentDivId);
-                        else if (sectionId === 'my-account') await loadMyAccountSection(contentDivId);
-                        else if (sectionId === 'spp-management') {
-                            contentDiv.innerHTML = '<p class="tb-text-gray-500">Functionality for SPP management will be available here in a future update.</p>';
-                        }
-                        console.log(`Section ${sectionId} content loading initiated.`);
-                    } catch (error) {
-                        console.error(`Error loading content for section ${sectionId}:`, error);
-                        contentDiv.innerHTML = `<p class="tb-text-red-500">An error occurred while loading this section.</p>`;
+                    // Handle content loading for each specific section
+                    if (sectionId === 'system-status') {
+                        const contentDiv = document.getElementById('system-status-content');
+                        if (contentDiv) {
+                            contentDiv.innerHTML = `<p class="tb-text-gray-500">Loading system status...</p>`;
+                            await loadSystemStatus('system-status-content');
+                        } else { console.error('Content div for system-status not found.'); }
                     }
+                    else if (sectionId === 'user-management') {
+                        // This section has two distinct content areas
+                        const mainUsersContentDiv = document.getElementById('user-management-content-main');
+                        const waitingListContentDiv = document.getElementById('user-waiting-list-content');
+
+                        if (mainUsersContentDiv) {
+                            mainUsersContentDiv.innerHTML = `<p class="tb-text-gray-500">Loading user data...</p>`;
+                            await loadUserManagement('user-management-content-main');
+                        } else { console.error('Content div for main user management not found.'); }
+
+                        if (waitingListContentDiv) {
+                            waitingListContentDiv.innerHTML = `<p class="tb-text-gray-500">Loading waiting list...</p>`;
+                            await loadWaitingListUsers('user-waiting-list-content');
+                        } else { console.error('Content div for user waiting list not found.'); }
+                    }
+                    else if (sectionId === 'module-management') {
+                        const contentDiv = document.getElementById('module-management-content');
+                        if (contentDiv) {
+                            contentDiv.innerHTML = `<p class="tb-text-gray-500">Loading module list...</p>`;
+                            await loadModuleManagement('module-management-content');
+                        } else { console.error('Content div for module-management not found.'); }
+                    }
+                    else if (sectionId === 'spp-management') {
+                        const contentDiv = document.getElementById('spp-management-content');
+                        if (contentDiv) {
+                            contentDiv.innerHTML = `<p class="tb-text-gray-500">Loading registered SPPs...</p>`;
+                            await loadSppManagement('spp-management-content');
+                        } else { console.error('Content div for spp-management not found.'); }
+                    }
+                    else if (sectionId === 'my-account') {
+                        const contentDiv = document.getElementById('my-account-content');
+                        if (contentDiv) {
+                            contentDiv.innerHTML = `<p class="tb-text-gray-500">Loading account details...</p>`;
+                            await loadMyAccountSection('my-account-content');
+                        } else { console.error('Content div for my-account not found.'); }
+                    }
+                    console.log(`Section ${sectionId} content loading initiated or already handled.`);
                 } else {
                     console.error(`Section element ${sectionId}-section not found.`);
                 }
             }
 
             async function setupLogout() {
-                const logoutButton = document.getElementById('logoutButton');
-                if (logoutButton) {
-                    logoutButton.addEventListener('click', async () => {
-                        console.log("Logout button clicked.");
-                        TB.ui.Loader.show("Logging out...");
-                        try {
-                            await TB.user.logout();
-                            window.location.href = '/';
-                        } catch (e) {
-                            console.error("Logout error:", e);
-                            TB.ui.Toast.showError("Logout failed. Please try again.");
-                        } finally {
-                            TB.ui.Loader.hide();
-                        }
-                    });
-                } else {
-                    console.warn("Logout button not found.");
-                }
+                document.getElementById('logoutButton')?.addEventListener('click', async () => {
+                    TB.ui.Loader.show("Logging out...");
+                    await TB.user.logout();
+                    window.location.href = '/';
+                    TB.ui.Loader.hide();
+                });
             }
 
             async function loadSystemStatus(targetDivId) {
                 const contentDiv = document.getElementById(targetDivId);
                 if (!contentDiv) return;
                 try {
-                    console.log("Requesting system status from API: CloudM.AdminDashboard/get_system_status");
                     const response = await TB.api.request('CloudM.AdminDashboard', 'get_system_status', null, 'GET');
-                    console.log("System status response:", response);
                     if (response.error === TB.ToolBoxError.none) {
                         renderSystemStatus(response.get(), contentDiv);
                     } else {
-                        contentDiv.innerHTML = `<p class="tb-text-red-500">Error loading system status: ${TB.utils.escapeHtml(response.info.help_text)}</p>`;
+                        contentDiv.innerHTML = `<p class="tb-text-red-500">Error: ${TB.utils.escapeHtml(response.info.help_text)}</p>`;
                     }
-                } catch (e) {
-                    contentDiv.innerHTML = '<p class="tb-text-red-500">Network error while fetching system status.</p>';
-                    console.error("loadSystemStatus error:", e);
-                }
+                } catch (e) { contentDiv.innerHTML = '<p class="tb-text-red-500">Network error.</p>'; console.error(e); }
             }
 
             function renderSystemStatus(statusData, contentDiv) {
                 if (!contentDiv) return;
-                console.log("Rendering system status:", statusData);
-                if (!statusData || Object.keys(statusData).length === 0 || (Object.keys(statusData).length === 1 && statusData["unknown_format"])) {
-                     if (statusData && statusData["unknown_format"]) {
-                        contentDiv.innerHTML = `<p class="tb-text-yellow-500">Service status format not recognized: ${TB.utils.escapeHtml(statusData["unknown_format"].details)}</p>`;
-                     } else {
-                        contentDiv.innerHTML = '<p class="tb-text-gray-500">No services found or status is currently unavailable.</p>';
-                     }
+                if (!statusData || Object.keys(statusData).length === 0 || (Object.keys(statusData).length === 1 && statusData["unknown_service_format"])) {
+                     if (statusData && statusData["unknown_service_format"]) {
+                        contentDiv.innerHTML = `<p class="tb-text-yellow-500">Service status format error: ${TB.utils.escapeHtml(statusData["unknown_service_format"].details)}</p>`;
+                     } else { contentDiv.innerHTML = '<p class="tb-text-gray-500">No services found or status unavailable.</p>';}
                     return;
                 }
                 let html = '<table><thead><tr><th>Service</th><th>Status</th><th>PID</th><th>Actions</th></tr></thead><tbody>';
                 for (const [name, data] of Object.entries(statusData)) {
                     let sClass = data.status_indicator === '🟢' ? 'status-green' : (data.status_indicator === '🔴' ? 'status-red' : 'status-yellow');
-                    html += `<tr>
-                        <td>${TB.utils.escapeHtml(name)}</td>
-                        <td><span class="status-indicator ${sClass}"></span> ${data.status_indicator}</td>
-                        <td>${TB.utils.escapeHtml(data.pid)}</td>
-                        <td><button class="action-btn btn-restart" data-service="${TB.utils.escapeHtml(name)}"><span class="material-symbols-outlined">restart_alt</span>Restart</button></td>
-                        </tr>`;
+                    html += `<tr><td>${TB.utils.escapeHtml(name)}</td><td><span class="status-indicator ${sClass}"></span> ${data.status_indicator}</td><td>${TB.utils.escapeHtml(data.pid)}</td><td><button class="action-btn btn-restart" data-service="${TB.utils.escapeHtml(name)}"><span class="material-symbols-outlined">restart_alt</span>Restart</button></td></tr>`;
                 }
                 html += '</tbody></table>';
                 contentDiv.innerHTML = html;
-                contentDiv.querySelectorAll('.btn-restart').forEach(btn => {
-                    btn.addEventListener('click', async e => {
-                        const serviceName = e.currentTarget.dataset.service;
-                        console.log(`Restart button clicked for service: ${serviceName}`);
-                        TB.ui.Toast.showInfo(`Restart for ${serviceName} clicked (Note: Restart functionality is a placeholder and not implemented).`);
-                    });
-                });
+                contentDiv.querySelectorAll('.btn-restart').forEach(btn => btn.addEventListener('click', e => TB.ui.Toast.showInfo(`Restart for ${e.currentTarget.dataset.service} (placeholder).`)));
             }
 
-            async function loadUserManagement(targetDivId) {
+             async function loadUserManagement(targetDivId = 'user-management-content-main') {
                 const contentDiv = document.getElementById(targetDivId);
                 if (!contentDiv) return;
                 try {
-                    console.log("Requesting user list from API: CloudM.AdminDashboard/list_users_admin");
                     const response = await TB.api.request('CloudM.AdminDashboard', 'list_users_admin', null, 'GET');
-                    console.log("User list response:", response);
                     if (response.error === TB.ToolBoxError.none) {
                         renderUserManagement(response.get(), contentDiv);
-                    } else {
-                        contentDiv.innerHTML = `<p class="tb-text-red-500">Error loading users: ${TB.utils.escapeHtml(response.info.help_text)}</p>`;
-                    }
-                } catch (e) {
-                    contentDiv.innerHTML = '<p class="tb-text-red-500">Network error while fetching users.</p>';
-                    console.error("loadUserManagement error:", e);
-                }
+                    } else { contentDiv.innerHTML = `<p class="tb-text-red-500">Error: ${TB.utils.escapeHtml(response.info.help_text)}</p>`; }
+                } catch (e) { contentDiv.innerHTML = '<p class="tb-text-red-500">Network error.</p>'; console.error(e); }
             }
-
             function renderUserManagement(users, contentDiv) {
                 if (!contentDiv) return;
-                console.log("Rendering user management:", users);
-                if (!users || users.length === 0) {
-                    contentDiv.innerHTML = '<p class="tb-text-gray-500">No users found in the system.</p>';
-                    return;
-                }
-                let html = '<table><thead><tr><th>Name</th><th>Email</th><th>Level</th><th>UID</th><th>Actions</th></tr></thead><tbody>';
+                if (!users || users.length === 0) { contentDiv.innerHTML = '<p class="tb-text-gray-500">No users.</p>'; return; }
+                // Store users data on the table for easier access by modal
+                let tableHtml = `<table data-users='${TB.utils.escapeHtml(JSON.stringify(users))}'><thead><tr><th>Name</th><th>Email</th><th>Level</th><th>UID</th><th>Actions</th></tr></thead><tbody>`;
                 users.forEach(user => {
-                    html += `<tr>
-                        <td>${TB.utils.escapeHtml(user.name)}</td>
-                        <td>${TB.utils.escapeHtml(user.email || 'N/A')}</td>
-                        <td>${user.level} ${user.level >= 1 ? '(Admin)' : ''}</td>
-                        <td>${TB.utils.escapeHtml(user.uid)}</td>
-                        <td>
-                        <button class="action-btn btn-edit" data-uid="${user.uid}"><span class="material-symbols-outlined">edit</span>Edit</button>
-                        ${(currentAdminUser && currentAdminUser.uid !== user.uid) ?
-                            `<button class="action-btn btn-delete" data-uid="${user.uid}" data-name="${TB.utils.escapeHtml(user.name)}"><span class="material-symbols-outlined">delete</span>Delete</button>`
-                            : ''}
-                        </td>
-                        </tr>`;
+                    tableHtml += `<tr><td>${TB.utils.escapeHtml(user.name)}</td><td>${TB.utils.escapeHtml(user.email || 'N/A')}</td><td>${user.level} ${user.level === 0 ? '(Admin)' : ''}</td><td>${TB.utils.escapeHtml(user.uid)}</td><td><button class="action-btn btn-edit" data-uid="${user.uid}"><span class="material-symbols-outlined">edit</span>Edit</button>${(currentAdminUser && currentAdminUser.uid !== user.uid) ? `<button class="action-btn btn-delete" data-uid="${user.uid}" data-name="${TB.utils.escapeHtml(user.name)}"><span class="material-symbols-outlined">delete</span>Delete</button>` : ''}</td></tr>`;
                 });
-                html += '</tbody></table>';
-                contentDiv.innerHTML = html;
-                contentDiv.querySelectorAll('.btn-edit').forEach(btn => {
-                    btn.addEventListener('click', (e) => {
-                        console.log(`Edit button clicked for UID: ${e.currentTarget.dataset.uid}`);
-                        showUserEditModal(e.currentTarget.dataset.uid, users)
-                    });
-                });
-                contentDiv.querySelectorAll('.btn-delete').forEach(btn => {
-                     btn.addEventListener('click', (e) => {
-                        console.log(`Delete button clicked for UID: ${e.currentTarget.dataset.uid}`);
-                        handleDeleteUser(e.currentTarget.dataset.uid, e.currentTarget.dataset.name)
-                    });
-                });
+                tableHtml += '</tbody></table>';
+                contentDiv.innerHTML = tableHtml;
             }
 
             function showUserEditModal(userId, allUsers) {
@@ -565,6 +586,78 @@ async def get_dashboard_main_page(app: App, request: RequestData):
                 });
             }
 
+             async function loadWaitingListUsers(targetDivId) {
+                const contentDiv = document.getElementById(targetDivId);
+                if (!contentDiv) return;
+                contentDiv.innerHTML = '<p class="tb-text-gray-500">Fetching waiting list...</p>';
+                try {
+                    const response = await TB.api.request('CloudM.AdminDashboard', 'get_waiting_list_users_admin', null, 'GET');
+                    if (response.error === TB.ToolBoxError.none) {
+                        renderWaitingListUsers(response.get(), contentDiv);
+                    } else {
+                        contentDiv.innerHTML = `<p class="tb-text-red-500">Error: ${TB.utils.escapeHtml(response.info.help_text)}</p>`;
+                    }
+                } catch (e) { contentDiv.innerHTML = '<p class="tb-text-red-500">Network error.</p>'; console.error(e); }
+            }
+
+            function renderWaitingListUsers(waitingUsers, contentDiv) {
+                if (!waitingUsers || waitingUsers.length === 0) {
+                    contentDiv.innerHTML = '<p class="tb-text-gray-500">No users currently on the waiting list.</p>'; return;
+                }
+                let html = '<table><thead><tr><th>Email</th><th>Actions</th></tr></thead><tbody>';
+                waitingUsers.forEach(entry => { // Assuming entry is just an email string for now
+                    const email = (typeof entry === 'string') ? entry : (entry.email || 'Invalid Entry');
+                    html += `<tr>
+                        <td>${TB.utils.escapeHtml(email)}</td>
+                        <td>
+                            <button class="action-btn btn-send-invite" data-email="${TB.utils.escapeHtml(email)}"><span class="material-symbols-outlined">outgoing_mail</span>Send Invite</button>
+                            <button class="action-btn btn-delete" data-email="${TB.utils.escapeHtml(email)}"><span class="material-symbols-outlined">person_remove</span>Remove</button>
+                        </td>
+                    </tr>`;
+                });
+                html += '</tbody></table>';
+                contentDiv.innerHTML = html;
+
+                contentDiv.querySelectorAll('.btn-send-invite').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        const email = e.currentTarget.dataset.email;
+                        const proposedUsername = prompt(`Enter a proposed username for ${email} (e.g., derived from email prefix):`, email.split('@')[0]);
+                        if (!proposedUsername) { TB.ui.Toast.showWarning("Username is required to send an invite."); return; }
+
+                        TB.ui.Loader.show(`Sending invite to ${email}...`);
+                        try {
+                            const inviteRes = await TB.api.request('CloudM.AdminDashboard', 'send_invite_to_waiting_list_user_admin',
+                                { email: email, username: proposedUsername }, 'POST');
+                            if (inviteRes.error === TB.ToolBoxError.none) {
+                                TB.ui.Toast.showSuccess(inviteRes.info.help_text || `Invite sent to ${email}.`);
+                                await loadWaitingListUsers('user-waiting-list-content'); // Refresh list
+                            } else {
+                                TB.ui.Toast.showError(`Failed to send invite: ${TB.utils.escapeHtml(inviteRes.info.help_text)}`);
+                            }
+                        } catch (err) { TB.ui.Toast.showError("Network error sending invite."); console.error(err); }
+                        finally { TB.ui.Loader.hide(); }
+                    });
+                });
+                contentDiv.querySelectorAll('.btn-delete').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        const email = e.currentTarget.dataset.email;
+                        if (!confirm(`Are you sure you want to remove ${email} from the waiting list?`)) return;
+
+                        TB.ui.Loader.show(`Removing ${email}...`);
+                        try {
+                            const removeRes = await TB.api.request('CloudM.AdminDashboard', 'remove_from_waiting_list_admin', { email: email }, 'POST');
+                             if (removeRes.error === TB.ToolBoxError.none) {
+                                TB.ui.Toast.showSuccess(`${email} removed from waiting list.`);
+                                await loadWaitingListUsers('user-waiting-list-content'); // Refresh list
+                            } else {
+                                TB.ui.Toast.showError(`Failed to remove: ${TB.utils.escapeHtml(removeRes.info.help_text)}`);
+                            }
+                        } catch (err) { TB.ui.Toast.showError("Network error removing from list."); console.error(err); }
+                        finally { TB.ui.Loader.hide(); }
+                    });
+                });
+            }
+
             async function loadModuleManagement(targetDivId) {
                 const contentDiv = document.getElementById(targetDivId);
                  if (!contentDiv) return;
@@ -623,6 +716,62 @@ async def get_dashboard_main_page(app: App, request: RequestData):
                 });
             }
 
+             async function loadSppManagement(targetDivId) {
+                const contentDiv = document.getElementById(targetDivId);
+                if (!contentDiv) return;
+                contentDiv.innerHTML = '<p class="tb-text-gray-500">Fetching registered SPPs/UI Panels...</p>';
+                try {
+                    const response = await TB.api.request('CloudM.AdminDashboard', 'list_spps_admin', null, 'GET');
+                    if (response.error === TB.ToolBoxError.none) {
+                        renderSppManagement(response.get(), contentDiv);
+                    } else {
+                        contentDiv.innerHTML = `<p class="tb-text-red-500">Error: ${TB.utils.escapeHtml(response.info.help_text)}</p>`;
+                    }
+                } catch (e) { contentDiv.innerHTML = '<p class="tb-text-red-500">Network error.</p>'; console.error(e); }
+            }
+
+            function renderSppManagement(spps, contentDiv) {
+                if (!spps || spps.length === 0) {
+                    contentDiv.innerHTML = '<p class="tb-text-gray-500">No SPPs or UI Panels are currently registered.</p>'; return;
+                }
+                let html = '<table><thead><tr><th>Title</th><th>Name/ID</th><th>Path</th><th>Description</th><th>Auth Req.</th><th>Actions</th></tr></thead><tbody>';
+                spps.forEach(spp => {
+                    // spp structure is: {"auth":auth,"path": path, "title": title, "description": description, "name": name}
+                    // Note: 'name' key might not be in original dict if 'add_ui' doesn't add it. Assuming 'title' or path can be unique identifier.
+                    // Let's assume `openui` adds the `name` key to the dictionary for easier identification.
+                    const name = spp.name || spp.title; // Fallback if name isn't explicitly set
+                    html += `<tr>
+                        <td>${TB.utils.escapeHtml(spp.title)}</td>
+                        <td>${TB.utils.escapeHtml(name)}</td>
+                        <td>${TB.utils.escapeHtml(spp.path)}</td>
+                        <td>${TB.utils.escapeHtml(spp.description)}</td>
+                        <td>${spp.auth ? 'Yes' : 'No'}</td>
+                        <td>
+                            <button class="action-btn btn-open-link" data-path="${spp.path}"><span class="material-symbols-outlined">open_in_new</span>Open</button>
+                            <!-- Conceptual buttons for Start/Stop/Logs - require backend implementation -->
+                            <!-- <button class="action-btn btn-restart" data-spp-name="${TB.utils.escapeHtml(name)}">Start/Stop</button> -->
+                            <!-- <button class="action-btn btn-view" data-spp-name="${TB.utils.escapeHtml(name)}">Logs</button> -->
+                        </td>
+                    </tr>`;
+                });
+                html += '</tbody></table>';
+                contentDiv.innerHTML = html;
+                contentDiv.querySelectorAll('.btn-open-link').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const path = e.currentTarget.dataset.path;
+                        if (path) {
+                           // If path is absolute or starts with /api/, open in new tab
+                           // Otherwise, try to use TB.router if it's a relative client-side path
+                           if (path.startsWith("http") || path.startsWith("/api/")) {
+                               window.open(path, '_blank');
+                           } else {
+                               TB.router.navigateTo(path); // Assumes path is router-compatible
+                           }
+                        }
+                    });
+                });
+            }
+
             async function loadMyAccountSection(targetDivId = 'my-account-content') {
                 const contentDiv = document.getElementById(targetDivId);
                 if (!contentDiv) { console.error("My Account content div not found."); return; }
@@ -639,7 +788,7 @@ async def get_dashboard_main_page(app: App, request: RequestData):
                 const personaStatusId = `persona-status-${TB.utils.uniqueId()}`;
 
                 let personaBtnHtml = !user.is_persona ?
-                    `<button id="registerPersonaBtnAdmin" class="tb-btn tb-btn-success tb-mt-2" style:"color: var(--text-color)"><span class="material-symbols-outlined tb-mr-1" style:"color: var(--text-color)">fingerprint</span>Add Persona Device</button><div id="${personaStatusId}" class="tb-text-sm tb-mt-1" style:"color: var(--text-color)"></div>` :
+                    `<button id="registerPersonaBtnAdmin" class="tb-btn tb-btn-success tb-mt-2"><span class="material-symbols-outlined tb-mr-1">fingerprint</span>Add Persona Device</button><div id="${personaStatusId}" class="tb-text-sm tb-mt-1"></div>` :
                     `<p class='tb-text-md tb-text-green-600 dark:tb-text-green-400'><span class="material-symbols-outlined tb-mr-1" style="vertical-align: text-bottom;">verified_user</span>Persona (WebAuthn) is configured for this account.</p>`;
 
                 contentDiv.innerHTML = `
@@ -721,30 +870,30 @@ async def get_dashboard_main_page(app: App, request: RequestData):
                 } else if (!user.is_persona) {
                     console.warn("Persona registration button (registerPersonaBtnAdmin) not found, though user is not persona.");
                 }
-            } // End of loadMyAccountSection
-        } // End of tbjs check
+            }
+        }
     </script>
 """
     return Result.html(html_content)
 
 
+# --- Existing Admin API Endpoints (System Status, User Mgmt, Module Mgmt, My Account) ---
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
 async def get_system_status(app: App, request: RequestData):
+    # ... (implementation from previous response, ensure PID_DIR is correct) ...
     admin_user = await _is_admin(app, request)
     if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
 
-    status_str = get_service_status(PID_DIR)
+    status_str = get_service_status(PID_DIR)  # Make sure PID_DIR is correct
     services_data = {}
-    lines = status_str.split('\n')
-    if lines and lines[0].startswith("Service(s):"):  # Check if lines is not empty
+    lines = status_str.split('n')
+    if lines and lines[0].startswith("Service(s):"):
         for line in lines[1:]:
             if not line.strip(): continue
             parts = line.split('(PID:')
             name_part = parts[0].strip()
             pid_part = "N/A"
-            if len(parts) > 1 and parts[1]:
-                pid_part = parts[1].replace(')', '').strip()
-
+            if len(parts) > 1 and parts[1]: pid_part = parts[1].replace(')', '').strip()
             status_indicator = name_part[0] if len(name_part) > 0 else "🟡"
             service_full_name = name_part[2:].strip() if len(name_part) > 1 else "Unknown Service"
             services_data[service_full_name] = {"status_indicator": status_indicator, "pid": pid_part}
@@ -755,29 +904,25 @@ async def get_system_status(app: App, request: RequestData):
             parts = status_str.split('(PID:')
             name_part = parts[0].strip()
             pid_part = "N/A"
-            if len(parts) > 1 and parts[1]:
-                pid_part = parts[1].replace(')', '').strip()
-
+            if len(parts) > 1 and parts[1]: pid_part = parts[1].replace(')', '').strip()
             status_indicator = name_part[0] if len(name_part) > 0 else "🟡"
             service_full_name = name_part[2:].strip() if len(name_part) > 1 else "Unknown Service"
             services_data[service_full_name] = {"status_indicator": status_indicator, "pid": pid_part}
-        elif status_str.strip():  # If status_str is not empty but not matching known formats
+        elif status_str.strip():
             services_data["unknown_service_format"] = {"status_indicator": "🟡", "pid": "N/A", "details": status_str}
-        else:  # If status_str is empty or whitespace
+        else:
             services_data = {}
-
     return Result.json(data=services_data)
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
 async def list_users_admin(app: App, request: RequestData):
+    # ... (implementation from previous response) ...
     admin_user = await _is_admin(app, request)
     if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
-
     all_users_result = await app.a_run_any(TBEF.DB.GET, query="USER::*", get_results=True)
     if all_users_result.is_error():
         return Result.default_internal_error(info="Failed to fetch users: " + str(all_users_result.info))
-
     users_data = []
     user_list_raw = all_users_result.get()
     if user_list_raw:
@@ -788,20 +933,79 @@ async def list_users_admin(app: App, request: RequestData):
                 try:
                     user_dict = json.loads(user_str)
                 except json.JSONDecodeError:
-                    # Fallback for non-JSON string (e.g. Python dict string representation)
-                    # This is risky and should be avoided if possible by storing JSON in DB
-                    app.print("Warning: User data for admin list was not valid JSON, falling back to eval: " + str(
+                    app.print("Warning: User data (admin list) not valid JSON, falling back to eval: " + str(
                         user_str[:100]) + "...", "WARNING")
-                    user_dict = eval(user_str)  # Ensure this eval is safe or replace DB storage method
+                    user_dict = eval(user_str)
+                users_data.append({"uid": user_dict.get("uid", "N/A"), "name": user_dict.get("name", "N/A"),
+                                   "email": user_dict.get("email"), "level": user_dict.get("level", -1),
+                                   "is_persona": user_dict.get("is_persona", False),
+                                   "settings": user_dict.get("settings", {})})
+            except Exception as e:
+                app.print("Error parsing user data for admin list: " + str(user_bytes[:100]) + "... - Error: " + str(e),
+                          "ERROR")
+    return Result.json(data=users_data)
 
-                users_data.append({
-                    "uid": user_dict.get("uid", "N/A"),
-                    "name": user_dict.get("name", "N/A"),
-                    "email": user_dict.get("email"),
-                    "level": user_dict.get("level", -1),
-                    "is_persona": user_dict.get("is_persona", False),
-                    "settings": user_dict.get("settings", {})
-                })
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
+async def get_system_status(app: App, request: RequestData):
+    admin_user = await _is_admin(app, request)
+    if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
+
+    status_str = get_service_status(PID_DIR)
+    services_data = {}
+    lines = status_str.split('\n')
+    if lines and lines[0].startswith("Service(s):"):
+        for line in lines[1:]:
+            if not line.strip(): continue
+            parts = line.split('(PID:')
+            name_part = parts[0].strip()
+            pid_part = "N/A"
+            if len(parts) > 1 and parts[1]: pid_part = parts[1].replace(')', '').strip()
+            status_indicator = name_part[0] if len(name_part) > 0 else "🟡"
+            service_full_name = name_part[2:].strip() if len(name_part) > 1 else "Unknown Service"
+            services_data[service_full_name] = {"status_indicator": status_indicator, "pid": pid_part}
+    elif status_str == "No services found":
+        services_data = {}
+    else:
+        if '(PID:' in status_str:
+            parts = status_str.split('(PID:')
+            name_part = parts[0].strip()
+            pid_part = "N/A"
+            if len(parts) > 1 and parts[1]: pid_part = parts[1].replace(')', '').strip()
+            status_indicator = name_part[0] if len(name_part) > 0 else "🟡"
+            service_full_name = name_part[2:].strip() if len(name_part) > 1 else "Unknown Service"
+            services_data[service_full_name] = {"status_indicator": status_indicator, "pid": pid_part}
+        elif status_str.strip():
+            services_data["unknown_service_format"] = {"status_indicator": "🟡", "pid": "N/A", "details": status_str}
+        else:
+            services_data = {}
+    return Result.json(data=services_data)
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
+async def list_users_admin(app: App, request: RequestData):
+    admin_user = await _is_admin(app, request)
+    if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
+    all_users_result = await app.a_run_any(TBEF.DB.GET, query="USER::*", get_results=True)
+    if all_users_result.is_error():
+        return Result.default_internal_error(info="Failed to fetch users: " + str(all_users_result.info))
+    users_data = []
+    user_list_raw = all_users_result.get()
+    if user_list_raw:
+        for user_bytes in user_list_raw:
+            try:
+                user_str = user_bytes.decode() if isinstance(user_bytes, bytes) else str(user_bytes)
+                user_dict = {}
+                try:
+                    user_dict = json.loads(user_str)
+                except json.JSONDecodeError:
+                    app.print("Warning: User data (admin list) not valid JSON, falling back to eval: " + str(
+                        user_str[:100]) + "...", "WARNING")
+                    user_dict = eval(user_str)
+                users_data.append({"uid": user_dict.get("uid", "N/A"), "name": user_dict.get("name", "N/A"),
+                                   "email": user_dict.get("email"), "level": user_dict.get("level", -1),
+                                   "is_persona": user_dict.get("is_persona", False),
+                                   "settings": user_dict.get("settings", {})})
             except Exception as e:
                 app.print("Error parsing user data for admin list: " + str(user_bytes[:100]) + "... - Error: " + str(e),
                           "ERROR")
@@ -812,8 +1016,7 @@ async def list_users_admin(app: App, request: RequestData):
 async def list_modules_admin(app: App, request: RequestData):
     admin_user = await _is_admin(app, request)
     if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
-
-    modules = list_all_modules(app)  # This function is assumed to exist and work
+    modules = list_all_modules(app)
     return Result.json(data=modules)
 
 
@@ -821,16 +1024,14 @@ async def list_modules_admin(app: App, request: RequestData):
 async def update_user_admin(app: App, request: RequestData, data: dict):
     admin_user = await _is_admin(app, request)
     if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
-
     uid_to_update = data.get("uid")
-    name_to_update = data.get("name")  # Name is often used as part of the DB key structure
-    if not uid_to_update or not name_to_update:
-        return Result.default_user_error(info="User UID and Name are required for update.")
+    name_to_update = data.get("name")
+    if not uid_to_update or not name_to_update: return Result.default_user_error(info="User UID and Name are required.")
 
-    user_res = get_user_by_name(app, username=name_to_update, uid=uid_to_update)
-    if user_res.is_error() or not user_res.get():
-        error_info = "User " + str(name_to_update) + " (UID: " + str(uid_to_update) + ") not found."
-        return Result.default_user_error(info=error_info)
+    user_res = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=name_to_update,
+                                   uid=uid_to_update)  # Use a_run_any for TBEF
+    if user_res.is_error() or not user_res.get(): return Result.default_user_error(
+        info="User " + str(name_to_update) + " (UID: " + str(uid_to_update) + ") not found.")
 
     user_to_update = user_res.get()
     if "email" in data: user_to_update.email = data["email"]
@@ -838,14 +1039,15 @@ async def update_user_admin(app: App, request: RequestData, data: dict):
         try:
             user_to_update.level = int(data["level"])
         except ValueError:
-            return Result.default_user_error(info="Invalid level format. Level must be an integer.")
+            return Result.default_user_error(info="Invalid level format.")
     if "settings" in data and isinstance(data["settings"], dict):
         if user_to_update.settings is None: user_to_update.settings = {}
         user_to_update.settings.update(data["settings"])
 
-    save_result = db_helper_save_user(app, asdict(user_to_update))  # This is synchronous
-    if save_result.is_error():
-        return Result.default_internal_error(info="Failed to save user: " + str(save_result.info))
+    save_result = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.DB_HELPER_SAVE_USER,
+                                      user_data=asdict(user_to_update))  # Use a_run_any for TBEF
+    if save_result.is_error(): return Result.default_internal_error(
+        info="Failed to save user: " + str(save_result.info))
     return Result.ok(info="User updated successfully.")
 
 
@@ -853,77 +1055,140 @@ async def update_user_admin(app: App, request: RequestData, data: dict):
 async def delete_user_admin(app: App, request: RequestData, data: dict):
     admin_user = await _is_admin(app, request)
     if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
-
     uid_to_delete = data.get("uid")
-    if not uid_to_delete: return Result.default_user_error(info="User UID is required for deletion.")
-    if admin_user.uid == uid_to_delete: return Result.default_user_error(
-        info="Administrators cannot delete their own account.")
+    if not uid_to_delete: return Result.default_user_error(info="User UID is required.")
+    if admin_user.uid == uid_to_delete: return Result.default_user_error(info="Admin cannot delete themselves.")
 
-    # Fetch user to get their name, as db_helper_delete_user usually requires it for the key.
-    user_to_delete_res = get_user_by_name(app, username='*', uid=uid_to_delete)  # Try with wildcard name
+    user_to_delete_res = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username='*', uid=uid_to_delete)
     username_to_delete = None
-
     if not user_to_delete_res.is_error() and user_to_delete_res.get():
         username_to_delete = user_to_delete_res.get().name
     else:
-        # Fallback: if get_user_by_name fails with wildcard, try fetching USER::*::{uid}
-        # This assumes the DB key might be USER::{name}::{uid} or sometimes just USER::*::{uid} for specific queries
-        app.print("Could not find user by get_user_by_name with wildcard name. Trying direct DB query for UID: " + str(
-            uid_to_delete), "DEBUG")
         all_users_raw_res = await app.a_run_any(TBEF.DB.GET, query="USER::*::" + str(uid_to_delete), get_results=True)
         if not all_users_raw_res.is_error() and all_users_raw_res.get():
             try:
-                user_bytes = all_users_raw_res.get()[0]  # Assuming first result is the one
+                user_bytes = all_users_raw_res.get()[0];
                 user_str = user_bytes.decode() if isinstance(user_bytes, bytes) else str(user_bytes)
-                user_dict_raw = {}
+                user_dict_raw = {};
                 try:
                     user_dict_raw = json.loads(user_str)
                 except json.JSONDecodeError:
-                    app.print("Warning: User data for deletion (fallback) was not valid JSON, trying eval: " + str(
-                        user_str[:100]) + "...", "WARNING")
                     user_dict_raw = eval(user_str)
                 username_to_delete = user_dict_raw.get("name")
             except Exception as e:
-                error_info = "Error parsing user data during fallback deletion search: " + str(e)
-                return Result.default_internal_error(info=error_info)
+                return Result.default_internal_error(info="Error parsing user data for deletion: " + str(e))
+    if not username_to_delete: return Result.default_user_error(
+        info="User with UID " + str(uid_to_delete) + " not found or name indeterminate.")
 
-    if not username_to_delete:
-        error_info = "User with UID " + str(
-            uid_to_delete) + " not found, or their name could not be determined for deletion."
-        return Result.default_user_error(info=error_info)
-
-    app.print("Attempting to delete user: " + str(username_to_delete) + " (UID: " + str(uid_to_delete) + ")", "INFO")
-    delete_result = db_helper_delete_user(app, username_to_delete, uid_to_delete)  # Synchronous
-    if delete_result.is_error():
-        return Result.default_internal_error(info="Failed to delete user: " + str(delete_result.info))
-    return Result.ok(info="User " + str(username_to_delete) + " deleted successfully.")
+    delete_result = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.DB_HELPER_DELETE_USER, username=username_to_delete,
+                                        uid=uid_to_delete)
+    if delete_result.is_error(): return Result.default_internal_error(
+        info="Failed to delete user: " + str(delete_result.info))
+    return Result.ok(info="User " + str(username_to_delete) + " deleted.")
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
 async def reload_module_admin(app: App, request: RequestData, data: dict):
     admin_user = await _is_admin(app, request)
     if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
-
     module_name = data.get("module_name")
-    if not module_name: return Result.default_user_error(info="Module name is required for reload.")
-
+    if not module_name: return Result.default_user_error(info="Module name is required.")
     app.print("Admin request to reload module: " + str(module_name), "INFO")
     try:
-        if module_name in app.get_all_mods():  # Check if module is currently loaded
-            # The actual mechanism for hot-reloading depends heavily on ToolBoxV2's core capabilities.
-            # A simple remove & add might work for stateless modules or if state is re-initialized.
-            app.print("Attempting to remove module: " + str(module_name), "DEBUG")
-            # app.remove_mod(module_name)  # May need spec for specific instances
-
-            app.print("Attempting to re-add module: " + str(module_name), "DEBUG")
-            # Re-adding might require knowing how it was originally added (e.g., from a path, a class)
-            # app.add_mod_with_tools(module_name) assumes it's a standard module that can be found by name.
-            # This part might need to be more sophisticated, e.g., app.toolbox.load_module_by_name(module_name)
-            app.reload_mod(module_name)  # Or app.load_module(module_name) or similar
-
+        if module_name in app.get_all_mods():
+            if hasattr(app, 'reload_mod'):
+                await app.reload_mod(module_name)  # Assuming reload_mod could be async
+            else:
+                app.remove_mod(module_name)
+                app.save_load(module_name)
             return Result.ok(info="Module " + str(module_name) + " reload process completed.")
         else:
-            return Result.default_user_error(info="Module " + str(module_name) + " not found or not currently loaded.")
+            return Result.default_user_error(info="Module " + str(module_name) + " not found.")
     except Exception as e:
         app.print("Error during module reload for " + str(module_name) + ": " + str(e), "ERROR")
-        return Result.default_internal_error(info="Error during reload attempt for " + str(module_name) + ": " + str(e))
+        return Result.default_internal_error(info="Error during reload: " + str(e))
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
+async def get_waiting_list_users_admin(app: App, request: RequestData):
+    admin_user = await _is_admin(app, request)
+    if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
+    waiting_list_res = await app.a_run_any(TBEF.DB.GET, query="email_waiting_list", get_results=True)
+    if waiting_list_res.is_error() or not waiting_list_res.get(): return Result.json(data=[])
+    raw_data = waiting_list_res.get()
+    try:
+        if isinstance(raw_data, bytes): raw_data = raw_data.decode()
+        if isinstance(raw_data, list) and len(raw_data) > 0: raw_data = raw_data[0]
+        waiting_list_emails = json.loads(raw_data)
+        if not isinstance(waiting_list_emails, list): return Result.json(data=[])
+        return Result.json(data=waiting_list_emails)
+    except (json.JSONDecodeError, TypeError, IndexError) as e:
+        app.print("Error parsing waiting list data: " + str(e), "ERROR");
+        return Result.json(data=[])
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
+async def remove_from_waiting_list_admin(app: App, request: RequestData, data: dict):
+    admin_user = await _is_admin(app, request)
+    if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
+    email_to_remove = data.get("email")
+    if not email_to_remove: return Result.default_user_error(info="Email is required.")
+    waiting_list_res = await app.a_run_any(TBEF.DB.GET, query="email_waiting_list", get_results=True)
+    updated_list = []
+    if not waiting_list_res.is_error() and waiting_list_res.get():
+        raw_data = waiting_list_res.get()
+        try:
+            if isinstance(raw_data, bytes): raw_data = raw_data.decode()
+            if isinstance(raw_data, list) and len(raw_data) > 0: raw_data = raw_data[0]
+            current_list = json.loads(raw_data)
+            if isinstance(current_list, list):
+                updated_list = [email for email in current_list if email != email_to_remove]
+        except (json.JSONDecodeError, TypeError, IndexError):
+            pass
+    save_res = await app.a_run_any(TBEF.DB.SET, query="email_waiting_list", data=json.dumps(updated_list),
+                                   get_results=True)
+    if save_res.is_error(): return Result.default_internal_error(
+        info="Failed to update waiting list: " + str(save_res.info))
+    return Result.ok(info="Email removed from waiting list.")
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
+async def send_invite_to_waiting_list_user_admin(app: App, request: RequestData, data: dict):
+    admin_user = await _is_admin(app, request)
+    if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
+    email_to_invite = data.get("email")
+    proposed_username = data.get("username")
+    if not email_to_invite or not proposed_username: return Result.default_user_error(
+        info="Email and proposed username are required.")
+
+    # db_helper_test_exist is sync, wrap it if true async desired or use a_run_any
+    if await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.DB_HELPER_TEST_EXIST, username=proposed_username):
+        return Result.default_user_error(info="Proposed username '" + str(proposed_username) + "' already exists.")
+
+    # send_signup_invitation_email is sync. Assuming it's okay or would be wrapped.
+    invite_result = send_signup_invitation_email(app, invited_user_email=email_to_invite,
+                                                 invited_username=proposed_username, inviter_username=admin_user.name)
+    if not invite_result.is_error():
+        return Result.ok(
+            info="Invitation email sent to " + str(email_to_invite) + " for username " + str(proposed_username) + ".")
+    else:
+        return Result.default_internal_error(info="Failed to send invitation: " + str(invite_result.info))
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
+async def list_spps_admin(app: App, request: RequestData):
+    admin_user = await _is_admin(app, request)
+    if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
+    spp_list = []
+    try:
+        # Directly use the imported dictionary from extras
+        for name_key, details in app.config_fh.get_file_handler("CloudM::UI", {}).items():
+            spp_list.append({
+                "name": name_key,
+                "title": details.get("title"), "path": details.get("path"),
+                "description": details.get("description"), "auth": details.get("auth", False)
+            })
+    except Exception as e:
+        app.print("Error fetching SPP list from CloudM.extras.uis: " + str(e), "ERROR")
+        return Result.default_internal_error(info="Could not retrieve SPP list.")
+    return Result.json(data=spp_list)

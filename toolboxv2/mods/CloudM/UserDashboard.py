@@ -224,10 +224,11 @@ async def get_user_dashboard_main_page(app: App, request: RequestData):
 <body data-theme="system">
     <div id="user-dashboard">
         <div id="user-header">
+            <h1><span class="material-symbols-outlined">dashboard</span>User Dashboard</h1>
             <button id="sidebar-toggle-btn" class="tb-btn" style="margin-right: 1rem; display: none; background: none; border: none; color: white;">
                 <span class="material-symbols-outlined">menu</span>
             </button>
-            <h1><span class="material-symbols-outlined">dashboard</span>User Dashboard</h1>
+
             <div class="header-actions">
                  <div id="darkModeToggleContainer" style="display: inline-flex; align-items: center; margin-right: 1.5rem;"></div>
                 <nav id="user-nav">
