@@ -89,54 +89,15 @@ def install_extra_win_gpu_12_6_package(python_exe):
                     "torch", "torchvision", "torchaudio",
                     "--index-url",
                     "https://download.pytorch.org/whl/cu126"])
-    subprocess.run([python_exe, "-m", "pip", "install", "starlette",
-    "litellm",
-    "pebble",
-    "transformers",
-    "networkx",
-    "numpy",
-    "tiktoken",
-    "chromadb",
-    "openai",
-    "pyaudio",
-    "whisper",
-    "gtts",
-    "pydub",
-    "websockets",
-    "keyboard",
-    "pyperclip",
-    "pygments",
-    "beautifulsoup4",
-    "duckduckgo_search",
-    "langchain",
-    "langchain_community",
-    "langchain_core",
-    "Pebble",
-    "Requests",
-    "torch",
-    "tqdm",
-    "utils",
-    "tokenizers",
-    "sentence-transformers",
-    "browser-use>=0.1.40",
-    "python-git>=2018.2.1",
-    "langchain-experimental>=0.3.4",
-    "rapidfuzz>=3.12.2",
-    "astor>=0.8.1",
-    "taichi>=1.7.3",
-    "nest-asyncio>=1.6.0",
-    "schedule>=1.2.2",
-    "qdrant-client[fastembed]",
-    "python-levenshtein>=0.27.1",
-    "langchain-google-genai>=2.1.2"])
-    subprocess.run([python_exe,
+    subprocess.run([python_exe, "-m", "pip", "install", "-e", "./toolboxv2/mods/isaa"])
+"""    subprocess.run([python_exe,
                     "-m",
                     "pip",
                     "install",
                     "websockets",
                     "schedule",
                     "mailjet_rest",
-                    "mockito"])
+                    "mockito"])"""
 
 
 def main():
@@ -147,7 +108,7 @@ def main():
     install_pip(python_exe)
     # time.sleep(5)
     install_current_package(python_exe)
-    # install_extra_win_gpu_12_6_package(python_exe)
+    install_extra_win_gpu_12_6_package(python_exe)
     print(f"✅ Python installed in {target_dir}")
     print(f"✅ Run your Python with: {python_exe}")
 

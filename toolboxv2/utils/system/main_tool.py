@@ -79,7 +79,10 @@ class MainTool:
                 await asyncio.sleep(0.1)
                 get_logger().info(f"{self.name} on load suspended")
             except Exception as e:
-                get_logger().error(f" Error loading mod {self.name} {e}")
+                get_logger().error(f"Error loading mod {self.name} {e}")
+                if self.app.debug:
+                    import traceback
+                    traceback.print_exc()
         else:
             get_logger().info(f"{self.name} no load require")
 

@@ -21,9 +21,9 @@ from langchain_community.tools import AIPluginTool
 from pebble import concurrent
 from pydantic import BaseModel
 
-from toolboxv2.mods.isaa.base.KnowledgeBase import TextSplitter
-from toolboxv2.mods.isaa.extras.filter import filter_relevant_texts
-from toolboxv2.mods.isaa.types import TaskChain
+from .base.KnowledgeBase import TextSplitter
+from .extras.filter import filter_relevant_texts
+from .types import TaskChain
 
 from toolboxv2.utils.system import FileCache
 
@@ -49,28 +49,28 @@ from typing import Any
 from toolboxv2 import FileHandler, MainTool, Spinner, Style, get_app, get_logger
 
 # Updated imports for EnhancedAgent
-from toolboxv2.mods.isaa.base.Agent.agent import (
+from .base.Agent.agent import (
     EnhancedAgent,
     AgentModelData,  # For type hinting if needed
     WorldModel,  # For type hinting if needed
 )
-from toolboxv2.mods.isaa.base.Agent.builder import (
+from .base.Agent.builder import (
     EnhancedAgentBuilder,
     BuilderConfig,
 )
 # AgentVirtualEnv and LLMFunction might be deprecated or need adaptation
 # For now, keeping them if they are used by other parts not being refactored.
-# from toolboxv2.mods.isaa.base.Agents import AgentVirtualEnv, LLMFunction
+# from t.base.Agents import AgentVirtualEnv, LLMFunction
 
 
-from toolboxv2.mods.isaa.base.AgentUtils import (
+from .base.AgentUtils import (
     AgentChain,
     AISemanticMemory,
     Scripts,
     dilate_string, ControllerManager
 )
-from toolboxv2.mods.isaa.CodingAgent.live import Pipeline
-from toolboxv2.mods.isaa.extras.modes import (
+from .CodingAgent.live import Pipeline
+from .extras.modes import (
     ISAA0CODE,  # Assuming this is a constant string
     ChainTreeExecutor,
     StrictFormatResponder,
@@ -80,7 +80,8 @@ from toolboxv2.mods.isaa.extras.modes import (
 )
 
 from .SearchAgentCluster.search_tool import web_search
-
+from .chainUi import initialize_module as initialize_isaa_chains
+from .ui import initialize_isaa_webui_module
 PIPLINE = None  # This seems unused or related to old pipeline
 Name = 'isaa'
 version = "0.2.0"  # Version bump for significant changes
@@ -227,6 +228,11 @@ class Tools(MainTool, FileHandler):
             Path(f".data/{get_app('isaa-initIsaa').id}/Agents/").mkdir(parents=True, exist_ok=True)
             Path(f".data/{get_app().id}/Memory/").mkdir(parents=True, exist_ok=True)
 
+        initialize_isaa_chains(self.app)
+        initialize_isaa_webui_module(self.app, self)
+        self.print("ISAA module started. fallback")
+
+
     async def _async_function_runner(self, name, **kwargs):
         agent = await self.get_agent("self")  # Get self agent for its tools
         # EnhancedAgent doesn't have function_invoke. Need to find tool and run.
@@ -295,7 +301,7 @@ class Tools(MainTool, FileHandler):
         prompt += f"\n\nAvailable Chains: {self.list_task()}"
 
         if 'TaskChainAgent' not in self.config['agents-name-list']:
-            task_chain_builder = await self.get_agent_builder("code")  # await here
+            task_chain_builder = self.get_agent_builder("code")
             task_chain_builder.with_agent_name("TaskChainAgent")
             tcm = self.controller.rget(TaskChainMode)
             task_chain_builder.with_system_message(tcm.system_msg)  # Use system_msg from LLMMode
@@ -309,7 +315,7 @@ class Tools(MainTool, FileHandler):
         if task_chain and len(task_chain.tasks):
             self.print(f"adding : {task_chain.name}")
             self.agent_chain.add(task_chain.name, task_chain.model_dump().get("tasks"))
-            self.agent_chain.add_discr(task_chain.name, task_chain.dis)
+            self.agent_chain.add_discr(task_chain.name, task_chain.description)
         return task_chain.name
 
     def get_augment(self, task_name=None, exclude=None):
@@ -324,7 +330,7 @@ class Tools(MainTool, FileHandler):
     async def init_from_augment(self, augment, agent_name: str or EnhancedAgentBuilder = 'self', exclude=None):
         builder_instance = None
         if isinstance(agent_name, str):
-            builder_instance = await self.get_agent_builder(agent_name)  # Gets a builder
+            builder_instance = self.get_agent_builder(agent_name)  # Gets a builder
         elif isinstance(agent_name, EnhancedAgentBuilder):
             builder_instance = agent_name
         else:
@@ -413,7 +419,7 @@ class Tools(MainTool, FileHandler):
         if self.initialized:
             self.print(f"Already initialized. Getting agent/builder: {name}")
             # build=True implies getting the builder, build=False (default) implies getting agent instance
-            return await self.get_agent_builder(name) if build else await self.get_agent(name)
+            return self.get_agent_builder(name) if build else await self.get_agent(name)
 
         self.initialized = True
         sys.setrecursionlimit(1500)
@@ -428,14 +434,17 @@ class Tools(MainTool, FileHandler):
             self.controller.init(self.config['controller_file'])
         self.config["controller-init"] = True
 
-        return await self.get_agent_builder(name) if build else await self.get_agent(name)
+        return self.get_agent_builder(name) if build else await self.get_agent(name)
 
     def show_version(self):
         self.print("Version: ", self.version)
         return self.version
 
-    async def on_start(self):
-        pass
+    def on_start(self):
+
+        initialize_isaa_chains(self.app)
+        initialize_isaa_webui_module(self.app, self)
+        self.print("ISAA module started.")
 
     def load_secrit_keys_from_env(self):
         # These are often used by LiteLLM if not passed directly or set as env vars for LiteLLM
@@ -485,7 +494,7 @@ class Tools(MainTool, FileHandler):
             memory_instance.save_all_memories(f".data/{get_app().id}/Memory/")
         self.print("Memory saving process initiated")
 
-    async def get_agent_builder(self, name="self") -> EnhancedAgentBuilder:
+    def get_agent_builder(self, name="self") -> EnhancedAgentBuilder:
         if name == 'None': name = "self"  # Default name
         self.print(f"Default EnhancedAgentBuilder::{name}")
 
@@ -606,7 +615,7 @@ class Tools(MainTool, FileHandler):
 
         if builder_to_use is None:
             self.print(f"No existing config for {agent_name} or load failed. Creating default builder.")
-            builder_to_use = await self.get_agent_builder(agent_name)  # This returns a configured builder
+            builder_to_use = self.get_agent_builder(agent_name)  # This returns a configured builder
 
         # Apply ISAARef and model override if any
         builder_to_use._isaa_ref = self

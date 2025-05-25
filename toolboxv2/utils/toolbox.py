@@ -497,7 +497,7 @@ class App(AppType, metaclass=Singleton):
                                          metadata=metadata,
                                          r=1)
             self.logger.warning(f"function modular not found {modular_id} 404")
-            return "404", 100
+            return "404", 404
 
         if function_id not in self.functions[modular_id]:
             self.logger.warning(f"function data not found {modular_id}.{function_id} 404")
@@ -518,7 +518,7 @@ class App(AppType, metaclass=Singleton):
 
         if function is None:
             self.logger.warning("No function found")
-            return "404", 300
+            return "404", 404
 
         if params is None:
             self.logger.warning("No function (params) found")

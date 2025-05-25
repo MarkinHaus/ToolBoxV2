@@ -16,7 +16,7 @@ from importlib.metadata import version
 from inspect import iscoroutinefunction
 from typing import (
     Any,
-    Literal,
+    Literal, Optional,
 )
 
 from pydantic import (
@@ -60,11 +60,18 @@ try:
         LongRunningFunctionTool,
         ToolContext,
     )
-    from google.adk.tools import VertexAiSearchTool as AdkVertexAiSearchTool
-    from google.adk.tools import (
-        built_in_code_execution as adk_built_in_code_execution,  # Secure option
-    )
-    from google.adk.tools import google_search as adk_google_search
+    try:
+        from google.adk.tools import VertexAiSearchTool as AdkVertexAiSearchTool
+        from google.adk.tools import (
+            built_in_code_execution as adk_built_in_code_execution,  # Secure option
+        )
+        from google.adk.tools import google_search as adk_google_search
+    except ImportError:
+        print("WARN: google.adk.tools.google_search not found. Google Search tool not available.")
+        def adk_built_in_code_execution():
+            return None  # Dummy
+        def adk_google_search():
+            return None  # Dummy
     from google.adk.tools.agent_tool import AgentTool
     from google.adk.tools.mcp_tool.mcp_toolset import (
         MCPToolset,
@@ -1904,7 +1911,7 @@ class EnhancedAgent(*_AgentBaseClass):
                                          tool_context: ToolContext | None,
                                          target_agent_url: str,
                                          task_prompt: str,
-                                         session_id: str | None = None
+                                         session_id: Optional[str] = None
                                          ) -> str:
         """ADK Tool: Sends a task to another agent via A2A and waits for the final text result."""
         # ... (implementation remains the same, calls _execute_a2a_call) ...

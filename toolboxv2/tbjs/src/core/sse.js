@@ -10,7 +10,7 @@ const SseManager = {
             return SseManager.connections[url];
         }
 
-        const fullUrl = url.startsWith('/') ? `${TB.config.getBaseUrl()}${url}` : url;
+        const fullUrl = url.startsWith('/') ? `${TB.config.get('baseApiUrl').replace('/api', '')}${url}` : url;
         const eventSource = new EventSource(fullUrl, options.eventSourceOptions); // options.eventSourceOptions for withCredentials etc.
 
         SseManager.connections[url] = eventSource;

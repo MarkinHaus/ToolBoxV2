@@ -1,6 +1,7 @@
 import os
+from dataclasses import dataclass
 from platform import system
-from typing import Any
+from typing import Any, Callable
 
 from langchain_community.agent_toolkits.load_tools import (
     load_huggingface_tool,
@@ -8,20 +9,46 @@ from langchain_community.agent_toolkits.load_tools import (
 )
 from langchain_core.tools import BaseTool
 
-from toolboxv2.mods.isaa.base.Agents import (
-    Agent,
-    Capabilities,
-    LLMFunction,
-    LLMMode,
-    get_free_agent_data_factory,
-)
 
 
-def get_free_agent(name: str, *args, **kwargs) -> Agent:
-    return Agent(
-        amd=get_free_agent_data_factory(name, *args),  # model="GPT4All-13B-snoozy.ggmlv3.q4_0.bin"
-        stream=False, **kwargs
-    )
+@dataclass(frozen=True)
+class LLMMessage:
+    role: str
+    content: str
+
+
+@dataclass(frozen=True)
+class LLMFunction:
+    name: str
+    description: str
+    parameters: dict[str, str] or list[str] or None
+    function: Callable[[str], str] | None
+
+    def __str__(self):
+        return f"----\nname -> '{self.name}'\nparameters -> {self.parameters} \ndescription -> '{self.description}'"
+
+    def __call__(self, *args, **kwargs):
+        return self.function(*args, **kwargs)
+
+@dataclass(frozen=True)
+class Capabilities:
+    name: str
+    description: str
+    trait: str
+    functions: list[LLMFunction] | None
+
+
+@dataclass
+class LLMMode:
+    name: str
+    description: str
+    system_msg: str
+    post_msg: str | None = None
+    examples: list[str] | None = None
+
+    def __str__(self):
+        return f"LLMMode: {self.name} (description) {self.description}"
+
 
 
 """Introducing the "Function Caller," a new type of agent that specializes in making function calls to other agents within the system. This agent is highly skilled at navigating complex systems and has an uncanny ability to find the right function call for any given task.

@@ -7,7 +7,7 @@ import json
 from toolboxv2 import TBEF, App, Result, get_app, RequestData
 from toolboxv2.mods.CloudM.AuthManager import db_helper_save_user, db_helper_delete_user, get_user_by_name, \
     db_helper_test_exist
-from toolboxv2.mods.CloudM.mini import get_service_status
+from toolboxv2.mods.CloudM import mini
 from toolboxv2.mods.CloudM.ModManager import list_modules as list_all_modules
 from .types import User
 from .UserAccountManager import get_current_user_from_request
@@ -885,7 +885,7 @@ async def get_system_status(app: App, request: RequestData):
     admin_user = await _is_admin(app, request)
     if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
 
-    status_str = get_service_status(PID_DIR)  # Make sure PID_DIR is correct
+    status_str = mini.get_service_status(PID_DIR)  # Make sure PID_DIR is correct
     services_data = {}
     lines = status_str.split('n')
     if lines and lines[0].startswith("Service(s):"):
@@ -952,7 +952,7 @@ async def get_system_status(app: App, request: RequestData):
     admin_user = await _is_admin(app, request)
     if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
 
-    status_str = get_service_status(PID_DIR)
+    status_str = mini.get_service_status(PID_DIR)
     services_data = {}
     lines = status_str.split('\n')
     if lines and lines[0].startswith("Service(s):"):

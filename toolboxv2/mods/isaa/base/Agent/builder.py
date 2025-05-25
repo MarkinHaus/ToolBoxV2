@@ -1003,7 +1003,8 @@ class EnhancedAgentBuilder:
                  agent_init_kwargs = final_kwargs
 
 
-            logger.debug(f"Final keys for EnhancedAgent init: {list(agent_init_kwargs.keys())}")
+            logger.info(f"Final keys for EnhancedAgent init: {list(agent_init_kwargs.keys())}")
+            logger.info(f"Final keys for EnhancedAgent init: {agent_init_kwargs}")
 
             # --- Instantiate the Agent ---
             agent = agent_class(**agent_init_kwargs)
