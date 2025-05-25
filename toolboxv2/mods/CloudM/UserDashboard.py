@@ -92,6 +92,9 @@ async def get_user_dashboard_main_page(app: App, request: RequestData):
                 width: 230px; /* Your desktop width */
                 transition: none; /* No transition needed for static display */
             }
+            .settings-grid {
+             display:table;
+            }
             /* Adjust #user-container or #user-content if needed when sidebar is static */
             #user-container.sidebar-present #user-content {
                 margin-left: 230px; /* Example: if sidebar is fixed and content needs to shift */

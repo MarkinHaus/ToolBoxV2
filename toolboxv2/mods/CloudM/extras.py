@@ -12,13 +12,12 @@ from .AuthManager import get_invitation
 from .types import User
 
 Name = 'CloudM'
-version = '0.0.3'
+version = '0.0.4'
 export = get_app(f"{Name}.EXPORT").tb
 no_test = export(mod_name=Name, test=False, version=version)
 test_only = export(mod_name=Name, test=True, version=version, test_only=True)
 to_api = export(mod_name=Name, api=True, version=version)
 
-uis = {}
 @no_test
 def add_ui(app: App, name:str, title:str, path:str, description:str, auth=False):
     if app is None:
@@ -32,7 +31,9 @@ def add_ui(app: App, name:str, title:str, path:str, description:str, auth=False)
 def openui(app:App):
     if app is None:
         app = get_app("openui")
-    uis = json.load(app.config_fh.get_file_handler("CloudM::UI", "{}"))
+    x = app.config_fh.get_file_handler("CloudM::UI", "{}")
+    print(x)
+    uis = json.loads(x)
     return [uis[name] for name in uis]
 
 @export(mod_name=Name, api=True, version=version, row=True)

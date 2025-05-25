@@ -129,7 +129,7 @@ const Router = {
             if (htmlContent.startsWith("HTTP error! status: 401")) {
                  logger.warn(`[Router] 401 for path: ${cleanPath}. Redirecting to 401 page.`);
                  if (cleanPath !== '/web/assets/401.html') {
-                    await Router.navigateTo('/web/assets/401.html', true);
+                    await Router.navigateTo('/web/assets/401.html', false);
                  } else {
                     appRootElement.innerHTML = '<h1>401 - Unauthorized (and 401.html is also missing)</h1>';
                  }
@@ -318,14 +318,32 @@ const Router = {
 
     handleLinkClick: (event) => {
         const link = event.target.closest('a');
-        if (link && link.href && !link.hasAttribute('data-external-link') && !link.hasAttribute('download')) {
-            const targetUrl = new URL(link.href, window.location.origin); // Ensure link.href is absolute for comparison
-            const currentOrigin = window.location.origin;
+        if (
+            link &&
+            typeof link.href === 'string' &&
+            !link.hasAttribute('data-external-link') &&
+            !link.hasAttribute('download')
+        ) {
+            let targetUrl;
+            try {
+                targetUrl = new URL(link.href, window.location.origin);
+            } catch (e) {
+                logger.warn(`[Router] Invalid URL in link: ${link.href}`, e);
+                return;
+            }
 
+            const currentOrigin = window.location.origin;
             if (targetUrl.origin === currentOrigin) {
                 event.preventDefault();
-                const navigationPath = targetUrl.pathname + targetUrl.search + targetUrl.hash;
-                Router.navigateTo(navigationPath).catch(err => logger.error("[Router] Navigation from link click failed:", err));
+
+                const pathname = targetUrl.pathname || '/';
+                const search = targetUrl.search || '';
+                const hash = targetUrl.hash || '';
+
+                const navigationPath = `${pathname}${search}${hash}`;
+
+                Router.navigateTo(navigationPath)
+                    .catch(err => logger.error("[Router] Navigation from link click failed:", err));
             } else {
                 logger.log(`[Router] External link clicked: ${link.href}`);
             }

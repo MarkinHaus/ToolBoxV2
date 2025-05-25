@@ -150,7 +150,11 @@ async def get_current_user_from_request_api_wrapper(app: App, request: RequestDa
     if not user:
         # Return error that tbjs can handle
         return Result.default_user_error(info="User not authenticated or found.", data=None, exec_code=401)
-    return Result.ok(data=asdict(user))
+    user_dict = asdict(user)
+    pub_user_data = {}
+    for key in ['name','pub_key','email','creation_time','is_persona','level','log_level','settings']:
+        pub_user_data[key] = user_dict.get(key, None)
+    return Result.ok(data=pub_user_data)
 
 # get_account_management_section_html is now largely obsolete.
 # Its functionality will be replicated by client-side JS (tbjs) in the Admin Dashboard,

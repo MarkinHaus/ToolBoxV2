@@ -873,6 +873,7 @@ async def get_dashboard_main_page(app: App, request: RequestData):
             }
         }
     </script>
+    <a href="/api/CloudM.UserDashboard/main">User Dashboard</a>
 """
     return Result.html(html_content)
 
@@ -1029,7 +1030,7 @@ async def update_user_admin(app: App, request: RequestData, data: dict):
     if not uid_to_update or not name_to_update: return Result.default_user_error(info="User UID and Name are required.")
 
     user_res = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=name_to_update,
-                                   uid=uid_to_update)  # Use a_run_any for TBEF
+                                   uid=uid_to_update, get_results=True)  # Use a_run_any for TBEF
     if user_res.is_error() or not user_res.get(): return Result.default_user_error(
         info="User " + str(name_to_update) + " (UID: " + str(uid_to_update) + ") not found.")
 
@@ -1044,8 +1045,7 @@ async def update_user_admin(app: App, request: RequestData, data: dict):
         if user_to_update.settings is None: user_to_update.settings = {}
         user_to_update.settings.update(data["settings"])
 
-    save_result = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.DB_HELPER_SAVE_USER,
-                                      user_data=asdict(user_to_update))  # Use a_run_any for TBEF
+    save_result =  db_helper_save_user(app, asdict(user_to_update))
     if save_result.is_error(): return Result.default_internal_error(
         info="Failed to save user: " + str(save_result.info))
     return Result.ok(info="User updated successfully.")
@@ -1059,7 +1059,7 @@ async def delete_user_admin(app: App, request: RequestData, data: dict):
     if not uid_to_delete: return Result.default_user_error(info="User UID is required.")
     if admin_user.uid == uid_to_delete: return Result.default_user_error(info="Admin cannot delete themselves.")
 
-    user_to_delete_res = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username='*', uid=uid_to_delete)
+    user_to_delete_res = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username='*', uid=uid_to_delete, get_results=True)
     username_to_delete = None
     if not user_to_delete_res.is_error() and user_to_delete_res.get():
         username_to_delete = user_to_delete_res.get().name
@@ -1080,8 +1080,9 @@ async def delete_user_admin(app: App, request: RequestData, data: dict):
     if not username_to_delete: return Result.default_user_error(
         info="User with UID " + str(uid_to_delete) + " not found or name indeterminate.")
 
-    delete_result = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.DB_HELPER_DELETE_USER, username=username_to_delete,
-                                        uid=uid_to_delete)
+    delete_result = db_helper_delete_user(app, username_to_delete, uid_to_delete, matching=True)
+    #delete_result = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.CREATE_USER, username=username_to_delete,
+    #                                    uid=uid_to_delete, get_results=True)
     if delete_result.is_error(): return Result.default_internal_error(
         info="Failed to delete user: " + str(delete_result.info))
     return Result.ok(info="User " + str(username_to_delete) + " deleted.")
@@ -1097,7 +1098,7 @@ async def reload_module_admin(app: App, request: RequestData, data: dict):
     try:
         if module_name in app.get_all_mods():
             if hasattr(app, 'reload_mod'):
-                await app.reload_mod(module_name)  # Assuming reload_mod could be async
+                app.reload_mod(module_name)  # Assuming reload_mod could be async
             else:
                 app.remove_mod(module_name)
                 app.save_load(module_name)
@@ -1182,7 +1183,7 @@ async def list_spps_admin(app: App, request: RequestData):
     spp_list = []
     try:
         # Directly use the imported dictionary from extras
-        for name_key, details in app.config_fh.get_file_handler("CloudM::UI", {}).items():
+        for name_key, details in json.loads(app.config_fh.get_file_handler("CloudM::UI", "{}")).items():
             spp_list.append({
                 "name": name_key,
                 "title": details.get("title"), "path": details.get("path"),

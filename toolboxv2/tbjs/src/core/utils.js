@@ -189,12 +189,19 @@ export function cleanUrl(url) {
 }
 
 
-export function escapeHtml (unsafe) {
-        if (typeof unsafe !== 'string') return '';
-        return unsafe
-            .replace(/&/g, "&")
-            .replace(/</g, "<")
-            .replace(/>/g, ">")
-            .replace(/"/g, '"')
-            .replace(/'/g, "'");
-    };
+export function escapeHtml(unsafe) {
+    if (typeof unsafe !== 'string') {
+        if (unsafe === null || unsafe === undefined) return '';
+        try {
+            return String(unsafe); // Attempt to convert to string if not already
+        } catch (e) {
+            return ''; // Fallback for unstringifiable types
+        }
+    }
+    return unsafe
+        .replace(/&/g, "&amp;")   // & must be first
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
