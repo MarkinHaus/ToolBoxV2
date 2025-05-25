@@ -1459,7 +1459,7 @@ class App(AppType, metaclass=Singleton):
         try:
             if not r:
                 print("§ Session server Offline!", self.session.base)
-                return Result.default_internal_error(msg="Session fetch failed").as_dict()
+                return Result.default_internal_error(info="Session fetch failed").as_dict()
 
             content_type = r.headers.get('Content-Type', '').lower()
             raw = await r.read()

@@ -357,15 +357,9 @@ def initialize_admin_panel(app: App):
     if app is None:
         app = get_app()
     app.run_any(("CloudM","add_ui"),
-                name=Name,
+                name="UserDashboard",
                 title=Name,
                 path=f"/api/CloudM.UI.widget/get_widget",
-                description="main",auth=True
-                )
-    app.run_any(("CloudM","add_ui"),
-                name="UserDashboard",
-                title="UserDashboard",
-                path=f"/api/CloudM.UserDashboard/main",
                 description="main",auth=True
                 )
     return Result.ok(info="Admin Panel Online").set_origin("CloudM.initialize_admin_panel")
