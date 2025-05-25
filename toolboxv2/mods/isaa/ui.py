@@ -536,17 +536,13 @@ def initialize_isaa_webui_module(app: App, isaa_instance=None):  # isaa_instance
 
     # Assuming CloudM module is available and add_ui is a known function
     try:
-        cloudm_mod = app.get_mod("CloudM")
-        if cloudm_mod and hasattr(cloudm_mod, "add_ui"):
-            # If add_ui is async, you might need app.run_async or similar
-            app.run_any((cloudm_mod, "add_ui"),  # Or ("CloudM", "add_ui") if get_mod returns the module object
-                        name=Name,
-                        title="ISAA UI",  # More user-friendly title
-                        path=f"/api/{MOD_NAME}/main",  # Use MOD_NAME for consistency
-                        description="Interactive Web UI for ISAA"
-                        )
-        else:
-            app.logger.warn("CloudM module or add_ui function not found. ISAA UI might not be accessible in main nav.")
+        # If add_ui is async, you might need app.run_async or similar
+        app.run_any(("CloudM", "add_ui"),  # Or ("CloudM", "add_ui") if get_mod returns the module object
+                    name=Name,
+                    title="ISAA UI",  # More user-friendly title
+                    path=f"/api/{MOD_NAME}/main",  # Use MOD_NAME for consistency
+                    description="Interactive Web UI for ISAA",auth=True
+                    )
     except Exception as e:
         app.logger.error(f"Failed to register ISAA UI with CloudM: {e}")
 
