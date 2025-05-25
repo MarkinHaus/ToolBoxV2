@@ -12,6 +12,7 @@ from platform import node, system
 
 # from sqlalchemy.testing.suite.test_reflection import metadata
 from toolboxv2.flows import flows_dict as flows_dict_func
+from toolboxv2.setup_helper import run_command
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils import get_app
 from toolboxv2.utils.daemon import DaemonApp
@@ -680,6 +681,7 @@ async def setup_app(ov_name=None):
         if args.update == "main":
             await tb_app.save_load("CloudM")
             tb_app.run_any("CloudM", "update_core")
+            run_command("npm run build:tbjs && npm run build:web")
         else:
             res = await tb_app.a_run_any("CloudM", "install", module_name=args.update, get_results=True)
             res.print()
