@@ -57,12 +57,85 @@ async def get_user_dashboard_main_page(app: App, request: RequestData):
 
         #user-container { display: flex; flex-grow: 1; }
         #user-sidebar {
-            width: 240px; /* Slightly wider */
-            background-color: var(--sidebar-bg, var(--tb-color-neutral-100, #ffffff)); /* Themeable sidebar */
-            padding: 1.5rem 1rem;
-            border-right: 1px solid var(--sidebar-border, var(--tb-color-neutral-300, #e0e0e0));
-            box-shadow: 1px 0 3px rgba(0,0,0,0.05);
-            transition: background-color 0.3s ease, border-color 0.3s ease;
+            display: none; /* Hidden by default on small screens */
+            position: fixed; /* Or absolute, depending on desired behavior */
+            left: -250px; /* Start off-screen */
+            top: 0;
+            bottom: 0;
+            width: 240px; /* Or your desired width */
+            z-index: 1000;
+            transition: left 0.3s ease-in-out;
+            overflow-y: auto; /* If content might overflow */
+        }
+
+        #user-sidebar.open {
+            display: flex; /* Or block */
+            left: 0; /* Slide in */
+        }
+
+        #sidebar-toggle-btn { /* Your hamburger button */
+            display: inline-flex; /* Or block, depending on header layout */
+            /* Styling for the button */
+            padding: 0.5rem;
+            cursor: pointer;
+            z-index: 1001; /* Above sidebar when closed, or managed differently */
+        }
+
+        @media (min-width: 768px) { /* Or your preferred breakpoint for tablet/desktop */
+            #sidebar-toggle-btn {
+                display: none; /* Hide hamburger on larger screens */
+            }
+            #user-sidebar {
+                display: flex; /* Show sidebar in its normal position */
+                position: static; /* Revert to static positioning */
+                left: auto;
+                width: 230px; /* Your desktop width */
+                transition: none; /* No transition needed for static display */
+            }
+            /* Adjust #user-container or #user-content if needed when sidebar is static */
+            #user-container.sidebar-present #user-content {
+                margin-left: 230px; /* Example: if sidebar is fixed and content needs to shift */
+            }
+        }
+
+        /* Backdrop for mobile sidebar */
+        #sidebar-backdrop {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            z-index: 999; /* Below sidebar, above content */
+        }
+        #sidebar-backdrop.active {
+            display: block;
+        }
+        #user-sidebar.open { /* This class is toggled by JS */
+            /* ... your existing .open styles ... */
+            left: 0;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.2); /* Add shadow when open */
+        }
+        @media (max-width: 767.98px) { /* Apply only on smaller screens */
+            #user-sidebar {
+                display: flex; /* Keep it flex for content alignment */
+                position: fixed;
+                left: -250px; /* Start off-screen (adjust width if needed) */
+                top: 0;
+                bottom: 0;
+                width: 240px; /* Consistent width */
+                z-index: 1000; /* Above backdrop */
+                transition: left 0.3s ease-in-out;
+                overflow-y: auto;
+                 /* Make sure background and border are explicitly set for mobile overlay */
+                background-color: var(--sidebar-bg, var(--tb-color-neutral-100, #ffffff));
+                border-right: 1px solid var(--sidebar-border, var(--tb-color-neutral-300, #e0e0e0));
+            }
+            body[data-theme="dark"] #user-sidebar {
+                 background-color: var(--sidebar-bg-dark, var(--tb-color-neutral-850, #232b33));
+                 border-right-color: var(--sidebar-border-dark, var(--tb-color-neutral-700, #374151));
+            }
         }
         body[data-theme="dark"] #user-sidebar {
              background-color: var(--sidebar-bg-dark, var(--tb-color-neutral-850, #232b33));
@@ -150,7 +223,10 @@ async def get_user_dashboard_main_page(app: App, request: RequestData):
 </head>
 <body data-theme="system">
     <div id="user-dashboard">
-        <header id="user-header">
+        <div id="user-header">
+            <button id="sidebar-toggle-btn" class="tb-btn" style="margin-right: 1rem; display: none; background: none; border: none; color: white;">
+                <span class="material-symbols-outlined">menu</span>
+            </button>
             <h1><span class="material-symbols-outlined">dashboard</span>User Dashboard</h1>
             <div class="header-actions">
                  <div id="darkModeToggleContainer" style="display: inline-flex; align-items: center; margin-right: 1.5rem;"></div>
@@ -160,7 +236,7 @@ async def get_user_dashboard_main_page(app: App, request: RequestData):
                     </ul>
                 </nav>
             </div>
-        </header>
+        </div>
         <div id="user-container">
             <aside id="user-sidebar">
                  <ul>
@@ -189,6 +265,7 @@ async def get_user_dashboard_main_page(app: App, request: RequestData):
                 </section>
             </main>
         </div>
+        <div id="sidebar-backdrop"></div>
     </div>
 
     <script type="module">
@@ -233,7 +310,63 @@ async def get_user_dashboard_main_page(app: App, request: RequestData):
                     console.error("Error fetching current user for dashboard:", e);
                     document.getElementById('user-content').innerHTML = '<p class="tb-text-red-500">Network error loading your details.</p>';
                 }
+                setupMobileSidebar();
             }
+
+
+            function setupMobileSidebar() {
+            const sidebar = document.getElementById('user-sidebar');
+            const toggleBtn = document.getElementById('sidebar-toggle-btn');
+            const backdrop = document.getElementById('sidebar-backdrop'); // Get the backdrop
+
+            if (!sidebar || !toggleBtn || !backdrop) { // Check for backdrop too
+                console.warn("Mobile sidebar elements (sidebar, toggle button, or backdrop) not found. Skipping mobile sidebar setup.");
+                // If toggle button isn't there, ensure it's not shown via CSS either if it was meant to be.
+                if(toggleBtn) toggleBtn.style.display = 'none';
+                return;
+            }
+
+            // Show toggle button only on smaller screens
+            function updateToggleBtnVisibility() {
+                if (window.innerWidth < 768) { // Your mobile breakpoint
+                    toggleBtn.style.display = 'inline-flex';
+                } else {
+                    toggleBtn.style.display = 'none';
+                    sidebar.classList.remove('open'); // Ensure sidebar is closed if screen resizes to desktop
+                    backdrop.classList.remove('active');
+                    document.body.style.overflow = '';
+                }
+            }
+
+            updateToggleBtnVisibility(); // Initial check
+            window.addEventListener('resize', updateToggleBtnVisibility);
+
+
+            toggleBtn.addEventListener('click', (e) => {
+                e.stopPropagation(); // Prevent click from bubbling if needed
+                sidebar.classList.toggle('open');
+                backdrop.classList.toggle('active');
+                document.body.style.overflow = sidebar.classList.contains('open') ? 'hidden' : '';
+            });
+
+            backdrop.addEventListener('click', () => {
+                sidebar.classList.remove('open');
+                backdrop.classList.remove('active');
+                document.body.style.overflow = '';
+            });
+
+            sidebar.querySelectorAll('li[data-section]').forEach(item => {
+                item.addEventListener('click', () => {
+                    // Only close if it's mobile view and sidebar is open
+                    if (window.innerWidth < 768 && sidebar.classList.contains('open')) {
+                        sidebar.classList.remove('open');
+                        backdrop.classList.remove('active');
+                        document.body.style.overflow = '';
+                    }
+                });
+            });
+             console.log("Mobile sidebar setup complete.");
+        }
 
             function _waitForTbInitUser(callback) {
                  if (window.TB?.events && window.TB.config?.get('appRootId')) {
@@ -614,41 +747,79 @@ async def get_user_dashboard_main_page(app: App, request: RequestData):
                 });
             }
 
+            // Inside your _applyCustomThemeVariables function in the User Dashboard JS
             function _applyCustomThemeVariables(themeOverrides) {
                 if (!themeOverrides) return;
+                const rootStyle = document.documentElement.style;
                 for (const [key, value] of Object.entries(themeOverrides)) {
-                    document.documentElement.style.setProperty(key, value);
-                }
-                console.log("Applied custom theme variables:", themeOverrides);
-            }
-
-            function _applyCustomBackgroundSettings(graphicsSettings) {
-                if (!graphicsSettings || !TB.graphics) return;
-                 // This is a conceptual application. TB.graphics and TB.ui.theme would need
-                 // to be designed to consume these settings from TB.state or be updated directly.
-                console.log("Applying graphics settings:", graphicsSettings);
-
-                // Update TB.config for TB.ui.theme to use (if it re-reads)
-                // Or, directly tell TB.ui.theme about the new background type
-                const currentThemeConfig = TB.ui.theme.getBackgroundConfig();
-                currentThemeConfig.type = graphicsSettings.type;
-                currentThemeConfig.light.color = graphicsSettings.bgColorLight;
-                currentThemeConfig.dark.color = graphicsSettings.bgColorDark;
-                currentThemeConfig.light.image = graphicsSettings.bgImageUrlLight;
-                currentThemeConfig.dark.image = graphicsSettings.bgImageUrlDark;
-                // TB.config.set('themeSettings.background', currentThemeConfig) // This might work if theme re-init is cheap
-
-                // For 3D settings, directly call TB.graphics methods
-                if (graphicsSettings.type === '3d') {
-                    if (TB.graphics.setSierpinskiDepth) TB.graphics.setSierpinskiDepth(graphicsSettings.sierpinskiDepth);
-                    if (TB.graphics.setAnimationSpeed) { // Assuming setAnimationSpeed takes factor for overall speed
-                         // Original setAnimationSpeed(x,y,z,factor) - need to decide base x,y,z
-                         // For simplicity, let's assume a default base and just adjust factor
-                         TB.graphics.setAnimationSpeed(0.0001, 0.0002, 0.00005, graphicsSettings.animationSpeedFactor);
+                    if (key.startsWith('--theme-') || key.startsWith('--glass-') || key.startsWith('--sidebar-')) { // Be specific
+                        rootStyle.setProperty(key, value);
                     }
                 }
-                // Force TB.ui.theme to re-evaluate and apply background
-                TB.ui.theme._applyBackground(); // Accessing private method, ideally theme would have a public refresh
+                console.log("Applied custom theme variables:", themeOverrides);
+                // Additionally, you might need to inform tbjs.ui.theme if its internal state
+                // or background calculations depend on these specific CSS variables.
+                // This might involve emitting an event or calling a theme refresh method if available.
+                // For example, if TB.ui.theme._applyBackground() reads these vars.
+                if (TB.ui.theme?._applyBackground) {
+                    TB.ui.theme._applyBackground(); // If safe to call directly
+                } else if (TB.events) {
+                    TB.events.emit('customTheme:variablesApplied', themeOverrides);
+                }
+            }
+
+            // Inside your _applyCustomBackgroundSettings function
+            function _applyCustomBackgroundSettings(graphicsSettings) {
+                if (!graphicsSettings) return;
+                console.log("Applying user-defined background settings:", graphicsSettings);
+
+                // 1. Update tbjs's internal config for theme/background so it persists across reloads/theme toggles
+                // This part is tricky as TB.config is usually set at init.
+                // A better approach would be for TB.ui.theme to listen to state changes for these settings.
+                // For now, let's assume TB.state is the source of truth for these overrides.
+
+                // Example: Saving to TB.state (which should then be read by TB.ui.theme)
+                TB.state.set('user.settings.graphics_settings', graphicsSettings, { persist: true });
+
+
+                // 2. Directly trigger TB.ui.theme to re-evaluate its background
+                //    This requires TB.ui.theme to be able to consume these settings.
+                if (TB.ui.theme && typeof TB.ui.theme.updateBackgroundConfiguration === 'function') {
+                    // Ideal: TB.ui.theme has a method to accept new background config parts
+                    TB.ui.theme.updateBackgroundConfiguration({
+                        type: graphicsSettings.type,
+                        light: {
+                            color: graphicsSettings.bgColorLight,
+                            image: graphicsSettings.bgImageUrlLight
+                        },
+                        dark: {
+                            color: graphicsSettings.bgColorDark,
+                            image: graphicsSettings.bgImageUrlDark
+                        }
+                        // ... and potentially placeholder settings if user can configure them
+                    });
+                } else if (TB.ui.theme?._applyBackground) {
+                    // Less ideal, but might work if _applyBackground re-reads from a source affected by the state update
+                    TB.ui.theme._applyBackground();
+                }
+
+
+                // 3. Directly interact with TB.graphics for 3D specific settings
+                if (graphicsSettings.type === '3d' && TB.graphics) {
+                    if (typeof graphicsSettings.sierpinskiDepth === 'number' && TB.graphics.setSierpinskiDepth) {
+                        TB.graphics.setSierpinskiDepth(graphicsSettings.sierpinskiDepth);
+                    }
+                    if (typeof graphicsSettings.animationSpeedFactor === 'number' && TB.graphics.setAnimationSpeed) {
+                        // Assuming default base speeds and only factor is changed by user
+                        TB.graphics.setAnimationSpeed( // Use existing animParams or defaults if available
+                            TB.graphics.animParams?.x || 0.0001,
+                            TB.graphics.animParams?.y || 0.0002,
+                            TB.graphics.animParams?.z || 0.00005,
+                            graphicsSettings.animationSpeedFactor
+                        );
+                    }
+                }
+                TB.logger.log("[UserDashboard] User background settings applied/updated.");
             }
 
 
