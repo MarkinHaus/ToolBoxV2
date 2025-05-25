@@ -755,6 +755,6 @@ def initialize_module(app: App):
                 name=f"{Name}_TaskChainEditor",  # Unique name for this UI
                 title="Task Chain Editor",
                 path=f"/api/{Name}/task_chain_editor",  # Unique path
-                description="Visueller Editor für Aufgaben-Ketten (Task Chains)"
+                description="Visueller Editor für Aufgaben-Ketten (Task Chains)",auth=True,
                 )
     return Result.ok(info="Modul und Task Chain Editor UI bereit.")
