@@ -10,7 +10,7 @@ from typing import (
     Any,
     Literal,
     Protocol,
-    TypeVar,
+    TypeVar, Optional,
 )
 
 from pydantic import (
@@ -21,6 +21,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+from toolboxv2 import get_logger
 
 # Framework Imports & Availability Checks (mirrored from agent.py)
 try: from google.adk.agents import LlmAgent; ADK_AVAILABLE_BLD = True
@@ -165,6 +167,7 @@ from toolboxv2.mods.isaa.base.Agent.agent import (  # Relative import assuming b
 # Local Imports
 
 logger = logging.getLogger("EnhancedAgentBuilder")
+logger.setLevel(get_logger().level)
 
 T = TypeVar('T', bound='EnhancedAgent') # Type variable for the agent being built
 
@@ -337,7 +340,6 @@ class BuilderConfig(BaseModel):
 
 
 # --- Production Builder Class ---
-
 
 class EnhancedAgentBuilder:
     """
@@ -565,12 +567,19 @@ class EnhancedAgentBuilder:
         self._adk_tools_transient.append(tool)
         return self
 
-    def with_adk_tool_function(self, func: Callable) -> 'EnhancedAgentBuilder':
+    def with_adk_tool_function(self, func: Callable, name: Optional[str] = None,
+                               description: Optional[str] = None) -> 'EnhancedAgentBuilder':
         """Adds a callable function as an ADK tool (transient)."""
-        if not self._ensure_adk("Tool Function"): return self
+        if not self._ensure_adk("Tool Function"):
+            return self
         if not callable(func):
             raise TypeError(f"Expected callable function for ADK tool, got {type(func)}")
-        self._adk_tools_transient.append(func)
+        if name:
+            func.__name__ = name
+        if description:
+            func.__doc__ = description
+        tool = FunctionTool(func)
+        self._adk_tools_transient.append(tool)
         return self
 
     def with_adk_mcp_toolset(self, connection_type: Literal["stdio", "sse"], **kwargs) -> 'EnhancedAgentBuilder':

@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from toolboxv2 import get_logger
+
 # --- Dependency Check ---
 try:
     import restrictedpython
@@ -70,6 +72,7 @@ except ImportError:
     ADK_EXEC_AVAILABLE = False
 
 logger = logging.getLogger("CodeExecutor")
+logger.setLevel(get_logger().level)
 safe_globals = {}
 # --- RestrictedPython Executor ---
 

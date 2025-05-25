@@ -6,6 +6,8 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from toolboxv2 import get_logger
+
 # Import dummy types if ADK/A2A/MCP are not available (ensure these align with agent.py)
 try:
     from google.adk.agents import BaseAgent
@@ -53,6 +55,7 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+logger.setLevel(get_logger().level)
 
 # --- Configuration Models ---
 

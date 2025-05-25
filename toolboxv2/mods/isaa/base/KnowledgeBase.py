@@ -17,16 +17,9 @@ from pydantic import BaseModel
 from sklearn.cluster import HDBSCAN
 
 from toolboxv2 import Spinner, get_app, get_logger
-from toolboxv2.mods.isaa.base.VectorStores.defaults import (
-    AbstractVectorStore,
-    EnhancedVectorStore,
-    FaissVectorStore,
-    FastVectorStore1,
-    FastVectorStoreO,
-    NumpyVectorStore,
-    VectorStoreConfig,
-)
-from toolboxv2.mods.isaa.base.VectorStores.qdrant_store import QdrantVectorStore
+from toolboxv2.mods.isaa.base.VectorStores import AbstractVectorStore
+from toolboxv2.mods.isaa.base.VectorStores.FaissVectorStore import FaissVectorStore
+
 from toolboxv2.mods.isaa.extras.adapter import litellm_complete
 from toolboxv2.mods.isaa.extras.filter import after_format
 
@@ -613,7 +606,7 @@ class KnowledgeBase:
     def __init__(self, embedding_dim: int = 768, similarity_threshold: float = 0.61, batch_size: int = 64,
                  n_clusters: int = 4, deduplication_threshold: float = 0.85, model_name=os.getenv("DEFAULTMODELSUMMERY"),
                  embedding_model=os.getenv("DEFAULTMODELEMBEDDING"),
-                 vis_class:str | None = "EnhancedVectorStore",
+                 vis_class:str | None = "FaissVectorStore",
                  vis_kwargs:dict[str, Any] | None=None,
                  requests_per_second=85.,
                  chunk_size: int = 3600,
@@ -646,19 +639,27 @@ class KnowledgeBase:
 
     def init_vis(self, vis_class, vis_kwargs):
         if vis_class is None:
-            vis_class = "EnhancedVectorStore"
-        if vis_class == "FastVectorStoreO":
-            if vis_kwargs is None:
-                vis_kwargs = {
-                    "embedding_size": self.embedding_dim
-                }
-            self.vdb = FastVectorStoreO(**vis_kwargs)
+            vis_class = "FaissVectorStore"
         if vis_class == "FaissVectorStore":
             if vis_kwargs is None:
                 vis_kwargs = {
                     "dimension": self.embedding_dim
                 }
             self.vdb = FaissVectorStore(**vis_kwargs)
+        else:
+            from toolboxv2.mods.isaa.base.VectorStores.taichiNumpyNumbaVectorStores import (
+                EnhancedVectorStore,
+                FastVectorStore1,
+                FastVectorStoreO,
+                NumpyVectorStore,
+                VectorStoreConfig,
+            )
+        if vis_class == "FastVectorStoreO":
+            if vis_kwargs is None:
+                vis_kwargs = {
+                    "embedding_size": self.embedding_dim
+                }
+            self.vdb = FastVectorStoreO(**vis_kwargs)
         if vis_class == "EnhancedVectorStore":
             if vis_kwargs is None:
                 vis_kwargs = {
@@ -670,15 +671,6 @@ class KnowledgeBase:
             self.vdb = FastVectorStore1()
         if vis_class == "NumpyVectorStore":
             self.vdb = NumpyVectorStore()
-        if vis_class == "QdrantVectorStore":
-            if vis_kwargs is None:
-                vis_kwargs = {
-                    "embedding_size": self.embedding_dim,
-                    "collection_name" : 'default_' + str(uuid.uuid4())[:6]
-                }
-            if 'collection_name' not in vis_kwargs:
-                vis_kwargs['collection_name'] = 'default_'+str(uuid.uuid4())[:6]
-            self.vdb = QdrantVectorStore(**vis_kwargs)
 
         self.vis_class = vis_class
         self.vis_kwargs = vis_kwargs

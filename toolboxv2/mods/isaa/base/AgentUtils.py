@@ -874,6 +874,27 @@ class AISemanticMemory(metaclass=Singleton):
                 return False
         return False
 
+    def save_all_memories(self, path: str) -> bool:
+        """Save all memory stores to disk"""
+        for name, kb in self.memories.items():
+            try:
+                kb.save(os.path.join(path, f"{name}.pkl"))
+            except Exception as e:
+                print(f"Error saving memory: {str(e)}")
+                return False
+        return True
+
+    def load_all_memories(self, path: str) -> bool:
+        """Load all memory stores from disk"""
+        for file in os.listdir(path):
+            if file.endswith(".pkl"):
+                try:
+                    self.memories[file[:-4]] = KnowledgeBase.load(os.path.join(path, file))
+                except Exception as e:
+                    print(f"Error loading memory: {str(e)}")
+                    return False
+        return True
+
     def load_memory(self, name: str, path: str | bytes) -> bool:
         """Load a memory store from disk"""
         sanitized = self._sanitize_name(name)
@@ -1741,3 +1762,138 @@ def _extract_from_string_de(agent_text, all_actions):
 
     return None, ''
 
+
+import os
+import re
+import threading
+from dataclasses import dataclass, field, asdict
+from datetime import datetime
+
+
+
+
+@dataclass
+class LLMMode:
+    name: str
+    description: str
+    system_msg: str
+    post_msg: str | None = None
+    examples: list[str] | None = None
+
+    def __str__(self):
+        return f"LLMMode: {self.name} (description) {self.description}"
+
+@dataclass
+class ModeController(LLMMode):
+    shots: list = field(default_factory=list)
+
+    def add_shot(self, user_input, agent_output):
+        self.shots.append([user_input, agent_output])
+
+    def add_user_feedback(self):
+
+        add_list = []
+
+        for index, shot in enumerate(self.shots):
+            print(f"Input : {shot[0]} -> llm output : {shot[1]}")
+            user_evalution = input("Rank from 0 to 10: -1 to exit\n:")
+            if user_evalution == '-1':
+                break
+            else:
+                add_list.append([index, user_evalution])
+
+        for index, evaluation in add_list:
+            self.shots[index].append(evaluation)
+
+    def auto_grade(self):
+        pass
+
+    @classmethod
+    def from_llm_mode(cls, llm_mode: LLMMode, shots: list | None = None):
+        if shots is None:
+            shots = []
+
+        return cls(
+            name=llm_mode.name,
+            description=llm_mode.description,
+            system_msg=llm_mode.system_msg,
+            post_msg=llm_mode.post_msg,
+            examples=llm_mode.examples,
+            shots=shots
+        )
+
+
+
+@dataclass
+class ControllerManager:
+    controllers: dict[str, ModeController] = field(default_factory=dict)
+
+    def rget(self, llm_mode: LLMMode, name: str = None):
+        if name is None:
+            name = llm_mode.name
+        if not self.registered(name):
+            self.add(name, llm_mode)
+        return self.get(name)
+
+    def registered(self, name):
+        return name in self.controllers
+
+    def get(self, name):
+        if name is None:
+            return None
+        if name in self.controllers:
+            return self.controllers[name]
+        return None
+
+    def add(self, name, llm_mode, shots=None):
+        if name in self.controllers:
+            return "Name already defined"
+
+        if shots is None:
+            shots = []
+
+        self.controllers[name] = ModeController.from_llm_mode(llm_mode=llm_mode, shots=shots)
+
+    def list_names(self):
+        return list(self.controllers.keys())
+
+    def list_description(self):
+        return [d.description for d in self.controllers.values()]
+
+    def __str__(self):
+        return "LLMModes \n" + "\n\t".join([str(m).replace('LLMMode: ', '') for m in self.controllers.values()])
+
+    def save(self, filename: str | None, get_data=False):
+
+        data = asdict(self)
+
+        if filename is not None:
+            with open(filename, 'w') as f:
+                json.dump(data, f)
+
+        if get_data:
+            return json.dumps(data)
+
+    @classmethod
+    def init(cls, filename: str | None, json_data: str | None = None):
+
+        controllers = {}
+
+        if filename is None and json_data is None:
+            print("No data provided for ControllerManager")
+            return cls(controllers=controllers)
+
+        if filename is not None and json_data is not None:
+            raise ValueError("filename and json_data are provided only one accepted filename or json_data")
+
+        if filename is not None:
+            if os.path.exists(filename) and os.path.isfile(filename):
+                with open(filename) as f:
+                    controllers = json.load(f)
+            else:
+                print("file not found")
+
+        if json_data is not None:
+            controllers = json.loads(json_data)
+
+        return cls(controllers=controllers)

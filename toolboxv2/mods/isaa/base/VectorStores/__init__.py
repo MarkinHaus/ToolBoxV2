@@ -1,19 +1,9 @@
 """
 Vector store implementations for the toolboxv2 system.
 """
-
-from toolboxv2.mods.isaa.base.VectorStores.defaults import (
-    AbstractVectorStore,
-    EnhancedVectorStore,
-    FaissVectorStore,
-    FastVectorStore,
-    FastVectorStore1,
-    FastVectorStore2,
-    FastVectorStoreO,
-    NumpyVectorStore,
-    RedisVectorStore,
-    VectorStoreConfig,
-)
+from toolboxv2.mods.isaa.base.VectorStores.FaissVectorStore import FaissVectorStore
+from toolboxv2.mods.isaa.base.VectorStores.RedisVectorStore import RedisVectorStore
+from toolboxv2.mods.isaa.base.VectorStores.types import AbstractVectorStore
 
 try:
     from toolboxv2.mods.isaa.base.VectorStores.qdrant_store import QdrantVectorStore
@@ -22,14 +12,7 @@ except ImportError:
     QDRANT_AVAILABLE = False
 
 __all__ = [
-    "AbstractVectorStore",
-    "NumpyVectorStore",
-    "FastVectorStore",
-    "FastVectorStoreO",
-    "FastVectorStore1",
-    "FastVectorStore2",
-    "EnhancedVectorStore",
-    "VectorStoreConfig",
+    "AbstractVectorStore"
     "RedisVectorStore",
     "FaissVectorStore",
 ]

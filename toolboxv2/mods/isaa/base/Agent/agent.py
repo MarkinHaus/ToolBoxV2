@@ -29,6 +29,8 @@ from pydantic import (
     model_validator,
 )
 
+from toolboxv2 import get_logger
+
 # --- Framework Imports with Availability Checks ---
 
 # Google ADK
@@ -259,12 +261,13 @@ except ImportError:
 
 # --- Logging Setup ---
 # Configure root logger level for libraries
-logging.basicConfig(level=logging.WARNING)
+
+logging.basicConfig(level=get_logger().level)
 # Configure LiteLLM logging level specifically if needed
-logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("LiteLLM").setLevel(get_logger().level)
 # Agent-specific logger
 logger = logging.getLogger("EnhancedAgent")
-logger.setLevel(logging.INFO) # Default level, builder can override via 'verbose'
+logger.setLevel(get_logger().level) # Default level, builder can override via 'verbose'
 
 
 # --- Helper Classes ---

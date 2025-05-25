@@ -2179,8 +2179,8 @@ class Pipeline:
 
         self._session_dir = Path(get_app().appdata) / 'ChatSession' / agent.amd.name
         self.ipython = MockIPython(self._session_dir, auto_remove=False)
-        self.chat_session = ChatSession(agent.memory, space_name=f"ChatSession/{agent.amd.name}/Pipeline.session", max_length=max_iter)
-        self.process_memory = ChatSession(agent.memory, space_name=f"ChatSession/{agent.amd.name}/Process.session", max_length=max_iter)
+        self.chat_session = ChatSession(get_app().get_mod("isaa").get_memory(), space_name=f"ChatSession/{agent.amd.name}/Pipeline.session", max_length=max_iter)
+        self.process_memory = ChatSession(get_app().get_mod("isaa").get_memory(), space_name=f"ChatSession/{agent.amd.name}/Process.session", max_length=max_iter)
 
         # Initialize interpreter with variables
         self.init_keys = list(self.ipython.user_ns.keys()).copy()
