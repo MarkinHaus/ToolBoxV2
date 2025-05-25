@@ -93,10 +93,12 @@ async def update_email(app: App, request: RequestData, new_email: str):
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, row=True, level=1)
 async def update_setting(app: App, request: RequestData, setting_key: str, setting_value: str):
+    if request is None:
+        return f"<div class='text-red-500'>Error: No request data provided.</div>"
     user = await get_current_user_from_request(app, request)
     # hx_trigger might not be reliable or always present if not an HTMX direct call.
     # Use a fixed or uniquely generated ID from the tbjs side if needed, or ensure HTMX context.
-    target_id_suffix = request.request.headers.get('HX-Trigger')
+    target_id_suffix = request.request.headers.hx_trigger
     if target_id_suffix:
         target_id_suffix = target_id_suffix.split("-")[-1] if "-" in target_id_suffix else target_id_suffix
     else:

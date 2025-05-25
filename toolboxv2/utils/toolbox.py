@@ -1587,7 +1587,11 @@ class App(AppType, metaclass=Singleton):
 
     def web_context(self):
         if self._web_context is None:
-            self._web_context = open("./dist/helper.html", encoding="utf-8").read()
+            try:
+                self._web_context = open("./dist/helper.html", encoding="utf-8").read()
+            except Exception as e:
+                self.logger.error(f"Could not load web context: {e}")
+                self._web_context = "<div><h1>Web Context not found</h1></div>"
         return self._web_context
 
     def get_mod(self, name, spec='app') -> ModuleType or MainToolType:

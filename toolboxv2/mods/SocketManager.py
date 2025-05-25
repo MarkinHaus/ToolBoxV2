@@ -1076,8 +1076,12 @@ class Tools(MainTool, FileHandler):
         socket_data = await self.create_socket(name, host, port, SocketType.server, max_connections=1)
         if not socket_data.is_error():
             return socket_data
+        if len(socket_data.get()) != 2:
+            return "Server not alive"
         send, receiver_queue = socket_data.get()
         status_queue = queue.Queue()
+        if not receiver_queue.get('alive'):
+            return "Server not alive"
         running = [True]  # Verwenden einer Liste, um den Wert referenzierbar zu machen
 
         def server_thread(client, address):

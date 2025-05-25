@@ -644,11 +644,19 @@ class Result:
                 data_info=result.get('data_info', '404'),
                 data=result.get('data'),
                 data_type=result.get('data_type', '404'),
-            ) if result else None,
+            ) if result else ToolBoxResultBM(
+                data_to=ToolBoxInterfaces.cli.value,
+                data_info='',
+                data='404',
+                data_type='404',
+            ),
             info=ToolBoxInfoBM(
                 exec_code=info.get('exec_code', 404),
                 help_text=info.get('help_text', '404')
-            ) if info else None,
+            ) if info else ToolBoxInfoBM(
+                exec_code=404,
+                help_text='404'
+            ),
             origin=origin
         ).as_result()
 
@@ -812,16 +820,15 @@ class Result:
         return cls(error=error, info=info, result=result)
 
     @classmethod
-    def html(cls, data=None, data_info="", info="OK", interface=ToolBoxInterfaces.remote, data_type="html",status=200, headers=None):
+    def html(cls, data=None, data_info="", info="OK", interface=ToolBoxInterfaces.remote, data_type="html",status=200, headers=None, row=False):
         error = ToolBoxError.none
         info = ToolBoxInfo(exec_code=status, help_text=info)
         from ...utils.system.getting_and_closing_app import get_app
 
-        if not '"<div class="main-content""' in data:
+        if not row and not '"<div class="main-content""' in data:
             data = f'<div class="main-content frosted-glass">{data}<div>'
-        if not get_app().web_context() in data:
+        if not row and not get_app().web_context() in data:
             data = get_app().web_context() + data
-
 
         if isinstance(headers, dict):
             result = ToolBoxResult(data_to=interface, data={'html':data,'headers':headers}, data_info=data_info,
