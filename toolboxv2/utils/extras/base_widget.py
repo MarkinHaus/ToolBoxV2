@@ -7,7 +7,7 @@ try:
 except ImportError:
     def CLOUDM_AUTHMANAGER():
         return None
-    CLOUDM_AUTHMANAGER.GET_USER_BY_NAME = ("CLOUDM_AUTHMANAGER", "GET_USER_BY_NAME".lower())
+    CLOUDM_AUTHMANAGER.GET_USER_BY_NAME = ("CLOUDM.AUTHMANAGER", "GET_USER_BY_NAME".lower())
 try:
     from ..system.all_functions_enums import MINIMALHTML
 except ImportError:
@@ -40,18 +40,43 @@ def get_spec(request):
         spec_ = request.session.get('live_data', {}).get('spec')
     return Result.ok(spec_)
 
+async def get_user_from_request(*a):
+    return await get_current_user_from_request(*a)
 
-async def get_user_from_request(app, request):
-    from ...mods.CloudM.types import User
-    if hasattr(request, "session_id"):
-        name = request.session.user_name
-    else:
-        name = request.session.get('live_data', {}).get('user_name')
-    if name:
-        user = await app.a_run_any(CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=app.config_fh.decode_code(name))
-    else:
-        user = User()
-    return user
+async def get_current_user_from_request(app, request) :
+    if not request or not hasattr(request, 'session') or not request.session:
+        app.logger.warning("No session found in request for UAM")
+        return None
+
+    username_c = request.session.user_name
+    if not username_c or username_c == "Cud be ur name":  # "Cud be ur name" is a default/guest
+        # app.print(f"No valid user_name in session for UAM: {username_c}", level="DEBUG")
+        return None
+
+    # No need to decode here if session.user_name is already the plain username
+    # If session.user_name is still encoded from an older system part, then decode
+    # Assuming session.user_name IS the actual username
+    decoded_username = username_c
+    # if app.config_fh.is_encoded(username_c): # Hypothetical check
+    #    decoded_username = app.config_fh.decode_code(username_c)
+    #    if not decoded_username:
+    #        app.print(f"Failed to decode username_c for UAM: {username_c}", level="WARNING")
+    #        return None
+
+    if not decoded_username:  # Should not happen if username_c is valid
+        return None
+
+    user_result = await app.a_run_any(CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=decoded_username, get_results=True)
+    if user_result.is_error() or not user_result.get():
+        app.logger.warning(f"UAM: Failed to get user by name '{decoded_username}': {user_result.info}")
+        return None
+
+    retrieved_user = user_result.get()
+    #if not hasattr(retrieved_user, 'user_pass_pub_persona'):
+    #    app.logger.warning(f"UAM: Retrieved data for '{decoded_username}' is not a User instance. is {type(retrieved_user)}")
+    #    return None
+
+    return retrieved_user
 
 
 class BaseWidget:
@@ -165,13 +190,7 @@ class BaseWidget:
         from toolboxv2.mods.CloudM import User
         if request is None:
             return User()
-        name = request.session.get('live_data', {}).get('user_name', "Cud be ur name")
-        if name != "Cud be ur name":
-            user = await app.a_run_any(CLOUDM_AUTHMANAGER.GET_USER_BY_NAME,
-                                       username=app.config_fh.decode_code(name))
-        else:
-            user = User()
-        return user
+        return await get_current_user_from_request(app, request)
 
     @staticmethod
     def get_s_id(request):

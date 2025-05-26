@@ -4,13 +4,23 @@
             margin: 10px 0;
             padding: 15px;
             border-radius: 8px;
-            transition: transform 0.2s;
+            transition: transform 0.2s, background 0.2s, opacity 0.3s; /* Added opacity transition */
             cursor: pointer;
         }
 
         .endpoint-card:hover {
             transform: translateY(-2px);
             background: rgba(255, 255, 255, 0.3);
+        }
+
+        /* Style for hidden cards during search */
+        .endpoint-card.hidden {
+            opacity: 0;
+            height: 0;
+            padding: 0;
+            margin: 0;
+            overflow: hidden;
+            pointer-events: none; /* Prevent interaction with hidden cards */
         }
 
         .endpoint-title {
@@ -39,10 +49,29 @@
             padding: 20px;
             color: var(--error-color, red);
         }
+
+        /* Search input styling */
+        #app-search-input {
+            width: calc(100% - 22px); /* Full width minus padding */
+            padding: 10px;
+            margin-bottom: 20px;
+            border: 1px solid var(--theme-accent, #ccc);
+            border-radius: 4px;
+            font-size: 1rem;
+            background-color: rgba(255, 255, 255, 0.3);
+            color: var(--text-color);
+        }
+        #app-search-input::placeholder {
+            color: var(--text-secondary-color, #777);
+        }
     </style>
 
     <div class="main-content frosted-glass">
         <h2 class="section-title">Available Apps</h2>
+
+        <!-- Search Input Field -->
+        <input type="text" id="app-search-input" placeholder="Search apps by title or description..." aria-label="Search apps">
+
         <div id="endpoints-container">
             <div class="loading">Loading Apps...</div>
         </div>
@@ -62,15 +91,11 @@
             return;
         }
 
+        let allFetchedEndpoints = []; // Store all fetched endpoints for filtering
+
         async function fetchUIEndpoints() {
             try {
-                // Assuming TB_INSTANCE.api.fetch returns the JSON parsed response directly
-                // or the response object which then needs .json()
                 const responseData = await TB_INSTANCE.api.httpPostUrl('CloudM', 'openui');
-
-                // Adjust based on what TB_INSTANCE.api.fetch returns
-                // If it returns a Response object: const data = await responseData.json();
-                // If it returns parsed JSON: const data = responseData;
                 const data = (typeof responseData.json === 'function') ? await responseData.json() : responseData;
 
                 if (data && data.result && data.result.data) {
@@ -88,73 +113,137 @@
             const card = document.createElement('div');
             card.className = 'endpoint-card';
             card.setAttribute('role', 'button');
-            card.setAttribute('tabindex', '0'); // Make it focusable
+            card.setAttribute('tabindex', '0');
             card.onclick = () => TB_INSTANCE.router.navigateTo(endpoint.path);
-            card.onkeypress = (e) => { // Accessibility for keyboard
+            card.onkeypress = (e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                     TB_INSTANCE.router.navigateTo(endpoint.path);
                 }
             };
 
-            const title = document.createElement('h3'); // More semantic
-            title.className = 'endpoint-title';
-            title.textContent = endpoint.title || 'Untitled Page';
+            const titleText = endpoint.title || 'Untitled Page';
+            const descriptionText = endpoint.description || 'No description available.';
 
-            const description = document.createElement('p'); // More semantic
+            const title = document.createElement('h3');
+            title.className = 'endpoint-title';
+            title.textContent = titleText;
+
+            const description = document.createElement('p');
             description.className = 'endpoint-description';
-            description.textContent = endpoint.description || 'No description available.';
+            description.textContent = descriptionText;
 
             card.appendChild(title);
             card.appendChild(description);
+
+            // Store searchable text directly on the element for easier filtering
+            card.dataset.searchableText = `${titleText} ${descriptionText}`.toLowerCase();
+
             return card;
         }
 
-        async function initializeEndpoints() {
+        function renderEndpoints(endpointsToRender) {
             const container = document.getElementById('endpoints-container');
             if (!container) {
-                TB_INSTANCE.logger.error("[mainContent.html] 'endpoints-container' not found.");
+                TB_INSTANCE.logger.error("[mainContent.html] 'endpoints-container' not found for rendering.");
+                return;
+            }
+            container.innerHTML = ''; // Clear previous content (or loading/error)
+
+            if (!endpointsToRender || endpointsToRender.length === 0) {
+                const currentSearchTerm = document.getElementById('app-search-input')?.value || "";
+                if (currentSearchTerm) {
+                    container.innerHTML = '<div>No apps match your search criteria.</div>';
+                } else {
+                    container.innerHTML = '<div>No UI pages currently available.</div>';
+                }
                 return;
             }
 
-            const endpoints = await fetchUIEndpoints();
+            endpointsToRender.forEach(endpoint => {
+                container.appendChild(createEndpointCard(endpoint));
+            });
+        }
 
-            if (endpoints === null) { // Check for null specifically for fetch errors
+        function filterAndRenderEndpoints() {
+            const searchInput = document.getElementById('app-search-input');
+            if (!searchInput) return; // Should not happen if initialized correctly
+
+            const searchTerm = searchInput.value.toLowerCase().trim();
+            const container = document.getElementById('endpoints-container');
+
+            // More efficient filtering directly on DOM elements
+            const cards = container.getElementsByClassName('endpoint-card');
+            let hasVisibleCard = false;
+
+            for (let card of cards) {
+                const searchableText = card.dataset.searchableText || "";
+                if (searchableText.includes(searchTerm)) {
+                    card.classList.remove('hidden');
+                    card.style.display = ''; // Reset to default display
+                    hasVisibleCard = true;
+                } else {
+                    card.classList.add('hidden');
+                    card.style.display = 'none'; // Ensure it's hidden
+                }
+            }
+             // If no cards are visible after filtering, show a message
+            const noResultsMessageDiv = container.querySelector('.no-results-message');
+            if (!hasVisibleCard && searchTerm) {
+                if (!noResultsMessageDiv) {
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'no-results-message';
+                    messageDiv.textContent = 'No apps match your search criteria.';
+                    container.appendChild(messageDiv); // Append if not exists
+                }
+            } else if (noResultsMessageDiv) {
+                noResultsMessageDiv.remove(); // Remove if search term is empty or results found
+            }
+        }
+
+
+        async function initializeEndpoints() {
+            const container = document.getElementById('endpoints-container');
+            const searchInput = document.getElementById('app-search-input');
+
+            if (!container || !searchInput) {
+                TB_INSTANCE.logger.error("[mainContent.html] 'endpoints-container' or 'app-search-input' not found.");
+                return;
+            }
+
+            // Set initial loading message
+            container.innerHTML = '<div class="loading">Loading Apps...</div>';
+
+            const fetchedData = await fetchUIEndpoints();
+
+            if (fetchedData === null) {
                 container.innerHTML = '<div class="error">Failed to load app pages. Please try again later.</div>';
                 return;
             }
 
-            container.innerHTML = ''; // Clear loading message
+            allFetchedEndpoints = fetchedData;
 
-            if (endpoints.length === 0) {
-                container.innerHTML = '<div>No UI pages currently available.</div>';
-                return;
-            }
-
-            endpoints.forEach(endpoint => {
-                container.appendChild(createEndpointCard(endpoint));
+            // 1. Sort the endpoints by title (case-insensitive)
+            allFetchedEndpoints.sort((a, b) => {
+                const titleA = (a.title || 'Untitled Page').toLowerCase();
+                const titleB = (b.title || 'Untitled Page').toLowerCase();
+                if (titleA < titleB) return -1;
+                if (titleA > titleB) return 1;
+                return 0;
             });
 
-            // HTMX processing for newly added content:
-            // The router now handles htmx.process(appRootElement) after all scripts.
-            // If these cards *themselves* contain new htmx attributes that need processing,
-            // and appRootElement is too broad, you might process just the container.
-            // However, typically router-level processing is sufficient.
-            // if (window.htmx) {
-            //    TB_INSTANCE.logger.debug('[mainContent.html] Explicitly processing HTMX for endpoints-container');
-            //    window.htmx.process(container);
-            // }
+            // 2. Initial render of all (sorted) endpoints
+            renderEndpoints(allFetchedEndpoints);
+
+            // 3. Add event listener for the search input
+            searchInput.addEventListener('input', filterAndRenderEndpoints);
         }
 
-        // The router now emits 'router:contentProcessed' after HTML is set and scripts are handled.
-        // Listening to this event is more robust than a fixed timeout.
-        // However, this script itself is *part* of that content.
-        // For "unsave" scripts, they run immediately after being injected.
-        // A minimal timeout can help ensure the DOM is fully settled if there are many elements.
-        // Or, if this script is small and self-contained, it can run immediately.
-
-        // Run on next microtask tick, usually safe.
         Promise.resolve().then(initializeEndpoints).catch(err => {
              TB_INSTANCE.logger.error("[mainContent.html] Error in initializeEndpoints promise:", err);
+             const container = document.getElementById('endpoints-container');
+             if (container) {
+                container.innerHTML = '<div class="error">An unexpected error occurred while initializing apps.</div>';
+             }
         });
 
       })(); // End IIFE

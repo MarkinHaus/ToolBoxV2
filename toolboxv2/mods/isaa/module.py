@@ -642,12 +642,12 @@ class Tools(MainTool, FileHandler):
 
     async def mini_task_completion(self, mini_task: str, user_task: str | None = None, mode: Any = None,  # LLMMode
                                    max_tokens_override: int | None = None, task_from="system",
-                                   stream_function: Callable | None = None, message_history: list | None = None):
+                                   stream_function: Callable | None = None, message_history: list | None = None, agent_name="TaskCompletion"):
         if mini_task is None: return None
         if mini_task == "test": return "test"
         self.print(f"Running mini task, volume {len(mini_task)}")
 
-        agent = await self.get_agent("TaskCompletion")  # Ensure agent is retrieved (and built if needed)
+        agent = await self.get_agent(agent_name)  # Ensure agent is retrieved (and built if needed)
 
         effective_system_message = agent.amd.system_message
         if mode and hasattr(mode, 'system_msg') and mode.system_msg:
@@ -667,7 +667,7 @@ class Tools(MainTool, FileHandler):
         messages.append({"role": "user", "content": current_prompt})
 
         # Prepare params for a_run_llm_completion
-        llm_params = {"model": agent.amd.model, "messages": messages}
+        llm_params = {"model": agent.amd.model, "llm_messages": messages}
         if max_tokens_override:
             llm_params['max_tokens'] = max_tokens_override
         else:

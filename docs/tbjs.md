@@ -260,9 +260,9 @@ Handles all HTTP and Tauri `invoke` calls, standardizing responses.
     // Structure of a Result object (simplified)
     // const result = {
     //   origin: Array<string>,    // e.g., ['http'], ['tauri']
-    //   error: string,           // From TB.api.ToolBoxError (e.g., 'none', 'InternalError')
+    //   error: string,           // From TB.ToolBoxError (e.g., 'none', 'InternalError')
     //   result: {                // Instance of ToolBoxResult
-    //     data_to: string,       // From TB.api.ToolBoxInterfaces (e.g., 'API', 'NATIVE')
+    //     data_to: string,       // From TB.ToolBoxInterfaces (e.g., 'API', 'NATIVE')
     //     data_info: string|null,// Additional info
     //     data: any              // The actual payload
     //   },
@@ -293,7 +293,7 @@ Handles all HTTP and Tauri `invoke` calls, standardizing responses.
     const userData = { name: 'John Doe', email: 'john@example.com' };
     let response = await TB.api.request('UserModule', 'createUser', userData); // Defaults to POST
 
-    if (response.error === TB.api.ToolBoxError.none) {
+    if (response.error === TB.ToolBoxError.none) {
         console.log('User created:', response.get());
     } else {
         TB.logger.error('Failed to create user:', response.info.help_text);

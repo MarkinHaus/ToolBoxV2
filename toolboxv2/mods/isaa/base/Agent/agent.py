@@ -1625,11 +1625,16 @@ class EnhancedAgent(*_AgentBaseClass):
             return messages
 
 
-    async def a_run_llm_completion(self, llm_messages: list[dict], **kwargs) -> str:
+    async def a_run_llm_completion(self, llm_messages: list[dict]=None, **kwargs) -> str:
         """Core wrapper around LiteLLM acompletion with error handling, streaming, and cost tracking."""
         if not llm_messages:
-            logger.warning("a_run_llm_completion called with empty message list.")
-            return "Error: No message provided to the model."
+            if "messages" in kwargs:
+                llm_messages = kwargs.pop("messages")
+            if "llm_messages" in kwargs:
+                llm_messages = kwargs.pop("llm_messages")
+            if not llm_messages:
+                logger.warning("a_run_llm_completion called with empty message list.")
+                return "Error: No message provided to the model."
 
         self.print_verbose(f"Running model '{self.amd.model}' with {len(llm_messages)} messages.")
         # self.print_verbose("Messages:", json.dumps(llm_messages, indent=2)) # Very verbose

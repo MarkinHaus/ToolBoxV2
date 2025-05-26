@@ -379,7 +379,7 @@ async def get_task_chain_editor_page(app: App, request: Optional[RequestData] = 
                 if (response.error === TB.ToolBoxError.none && response.get()) {
                     const chainDef = response.get();
                     currentChainName = chainDef.name;
-                    currentTasks = chainDef.tasks.map(task => ({ ...task, id: task.id || TB.utils.uuidv4() })); // Ensure client-side ID
+                    currentTasks = chainDef.tasks.map(task => ({ ...task, id: task.id || TB.utils.uniqueId('task_') })); // Ensure client-side ID
                     currentChainDescription = chainDef.description || "";
                     renderCurrentTasks();
                 } else {
@@ -622,7 +622,7 @@ async def get_task_chain_editor_page(app: App, request: Optional[RequestData] = 
                         variant: 'primary',
                         action: modal => {
                             const newTask = {
-                                id: task?.id || TB.utils.uuidv4(), // Retain ID if editing, else new
+                                id: task?.id || TB.utils.uniqueId('task_'), // Retain ID if editing, else new
                                 use: document.getElementById('taskUseModal').value,
                                 name: document.getElementById('taskNameModal').value.trim(),
                                 args: document.getElementById('taskArgsModal').value.trim(),

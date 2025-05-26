@@ -43,14 +43,6 @@ class Modal {
         // --- Overlay ---
         this._overlayElement = document.createElement('div');
         this._overlayElement.id = `${this.id}-overlay`;
-        // **MODIFIED OVERLAY CLASSES:**
-        // - `fixed inset-0`: Full screen coverage.
-        // - `bg-black/30 dark:bg-black/60`: Semi-transparent backdrop.
-        // - `backdrop-blur-sm`: Slight blur on content BEHIND the overlay.
-        // - `flex items-center justify-center`: CRITICAL for centering the modal.
-        // - `p-4`: Padding so modal doesn't touch screen edges on small screens.
-        // - `z-[1050]`: High z-index.
-        // - `opacity-0 ...`: For animations.
         this._overlayElement.className = `
             fixed inset-0
             bg-black/30 dark:bg-black/60 backdrop-blur-sm
@@ -69,19 +61,6 @@ class Modal {
         this._modalElement.setAttribute('aria-modal', 'true');
         // this._modalElement.setAttribute('aria-labelledby', `${this.id}-title`);
 
-        // **MODIFIED MODAL CONTAINER CLASSES for Milk Glass Effect & Rounded Borders:**
-        // - `bg-white/60 dark:bg-neutral-800/60`: Semi-transparent background (adjust opacity as needed, e.g., /60, /70).
-        // - `backdrop-blur-lg dark:backdrop-blur-xl`: Stronger blur for the modal itself, blurring the overlay.
-        // - `border border-white/30 dark:border-neutral-700/30`: Subtle border.
-        // - `rounded-2xl`: More pronounced rounded corners.
-        // - `text-neutral-900 dark:text-neutral-100`: Base text colors for readability.
-        // - `shadow-xl`: Kept.
-        // - `transform transition-all ...`: Kept for animations.
-        // - `w-full`: Takes available width within the flex-centered container.
-        // - `${this.options.maxWidth}`: Constrains the width.
-        // - `p-0`: Padding will be handled by header/body/footer or the content itself.
-        //            OR, if you want consistent padding, use `p-6` here and remove from content.
-        // - `max-h-[90vh] overflow-y-auto`: Prevent modal from exceeding viewport height and enable scroll.
         this._modalElement.className = `
             bg-white/60 dark:bg-neutral-800/70
             backdrop-blur-lg dark:backdrop-blur-xl
@@ -101,7 +80,6 @@ class Modal {
         // Modal Header (optional)
         if (this.options.title || this.options.closeButton !== false) {
             const header = document.createElement('div');
-            // **MODIFIED HEADER CLASSES:** Added padding. `flex-shrink-0`
             header.className = `flex justify-between items-center p-4 md:p-6 border-b border-neutral-300/50 dark:border-neutral-700/50 flex-shrink-0 ${this.options.customClasses.header}`;
 
             if (this.options.title) {
@@ -112,9 +90,8 @@ class Modal {
                 header.appendChild(titleEl);
             }
 
-            if (this.options.closeButton !== false) {
+            if (this.options.closeButton !== false) { // Check if closeButton is explicitly false
                 const closeBtn = document.createElement('button');
-                // Consider more contrast for close button if needed
                 closeBtn.className = `material-symbols-outlined p-1 rounded text-neutral-600 dark:text-neutral-400 hover:bg-neutral-500/20 dark:hover:bg-neutral-300/20 transition ${this.options.customClasses.closeButton}`;
                 closeBtn.innerHTML = 'close';
                 closeBtn.style.scale = 1.5;
@@ -127,7 +104,6 @@ class Modal {
 
         // Modal Body
         const body = document.createElement('div');
-        // **MODIFIED BODY CLASSES:** Added padding, `overflow-y-auto` if header/footer are fixed. `flex-grow`
         body.className = `p-4 md:p-6 flex-grow overflow-y-auto ${this.options.customClasses.body}`;
         if (typeof this.options.content === 'string') {
             body.innerHTML = this.options.content;
@@ -135,17 +111,15 @@ class Modal {
             body.appendChild(this.options.content);
         }
         this._modalElement.appendChild(body);
-        // Removed TB.ui.processDynamicContent(body); - ensure this is called if needed after content insertion by the caller or here.
 
         // Modal Footer (optional, for buttons)
-        if (this.options.buttons.length > 0) {
+        if (this.options.buttons && this.options.buttons.length > 0) {
             const footer = document.createElement('div');
-            // **MODIFIED FOOTER CLASSES:** Added padding. `flex-shrink-0`
             footer.className = `mt-auto p-4 md:p-6 flex flex-wrap justify-end gap-3 border-t border-neutral-300/50 dark:border-neutral-700/50 flex-shrink-0 ${this.options.customClasses.footer}`;
             this.options.buttons.forEach(btnConfig => {
                 const button = TB.ui.Button.create(btnConfig.text, (() => btnConfig.action(this)) || (() => this.close()), {
                     variant: btnConfig.variant || 'primary',
-                    customClasses: btnConfig.className,
+                    customClasses: btnConfig.className, // Pass as customClasses
                     size: btnConfig.size
                 });
                 footer.appendChild(button);
@@ -164,7 +138,6 @@ class Modal {
     }
 
     _handleOverlayClick(event) {
-        // Ensure click is directly on overlay, not on modal content bubbling up
         if (event.target === this._overlayElement && this.options.closeOnOutsideClick) {
             this.close();
         }
@@ -172,26 +145,21 @@ class Modal {
 
     show() {
         if (this.isOpen) return;
-        if (!this._overlayElement) { // Create DOM only if it doesn't exist
+        if (!this._overlayElement) {
             this._createDom();
         } else {
-            // If reusing, ensure it's appended again if somehow removed without proper close
             if (!this._overlayElement.parentNode) {
                 document.body.appendChild(this._overlayElement);
             }
         }
 
-
-        // Ensure transitions apply by forcing reflow AFTER elements are in DOM
-        // and BEFORE changing opacity/transform
         requestAnimationFrame(() => {
-            requestAnimationFrame(() => { // Double requestAnimationFrame for some browsers
+            requestAnimationFrame(() => {
                 this._overlayElement.style.opacity = '1';
                 this._modalElement.style.opacity = '1';
                 this._modalElement.style.transform = 'scale(1)';
             });
         });
-
 
         document.addEventListener('keydown', this._boundHandleKeydown);
         this.isOpen = true;
@@ -206,7 +174,7 @@ class Modal {
     }
 
     close(triggerEvent = true) {
-        if (!this.isOpen || !this._overlayElement) return; // Check _overlayElement existence
+        if (!this.isOpen || !this._overlayElement) return;
 
         if (triggerEvent && this.options.beforeClose) {
             if (this.options.beforeClose(this) === false) {
@@ -221,17 +189,12 @@ class Modal {
 
         document.removeEventListener('keydown', this._boundHandleKeydown);
 
-        // Use the transitionend event for more robust cleanup
         const onTransitionEnd = () => {
             this._modalElement.removeEventListener('transitionend', onTransitionEnd);
             if (this._overlayElement && this._overlayElement.parentNode) {
                 this._overlayElement.parentNode.removeChild(this._overlayElement);
             }
-            // Nullify elements only after removal, not if we plan to reuse the DOM structure later.
-            // For full cleanup if not reusing:
-            // this._overlayElement = null;
-            // this._modalElement = null;
-            this.isOpen = false; // Set isOpen to false here
+            this.isOpen = false;
             if (triggerEvent) {
                  TB.logger.log(`[Modal] Closed: #${this.id}`);
                 TB.events.emit('modal:closed', this);
@@ -239,20 +202,20 @@ class Modal {
             }
         };
 
-        // Fallback if transitionend doesn't fire (e.g., element removed before transition finishes)
-        const fallbackTimeout = setTimeout(onTransitionEnd, 350); // Slightly longer than transition
+        const fallbackTimeout = setTimeout(onTransitionEnd, 350);
 
         this._modalElement.addEventListener('transitionend', () => {
             clearTimeout(fallbackTimeout);
             onTransitionEnd();
         });
 
-        // If there's no transition (e.g. duration 0), call cleanup immediately
         if (getComputedStyle(this._modalElement).transitionDuration === '0s') {
             clearTimeout(fallbackTimeout);
             onTransitionEnd();
         } else {
-            this.isOpen = false; // Set immediately for logic, actual removal on transition end.
+             // this.isOpen = false; // Set isOpen to false in onTransitionEnd to ensure it's false only after full close.
+                                  // However, for logical operations, it might be better to set it earlier.
+                                  // Current behavior: set to false in onTransitionEnd. This is generally fine.
         }
     }
 
@@ -261,6 +224,94 @@ class Modal {
         const modalInstance = new Modal(options);
         modalInstance.show();
         return modalInstance;
+    }
+
+    /**
+     * Shows a confirmation modal and returns a Promise that resolves to true or false.
+     * @param {object} options - Configuration for the confirmation modal.
+     * @param {string} options.title - The title of the confirmation modal.
+     * @param {string|HTMLElement} options.content - The content/message of the confirmation modal.
+     * @param {string} [options.confirmButtonText='OK'] - Text for the confirm button.
+     * @param {string} [options.cancelButtonText='Cancel'] - Text for the cancel button.
+     * @param {string} [options.confirmButtonVariant='primary'] - Variant for the confirm button (e.g., 'primary', 'danger').
+     * @param {string} [options.cancelButtonVariant='secondary'] - Variant for the cancel button (e.g., 'secondary', 'outline').
+     * @param {string} [options.confirmButtonClass=''] - Additional CSS classes for the confirm button.
+     * @param {string} [options.cancelButtonClass=''] - Additional CSS classes for the cancel button.
+     * @param {boolean} [options.hideCancelButton=false] - If true, the cancel button will not be shown.
+     * @param {boolean} [options.resolveOnClose=false] - Value the promise resolves to if closed by ESC, 'X' button, or outside click.
+     * @param {object} [options.extraModalOptions={}] - Pass any other valid Modal options (e.g., maxWidth, customClasses, closeButton: false).
+     * @returns {Promise<boolean>} A promise that resolves to true if confirmed, false otherwise.
+     */
+    static async confirm({
+        title,
+        content,
+        confirmButtonText = 'OK',
+        cancelButtonText = 'Cancel',
+        confirmButtonVariant = 'primary',
+        cancelButtonVariant = 'secondary',
+        confirmButtonClass = '',
+        cancelButtonClass = '',
+        hideCancelButton = false,
+        resolveOnClose = false,
+        ...extraModalOptions // Collects any other options passed to confirm
+    } = {}) {
+        if (title === undefined || content === undefined) {
+            TB.logger.error('[Modal.confirm] Options "title" and "content" are required.');
+            return Promise.resolve(false); // Or throw new Error('Modal.confirm requires title and content');
+        }
+
+        return new Promise((resolve) => {
+            const buttons = [];
+
+            if (!hideCancelButton) {
+                buttons.push({
+                    text: cancelButtonText,
+                    action: (modal) => {
+                        modal.close(false); // Pass false to prevent this modal's onClose from triggering
+                        resolve(false);
+                    },
+                    variant: cancelButtonVariant,
+                    className: cancelButtonClass,
+                });
+            }
+
+            buttons.push({
+                text: confirmButtonText,
+                action: (modal) => {
+                    modal.close(false); // Pass false to prevent this modal's onClose from triggering
+                    resolve(true);
+                },
+                variant: confirmButtonVariant,
+                className: confirmButtonClass,
+            });
+
+            // Define default modal settings specific to confirm dialogs
+            const confirmDefaults = {
+                maxWidth: 'max-w-md', // Confirm dialogs are often a bit smaller
+                closeOnEsc: true,     // Usually, Esc should cancel
+                closeOnOutsideClick: true, // Usually, clicking outside should cancel
+            };
+
+            // Merge options: confirmDefaults < extraModalOptions < coreConfirmLogic
+            const modalSettings = {
+                ...confirmDefaults,
+                ...extraModalOptions, // User-supplied modal options can override confirmDefaults
+                // Core properties for the confirm modal, these override anything from extraModalOptions
+                title: title,
+                content: content,
+                buttons: buttons,
+                onClose: () => {
+                    // This onClose is specifically for the promise resolution.
+                    // It's called if the modal is closed by ESC, 'X' button, or programmatically
+                    // via modal.close() or modal.close(true), because our explicit buttons
+                    // call modal.close(false) which bypasses this modal's onClose callback.
+                    resolve(resolveOnClose);
+                },
+            };
+
+            const modalInstance = new Modal(modalSettings);
+            modalInstance.show();
+        });
     }
 }
 
