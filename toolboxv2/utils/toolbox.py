@@ -263,8 +263,22 @@ class App(AppType, metaclass=Singleton):
     def debug_rains(self, e):
         if self.debug:
             import traceback
-            print(traceback.format_exc())
+            x = "="*5
+            x += " DEBUG "
+            x += "="*5
+            self.print(x)
+            self.print(traceback.format_exc())
+            self.print(x)
             raise e
+        else:
+            self.logger.error(f"Error: {e}")
+            import traceback
+            x = "="*5
+            x += " DEBUG "
+            x += "="*5
+            self.print(x)
+            self.print(traceback.format_exc())
+            self.print(x)
 
     def set_flows(self, r):
         self.flows = r
@@ -727,15 +741,14 @@ class App(AppType, metaclass=Singleton):
         if running_function_coro is None:
             mn, fn = args[0]
             if self.functions.get(mn, {}).get(fn, {}).get('request_as_kwarg', False):
-                kwargs["request"] = request
+                kwargs["request"] = RequestData.from_dict(request)
                 if 'data' in kwargs and 'data' not in self.functions.get(mn, {}).get(fn, {}).get('params', []):
-                    kwargs["request"]['data'] = kwargs['data']
+                    kwargs["request"].data = kwargs["request"].body = kwargs['data']
                     del kwargs['data']
                 if 'form_data' in kwargs and 'form_data' not in self.functions.get(mn, {}).get(fn, {}).get('params',
                                                                                                            []):
-                    kwargs["request"]['form_data'] = kwargs['form_data']
+                    kwargs["request"].form_data = kwargs["request"].body = kwargs['form_data']
                     del kwargs['form_data']
-                kwargs["request"] = RequestData.from_dict(request)
 
         # Create the coroutine
         coro = running_function_coro or self.a_run_any(*args, **kwargs)
@@ -1358,6 +1371,9 @@ class App(AppType, metaclass=Singleton):
                 f" executed wit an error {str(e)}, {type(e)}")
             self.debug_rains(e)
             self.print(f"! Function ERROR: in {modular_name}.{function_name} ")
+
+
+
         else:
             self.print_ok()
 

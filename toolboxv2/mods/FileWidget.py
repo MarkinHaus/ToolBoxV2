@@ -9,176 +9,97 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Any, AsyncGenerator
+import base64  # Added for base64 decoding
 
 # Assuming toolboxv2 and its components are in the Python path
 from toolboxv2 import App, Result, RequestData, get_app, MainTool
+from toolboxv2.utils.extras.base_widget import get_current_user_from_request
 from toolboxv2.utils.extras.blobs import BlobFile, BlobStorage
-
-# from toolboxv2.utils.system.session import RequestSession # Replaced by RequestData
 
 # --- Constants ---
 MOD_NAME = Name = "FileWidget"
-VERSION = "0.1.0"  # Incremented version
+VERSION = "0.2.0"  # Incremented version
 SHARES_METADATA_FILENAME = "filewidget_shares.json"
 
 # --- Module Export ---
-# Adjust the module path as per your project structure
-# e.g., if FileWidget is in a 'widgets' sub-package: "widgets.FileWidget"
 export = get_app(f"widgets.{MOD_NAME}").tb
 
 
 @dataclass
 class ChunkInfo:
-    filename: str
-    chunk_index: int | None
-    total_chunks: int | None
-    content: bytes
-
-
-class MultipartParser:
-    def __init__(self, body: bytes):
-        self.body = body
-        self.boundary = self._extract_boundary()
-
-    def _extract_boundary(self) -> bytes:
-        # Erste Zeile enthält die Boundary, muss bytes bleiben
-        first_line = self.body.split(b'\r\n', 1)[0]
-        return first_line
-
-    def _parse_content_disposition(self, headers_bytes: bytes) -> dict:
-        result = {}
-        headers = headers_bytes.decode('utf-8', errors='ignore')
-        for header_line in headers.split('\r\n'):
-            if header_line.lower().startswith('content-disposition'):
-                matches = re.findall(r'(\w+)="([^"]+)"', header_line)
-                for key, value in matches:
-                    result[key] = value
-        return result
-
-    def parse(self) -> ChunkInfo:
-        if not self.boundary:
-            # Fallback or error if boundary is not found (e.g., not multipart)
-            # This might happen if the request is not correctly formatted as multipart/form-data
-            # For now, let's assume it's a single file if no boundary
-            # A more robust parser would handle this better or raise an error
-            # For simplicity, we'll try to make it work for single, non-chunked files
-            # sent not as multipart but directly. This is a simplification.
-            # A proper client would always send multipart for the 'upload' endpoint.
-            # Let's assume the request is a direct file upload without form fields for this hack:
-            # This part is speculative and depends on how non-chunked, simple uploads are sent.
-            # If they are always multipart, this path is not taken.
-            # This should ideally raise an error if boundary is expected but not found.
-            # For now, let's try to extract filename from request if possible (not standard)
-            # and assume the whole body is content. THIS IS A HACK.
-            # A real solution would be to enforce multipart or have a separate endpoint.
-            # For this exercise, we'll focus on the multipart path.
-            # If boundary is not found, it's likely not a valid multipart request for this parser.
-            raise ValueError("Invalid multipart request: Boundary not found")
-
-        parts = self.body.split(self.boundary)
-
-        file_content = None
-        filename = "unknown_file"  # Default filename
-        chunk_index_str = None
-        total_chunks_str = None
-
-        # part[0] is usually empty or preamble, part[-1] is the epilogue with --
-        # Iterate over actual content parts
-        for part_bytes in parts[1:-1]:  # Skip preamble and epilogue
-            if not part_bytes.strip():
-                continue
-
-            try:
-                # Headers are separated from content by \r\n\r\n
-                headers_bytes, content_with_crlf = part_bytes.split(b'\r\n\r\n', 1)
-
-                # Content might have a trailing \r\n before the next boundary
-                content = content_with_crlf.rsplit(b'\r\n', 1)[0]
-
-                disposition = self._parse_content_disposition(headers_bytes)
-
-                field_name = disposition.get('name')
-
-                if field_name == 'file':
-                    file_content = content
-                    if disposition.get('filename'):  # Get filename from 'file' part if available
-                        filename = disposition.get('filename')
-                elif field_name == 'fileName':
-                    filename = content.decode('utf-8', errors='ignore')
-                elif field_name == 'chunkIndex':
-                    chunk_index_str = content.decode('utf-8', errors='ignore')
-                elif field_name == 'totalChunks':
-                    total_chunks_str = content.decode('utf-8', errors='ignore')
-            except ValueError:  # Handles split errors if part is not as expected
-                # self.app.logger.warning(f"Could not parse multipart part: {part_bytes[:100]}") # Assuming self.app.logger
-                print(f"Warning: Could not parse multipart part: {part_bytes[:100]}")
-                continue
-
-        if file_content is None:
-            raise ValueError("File content not found in multipart request.")
-
-        return ChunkInfo(
-            filename=filename,
-            chunk_index=int(chunk_index_str) if chunk_index_str and chunk_index_str.isdigit() else 0,
-            # default to 0 for single chunk
-            total_chunks=int(total_chunks_str) if total_chunks_str and total_chunks_str.isdigit() else 1,
-            # default to 1
-            content=file_content
-        )
+    filename: str  # This is the final intended filename
+    chunk_index: int
+    total_chunks: int
+    content: bytes  # Raw bytes of the chunk
 
 
 class FileUploadHandler:
     def __init__(self, upload_dir: str = 'uploads'):
         self.upload_dir = Path(upload_dir)
         self.upload_dir.mkdir(parents=True, exist_ok=True)
+        # self.app = get_app().app # If logger is needed here
 
     def save_file(self, chunk_info: ChunkInfo, storage: BlobStorage) -> str:
         """Speichert die Datei oder Chunk. Chunks werden lokal gespeichert, dann zu BlobStorage gemerged."""
-        final_blob_path = chunk_info.filename  # Relative path within BlobStorage
+        final_blob_path = Path(chunk_info.filename).name  # Use only filename part for security within blob storage
 
-        if chunk_info.total_chunks is None or chunk_info.total_chunks == 1:
+        if chunk_info.total_chunks == 1:
             # Komplette Datei direkt in BlobStorage speichern
+            # print(f"Saving single part file: {final_blob_path} to BlobStorage directly.") # Debug
             with BlobFile(final_blob_path, 'w', storage=storage) as bf:
                 bf.write(chunk_info.content)
         else:
             # Chunk lokal speichern
-            # Sanitize filename for local path
-            safe_filename = "".join(c if c.isalnum() or c in ('.', '_', '-') else '_' for c in chunk_info.filename)
-            chunk_path = self.upload_dir / f"{safe_filename}.part{chunk_info.chunk_index}"
+            # Sanitize filename for local path (original chunk_info.filename might contain path parts client-side)
+            safe_base_filename = "".join(
+                c if c.isalnum() or c in ('.', '_', '-') else '_' for c in Path(chunk_info.filename).name)
+            chunk_path = self.upload_dir / f"{safe_base_filename}.part{chunk_info.chunk_index}"
+            # print(f"Saving chunk: {chunk_path} locally. Total chunks: {chunk_info.total_chunks}") # Debug
 
             with open(chunk_path, 'wb') as f:
                 f.write(chunk_info.content)
 
-            if self._all_chunks_received(safe_filename, chunk_info):
-                self._merge_chunks_to_blob(safe_filename, chunk_info, final_blob_path, storage)
-                self._cleanup_chunks(safe_filename, chunk_info)
+            if self._all_chunks_received(safe_base_filename, chunk_info.total_chunks):
+                # print(f"All chunks received for {safe_base_filename}. Merging to BlobStorage path: {final_blob_path}") # Debug
+                self._merge_chunks_to_blob(safe_base_filename, chunk_info.total_chunks, final_blob_path, storage)
+                self._cleanup_chunks(safe_base_filename, chunk_info.total_chunks)
+            # else:
+            # print(f"Still waiting for more chunks for {safe_base_filename}.") # Debug
 
         return final_blob_path  # Path within BlobStorage
 
-    def _all_chunks_received(self, safe_filename: str, chunk_info: ChunkInfo) -> bool:
-        if chunk_info.total_chunks is None:
-            return False
-        for i in range(chunk_info.total_chunks):
-            chunk_path = self.upload_dir / f"{safe_filename}.part{i}"
+    def _all_chunks_received(self, safe_base_filename: str, total_chunks: int) -> bool:
+        for i in range(total_chunks):
+            chunk_path = self.upload_dir / f"{safe_base_filename}.part{i}"
             if not chunk_path.exists():
+                # print(f"Chunk {i} for {safe_base_filename} not found. Path: {chunk_path}") # Debug
                 return False
+        # print(f"All {total_chunks} chunks found for {safe_base_filename}.") # Debug
         return True
 
-    def _merge_chunks_to_blob(self, safe_filename: str, chunk_info: ChunkInfo, final_blob_path: str,
+    def _merge_chunks_to_blob(self, safe_base_filename: str, total_chunks: int, final_blob_path: str,
                               storage: BlobStorage):
+        # print(f"Merging {total_chunks} chunks for {safe_base_filename} into Blob: {final_blob_path}") # Debug
         with BlobFile(final_blob_path, 'w', storage=storage) as outfile:
-            for i in range(chunk_info.total_chunks):
-                chunk_path = self.upload_dir / f"{safe_filename}.part{i}"
+            for i in range(total_chunks):
+                chunk_path = self.upload_dir / f"{safe_base_filename}.part{i}"
+                # print(f"Appending chunk {i} ({chunk_path}) to Blob.") # Debug
                 with open(chunk_path, 'rb') as chunk_file:
                     outfile.write(chunk_file.read())
+        # print(f"Finished merging chunks for {safe_base_filename} to Blob: {final_blob_path}") # Debug
 
-    def _cleanup_chunks(self, safe_filename: str, chunk_info: ChunkInfo):
-        if chunk_info.total_chunks is None:
-            return
-        for i in range(chunk_info.total_chunks):
-            chunk_path = self.upload_dir / f"{safe_filename}.part{i}"
+    def _cleanup_chunks(self, safe_base_filename: str, total_chunks: int):
+        # print(f"Cleaning up {total_chunks} chunks for {safe_base_filename}.") # Debug
+        for i in range(total_chunks):
+            chunk_path = self.upload_dir / f"{safe_base_filename}.part{i}"
             if chunk_path.exists():
-                os.remove(chunk_path)
+                # print(f"Removing chunk: {chunk_path}") # Debug
+                try:
+                    os.remove(chunk_path)
+                except OSError as e:
+                    # self.app.logger.error(f"Error removing chunk {chunk_path}: {e}") # If logger available
+                    print(f"Error removing chunk {chunk_path}: {e}")
+
 
 class Tools(MainTool):
     def __init__(self, app: App):
@@ -187,49 +108,52 @@ class Tools(MainTool):
         self.shares = None
         self.shares_metadata_path = None
         self.name = MOD_NAME
-        self.version = "0.0.1"
-        self.color = "WITHE"
+        self.version = VERSION  # Use class constant
+        self.color = "WHITE"  # Corrected casing
         self.tools = {
             "all": [["Version", "Shows current Version"]],
             "name": MOD_NAME,
             "Version": self.show_version,
         }
         MainTool.__init__(self,
-                          load=lambda :None,
+                          load=lambda: None,
                           v=self.version,
                           tool=self.tools,
                           name=self.name,
                           color=self.color,
                           on_exit=self.on_exit)
         self.on_start()
+
     def on_start(self):
         self.shares_metadata_path = Path(self.app.data_dir) / SHARES_METADATA_FILENAME
         self.shares: Dict[str, Dict[str, Any]] = self._load_shares()
 
-        # Temporary local upload dir for chunks
         self.temp_upload_dir = Path(self.app.data_dir) / "filewidget_tmp_uploads"
         self.temp_upload_dir.mkdir(parents=True, exist_ok=True)
         self.upload_handler = FileUploadHandler(upload_dir=str(self.temp_upload_dir))
 
         self.app.logger.info(f"{self.name} v{self.version} initialized.")
         self.app.logger.info(f"Shares loaded from: {self.shares_metadata_path}")
+        self.app.logger.info(f"Temporary upload directory: {self.temp_upload_dir}")
+
         self.app.run_any(("CloudM", "add_ui"),
-                    name="FileWidget",
-                    title="FileWidget",
-                    path=f"/api/FileWidget/ui",
-                    description="file management", auth=True
-                    )
-        self.app.logger.info("Starting FileWidget")
+                         name="FileWidget",
+                         title="FileWidget",
+                         path=f"/api/FileWidget/ui",
+                         # This path is where CloudM lists it, not necessarily where users access it directly
+                         description="file management", auth=True
+                         )
+        self.app.logger.info("FileWidget UI registered with CloudM.")
 
     def on_exit(self):
-        self.app.logger.info("Closing FileWidget")
+        self.app.logger.info(f"Closing {self.name}")
 
     def show_version(self):
-        self.app.logger.info("Version: %s", self.version)
+        self.app.logger.info(f"{self.name} Version: {self.version}")
         return self.version
 
     def _load_shares(self) -> Dict[str, Dict[str, Any]]:
-        if self.shares_metadata_path.exists():
+        if self.shares_metadata_path is not None and self.shares_metadata_path.exists():
             try:
                 with open(self.shares_metadata_path, 'r') as f:
                     return json.load(f)
@@ -250,57 +174,54 @@ class Tools(MainTool):
         return secrets.token_urlsafe(16)
 
     async def _get_user_uid_from_request(self, request: RequestData) -> Optional[str]:
-        # This depends on how user authentication is handled and session data is populated
-        # in RequestData by your ToolBoxV2 setup.
-        # Assuming request.session exists and has a 'uid' or 'user_id' attribute.
-        if hasattr(request, 'session') and request.session and hasattr(request.session, 'uid'):
-            return request.session.uid
-        if hasattr(request, 'user') and request.user and hasattr(request.user, 'uid'):  # Alternative common pattern
-            return request.user.uid
-        self.app.logger.warning("Could not determine user UID from request session/user.")
+        user = await get_current_user_from_request(self.app, request)
+        if user and hasattr(user, 'uid') and user.uid:  # Ensure uid attribute exists and is not empty
+            return user.uid
+        # Fallback: try to get 'SiID' or 'user_name' from session if user object is not fully formed
+        # This depends on how get_current_user_from_request populates the User object
+        # or if request.session is directly usable.
+        if request and request.session:
+            # Assuming session is a dict-like object as populated by Rust via kwargs['request']['session']
+            # 'SiID' is often used as a unique session/user identifier in such systems.
+            uid_from_session = request.session.get('SiID') or request.session.get('uid')
+            if uid_from_session:
+                self.app.logger.debug(f"Retrieved UID '{uid_from_session}' from request.session as fallback.")
+                return uid_from_session
+            self.app.logger.warning(
+                f"User object found but no UID. Session keys: {list(request.session.keys()) if request.session else 'No session'}")
         return None
 
     async def get_blob_storage(self, request: Optional[RequestData] = None,
                                owner_uid_override: Optional[str] = None) -> BlobStorage:
-        user_uid = owner_uid_override
-        is_authenticated_user_storage = False
+        user_uid: Optional[str] = None
 
-        if not user_uid and request:  # Try to get UID from request if not overridden
+        if owner_uid_override:
+            user_uid = owner_uid_override
+            self.app.logger.debug(f"BlobStorage access for overridden UID: {user_uid}")
+        elif request:
             user_uid = await self._get_user_uid_from_request(request)
-            is_authenticated_user_storage = True
+            if not user_uid:
+                self.app.logger.warning("Authenticated action attempted, but no user UID found in request session.")
+                raise ValueError("User authentication required, or UID not found in session for storage access.")
+            self.app.logger.debug(f"BlobStorage access for authenticated user UID: {user_uid}")
+        else:
+            self.app.logger.error("BlobStorage access attempted without user context (no request and no UID override).")
+            raise ValueError("Cannot determine user context for BlobStorage access.")
 
-        if not user_uid:  # No UID from override or request (e.g. anonymous access attempt to non-shared resource)
-            # For public files not tied to a specific user (e.g. system assets),
-            # you might return a generic public BlobStorage.
-            # For user files, this path should ideally not be hit unless it's for a shared file
-            # where owner_uid_override *is* provided.
-            # If we are here trying to get a user's storage without a UID, it's an issue.
-            if is_authenticated_user_storage:  # This implies an issue with getting UID for an authenticated action
-                self.app.logger.error(
-                    "Attempted to get user blob storage for an authenticated action, but no UID found.")
-                raise ValueError("User not authenticated or UID not found in session for storage access.")
-            else:  # Generic public storage if no specific user context
-                self.app.logger.info("Accessing generic public BlobStorage.")
-                return BlobStorage(Path(self.app.data_dir) / 'public_files', 0)
-
-        # User-specific storage
-        # if user_uid not in self.blob_storage_cache: # Not caching instances to avoid state issues with BlobStorage itself
+        # User-specific storage path
         storage_path = Path(self.app.data_dir) / 'user_storages' / user_uid
-        # self.blob_storage_cache[user_uid] = BlobStorage(storage_path)
-        # self.app.logger.debug(f"BlobStorage instance created/retrieved for user {user_uid} at {storage_path}")
+        # Ensure storage_path is not trying to escape (e.g. if user_uid had '..')
+        # Path resolution should handle this, but being explicit is safer if user_uid is not strictly controlled.
+        # For now, assume user_uid is a safe directory name.
         return BlobStorage(storage_path)
-        # return self.blob_storage_cache[user_uid]
 
 
 def get_template_content() -> str:
-    # Content from the original get_template method
-    # Added a share button placeholder and an input for the share link
     return """
     <title>File Manager</title>
     <style>
-    .tree-view { color: var(--theme-bg);font-family: monospace; margin: 10px 0; border: 1px solid #ddd; padding: 10px; max-height: 600px; overflow-y: auto; background: #f8f9fa; }
-    .tree-view p { color: var(--theme-bg)}
-    .folder-group { font-weight: bold; color: #2c3e50; padding: 5px; margin-top: 10px; background: #edf2f7; border-radius: 4px; cursor: pointer; }
+    .tree-view {font-family: monospace; margin: 10px 0; border: 1px solid #ddd; padding: 10px; max-height: 600px; overflow-y: auto; background: var(--theme-bg); }
+    .folder-group { font-weight: bold; color: #2c3e50; padding: 5px; margin-top: 10px; background: var(--theme-bg); border-radius: 4px; cursor: pointer; }
     .group-content { margin-left: 20px; border-left: 2px solid #e2e8f0; padding-left: 10px; display: none; }
     .folder { cursor: pointer; padding: 2px 5px; margin: 2px 0; color: #4a5568; }
     .folder:hover { background: #edf2f7; border-radius: 4px; }
@@ -315,11 +236,19 @@ def get_template_content() -> str:
     .folder.open::before, .folder-group.open::before { transform: rotate(90deg); }
     .drop-zone { border: 2px dashed #ccc; padding: 20px; text-align: center; margin: 10px 0; cursor: pointer; }
     .drop-zone.dragover { background-color: #e1e1e1; border-color: #999; }
-    .progress-bar { width: 100%; height: 20px; background-color: #f0f0f0; border-radius: 4px; overflow: hidden; margin-top: 5px; }
-    .progress { width: 0%; height: 100%; background-color: #4CAF50; transition: width 0.3s ease-in-out; }
-    #shareLinkContainer { margin-top: 15px; padding: 10px; background-color: #e9ecef; border-radius: 4px; display: none; }
-    #shareLinkInput { width: calc(100% - 80px); padding: 8px; border: 1px solid #ced4da; border-radius: 4px; margin-right: 5px; }
-    #copyShareLinkBtn { padding: 8px 12px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    .progress-bar-container { width: 100%; height: 20px; background-color: #f0f0f0; border-radius: 4px; overflow: hidden; margin-top: 5px; display: none; }
+    .progress-bar { width: 0%; height: 100%; background-color: #4CAF50; transition: width 0.3s ease-in-out; text-align: center; color: white; line-height:20px; }
+    /* Styles for TB.ui.Modal (if not globally available through tb.css) */
+    /* Basic modal styles, assuming TB provides more complete ones */
+    .tb-modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1050;}
+    .tb-modal-dialog { background: white; padding: 20px; border-radius: 5px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); min-width: 300px; max-width: 500px;}
+    .tb-modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 10px;}
+    .tb-modal-title { font-size: 1.25rem; margin: 0;}
+    .tb-modal-body { margin-bottom: 15px; }
+    .tb-modal-footer { text-align: right; border-top: 1px solid #eee; padding-top: 10px; margin-top: 10px;}
+    .tb-modal-footer button { margin-left: 5px; }
+    #shareLinkInputModal { width: calc(100% - 22px); padding: 8px; border: 1px solid #ced4da; border-radius: 4px; margin-bottom: 10px; }
+
     </style>
 
     <div class="file-container">
@@ -328,31 +257,25 @@ def get_template_content() -> str:
             <p>Drag & Drop files here or click to upload</p>
             <input type="file" id="fileInput" multiple style="display: none;">
         </div>
-        <div class="progress-bar" style="display: none;"><div class="progress" id="uploadProgress"></div></div>
-
-        <div id="shareLinkContainer">
-            <input type="text" id="shareLinkInput" readonly>
-            <button id="copyShareLinkBtn">Copy</button>
-        </div>
+        <div class="progress-bar-container" id="progressBarContainer"><div class="progress-bar" id="uploadProgress">0%</div></div>
 
         <div class="tree-view" id="fileTree">Loading file tree...</div>
     </div>
 
-    <script>
-        // Ensure TB (ToolBox Client-Side) is available, or use standard fetch
-        // For this example, we'll use standard fetch for API calls.
-        // const TB_API_PREFIX = '/api/FileWidget'; // Adjust if your API routes are different
+    <script unSave="true">
+        // Ensure TB (ToolBox Client-Side) is available
 
+
+        // Ensure this script runs after the DOM is fully loaded,
+        // and TB object is available.
+        function initializeFileManager() {
         class FileManager {
             constructor() {
                 this.dropZone = document.getElementById('dropZone');
                 this.fileInput = document.getElementById('fileInput');
                 this.fileTree = document.getElementById('fileTree');
-                this.progressBar = document.querySelector('.progress-bar');
-                this.progress = document.getElementById('uploadProgress');
-                this.shareLinkContainer = document.getElementById('shareLinkContainer');
-                this.shareLinkInput = document.getElementById('shareLinkInput');
-                this.copyShareLinkBtn = document.getElementById('copyShareLinkBtn');
+                this.progressBarContainer = document.getElementById('progressBarContainer');
+                this.uploadProgress = document.getElementById('uploadProgress');
 
                 this.responseCache = {}; // To store original file paths from server
 
@@ -366,84 +289,114 @@ def get_template_content() -> str:
                 this.dropZone.addEventListener('dragover', (e) => { e.preventDefault(); this.dropZone.classList.add('dragover'); });
                 this.dropZone.addEventListener('dragleave', () => this.dropZone.classList.remove('dragover'));
                 this.dropZone.addEventListener('drop', (e) => { e.preventDefault(); this.dropZone.classList.remove('dragover'); this.handleFiles(e.dataTransfer.files); });
-                this.copyShareLinkBtn.addEventListener('click', () => this.copyShareLink());
             }
 
             async handleFiles(files) {
                 for (const file of files) {
                     await this.uploadFile(file);
                 }
-                this.loadFileTree(); // Refresh tree after upload
             }
 
             async uploadFile(file) {
-                this.progressBar.style.display = 'block';
-                this.progress.style.width = '0%';
+                this.progressBarContainer.style.display = 'block';
+                this.uploadProgress.style.width = '0%';
+                this.uploadProgress.textContent = '0%';
+                const loaderId = TB.ui.Loader.show("Uploading " + file.name + "...");
 
-                const chunkSize = 1024 * 1024; // 1MB
+                const chunkSize = 1 * 1024 * 1024; // 1MB
                 const totalChunks = Math.ceil(file.size / chunkSize);
+                let successfulChunks = 0;
 
                 for (let i = 0; i < totalChunks; i++) {
                     const chunk = file.slice(i * chunkSize, (i + 1) * chunkSize);
                     const formData = new FormData();
-                    formData.append('file', chunk, file.name); // Ensure filename is passed with the blob
-                    formData.append('fileName', file.name);
-                    formData.append('chunkIndex', i);
-                    formData.append('totalChunks', totalChunks);
+
+                    // For HTTP fetch (browser native FormData handling):
+                    // The 'name' attribute of formData.append('file', ...) is the field name.
+                    // The Rust server will interpret this field name 'file' and its content.
+                    formData.append('file', chunk, file.name); // The third arg to append (filename) sets Content-Disposition filename for this part
+
+                    // These are the additional fields the Python function expects directly in form_data
+                    formData.append('fileName', file.name);    // Overall intended filename
+                    formData.append('chunkIndex', i.toString());        // Ensure string for form data
+                    formData.append('totalChunks', totalChunks.toString());  // Ensure string for form data
 
                     try {
-                        const response = await fetch('/api/FileWidget/upload', { method: 'POST', body: formData });
-                        if (!response.ok) {
-                            const errorData = await response.json();
-                            console.error('Upload chunk failed:', errorData.info?.help_text || 'Unknown error');
-                            alert('Upload failed: ' + (errorData.info?.help_text || 'Server error'));
-                            this.progressBar.style.display = 'none';
+                        // For TB.api.request, if payload is FormData, it's passed directly for HTTP
+                        // For Tauri, TB.api.request will transform it as discussed above.
+                        const response = await TB.api.request(
+                            'FileWidget',
+                            'upload', // function_name for the Python endpoint
+                            formData, // payload
+                            'POST'    // method
+                            // useTauri default is 'auto'
+                        );
+
+                        if (response && response.error && response.error !== "none") {
+                            console.error('Upload chunk failed:', response.info?.help_text || response.error);
+                            TB.ui.Toast.showError('Upload failed: ' + (response.info?.help_text || response.error));
+                            this.progressBarContainer.style.display = 'none';
+                            TB.ui.Loader.hide(loaderId);
                             return;
                         }
+                        successfulChunks++;
                     } catch (error) {
-                        console.error('Network error during upload:', error);
-                        alert('Upload failed: Network error');
-                        this.progressBar.style.display = 'none';
+                        console.error('Network error or TB.api.request issue during upload:', error);
+                        TB.ui.Toast.showError('Upload failed: Network error or API call issue. ' + error.message);
+                        this.progressBarContainer.style.display = 'none';
+                        TB.ui.Loader.hide(loaderId);
                         return;
                     }
-                    const progressVal = ((i + 1) / totalChunks) * 100;
-                    this.progress.style.width = progressVal + '%';
+                    const progressVal = Math.round((successfulChunks / totalChunks) * 100);
+                    this.uploadProgress.style.width = progressVal + '%';
+                    this.uploadProgress.textContent = progressVal + '%';
                 }
-                setTimeout(() => { this.progressBar.style.display = 'none'; this.progress.style.width = '0%'; }, 1000);
+
+                TB.ui.Loader.hide(loaderId);
+                if (successfulChunks === totalChunks) {
+                    TB.ui.Toast.showSuccess(`File '${file.name}' uploaded successfully!`);
+                    this.loadFileTree(); // Refresh tree after successful upload
+                } else {
+                    TB.ui.Toast.showError(`File '${file.name}' upload incomplete.`);
+                }
+                setTimeout(() => { this.progressBarContainer.style.display = 'none'; this.uploadProgress.style.width = '0%'; this.uploadProgress.textContent = '0%';}, 2000);
             }
 
             initLoadFileTree() {
-                // Delay slightly to ensure DOM is ready or TB is initialized if it were used
-                setTimeout(() => this.loadFileTree(), 500);
+                setTimeout(() => this.loadFileTree(), 100); // Short delay
             }
 
             async loadFileTree() {
+                const loaderId = TB.ui.Loader.show("Loading files...");
+                this.fileTree.innerHTML = '<i>Loading...</i>';
                 try {
-                    this.fileTree.innerHTML = '<i>Loading...</i>';
-                    const response = await fetch('/api/FileWidget/files');
-                    if (!response.ok) {
-                        this.fileTree.innerHTML = '<p style="color:red;">Error loading files.</p>';
-                        console.error("Error loading file tree, status:", response.status);
-                        return;
-                    }
-                    const apiResponse = await response.json();
-                     // Assuming the actual tree data is in apiResponse.result.data
-                    if (apiResponse && apiResponse.result && apiResponse.result.data) {
-                        this.renderFileTree(apiResponse.result.data);
+                    const response = await TB.api.request('FileWidget', 'files');
+                    TB.ui.Loader.hide(loaderId);
+
+                    if (response && response.result && response.result.data) {
+                        this.renderFileTree(response.result.data);
+                         if (Object.keys(response.result.data).length === 0) {
+                             this.fileTree.innerHTML = "<p>No files or folders found.</p>";
+                         }
+                    } else if (response && response.error && response.error !== "none") {
+                         this.fileTree.innerHTML = `<p style="color:red;">Error loading files: ${response.info?.help_text || response.error}</p>`;
+                         TB.ui.Toast.showError(`Error loading files: ${response.info?.help_text || response.error}`);
                     } else {
                         this.fileTree.innerHTML = '<p>No files found or invalid response structure.</p>';
-                        console.warn("File tree data not in expected format:", apiResponse);
+                        console.warn("File tree data not in expected format:", response);
                     }
                 } catch (error) {
+                    TB.ui.Loader.hide(loaderId);
                     this.fileTree.innerHTML = '<p style="color:red;">Failed to fetch file tree.</p>';
+                    TB.ui.Toast.showError('Failed to fetch file tree: ' + error.message);
                     console.error("Error in loadFileTree:", error);
                 }
             }
 
             renderFileTree(treeData) {
-                this.responseCache = {}; // Clear cache before rendering
+                this.responseCache = {}; // Clear cache
                 this.fileTree.innerHTML = this.buildTreeHTML(treeData);
-                if (!this.fileTree.innerHTML) {
+                if (!this.fileTree.innerHTML.trim()) { // Check if empty after build
                     this.fileTree.innerHTML = "<p>No files or folders.</p>";
                 }
                 this.addTreeEventListeners();
@@ -452,22 +405,24 @@ def get_template_content() -> str:
             buildTreeHTML(node, currentPath = '') {
                 let html = '';
                 const entries = Object.entries(node).sort(([keyA, valA], [keyB, valB]) => {
-                    const isDirA = typeof valA === 'object';
-                    const isDirB = typeof valB === 'object';
-                    if (isDirA !== isDirB) return isDirA ? -1 : 1; // Directories first
-                    return keyA.localeCompare(keyB); // Then alphanumeric
+                    const isDirA = typeof valA === 'object' && valA !== null && !valA.hasOwnProperty('content_base64'); // Heuristic for folder
+                    const isDirB = typeof valB === 'object' && valB !== null && !valB.hasOwnProperty('content_base64');
+                    if (isDirA !== isDirB) return isDirA ? -1 : 1;
+                    return keyA.localeCompare(keyB);
                 });
 
                 for (const [name, content] of entries) {
                     const fullPathKey = currentPath ? `${currentPath}/${name}` : name;
+                    // Check if content is an object and not null, and further check if it's a folder or file metadata
+                    // A simple check: if content is a string, it's a file path. If an object, it's a folder (directory).
                     if (typeof content === 'object' && content !== null) { // It's a folder
                         html += `<div class="folder" data-folder-path="${fullPathKey}">📁 ${name}</div>`;
                         html += `<div class="folder-content">`;
                         html += this.buildTreeHTML(content, fullPathKey);
                         html += `</div>`;
                     } else { // It's a file, content is the actual path for download/share
-                        const originalFilePath = content; // This is the important part from server
-                        this.responseCache[fullPathKey] = originalFilePath; // Store for later use
+                        const originalFilePath = String(content); // Server provides path as string
+                        this.responseCache[fullPathKey] = originalFilePath;
                         const icon = this.getFileIcon(name);
                         html += `<div class="file" data-display-path="${fullPathKey}">
                                     <span class="file-name" data-file-path="${fullPathKey}">${icon} ${name}</span>
@@ -480,7 +435,10 @@ def get_template_content() -> str:
 
             getFileIcon(filename) {
                 const ext = filename.split('.').pop()?.toLowerCase() || 'default';
-                const iconMap = {'agent':'🤖','json':'📋','pkl':'📦','txt':'📝','data':'💾','ipy':'🐍','bin':'📀','sqlite3':'🗄️','vec':'📊','pickle':'🥒','html':'🌐','js':'📜','md':'📑','py':'🐍','default':'📄', 'png':'🖼️', 'jpg':'🖼️', 'jpeg':'🖼️', 'gif':'🖼️', 'pdf':'📕', 'zip':'📦'};
+                const iconMap = {'agent':'🤖','config':'🔧','json':'📋','pkl':'📦','txt':'📝','data':'💾','ipy':'🐍',
+                'bin':'📀','sqlite3':'🗄️','vec':'📊','pickle':'🥒','html':'🌐','js':'📜','md':'📑','py':'🐍',
+                'default':'📄', 'png':'🖼️', 'jpg':'🖼️', 'jpeg':'🖼️', 'gif':'🖼️', 'pdf':'📕',
+                 'zip':'📦', 'csv':'📊', 'options': '⚙️'};
                 return iconMap[ext] || iconMap['default'];
             }
 
@@ -492,20 +450,20 @@ def get_template_content() -> str:
                         if (actualPath) {
                             this.downloadFile(actualPath);
                         } else {
+                            TB.ui.Toast.showError("Could not determine file path for download.");
                             console.error("Actual path not found for displayed path:", displayPath);
-                            alert("Could not determine file path for download.");
                         }
                     });
                 });
                 this.fileTree.querySelectorAll('.share-btn').forEach(btn => {
                     btn.addEventListener('click', (e) => {
                         const displayPath = e.currentTarget.dataset.sharePath;
-                         const actualPath = this.responseCache[displayPath];
+                        const actualPath = this.responseCache[displayPath];
                         if (actualPath) {
                             this.createShareLink(actualPath);
                         } else {
-                            console.error("Actual path not found for displayed path:", displayPath);
-                            alert("Could not determine file path for sharing.");
+                            TB.ui.Toast.showError("Could not determine file path for sharing.");
+                            console.error("Actual path not found for sharing:", displayPath);
                         }
                     });
                 });
@@ -522,58 +480,104 @@ def get_template_content() -> str:
             }
 
             async downloadFile(actualFilePathFromServer) {
-                // actualFilePathFromServer is the path BlobStorage knows, like "myfile.txt" or "folder/myfile.txt"
-                const response = await fetch(`/api/FileWidget/download?path=${encodeURIComponent(actualFilePathFromServer)}`);
-                if (!response.ok) {
-                    alert('Error downloading file.');
-                    console.error("Download failed", response.status);
-                    return;
+                const loaderId = TB.ui.Loader.show("Preparing download...");
+                try {
+                    const response = await fetch(`/api/FileWidget/download?path=${encodeURIComponent(actualFilePathFromServer)}`);
+                    TB.ui.Loader.hide(loaderId);
+                    if (!response.ok) {
+                        TB.ui.Toast.showError(`Error downloading file: ${response.statusText}`);
+                        console.error("Download failed", response.status, await response.text());
+                        return;
+                    }
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = actualFilePathFromServer.split('/').pop();
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                    TB.ui.Toast.showInfo("Download started.");
+                } catch (error) {
+                    TB.ui.Loader.hide(loaderId);
+                    TB.ui.Toast.showError("Download error: " + error.message);
+                    console.error("Download error:", error);
                 }
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = actualFilePathFromServer.split('/').pop(); // Get filename from path
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                window.URL.revokeObjectURL(url);
             }
 
             async createShareLink(actualFilePathFromServer) {
+                const loaderId = TB.ui.Loader.show("Creating share link...");
                 try {
-                    const response = await fetch(`/api/FileWidget/create_share_link?file_path=${encodeURIComponent(actualFilePathFromServer)}&share_type=public`);
-                    if (!response.ok) {
-                        const errorData = await response.json();
-                        alert('Failed to create share link: ' + (errorData.info?.help_text || 'Server error'));
-                        return;
-                    }
-                    const result = await response.json();
-                    if (result.result && result.result.data && result.result.data.share_link) {
-                        this.shareLinkInput.value = result.result.data.share_link;
-                        this.shareLinkContainer.style.display = 'block';
+                    const response = await TB.api.request(
+                        'FileWidget',
+                        'create_share_link',
+                        { file_path: actualFilePathFromServer, share_type: 'public' } // kwargs for python func
+                    );
+                    TB.ui.Loader.hide(loaderId);
+
+                    if (response && response.result && response.result.data && response.result.data.share_link) {
+                        const shareLink = response.result.data.share_link;
+
+                        TB.ui.Modal.show({
+                            title: 'Share Link Created',
+                            content: `
+                                <p>Your shareable link:</p>
+                                <input type="text" id="shareLinkInputModal" value="${shareLink}" readonly style="width: 100%; padding: 8px; box-sizing: border-box; margin-bottom: 10px;">
+                                <p><small>Anyone with this link can access the file.</small></p>
+                            `,
+                            buttons: [
+                                {
+                                    text: 'Copy Link',
+                                    variant: 'primary',
+                                    action: (modal) => {
+                                        const input = document.getElementById('shareLinkInputModal');
+                                        if(input) {
+                                            input.select();
+                                            input.setSelectionRange(0, 99999); // For mobile devices
+                                            navigator.clipboard.writeText(input.value).then(() => {
+                                                TB.ui.Toast.showSuccess('Share link copied to clipboard!');
+                                            }).catch(err => {
+                                                TB.ui.Toast.showError('Failed to copy link automatically.');
+                                                console.error('Failed to copy: ', err);
+                                            });
+                                        }
+                                    }
+                                },
+                                {
+                                    text: 'Close',
+                                    variant: 'secondary',
+                                    action: (modal) => modal.hide()
+                                }
+                            ]
+                        });
+                    } else if (response && response.error && response.error !== "none") {
+                        TB.ui.Toast.showError('Failed to create share link: ' + (response.info?.help_text || response.error));
                     } else {
-                        alert('Could not retrieve share link from server response.');
+                        TB.ui.Toast.showError('Could not retrieve share link from server response.');
                     }
                 } catch (error) {
+                    TB.ui.Loader.hide(loaderId);
                     console.error("Error creating share link:", error);
-                    alert('Error creating share link. Check console.');
+                    TB.ui.Toast.showError('Error creating share link: ' + error.message);
                 }
             }
-
-            copyShareLink() {
-                this.shareLinkInput.select();
-                document.execCommand('copy');
-                alert('Share link copied to clipboard!');
-            }
         }
-        // Ensure this script runs after the DOM is fully loaded,
-        // or if TB framework has an event for widget initialization, use that.
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => new FileManager());
-        } else {
+
             new FileManager();
         }
+
+        if (window.TB?.events) {
+            if (window.TB.config?.get('appRootId')) { // A sign that TB.init might have run
+                 initializeFileManager();
+            } else {
+                window.TB.events.on('tbjs:initialized', initializeFileManager, { once: true });
+            }
+        } else {
+            // Fallback if TB is not even an object yet, very early load
+            document.addEventListener('tbjs:initialized', initializeFileManager, { once: true }); // Custom event dispatch from TB.init
+        }
+
     </script>
     """
 
@@ -582,61 +586,147 @@ def get_template_content() -> str:
 @export(mod_name=MOD_NAME, api=True, version=VERSION, name="ui", api_methods=['GET'])
 async def get_main_ui(self) -> Result:
     """Serves the main HTML UI for the FileWidget."""
-    # Here, you'd typically use the app's template rendering mechanism
-    # if it's more complex or involves BaseWidget features.
-    # For simplicity, returning raw HTML via Result.html.
-    # The `unsave="true"` in the script tag from original is `unSave="true"`.
-    # Modern browsers/HTMX might handle script execution differently.
-    # Standard script tags in HTML served this way should execute.
     html_content = get_template_content()
     return Result.html(data=html_content)
 
+
 @export(mod_name=MOD_NAME, api=True, version=VERSION, name="upload", api_methods=['POST'], request_as_kwarg=True)
-async def handle_upload(self, request: RequestData) -> Result:
-    if not request.body:
-        return Result.default_user_error(info="No data received for upload.", exec_code=400)
+async def handle_upload(self, request: RequestData, form_data: Optional[Dict[str, Any]] = None) -> Result:
+    """
+    Handles file uploads. Expects chunked data via form_data kwarg from Rust server.
+    'form_data' structure (from Rust's parsing of multipart) after client sends FormData with fields:
+    'file' (the blob), 'fileName', 'chunkIndex', 'totalChunks'.
+
+    Expected `form_data` in this Python function:
+    {
+        "file": {  // This 'file' key is the NAME of the form field that held the file blob
+            "filename": "original_file_name_for_this_chunk.txt", // from Content-Disposition of the 'file' field part
+            "content_type": "mime/type_of_chunk",
+            "content_base64": "BASE64_ENCODED_CHUNK_CONTENT"
+        },
+        "fileName": "overall_final_filename.txt", // From a separate form field named 'fileName'
+        "chunkIndex": "0",                        // From a separate form field named 'chunkIndex'
+        "totalChunks": "5"                        // From a separate form field named 'totalChunks'
+    }
+    """
+    self.app.logger.debug(
+        f"FileWidget: handle_upload called. Received form_data keys: {list(form_data.keys()) if form_data else 'None'}"
+    )
+    self.app.logger.debug(f"FileWidget: handle_upload called. Received form_data: {request.to_dict()}")
+    # self.app.logger.debug(f"Full form_data: {form_data}") # For deeper debugging if needed
+
+    if not form_data:
+        return Result.default_user_error(info="No form data received for upload.", exec_code=400)
 
     try:
         storage = await self.get_blob_storage(request)
-        parser = MultipartParser(request.body)
-        chunk_info = parser.parse()
 
-        # Ensure filename is sensible
-        if not chunk_info.filename or chunk_info.filename == "unknown_file":
-            return Result.default_user_error(info="Filename not provided or invalid in upload.", exec_code=400)
+        # Extract data from form_data (populated by Rust server from multipart)
+        file_field_data = form_data.get('file')  # This is the dict from UploadedFile struct
+        # The 'file_field_data.get('filename')' is the name of the chunk part,
+        # which the JS client sets to be the same as the original file's name.
+        # This is fine for FileUploadHandler.save_file's chunk_info.filename if total_chunks > 1,
+        # as it will be used to create temporary part files like "original_file_name.txt.part0".
 
-        # Sanitize filename to prevent path traversal issues, BlobFile should handle this too
-        # but good to be cautious. For BlobStorage, the key itself is usually sanitized or managed.
-        # The path here is relative to the user's storage root.
-        blob_relative_path = Path(chunk_info.filename).name  # Use only the filename part for security
+        overall_filename_from_form = form_data.get('fileName') # This is the target filename for the assembled file.
+        chunk_index_str = form_data.get('chunkIndex')
+        total_chunks_str = form_data.get('totalChunks')
 
-        # Update chunk_info with the sanitized/final path name
+        if not all([
+            file_field_data, isinstance(file_field_data, dict),
+            overall_filename_from_form,
+            chunk_index_str is not None, # Check for presence, not just truthiness (0 is valid)
+            total_chunks_str is not None # Check for presence
+        ]):
+            missing = []
+            if not file_field_data or not isinstance(file_field_data, dict): missing.append("'file' object field")
+            if not overall_filename_from_form: missing.append("'fileName' field")
+            if chunk_index_str is None: missing.append("'chunkIndex' field")
+            if total_chunks_str is None: missing.append("'totalChunks' field")
+
+            self.app.logger.error(
+                f"Missing critical form data fields for upload: {missing}. Received form_data: {form_data}")
+            return Result.default_user_error(info=f"Incomplete upload data. Missing: {', '.join(missing)}",
+                                             exec_code=400)
+
+        content_base64 = file_field_data.get('content_base64')
+        if not content_base64:
+            return Result.default_user_error(info="File content (base64) not found in 'file' field data.",
+                                             exec_code=400)
+
+        try:
+            content_bytes = base64.b64decode(content_base64)
+        except base64.binascii.Error as b64_error:
+            self.app.logger.error(f"Base64 decoding failed for upload: {b64_error}")
+            return Result.default_user_error(info="Invalid file content encoding.", exec_code=400)
+
+        try:
+            chunk_index = int(chunk_index_str)
+            total_chunks = int(total_chunks_str)
+        except ValueError:
+            return Result.default_user_error(info="Invalid chunk index or total chunks value. Must be integers.", exec_code=400)
+
+        # Use the 'overall_filename_from_form' for the ChunkInfo.filename,
+        # as this is the intended final name in blob storage.
+        # FileUploadHandler will use Path(this_name).name to ensure it's just a filename.
         chunk_info_to_save = ChunkInfo(
-            filename=blob_relative_path,  # This is the key in BlobStorage
-            chunk_index=chunk_info.chunk_index,
-            total_chunks=chunk_info.total_chunks,
-            content=chunk_info.content
+            filename=overall_filename_from_form, # THIS IS THE KEY CHANGE FOR CONSISTENCY
+            chunk_index=chunk_index,
+            total_chunks=total_chunks,
+            content=content_bytes
         )
 
-        saved_blob_path = self.upload_handler.save_file(chunk_info_to_save, storage)
         self.app.logger.info(
-            f"File '{saved_blob_path}' uploaded/chunk saved by user (UID from session if available).")
-        return Result.ok(data={"message": "File uploaded successfully", "path": saved_blob_path})
-    except ValueError as e:  # Catch specific errors from parser or handler
+            f"Processing chunk {chunk_index + 1}/{total_chunks} for final file '{overall_filename_from_form}'. " # Log the intended final name
+            f"Size: {len(content_bytes)} bytes."
+        )
+
+        saved_blob_path = self.upload_handler.save_file(chunk_info_to_save, storage) # saved_blob_path will be Path(overall_filename_from_form).name
+
+        msg = f"Chunk {chunk_index + 1}/{total_chunks} for '{saved_blob_path}' saved."
+        if chunk_info_to_save.chunk_index == chunk_info_to_save.total_chunks - 1:
+            # Check if fully assembled
+            # The 'safe_base_filename' in FileUploadHandler is derived from ChunkInfo.filename,
+            # which we've now set to 'overall_filename_from_form'.
+            # So, this check should work correctly.
+            safe_base_filename_for_check = "".join(
+                c if c.isalnum() or c in ('.', '_', '-') else '_' for c in Path(overall_filename_from_form).name)
+
+            # A slight delay might be needed if file system operations are not instantly consistent across threads/processes
+            # For now, assume direct check is okay.
+            # await asyncio.sleep(0.1) # Optional small delay if race conditions are suspected with file system
+
+            if self.upload_handler._all_chunks_received(safe_base_filename_for_check, total_chunks):
+                msg = f"File '{saved_blob_path}' upload complete and assembled."
+                self.app.logger.info(msg)
+            else:
+                msg = f"Final chunk for '{saved_blob_path}' saved, but assembly check failed or is pending."
+                self.app.logger.warning(msg + f" (Could not verify all chunks for '{safe_base_filename_for_check}' immediately after final one)")
+
+
+        return Result.ok(data={"message": msg, "path": saved_blob_path}) # Return the blob-relative path
+
+    except ValueError as e:
         self.app.logger.error(f"Upload processing error: {e}", exc_info=True)
-        return Result.default_user_error(info=f"Upload error: {str(e)}", exec_code=400)
+        return Result.default_user_error(info=f"Upload error: {str(e)}",
+                                         exec_code=400 if "authentication" in str(e).lower() else 400)
     except Exception as e:
         self.app.logger.error(f"Unexpected error during file upload: {e}", exc_info=True)
         return Result.default_internal_error(info="An unexpected error occurred during upload.")
 
-async def _prepare_file_response(self, storage: BlobStorage, blob_path: str) -> Result:
-    try:
-        # Sanitize blob_path, prevent '..' (BlobFile might do this, but good practice)
-        # For BlobStorage, paths are usually relative to its root.
-        # Path(blob_path).is_absolute() or ".." in blob_path could be checks here.
-        # However, BlobFile itself should handle the sandboxing within its storage_root.
 
-        if not storage.exists(blob_path):
+async def _prepare_file_response(self, storage: BlobStorage, blob_path: str, row=False) -> Result:
+    try:
+        # Basic sanitization for blob_path. BlobFile should handle sandboxing.
+        # Ensure blob_path is relative and doesn't try to escape.
+        # Path(blob_path).is_absolute() or ".." in blob_path are checks one might do.
+        # For BlobStorage, paths are relative to its root. Path(blob_path).name could be used
+        # if only files at root are allowed, but full relative paths are generally fine.
+        if ".." in blob_path or Path(blob_path).is_absolute():
+            self.app.logger.warning(f"Attempt to access potentially unsafe path: {blob_path}")
+            return Result.default_user_error(info="Invalid file path.", exec_code=400)
+
+        if not BlobFile(blob_path, storage=storage).exists():
             self.app.logger.warning(f"File not found in BlobStorage: {blob_path}")
             return Result.default_user_error(info="File not found.", exec_code=404)
 
@@ -644,216 +734,227 @@ async def _prepare_file_response(self, storage: BlobStorage, blob_path: str) -> 
         content_type, _ = mimetypes.guess_type(filename)
         if content_type is None:
             content_type = 'application/octet-stream'
+        with BlobFile(blob_path, 'r', storage=storage) as bf:
+            data = bf.read()
+        file_size = len(data)
 
-        # For streaming large files, you'd implement BlobFile.stream() or read in chunks
-        # For now, reading whole file (as in original)
-        file_size = storage.get_size(blob_path)  # Get size for Content-Length
-
-        # Streamer function for Result.binary
         async def file_streamer() -> AsyncGenerator[bytes, None]:
             with BlobFile(blob_path, 'r', storage=storage) as bf:
-                # Read in chunks if you want to support large files better
-                # For now, matching original behavior of reading all then sending
-                # However, Result.binary with a streamer is better.
-                # Let's assume BlobFile can be read in chunks or bf.read() is efficient enough
-                # For a true stream:
-                # chunk_size = 1024 * 1024 # 1MB
-                # while True:
-                #     data_chunk = bf.read(chunk_size)
-                #     if not data_chunk:
-                #         break
-                #     yield data_chunk
-                # For simplicity, if bf.read() returns all data:
-                yield bf.read()
+                # Stream in chunks for large files
+                chunk_size = 1024 * 1024  # 1MB chunks
+                while True:
+                    data_chunk = bf.read(chunk_size)
+                    if not data_chunk:
+                        break
+                    yield data_chunk
+        if row:
+            return data.decode('utf-8')
+        data = base64.b64encode(data).decode('utf-8')
+        self.app.logger.info(f"Preparing to stream file '{blob_path}' ({content_type}, {file_size} bytes).")
+        result = Result.html(data=f"""<div>
+<h2>Download Embedded File</h2>
+  <a id="download-link" download="{filename}">Download File</a>
 
-        return Result.binary(
-            stream_generator=file_streamer(),
-            content_type=content_type,
-            download_name=filename,
-            content_length=file_size  # Important for clients
+  <script unSave="true">
+    // Embedded base64 data
+    const base64Data = "{data}";
+
+    // Create a Blob from base64
+    const byteCharacters = atob(base64Data);
+    const byteNumbers = Array.from(byteCharacters, c => c.charCodeAt(0));
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray]);
+
+    // Create a URL and set the download link
+    const link = document.getElementById('download-link');
+    link.href = URL.createObjectURL(blob);
+    link.download = "{filename}";
+  </script>
+</div>""",
         )
-    except FileNotFoundError:  # Should be caught by storage.exists earlier
-        self.app.logger.warning(f"Download attempt for non-existent file: {blob_path}")
+        return result
+    except FileNotFoundError:
+        self.app.logger.warning(f"Download attempt for non-existent file (caught late): {blob_path}")
         return Result.default_user_error(info="File not found.", exec_code=404)
     except Exception as e:
         self.app.logger.error(f"Error processing download for {blob_path}: {e}", exc_info=True)
+        self.app.debug_rains(e)
         return Result.default_internal_error(info="Error processing download.")
 
-@export(mod_name=MOD_NAME, api=True, version=VERSION, name="download", api_methods=['GET'], request_as_kwarg=True)
-async def handle_download(self, request: RequestData) -> Result:
+
+@export(mod_name=MOD_NAME, api=True, version=VERSION, name="download", row=True, api_methods=['GET'], request_as_kwarg=True)
+async def handle_download(self, request: RequestData, **kwargs) -> Result:  # Removed path kwarg, always use query_params
     blob_path = request.query_params.get('path')
     if not blob_path:
-        return Result.default_user_error(info="File path parameter is missing.", exec_code=400)
+        return Result.default_user_error(info="File path parameter 'path' is missing.", exec_code=400)
 
     try:
-        storage = await self.get_blob_storage(request)  # User's own storage
-        self.app.logger.info(f"User download request for: {blob_path}")
-        return await self._prepare_file_response(storage, blob_path)
-    except ValueError as e:  # e.g. user not authenticated for storage access
+        # User's own storage. get_blob_storage handles auth check.
+        storage = await self.get_blob_storage(request)
+        self.app.logger.info(f"User download request for: {blob_path} from their storage.")
+        result = await _prepare_file_response(self, storage, blob_path)
+        return result
+    except ValueError as e:  # Raised by get_blob_storage if user not authenticated
         self.app.logger.warning(f"Auth error during download for path {blob_path}: {e}")
-        return Result.default_user_error(info=str(e), exec_code=401)
+        return Result.default_user_error(info=str(e), exec_code=401)  # 401 Unauthorized
+    except Exception as e:
+        self.app.logger.error(f"Unexpected error in handle_download for {blob_path}: {e}", exc_info=True)
+        return Result.default_internal_error(info="Failed to process download request.")
+
 
 @export(mod_name=MOD_NAME, api=True, version=VERSION, name="files", api_methods=['GET'], request_as_kwarg=True)
 async def get_file_tree(self, request: RequestData) -> Result:
     try:
-        storage = await self.get_blob_storage(request)
-
-        # The original `get_file_tree` logic for building the tree structure
-        # by iterating through blob_ids and parsing their metadata is specific
-        # to how BlobStorage internally stores file listings or if it relies on pickled metadata.
-        # A more typical BlobStorage might have a list_files() method.
-        # Assuming the original logic is what's needed for this BlobStorage implementation.
-
+        storage = await self.get_blob_storage(request)  # Handles auth
         tree: Dict[str, Any] = {}
-        # This part depends heavily on BlobStorage internals.
-        # If BlobStorage._get_all_blob_ids() and reading pickled metadata is the way, use it.
-        # A simpler BlobStorage might offer storage.list_files(recursive=True)
-        try:
-            # This is the complex part from the original, depends on BlobStorage's design
-            # If BlobStorage stores files with their full paths as IDs (e.g. "folder/file.txt")
-            # and has a method like `storage.list_all_paths()`
-            all_paths = []
-            if hasattr(storage, '_get_all_blob_ids_and_paths'):  # Idealized method
-                all_paths = storage._get_all_blob_ids_and_paths()  # Returns list of relative paths
-            elif hasattr(storage, '_get_all_blob_ids'):  # Original approach
-                blob_ids = storage._get_all_blob_ids()
-                for blob_id in blob_ids:  # blob_id is often the filename/path itself
-                    # The original code tries to load pickled data for each blob_id to find paths.
-                    # This seems overly complex if blob_id is already the path.
-                    # Let's assume blob_id IS the relative path for simplicity.
-                    # If not, the original's pickle loading logic needs to be here.
-                    # For now, let's assume `blob_id` is the path.
-                    # If it's an opaque ID, we need a way to get path from ID or metadata.
-                    # The simplest interpretation for a file storage is that the ID *is* the path.
-                    all_paths.append(str(blob_id))  # Assuming blob_id is path
-            else:  # Fallback: try to list based on directory structure if possible (not standard for all blob storages)
-                if storage.storage_root and Path(storage.storage_root).exists():
-                    for item in Path(storage.storage_root).rglob('*'):
-                        if item.is_file():
-                            all_paths.append(str(item.relative_to(storage.storage_root)))
+        all_paths = []
 
-            for file_path_str in all_paths:
-                path_parts = file_path_str.split('/')
-                current_level = tree
-                for i, part in enumerate(path_parts):
-                    if not part: continue
-                    if i == len(path_parts) - 1:  # It's a file
-                        current_level[part] = file_path_str  # Store the full path as value
-                    else:  # It's a folder
-                        if part not in current_level:
-                            current_level[part] = {}
-                        elif not isinstance(current_level[part], dict):  # Conflict: file with same name as folder
-                            self.app.logger.warning(
-                                f"File/folder name conflict for '{part}' in path '{file_path_str}'")
-                            # Decide on handling: overwrite, skip, or error
-                            # For now, skip making it a dict if it's already a file path
-                            break
-                        current_level = current_level[part]
+        # Adapt to BlobStorage's way of listing files.
+        # Assuming BlobStorage might have a more direct way or we fall back to iterating.
+        if hasattr(storage, 'list_files'):  # Ideal: storage.list_files(recursive=True) -> List[str]
+            all_paths = storage.list_files(recursive=True)
+        elif hasattr(storage, '_get_all_blob_ids_and_paths'):  # Method from original thought process
+            all_paths = storage._get_all_blob_ids_and_paths()
+        elif hasattr(storage, '_get_all_blob_ids'):  # Fallback if only opaque IDs are available
+            blob_ids = storage._get_all_blob_ids()
+            # This implies blob_id is the path or can be resolved to a path.
+            # The original code had complex pickle loading here which is highly specific.
+            # Assuming blob_id itself is the path string for simplicity.
+            all_paths = [str(bid) for bid in blob_ids]  # Filter out potentially invalid ids
+        elif storage.storage_root and Path(storage.storage_root).exists():  # Filesystem-based fallback
+            self.app.logger.debug(f"Falling back to filesystem scan for BlobStorage at {storage.storage_root}")
+            for item in Path(storage.storage_root).rglob('*'):
+                if item.is_file():
+                    all_paths.append(str(item.relative_to(storage.storage_root)))
+        else:
+            self.app.logger.warning("BlobStorage does not support standard listing methods, and no fallback possible.")
+            return Result.ok(data={})  # Return empty if listing is not possible
 
-        except Exception as e:
-            self.app.logger.error(f"Error building file tree from BlobStorage: {e}", exc_info=True)
-            return Result.default_internal_error(info="Could not list files.")
+        for file_path_str in sorted(all_paths):  # Sort paths for consistent tree structure
+            path_parts = Path(file_path_str).parts  # Use Path parts for OS-agnostic splitting
+            current_level = tree
+            for i, part in enumerate(path_parts):
+                if not part: continue
+                if i == len(path_parts) - 1:  # It's a file
+                    current_level[part] = file_path_str  # Store the full original path as value
+                else:  # It's a folder
+                    current_level = current_level.setdefault(part, {})
+                    if not isinstance(current_level, dict):  # Conflict: file with same name as folder part
+                        self.app.logger.warning(
+                            f"File/folder name conflict for '{part}' in path '{file_path_str}'. Overwriting with folder.")
+                        # This case should ideally be prevented by design or handled by BlobStorage's structure.
+                        # For now, if a file exists where a folder should be, we might have an issue.
+                        # Simplistic approach: If a non-dict is found, create new dict, potentially losing the file.
+                        # A better approach: append a special marker or error.
+                        # current_level[part] = {} # Force it to be a dict for further path parts
+                        # current_level = current_level[part]
+                        # Let's log and skip this problematic path to avoid data corruption in tree.
+                        self.app.logger.error(
+                            f"Path conflict: {file_path_str} - segment {part} is a file but needs to be a directory.")
+                        break  # Stop processing this conflicted path
+            else:  # Inner loop completed without break
+                continue
+            break  # Outer loop break if inner loop broke
 
-        self.app.logger.debug(f"File tree for user: {tree}")
+        self.app.logger.debug(f"File tree for user: {json.dumps(tree, indent=2)}")
         return Result.json(data=tree)
-    except ValueError as e:  # e.g. user not authenticated for storage access
+    except ValueError as e:
         self.app.logger.warning(f"Auth error during file tree access: {e}")
         return Result.default_user_error(info=str(e), exec_code=401)
     except Exception as e:
         self.app.logger.error(f"Unexpected error in get_file_tree: {e}", exc_info=True)
         return Result.default_internal_error(info="Failed to retrieve file list.")
 
+
+@export(mod_name=MOD_NAME, api=True, version=VERSION, name="create_share_link_test", api_methods=['GET', 'POST'],
+        request_as_kwarg=True)
+async def create_share_link_test(self):
+
+    return await create_share_link(self, RequestData.moc(), "init.config")
+
+
 @export(mod_name=MOD_NAME, api=True, version=VERSION, name="create_share_link", api_methods=['GET', 'POST'],
         request_as_kwarg=True)
-async def create_share_link(self, request: RequestData) -> Result:
+async def create_share_link(self, request: RequestData, file_path: Optional[str] = None,
+                            share_type: Optional[str] = 'public') -> Result:
     user_uid = await self._get_user_uid_from_request(request)
-    if not user_uid:
+    if not user_uid:  # Should be caught by get_blob_storage called next, but explicit check is good.
         return Result.default_user_error(info="Authentication required to create share links.", exec_code=401)
 
-    file_path = request.query_params.get('file_path') if request.method == 'GET' else (
-            await request.json_body() or {}).get('file_path')
-    # share_type = request.query_params.get('share_type', 'link') # 'public' or 'link' for now same
+    # Determine file_path from query_params (GET) or JSON body (POST)
+    # The function signature allows direct passing too, useful for internal calls.
+    if request.method == 'POST':
+        json_body = request.data or {}
+        file_path = file_path or json_body.get('file_path')
+        share_type = share_type or json_body.get('share_type', 'public')
+    elif request.method == 'GET':
+        file_path = file_path or request.query_params.get('file_path')
+        share_type = share_type or request.query_params.get('share_type', 'public')
 
     if not file_path:
         return Result.default_user_error(info="Parameter 'file_path' is required.", exec_code=400)
 
-    # Validate that the user owns this file path
-    user_storage = await self.get_blob_storage(request)  # Gets storage for the authenticated user
-    if not user_storage.exists(file_path):
-        return Result.default_user_error(info=f"File not found in your storage: {file_path}", exec_code=404)
+    try:
+        user_storage: BlobStorage = await self.get_blob_storage(request)  # Validates user auth implicitly
+        if not BlobFile(file_path, storage=user_storage).exists():
+            return Result.default_user_error(info=f"File not found in your storage: {file_path}", exec_code=404)
+    except ValueError as e:  # From get_blob_storage if auth fails
+        return Result.default_user_error(info=str(e), exec_code=401)
 
     share_id = self._generate_share_id()
     self.shares[share_id] = {
         "owner_uid": user_uid,
         "file_path": file_path,
-        "created_at": time.time(),  # Assuming app has a timestamp utility
-        # "share_type": share_type
+        "created_at": time.time(),
+        "share_type": share_type
     }
     self._save_shares()
 
-    # Construct the full share link URL
-    # This depends on your server's domain and how API routes are exposed.
-    # Assuming standard /api/ModuleName/function_name structure.
-    base_url = request.base_url  # e.g. "http://localhost:8000"
-    # Ensure base_url doesn't have trailing slash, and API path starts with one
-    share_access_path = f"/api/{MOD_NAME}/shared/{share_id}"
+    # Construct the full share link URL. APP_BASE_URL should be set in your app's environment.
+    base_url = os.getenv("APP_BASE_URL", "http://localhost:8000")
+    share_access_path = f"/api/{MOD_NAME}/open_shared?share_id={share_id}"  # Path for access_shared_file endpoint
     full_share_link = str(base_url).rstrip('/') + share_access_path
 
-    self.app.logger.info(f"Share link created by UID {user_uid} for path '{file_path}': {share_id}")
+    self.app.logger.info(
+        f"Share link created by UID {user_uid} for path '{file_path}': ID {share_id}, Link: {full_share_link}")
     return Result.ok(data={"share_id": share_id, "share_link": full_share_link})
 
-@export(mod_name=MOD_NAME, api=True, version=VERSION, name="shared", api_methods=['GET'],
-        request_as_kwarg=True)
-async def access_shared_file(self, request: RequestData, share_id: str) -> Result:
+
+@export(mod_name=MOD_NAME, api=True, version=VERSION, name="open_shared", api_methods=['GET'],
+        request_as_kwarg=True, level=-1, row=True)
+async def access_shared_file(self, request: RequestData, share_id: str) -> Result:  # share_id from path
     """
     Accesses a shared file via its share_id.
     The URL for this would be like /api/FileWidget/shared/{share_id_value}
-    ` in @export tells ToolBoxV2 to extract 'share_id' from the path.
+    The 'share_id: str' in signature implies ToolBoxV2 extracts it from path.
     """
-    if not share_id:  # Should be caught by routing  is mandatory
-        return Result.default_user_error(info="Share ID is missing.", exec_code=400)
+    if not share_id:
+        return Result.html(data="Share ID is missing in path.", status=302)
 
     share_info = self.shares.get(share_id)
     if not share_info:
-        return Result.default_user_error(info="Share link is invalid or has expired.", exec_code=404)
+        return Result.html(data="Share link is invalid or has expired.", status=404)
 
     owner_uid = share_info["owner_uid"]
-    file_path = share_info["file_path"]
+    file_path_in_owner_storage = share_info["file_path"]
 
     try:
         # Get BlobStorage for the owner, not the current request's user (if any)
-        owner_storage = await self.get_blob_storage(owner_uid_override=owner_uid)
-        self.app.logger.info(f"Accessing shared file via link {share_id}: owner {owner_uid}, path {file_path}")
-        return await self._prepare_file_response(owner_storage, file_path)
-    except Exception as e:
-        self.app.logger.error(f"Error accessing shared file {share_id} (owner {owner_uid}, path {file_path}): {e}",
+        owner_storage = await self.get_blob_storage(
+            owner_uid_override=owner_uid)  # Crucially, pass request=None if not needed
+        self.app.logger.info(
+            f"Accessing shared file via link {share_id}: owner {owner_uid}, path {file_path_in_owner_storage}")
+        result = await _prepare_file_response(self, owner_storage, file_path_in_owner_storage)
+        if result.is_error():
+            self.app.logger.error(f"Error preparing shared file response for {share_id}: {result.info.help_text}")
+            return Result.html(data=f"Failed to prepare shared file for download. {result.info.help_text} {result.result.data_info}")
+        return result
+    except ValueError as e:  # From get_blob_storage if owner_uid is invalid for some reason
+        self.app.logger.error(f"Error getting owner's storage for shared file {share_id} (owner {owner_uid}): {e}",
                               exc_info=True)
-        return Result.default_internal_error(info="Could not retrieve shared file.")
-
-# To make this runnable/testable with a ToolBoxV2 app, you'd typically have an app setup:
-#
-# from toolboxv2 import App
-#
-# if __name__ == "__main__":
-#     # This is a mock app setup for standalone thinking.
-#     # In a real ToolBoxV2 app, the App instance is managed globally or passed around.
-#     class MockApp(App):
-#         def __init__(self):
-#             self.data_dir = Path("./.temp_tb_data") # Example data directory
-#             self.data_dir.mkdir(exist_ok=True)
-#             # Mock logger
-#             class MockLogger:
-#                 def info(self, msg): print(f"INFO: {msg}")
-#                 def error(self, msg, exc_info=None): print(f"ERROR: {msg}")
-#                 def warning(self, msg): print(f"WARN: {msg}")
-#                 def debug(self, msg): print(f"DEBUG: {msg}")
-#             self.logger = MockLogger()
-#         def get_timestamp(self): import time; return time.time()
-
-#     mock_app_instance = MockApp()
-#     # The FileWidget would be instantiated by the ToolBoxV2 framework,
-#     # likely when its module is loaded or a request targets it.
-#     # file_widget_instance = FileWidget(app=mock_app_instance)
-#
-#     # Then, ToolBoxV2's routing would call the exported methods based on requests.
-#     # e.g., a GET to /api/FileWidget/ui would call file_widget_instance.get_main_ui(...)
+        return Result.html(data="Could not access owner's storage for shared file.")
+    except Exception as e:
+        self.app.logger.error(
+            f"Error accessing shared file {share_id} (owner {owner_uid}, path {file_path_in_owner_storage}): {e}",
+            exc_info=True)
+        return Result.html(data="Could not retrieve shared file.")

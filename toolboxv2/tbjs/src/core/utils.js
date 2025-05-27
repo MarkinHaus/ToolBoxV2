@@ -205,3 +205,13 @@ export function escapeHtml(unsafe) {
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
 }
+
+
+export function getCssVarHex(varName) {
+    const value = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+    if (value.startsWith('#')) {
+        return parseInt(value.slice(1), 16); // Convert "#6c8ee8" → 0x6c8ee8
+    }
+    console.warn(`CSS variable ${varName} is not a hex color.`);
+    return 0xffffff;
+}

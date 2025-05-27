@@ -321,8 +321,7 @@ async def get_magic_link_email(app: App, username=None):
         user = UserCreator(**asdict(user))
 
     invitation = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
-    nl = len(user.name)
-    res = send_magic_link_email(app, user.email, os.getenv("APP_BASE_URL", "http://localhost:8080")+f"/web/assets/m_log_in.html?key={invitation}&nl={nl}", user.name)
+    res = send_magic_link_email(app, user.email, os.getenv("APP_BASE_URL", "http://localhost:8080")+f"/web/assets/m_log_in.html?key={quote(invitation)}&name={user.name}", user.name)
     return res
 
     # if not invitation.endswith(user.challenge[12:]):

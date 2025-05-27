@@ -511,6 +511,19 @@ Displays modal dialogs.
 *   **Styling:** Uses Tailwind CSS, "milk glass" effect.
 *   **Events:** `modal:shown`, `modal:closed`.
 
+*   **Static Usage:** `TB.ui.Modal.confirm({
+        title,
+        content,
+        confirmButtonText = 'OK',
+        cancelButtonText = 'Cancel',
+        confirmButtonVariant = 'primary',
+        cancelButtonVariant = 'secondary',
+        confirmButtonClass = '',
+        cancelButtonClass = '',
+        hideCancelButton = false,
+        resolveOnClose = false,
+        ...extraModalOptions // Collects any other options passed to confirm
+
 ##### `TB.ui.Toast`
 
 Displays "speech balloon" style toast notifications.

@@ -173,7 +173,8 @@
     --primary-hover:  var(--secondary-color);
     --primary-focus: rgba(var(--secondary-color), 0.25);
     --primary-inverse: var(--text-color);
-
+    --theme-bg-sun: #ffffff;
+    --theme-bg-light: #537FE7;
 
 }
 
@@ -184,6 +185,9 @@
       --tb-color-background: #1f2937; /* gray-800 */
       --tb-color-text: #f3f4f6;       /* gray-100 */
       --tb-color-border: #4b5563;     /* gray-600 */
+
+        --theme-bg-sun: #404060;
+    --theme-bg-light: #181823;
     --theme-bg: #181823;
     --theme-text: #E9F8F9;
     --theme-primary: #6c8ee8; /* Lighter blue for dark mode */
@@ -665,7 +669,104 @@ header {
 .none, .hidden { display: none !important; }
 @media screen and (max-width: 1024px) { html { font-size: 105%; } .main-content { max-width: 90vw; padding: calc(var(--spacing) * 1.2) calc(var(--spacing) * 1.5); } }
 @media screen and (max-width: 767px) { html { font-size: 100%; } .main-content { max-width: 95vw; padding: var(--spacing); border-radius: var(--radius-md); } .Mcontent { padding-top: calc(var(--spacing) * 6); } /* Adjust padding for mobile */ h1 { font-size: var(--font-size-3xl); } h2 { font-size: var(--font-size-2xl); } h3 { font-size: var(--font-size-xl); } .form-container { flex-direction: column; gap: var(--spacing); } .form { max-width: 100%; } button, input[type="button"], input[type="submit"], input[type="reset"] { padding: calc(var(--spacing) * 0.7) calc(var(--spacing) * 1.4); width: 100%; max-width: 300px; margin-right: 0; } form button, form input[type="submit"] { align-self: stretch; max-width: none; } }
+input[type="color"] {
+    display: inline-block;
+    width: 3rem;
+    height: 3rem;
+    padding: 0;
+    margin-bottom: var(--spacing);
+    background-color: var(--input-bg);
+    border: 2px solid var(--input-border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+    appearance: none;
+    overflow: hidden;
+    vertical-align: middle;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+}
 
+input[type="color"]::-webkit-color-swatch-wrapper {
+    padding: 0;
+    border: none;
+    border-radius: calc(var(--radius-md) - 2px);
+}
+
+input[type="color"]::-webkit-color-swatch {
+    border: none;
+    border-radius: calc(var(--radius-md) - 2px);
+    box-shadow: none;
+}
+
+input[type="color"]::-moz-color-swatch {
+    border: none;
+    border-radius: calc(var(--radius-md) - 2px);
+}
+
+input[type="color"]:focus {
+    outline: none;
+    border-color: var(--input-focus-border);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-primary) 25%, transparent),
+                inset 0 1px 3px rgba(0, 0, 0, 0.1);
+    transform: scale(1.05);
+}
+
+input[type="color"]:hover:not(:focus) {
+    border-color: var(--theme-primary);
+    transform: scale(1.02);
+}
+
+input[type="color"]:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Responsive size variants with media queries */
+input[type="color"].large {
+    width: 4rem;
+    height: 4rem;
+}
+
+input[type="color"].small {
+    width: 2rem;
+    height: 2rem;
+}
+
+/* Auto-responsive sizing based on viewport */
+@media screen and (max-width: 1024px) {
+    input[type="color"] {
+        width: 2.75rem;
+        height: 2.75rem;
+    }
+
+    input[type="color"].large {
+        width: 3.5rem;
+        height: 3.5rem;
+    }
+
+    input[type="color"].small {
+        width: 1.75rem;
+        height: 1.75rem;
+    }
+}
+
+@media screen and (max-width: 767px) {
+    input[type="color"] {
+        width: 2.5rem;
+        height: 2.5rem;
+    }
+
+    input[type="color"].large {
+        width: 3rem;
+        height: 3rem;
+    }
+
+    input[type="color"].small {
+        width: 1.5rem;
+        height: 1.5rem;
+    }
+}
 /* ==========================================================================
    7. Scrollbar Styles (Webkit) & Icons (Keep as is)
    ========================================================================== */

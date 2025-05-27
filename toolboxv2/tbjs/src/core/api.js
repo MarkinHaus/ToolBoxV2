@@ -30,6 +30,29 @@ function wrapApiResponse(data, source = "http") {
 
 const Api = {
     wrapApiResponse: wrapApiResponse,
+
+    _readFileAsBase64: (file) => {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+                // reader.result is "data:mime/type;base64,THE_BASE64_STRING"
+                // We need to extract THE_BASE64_STRING
+                const base64String = reader.result.split(',')[1];
+                if (typeof base64String === 'string') {
+                    resolve(base64String);
+                } else {
+                    // This case should ideally not happen with readAsDataURL if file is valid
+                    logger.warn("[API _readFileAsBase64] Failed to extract base64 string from FileReader result for file:", file.name);
+                    reject(new Error("Failed to extract base64 string from FileReader result."));
+                }
+            };
+            reader.onerror = (error) => {
+                logger.error("[API _readFileAsBase64] FileReader error:", error);
+                reject(error);
+            };
+            reader.readAsDataURL(file);
+        });
+    },
     _getRequestHeaders: (isJson = true) => {
         const headers = {
             'Accept': isJson ? 'application/json' : 'text/html',
@@ -55,7 +78,7 @@ const Api = {
      * Makes a request to the backend.
      * @param {string} moduleName - The backend module name, OR a full path starting with '/' for special routes.
      * @param {string} functionName - The backend function name (ignored if moduleName is a full path).
-     * @param {object|string} [payload=null] - Data to send. If string, used as query params for GET/POST-URL.
+     * @param {object|string|FormData} [payload=null] - Data to send. If string, used as query params for GET/POST-URL.
      * @param {string} [method='POST'] - HTTP method.
      * @param {string} [useTauri='auto'] - 'auto', 'force', or 'never'.
      * @param {boolean} [isSpecialAuthRoute=false] - Indicates if this is a special auth route that might have different token handling.
@@ -64,20 +87,67 @@ const Api = {
     request: async (moduleName, functionName, payload = null, method = 'POST', useTauri = 'auto', isSpecialAuthRoute = false) => {
         let command = `${moduleName}.${functionName}`; // For Tauri invoke
         let isFullPath = moduleName.startsWith('/');
+        const isFormDataPayload = payload instanceof FormData;
+
+        // _getRequestHeaders() likely sets 'Accept' and 'Authorization'.
+        // It might also set a default 'Content-Type', which we'll need to override or remove for FormData.
+        const baseHeaders = Api._getRequestHeaders();
+        const options = {
+            method,
+            headers: { ...baseHeaders }, // Start with base headers
+        };
 
         if (!isFullPath && (useTauri === 'auto' || useTauri === 'force') && env.isTauri()) {
             try {
-                logger.debug(`[API] Attempting Tauri invoke: ${command}`, payload);
-                const tauriPayload = {};
-                if(payload){
-                    if(typeof payload === 'string'){
-                         Api.parseQueryParams(payload, tauriPayload);
-                    } else {
-                        Object.assign(tauriPayload, payload);
+                logger.debug(`[API] Attempting Tauri invoke: ${command}`, isFormDataPayload ? "[FormData]" : payload);
+                let tauriInvokePayloadArgs; // This will be the direct argument(s) for invoke
+
+                if (isFormDataPayload) {
+                    // The Rust parser produces a flat HashMap<String, serde_json::Value>.
+                    // We need to construct an equivalent JS object.
+                    // The original JS sent { form_data: { ... } }, so we'll stick to that outer structure
+                    // and make the inner object compatible.
+                    const compatibleFormDataMap = {};
+                    for (const [key, value] of payload.entries()) {
+                        if (value instanceof File) {
+                            try {
+                                compatibleFormDataMap[key] = {
+                                    filename: value.name,
+                                    content_type: value.type || 'application/octet-stream', // Provide a default
+                                    content_base64: await Api._readFileAsBase64(value)
+                                };
+                                logger.debug(`[API] Tauri FormData: Processed file field '${key}': ${value.name}`);
+                            } catch (fileReadError) {
+                                logger.error(`[API] Error reading file ${value.name} (field: ${key}) for Tauri invoke:`, fileReadError);
+                                // Decide how to handle: skip field, error out, or send null
+                                // For now, let's send null as per Rust parser's error handling for decode
+                                compatibleFormDataMap[key] = null;
+                                // Optionally, could return an error immediately:
+                                // return new Result(['tauri', 'file_error'], ToolBoxError.input_error, new ToolBoxResult(), new ToolBoxInfo(-1, `Error reading file ${value.name} for Tauri: ${fileReadError.message}`));
+                            }
+                        } else {
+                            // Regular field, Rust parser expects a string value (which serde_json::json!() will handle)
+                            compatibleFormDataMap[key] = value;
+                            logger.debug(`[API] Tauri FormData: Processed text field '${key}': ${value}`);
+                        }
                     }
+                    // Assuming the Tauri command expects an object with a 'form_data' field
+                    // which then contains our map.
+                    tauriInvokePayloadArgs = { form_data: compatibleFormDataMap };
+
+                } else if (payload !== null && payload !== undefined) {
+                    tauriInvokePayloadArgs = {}; // Initialize as an empty object for kwargs
+                    if (typeof payload === 'string') {
+                         Api.parseQueryParams(payload, tauriInvokePayloadArgs);
+                    } else { // Assumes payload is an object to be spread as kwargs
+                        Object.assign(tauriInvokePayloadArgs, payload);
+                    }
+                } else { // payload is null or undefined
+                    tauriInvokePayloadArgs = {}; // Send empty object as kwargs
                 }
 
-                const response = await window.__TAURI__.invoke(command, tauriPayload);
+                logger.debug(`[API] Tauri invoke payload for ${command}:`, tauriInvokePayloadArgs);
+                const response = await window.__TAURI__.invoke(command, tauriInvokePayloadArgs);
                 logger.debug(`[API] Tauri invoke success for ${command}:`, response);
                 return wrapApiResponse(response, 'tauri');
             } catch (error) {
@@ -92,94 +162,103 @@ const Api = {
         // HTTP Fetch
         let url;
         if (isFullPath) {
-            if (moduleName.includes("IsValidSession") ||moduleName.includes("validateSession") || moduleName.startsWith("/web/")){
+            if (moduleName.includes("IsValidSession") || moduleName.includes("validateSession") || moduleName.startsWith("/web/")){
                 url = `${config.get('baseApiUrl').replace('/api', '')}${moduleName}`;
-                if (method==="POST" && moduleName.includes("IsValidSession")){
-                    method = "GET"
+                if (method === "POST" && moduleName.includes("IsValidSession")){ // Note: case sensitive
+                    method = "GET"; // Update method for options too
+                    options.method = "GET";
                 }
-            }else{
+            } else {
                 url = `${config.get('baseApiUrl')}${moduleName}`;
-            }// moduleName is the path itself
-             if (functionName && typeof functionName === 'string' && functionName.length > 0 && (method.toUpperCase() === 'GET' || method.toUpperCase() === 'DELETE')) {
-                // If functionName is provided for a full path GET/DELETE, treat it as query string
+            }
+            if (functionName && typeof functionName === 'string' && functionName.length > 0 && (method.toUpperCase() === 'GET' || method.toUpperCase() === 'DELETE')) {
                 url += `?${functionName}`;
             } else if (functionName && typeof functionName === 'object' && (method.toUpperCase() === 'GET' || method.toUpperCase() === 'DELETE')) {
                  url += `?${new URLSearchParams(functionName).toString()}`;
             }
-
         } else {
             url = `${config.get('baseApiUrl')}/${moduleName}/${functionName}`;
         }
 
-        const options = {
-            method,
-            // Headers now depend on whether it's a special auth route.
-            // For AuthHttpPostData, it passed its own headers. We can mimic this by not adding auth token for it.
-            headers: Api._getRequestHeaders(true), // Let _getRequestHeaders handle token logic generally
-        };
-
-        // Special handling for AuthHttpPostData which originally had its own Content-Type and Accept.
-        // And it didn't send Authorization Bearer token.
-        // This is tricky to generalize. If `isSpecialAuthRoute` is true, we might want different header logic.
-        // For now, _getRequestHeaders handles token addition. If /validateSession should NOT have it,
-        // the backend should simply ignore it, or _getRequestHeaders needs more specific rules.
-
         if (method.toUpperCase() === 'GET' || method.toUpperCase() === 'DELETE') {
-            if (payload && typeof payload === 'string' && !isFullPath)
-                url += `?${payload}`; // Only add payload as query if not already handled by functionName for full paths
-            else if (payload && typeof payload === 'object' && !isFullPath) url += `?${new URLSearchParams(payload).toString()}`;
+            if (payload && typeof payload === 'string' && !isFullPath) {
+                url += `?${payload}`;
+            } else if (payload && typeof payload === 'object' && !isFullPath) {
+                url += `?${new URLSearchParams(payload).toString()}`;
+            }
+            // For GET/DELETE, payload is in URL, so options.body is not set.
+            // Content-Type is typically not needed for GET/DELETE requests without a body.
+            delete options.headers['Content-Type'];
         } else { // POST, PUT, PATCH
-             if (payload && typeof payload === 'string' && payload.includes('=')) { // Simple check for key=value pairs
-            options.headers['Content-Type'] = 'application/x-www-form-urlencoded';
-            options.body = payload;
+             if (isFormDataPayload) {
+                // For FormData, DO NOT set Content-Type header manually.
+                // The browser will do it correctly, including the boundary.
+                // Remove any Content-Type that might have been set by _getRequestHeaders or previous logic.
+                delete options.headers['Content-Type'];
+                options.body = payload; // payload is already a FormData object
+            } else if (payload && typeof payload === 'string' && payload.includes('=')) {
+                options.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+                options.body = payload;
             } else if (payload && typeof payload === 'string' && method.toUpperCase() === 'POST' && !isFullPath) {
                  url += `?${payload}`;
-            }  else if (payload) {
+                 delete options.headers['Content-Type']; // No body, so no content type for body
+            }  else if (payload !== null && payload !== undefined) {
+                options.headers['Content-Type'] = 'application/json';
                 options.body = JSON.stringify(payload);
+            } else {
+                // If payload is null or undefined for POST/PUT/PATCH, options.body remains unset.
+                // And we might not need a Content-Type, or the server might expect one (e.g., application/json for an empty object).
+                // For safety, if a default was set by _getRequestHeaders, it might remain.
+                // If no body, often Content-Type is omitted or can be 'application/json' if an empty {} is conventional.
+                // If options.headers['Content-Type'] was already set (e.g. to application/json), leave it.
+                // If not, and we want to be explicit for an empty body POST:
+                // options.headers['Content-Type'] = 'application/json';
+                // options.body = JSON.stringify({}); // Or let it be truly empty if the server handles it
+                // For now, let's assume if payload is null, no body is intended, and Content-Type for body is not relevant.
+                delete options.headers['Content-Type'];
             }
         }
 
-
-        logger.debug(`[API] HTTP ${method} request to: ${url}`, payload);
+        logger.debug(`[API] HTTP ${options.method} request to: ${url}`, isFormDataPayload ? "[FormData (details in network tab)]" : payload, "Headers:", options.headers);
         try {
             const response = await fetch(url, options);
-            // Handle cases where response might not be JSON (e.g. logout might return 204 No Content)
             let responseData;
-            const contentType = response.headers.get("content-type");
-            if (contentType && contentType.includes("application/json")) {
-                responseData = await response.json();
-            } else if (response.status === 204 || response.status === 205) { // No Content / Reset Content
+            const contentTypeHeader = response.headers.get("content-type");
+
+            if (response.status === 204 || response.status === 205) { // No Content / Reset Content
                 responseData = { success: true }; // Create a minimal success object
+            } else if (contentTypeHeader && contentTypeHeader.includes("application/json")) {
+                responseData = await response.json();
             } else {
-                // Attempt to read as text if not JSON and not empty
                 const textResponse = await response.text();
-                try {
-                    responseData = JSON.parse(textResponse); // Try parsing if it happens to be JSON anyway
-                } catch (e) {
-                     responseData = { message: textResponse }; // Fallback to text message
+                if (textResponse) {
+                    try {
+                        responseData = JSON.parse(textResponse);
+                    } catch (e) {
+                         responseData = { success: response.ok, message: textResponse }; // Fallback to text message
+                    }
+                } else {
+                    responseData = { success: response.ok }; // Empty response, but use status for success
                 }
             }
 
-
             if (!response.ok) {
                 logger.error(`[API] HTTP error ${response.status} for ${url}:`, responseData);
-                // Ensure wrapApiResponse can handle responseData that might not be a full Result structure
                 const errorPayload = (responseData && typeof responseData === 'object') ? responseData : {};
                 return wrapApiResponse({
                     error: errorPayload.error || ToolBoxError.internal_error,
                     info: errorPayload.info || { exec_code: response.status, help_text: (errorPayload?.message || response.statusText || "HTTP Error") },
                     result: errorPayload.result || {}
-                });
+                }, 'http');
             }
             logger.debug(`[API] HTTP success for ${url}:`, responseData);
-            return wrapApiResponse(responseData);
+            return wrapApiResponse(responseData, 'http');
         } catch (error) {
             logger.error(`[API] HTTP fetch error for ${url}:`, error);
             events.emit('api:networkError', { url, error });
             return new Result(['http', 'error'], ToolBoxError.internal_error, new ToolBoxResult(), new ToolBoxInfo(-1, `Network error: ${error.message || error}`));
         }
     },
-
 
     /**
      * Fetches HTML content for a given path.

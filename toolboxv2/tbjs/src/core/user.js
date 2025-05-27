@@ -169,6 +169,14 @@ const user = {
         TB.logger.info(`[User] Attempting device key login for ${username}`);
         try {
             const privateKeyBase64 = await crypto.retrievePrivateKey(username);
+            this._updateUserState({
+                        isAuthenticated: false,
+                        username: username,
+                        userLevel: 0,
+                        token: null,
+                        isDeviceRegisteredWithKey: false,
+                        userData: {}
+                    }, true);
             if (!privateKeyBase64) {
                 return { success: false, message: `No device key found for ${username}. Consider registering this device or using another login method.` };
             }
@@ -214,12 +222,15 @@ const user = {
                     TB.logger.info(`[User] Device key login successful for ${username}`);
                     return {success: true, message: "Login successful.", data: responseData};
                 } else {
+                    localStorage.removeItem("tb_pk_"+username)
                 return { success: false, message: validationResult.info.help_text || "Device key login failed." };
             }
             } else {
+                localStorage.removeItem("tb_pk_"+username)
                 return { success: false, message: validationResult.info.help_text || "Device key login failed." };
             }
         } catch (error) {
+            localStorage.removeItem("tb_pk_"+username)
             TB.logger.error(`[User] Device key login error for ${username}:`, error);
             return { success: false, message: error.message || "An unexpected error occurred." };
         }
@@ -355,7 +366,7 @@ const user = {
         if (!this.isAuthenticated() || !this.getToken()) return false;
         try {
             const result = await TB.api.request('/IsValidSession', null, { token: this.getToken() }, 'POST', 'never', true);
-            return result.error === TB.ToolBoxError.none && result.get()?.isValid;
+            return result.error === TB.ToolBoxError.none;
         } catch (e) {
             TB.logger.error("[User] Error checking session validity", e);
             return false;

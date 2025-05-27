@@ -95,7 +95,12 @@ function setupMagicLinkLogin() {
             if (result.success) {
                 showGeneralInfo(result.message || `Device registered for ${username}! Logging you in...`, false, "Z2+52:R0+50");
                 setTimeout(() => {
-                    window.TB.router.navigateTo('/web/dashboard'); // Or a more appropriate post-registration page
+                    let next_url = "/web/mainContent.html";
+                    const urlParams = new URLSearchParams(window.location.search);
+                    if (urlParams.get('next')) {
+                        next_url = urlParams.get('next');
+                    }
+                    window.TB.router.navigateTo(next_url); // Or a more appropriate post-registration page
                     if (window.TB.graphics?.stopAnimationSequence) window.TB.graphics.stopAnimationSequence();
                 }, 1200);
             } else {

@@ -258,7 +258,7 @@ def create_magic_log_in(app: App, username: str):
         return Result.default_internal_error("Invalid user or db connection", data="Add -c DB edit_cli [RR, LR, LD, RD]")
     key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
     base_url = app.config_fh.get_file_handler("provider::") + (
-        ':5000' if app.args_sto.host == 'localhost' else "")
+        ':8080' if app.args_sto.host == 'localhost' else "")
     url = f"{base_url}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
     print_qrcode_to_console(url)
     return url

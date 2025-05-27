@@ -330,6 +330,52 @@ class RequestData:
             return getattr(self.request, name)
         raise AttributeError(f"'RequestData' object has no attribute '{name}'")
 
+    @classmethod
+    def moc(cls):
+        return cls(
+            request=Request.from_dict({
+                'content_type': 'application/x-www-form-urlencoded',
+                'headers': {
+                    'accept': '*/*',
+                    'accept-encoding': 'gzip, deflate, br, zstd',
+                    'accept-language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'connection': 'keep-alive',
+                    'content-length': '107',
+                    'content-type': 'application/x-www-form-urlencoded',
+                    'cookie': 'session=abc123',
+                    'host': 'localhost:8080',
+                    'hx-current-url': 'http://localhost:8080/api/TruthSeeker/get_main_ui',
+                    'hx-request': 'true',
+                    'hx-target': 'estimates-guest_1fc2c9',
+                    'hx-trigger': 'config-form-guest_1fc2c9',
+                    'origin': 'http://localhost:8080',
+                    'referer': 'http://localhost:8080/api/TruthSeeker/get_main_ui',
+                    'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Windows"',
+                    'sec-fetch-dest': 'empty',
+                    'sec-fetch-mode': 'cors',
+                    'sec-fetch-site': 'same-origin',
+                    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                },
+                'method': 'POST',
+                'path': '/api/TruthSeeker/update_estimates',
+                'query_params': {},
+                'form_data': {
+                    'param1': 'value1',
+                    'param2': 'value2'
+                }
+            }),
+            session=Session.from_dict({
+                'SiID': '29a2e258e18252e2afd5ff943523f09c82f1bb9adfe382a6f33fc6a8381de898',
+                'level': '1',
+                'spec': '74eed1c8de06886842e235486c3c2fd6bcd60586998ac5beb87f13c0d1750e1d',
+                'user_name': 'root',
+                'custom_field': 'custom_value'
+            }),
+            session_id='0x29dd1ac0d1e30d3f'
+        )
+
 
 # Example usage:
 def parse_request_data(data: dict[str, Any]) -> RequestData:
@@ -617,7 +663,13 @@ class Result:
     def is_error(self):
         if _test_is_result(self.result.data):
             return self.result.data.is_error()
-        return self.info.exec_code != 0
+        if self.error == ToolBoxError.none:
+            return False
+        if self.info.exec_code == 0:
+            return False
+        if self.info.exec_code == 200:
+            return False
+        return True
 
     def is_data(self):
         return self.result.data is not None

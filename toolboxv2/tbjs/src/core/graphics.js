@@ -143,10 +143,12 @@ export function updateTheme(theme) {
     if (!isInitialized) return;
     let clearColorHex, ambientColorHex, pointColorHex;
     if (theme === 'dark') {
-        clearColorHex = 0x000000; ambientColorHex = 0x181823; pointColorHex = 0x404060;
+        clearColorHex = 0x000000;
     } else {
-        clearColorHex = 0xcccccc; ambientColorHex = 0x537FE7; pointColorHex = 0xffffff;
+        clearColorHex = 0xcccccc;
     }
+    ambientColorHex = TB.utils.getCssVarHex('--theme-bg-light');
+    pointColorHex = TB.utils.getCssVarHex('--theme-bg-sun');
     renderer.setClearColor(clearColorHex, 1);
     if (ambientLightInstance) ambientLightInstance.color.setHex(ambientColorHex);
     pointLightInstances.forEach(pl => pl.color.setHex(pointColorHex));

@@ -40,102 +40,411 @@ async def get_dashboard_main_page(app: App, request: RequestData):
     # Main HTML structure for the admin dashboard
     html_content =  """
 <style>
-        body {
-            margin: 0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background-color: var(--theme-bg, var(--tb-color-neutral-50, #f0f2f5));
-            color: var(--theme-text, var(--tb-color-neutral-800, #333));
-            transition: background-color 0.3s ease, color 0.3s ease;
-        }
-        #admin-dashboard { display: flex; flex-direction: column; min-height: 100vh; }
-        #admin-header {
-            background-color: var(--tb-color-neutral-800, #2c3e50);
-            color: var(--tb-color-neutral-100, white);
-            padding: 1rem 1.5rem; display: flex; justify-content: space-between; align-items: center;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        }
-        #admin-header h1 { margin: 0; font-size: 1.6rem; font-weight: 600; display: flex; align-items: center;}
-        #admin-header h1 .material-symbols-outlined { vertical-align: middle; font-size: 1.5em; margin-right: 0.3em; }
-        #admin-header .header-actions { display: flex; align-items: center; }
-        #admin-nav ul { list-style: none; padding: 0; margin: 0 0 0 1.5rem; display: flex; }
-        #admin-nav li { margin-left: 1rem; cursor: pointer; padding: 0.6rem 1rem; border-radius: 6px; transition: background-color 0.2s ease; font-weight: 500; display: flex; align-items: center; }
-        #admin-nav li .material-symbols-outlined { vertical-align: text-bottom; margin-right: 0.3em; }
-        #admin-nav li:hover { background-color: var(--tb-color-neutral-700, #34495e); }
-        #admin-container { display: flex; flex-grow: 1; }
-        #admin-sidebar {
-            width: 240px; background-color: var(--sidebar-bg, var(--tb-color-neutral-100, #ffffff));
-            padding: 1.5rem 1rem; border-right: 1px solid var(--sidebar-border, var(--tb-color-neutral-300, #e0e0e0));
-            box-shadow: 1px 0 3px rgba(0,0,0,0.05); transition: background-color 0.3s ease, border-color 0.3s ease;
-        }
-        body[data-theme="dark"] #admin-sidebar {
-             background-color: var(--sidebar-bg-dark, var(--tb-color-neutral-850, #232b33));
-             border-right-color: var(--sidebar-border-dark, var(--tb-color-neutral-700, #374151));
-        }
-        #admin-sidebar ul { list-style: none; padding: 0; margin: 0; }
-        #admin-sidebar li { padding: 0.9rem 1rem; margin-bottom: 0.6rem; cursor: pointer; border-radius: 8px; display: flex; align-items: center; font-weight: 500; color: var(--sidebar-text, var(--tb-color-neutral-700, #333)); transition: background-color 0.2s ease, color 0.2s ease; }
-        body[data-theme="dark"] #admin-sidebar li { color: var(--sidebar-text-dark, var(--tb-color-neutral-200, #ccc)); }
-        #admin-sidebar li .material-symbols-outlined { margin-right: 0.85rem; font-size: 1.4rem; }
-        #admin-sidebar li:hover { background-color: var(--sidebar-hover-bg, var(--tb-color-neutral-200, #e9ecef)); }
-        body[data-theme="dark"] #admin-sidebar li:hover { background-color: var(--sidebar-hover-bg-dark, var(--tb-color-neutral-700, #34495e)); }
-        #admin-sidebar li.active { background-color: var(--theme-primary, var(--tb-color-primary-500, #007bff)); color: var(--sidebar-active-text, white) !important; font-weight: 600; box-shadow: 0 2px 8px rgba(0, 123, 255, 0.3); }
-        body[data-theme="dark"] #admin-sidebar li.active { background-color: var(--theme-primary-darker, var(--tb-color-primary-600, #0056b3)); }
-        #admin-content { flex-grow: 1; padding: 2rem; }
-        .content-section { display: none; }
-        .content-section.active { display: block; animation: fadeIn 0.5s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .content-section h2 { font-size: 2rem; font-weight: 600; color: var(--theme-text, var(--tb-color-neutral-700, #212529)); margin-bottom: 1.8rem; padding-bottom: 1rem; border-bottom: 1px solid var(--section-border, var(--tb-color-neutral-300, #dee2e6)); display: flex; align-items: center; }
-        .content-section h2 .material-symbols-outlined { font-size: 1.3em; margin-right: 0.5em;}
-        body[data-theme="dark"] .content-section h2 { color: var(--theme-text-dark, var(--tb-color-neutral-100, #f8f9fa)); border-bottom-color: var(--section-border-dark, var(--tb-color-neutral-700, #495057)); }
-        .content-section h3 { font-size: 1.5rem; font-weight: 500; margin-top: 2rem; margin-bottom: 1rem; color: var(--theme-text); }
-        body[data-theme="dark"] .content-section h3 { color: var(--theme-text-dark); }
+/* Refactored styles for Admin Dashboard Page, based on tbjs-main.css principles */
 
-        table { width: 100%; border-collapse: collapse; margin-top: 1.5rem; font-size: 0.9rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); border-radius: 8px; overflow: hidden; }
-        th, td { border: 1px solid var(--tb-color-neutral-200, #e0e0e0); padding: 12px 15px; text-align: left; }
-        body[data-theme="dark"] th, body[data-theme="dark"] td { border-color: var(--tb-color-neutral-700, #4a5568); }
-        th { background-color: var(--tb-color-neutral-100, #f8f9fa); font-weight: 600; }
-        body[data-theme="dark"] th { background-color: var(--tb-color-neutral-750, #323840); }
-        .status-indicator { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
-        .status-green { background-color: var(--tb-color-success-500, #28a745); }
-        .status-yellow { background-color: var(--tb-color-warning-500, #ffc107); }
-        .status-red { background-color: var(--tb-color-danger-500, #dc3545); }
-        .action-btn { padding: 8px 15px; margin: 4px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.875rem; font-weight: 500; transition: background-color 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease; display: inline-flex; align-items: center; }
-        .action-btn .material-symbols-outlined { margin-right: 6px; font-size: 1.2em; }
-        .action-btn:hover { transform: translateY(-1px); box-shadow: 0 2px 5px rgba(0,0,0,0.1);}
-        .action-btn:active { transform: translateY(0px); box-shadow: inset 0 1px 3px rgba(0,0,0,0.1); }
-        .btn-restart { background-color: var(--tb-color-warning-500, #ffc107); color: var(--tb-color-neutral-900, black); } .btn-restart:hover { background-color: var(--tb-color-warning-600, #e0a800); }
-        .btn-edit { background-color: var(--tb-color-info-500, #17a2b8); color: white; } .btn-edit:hover { background-color: var(--tb-color-info-600, #138496); }
-        .btn-delete { background-color: var(--tb-color-danger-500, #dc3545); color: white; } .btn-delete:hover { background-color: var(--tb-color-danger-600, #c82333); }
-        .btn-send-invite { background-color: var(--tb-color-success-500, #28a745); color: white; } .btn-send-invite:hover { background-color: var(--tb-color-success-600, #218838); }
-        .btn-open-link { background-color: var(--tb-color-secondary-500, #6c757d); color: white; } .btn-open-link:hover { background-color: var(--tb-color-secondary-600, #5a6268); }
+body {
+    margin: 0;
+    font-family: var(--font-family-base);
+    background-color: var(--theme-bg);
+    color: var(--theme-text);
+    transition: background-color var(--transition-medium), color var(--transition-medium);
+}
 
-        .frosted-glass-pane {
-            background: var(--glass-bg, rgba(255, 255, 255, 0.75));
-            backdrop-filter: blur(var(--glass-blur, 10px)); -webkit-backdrop-filter: blur(var(--glass-blur, 10px));
-            border-radius: 12px; padding: 2rem;
-            border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
-            box-shadow: var(--glass-shadow, 0 4px 15px rgba(0, 0, 0, 0.08));
-        }
-        body[data-theme="dark"] .frosted-glass-pane {
-            background: var(--glass-bg-dark, rgba(30, 35, 40, 0.75));
-            border-color: var(--glass-border-dark, rgba(255, 255, 255, 0.15));
-        }
-        .tb-input { padding: 0.75rem 1rem; border-radius: 6px; width: 100%; box-sizing: border-box; border: 1px solid var(--tb-color-neutral-300, #ced4da); background-color: var(--tb-color-neutral-0, #fff); color: var(--tb-color-neutral-700, #495057); }
-        body[data-theme="dark"] .tb-input { border-color: var(--tb-color-neutral-600, #495057); background-color: var(--tb-color-neutral-800, #343a40); color: var(--tb-color-neutral-100, #f8f9fa); }
-        .tb-label { font-weight: 500; margin-bottom: 0.5rem; display: block; }
-        .tb-checkbox { margin-right: 0.5rem; }
-        .tb-btn { display:inline-flex; align-items:center; justify-content:center; padding:0.6rem 1.2rem; border-radius:6px; font-weight:500; cursor:pointer; transition: background-color 0.2s ease, box-shadow 0.2s ease; border:none; }
-        .tb-btn .material-symbols-outlined { margin-right: 0.4em; font-size: 1.2em; }
-        .tb-btn-primary { background-color: var(--theme-primary, var(--tb-color-primary-500)); color: white; } .tb-btn-primary:hover { background-color: var(--theme-primary-darker, var(--tb-color-primary-600)); }
-        .tb-space-y-6 > *:not([hidden]) ~ *:not([hidden]) { margin-top: 1.5rem; }
-        .tb-mt-2 { margin-top: 0.5rem; } .tb-mb-1 { margin-bottom: 0.25rem; } .tb-mb-2 { margin-bottom: 0.5rem; } .tb-mt-6 { margin-top: 1.5rem; } /* Added tb-mt-6 */
-        .tb-mr-1 { margin-right: 0.25rem; }
-        .md\\:tb-w-2\\/3 { width: 66.666667%; }
-        .tb-text-red-500 { color: #ef4444; } .tb-text-green-500 { color: #22c55e; } .tb-text-yellow-500 { color: #eab308; }
-        .tb-text-gray-500 { color: #6b7280; } body[data-theme="dark"] .tb-text-gray-500 { color: #9ca3af; }
-        .tb-text-sm { font-size: 0.875rem; } .tb-text-md { font-size: 1rem; } .tb-text-lg { font-size: 1.125rem; }
-        .tb-font-semibold { font-weight: 600; }
-        .tb-flex { display: flex; } .tb-items-center { align-items: center; } .tb-cursor-pointer { cursor: pointer; }
-        #sidebar-toggle-btn { display: none; }
+#admin-dashboard {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+#admin-header {
+    /* Using a distinct dark accent for admin header, different from user-facing primary */
+    background-color: var(--dark-acent); /* e.g., #011b33 from main styles */
+    color: var(--anti-text-clor);       /* e.g., #fff from main styles */
+    padding: var(--spacing) calc(var(--spacing) * 1.5);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 2px 4px color-mix(in srgb, var(--theme-text) 10%, transparent); /* Adapting shadow */
+}
+
+#admin-header h1 {
+    margin: 0;
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-semibold);
+    display: flex;
+    align-items: center;
+}
+
+#admin-header h1 .material-symbols-outlined {
+    vertical-align: middle;
+    font-size: 1.5em;
+    margin-right: 0.3em;
+}
+
+#admin-header .header-actions {
+    display: flex;
+    align-items: center;
+}
+
+#admin-nav ul {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 0 calc(var(--spacing) * 1.5);
+    display: flex;
+}
+
+#admin-nav li {
+    margin-left: var(--spacing);
+    cursor: pointer;
+    padding: calc(var(--spacing) * 0.6) var(--spacing);
+    border-radius: var(--radius-sm);
+    transition: background-color var(--transition-fast);
+    font-weight: var(--font-weight-medium);
+    display: flex;
+    align-items: center;
+}
+
+#admin-nav li .material-symbols-outlined {
+    vertical-align: text-bottom;
+    margin-right: 0.3em;
+}
+
+#admin-nav li:hover {
+    /* Subtle hover on the dark header, using the light text color from header */
+    background-color: color-mix(in srgb, var(--anti-text-clor) 15%, transparent);
+}
+
+#admin-container {
+    display: flex;
+    flex-grow: 1;
+}
+
+#admin-sidebar {
+    width: 240px;
+    background-color: var(--input-bg); /* Good for side panels, adapts to theme */
+    padding: calc(var(--spacing) * 1.5) var(--spacing);
+    border-right: 1px solid var(--theme-border);
+    box-shadow: 1px 0 3px color-mix(in srgb, var(--theme-text) 5%, transparent);
+    transition: background-color var(--transition-medium), border-color var(--transition-medium);
+    /* Responsive behavior handled by @media query below */
+}
+/* Removed body[data-theme="dark"] #admin-sidebar as --input-bg and --theme-border handle themes */
+
+#admin-sidebar ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+#admin-sidebar li {
+    padding: calc(var(--spacing) * 0.9) var(--spacing);
+    margin-bottom: calc(var(--spacing) * 0.6);
+    cursor: pointer;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    font-weight: var(--font-weight-medium);
+    color: var(--theme-text); /* Sidebar items use main text color */
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+/* Removed body[data-theme="dark"] #admin-sidebar li */
+
+#admin-sidebar li .material-symbols-outlined {
+    margin-right: calc(var(--spacing) * 0.85);
+    font-size: 1.4rem;
+}
+
+#admin-sidebar li:hover {
+    background-color: color-mix(in srgb, var(--theme-primary) 15%, transparent);
+    color: var(--theme-primary);
+}
+/* Removed body[data-theme="dark"] #admin-sidebar li:hover */
+
+#admin-sidebar li.active {
+    background-color: var(--theme-primary);
+    color: var(--theme-text-on-primary) !important;
+    font-weight: var(--font-weight-semibold);
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--theme-primary) 30%, transparent);
+}
+/* Removed body[data-theme="dark"] #admin-sidebar li.active */
+
+#admin-content {
+    flex-grow: 1;
+    padding: calc(var(--spacing) * 2);
+    overflow-y: auto; /* Ensure content within can scroll if it overflows */
+}
+
+.content-section {
+    display: none;
+}
+
+.content-section.active {
+    display: block;
+    animation: fadeIn 0.5s ease-out;
+}
+
+@keyframes fadeIn { /* Kept original keyframes */
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.content-section h2 {
+    font-size: var(--font-size-3xl);
+    font-weight: var(--font-weight-semibold);
+    color: var(--theme-text);
+    margin-bottom: calc(var(--spacing) * 1.8);
+    padding-bottom: var(--spacing);
+    border-bottom: 1px solid var(--theme-border);
+    display: flex;
+    align-items: center;
+}
+
+.content-section h2 .material-symbols-outlined {
+    font-size: 1.3em;
+    margin-right: 0.5em;
+}
+/* Removed body[data-theme="dark"] .content-section h2 */
+
+.content-section h3 {
+    font-size: var(--font-size-xl); /* Mapped 1.5rem to xl */
+    font-weight: var(--font-weight-medium);
+    margin-top: calc(var(--spacing) * 2);
+    margin-bottom: var(--spacing);
+    color: var(--theme-text);
+}
+/* Removed body[data-theme="dark"] .content-section h3 */
+
+table {
+    width: 100%;
+    border-collapse: collapse; /* Main theme sets border-collapse */
+    margin-top: calc(var(--spacing) * 1.5);
+    font-size: var(--font-size-sm); /* Main theme sets table font-size */
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--theme-text) 5%, transparent);
+    border-radius: var(--radius-md);
+    overflow: hidden; /* For border-radius to apply to table contents properly */
+    border: 1px solid var(--theme-border); /* Main theme sets this */
+}
+
+th, td {
+    /* Padding and text-align from main theme or override here if different */
+    padding: calc(var(--spacing) * 0.75) var(--spacing); /* 12px, 15px. Using 0.75 & 1 for approximation */
+    text-align: left; /* Main theme sets this */
+    border: 1px solid var(--theme-border); /* Main theme sets this */
+}
+/* Removed body[data-theme="dark"] th, body[data-theme="dark"] td */
+
+th {
+    /* Background, font-weight from main theme or override */
+    background-color: color-mix(in srgb, var(--theme-text) 3%, transparent); /* Main theme th bg */
+    font-weight: var(--font-weight-semibold); /* Main theme th font-weight */
+}
+/* Removed body[data-theme="dark"] th */
+
+.status-indicator {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
+.status-green { background-color: var(--color-success); }
+.status-yellow { background-color: var(--color-warning); }
+.status-red { background-color: var(--color-error); }
+
+.action-btn {
+    padding: calc(var(--spacing) * 0.5) calc(var(--spacing) * 0.9); /* 8px, 15px roughly */
+    margin: calc(var(--spacing) * 0.25);
+    border: none; /* Main theme button has border: 1px solid transparent, this is fine */
+    border-radius: var(--radius-sm); /* 6px, sm is 4px. md is 8px. Keep sm for smaller buttons */
+    cursor: pointer;
+    font-size: var(--font-size-sm); /* 0.875rem */
+    font-weight: var(--font-weight-medium);
+    transition: background-color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast), color var(--transition-fast);
+    display: inline-flex;
+    align-items: center;
+    line-height: var(--line-height-tight); /* Ensure icon and text align well */
+}
+
+.action-btn .material-symbols-outlined {
+    margin-right: 6px;
+    font-size: 1.2em;
+}
+
+.action-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 5px color-mix(in srgb, var(--theme-text) 10%, transparent);
+}
+
+.action-btn:active {
+    transform: translateY(0px);
+    box-shadow: inset 0 1px 3px color-mix(in srgb, var(--theme-text) 10%, transparent);
+}
+
+.btn-restart { background-color: var(--color-warning); color: var(--theme-text); /* Black on yellow is often readable */ }
+.btn-restart:hover { background-color: color-mix(in srgb, var(--color-warning) 85%, black 15%); }
+
+.btn-edit { background-color: var(--color-info); color: var(--theme-text-on-primary); }
+.btn-edit:hover { background-color: color-mix(in srgb, var(--color-info) 85%, black 15%); }
+
+.btn-delete { background-color: var(--color-error); color: var(--theme-text-on-primary); }
+.btn-delete:hover { background-color: color-mix(in srgb, var(--color-error) 85%, black 15%); }
+
+.btn-send-invite { background-color: var(--color-success); color: var(--theme-text-on-primary); }
+.btn-send-invite:hover { background-color: color-mix(in srgb, var(--color-success) 85%, black 15%); }
+
+.btn-open-link { background-color: var(--theme-secondary); color: var(--theme-text-on-primary); }
+.btn-open-link:hover { background-color: color-mix(in srgb, var(--theme-secondary) 85%, black 15%); }
+
+
+.frosted-glass-pane {
+    background-color: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border-radius: var(--radius-lg);
+    padding: calc(var(--spacing) * 2);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+}
+/* Removed body[data-theme="dark"] .frosted-glass-pane */
+
+.tb-input { /* Re-using from previous answer, ensure it's consistent */
+    display: block;
+    width: 100%;
+    padding: calc(var(--spacing) * 0.75) var(--spacing);
+    font-family: inherit;
+    font-size: var(--font-size-base);
+    line-height: var(--line-height-normal);
+    color: var(--theme-text);
+    background-color: var(--input-bg);
+    background-clip: padding-box;
+    border: 1px solid var(--input-border);
+    border-radius: var(--radius-md); /* Original was 6px, md is 8px */
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    appearance: none;
+    box-sizing: border-box;
+}
+.tb-input:focus {
+    outline: none;
+    border-color: var(--input-focus-border);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-primary) 25%, transparent);
+}
+/* Removed body[data-theme="dark"] .tb-input */
+
+.tb-label {
+    font-weight: var(--font-weight-medium);
+    margin-bottom: calc(var(--spacing) * 0.5);
+    display: block;
+    font-size: var(--font-size-sm);
+}
+
+.tb-checkbox { /* Actual input element */
+    /* Inherits from main input[type="checkbox"] styles */
+    margin-right: calc(var(--spacing) * 0.5);
+}
+
+.tb-btn { /* Re-using from previous answer */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: calc(var(--spacing) * 0.6) calc(var(--spacing) * 1.2);
+    border-radius: var(--radius-md);
+    font-weight: var(--font-weight-medium);
+    cursor: pointer;
+    transition: background-color var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+    border: 1px solid transparent;
+    text-align: center;
+    vertical-align: middle;
+    user-select: none;
+}
+.tb-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-primary) 35%, transparent);
+}
+.tb-btn .material-symbols-outlined {
+    margin-right: 0.4em;
+    font-size: 1.2em;
+}
+
+.tb-btn-primary {
+    background-color: var(--button-bg);
+    color: var(--button-text);
+    border-color: var(--button-bg);
+}
+.tb-btn-primary:hover {
+    background-color: var(--button-hover-bg);
+    border-color: var(--button-hover-bg);
+}
+
+.tb-space-y-6 > *:not([hidden]) ~ *:not([hidden]) { margin-top: calc(var(--spacing) * 1.5); }
+.tb-mt-2 { margin-top: calc(var(--spacing) * 0.5); }
+.tb-mb-1 { margin-bottom: calc(var(--spacing) * 0.25); }
+.tb-mb-2 { margin-bottom: calc(var(--spacing) * 0.5); }
+.tb-mt-6 { margin-top: calc(var(--spacing) * 1.5); }
+.tb-mr-1 { margin-right: calc(var(--spacing) * 0.25); }
+
+.md\\:tb-w-2\\/3 { width: 66.666667%; } /* Kept as is */
+
+.tb-text-red-500 { color: var(--color-error); }
+.tb-text-green-500 { color: var(--color-success); } /* Assuming 500 maps to base success */
+.tb-text-yellow-500 { color: var(--color-warning); } /* Assuming 500 maps to base warning */
+.tb-text-gray-500 { color: var(--theme-text-muted); }
+/* Removed body[data-theme="dark"] .tb-text-gray-500 */
+
+.tb-text-sm { font-size: var(--font-size-sm); }
+.tb-text-md { font-size: var(--font-size-base); }
+.tb-text-lg { font-size: var(--font-size-lg); }
+.tb-font-semibold { font-weight: var(--font-weight-semibold); }
+.tb-flex { display: flex; }
+.tb-items-center { align-items: center; }
+.tb-cursor-pointer { cursor: pointer; }
+
+/* This was globally hidden in your provided styles for admin. If a toggle button is needed for mobile,
+   its styling would be similar to #sidebar-toggle-btn in the user dashboard example,
+   and this global hide would be removed or scoped to desktop. */
+#sidebar-toggle-btn {
+    display: none;
+}
+
+@media (max-width: 767.98px) {
+    #admin-sidebar {
+        position: fixed;
+        left: -250px; /* Start off-screen */
+        top: 0;
+        bottom: 0;
+        width: 240px;
+        z-index: var(--z-modal); /* Above backdrop */
+        transition: left var(--transition-medium);
+        overflow-y: auto;
+        /* background-color and border-right will use the default #admin-sidebar styles which are theme-aware */
+    }
+    /* Removed body[data-theme="dark"] #admin-sidebar as it's covered by main styles */
+
+    #admin-sidebar.open {
+        left: 0; /* Slide in */
+        box-shadow: 2px 0 10px color-mix(in srgb, var(--theme-text) 20%, transparent);
+    }
+
+    #sidebar-backdrop-admin {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: color-mix(in srgb, var(--theme-bg) 50%, black 50%);
+        opacity: 0; /* Start transparent */
+        z-index: calc(var(--z-modal) - 1); /* Below sidebar */
+        transition: opacity var(--transition-medium);
+    }
+
+    #sidebar-backdrop-admin.active {
+        display: block;
+        opacity: 0.7; /* Fade in to 70% opacity */
+    }
+    /* If #sidebar-toggle-btn IS used on mobile for admin, its display:block/inline-flex would go here */
+}
          @media (max-width: 767.98px) {
             #admin-sidebar { position: fixed; left: -250px; top: 0; bottom: 0; width: 240px; z-index: 1000; transition: left 0.3s ease-in-out; overflow-y: auto; background-color: var(--sidebar-bg, var(--tb-color-neutral-100, #ffffff)); border-right: 1px solid var(--sidebar-border, var(--tb-color-neutral-300, #e0e0e0)); }
             body[data-theme="dark"] #admin-sidebar { background-color: var(--sidebar-bg-dark, var(--tb-color-neutral-850, #232b33)); border-right-color: var(--sidebar-border-dark, var(--tb-color-neutral-700, #374151));}

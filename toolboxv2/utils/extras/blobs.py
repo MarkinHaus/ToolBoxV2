@@ -239,6 +239,15 @@ class BlobFile(io.IOBase):
 
     # def add_save_on_disk(self, storage_id, one_time_token):
     #     self.storage.save(self.filename, storage_id, one_time_token)
+    def exists(self) -> bool:
+        try:
+            blob_data = pickle.loads(self.storage.read_blob(self.blob_id))
+            if self.folder in blob_data:
+                if self.datei in blob_data[self.folder]:
+                    return True
+            return False
+        except Exception:
+            return False
 
     def clear(self):
         self.data = b""

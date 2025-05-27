@@ -5,19 +5,49 @@ import TB from '../../../index.js';
 const DEFAULT_NAVMENU_OPTIONS = {
     triggerSelector: '#links', // Selector for the menu toggle button
     menuContentHtml: `
-        <ul class="space-y-2 p-4">
-                <li><a href="/web/core0/index.html">Home</a></li>
-                <li><a href="/web/mainContent.html">Apps</a></li>
-                <li><a href="/web/assets/login.html">Login</a></li>
-                <li><a href="/api/CloudM.UI.widget/get_widget">Config</a></li>
-                <li><a href="/web/assets/terms.html">Terms and Conditions</a></li>
-        </ul>
+            <ul class="py-2" style="list-style-type: none;">
+                <li>
+                    <a href="/web/core0/index.html"
+                       class="flex items-center space-x-3 px-4 py-3 text-sm hover:bg-gray-50 transition-colors group">
+                        <span class="material-icons text-lg text-gray-400 group-hover:text-blue-500">home</span>
+                        <span class="text-gray-700 group-hover:text-gray-900">Home</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="/web/mainContent.html"
+                       class="flex items-center space-x-3 px-4 py-3 text-sm hover:bg-gray-50 transition-colors group">
+                        <span class="material-icons text-lg text-gray-400 group-hover:text-green-500">apps</span>
+                        <span class="text-gray-700 group-hover:text-gray-900">Apps</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="/web/assets/login.html"
+                       class="flex items-center space-x-3 px-4 py-3 text-sm hover:bg-gray-50 transition-colors group">
+                        <span class="material-icons text-lg text-gray-400 group-hover:text-purple-500">login</span>
+                        <span class="text-gray-700 group-hover:text-gray-900">Login</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="/api/CloudM.UI.widget/get_widget"
+                       class="flex items-center space-x-3 px-4 py-3 text-sm hover:bg-gray-50 transition-colors group">
+                        <span class="material-icons text-lg text-gray-400 group-hover:text-orange-500">settings</span>
+                        <span class="text-gray-700 group-hover:text-gray-900">Config</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="/web/assets/terms.html"
+                       class="flex items-center space-x-3 px-4 py-3 text-sm hover:bg-gray-50 transition-colors group">
+                        <span class="material-icons text-lg text-gray-400 group-hover:text-red-500">description</span>
+                        <span class="text-gray-700 group-hover:text-gray-900">Terms and Conditions</span>
+                    </a>
+                </li>
+            </ul>
     `,
     menuId: 'tb-nav-menu-modal',
     openIconClass: 'menu', // Material Symbols class
     closeIconClass: 'close',
     customClasses: {
-        overlay: 'fixed inset-0 bg-black bg-opacity-30 z-[1040] opacity-0 transition-opacity duration-300', // Backdrop
+        overlay: 'fixed inset-0 bg-black bg-opacity-30 z-[1040] opacity-0 transition-opacity duration-300 rounded-lg shadow-md border border-gray-200 max-w-sm mx-auto', // Backdrop
         menuContainer: 'fixed top-0 left-0 h-full w-64 sm:w-72 bg-background-color shadow-xl z-[1041] transform -translate-x-full transition-transform duration-300 ease-in-out', // Slide-in menu
         // Or for a centered modal style:
         // menuContainer: 'fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-background-color shadow-xl z-[1041] rounded-lg p-6 opacity-0 scale-95 transition-all duration-300',
