@@ -65,7 +65,7 @@ async def get_widget(app: App | None = None, request: RequestData = None, **kwar
 
         if dashboard_result.is_error():
             return dashboard_result  # Or some error HTML
-        return dashboard_result.get()  # Should be HTML string
+        return dashboard_result  # Should be HTML string
     else:
         # No user logged in - redirect to login page or show guest content
         # For now, let tbjs on the client handle redirect if session is invalid
