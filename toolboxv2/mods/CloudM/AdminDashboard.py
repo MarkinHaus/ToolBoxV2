@@ -38,7 +38,7 @@ async def get_dashboard_main_page(app: App, request: RequestData):
                            status=403)
 
     # Main HTML structure for the admin dashboard
-    html_content =  """
+    html_content =  """<div>
 <style>
 /* Refactored styles for Admin Dashboard Page, based on tbjs-main.css principles */
 
@@ -1185,7 +1185,7 @@ th {
         }
     </script>
     <a href="/api/CloudM.UserDashboard/main">User Dashboard</a>
-"""
+</div>"""
     return Result.html(html_content)
 
 
