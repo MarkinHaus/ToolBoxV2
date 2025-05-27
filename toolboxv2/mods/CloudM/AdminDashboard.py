@@ -30,7 +30,7 @@ async def _is_admin(app: App, request: RequestData) -> User | None:
     return None
 
 
-@export(mod_name=Name, api=True, version=version, name="main", api_methods=['GET'], request_as_kwarg=True, row=True)
+@export(mod_name=Name, api=True, version=version, name="main", api_methods=['GET'], request_as_kwarg=True)
 async def get_dashboard_main_page(app: App, request: RequestData):
     admin_user = await _is_admin(app, request)
     if not admin_user:
