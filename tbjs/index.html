@@ -1997,7 +1997,23 @@ yarn<span class="w"> </span>add<span class="w"> </span>tbjs
 </ul>
 </li>
 <li><strong>Styling:</strong> Uses Tailwind CSS, "milk glass" effect.</li>
-<li><strong>Events:</strong> <code>modal:shown</code>, <code>modal:closed</code>.</li>
+<li>
+<p><strong>Events:</strong> <code>modal:shown</code>, <code>modal:closed</code>.</p>
+</li>
+<li>
+<p><strong>Static Usage:</strong> `TB.ui.Modal.confirm({
+        title,
+        content,
+        confirmButtonText = 'OK',
+        cancelButtonText = 'Cancel',
+        confirmButtonVariant = 'primary',
+        cancelButtonVariant = 'secondary',
+        confirmButtonClass = '',
+        cancelButtonClass = '',
+        hideCancelButton = false,
+        resolveOnClose = false,
+        ...extraModalOptions // Collects any other options passed to confirm</p>
+</li>
 </ul>
 <h5 id="tbuitoast"><code>TB.ui.Toast</code><a class="headerlink" href="#tbuitoast" title="Permanent link">&para;</a></h5>
 <p>Displays "speech balloon" style toast notifications.</p>
