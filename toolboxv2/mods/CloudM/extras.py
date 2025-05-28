@@ -130,7 +130,7 @@ def show_version(_, app: App):
 
 @no_test
 def create_account(self):
-    version_command = self.st_router.config_fh.get_file_handler("provider::")
+    version_command = self.app.config_fh.get_file_handler("provider::")
     url = "https://simeplecore.app/web/signup"
     if version_command is not None:
         url = version_command + "/web/signup"
@@ -211,11 +211,11 @@ def update_core_git(self, backup=False, name="base"):
     self.print("Init Update..")
     if backup:
         os.system("git fetch --all")
-        d = f"git branch backup-master-{self.st_router.id}-{self.version}-{name}"
+        d = f"git branch backup-master-{self.app.id}-{self.version}-{name}"
         os.system(d)
         os.system("git reset --hard origin/master")
     out = os.system("git pull")
-    self.st_router.remove_all_modules()
+    self.app.remove_all_modules()
     try:
         com = " ".join(sys.orig_argv)
     except AttributeError:
@@ -223,14 +223,14 @@ def update_core_git(self, backup=False, name="base"):
         com += " ".join(sys.argv)
 
     if out == 0:
-        self.st_router.print_ok()
+        self.app.print_ok()
     else:
         print("their was an error updating...\n\n")
         print(Style.RED(f"Error-code: os.system -> {out}"))
         print(
             f"if you changes local files type $ cloudM update_core save {name}")
         print(
-            f"your changes will be saved to a branch named : backup-master-{self.st_router.id}-{self.version}-{name}"
+            f"your changes will be saved to a branch named : backup-master-{self.app.id}-{self.version}-{name}"
         )
         print(
             "you can apply yur changes after the update with:\ngit stash\ngit stash pop"
@@ -298,7 +298,7 @@ async def register_initial_loot_user(app: App, email=None, user_name="loot"):
 
 @no_test
 def clear_db(self, do_root=False):
-    db = self.st_router.get_mod('DB', spec=self.spec)
+    db = self.app.get_mod('DB', spec=self.spec)
 
     if db.data_base is None or not db:
         self.print(
