@@ -142,9 +142,9 @@ class Tools(MainTool, FileHandler):
         extra_path = ""
         if self.toolID:  # MainTool attribute
             extra_path = f"/{self.toolID}"
-        self.observation_term_mem_file = f".data/{app.id}/Memory{extra_path}/observationMemory/"
-        self.config['controller_file'] = f".data/{app.id}{extra_path}/controller.json"
-        self.mas_text_summaries_dict = FileCache(folder=f".data/{app.id}/Memory{extra_path}/summaries/")
+        self.observation_term_mem_file = f"{app.data_dir}/Memory{extra_path}/observationMemory/"
+        self.config['controller_file'] = f"{app.data_dir}{extra_path}/controller.json"
+        self.mas_text_summaries_dict = FileCache(folder=f"{app.data_dir}/Memory{extra_path}/summaries/")
         self.tools = {
             "name": "isaa",
             "Version": self.show_version,
@@ -172,7 +172,7 @@ class Tools(MainTool, FileHandler):
         self.global_stream_override = False  # Handled by EnhancedAgentBuilder
         self.pipes_device = 1  # For HuggingFace pipelines
         self.lang_chain_tools_dict: dict[str, Any] = {}  # Store actual tool objects for wrapping
-        self.agent_chain = AgentChain(directory=f".data/{app.id}{extra_path}/chains")
+        self.agent_chain = AgentChain(directory=f"{app.data_dir}{extra_path}/chains")
         self.agent_chain_executor = ChainTreeExecutor()
         # These runners will become async due to get_agent being async
         self.agent_chain_executor.function_runner = self._async_function_runner
@@ -183,7 +183,7 @@ class Tools(MainTool, FileHandler):
         self.summarization_mode = 1
         self.summarization_limiter = 102000
         self.speak = lambda x, *args, **kwargs: x  # Placeholder
-        self.scripts = Scripts(f".data/{app.id}{extra_path}/ScriptFile")
+        self.scripts = Scripts(f"{app.data_dir}{extra_path}/ScriptFile")
         self.ac_task = None  # Unused?
         self.default_setter = None  # For agent builder customization
         self.local_files_tools = True  # Related to old FileManagementToolkit
@@ -225,8 +225,8 @@ class Tools(MainTool, FileHandler):
                 self.load_keys_from_env()
 
             # Ensure directories exist
-            Path(f".data/{get_app('isaa-initIsaa').id}/Agents/").mkdir(parents=True, exist_ok=True)
-            Path(f".data/{get_app().id}/Memory/").mkdir(parents=True, exist_ok=True)
+            Path(f"{get_app('isaa-initIsaa').data_dir}/Agents/").mkdir(parents=True, exist_ok=True)
+            Path(f"{get_app('isaa-initIsaa').data_dir}/Memory/").mkdir(parents=True, exist_ok=True)
 
         initialize_isaa_chains(self.app)
         initialize_isaa_webui_module(self.app, self)
@@ -491,7 +491,7 @@ class Tools(MainTool, FileHandler):
         # For now, this can be a no-op or save AISemanticMemory instances if managed by Tools.
         memory_instance = self.get_memory()  # Assuming this returns AISemanticMemory
         if hasattr(memory_instance, 'save_all_memories'):  # Hypothetical method
-            memory_instance.save_all_memories(f".data/{get_app().id}/Memory/")
+            memory_instance.save_all_memories(f"{get_app().data_dir}/Memory/")
         self.print("Memory saving process initiated")
 
     def get_agent_builder(self, name="self") -> EnhancedAgentBuilder:
@@ -502,7 +502,7 @@ class Tools(MainTool, FileHandler):
         agent_builder._isaa_ref = self  # Store ISAA reference if needed by builder logic or tools
 
         # Load from file if exists
-        agent_config_path = Path(f".data/{get_app().id}/Agents/{name}.agent.json")  # Builder saves as .json
+        agent_config_path = Path(f"{get_app().data_dir}/Agents/{name}.agent.json")  # Builder saves as .json
         if agent_config_path.exists():
             try:
                 agent_builder.load_config(agent_config_path)
@@ -563,7 +563,7 @@ class Tools(MainTool, FileHandler):
         # Configure cost tracking persistency if not already set by loaded config
         if agent_builder._config.cost_tracker_config is None or agent_builder._config.cost_tracker_config.get(
             'type') != 'json':
-            cost_file = Path(f".data/{get_app().id}/Agents/{name}.costs.json")
+            cost_file = Path(f"{get_app().data_dir}/Agents/{name}.costs.json")
             agent_builder.with_json_cost_tracker(cost_file)
 
         return agent_builder
@@ -575,7 +575,7 @@ class Tools(MainTool, FileHandler):
             self.config.pop(f'agent-instance-{agent_name}', None)  # Remove old instance
 
         # Save the builder's configuration
-        config_path = Path(f".data/{get_app().id}/Agents/{agent_name}.agent.json")
+        config_path = Path(f"{get_app().data_dir}/Agents/{agent_name}.agent.json")
         agent_builder.save_config(config_path)
         self.print(f"Saved EnhancedAgentBuilder config for '{agent_name}' to {config_path}")
 

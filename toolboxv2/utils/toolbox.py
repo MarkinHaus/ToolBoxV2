@@ -102,6 +102,11 @@ class App(AppType, metaclass=Singleton):
             self.data_dir = start_dir + '\\.data\\' + "test"
             self.config_dir = start_dir + '\\.config\\' + "test"
             self.info_dir = start_dir + '\\.info\\' + "test"
+        elif identification.startswith('collective-'):
+            collective_identification = identification.split('-')[1]
+            self.data_dir = self.start_dir + '\\.data\\' + collective_identification
+            self.config_dir = self.start_dir + '\\.config\\' + collective_identification
+            self.info_dir = self.start_dir + '\\.info\\' + collective_identification
         else:
             self.data_dir = self.start_dir + '\\.data\\' + identification
             self.config_dir = self.start_dir + '\\.config\\' + identification
@@ -732,6 +737,9 @@ class App(AppType, metaclass=Singleton):
                 return False
 
         return True
+
+    def __call__(self, *args, **kwargs):
+        return self.run(*args, **kwargs)
 
     def run(self, *args, request=None, running_function_coro=None, **kwargs):
         """

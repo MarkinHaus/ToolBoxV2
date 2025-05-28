@@ -18,7 +18,7 @@ from toolboxv2.utils.extras.blobs import BlobFile, BlobStorage
 
 # --- Constants ---
 MOD_NAME = Name = "FileWidget"
-VERSION = "0.2.0"  # Incremented version
+VERSION = "0.2.1"  # Incremented version
 SHARES_METADATA_FILENAME = "filewidget_shares.json"
 
 # --- Module Export ---
@@ -489,11 +489,25 @@ def get_template_content() -> str:
                         console.error("Download failed", response.status, await response.text());
                         return;
                     }
+
+                    // Try to get filename from Content-Disposition header or fall back to path
+                    let filename = actualFilePathFromServer.split('/').pop() || 'download';
+
+                    const contentDisposition = response.headers.get('Content-Disposition');
+                    if (contentDisposition) {
+                        // RFC 6266 konforme Extraktion des Dateinamens
+                        const filenameMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^"]+)"?/);
+
+                        if (filenameMatch) {
+                            filename = decodeURIComponent(filenameMatch[1] || filenameMatch[2] || filename).replace(/[/\\?%*:|"<>]/g, '-');
+                        }
+                    }
+
                     const blob = await response.blob();
                     const url = window.URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = actualFilePathFromServer.split('/').pop();
+                    a.download = filename;
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
@@ -748,30 +762,63 @@ async def _prepare_file_response(self, storage: BlobStorage, blob_path: str, row
                         break
                     yield data_chunk
         if row:
-            return data.decode('utf-8')
-        data = base64.b64encode(data).decode('utf-8')
-        self.app.logger.info(f"Preparing to stream file '{blob_path}' ({content_type}, {file_size} bytes).")
-        result = Result.html(data=f"""<div>
-<h2>Download Embedded File</h2>
-  <a id="download-link" download="{filename}">Download File</a>
+            return Result.file(data, filename)
 
-  <script unSave="true">
-    // Embedded base64 data
-    const base64Data = "{data}";
+        self.app.logger.info(f"Preparing file download '{blob_path}' ({content_type}, {file_size} bytes).")
 
-    // Create a Blob from base64
-    const byteCharacters = atob(base64Data);
-    const byteNumbers = Array.from(byteCharacters, c => c.charCodeAt(0));
-    const byteArray = new Uint8Array(byteNumbers);
-    const blob = new Blob([byteArray]);
+        # Convert to base64 for embedding in HTML
+        data_base64 = base64.b64encode(data).decode('utf-8')
 
-    // Create a URL and set the download link
-    const link = document.getElementById('download-link');
-    link.href = URL.createObjectURL(blob);
-    link.download = "{filename}";
-  </script>
-</div>""",
-        )
+        # Create HTML that automatically downloads the file with correct filename
+        download_html = f"""<div>
+    <title>Downloading {filename}</title>
+    <div style="padding: 50px; font-family: Arial, sans-serif;">
+        <h2>Downloading {filename}</h2>
+        <section>
+        <p>Your download should start automatically...</p>
+        <p><a id="download-link" href="#" download="{filename}">Click here if download doesn't start</a></p>
+        </section>
+    </div>
+    <script unSave="true">
+    if (window.TB) {{
+        TB.ui.Toast.showInfo("Download started.");
+
+        // Convert base64 to blob and trigger download
+        const base64Data = "{data_base64}";
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {{
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }}
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], {{type: "{content_type}"}});
+
+        const url = URL.createObjectURL(blob);
+        const link = document.getElementById('download-link');
+        link.href = url;
+        link.download = "{filename}";
+
+         // Get the current URL and its query parameters
+          const currentUrl = new URL(window.location.href);
+
+          // Add or set the query parameter `row=true`
+          currentUrl.searchParams.set('row', 'true');
+
+          // Set this URL to the download link
+          const downloadLink = document.getElementById('download-link');
+          downloadLink.href = currentUrl.toString();
+
+        // Auto-trigger download
+        setTimeout(() => {{
+            link.click();
+            // Clean up
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }}, 100);
+    }}
+    </script>
+</div>"""
+
+        result = Result.html(data=download_html)
         return result
     except FileNotFoundError:
         self.app.logger.warning(f"Download attempt for non-existent file (caught late): {blob_path}")
@@ -792,7 +839,7 @@ async def handle_download(self, request: RequestData, **kwargs) -> Result:  # Re
         # User's own storage. get_blob_storage handles auth check.
         storage = await self.get_blob_storage(request)
         self.app.logger.info(f"User download request for: {blob_path} from their storage.")
-        result = await _prepare_file_response(self, storage, blob_path)
+        result = await _prepare_file_response(self, storage, blob_path, row=True)
         return result
     except ValueError as e:  # Raised by get_blob_storage if user not authenticated
         self.app.logger.warning(f"Auth error during download for path {blob_path}: {e}")
@@ -911,8 +958,11 @@ async def create_share_link(self, request: RequestData, file_path: Optional[str]
     self._save_shares()
 
     # Construct the full share link URL. APP_BASE_URL should be set in your app's environment.
+    # Include the filename in the URL so the browser can use it for download
+    from pathlib import Path
+    filename = Path(file_path).name
     base_url = os.getenv("APP_BASE_URL", "http://localhost:8000")
-    share_access_path = f"/api/{MOD_NAME}/open_shared?share_id={share_id}"  # Path for access_shared_file endpoint
+    share_access_path = f"/api/{MOD_NAME}/open_shared?share_id={share_id}&filename={filename}"  # Include filename
     full_share_link = str(base_url).rstrip('/') + share_access_path
 
     self.app.logger.info(
@@ -922,7 +972,7 @@ async def create_share_link(self, request: RequestData, file_path: Optional[str]
 
 @export(mod_name=MOD_NAME, api=True, version=VERSION, name="open_shared", api_methods=['GET'],
         request_as_kwarg=True, level=-1, row=True)
-async def access_shared_file(self, request: RequestData, share_id: str) -> Result:  # share_id from path
+async def access_shared_file(self, request: RequestData, share_id: str, filename: str = None, row=None) -> Result:  # share_id from query params
     """
     Accesses a shared file via its share_id.
     The URL for this would be like /api/FileWidget/shared/{share_id_value}
@@ -944,7 +994,7 @@ async def access_shared_file(self, request: RequestData, share_id: str) -> Resul
             owner_uid_override=owner_uid)  # Crucially, pass request=None if not needed
         self.app.logger.info(
             f"Accessing shared file via link {share_id}: owner {owner_uid}, path {file_path_in_owner_storage}")
-        result = await _prepare_file_response(self, owner_storage, file_path_in_owner_storage)
+        result = await _prepare_file_response(self, owner_storage, file_path_in_owner_storage, row=row is not None)
         if result.is_error():
             self.app.logger.error(f"Error preparing shared file response for {share_id}: {result.info.help_text}")
             return Result.html(data=f"Failed to prepare shared file for download. {result.info.help_text} {result.result.data_info}")

@@ -8,7 +8,7 @@ watch_modules = ["CloudM", "TruthSeeker", "DoNext"]
 
 
 [toolbox]
-client_prifix="api-debug"
+client_prifix="collective-debugApi-"
 timeout_seconds = 60
 max_instances = 2
 

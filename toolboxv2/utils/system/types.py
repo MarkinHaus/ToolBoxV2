@@ -898,6 +898,50 @@ class Result:
         return cls(error=error, info=info_obj, result=result)
 
     @classmethod
+    def file(cls, data, filename, content_type=None, info="OK", interface=ToolBoxInterfaces.remote):
+        """Create a file download response Result.
+
+        Args:
+            data: File data as bytes or base64 string
+            filename: Name of the file for download
+            content_type: MIME type of the file (auto-detected if None)
+            info: Response info text
+            interface: Target interface
+
+        Returns:
+            Result object configured for file download
+        """
+        import base64
+        import mimetypes
+
+        error = ToolBoxError.none
+        info_obj = ToolBoxInfo(exec_code=200, help_text=info)
+
+        # Auto-detect content type if not provided
+        if content_type is None:
+            content_type, _ = mimetypes.guess_type(filename)
+            if content_type is None:
+                content_type = "application/octet-stream"
+
+        # Ensure data is base64 encoded string (as expected by Rust server)
+        if isinstance(data, bytes):
+            base64_data = base64.b64encode(data).decode('utf-8')
+        elif isinstance(data, str):
+            # Assume it's already base64 encoded
+            base64_data = data
+        else:
+            raise ValueError("File data must be bytes or base64 string")
+
+        result = ToolBoxResult(
+            data_to=interface,
+            data=base64_data,  # Rust expects base64 string for "file" type
+            data_info=f"File download: {filename}",
+            data_type="file"
+        )
+
+        return cls(error=error, info=info_obj, result=result)
+
+    @classmethod
     def redirect(cls, url, status_code=302, info="Redirect", interface=ToolBoxInterfaces.remote):
         """Create a redirect response."""
         error = ToolBoxError.none
