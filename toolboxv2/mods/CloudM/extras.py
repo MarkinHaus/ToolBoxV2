@@ -18,7 +18,7 @@ no_test = export(mod_name=Name, test=False, version=version)
 test_only = export(mod_name=Name, test=True, version=version, test_only=True)
 to_api = export(mod_name=Name, api=True, version=version)
 
-@no_test
+@no_test # TODO make user spesifc and public apps
 def add_ui(app: App, name:str, title:str, path:str, description:str, auth=False):
     if app is None:
         app = get_app("add_ui")

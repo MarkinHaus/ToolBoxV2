@@ -1189,75 +1189,6 @@ th {
     return Result.html(html_content)
 
 
-# --- Existing Admin API Endpoints (System Status, User Mgmt, Module Mgmt, My Account) ---
-@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
-async def get_system_status(app: App, request: RequestData):
-    # ... (implementation from previous response, ensure PID_DIR is correct) ...
-    admin_user = await _is_admin(app, request)
-    if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
-
-    status_str = mini.get_service_status(PID_DIR)  # Make sure PID_DIR is correct
-    services_data = {}
-    lines = status_str.split('n')
-    if lines and lines[0].startswith("Service(s):"):
-        for line in lines[1:]:
-            if not line.strip(): continue
-            parts = line.split('(PID:')
-            name_part = parts[0].strip()
-            pid_part = "N/A"
-            if len(parts) > 1 and parts[1]: pid_part = parts[1].replace(')', '').strip()
-            status_indicator = name_part[0] if len(name_part) > 0 else "🟡"
-            service_full_name = name_part[2:].strip() if len(name_part) > 1 else "Unknown Service"
-            services_data[service_full_name] = {"status_indicator": status_indicator, "pid": pid_part}
-    elif status_str == "No services found":
-        services_data = {}
-    else:
-        if '(PID:' in status_str:
-            parts = status_str.split('(PID:')
-            name_part = parts[0].strip()
-            pid_part = "N/A"
-            if len(parts) > 1 and parts[1]: pid_part = parts[1].replace(')', '').strip()
-            status_indicator = name_part[0] if len(name_part) > 0 else "🟡"
-            service_full_name = name_part[2:].strip() if len(name_part) > 1 else "Unknown Service"
-            services_data[service_full_name] = {"status_indicator": status_indicator, "pid": pid_part}
-        elif status_str.strip():
-            services_data["unknown_service_format"] = {"status_indicator": "🟡", "pid": "N/A", "details": status_str}
-        else:
-            services_data = {}
-    return Result.json(data=services_data)
-
-
-@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
-async def list_users_admin(app: App, request: RequestData):
-    # ... (implementation from previous response) ...
-    admin_user = await _is_admin(app, request)
-    if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
-    all_users_result = await app.a_run_any(TBEF.DB.GET, query="USER::*", get_results=True)
-    if all_users_result.is_error():
-        return Result.default_internal_error(info="Failed to fetch users: " + str(all_users_result.info))
-    users_data = []
-    user_list_raw = all_users_result.get()
-    if user_list_raw:
-        for user_bytes in user_list_raw:
-            try:
-                user_str = user_bytes.decode() if isinstance(user_bytes, bytes) else str(user_bytes)
-                user_dict = {}
-                try:
-                    user_dict = json.loads(user_str)
-                except json.JSONDecodeError:
-                    app.print("Warning: User data (admin list) not valid JSON, falling back to eval: " + str(
-                        user_str[:100]) + "...", "WARNING")
-                    user_dict = eval(user_str)
-                users_data.append({"uid": user_dict.get("uid", "N/A"), "name": user_dict.get("name", "N/A"),
-                                   "email": user_dict.get("email"), "level": user_dict.get("level", -1),
-                                   "is_persona": user_dict.get("is_persona", False),
-                                   "settings": user_dict.get("settings", {})})
-            except Exception as e:
-                app.print("Error parsing user data for admin list: " + str(user_bytes[:100]) + "... - Error: " + str(e),
-                          "ERROR")
-    return Result.json(data=users_data)
-
-
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
 async def get_system_status(app: App, request: RequestData):
     admin_user = await _is_admin(app, request)
@@ -1402,10 +1333,10 @@ async def delete_user_admin(app: App, request: RequestData, data: dict):
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
 async def reload_module_admin(app: App, request: RequestData, data: dict):
     admin_user = await _is_admin(app, request)
-    if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
+    if not admin_user: return Result.redirect("/web/core0/index.html")
     module_name = data.get("module_name")
     if not module_name: return Result.default_user_error(info="Module name is required.")
-    app.print("Admin request to reload module: " + str(module_name), "INFO")
+    app.print("Admin request to reload module: " + str(module_name))
     try:
         if module_name in app.get_all_mods():
             if hasattr(app, 'reload_mod'):
@@ -1424,16 +1355,18 @@ async def reload_module_admin(app: App, request: RequestData, data: dict):
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
 async def get_waiting_list_users_admin(app: App, request: RequestData):
     admin_user = await _is_admin(app, request)
-    if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
+    if not admin_user: return Result.redirect("/web/core0/index.html")
     waiting_list_res = await app.a_run_any(TBEF.DB.GET, query="email_waiting_list", get_results=True)
+    waiting_list_res.print()
     if waiting_list_res.is_error() or not waiting_list_res.get(): return Result.json(data=[])
     raw_data = waiting_list_res.get()
     try:
         if isinstance(raw_data, bytes): raw_data = raw_data.decode()
         if isinstance(raw_data, list) and len(raw_data) > 0: raw_data = raw_data[0]
-        waiting_list_emails = json.loads(raw_data)
+        waiting_list_emails = json.loads(raw_data.replace("'", '"')).get("set")
+        app.print(f"DARA::, {waiting_list_emails}, {type(waiting_list_emails)}")
         if not isinstance(waiting_list_emails, list): return Result.json(data=[])
-        return Result.json(data=waiting_list_emails)
+        return Result.json(data=list(waiting_list_emails))
     except (json.JSONDecodeError, TypeError, IndexError) as e:
         app.print("Error parsing waiting list data: " + str(e), "ERROR");
         return Result.json(data=[])
@@ -1442,7 +1375,7 @@ async def get_waiting_list_users_admin(app: App, request: RequestData):
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
 async def remove_from_waiting_list_admin(app: App, request: RequestData, data: dict):
     admin_user = await _is_admin(app, request)
-    if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
+    if not admin_user: return Result.redirect("/web/core0/index.html")
     email_to_remove = data.get("email")
     if not email_to_remove: return Result.default_user_error(info="Email is required.")
     waiting_list_res = await app.a_run_any(TBEF.DB.GET, query="email_waiting_list", get_results=True)
@@ -1467,14 +1400,15 @@ async def remove_from_waiting_list_admin(app: App, request: RequestData, data: d
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
 async def send_invite_to_waiting_list_user_admin(app: App, request: RequestData, data: dict):
     admin_user = await _is_admin(app, request)
-    if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
+    if not admin_user: return Result.redirect("/web/core0/index.html")
     email_to_invite = data.get("email")
     proposed_username = data.get("username")
     if not email_to_invite or not proposed_username: return Result.default_user_error(
         info="Email and proposed username are required.")
 
+
     # db_helper_test_exist is sync, wrap it if true async desired or use a_run_any
-    if await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.DB_HELPER_TEST_EXIST, username=proposed_username):
+    if db_helper_test_exist(app, username=proposed_username):
         return Result.default_user_error(info="Proposed username '" + str(proposed_username) + "' already exists.")
 
     # send_signup_invitation_email is sync. Assuming it's okay or would be wrapped.
@@ -1490,7 +1424,7 @@ async def send_invite_to_waiting_list_user_admin(app: App, request: RequestData,
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
 async def list_spps_admin(app: App, request: RequestData):
     admin_user = await _is_admin(app, request)
-    if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
+    if not admin_user: return Result.redirect("/web/core0/index.html")
     spp_list = []
     try:
         # Directly use the imported dictionary from extras

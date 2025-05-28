@@ -43,7 +43,7 @@ BING_SEARCH_URL=
 
 GMAIL_PASSWORD=
 GMAIL_EMAIL=
-EMAIL_BG_LIGHT_URL="/web/assets/backgrounds/dark-bg.png"
+EMAIL_BG_LIGHT_URL="/web/assets/backgrounds/light-bg.png"
 EMAIL_BG_DARK_URL="/web/assets/backgrounds/dark-bg.png"
 EMAIL_LOGO_URL="/web/icons/icon.png"
 GOOGLE_CREDENTIALS_FILE=

@@ -32,13 +32,14 @@ function initEmailWaitingList() {
 
             // Disable button during submission
             submitButton.disabled = true;
+            submitButton.classList.add('is-submitting')
             submitButton.textContent = 'Subscribing...';
 
             // Call your 3D animation functions via TB.graphics
             // Assuming Set_animation_xyz(speedMultiplier, rotX, rotY, factor)
             // Call 1: Set_animation_xyz(0, 0.6, 0, 16)
             if (TB.graphics && typeof TB.graphics.setAnimationSpeed === 'function') {
-                TB.graphics.setAnimationSpeed(0.6, 0, 0, 16); // Mapped: x=0.6, y=0, z=0 (implicit), factor=16
+                TB.graphics.setAnimationSpeed(0.6, 0, 0.1, 24); // Mapped: x=0.6, y=0, z=0 (implicit), factor=16
             }
 
 
@@ -94,8 +95,9 @@ function initEmailWaitingList() {
                     }, 300); // Original had 300ms timeout
                 }
 
-                submitButton.disabled = false;
+                submitButton.disabled = true;
                 submitButton.textContent = 'Subscribe';
+                submitButton.classList.remove('is-submitting'); // THIS IS THE KEY CHANGE
             }
         });
     } else {

@@ -114,47 +114,37 @@ const user = {
     async signup(username, email, initiationKey, registerAsPersona = false) {
         TB.logger.info(`[User] Attempting signup for ${username}`);
         try {
-            // The old signup.js had a complex flow. Let's assume a simplified API for now.
-            // 'CloudM.AuthManager.create_user_with_init_key_personal'
-            // This needs to be adapted based on your actual backend endpoint for signup.
-            // It seems 'create_user_with_init_key_personal' might be for WebAuthn (Persona)
-            // and a different one for simple user + device key.
-
+            const keys = await crypto.generateAsymmetricKeys();
+            await crypto.storePrivateKey(keys.privateKey_base64, username);
             // This is a placeholder for your actual signup logic
             // It likely involves one or two API calls.
-            const payload = { username, email, initiation_key: initiationKey, as_persona: registerAsPersona };
+            const payload = {
+                name: username,
+                email: email,
+                pub_key: keys.publicKey,//initiation_key: initiationKey,
+                invitation: initiationKey, // registerAsPersona
+                web_data: true,
+                as_base64: false
+            };
             const result = await TB.api.request('CloudM.AuthManager', 'create_user', payload, 'POST'); // Adjust endpoint
 
             if (result.error === TB.ToolBoxError.none && result.get()) {
-                const responseData = result.get();
-                TB.logger.info(`[User] Signup successful for ${username}. Data:`, responseData);
+                // 2. Perform WebAuthn registration
 
-                // If signup immediately logs in or provides a token:
-                if (typeof responseData === 'string') {
-                     this._updateUserState({
-                        isAuthenticated: true,
-                        username: responseData.username || username,
-                        userLevel: responseData.userLevel || 0,
-                        token: responseData.token || null,
-                        userData: responseData.userData || {}
-                    }, true);
-                    await this.registerWebAuthnForCurrentUser(username, responseData);
-                } else if (responseData.token) {
-                    return this._updateUserState({
-                        isAuthenticated: true,
-                        username: responseData.username || username,
-                        userLevel: responseData.userLevel || 0,
-                        token: responseData.token,
-                        userData: responseData.userData || {}
-                    }, true);
+                const { challenge, userId, username ,...rest } = result.get();
+                // The 'sing' parameter's purpose from original cryp.js unclear, may need token or specific server data.
+                // For adding a credential to an existing user, 'sing' might be the current session token.
+                const currentToken = this.getToken();
+                const registrationPayload = await crypto.registerWebAuthnCredential({ challenge, userId, username }, currentToken);
+
+                // 3. Send new WebAuthn credential to server
+                const result = await TB.api.request('CloudM.AuthManager', 'register_user_personal_key', registrationPayload, 'POST');
+                if (result.error === TB.ToolBoxError.none) {
+                    TB.logger.info(`[User] WebAuthn (Persona) registration successful for ${username}`);
+                    return { success: true, message: result.info.help_text || "WebAuthn credential registered." };
+                } else {
+                    return { success: false, message: result.info.help_text || "Failed to register WebAuthn credential." };
                 }
-
-                // If signup requires separate login or WebAuthn registration:
-                // The responseData should guide the next step.
-                // e.g., if (registerAsPersona && responseData.webAuthnChallenge) {
-                //    await this.registerWebAuthn(username, responseData.webAuthnChallengeInfo);
-                // }
-                return { success: true, data: responseData, message: result.info.help_text || "Signup successful." };
             } else {
                 TB.logger.warn(`[User] Signup failed for ${username}: ${result.info.help_text}`);
                 return { success: false, message: result.info.help_text || "Signup failed." };
@@ -322,7 +312,7 @@ const user = {
         }
     },
 
-    async registerWebAuthnForCurrentUser(username) {
+    async registerWebAuthnForCurrentUser(username, invitationKey) {
         TB.logger.info(`[User] Attempting to register WebAuthn (Persona) for current user ${username}`);
         if (!this.isAuthenticated() || this.getUsername() !== username) {
             return { success: false, message: "User must be logged in to register a WebAuthn credential." };
@@ -332,11 +322,22 @@ const user = {
             // This endpoint needs to be specific for adding a new WebAuthn credential to an *existing, authenticated* user.
             // The old 'create_user_with_init_key_personal' might not be it.
             // Let's assume an endpoint 'getWebAuthnRegistrationChallengeForUser'
-            const challengeRes = await TB.api.request('/CloudM.AuthManager/get_to_sing_data', 'username='+username+'&personal_key=true', {  }, 'GET');
+             const keys = await crypto.generateAsymmetricKeys();
+            await crypto.storePrivateKey(keys.privateKey_base64, username);
+
+            const payload = {
+                name: username,
+                pub_key: keys.publicKey, // PEM format from generateAsymmetricKeys
+                invitation: invitationKey,
+                web_data: true,
+                as_base64: false // Assuming server expects PEM
+            };
+            const challengeRes = await TB.api.request('CloudM.AuthManager', 'add_user_device', payload, 'POST');
+
             if (challengeRes.error !== TB.ToolBoxError.none || !challengeRes.get()?.challenge) {
                 return { success: false, message: challengeRes.info.help_text || "Failed to get WebAuthn registration challenge."};
             }
-            const { challenge, userId } = challengeRes.get().challenge; // Server provides challenge and its internal userId for WebAuthn
+            const { challenge, userId } = challengeRes.get(); // Server provides challenge and its internal userId for WebAuthn
 
             // 2. Perform WebAuthn registration
             // The 'sing' parameter's purpose from original cryp.js unclear, may need token or specific server data.

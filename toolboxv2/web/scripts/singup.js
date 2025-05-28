@@ -4,10 +4,20 @@ function setupSignup() {
     const signupForm = document.getElementById('signupForm');
     const usernameInput = document.getElementById('username');
     const emailInput = document.getElementById('email');
-    const initiationKeyInput = document.getElementById('initiation'); // Assuming this is the ID
-    const skipPersonaButton = document.getElementById('skip-persona-button'); // Button to signup without WebAuthn initially
-    const infoPopup = document.getElementById('infoPopup'); // Local UI
-    const infoText = document.getElementById('infoText');   // Local UI
+    const initiationKeyInput = document.getElementById('initiation');
+    const skipPersonaButton = document.getElementById('skip-persona-button');
+    const infoPopup = document.getElementById('infoPopup');
+    const infoText = document.getElementById('infoText');
+
+    // --- 🔍 Parse URL and prefill fields if applicable
+    const urlParams = new URLSearchParams(window.location.search);
+    const defaultEmail = urlParams.get('email');
+    const defaultUsername = urlParams.get('username');
+    const defaultInitiationKey = urlParams.get('invitation');
+
+    if (defaultEmail && emailInput) emailInput.value = decodeURIComponent(defaultEmail);
+    if (defaultUsername && usernameInput) usernameInput.value = decodeURIComponent(defaultUsername);
+    if (defaultInitiationKey && initiationKeyInput) initiationKeyInput.value = decodeURIComponent(defaultInitiationKey);
 
     function showInfo(message, isError = false, animationSequence = null) {
         if (infoPopup && infoText) {
@@ -32,55 +42,45 @@ function setupSignup() {
     async function handleSignup(registerAsPersona) {
         const username = usernameInput.value.trim();
         const email = emailInput.value.trim();
-        const initiationKey = initiationKeyInput ? initiationKeyInput.value.trim() : ''; // Handle if key is optional
+        const initiationKey = initiationKeyInput ? initiationKeyInput.value.trim() : '';
 
         if (!username || !email) {
             showInfo("Username and Email are required.", true, "Y0-22");
             return;
         }
-        // Add more validation as needed (e.g., email format, password strength if applicable)
 
         showInfo(`Attempting to sign up ${username}...`, false, "Y1+11:R1-11");
         window.TB.ui.Loader.show('Processing signup...');
 
-
         try {
-            // The `initiationKey` might only be relevant for certain signup flows (e.g., invite-only)
-            // `registerAsPersona` determines if WebAuthn should be part of the initial signup.
             const result = await window.TB.user.signup(username, email, initiationKey, registerAsPersona);
 
             if (result.success) {
                 let successMessage = result.message || "Signup successful!";
-                let successAnimation = "Z1+32:Y0+50"; // Default success animation
+                let successAnimation = "Z1+32:Y0+50";
 
-                // Example flow: if signup response indicates further action like WebAuthn registration
                 if (registerAsPersona && result.data?.needsWebAuthnRegistration) {
                     successMessage = "Account created! Now, let's secure it with a passkey (WebAuthn).";
                     successAnimation = "P1+21:Y1+21";
                     showInfo(successMessage, false, successAnimation);
-                    // This would ideally trigger the WebAuthn registration flow
-                    // For now, we might redirect to a page or show instructions.
-                    // e.g., await window.TB.user.registerWebAuthnForCurrentUser(username);
-                    // For simplicity, let's assume the user module or a subsequent page handles this.
-                    // Or, we can navigate to a specific "setup passkey" page.
                     setTimeout(() => window.TB.router.navigateTo('/web/setup-passkey.html?username=' + encodeURIComponent(username)), 1200);
 
-                } else if (result.data?.token) { // Signup resulted in immediate login
+                } else if (result.data?.token) {
                     showInfo(successMessage, false, successAnimation);
                     setTimeout(() => {
                         window.TB.router.navigateTo('/web/dashboard');
                         if (window.TB.graphics?.stopAnimationSequence) window.TB.graphics.stopAnimationSequence();
                     }, 800);
-                } else { // Signup successful, but requires separate login
+                } else {
                     showInfo("Signup successful! Please log in.", false, "P0+31");
                     setTimeout(() => {
                         window.TB.router.navigateTo('/web/assets/login.html');
-                         if (window.TB.graphics?.stopAnimationSequence) window.TB.graphics.stopAnimationSequence();
+                        if (window.TB.graphics?.stopAnimationSequence) window.TB.graphics.stopAnimationSequence();
                     }, 800);
                 }
             } else {
                 showInfo(result.message || "Signup failed. Please check your details and try again.", true, "R2-42");
-                 if (window.TB.graphics?.stopAnimationSequence) window.TB.graphics.stopAnimationSequence();
+                if (window.TB.graphics?.stopAnimationSequence) window.TB.graphics.stopAnimationSequence();
             }
         } catch (error) {
             window.TB.logger.error('[Signup Page] Signup submission error:', error);
@@ -94,11 +94,10 @@ function setupSignup() {
     if (signupForm) {
         signupForm.addEventListener('submit', async (event) => {
             event.preventDefault();
-            // Default submit action might imply registering with Persona (WebAuthn) if UI supports it
-            await handleSignup(true); // Assuming default signup tries to register as Persona
+            await handleSignup(true);
         });
     } else {
-         if (window.TB && window.TB.logger) {
+        if (window.TB && window.TB.logger) {
             window.TB.logger.warn('[Signup Page] Signup form not found.');
         } else {
             console.warn('[Signup Page] Signup form not found, TB.logger not available.');
@@ -108,7 +107,6 @@ function setupSignup() {
     if (skipPersonaButton) {
         skipPersonaButton.addEventListener('click', async (event) => {
             event.preventDefault();
-            // This button explicitly skips the initial WebAuthn registration part
             await handleSignup(false);
         });
     }

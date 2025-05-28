@@ -818,7 +818,8 @@ class App(AppType, metaclass=Singleton):
 
         # Process the final result
         if isinstance(result, Result):
-            result.print()
+            if 'debug' in self.id:
+                result.print()
             if getattr(result.result, 'data_type', None) == "stream":
                 return result
             return result.to_api_result().model_dump(mode='json')
@@ -1599,6 +1600,7 @@ class App(AppType, metaclass=Singleton):
             self.run_bg_task(res.bg_task)
 
         if self.debug:
+            res.print()
             res.log(show_data=False) if isinstance(res, Result) else self.logger.debug(res)
         if not get_results and isinstance(res, Result):
             return res.get()
@@ -1640,6 +1642,8 @@ class App(AppType, metaclass=Singleton):
 
     def print(self, text, *args, **kwargs):
         # self.logger.info(f"Output : {text}")
+        if 'live' in self.id:
+            return
         if self.sprint(None):
             print(Style.CYAN(f"System${self.id}:"), end=" ")
         print(text, *args, **kwargs)
@@ -1647,6 +1651,8 @@ class App(AppType, metaclass=Singleton):
     def sprint(self, text, *args, **kwargs):
         if text is None:
             return True
+        if 'live' in self.id:
+            return
         # self.logger.info(f"Output : {text}")
         print(Style.CYAN(f"System${self.id}:"), end=" ")
         if isinstance(text, str) and kwargs == {} and text:

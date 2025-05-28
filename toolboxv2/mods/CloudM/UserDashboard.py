@@ -21,9 +21,9 @@ version = '0.1.1'  # Incremented version
 
 @export(mod_name=Name, api=True, version=version, name="main", api_methods=['GET'], request_as_kwarg=True, row=True)
 async def get_user_dashboard_main_page(app: App, request: RequestData):
-    current_user = await get_current_user_from_request(app, request)
-    if not current_user:
-        return Result.html("<h1>Access Denied</h1><p>Please log in to view your dashboard.</p>", status_code=401)
+    #current_user = await get_current_user_from_request(app, request)
+    #if not current_user:
+    #    return Result.html("<h1>Access Denied</h1><p>Please log in to view your dashboard.</p>", status_code=401)
 
     # HTML structure for the User Dashboard
     # Using Python's triple-quoted string for the main HTML block.
@@ -718,7 +718,7 @@ body {
                 const magicLinkIdUser = `user-magic-link-${TB.utils.uniqueId()}`;
 
                 let personaBtnHtmlUser = !user.is_persona ?
-                    `<button id="registerPersonaBtnUser" class="tb-btn tb-btn-success tb-mt-2"><span class="material-symbols-outlined tb-mr-1">fingerprint</span>Add Persona Device</button><div id="${personaStatusIdUser}" class="tb-text-sm tb-mt-1"></div>` :
+                    `<button id="registerPersonaBtnUser" class="tb-btn tb-btn-success tb-mt-2"><span class="material-symbols-outlined tb-mr-1">fingerprint</span>Add Persona Device</button><div id="${personaStatusIdUser}" class="tb-text-sm tb-mt-1"></div><input id='invitation-key' placeholder="Invitation Key"></input>` :
                     `<p class='tb-text-md tb-text-green-600 dark:tb-text-green-400'><span class="material-symbols-outlined tb-mr-1" style="vertical-align: text-bottom;">verified_user</span>Persona (WebAuthn) is configured.</p>`;
 
                 contentDiv.innerHTML = `
@@ -779,7 +779,7 @@ body {
                         if (!statusDiv) return;
                         statusDiv.innerHTML = '<p class="tb-text-sm tb-text-blue-500">Initiating WebAuthn registration...</p>';
                         if (window.TB?.user && user.name) {
-                            const result = await window.TB.user.registerWebAuthnForCurrentUser(user.name);
+                            const result = await window.TB.user.registerWebAuthnForCurrentUser(user.name, document.getElementById('invitation-key').value);
                             if (result.success) {
                                 statusDiv.innerHTML = `<p class="tb-text-sm tb-text-green-500">${TB.utils.escapeHtml(result.message)} Refreshing details...</p>`;
                                 TB.ui.Toast.showSuccess("Persona registered! Refreshing...");

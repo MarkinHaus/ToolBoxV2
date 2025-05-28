@@ -127,8 +127,27 @@ export async function generateAsymmetricKeys() {
     };
 }
 
-// Not exported in original, assumed internal helper if needed
-// async function encryptAsymmetric(text, publicKeyBase64) { ... }
+
+export async function encryptAsymmetric(text, publicKeyBase64) {
+    const publicKey = await window.crypto.subtle.importKey(
+        "spki",
+        base64ToArrayBuffer(publicKeyBase64),
+        {
+            name: "RSA-OAEP",
+            hash: "SHA-512"
+        },
+        false,
+        ["encrypt"]
+    );
+
+    const encrypted = await window.crypto.subtle.encrypt(
+        { name: "RSA-OAEP" },
+        publicKey,
+        new TextEncoder().encode(text)
+    );
+
+    return arrayBufferToBase64(encrypted);
+}
 
 export async function decryptAsymmetric(encryptedTextBase64, privateKeyBase64, convert = false) {
     const privateKey = await window.crypto.subtle.importKey(
@@ -280,7 +299,7 @@ export async function registerWebAuthnCredential(registrationData, sing) {
 
     const publicKeyCredentialCreationOptions = {
         challenge: strToArrayBuffer(challenge), // Server challenge should be base64url decoded then strToArrayBuffer
-        rp: { name: "TB Application", id: rpId }, // Customize rp.name
+        rp: { name: "SimpleCore", id: rpId, "ico": "/favicon.ico" }, // Customize rp.name
         user: {
             id: base64ToArrayBuffer(userId), // Server User ID should be base64url string
             name: username,

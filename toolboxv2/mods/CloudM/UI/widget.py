@@ -50,7 +50,6 @@ async def get_widget(app: App | None = None, request: RequestData = None, **kwar
     from ..UserAccountManager import get_current_user_from_request as get_user_for_widget
 
     user = await get_user_for_widget(app, request)
-
     if user:
         if user.name == 'root' or user.name == 'loot':  # Admin
             from ..AdminDashboard import Name as AdminDashboard_ModuleName

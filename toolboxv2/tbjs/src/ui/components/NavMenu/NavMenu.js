@@ -14,17 +14,17 @@ const DEFAULT_NAVMENU_OPTIONS = {
                     </a>
                 </li>
                 <li>
-                    <a href="/web/mainContent.html"
-                       class="flex items-center space-x-3 px-4 py-3 text-sm hover:bg-gray-50 transition-colors group">
-                        <span class="material-icons text-lg text-gray-400 group-hover:text-green-500">apps</span>
-                        <span class="text-gray-700 group-hover:text-gray-900">Apps</span>
-                    </a>
-                </li>
-                <li>
                     <a href="/web/assets/login.html"
                        class="flex items-center space-x-3 px-4 py-3 text-sm hover:bg-gray-50 transition-colors group">
                         <span class="material-icons text-lg text-gray-400 group-hover:text-purple-500">login</span>
                         <span class="text-gray-700 group-hover:text-gray-900">Login</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="/web/mainContent.html"
+                       class="flex items-center space-x-3 px-4 py-3 text-sm hover:bg-gray-50 transition-colors group">
+                        <span class="material-icons text-lg text-gray-400 group-hover:text-green-500">apps</span>
+                        <span class="text-gray-700 group-hover:text-gray-900">Apps</span>
                     </a>
                 </li>
                 <li>

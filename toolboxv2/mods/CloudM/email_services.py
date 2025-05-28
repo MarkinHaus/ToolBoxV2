@@ -280,7 +280,7 @@ def send_signup_invitation_email(app: App, invited_user_email: str, invited_user
         uuid.uuid4())[:6]
 
     # Construct the signup link URL (adjust your frontend signup path as needed)
-    signup_link_url = f"{APP_BASE_URL}/signup?invitation={quote(invitation_code)}&email={quote(invited_user_email)}&username={quote(invited_username)}"
+    signup_link_url = f"{APP_BASE_URL}/web/assets/signup.html?invitation={quote(invitation_code)}&email={quote(invited_user_email)}&username={quote(invited_username)}"
 
     subject = f"You're Invited to Join {APP_NAME}!"
     preview_text = f"{inviter_username or 'A friend'} has invited you to {APP_NAME}!"
@@ -292,7 +292,7 @@ def send_signup_invitation_email(app: App, invited_user_email: str, invited_user
         <p>{APP_NAME} is an exciting platform, and we'd love for you to be a part of it!</p>
         <p>Click the button below to accept the invitation and create your account:</p>
         <a href="{signup_link_url}" class="button">Accept Invitation & Sign Up</a>
-        <p>This invitation is unique to you.</p>
+        <p>This invitation is unique to you : {invitation_code}</p>
         <p>If the button doesn't work, copy and paste this link into your browser:<br><span class="link-in-text">{signup_link_url}</span></p>
         <p>We look forward to seeing you there!<br>The {APP_NAME} Team</p>
     """
@@ -308,38 +308,35 @@ def add(app: App, email: str) -> ApiResult:
     tb_token_jwt = app.run_any('DB', 'append_on_set', query="email_waiting_list", data=[email], get_results=True)
 
     # Default response for internal error
-    error_type = ToolBoxError.internal_error
     out = "My apologies, unfortunately, you could not be added to the Waiting list."
-    tb_token_jwt.print()
-    # Check if the email was successfully added to the waiting list
-    if not tb_token_jwt.is_error():
-        out = "You will receive an invitation email in a few days"
-        error_type = ToolBoxError.none
-    elif tb_token_jwt.info.exec_code == -4 or tb_token_jwt.info.exec_code == -3:
-
-        app.run_any('DB', 'set', query="email_waiting_list", data=[email], get_results=True)
-        out = "You will receive an invitation email in a few days NICE you ar the first on in the list"
-        tb_token_jwt.print()
-        error_type = ToolBoxError.none
-
+    result = Result.default_user_error(info=out, data={"message": out})
+    flag = False
+    if tb_token_jwt.info.exec_code == -4:
+        app.run_any('DB', 'set', query="email_waiting_list", data={"set":[email]}, get_results=True)
     # Check if the email is already in the waiting list
     elif tb_token_jwt.info.exec_code == -5:
         out = "You are already in the list, please do not try to add yourself more than once."
-        error_type = ToolBoxError.custom_error
-    if error_type != ToolBoxError.none:
-        return MainTool.return_result(
-            error=error_type,
-            exec_code=0,  # Assuming exec_code 0 for success, modify as needed
-            help_text=out,
-            data_info="email",
-            data={"message": out}
-        )
-    # Use the return_result function to create and return the Result object
-    return send_waiting_list_confirmation_email(email).lazy_return(Result.ok(
-        info=out,
-        data_info="email",
-        data={"message": out}
-    ))
+        result = Result.default_user_error(info=out, data={"message": out})
+        flag = True
+
+    elif tb_token_jwt.is_error():
+        if tb_token_jwt.info.help_text == "":
+            tb_token_jwt.info.help_text = out
+        result = tb_token_jwt
+        flag = True
+
+    if flag:
+        return result
+
+    out = "You will receive an invitation email in a few days"
+    sending_result = send_waiting_list_confirmation_email(app, email)
+    if sending_result.is_error():
+        out = "You are in the list, but there was an error sending the confirmation email. Please try again later."
+        result = Result.default_internal_error(info=out, data={"message": out})
+    else:
+        result = Result.ok(info=out, data_info="email", data={"message": out})
+
+    return result
 
 # --- Example Usage (for testing, typically called from other modules) ---
 if __name__ == "__main__":
