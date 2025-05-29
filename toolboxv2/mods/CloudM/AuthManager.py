@@ -6,7 +6,8 @@ import os
 import time
 import uuid
 from dataclasses import asdict
-from urllib.parse import quote
+from typing import Optional, Any, Dict
+from urllib.parse import quote, urlparse
 
 import jwt
 import webauthn
@@ -15,8 +16,12 @@ from webauthn.helpers.exceptions import (
     InvalidAuthenticationResponse,
     InvalidRegistrationResponse,
 )
-from webauthn.helpers.structs import AuthenticationCredential, RegistrationCredential, AuthenticatorAttestationResponse
-
+from webauthn.helpers.structs import (
+    AuthenticationCredential as WebAuthnAuthenticationCredential, # Rename to avoid clash if needed
+    AuthenticatorAssertionResponse as WebAuthnAuthenticatorAssertionResponse,
+    RegistrationCredential,
+    AuthenticatorAttestationResponse
+)
 from toolboxv2 import TBEF, App, Result, ToolBox_over, get_app, get_logger
 from toolboxv2.mods.DB.types import DatabaseModes
 from toolboxv2.utils.security.cryp import Code
@@ -33,36 +38,49 @@ test_only = export(mod_name=Name, test_only=True)
 instance_bios = str(uuid.uuid4())
 
 
-def b64decode(s: str) -> bytes:
-    return base64.urlsafe_b64decode(s.encode())
+def b64decode(s: str) -> bytes: # Used for URL-safe base64
+    padding = '=' * (-len(s) % 4)
+    return base64.urlsafe_b64decode(s.encode() + padding.encode())
+# Helper for standard base64 to bytes, as used by client for response fields
+def base64_std_to_bytes(val: Optional[str]) -> Optional[bytes]:
+    if val is None:
+        return None
+    if not isinstance(val, str):
+        get_logger().warning(f"base64_std_to_bytes expected string, got {type(val)}")
+        # Depending on strictness, either raise an error or return val (which might cause issues later)
+        raise ValueError(f"Expected base64 string, got {type(val)}")
+    try:
+        padding = '=' * (-len(val) % 4)
+        return base64.b64decode(val + padding)
+    except Exception as e:
+        get_logger().error(f"Error decoding standard base64 string '{val[:30]}...': {e}")
+        raise # Re-raise to be caught by API handler
 
-
-class CustomAuthenticationCredential(AuthenticationCredential):
-    @property
-    def id(self) -> str:
-        # base64url without padding (JavaScript uses unpadded base64url)
-        return base64.urlsafe_b64encode(self.raw_id).rstrip(b"=").decode("ascii")
-
+class CustomAuthenticationCredential(WebAuthnAuthenticationCredential): # Inherits from webauthn's struct
     @field_validator("raw_id", mode="before")
     @classmethod
     def decode_base64url_to_bytes(cls, v):
         if isinstance(v, str):
-            # Pad base64url string if needed
-            padding = '=' * (-len(v) % 4)
-            return base64.urlsafe_b64decode(v + padding)
+            return b64decode(v) # b64decode handles padding and uses urlsafe_b64decode
         return v
 
 
 class CustomRegistrationCredential(RegistrationCredential):
-    @field_validator('raw_id')
+    @field_validator('raw_id', mode="before") # Changed from after to before
     def convert_raw_id(cls, v: str):
-        assert isinstance(v, str), 'raw_id is not a string'
-        return b64decode(v)
+        if isinstance(v, str): # Assuming raw_id comes as standard base64 from client for registration
+             return base64_std_to_bytes(v)
+        return v # Or raise error if not string
 
-    @field_validator('response')
+    @field_validator('response', mode="before")
     def convert_response(cls, data: dict):
-        assert isinstance(data, dict), 'response is not a dictionary'
-        return {k: b64decode(v) for k, v in data.items()}
+        if isinstance(data, dict):
+            # Assuming client sends these as standard base64 for registration
+            return {
+                k: base64_std_to_bytes(v) if isinstance(v, str) else v
+                for k, v in data.items()
+            }
+        return data
 
 
 # app Helper functions interaction with the db
@@ -254,6 +272,7 @@ class AddUserDeviceObject(BaseModel):
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=False, test=False)
 def get_new_user_invitation_key(username):
     return Code.one_way_hash(username, "00#", os.getenv("TB_R_KEY", "pepper123"))[:12] + str(uuid.uuid4())[:6]
+
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.api, api=True, test=False)
 def create_user(app: App, data: CreateUserObject = None, username: str = 'test-user',
                       email: str = 'test@user.com',
@@ -427,6 +446,7 @@ async def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
         # Ensure proper base64 padding
         padded = val + '=' * (-len(val) % 4)
         return base64.b64decode(padded)
+
     data['registration_credential']['raw_id'] = base64url_to_bytes(data['registration_credential']['raw_id'])
     data['registration_credential']['response']['client_data_json'] = base64_to_bytes(data['registration_credential']['response']['client_data_json'])
     data['registration_credential']['response']['attestation_object'] = base64_to_bytes(data['registration_credential']['response']['attestation_object'])
@@ -466,11 +486,16 @@ async def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
     # "clientDataJSON": clientJSON,       "transports": ["usb", "nfc", "ble", "internal", "cable", "hybrid"],
     # },   "type": "public-key",   "clientExtensionResults": {},   "authenticatorAttachment": "platform",}
     try:
+        expected_rp_id = os.environ.get('APP_BASE_URL', 'localhost')
+        if 'simplecore' in expected_rp_id:
+            expected_rp_id = "simplecore.app"
+        else:
+            expected_rp_id = "localhost"
         registration_verification = webauthn.verify_registration_response(
             credential=registration_credential,
             expected_challenge=user.challenge.encode(),
             expected_origin=valid_origen,
-            expected_rp_id=os.environ.get('HOSTNAME', 'localhost'),  # simplecore.app
+            expected_rp_id=expected_rp_id,  # simplecore.app
             require_user_verification=True,
         )
     except InvalidRegistrationResponse as e:
@@ -480,10 +505,11 @@ async def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
         return Result.default_user_error(info="Invalid registration not user verified")
 
     user_persona_pub_key = {
+        'public_key_row': base64.b64encode(registration_verification.credential_public_key).decode('utf-8'),
         'public_key': data.get("pk"),
         'sign_count': registration_verification.sign_count,
         'credential_id': base64.b64encode(registration_verification.credential_id).decode('ascii'),
-        'rawId': base64.b64encode(registration_credential.raw_id).decode('ascii'),
+        'rawId': data.get('raw_id'),
         'attestation_object': base64.b64encode(registration_verification.attestation_object).decode('ascii'),
     }
 
@@ -555,27 +581,50 @@ async def local_login(app: App, username: str) -> Result:
 
 
 @export(mod_name=Name, api=True, test=False)
-async def get_to_sing_data(app: App, username, personal_key=False):
+async def get_to_sing_data(app: App, username, personal_key: Any = False):  # Use Any for personal_key initially
     t0 = time.perf_counter()
     if app is None:
         app = get_app(from_=Name + '.get_to_sing_data')
 
     user_result = get_user_by_name(app, username)
-    if user_result.is_error() and not user_result.is_data():
+    if user_result.is_error() or not user_result.is_data():
         return Result.default_user_error(info=f"User {username} is not a valid user")
     user: User = user_result.get()
 
-    if user.challenge == "":
-        user.challenge = Code.encrypt_asymmetric(str(uuid.uuid4()), user.user_pass_pub)
-        db_helper_save_user(app, asdict(user))
-    data = {'challenge': user.challenge}
+    # Generate a new, plain challenge for WebAuthn or device key flow
+    new_challenge = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b'=').decode('utf-8')
+    user.challenge = new_challenge  # Store the plain challenge
 
-    if personal_key == 'false':
-        personal_key = False
-    if personal_key:
-        data['rowId'] =  user.user_pass_pub_persona.get("rawId")
-    app.print(f"END {time.perf_counter()-t0}",)
-    return Result.ok(data=data, info="Challenge returned")
+    save_res = db_helper_save_user(app, asdict(user))
+    if save_res.is_error():
+        app.print(f"Failed to save user {username} with new challenge: {save_res.info.help_text}", level="ERROR")
+        return Result.default_internal_error(info="Failed to prepare session challenge.")
+
+    data_to_return = {'challenge': user.challenge}
+
+    # Handle personal_key being passed as string 'true'/'false' or boolean
+    if isinstance(personal_key, str):
+        is_personal_key_true = personal_key.lower() == 'true'
+    elif isinstance(personal_key, bool):
+        is_personal_key_true = personal_key
+    else:
+        is_personal_key_true = False  # Default if type is unexpected
+
+    if is_personal_key_true:
+        # rawId for WebAuthn login, stored during registration.
+        # Client sends: raw_id: arrayBufferToBase64(credential.rawId)
+        # Server stores: user.user_pass_pub_persona['rawId'] = data.get('raw_id')
+        # This rawId is standard base64 of the credential's raw ID bytes.
+        stored_raw_id = user.user_pass_pub_persona.get("rawId")
+        if not stored_raw_id:
+            return Result.default_user_error(
+                info=f"User {username} has no WebAuthn credential registered (missing rawId).")
+        data_to_return['rowId'] = stored_raw_id  # Client expects 'rowId'
+
+    app.print(
+        f"END get_to_sing_data for {username}, personal_key={is_personal_key_true}, took {time.perf_counter() - t0:.4f}s", )
+    return Result.ok(data=data_to_return, info="Challenge returned")
+
 
 @export(mod_name=Name, state=True, interface=ToolBoxInterfaces.native, api=False, level=999, test=False)
 def get_invitation(app: App, username='') -> Result:
@@ -590,75 +639,187 @@ def get_invitation(app: App, username='') -> Result:
 
 class VdUSER(BaseModel):
     username: str
-    signature: str
+    signature: str  # Base64 encoded signature for device key validation
 
 
-class VpUSER(VdUSER, BaseModel):
-    authentication_credential: CustomAuthenticationCredential
+class ClientAuthNCredentialPayload(BaseModel):
+    id: str  # Base64URL string (credential.id from browser)
+    raw_id: str  # Base64URL string (also credential.id from browser, will be decoded to bytes)
+    type: str
+    authenticator_attachment: Optional[str] = None
+    response: Dict[str, Any]  # Keep as dict for now, will be processed
+    # client_extension_results: Optional[Dict[str, Any]] = None # If you use extensions
+
+
+class VpUSER(BaseModel):
+    username: str
+    # signature: str # This top-level signature is for device key, not WebAuthn
+    authentication_credential: ClientAuthNCredentialPayload  # Use the defined Pydantic model
 
 
 @export(mod_name=Name, api=True, test=False)
 async def validate_persona(app: App, data: VpUSER) -> ApiResult:
     if app is None:
-        app = get_app(".validate_persona")
-
-    def base64url_to_bytes(val: str) -> bytes:
-        # Add padding back (base64 must be a multiple of 4 chars)
-        padded = val + '=' * (-len(val) % 4)
-        return base64.urlsafe_b64decode(padded)
-
-    def base64_to_bytes(val: str) -> bytes:
-        # Ensure proper base64 padding
-        padded = val + '=' * (-len(val) % 4)
-        return base64.b64decode(padded)
-    if 'authentication_credential' not in data:
-        return Result.default_user_error(info="Invalid data")
-    if 'raw_id' not in data['authentication_credential']:
-        return Result.default_user_error(info="Invalid data")
-    data['authentication_credential']['raw_id'] = base64url_to_bytes(data['authentication_credential']['raw_id'])
-    data['authentication_credential']['response']['client_data_json'] = base64_to_bytes(
-        data['authentication_credential']['response']['client_data_json'])
-    data['authentication_credential']['response']['authenticator_data'] = base64_to_bytes(
-        data['authentication_credential']['response']['authenticator_data'])
+        app = get_app(f"{Name}.validate_persona")
     if isinstance(data, dict):
         data = VpUSER(**data)
-    user_result = get_user_by_name(app, data.username)
+    auth_cred_payload = data.authentication_credential
 
-    if user_result.is_error() or not user_result.is_data():
-        return Result.default_user_error(info=f"Invalid username : {data.username}")
-    # from_base64(data.signature)
-    user: User = user_result.get()
-
-    if user.is_persona == "":
-        return Result.default_user_error(info="No Persona key registered")
-
-    valid_origen = ["https://simplecore.app","https://simplecorehub.com", os.getenv("APP_BASE_URL", "http://localhost:8080") ] + (
-        ["http://localhost:5000"] if app.debug else [])
+    # --- 1. Prepare response object for webauthn library ---
+    response_payload = auth_cred_payload.response
+    if not isinstance(response_payload, dict):
+        return Result.default_user_error(info="authentication_credential.response must be an object.")
 
     try:
-        authentication_verification = webauthn.verify_authentication_response(
-            # daemonstrating the ability to handle a stringified JSON version of the WebAuthn response
-            credential=data.authentication_credential,
-            expected_challenge=user.challenge.encode(),
-            expected_rp_id=os.environ.get('HOSTNAME', 'localhost'),
-            expected_origin=valid_origen,
-            credential_public_key=user.user_pass_pub_persona.get("public_key"),
-            credential_current_sign_count=user.user_pass_pub_persona.get("sign_count"),
-            require_user_verification=True,
+        client_data_json_bytes = base64_std_to_bytes(response_payload.get('client_data_json'))
+        authenticator_data_bytes = base64_std_to_bytes(response_payload.get('authenticator_data'))
+        signature_bytes = base64_std_to_bytes(response_payload.get('signature'))
+        user_handle_bytes = base64_std_to_bytes(response_payload.get('user_handle')) if response_payload.get(
+            'user_handle') else None
+
+        if not all([client_data_json_bytes, authenticator_data_bytes, signature_bytes]):
+            missing = [
+                f for f_name, f in [
+                    ('client_data_json', client_data_json_bytes),
+                    ('authenticator_data', authenticator_data_bytes),
+                    ('signature', signature_bytes)
+                ] if not f
+            ]
+            return Result.default_user_error(
+                info=f"Missing required fields in authentication_credential.response: {', '.join(missing)}")
+
+    except ValueError as e:  # Catch decoding errors from base64_std_to_bytes
+        get_logger().error(f"Base64 decoding error for user {data.username} in validate_persona: {e}")
+        return Result.default_user_error(info=f"Invalid base64 encoding in authentication_credential.response: {e}")
+    except Exception as e:
+        get_logger().error(f"Error processing response for user {data.username} in validate_persona: {e}")
+        return Result.default_internal_error(info="Error processing authentication response.")
+
+    # --- 2. Get User and WebAuthn specific data ---
+    user_result = get_user_by_name(app, data.username)
+    if user_result.is_error() or not user_result.is_data():
+        return Result.default_user_error(info=f"Invalid username: {data.username}")
+    user: User = user_result.get()
+
+    if not user.is_persona:
+        return Result.default_user_error(info=f"No Persona key (WebAuthn) registered for user {data.username}.")
+
+    cose_credential_public_key_b64 = user.user_pass_pub_persona.get("public_key_row")
+    if not cose_credential_public_key_b64:
+        app.print(f"WebAuthn Error: 'public_key_row' (COSE key) not found for user {data.username}.", level="ERROR")
+        return Result.default_user_error(info="WebAuthn credential public key not found. Please re-register passkey.")
+    try:
+        credential_public_key_bytes = base64.b64decode(cose_credential_public_key_b64.encode('utf-8'))
+    except Exception as e:
+        app.print(f"Error decoding 'public_key_row' for user {data.username}: {e}", level="ERROR")
+        return Result.default_user_error(info="Failed to decode WebAuthn credential public key.")
+
+    # --- 3. Construct webauthn library's Structs ---
+    try:
+        # raw_id from client is base64url string (assertion.id)
+        raw_id_bytes = b64decode(auth_cred_payload.raw_id)  # b64decode for URL-safe
+
+        auth_response_struct = WebAuthnAuthenticatorAssertionResponse(
+            client_data_json=client_data_json_bytes,
+            authenticator_data=authenticator_data_bytes,
+            signature=signature_bytes,
+            user_handle=user_handle_bytes
         )
-        get_logger().info(f"\n[Authentication Verification {user.name}]")
+        auth_cred_struct = WebAuthnAuthenticationCredential(
+            id=auth_cred_payload.id,  # This is the base64url string ID
+            raw_id=raw_id_bytes,  # These are the raw bytes of the ID
+            response=auth_response_struct,
+            type=auth_cred_payload.type,
+            # client_extension_results=auth_cred_payload.client_extension_results, # If you use them
+            authenticator_attachment=auth_cred_payload.authenticator_attachment
+        )
+    except Exception as e:
+        get_logger().error(f"Error constructing webauthn library structs for user {data.username}: {e}", exc_info=True)
+        return Result.default_internal_error(info="Failed to prepare WebAuthn validation data structure.")
+
+    # --- 4. Determine Expected RP ID and Origin ---
+    # Client getRpId(): localhost or actual hostname. For production, eTLD+1.
+    # Server's expected_rp_id should match this.
+    app_base_url_str = os.getenv("APP_BASE_URL", "http://localhost:8080")  # Default if not set
+    parsed_app_url = urlparse(app_base_url_str)
+    hostname_from_env = parsed_app_url.hostname
+
+    if hostname_from_env and (hostname_from_env.startswith("localhost") or hostname_from_env == "127.0.0.1"):
+        expected_rp_id = "localhost"
+    elif hostname_from_env and "simplecore.app" in hostname_from_env:
+        expected_rp_id = "simplecore.app"  # eTLD+1
+    elif hostname_from_env and "simplecorehub.com" in hostname_from_env:
+        expected_rp_id = "simplecorehub.com"  # eTLD+1
+    elif hostname_from_env:
+        expected_rp_id = hostname_from_env  # May need refinement to eTLD+1 for other domains
+    else:  # Fallback if APP_BASE_URL is malformed or missing hostname
+        expected_rp_id = "localhost"
+
+    valid_origins = [app_base_url_str]  # Primary origin from APP_BASE_URL
+    if "localhost" in app_base_url_str:  # For local dev, window.location.origin might include port
+        if "http://localhost:8080" not in valid_origins: valid_origins.append("http://localhost:8080")
+        if "http://localhost:5000" not in valid_origins: valid_origins.append("http://localhost:5000")  # if used
+    # Add production origins explicitly if different or need subdomains
+    if "https://simplecore.app" not in valid_origins: valid_origins.append("https://simplecore.app")
+    if "https://simplecorehub.com" not in valid_origins: valid_origins.append("https://simplecorehub.com")
+
+    # --- 5. Perform WebAuthn Verification ---
+    try:
+        current_sign_count = user.user_pass_pub_persona.get("sign_count")
+        if not isinstance(current_sign_count, int):
+            try:
+                current_sign_count = int(current_sign_count)
+            except (ValueError, TypeError):
+                get_logger().warning(f"Invalid sign_count for user {data.username}: {current_sign_count}. Assuming 0.")
+                current_sign_count = 0  # Or handle as error if strict count checking is critical
+
+        get_logger().debug(
+            f"WebAuthn Verify Params for {data.username}: "
+            f"expected_rp_id='{expected_rp_id}', "
+            f"expected_challenge(start)='{user.challenge[:10]}...', "
+            f"expected_origin(s)='{valid_origins}', "
+            f"sign_count={current_sign_count}"
+        )
+
+        authentication_verification = webauthn.verify_authentication_response(
+            credential=auth_cred_struct,
+            expected_challenge=user.challenge.encode('utf-8'),  # Plain challenge, UTF-8 encoded
+            expected_rp_id=expected_rp_id,
+            expected_origin=valid_origins,  # List of allowed origins
+            credential_public_key=credential_public_key_bytes,
+            credential_current_sign_count=current_sign_count,
+            require_user_verification=True,  # Matches client authenticatorSelection
+        )
+        get_logger().info(
+            f"Authentication Verification Success for {user.name}. New sign count: {authentication_verification.new_sign_count}")
         user.user_pass_pub_persona["sign_count"] = authentication_verification.new_sign_count
     except InvalidAuthenticationResponse as e:
-        get_logger().warning(f"0Error authenticating user {data.username}, {e}")
-        return Result.default_user_error(info=f"Authentication failure : {e}")
+        client_data_json_str = auth_response_struct.client_data_json.decode('utf-8',
+                                                                            errors='replace') if auth_response_struct.client_data_json else "N/A"
+        get_logger().warning(
+            f"WebAuthn InvalidAuthenticationResponse for user {data.username}. Error: {e}. "
+            f"Challenge used (server): '{user.challenge}'. RP ID used (server): '{expected_rp_id}'. "
+            f"ClientDataJSON challenge (from client): '{json.loads(client_data_json_str).get('challenge', 'MISSING') if client_data_json_str != 'N/A' else 'N/A'}'"
+        )
+        return Result.default_user_error(info=f"Authentication failure: {e}")
+    except Exception as e:
+        get_logger().error(f"Unexpected error during WebAuthn verification for user {data.username}: {e}",
+                           exc_info=True)
+        return Result.default_internal_error(info=f"An unexpected error occurred during WebAuthn verification: {e}")
 
-    save_result = db_helper_save_user(app, asdict(user))
+    # --- 6. Post-Authentication ---
+    save_result = db_helper_save_user(app, asdict(user))  # Save updated sign_count
     if save_result.is_error():
-        return save_result.to_api_result()
+        return save_result.to_api_result()  # Propagate DB error
 
-    key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
-    url = f"/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
-    return Result.ok(data=url, info="Auto redirect")
+    # The redirect URL seems to be for initiating another device registration via magic link.
+    # Typically, after login, you'd issue a session token (JWT) or set a session cookie.
+    # This part might need review based on your intended post-login flow.
+    magic_link_key_segment = Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
+    redirect_url = f"/web/assets/m_log_in.html?key={quote('01#' + magic_link_key_segment)}&name={user.name}"
+
+    get_logger().info(f"User {data.username} successfully authenticated via WebAuthn. Redirecting to: {redirect_url}")
+    return Result.ok(data=redirect_url, info="Authentication successful. Redirecting...")
 
 
 @export(mod_name=Name, api=True, test=False)

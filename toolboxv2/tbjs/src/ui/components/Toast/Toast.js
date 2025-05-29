@@ -5,7 +5,7 @@ let activeToasts = new Map();
 const DEFAULT_TOAST_OPTIONS = {
     message: '',
     type: 'info', // 'info', 'success', 'warning', 'error'
-    duration: 4000, // milliseconds, 0 for sticky
+    duration: 4500, // milliseconds, 0 for sticky
     position: 'top-right',//['top-right', 'top-center', 'top-left', 'bottom-right', 'bottom-center', 'bottom-left'
     title: '', // Optional title
     actions: [], // [{ text: 'Undo', action: () => {} }]
@@ -19,8 +19,8 @@ const DEFAULT_TOAST_OPTIONS = {
     },
     icon: true,
     closable: true,
-    showDotOnHide: true,
-    dotDuration: 3000,
+    showDotOnHide: false, // Error its not clickable z index ??
+    dotDuration: 1300,
 };
 
 let toastContainers = {};

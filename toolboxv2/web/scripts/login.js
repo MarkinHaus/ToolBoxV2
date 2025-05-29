@@ -18,14 +18,6 @@ async function setupLogin_() {
     if (urlParams.get('next')) {
         next_url = urlParams.get('next');
     }
-    if (await window.TB.user.checkSessionValidity()) {
-        window.TB.ui.Toast.showInfo("Session is valid. "+window.TB.user.getUsername()+" go to "+ next_url, {actions: [{
-                text: "OK",
-                action: () => window.TB.router.navigateTo(next_url)
-            }]});
-    }else {
-        window.TB.logger.info('[Login Page] Session is not valid.');
-    }
 
     function showInfo(message, isError = null, animationSequence = null) {
         if (infoPopup && infoText) { // For local popups

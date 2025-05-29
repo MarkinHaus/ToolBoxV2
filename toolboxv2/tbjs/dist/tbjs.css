@@ -367,8 +367,8 @@ body.dark-mode {
 
 /* The actual content area */
 .main-content { /* Ensure your <main> tag has this class! */
-    max-width: 85vw;
-    width: 100%;
+    min-width: fit-content;
+    max-width: 900px;
     min-height: min-content;
     margin: 0 auto;
     padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2);

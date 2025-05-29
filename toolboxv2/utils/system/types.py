@@ -270,13 +270,15 @@ class Session:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> 'Session':
-        """Create a Session instance from a dictionary."""
-        # Extract known fields
-        known_fields = {k: data.get(k) for k in ['SiID', 'level', 'spec', 'user_name'] if k in data}
+        """Create a Session instance from a dictionary with default values."""
+        known_fields = {
+            'SiID': data.get('SiID', '#0'),
+            'level': data.get('level', -1),
+            'spec': data.get('spec', 'app'),
+            'user_name': data.get('user_name', 'anonymous'),
+        }
 
-        # Extract extra fields
         extra_data = {k: v for k, v in data.items() if k not in known_fields}
-
         return cls(**known_fields, extra_data=extra_data)
 
     def to_dict(self) -> dict[str, Any]:

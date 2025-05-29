@@ -356,55 +356,105 @@ export async function storePrivateKey(privateKeyBase64, username, ttlMs = DEFAUL
     }
 }
 
+// Assuming getDB, DEFAULT_TTL_MS, getEncryptedKeyId, base64ToArrayBuffer,
+// deriveKeyFromSaltedUsername, TB.logger, and crypto.subtle.decrypt are defined elsewhere.
+
 export async function retrievePrivateKey(username) {
     try {
         const db = await getDB();
-        let matchedKey = null;
-        let keyId = null;
+        let matchedKeyEntry = null; // Store the full entry of the matched key
+        const keysToDelete = [];
+        const potentialEntries = []; // To store entries that are not expired
 
-        for (let cursor = await db.transaction("keys", "readwrite").store.openCursor(); cursor; cursor = await cursor.continue()) {
-            const entry = cursor.value;
-            const salt = base64ToArrayBuffer(entry.salt);
+        // --- Phase 1: Read all relevant data from DB ---
+        let readTx = db.transaction("keys", "readonly");
+        let store = readTx.objectStore("keys"); // Use objectStore() method
+
+        let cursor = await store.openCursor();
+        while (cursor) {
+            const entry = cursor.value; // { salt, iv, encrypted, createdAt, ttlMs }
             const createdAt = entry.createdAt || 0;
             const ttlMs = entry.ttlMs || DEFAULT_TTL_MS;
 
-            // Expired? Auto delete
             if (Date.now() - createdAt > ttlMs) {
-                (TB.logger || console).info(`[Crypto] Deleting expired key: ${cursor.key}`);
-                await cursor.delete();
-                continue;
+                keysToDelete.push(cursor.key);
+            } else {
+                // Store the cursor's key and the entry's salt for later processing
+                potentialEntries.push({
+                    idbKey: cursor.key, // The actual key in IndexedDB
+                    salt: entry.salt, // Needed to compute candidateKeyId
+                    iv: entry.iv,     // Needed for decryption if this is the one
+                    encrypted: entry.encrypted, // Needed for decryption
+                    // No need to store the full entry if we store components
+                });
             }
+            cursor = await cursor.continue();
+        }
+        await readTx.done; // Wait for the readonly transaction to complete
 
-            const candidateKeyId = await getEncryptedKeyId(username, salt);
-            if (cursor.key === candidateKeyId) {
-                matchedKey = entry;
-                keyId = candidateKeyId;
-                break;
+        // --- Phase 2: Process potential entries (async crypto operations outside IDB transaction) ---
+        for (const potential of potentialEntries) {
+            const candidateKeyId = await getEncryptedKeyId(username, base64ToArrayBuffer(potential.salt));
+            if (potential.idbKey === candidateKeyId) {
+                matchedKeyEntry = potential; // We found our match
+                break; // Stop searching
             }
         }
 
-        if (!matchedKey) {
+        // --- Phase 3: Delete expired keys (in a new readwrite transaction) ---
+        if (keysToDelete.length > 0) {
+            const deleteTx = db.transaction("keys", "readwrite");
+            store = deleteTx.objectStore("keys");
+            for (const key of keysToDelete) {
+                (TB.logger || console).info(`[Crypto] Deleting expired key: ${key}`);
+                await store.delete(key); // This await is fine, it's an IDB request
+            }
+            await deleteTx.done; // Wait for the delete transaction to complete
+        }
+
+        if (!matchedKeyEntry) {
             (TB.logger || console).warn(`[Crypto] No valid key found for ${username}`);
             return null;
         }
 
-        const salt = base64ToArrayBuffer(matchedKey.salt);
-        const iv = base64ToArrayBuffer(matchedKey.iv);
-        const encrypted = base64ToArrayBuffer(matchedKey.encrypted);
+        // Now use matchedKeyEntry which contains salt, iv, encrypted
+        const salt = base64ToArrayBuffer(matchedKeyEntry.salt);
+        const iv = base64ToArrayBuffer(matchedKeyEntry.iv);
+        const encrypted = base64ToArrayBuffer(matchedKeyEntry.encrypted);
 
         const aesKey = await deriveKeyFromSaltedUsername(username, salt);
         const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, aesKey, encrypted);
 
-        const dec = new TextDecoder();
-        const keyBase64 = btoa(dec.decode(decrypted));
+        // If the decrypted data is meant to be a UTF-8 string that is then base64 encoded:
+        const dec = new TextDecoder(); // Assumes decrypted data is UTF-8 text
+        const decryptedString = dec.decode(decrypted);
+        const keyBase64 = btoa(decryptedString); // btoa works on strings of single-byte characters
+
+        // If the decrypted data is raw binary and needs to be base64 encoded:
+        // function arrayBufferToBase64(buffer) {
+        //     let binary = '';
+        //     const bytes = new Uint8Array(buffer);
+        //     for (let i = 0; i < bytes.byteLength; i++) {
+        //         binary += String.fromCharCode(bytes[i]);
+        //     }
+        //     return btoa(binary);
+        // }
+        // const keyBase64 = arrayBufferToBase64(decrypted);
+
 
         (TB.logger || console).debug(`[Crypto] Private key retrieved for ${username}`);
         return keyBase64;
+
     } catch (e) {
         (TB.logger || console).error(`[Crypto] Key retrieval failed:`, e);
-        throw new Error("Decryption failed or key not found.");
+        // More specific error logging if possible
+        if (e.name === 'TransactionInactiveError') {
+            (TB.logger || console).error('[Crypto] TransactionInactiveError encountered. This usually means an await for a non-IDB operation happened inside an IDB transaction loop.');
+        }
+        return null;
     }
 }
+
 
 export async function removePrivateKey(username) {
     try {
@@ -550,6 +600,7 @@ export async function registerWebAuthnCredential(registrationData, sing) {
             pk: await retrievePublicKey(username), // PEM format from generateAsymmetricKeys
             sing: sing, // Include original 'sing' parameter
             client_json: {challenge, origin: window.location.origin},
+            raw_id: arrayBufferToBase64(credential.rawId),
             registration_credential: {
                 id: credential.id, // This is the credential ID, base64url encoded by browser
                 raw_id: credential.id, // rawId as base64

@@ -1464,7 +1464,7 @@ def POAPage(app_ref: Optional[App] = None):
     <title>Action Manager Enhanced</title>
 
     <style>
-        * {
+* {
             box-sizing: border-box;
             margin: 0;
             padding: 0;
@@ -1472,9 +1472,10 @@ def POAPage(app_ref: Optional[App] = None):
         }
 
         body {
-            background: #f0f2f5;
-            color: #1a1a1a;
+            background: var(--theme-bg, #f0f2f5);
+            color: var(--theme-text, #1a1a1a);
             min-height: 100vh;
+            transition: background-color 0.3s ease, color 0.3s ease;
         }
 
         .app-container {
@@ -1486,17 +1487,18 @@ def POAPage(app_ref: Optional[App] = None):
         }
 
         .card {
-            color: var(--text-color);
-            background: var(--theme-bg);
+            color: var(--theme-text, #1a1a1a);
+            background: var(--theme-bg, white);
+            border: 1px solid var(--theme-border, rgba(0, 0, 0, 0.1));
             border-radius: 16px;
             padding: 20px;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-            transition: transform 0.2s, box-shadow 0.2s;
+            transition: transform 0.2s, box-shadow 0.2s, background-color 0.3s ease, border-color 0.3s ease;
         }
 
         .card:hover {
             transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 4px 15px var(--glass-shadow, rgba(0, 0, 0, 0.1));
         }
 
         .card-header {
@@ -1505,21 +1507,22 @@ def POAPage(app_ref: Optional[App] = None):
             align-items: center;
             margin-bottom: 16px;
         }
+
         .item-icon {
             margin-right: 8px;
             font-size: 1.2em;
         }
 
         .badge {
-            background: #e3e8ef;
-            padding: 4px 8px; /* Increased padding slightly */
+            background: var(--input-bg, #e3e8ef);
+            padding: 4px 8px;
             border-radius: 6px;
-            font-size: 0.85em; /* Slightly smaller font */
+            font-size: 0.85em;
             margin-left: 6px;
-            /* max-width: 150px; Increased max-width */
-            color: #000000;
-            display: inline-block; /* Ensure badges flow well */
+            color: var(--theme-text, #000000);
+            display: inline-block;
             white-space: nowrap;
+            transition: background-color 0.3s ease, color 0.3s ease;
         }
 
         .badge.priority-1 { background: #ff4d4f; color: white; }
@@ -1530,28 +1533,29 @@ def POAPage(app_ref: Optional[App] = None):
 
         .badge.status-in_progress { background: #1890ff; color: white; }
         .badge.status-completed { background: #52c41a; color: white; }
-        .badge.status-not_started { background: #d9d9d9; color: black; }
-        .badge.status-cancelled { background: #bfbfbf; color: black; }
-        .badge.date-badge { background: #40a9ff; color: white; } /* For due dates */
-        .badge.location-badge { background: #722ed1; color: white; } /* For location */
-
+        .badge.status-not_started { background: var(--theme-border, #d9d9d9); color: var(--theme-text, black); }
+        .badge.status-cancelled { background: var(--theme-text-muted, #bfbfbf); color: var(--theme-text, black); }
+        .badge.date-badge { background: #40a9ff; color: white; }
+        .badge.location-badge { background: #722ed1; color: white; }
 
         .item-content {
             margin: 16px 0;
             font-size: 1.1em;
         }
+
         .item-content p {
             margin-top: 8px;
             font-size: 0.95em;
-            color: #595959;
+            color: var(--theme-text-muted, #595959);
         }
-        .item-content h3 + p { /* Description directly after title */
+
+        .item-content h3 + p {
              margin-top: 4px;
         }
 
         .button-group {
             display: flex;
-            flex-wrap: wrap; /* Allow buttons to wrap on smaller screens */
+            flex-wrap: wrap;
             gap: 8px;
             margin-top: 16px;
         }
@@ -1562,21 +1566,35 @@ def POAPage(app_ref: Optional[App] = None):
             border: none;
             cursor: pointer;
             font-weight: 500;
-            transition: background-color 0.2s;
+            transition: background-color 0.2s, color 0.2s;
             font-size: 0.9em;
         }
 
-        .btn-primary { background: #1890ff; color: white; }
-        .btn-primary:hover { background: #096dd9; }
-        .btn-secondary { background: #f0f0f0; color: #1a1a1a; }
-        .btn-secondary:hover { background: #d9d9d9; }
+        .btn-primary {
+            background: var(--theme-primary, #1890ff);
+            color: var(--theme-text-on-primary, white);
+        }
+
+        .btn-primary:hover {
+            background: var(--link-hover-color, #096dd9);
+        }
+
+        .btn-secondary {
+            background: var(--input-bg, #f0f0f0);
+            color: var(--theme-text, #1a1a1a);
+            border: 1px solid var(--theme-border, transparent);
+        }
+
+        .btn-secondary:hover {
+            background: var(--theme-border, #d9d9d9);
+        }
+
         .btn-warning { background: #faad14; color: white; }
         .btn-warning:hover { background: #d48806; }
-        .btn-remove { background: #ff4d4f; color: white; } /* Changed to red */
+        .btn-remove { background: #ff4d4f; color: white; }
         .btn-remove:hover { background: #cf1322; }
         .btn-success { background: #52c41a; color: white; }
         .btn-success:hover { background: #389e0d; }
-
 
         .modal {
             display: none;
@@ -1585,25 +1603,28 @@ def POAPage(app_ref: Optional[App] = None):
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.6); /* Darker overlay */
+            background: rgba(0, 0, 0, 0.6);
             z-index: 1000;
-            align-items: center; /* Vertically center */
-            justify-content: center; /* Horizontally center */
+            align-items: center;
+            justify-content: center;
         }
+
         .modal.active {
             display: flex;
         }
 
         .modal-content {
-            background: white;
+            background: var(--theme-bg, white);
+            color: var(--theme-text, #1a1a1a);
+            border: 1px solid var(--theme-border, rgba(0, 0, 0, 0.1));
             border-radius: 16px;
             padding: 24px;
             width: 90%;
             max-width: 500px;
-            /* margin: 50px auto; Removed, using flexbox for centering */
-            max-height: 90vh; /* Max height */
+            max-height: 90vh;
             overflow-y: auto;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            box-shadow: var(--glass-shadow, 0 5px 15px rgba(0,0,0,0.3));
+            transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
         }
 
         .input-group {
@@ -1614,25 +1635,27 @@ def POAPage(app_ref: Optional[App] = None):
             display: block;
             margin-bottom: 8px;
             font-weight: 500;
-            color: #262626;
+            color: var(--theme-text, #262626);
         }
 
         .input-group input,
         .input-group select,
         .input-group textarea {
             width: 100%;
-            padding: 10px; /* Increased padding */
-            border: 1px solid #d9d9d9;
+            padding: 10px;
+            border: 1px solid var(--input-border, #d9d9d9);
             border-radius: 8px;
             font-size: 1em;
-            background-color:  #f5f5f5; /* Lighter background */
-            color: #262626;
+            background-color: var(--input-bg, #f5f5f5);
+            color: var(--theme-text, #262626);
+            transition: border-color 0.2s, background-color 0.3s ease, color 0.3s ease;
         }
+
         .input-group input:focus,
         .input-group select:focus,
         .input-group textarea:focus {
-            border-color: #1890ff;
-            box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+            border-color: var(--input-focus-border, #1890ff);
+            box-shadow: 0 0 0 2px var(--primary-focus, rgba(24, 144, 255, 0.2));
             outline: none;
         }
 
@@ -1641,86 +1664,105 @@ def POAPage(app_ref: Optional[App] = None):
             display: flex;
             gap: 10px;
         }
+
         .ai-input-section input {
             flex-grow: 1;
         }
 
         .history-list { margin-top: 16px; }
+
         .history-item {
             padding: 12px;
-            border-bottom: 1px solid #f0f0f0;
+            border-bottom: 1px solid var(--theme-border, #f0f0f0);
             display: flex;
             justify-content: space-between;
             align-items: center;
             font-size: 0.9em;
         }
-        .history-item:last-child { border-bottom: none; }
-        .history-item div:first-child { flex-grow: 1; } /* Allow text to take space */
-        .history-item div:last-child { white-space: nowrap; margin-left: 10px; color: #8c8c8c; }
 
+        .history-item:last-child { border-bottom: none; }
+        .history-item div:first-child { flex-grow: 1; }
+        .history-item div:last-child {
+            white-space: nowrap;
+            margin-left: 10px;
+            color: var(--theme-text-muted, #8c8c8c);
+        }
 
         .item-hierarchy { margin-top: 16px; }
+
         .sub-item {
-            margin-left: 20px; /* Slightly reduced */
-            padding-left: 15px; /* Slightly increased */
-            border-left: 2px solid #e8e8e8; /* Lighter border */
-            margin-top:10px; /* Spacing between sub-items */
+            margin-left: 20px;
+            padding-left: 15px;
+            border-left: 2px solid var(--theme-border, #e8e8e8);
+            margin-top:10px;
         }
 
         .tabs {
             display: flex;
-            gap: 0; /* Remove gap, use borders */
-            margin-bottom: 20px; /* Increased margin */
-            border-bottom: 1px solid #d9d9d9;
+            gap: 0;
+            margin-bottom: 20px;
+            border-bottom: 1px solid var(--theme-border, #d9d9d9);
         }
 
         .tab {
-            padding: 10px 18px; /* Increased padding */
-            border-radius: 0; /* Remove individual radius */
+            padding: 10px 18px;
+            border-radius: 0;
             cursor: pointer;
-            background: transparent; /* Use border for separation */
-            border-bottom: 3px solid transparent; /* For active state */
-            color: #595959;
+            background: transparent;
+            border-bottom: 3px solid transparent;
+            color: var(--theme-text-muted, #595959);
             font-weight: 500;
-            margin-bottom: -1px; /* Align with parent border */
+            margin-bottom: -1px;
+            transition: color 0.2s, border-color 0.2s;
         }
+
         .tab:hover {
-            color: #1890ff;
+            color: var(--theme-primary, #1890ff);
         }
+
         .tab.active {
-            color: #1890ff;
-            border-bottom-color: #1890ff;
+            color: var(--theme-primary, #1890ff);
+            border-bottom-color: var(--theme-primary, #1890ff);
         }
 
         .current-item-section {
-            background: #e6f7ff; /* Lighter blue */
-            color: #0050b3; /* Darker text for contrast */
-            border: 1px solid #91d5ff; /* Blue border */
+            background: var(--glass-bg, #e6f7ff);
+            color: var(--theme-text, #0050b3);
+            border: 1px solid var(--theme-primary, #91d5ff);
+            transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
         }
+
         .current-item-section .badge#elapsed-time {
-            background: #003a8c; /* Dark blue for timer */
+            background: var(--theme-accent, #003a8c);
             color: white;
         }
+
         .section-title {
             font-size: 1.4em;
-            color: #262626;
+            color: var(--theme-text, #262626);
             margin-bottom: 10px;
         }
+
         /* File input styling */
         input[type="file"] {
-            border: 1px dashed #d9d9d9;
+            border: 1px dashed var(--theme-border, #d9d9d9);
+            background: var(--input-bg, transparent);
             padding: 10px;
             text-align: center;
             cursor: pointer;
+            color: var(--theme-text, inherit);
+            transition: border-color 0.3s ease, background-color 0.3s ease;
         }
+
         input[type="file"]::-webkit-file-upload-button {
             visibility: hidden;
         }
+
         input[type="file"]::before {
             content: 'Select .ics file';
             display: inline-block;
-            background: #1890ff;
-            color: white;
+            background: var(--theme-primary, #1890ff);
+            color: var(--theme-text-on-primary, white);
             border-radius: 4px;
             padding: 5px 8px;
             outline: none;
@@ -1730,12 +1772,51 @@ def POAPage(app_ref: Optional[App] = None):
             font-size: 0.9em;
             margin-right: 10px;
         }
+
         input[type="file"]:hover::before {
-            background: #096dd9;
+            background: var(--link-hover-color, #096dd9);
         }
+
         .tab-content { display: none; }
         .tab-content.active { display: block; }
 
+        /* Dark mode specific adjustments */
+        :root[data-theme="dark"] .badge.status-not_started {
+            background: var(--theme-text-muted, #4a4a4a);
+            color: var(--theme-text, white);
+        }
+
+        :root[data-theme="dark"] .badge.status-cancelled {
+            background: var(--theme-text-muted, #666666);
+            color: var(--theme-text, white);
+        }
+
+        :root[data-theme="dark"] .badge.priority-4 {
+            color: var(--theme-text, black);
+        }
+
+        /* Scrollbar styling for dark mode support */
+        ::-webkit-scrollbar {
+            width: var(--scrollbar-width, 8px);
+            height: var(--scrollbar-height, 8px);
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--scrollbar-track-color, #f1f1f1);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--scrollbar-thumb-color, #c1c1c1);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--scrollbar-thumb-hover-color, #a8a8a8);
+        }
+
+        ::-webkit-scrollbar-thumb:active {
+            background: var(--scrollbar-thumb-active-color, #8a8a8a);
+        }
     </style>
 
     <div class="app-container">

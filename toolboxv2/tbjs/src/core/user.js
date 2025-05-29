@@ -141,7 +141,7 @@ const user = {
                 const _result = await TB.api.request('CloudM.AuthManager', 'register_user_personal_key', registrationPayload, 'POST');
                 if (_result.error === TB.ToolBoxError.none) {
                     TB.logger.info(`[User] WebAuthn (Persona) registration successful for ${username}`);
-                    return { success: true, message: _result.info.help_text || "WebAuthn credential registered." };
+                    return await this.loginWithDeviceKey(username, keys.privateKey_base64);
                 } else {
                     return { success: false, message: _result.info.help_text || "Failed to register WebAuthn credential." };
                 }
@@ -155,11 +155,12 @@ const user = {
         }
     },
 
-    async loginWithDeviceKey(username) {
+    async loginWithDeviceKey(username, privateKeyBase64=false) {
         TB.logger.info(`[User] Attempting device key login for ${username}`);
         try {
-            const privateKeyBase64 = await crypto.retrievePrivateKey(username);
-            console.log("PRIVAT KEY", privateKeyBase64)
+            if (!privateKeyBase64){
+                privateKeyBase64 = await crypto.retrievePrivateKey(username);
+            }
             this._updateUserState({
                         isAuthenticated: false,
                         username: username,
@@ -280,7 +281,6 @@ const user = {
         TB.logger.info(`[User] Registering device for ${username} with invitation key.`);
         try {
             const keys = await crypto.generateAsymmetricKeys();
-            console.log("PRIVAT KEY", keys.privateKey_base64)
             await crypto.storePrivateKey(keys.privateKey_base64, username);
             await crypto.storePublicKey(keys.publicKey_base64, username);
             const payload = {
@@ -304,7 +304,7 @@ const user = {
 
                 TB.logger.info(`[User] Device registration successful for ${username}. Now attempting login.`);
                 // After successful device registration, typically log in the user with this new device.
-                return this.loginWithDeviceKey(username);
+                return this.loginWithDeviceKey(username, keys.privateKey_base64);
             } else {
                 return { success: false, message: result.info.help_text || "Device registration via invitation failed." };
             }
@@ -324,9 +324,18 @@ const user = {
             // This endpoint needs to be specific for adding a new WebAuthn credential to an *existing, authenticated* user.
             // The old 'create_user_with_init_key_personal' might not be it.
             // Let's assume an endpoint 'getWebAuthnRegistrationChallengeForUser'
+            let publicKeyBase64 = await crypto.retrievePublicKey(username)
+            let privateKeyBase64 = await crypto.retrievePrivateKey(username);
+            if (!privateKeyBase64){
+                const keys = await crypto.generateAsymmetricKeys();
+                await crypto.storePrivateKey(keys.privateKey_base64, username);
+                await crypto.storePublicKey(keys.publicKey_base64, username);
+                privateKeyBase64 = keys.privateKey_base64;
+                publicKeyBase64 = keys.publicKey_base64;
+            }
             const payload = {
                 name: username,
-                pub_key: await crypto.retrievePublicKey(username), // PEM format from generateAsymmetricKeys
+                pub_key: publicKeyBase64, // PEM format from generateAsymmetricKeys
                 invitation: invitationKey,
                 web_data: true,
                 as_base64: false // Assuming server expects PEM
@@ -338,9 +347,8 @@ const user = {
             }
             const { challenge, userId, ...rest } = challengeRes.get(); // Server provides challenge and its internal userId for WebAuthn
 
-            const currentPrivateKey = await crypto.retrievePrivateKey(username);
             const registrationPayload = await crypto.registerWebAuthnCredential({ challenge, userId, username },
-                await crypto.signMessage(currentPrivateKey, challenge));
+                await crypto.signMessage(privateKeyBase64, challenge));
 
             // 3. Send new WebAuthn credential to server
             const result = await TB.api.request('CloudM.AuthManager', 'register_user_personal_key', registrationPayload, 'POST');
