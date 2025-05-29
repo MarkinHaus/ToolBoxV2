@@ -15,7 +15,7 @@ from webauthn.helpers.exceptions import (
     InvalidAuthenticationResponse,
     InvalidRegistrationResponse,
 )
-from webauthn.helpers.structs import AuthenticationCredential, RegistrationCredential
+from webauthn.helpers.structs import AuthenticationCredential, RegistrationCredential, AuthenticatorAttestationResponse
 
 from toolboxv2 import TBEF, App, Result, ToolBox_over, get_app, get_logger
 from toolboxv2.mods.DB.types import DatabaseModes
@@ -319,6 +319,7 @@ async def get_magic_link_email(app: App, username=None):
 
     if user.challenge == '':
         user = UserCreator(**asdict(user))
+        db_helper_save_user(app, asdict(user))
 
     invitation = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
     res = send_magic_link_email(app, user.email, os.getenv("APP_BASE_URL", "http://localhost:8080")+f"/web/assets/m_log_in.html?key={quote(invitation)}&name={user.name}", user.name)
@@ -346,7 +347,7 @@ def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 
         return Result.default_user_error(info=f"Username '{username}' not known", interface=ToolBoxInterfaces.remote)
 
     if not invitation.startswith("01#"):  # not db_valid_invitation(app, invitation):
-        return Result.default_user_error(info="Invalid invitation", interface=ToolBoxInterfaces.remote)
+        return Result.default_user_error(info="Invalid key", interface=ToolBoxInterfaces.remote)
     invitation = invitation.replace("01#", "")
     test_bub_key = "Invalid"
 
@@ -365,8 +366,10 @@ def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 
 
     user_r: Result = get_user_by_name(app, username=username)
     user: User = user_r.get()
+    s_invite = Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
+    app.print(f"INVATATION : {invitation} and server whants {s_invite} {s_invite == invitation=}")
 
-    if invitation != Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email"):
+    if invitation != s_invite:
         return Result.default_user_error(info="Invalid invitation", interface=ToolBoxInterfaces.remote)
 
     user.user_pass_pub_devices.append(pub_key)
@@ -387,28 +390,53 @@ def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 
 class PersonalData(BaseModel):
     userId: str
     username: str
-    pk: str  # arrayBufferToBase64
-    pkAlgo: int
-    authenticatorData: str  # arrayBufferToBase64
-    clientJson: str  # arrayBufferToBase64
+    #pk: str  # arrayBufferToBase64
+    #pkAlgo: int
+    #authenticatorData: str  # arrayBufferToBase64
+    client_json: dict  # arrayBufferToBase64
     sing: str
-    rawId: str  # arrayBufferToBase64
+    # rawId: str  # arrayBufferToBase64
     registration_credential: CustomRegistrationCredential
 
 
 @export(mod_name=Name, api=True, test=False)
 async def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
-    if isinstance(data, dict):
-        data = PersonalData(**data)
-    if not db_helper_test_exist(app, data.username):
-        return Result.default_user_error(info=f"Username '{data.username}' not known")
+    if app is None:
+        app = get_app(Name + '.register_user_personal_key')
+    username = data.get("username")
+    userId = data.get("userId")
+    client_json = data.get("client_json")
+    sing = data.get("sing")
+    # app.print(f"Data : {username=}, {userId=}, {client_json=}, {username is None or userId is None or client_json is None or sing is None=}")
+    if username is None or userId is None or client_json is None or sing is None:
+        return Result.default_user_error(info="Invalid data")
 
-    user_result = get_user_by_name(app, data.username, from_base64(data.userId).decode())
+    if 'registration_credential' not in data or 'response' not in data['registration_credential']:
+        return Result.default_user_error(info="Invalid data")
+
+    def base64url_to_bytes(val: str) -> bytes:
+        # Add padding back (base64 must be a multiple of 4 chars)
+        padded = val + '=' * (-len(val) % 4)
+        return base64.urlsafe_b64decode(padded)
+
+    def base64_to_bytes(val: str) -> bytes:
+        # Ensure proper base64 padding
+        padded = val + '=' * (-len(val) % 4)
+        return base64.b64decode(padded)
+    data['registration_credential']['raw_id'] = base64url_to_bytes(data['registration_credential']['raw_id'])
+    data['registration_credential']['response']['client_data_json'] = base64_to_bytes(data['registration_credential']['response']['client_data_json'])
+    data['registration_credential']['response']['attestation_object'] = base64_to_bytes(data['registration_credential']['response']['attestation_object'])
+    data['registration_credential']['response'] = AuthenticatorAttestationResponse(**data['registration_credential']['response'])
+    registration_credential = CustomRegistrationCredential(**data.get("registration_credential"))
+    if not db_helper_test_exist(app, username):
+        return Result.default_user_error(info=f"Username '{username}' not known")
+
+    user_result = get_user_by_name(app, username, from_base64(userId).decode())
 
     if user_result.is_error() and not user_result.is_data():
         return Result.default_internal_error(info="No user found", data=user_result)
 
-    client_json = json.loads(from_base64(data.clientJson))
+    client_json = client_json
     challenge = client_json.get("challenge")
     origin = client_json.get("origin")
     # crossOrigin = client_json.get("crossOrigin")
@@ -416,26 +444,26 @@ async def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
     if challenge is None:
         return Result.default_user_error(info="No challenge found in data invalid date parsed", data=user_result)
 
-    valid_origen = ["https://simplecore.app", "https://simplecorehub.com", "http://localhost:5000"] + (
-        ["http://localhost:5000"] if app.debug else [])
+    valid_origen = ["https://simplecore.app", "https://simplecorehub.com", os.getenv("APP_BASE_URL", "http://localhost:8080")] + (
+        ["http://localhost:5000", "http://localhost:8080", os.getenv("APP_BASE_URL", "http://localhost:8080")] if app.debug else [])
 
     if origin not in valid_origen:
         return Result.default_user_error(info=f'Invalid origen: {origin} not in {valid_origen}', data=user_result)
 
     user: User = user_result.get()
 
-    if challenge != to_base64(user.challenge).decode():
+    if challenge != user.challenge:
         return Result.default_user_error(info="Invalid challenge returned", data=user)
 
-    if not Code.verify_signature(signature=from_base64(data.sing), message=user.challenge, public_key_str=user.pub_key,
+    if not Code.verify_signature(signature=from_base64(sing), message=user.challenge, public_key_str=user.pub_key,
                                  salt_length=32):
         return Result.default_user_error(info="Verification failed Invalid signature")
-    # c = {   "id": data.rawId,   "rawId": data.rawId,   "response": {       "attestationObject": data.attestationObj,
-    # "clientDataJSON": data.clientJSON,       "transports": ["usb", "nfc", "ble", "internal", "cable", "hybrid"],
+    # c = {   "id": rawId,   "rawId": rawId,   "response": {       "attestationObject": attestationObj,
+    # "clientDataJSON": clientJSON,       "transports": ["usb", "nfc", "ble", "internal", "cable", "hybrid"],
     # },   "type": "public-key",   "clientExtensionResults": {},   "authenticatorAttachment": "platform",}
     try:
         registration_verification = webauthn.verify_registration_response(
-            credential=data.registration_credential,
+            credential=registration_credential,
             expected_challenge=user.challenge.encode(),
             expected_origin=valid_origen,
             expected_rp_id=os.environ.get('HOSTNAME', 'localhost'),  # simplecore.app
@@ -448,11 +476,11 @@ async def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
         return Result.default_user_error(info="Invalid registration not user verified")
 
     user_persona_pub_key = {
-        'public_key': registration_verification.credential_public_key,
-        'sign_count': registration_verification.sign_count,
-        'credential_id': registration_verification.credential_id,
-        'rawId': data.rawId,
-        'attestation_object': registration_verification.attestation_object,
+        'public_key': base64.b64encode(registration_verification.credential_public_key).decode('ascii'),
+        'sign_count': base64.b64encode(registration_verification.sign_count).decode('ascii'),
+        'credential_id': base64.b64encode(registration_verification.credential_id).decode('ascii'),
+        'rawId': base64.b64encode(registration_credential.raw_id).decode('ascii'),
+        'attestation_object': base64.b64encode(registration_verification.attestation_object).decode('ascii'),
     }
 
     user.challenge = ""
@@ -538,8 +566,10 @@ async def get_to_sing_data(app: App, username, personal_key=False):
         db_helper_save_user(app, asdict(user))
     data = {'challenge': user.challenge}
 
+    if personal_key == 'false':
+        personal_key = False
     if personal_key:
-        data['rowId'] = user.user_pass_pub_persona.get("rawId")
+        data['rowId'] =  user.user_pass_pub_persona.get("rawId")
     app.print(f"END {time.perf_counter()-t0}",)
     return Result.ok(data=data, info="Challenge returned")
 

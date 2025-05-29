@@ -60,7 +60,7 @@ const Router = {
         logger.log(`[Router] Navigating to: ${cleanPath}`);
         events.emit('router:beforeNavigation', { from: currentPath, to: cleanPath });
 
-        const loadingView = Loader ? Loader.show() : null;
+        const loadingView = Loader ? Loader.show({hideMainContent:false, text:`Routing to ${cleanPath}...`}) : null;
 
         // --- SCRIPT CLEANUP (Handles global attribute) ---
         const survivingGlobalScripts = new Set();

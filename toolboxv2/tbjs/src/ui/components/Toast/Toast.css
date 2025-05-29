@@ -1,195 +1,286 @@
+/* Modern Toast Styles - Slim, Plastic, Minimalistic */
 
-/* Beispiel für einen globalen tbjs-Komponenten-Style, wenn nötig */
-/* .tb-button-custom { ... } */
-
-/* Styles für Komponenten, die nicht rein mit Tailwind gehen, z.B. der Loader-Spinner */
-/* Diese sollten idealerweise auch mit dem `tb-` Präfix versehen werden. */
-/* Beispiel aus Loader.js (angepasst mit tb- Präfix) */
-.tb-loader-spinner-default {
-    width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.3); /* Farbe anpassen für Themen */
-    border-top-color: var(--tb-color-primary-500); /* Nutzt deine Theme-Farbe */
-    border-radius: 50%; animation: tbjs_spin 1s linear infinite;
-}
-html.dark .tb-loader-spinner-default {
-    border-top-color: var(--tb-color-primary-500); /* Kann gleich bleiben oder angepasst werden */
-    border-color: rgba(255,255,255,0.2); /* Dunklerer transparenter Rand */
+/* Container for all toasts */
+.tb-toast-container {
+    max-width: 400px;
+    width: 100%;
 }
 
-/* Sicherstellen, dass die Animation definiert ist */
-@keyframes tbjs_spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-/* Main Toast Container (already has Tailwind for layout, bg, shadow, rounding) */
-.tb-speech-balloon-toast {
-    /* Ensure backdrop-filter is applied if supported by browser (already in JS) */
-    /* -webkit-backdrop-filter: blur(10px); */ /* Example if not handled by Tailwind */
-    /* backdrop-filter: blur(10px); */      /* Example if not handled by Tailwind */
-    position: relative; /* Needed for absolute positioning of "from" label and tail */
-    /* padding: 20px; -- from speech_balloon.css, in Toast.js it's tb-p-5 */
-    /* margin: 15px; -- applied by the toast container's gap */
-    animation: tb-toast-fadeIn 0.3s ease-out; /* Entry animation */
+/* Main toast element */
+.tb-toast {
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 12px;
+    box-shadow:
+        0 8px 32px rgba(0, 0, 0, 0.12),
+        0 2px 8px rgba(0, 0, 0, 0.08);
+    color: #1f2937;
+    font-size: 14px;
+    line-height: 1.4;
+    min-width: 280px;
+    max-width: 380px;
+    overflow: hidden;
+    position: relative;
+    transform: translateY(-20px) scale(0.95);
+    opacity: 0;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: transform, opacity;
 }
 
-/* Type-specific border colors (JS already adds tb-border-...)
-   These are mostly illustrative if your JS handles border colors via Tailwind.
-   If not, you'd uncomment and use them.
-.tb-toast-type-info { border-color: var(--tb-color-primary-500, #3b82f6); }
-.tb-toast-type-success { border-color: var(--tb-color-green-500, #22c55e); }
-.tb-toast-type-warning { border-color: var(--tb-color-yellow-500, #eab308); }
-.tb-toast-type-error { border-color: var(--tb-color-red-500, #ef4444); }
-*/
-
-/* "From" Label (Title) */
-.tb-speech-balloon-from { /* This class is added in Toast.js */
-    /* position: absolute; - already set by Tailwind in Toast.js */
-    /* top: -10px; / tb--top-2.5 in Toast.js */
-    /* left: 50%; / tb-left-1/2 in Toast.js */
-    /* transform: translateX(-50%); / tb--translate-x-1/2 in Toast.js */
-    /* background: var(--tb-color-background, white); / tb-bg-background-color in Toast.js */
-    /* backdrop-filter: blur(10px); */ /* Could be added if desired, but might be too much with main blur */
-    /* padding: 0 5px; / tb-px-2 tb-py-0.5 in Toast.js */
-    /* z-index: 1; / Tailwind z-10 could be used in JS if needed */
-    /* border-radius: 5px; / tb-rounded in Toast.js */
-    /* font-size: 0.75rem; / tb-text-xs in Toast.js */
-    /* font-weight: 600; / tb-font-semibold in Toast.js */
-    /* box-shadow: 0 1px 3px rgba(0,0,0,0.1); / tb-shadow in Toast.js */
-    /* These styles from speech_balloon.css are mostly covered by Tailwind in Toast.js */
-    /* We can ensure the background is distinct if needed */
-    background-color: var(--tb-color-background); /* Ensure it's opaque over the blurred toast body */
-    border: 1px solid var(--tb-color-border, #e5e7eb); /* Match general border style */
-}
-html.dark .tb-speech-balloon-from {
-    border-color: var(--tb-color-border, #4b5563);
+/* Dark mode */
+:root[data-theme="dark"] {
+    .tb-toast {
+        background: rgba(17, 24, 39, 0.95);
+        border-color: rgba(75, 85, 99, 0.3);
+        color: #f9fafb;
+        box-shadow:
+            0 8px 32px rgba(0, 0, 0, 0.3),
+            0 2px 8px rgba(0, 0, 0, 0.2);
+    }
 }
 
-
-/* Speech Balloon Tail */
-.tb-speech-balloon-tail {
-    content: "";
-    position: absolute;
-    width: 0;
-    height: 0;
-    border-style: solid;
-    border-width: 8px; /* Size of the tail */
-    left: 50%;
-    transform: translateX(-50%);
-    /* Will be dynamically set by JS or specific CSS for top/bottom */
+/* Toast states */
+.tb-toast.tb-toast-showing {
+    transform: translateY(0) scale(1);
+    opacity: 1;
 }
 
-/* Tail pointing DOWN (for toasts at the top of the screen) */
-.tb-toast-position-top .tb-speech-balloon-tail {
-    top: -16px; /* (2 * border-width) */
-    border-left-color: transparent;
-    border-right-color: transparent;
-    border-top-color: transparent;
-    /* border-bottom-color is set by JS based on type's border color for consistency */
+.tb-toast.tb-toast-hiding {
+    transform: translateY(-10px) scale(0.98);
+    opacity: 0;
+    transition: all 0.2s ease-in;
 }
 
-/* Tail pointing UP (for toasts at the bottom of the screen) */
-.tb-toast-position-bottom .tb-speech-balloon-tail {
-    bottom: -16px; /* (2 * border-width) */
-    border-left-color: transparent;
-    border-right-color: transparent;
-    border-bottom-color: transparent;
-    /* border-top-color is set by JS based on type's border color for consistency */
-}
-/* Note: The actual color of the tail (border-top/bottom-color) should match the toast's border color.
-   This logic will be added to Toast.js _createDom to apply the correct border color. */
-
-
-/* Fade Animations */
-@keyframes tb-toast-fadeIn {
-    from { opacity: 0; transform: translateY(-10px) scale(0.95); } /* Example entry */
-    to { opacity: 1; transform: translateY(0) scale(1); }
-}
-@keyframes tb-toast-fadeOut { /* Used for the dot */
-    from { opacity: 1; }
-    to { opacity: 0; }
-}
-/* The main toast fade-out is handled by direct style manipulation in JS for opacity and transform */
-
-.tb-speech-balloon-content{
-    background-color: var(--theme-bg);
+.tb-toast.tb-toast-hidden {
+    display: none;
 }
 
-/* Content Area - already styled by Tailwind in Toast.js */
-.tb-speech-balloon-content p { /* If you want specific styling for p tags inside */
-    /* font-size: 1rem; */ /* Example, already tb-text-sm in Toast.js */
-    margin-bottom: 0.5em; /* Add some spacing between paragraphs */
-}
-.tb-speech-balloon-content p:last-child {
-    margin-bottom: 0;
-}
-
-
-/* Progress Bar Container & Bar */
-/* Container style (tb-bg-text-color/10 tb-rounded-full tb-overflow-hidden) is good from JS */
-.tb-speech-balloon-progress-bar-container {
-    height: 5px; /* Explicit height matching speech_balloon.css */
-}
-.tb-speech-balloon-progress-bar {
-    /* height: 100%; tb-h-full from JS */
-    /* background-color is set by JS using accentColorClass.replace('tb-text-', 'tb-bg-') */
-    /* border-radius: 9999px; tb-rounded-full from JS */
-    transition: width 0.1s linear; /* Smoothness for JS-driven updates */
-}
-/* No CSS animation needed for progress bar as JS handles width update */
-
-.tb-speech-balloon-close-button {
-    padding: 0;
-    position: absolute;
-    top: 5px;
-    right: 5px;
-    cursor: pointer;
+/* Header section */
+.tb-toast-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px 8px;
+    min-height: 40px;
 }
 
-.tb-toast-container-mini-button{
-    padding: 0;
-    cursor: pointer;
-}
-
-/* Close Button */
-.tb-speech-balloon-close-button .material-symbols-outlined {
-    font-size: 1.125rem; /* Slightly smaller than default 24px for a less intrusive button */
+/* Icon */
+.tb-toast-icon {
+    color: var(--toast-color);
+    font-size: 18px !important;
+    flex-shrink: 0;
     line-height: 1;
 }
-.tb-speech-balloon-close-button:hover .material-symbols-outlined {
-    /* color: var(--tb-color-primary-500); */ /* Or use text-color from JS */
+
+/* Title */
+.tb-toast-title {
+    color: var(--toast-color);
+    font-weight: 600;
+    font-size: 13px;
+    flex: 1;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    opacity: 0.9;
 }
 
+/* Close button */
+.tb-toast-close {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    opacity: 0.6;
+    padding: 4px;
+    border-radius: 6px;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+    margin-left: auto;
+}
 
-/* Dot (after toast closes) */
+.tb-toast-close:hover {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+    .tb-toast-close:hover {
+        background: rgba(255, 255, 255, 0.1);
+    }
+}
+
+.tb-toast-close .material-symbols-outlined {
+    font-size: 16px !important;
+    line-height: 1;
+}
+
+/* Message content */
+.tb-toast-message {
+    padding: 0 16px 12px;
+    color: inherit;
+    opacity: 0.9;
+    line-height: 1.5;
+}
+
+/* Action buttons */
+.tb-toast-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    padding: 8px 16px 12px;
+}
+
+.tb-toast-action-btn {
+    background: var(--toast-color);
+    border: none;
+    border-radius: 6px;
+    color: white;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 12px;
+    transition: all 0.15s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.tb-toast-action-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    filter: brightness(1.1);
+}
+
+.tb-toast-action-btn:active {
+    transform: translateY(0);
+}
+
+/* Progress bar */
+.tb-toast-progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: rgba(0, 0, 0, 0.05);
+    overflow: hidden;
+}
+
+@media (prefers-color-scheme: dark) {
+    .tb-toast-progress {
+        background: rgba(255, 255, 255, 0.1);
+    }
+}
+
+.tb-toast-progress-bar {
+    height: 100%;
+    background: var(--toast-color);
+    transform-origin: left;
+    transition: transform 0.1s linear;
+    will-change: transform;
+}
+
+/* Dot indicator (after toast is hidden) */
 .tb-toast-dot {
-    position: relative; /* So it sits in the flow of the toast container */
-    /* display: inline-block; /* Or flex if content inside */
-    width: 10px;  /* Larger than speech_balloon's dot for better visibility */
-    height: 10px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
     cursor: pointer;
-    /* background-color set by JS based on toast type */
-    margin: 5px; /* Spacing from where the toast was */
-    opacity: 0; /* Start hidden */
-    animation: tb-toast-dot-fadeIn 0.3s forwards, tb-toast-dot-autoHide 15s 0.5s forwards; /* Fade in, then auto hide */
-    transition: transform 0.2s ease-out, background-color 0.2s;
-    z-index: 1090; /* Below toast container (1100) but above most page content */
+    opacity: 0;
+    transform: scale(0.5);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    animation: tb-toast-dot-appear 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    margin: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .tb-toast-dot:hover {
-    transform: scale(1.2);
-    /* background-color: var(--tb-color-accent, #2563eb); /* Example hover color */
+    transform: scale(1.3);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
 }
 
-@keyframes tb-toast-dot-fadeIn {
-    from { opacity: 0; transform: scale(0.5); }
-    to { opacity: 1; transform: scale(1); }
+.tb-toast-dot.tb-toast-dot-hiding {
+    animation: tb-toast-dot-disappear 0.2s ease-in forwards;
 }
 
-@keyframes tb-toast-dot-autoHide {
-    0% { opacity: 1; }
-    90% { opacity: 1; } /* Hold visibility for most of the duration */
-    100% { opacity: 0; transform: scale(0.5); }
+/* Dot animations */
+@keyframes tb-toast-dot-appear {
+    from {
+        opacity: 0;
+        transform: scale(0.5);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
 }
 
-/* Specific dot colors (applied by JS) */
-.tb-toast-dot-success { background-color:  #22c55e; }
-.tb-toast-dot-warning { background-color:  #eab308; }
-.tb-toast-dot-error   { background-color:  #ef4444; }
-.tb-toast-dot-info    { background-color:  #3b82f6; }
+@keyframes tb-toast-dot-disappear {
+    from {
+        opacity: 1;
+        transform: scale(1);
+    }
+    to {
+        opacity: 0;
+        transform: scale(0.5);
+    }
+}
+
+/* Responsive adjustments */
+@media (max-width: 640px) {
+    .tb-toast-container {
+        max-width: calc(100vw - 32px);
+        margin: 0 16px;
+    }
+
+    .tb-toast {
+        min-width: 240px;
+        max-width: none;
+        width: 100%;
+    }
+
+    .tb-toast-header {
+        padding: 10px 14px 6px;
+    }
+
+    .tb-toast-message {
+        padding: 0 14px 10px;
+    }
+
+    .tb-toast-actions {
+        padding: 6px 14px 10px;
+    }
+}
+
+/* Utility classes for positioning (used by JS) */
+.tb-fixed { position: fixed; }
+.tb-z-\[9999\] { z-index: 9999; }
+.tb-flex { display: flex; }
+.tb-flex-col { flex-direction: column; }
+.tb-pointer-events-none { pointer-events: none; }
+.tb-p-4 { padding: 1rem; }
+.tb-gap-2 { gap: 0.5rem; }
+.tb-top-0 { top: 0; }
+.tb-right-0 { right: 0; }
+.tb-bottom-0 { bottom: 0; }
+.tb-left-0 { left: 0; }
+.tb-left-1\/2 { left: 50%; }
+.tb--translate-x-1\/2 { transform: translateX(-50%); }
+.tb-items-end { align-items: flex-end; }
+.tb-items-start { align-items: flex-start; }
+.tb-items-center { align-items: center; }
+
+/* Animation performance optimizations */
+.tb-toast,
+.tb-toast-dot {
+    backface-visibility: hidden;
+    perspective: 1000px;
+}
+
+/* Print styles */
+@media print {
+    .tb-toast-container,
+    .tb-toast,
+    .tb-toast-dot {
+        display: none !important;
+    }
+}

@@ -1,45 +1,52 @@
 // tbjs/ui/components/Toast/Toast.js
 import TB from '../../../index.js';
 let activeToasts = new Map();
+
 const DEFAULT_TOAST_OPTIONS = {
     message: '',
     type: 'info', // 'info', 'success', 'warning', 'error'
-    duration: 15000, // milliseconds, 0 for sticky
-    position: 'top-right', // 'top-right', 'top-center', 'top-left', 'bottom-right', ...
-    title: '', // Optional title, will be used as the "from" label
+    duration: 4000, // milliseconds, 0 for sticky
+    position: 'top-right',//['top-right', 'top-center', 'top-left', 'bottom-right', 'bottom-center', 'bottom-left'
+    title: '', // Optional title
     actions: [], // [{ text: 'Undo', action: () => {} }]
     customClasses: {
-        container: '', // For the individual toast
+        container: '',
         title: '',
         message: '',
         actionButton: '',
-        progressBar: '', // Custom class for the progress bar itself
-        toastHost: '', // For the main container holding all toasts
+        progressBar: '',
+        toastHost: '',
     },
-    icon: true, // Show default icon based on type (less prominent in balloon style)
+    icon: true,
     closable: true,
-    showDotOnHide: true, // New option to control dot behavior
-    dotDuration: 10000, // How long the dot stays visible (ms)
+    showDotOnHide: true,
+    dotDuration: 3000,
 };
 
-let toastContainers = {}; // Store containers by position
+let toastContainers = {};
 
 class Toast {
     constructor(options = {}) {
         this.options = { ...DEFAULT_TOAST_OPTIONS, ...options };
+
+        const validPositions = ['top-right', 'top-center', 'top-left', 'bottom-right', 'bottom-center', 'bottom-left'];
+        if (!validPositions.includes(this.options.position)) {
+            TB.logger.warn(`[Toast] Invalid position "${this.options.position}". Defaulting to "top-right".`);
+            this.options.position = 'top-right';
+        }
+
         this.options.customClasses = { ...DEFAULT_TOAST_OPTIONS.customClasses, ...options.customClasses };
         this.id = TB.utils.uniqueId('tb-toast-');
         this._toastElement = null;
         this._timeoutId = null;
         this._progressIntervalId = null;
         this._progressBarElement = null;
-        this._dotElement = null; // To manage the dot
-        this._dotTimeoutId = null; // For auto-removing the dot
-        this._isPermanentlyHidden = false; // Flag to prevent dot re-creation
+        this._dotElement = null;
+        this._dotTimeoutId = null;
+        this._isPermanentlyHidden = false;
     }
 
     _getToastContainer() {
-        const positionClass = this._getPositionClass();
         const containerId = `tb-toast-container-${this.options.position.replace(/-/g, '')}`;
 
         if (!toastContainers[this.options.position]) {
@@ -47,14 +54,9 @@ class Toast {
             if (!container) {
                 container = document.createElement('div');
                 container.id = containerId;
-                // container.classList.add("tb-toast-container-mini-button"); // This was being overwritten
-                // Tailwind: fixed z-[1100] flex flex-col items-end p-4 gap-3 (for top-right)
-                // Adjust alignment based on position
-                let alignmentClasses = 'items-end'; // Default for right positions
-                if (this.options.position.includes('left')) alignmentClasses = 'items-start';
-                if (this.options.position.includes('center')) alignmentClasses = 'items-center';
 
-                container.className = `tb-fixed tb-z-[1100] tb-flex tb-flex-col tb-p-4 tb-gap-3 ${positionClass} ${alignmentClasses} ${this.options.customClasses.toastHost || ''}`;
+                const positionClasses = this._getContainerPositionClasses();
+                container.className = `tb-toast-container ${positionClasses} ${this.options.customClasses.toastHost || ''}`;
                 document.body.appendChild(container);
             }
             toastContainers[this.options.position] = container;
@@ -62,66 +64,52 @@ class Toast {
         return toastContainers[this.options.position];
     }
 
-    _getPositionClass() {
-        // These classes position the container itself
+    _getContainerPositionClasses() {
+        const baseClasses = 'tb-fixed tb-z-[9999] tb-flex tb-flex-col tb-pointer-events-none';
+        const spacing = 'tb-p-4 tb-gap-2';
+
         switch (this.options.position) {
-            case 'top-right': return 'tb-top-0 tb-right-0';
-            case 'top-center': return 'tb-top-0 tb-left-1/2 tb--translate-x-1/2';
-            case 'top-left': return 'tb-top-0 tb-left-0';
-            case 'bottom-right': return 'tb-bottom-0 tb-right-0';
-            case 'bottom-center': return 'tb-bottom-0 tb-left-1/2 tb--translate-x-1/2';
-            case 'bottom-left': return 'tb-bottom-0 tb-left-0';
-            default: return 'tb-top-0 tb-right-0';
+            case 'top-right':
+                return `${baseClasses} ${spacing} tb-top-0 tb-right-0 tb-items-end`;
+            case 'top-center':
+                return `${baseClasses} ${spacing} tb-top-0 tb-left-1/2 tb--translate-x-1/2 tb-items-center`;
+            case 'top-left':
+                return `${baseClasses} ${spacing} tb-top-0 tb-left-0 tb-items-start`;
+            case 'bottom-right':
+                return `${baseClasses} ${spacing} tb-bottom-0 tb-right-0 tb-items-end`;
+            case 'bottom-center':
+                return `${baseClasses} ${spacing} tb-bottom-0 tb-left-1/2 tb--translate-x-1/2 tb-items-center`;
+            case 'bottom-left':
+                return `${baseClasses} ${spacing} tb-bottom-0 tb-left-0 tb-items-start`;
+            default:
+                return `${baseClasses} ${spacing} tb-top-0 tb-right-0 tb-items-end`;
         }
     }
 
-    _getAppearanceStyles() {
-        let baseWrapperClasses = `tb-relative tb-flex tb-flex-col tb-items-center tb-bg-background-color/60 dark:tb-bg-background-color/60 tb-backdrop-blur-md tb-rounded-lg tb-p-5 tb-shadow-xl tb-min-w-[250px] tb-max-w-xs md:tb-max-w-sm`;
-        baseWrapperClasses += ' tb-speech-balloon-toast';
-
-
-        let borderColorClass = 'tb-border-gray-400 dark:tb-border-gray-600';
-        let accentColorClass = 'tb-text-blue-500 dark:tb-text-blue-400';
-        let fromLabel = this.options.title || 'Notification';
-        let dotColorClass = 'tb-toast-dot-info';
-
-
-        switch (this.options.type) {
-            case 'success':
-                borderColorClass = 'tb-border-green-500 dark:tb-border-green-400';
-                accentColorClass = 'tb-text-green-500 dark:tb-text-green-400';
-                dotColorClass = 'tb-toast-dot-success';
-                if (!this.options.title) fromLabel = 'Success';
-                break;
-            case 'warning':
-                borderColorClass = 'tb-border-yellow-500 dark:tb-border-yellow-400';
-                accentColorClass = 'tb-text-yellow-500 dark:tb-text-yellow-400';
-                dotColorClass = 'tb-toast-dot-warning';
-                if (!this.options.title) fromLabel = 'Warning';
-                break;
-            case 'error':
-                borderColorClass = 'tb-border-red-500 dark:tb-border-red-400';
-                accentColorClass = 'tb-text-red-500 dark:tb-text-red-400';
-                dotColorClass = 'tb-toast-dot-error';
-                if (!this.options.title) fromLabel = 'Error';
-                break;
-            case 'info':
-            default:
-                borderColorClass = 'tb-border-blue-500 dark:tb-border-blue-400'; // Default to blue for info if not gray
-                accentColorClass = 'tb-text-blue-500 dark:tb-text-blue-400';
-                dotColorClass = 'tb-toast-dot-info';
-                if (!this.options.title) fromLabel = 'Info';
-                break;
-        }
-        baseWrapperClasses += ` ${borderColorClass.split(' ')[0]}`; // Add only the light mode border for now or handle dark mode separately
-
-        return {
-            wrapper: baseWrapperClasses,
-            accentColorClass: accentColorClass,
-            fromLabel: fromLabel,
-            borderColorClass: borderColorClass.split(' ')[0], // Use light mode for tail color logic
-            dotColorClass: dotColorClass,
+    _getTypeConfig() {
+        const configs = {
+            success: {
+                color: '#10b981',
+                icon: 'check_circle',
+                label: 'Success'
+            },
+            warning: {
+                color: '#f59e0b',
+                icon: 'warning',
+                label: 'Warning'
+            },
+            error: {
+                color: '#ef4444',
+                icon: 'error',
+                label: 'Error'
+            },
+            info: {
+                color: '#3b82f6',
+                icon: 'info',
+                label: 'Info'
+            }
         };
+        return configs[this.options.type] || configs.info;
     }
 
     _createDom() {
@@ -129,118 +117,100 @@ class Toast {
         this._toastElement = document.createElement('div');
         this._toastElement.id = this.id;
 
+        const typeConfig = this._getTypeConfig();
+        const fromLabel = this.options.title || typeConfig.label;
 
-        const { wrapper: wrapperClasses, accentColorClass, fromLabel, borderColorClass, dotColorClass } = this._getAppearanceStyles();
-
-        const initialTransform = this.options.position.includes('bottom-') ? 'tb-translate-y-2' : 'tb--translate-y-2';
-        this._toastElement.className = `tb-opacity-0 ${initialTransform} tb-transition-all tb-duration-300 tb-ease-out ${wrapperClasses} ${this.options.customClasses.container}`
-        let contentHtml = '';
-
-        let bgColor = '';
-        // Determine background color for the "from" label based on type
-        switch (this.options.type) {
-            case 'success': bgColor = TB.ui.theme?.tailwindResolvedColors?.['green-500'] || '#22c55e'; break;
-            case 'warning': bgColor = TB.ui.theme?.tailwindResolvedColors?.['yellow-500'] || '#eab308'; break;
-            case 'error': bgColor = TB.ui.theme?.tailwindResolvedColors?.['red-500'] || '#ef4444'; break;
-            case 'info':
-            default: bgColor = TB.ui.theme?.tailwindResolvedColors?.['blue-500'] || '#3b82f6'; break;
-        }
-
-
-        contentHtml += `
-          <div
-            class="tb-speech-balloon-from tb-absolute tb--top-2.5 tb-left-1/2 tb--translate-x-1/2 tb-px-2 tb-py-0.5 tb-text-xs tb-text-white tb-font-semibold tb-rounded tb-shadow ${this.options.customClasses.title}"
-            style="background-color: ${bgColor};"
-          >
-            ${fromLabel}
-          </div>
+        // Modern, slim toast with plastic aesthetic
+        this._toastElement.className = `tb-toast ${this.options.customClasses.container}`;
+        this._toastElement.style.cssText = `
+            --toast-color: ${typeConfig.color};
+            pointer-events: auto;
         `;
-        if (this.options.closable) {
-            contentHtml += `<button class="tb-speech-balloon-close-button tb-absolute tb-top-1 tb-right-1 tb-p-1 tb-text-text-color/70 hover:tb-text-text-color tb-rounded-full" data-close-btn="true">
-                                <span class="material-symbols-outlined tb-text-base">close</span>
-                           </button>`;
-        }
 
-        contentHtml += `<div class="tb-speech-balloon-content tb-w-full tb-text-sm tb-mt-2 ${this.options.customClasses.message}">`;
-        if (this.options.icon) {
-            // Icon HTML was commented out, uncommenting if it's intended. For tests, it doesn't matter now.
-            let iconName = 'info';
-            if (this.options.type === 'success') iconName = 'check_circle';
-            if (this.options.type === 'warning') iconName = 'warning';
-            if (this.options.type === 'error') iconName = 'error';
-            contentHtml += `<span class="material-symbols-outlined tb-mr-2 tb-align-middle ${accentColorClass}">${iconName}</span>`;
+        let contentHtml = `
+            <div class="tb-toast-header">
+                ${this.options.icon ? `<span class="tb-toast-icon material-symbols-outlined">${typeConfig.icon}</span>` : ''}
+                <span class="tb-toast-title">${TB.utils.escapeHtml(fromLabel)}</span>
+                ${this.options.closable ? `
+                    <button class="tb-toast-close" data-close-btn="true" aria-label="Close">
+                        <span class="material-symbols-outlined">close</span>
+                    </button>
+                ` : ''}
+            </div>
+        `;
+
+        if (this.options.message) {
+            contentHtml += `
+                <div class="tb-toast-message ${this.options.customClasses.message}">
+                    ${TB.utils.escapeHtml(this.options.message)}
+                </div>
+            `;
         }
-        contentHtml += this.options.message;
-        contentHtml += `</div>`;
 
         if (this.options.actions.length > 0) {
-            contentHtml += '<div class="tb-speech-balloon-options tb-mt-3 tb-flex tb-flex-wrap tb-gap-2 tb-justify-center tb-w-full">';
+            contentHtml += '<div class="tb-toast-actions">';
             this.options.actions.forEach((action, idx) => {
-                contentHtml += `<button class="tb-px-3 tb-py-1 tb-text-xs tb-font-medium tb-rounded tb-border tb-border-current hover:tb-bg-text-color/10 ${accentColorClass} ${this.options.customClasses.actionButton}" data-action-idx="${idx}">${action.text}</button>`;
+                contentHtml += `
+                    <button class="tb-toast-action-btn ${this.options.customClasses.actionButton}" data-action-idx="${idx}">
+                        ${TB.utils.escapeHtml(action.text)}
+                    </button>
+                `;
             });
             contentHtml += '</div>';
         }
 
         if (this.options.duration > 0) {
-            contentHtml += `<div class="tb-speech-balloon-progress-bar-container tb-w-full tb-h-1.5 tb-bg-text-color/10 tb-mt-4 tb-rounded-full tb-overflow-hidden">
-                                <div class="tb-speech-balloon-progress-bar tb-h-full tb-rounded-full ${accentColorClass.replace('tb-text-', 'tb-bg-')} ${this.options.customClasses.progressBar}" style="width: 100%;"></div>
-                           </div>`;
+            contentHtml += `
+                <div class="tb-toast-progress ${this.options.customClasses.progressBar}">
+                    <div class="tb-toast-progress-bar"></div>
+                </div>
+            `;
         }
-        contentHtml += `<div class="tb-speech-balloon-tail"></div>`;
-
 
         this._toastElement.innerHTML = contentHtml;
-        this._progressBarElement = this._toastElement.querySelector('.tb-speech-balloon-progress-bar');
+        this._progressBarElement = this._toastElement.querySelector('.tb-toast-progress-bar');
 
+        // Event listeners
         this._toastElement.querySelectorAll('[data-action-idx]').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const idx = parseInt(e.target.dataset.actionIdx);
                 this.options.actions[idx].action();
-                this.hide(false); // Typically actions mean the toast is done, no dot.
+                this.hide(false);
             });
         });
 
-        const tail = this._toastElement.querySelector('.tb-speech-balloon-tail');
-        if (tail) {
-            const colorName = borderColorClass.split('-').slice(2).join('-'); // e.g., green-500
-            const resolvedColor = TB.ui.theme?.tailwindResolvedColors?.[colorName] || 'currentColor';
-
-            if (this.options.position.startsWith('top-')) {
-                this._toastElement.classList.add('tb-toast-position-top');
-                tail.style.borderBottomColor = resolvedColor;
-            } else {
-                this._toastElement.classList.add('tb-toast-position-bottom');
-                tail.style.borderTopColor = resolvedColor;
-            }
-        }
-
         const closeBtn = this._toastElement.querySelector('[data-close-btn]');
         if (closeBtn) {
-            closeBtn.addEventListener('click', () => this.hide(this.options.showDotOnHide)); // Respect showDotOnHide for manual close
+            closeBtn.addEventListener('click', () => this.hide(this.options.showDotOnHide));
         }
 
-        const toastContainerElement = this._getToastContainer();
-        if (this.options.position.startsWith('top-')) {
-            toastContainerElement.appendChild(this._toastElement);
+        // Insert toast
+        if (this.options.position.startsWith('bottom-')) {
+            container.prepend(this._toastElement);
         } else {
-            toastContainerElement.prepend(this._toastElement);
+            container.appendChild(this._toastElement);
         }
-        activeToasts.set(this.id, this); // Add to map after it's part of DOM creation logic
+
+        activeToasts.set(this.id, this);
     }
 
     _startProgressBar() {
         if (!this._progressBarElement || this.options.duration <= 0) return;
+
         const startTime = Date.now();
         const duration = this.options.duration;
+
         this._progressIntervalId = setInterval(() => {
-            const elapsedTime = Date.now() - startTime;
-            const progress = Math.max(0, 100 - (elapsedTime / duration) * 100);
-            this._progressBarElement.style.width = `${progress}%`;
+            const elapsed = Date.now() - startTime;
+            const progress = Math.max(0, 100 - (elapsed / duration) * 100);
+
+            this._progressBarElement.style.transform = `scaleX(${progress / 100})`;
+
             if (progress === 0) {
                 clearInterval(this._progressIntervalId);
                 this._progressIntervalId = null;
             }
-        }, 50);
+        }, 16); // ~60fps
     }
 
     _stopProgressBar() {
@@ -253,46 +223,42 @@ class Toast {
     show() {
         if (this._isPermanentlyHidden) return;
 
-        if (this._dotElement && this._dotElement.parentNode) {
+        if (this._dotElement?.parentNode) {
             this._dotElement.parentNode.removeChild(this._dotElement);
             this._dotElement = null;
             if (this._dotTimeoutId) clearTimeout(this._dotTimeoutId);
         }
 
         if (!this._toastElement) {
-             this._createDom();
+            this._createDom();
         }
-        this._toastElement.classList.remove('tb-hidden');
-        this._toastElement.classList.remove('tb-toast-hiding');
 
-        void this._toastElement.offsetWidth;
+        // Show with animation
+        this._toastElement.classList.remove('tb-toast-hidden', 'tb-toast-hiding');
+        this._toastElement.classList.add('tb-toast-showing');
 
-        this._toastElement.style.opacity = '1';
-        this._toastElement.style.transform = 'translateY(0) translateX(0)'; // Ensure both transforms are reset
-
+        // Start auto-hide timer and progress bar
         if (this.options.duration > 0) {
             this._startProgressBar();
             this._timeoutId = setTimeout(() => this.hide(this.options.showDotOnHide), this.options.duration);
         }
 
-        TB.logger.log(`[Toast] Shown: ${this.options.message.substring(0, 30)}...`);
+        TB.logger.log(`[Toast] Shown: ${this.options.message.substring(0, 30)}... (ID: ${this.id})`);
         TB.events.emit('toast:shown', this);
     }
 
     hide(showDot = this.options.showDotOnHide) {
         if (!this._toastElement || this._toastElement.classList.contains('tb-toast-hiding')) return;
+
         this._toastElement.classList.add('tb-toast-hiding');
+        this._toastElement.classList.remove('tb-toast-showing');
 
         if (this._timeoutId) clearTimeout(this._timeoutId);
         this._stopProgressBar();
 
-        this._toastElement.style.opacity = '0';
-        const exitTransform = this.options.position.includes('bottom-') ? 'translateY(0.5rem)' : 'translateY(-0.5rem)';
-        this._toastElement.style.transform = exitTransform;
-
         setTimeout(() => {
             if (this._toastElement) {
-                this._toastElement.classList.add('tb-hidden');
+                this._toastElement.classList.add('tb-toast-hidden');
                 this._toastElement.classList.remove('tb-toast-hiding');
             }
 
@@ -301,49 +267,57 @@ class Toast {
             } else {
                 this._removeToastCompletely();
             }
-        }, 300);
+        }, 250); // Match CSS transition duration
     }
 
     _createDot() {
-        if (this._dotElement || !this._toastElement?.parentNode) return;
+        if (this._dotElement || !this._toastElement?.parentNode || this._isPermanentlyHidden) return;
 
-        const { dotColorClass } = this._getAppearanceStyles();
+        const typeConfig = this._getTypeConfig();
         this._dotElement = document.createElement('div');
-        this._dotElement.className = `tb-toast-dot ${dotColorClass}`; // This is a general class, specific color comes from dotColorClass
-        this._dotElement.title = `Re-open: ${this.options.title || this.options.message.substring(0,20) + '...'}`;
+        this._dotElement.className = 'tb-toast-dot';
+        this._dotElement.style.backgroundColor = typeConfig.color;
+
+        const tooltip = `Re-open: ${this.options.title || this.options.message.substring(0, 20) + '...'}`;
+        this._dotElement.title = TB.utils.escapeHtml(tooltip);
+        this._dotElement.setAttribute('aria-label', TB.utils.escapeHtml(tooltip));
 
         this._dotElement.addEventListener('click', () => {
             if (this._dotTimeoutId) clearTimeout(this._dotTimeoutId);
-            if (this._dotElement && this._dotElement.parentNode) {
-                 this._dotElement.parentNode.removeChild(this._dotElement);
-            }
-            this._dotElement = null;
-            this._isPermanentlyHidden = false;
-            this.show();
-        });
-
-        const toastContainerElement = this._getToastContainer();
-        if (this.options.position.startsWith('top-')) {
-            toastContainerElement.appendChild(this._dotElement);
-        } else {
-            toastContainerElement.prepend(this._dotElement);
-        }
-
-        this._dotTimeoutId = setTimeout(() => {
-            if (this._dotElement && this._dotElement.parentNode) {
+            if (this._dotElement?.parentNode) {
                 this._dotElement.parentNode.removeChild(this._dotElement);
             }
             this._dotElement = null;
+            this.show();
+        });
 
-            if (!this._toastElement || this._toastElement.classList.contains('tb-hidden')) { // Check if it wasn't re-shown
-                this._isPermanentlyHidden = true;
-                this._removeToastCompletely();
+        const container = this._getToastContainer();
+        if (this.options.position.startsWith('bottom-')) {
+            container.prepend(this._dotElement);
+        } else {
+            container.appendChild(this._dotElement);
+        }
+
+        // Auto-hide dot after duration
+        this._dotTimeoutId = setTimeout(() => {
+            if (this._dotElement?.parentNode) {
+                this._dotElement.classList.add('tb-toast-dot-hiding');
+                setTimeout(() => {
+                    if (this._dotElement?.parentNode) {
+                        this._dotElement.parentNode.removeChild(this._dotElement);
+                    }
+                    this._dotElement = null;
+                    if (!activeToasts.has(this.id)) {
+                        this._isPermanentlyHidden = true;
+                        this._removeToastCompletely();
+                    }
+                }, 200);
             }
         }, this.options.dotDuration);
     }
 
     _removeToastCompletely() {
-        if (this._toastElement && this._toastElement.parentNode) {
+        if (this._toastElement?.parentNode) {
             this._toastElement.parentNode.removeChild(this._toastElement);
         }
         activeToasts.delete(this.id);
@@ -354,32 +328,59 @@ class Toast {
             if (container.parentNode) container.parentNode.removeChild(container);
             delete toastContainers[this.options.position];
         }
-        TB.logger.log(`[Toast] Permanently removed: ${this.options.message.substring(0, 30)}...`);
+
+        TB.logger.log(`[Toast] Removed: ${this.options.message.substring(0, 30)}... (ID: ${this.id})`);
         TB.events.emit('toast:hidden', this);
     }
 
-    static showInfo(message, options = {}) { new Toast({ ...options, message, type: 'info' }).show(); }
-    static showSuccess(message, options = {}) { new Toast({ ...options, message, type: 'success' }).show(); }
-    static showWarning(message, options = {}) { new Toast({ ...options, message, type: 'warning' }).show(); }
-    static showError(message, options = {}) { new Toast({ ...options, message, type: 'error' }).show(); }
+    // Static convenience methods
+    static showInfo(message, options = {}) {
+        return new Toast({ ...options, message, type: 'info' }).show() //(t => t.show());
+    }
 
-    static hideAll() {
+    static showSuccess(message, options = {}) {
+        return new Toast({ ...options, message, type: 'success' }).show() //(t => t.show());
+    }
+
+    static showWarning(message, options = {}) {
+        return new Toast({ ...options, message, type: 'warning' }).show() //(t => t.show());
+    }
+
+    static showError(message, options = {}) {
+        return new Toast({ ...options, message, type: 'error' }).show() //(t => t.show());
+    }
+
+    static hideAll(immediately = false) {
         activeToasts.forEach(toast => {
             toast._isPermanentlyHidden = true;
-            toast.hide(false);
+            if (immediately) {
+                toast._removeToastCompletely();
+            } else {
+                toast.hide(false);
+            }
         });
+
+        if (immediately) {
+            activeToasts.clear();
+            Object.values(toastContainers).forEach(container => {
+                if (container?.parentNode) {
+                    container.parentNode.removeChild(container);
+                }
+            });
+            toastContainers = {};
+        }
     }
 
-    // For testing purposes to reset module-level state
+    // Test methods
     static __testonly__resetModuleState() {
-        activeToasts = new Map();
-        toastContainers = {};
+        Toast.hideAll(true);
     }
-    // For testing purposes to inspect module-level state
+
     static __testonly__getActiveToasts() {
         return activeToasts;
     }
-    static __testonly__getToastContainers() { // <--- ADD THIS
+
+    static __testonly__getToastContainers() {
         return toastContainers;
     }
 }

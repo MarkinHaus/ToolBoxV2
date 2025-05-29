@@ -81,7 +81,7 @@ async function setupLogin_() {
                     showInfo("Attempting device key login..."); // Local info
                     result = await window.TB.user.loginWithDeviceKey(username);
 
-                    if (!result.success && result.message && result.message.includes("No device key found")) {
+                    if (!result.success && result.message) {
                         window.TB.ui.Loader.hide(); // Hide loader first
                         if (window.TB.graphics?.stopAnimationSequence) { // Stop the general loading animation
                             window.TB.graphics.stopAnimationSequence();

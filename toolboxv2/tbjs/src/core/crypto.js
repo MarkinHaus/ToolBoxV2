@@ -1,8 +1,9 @@
 // tbjs/core/crypto.js
 // Cryptographic utilities.
 // Original: web/scripts/cryp.js
-
+import { openDB } from 'idb';
 import TB from '../index.js'; // Access TB.api, TB.config, TB.logger
+const DEFAULT_TTL_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
 
 function getRpId() {
     let rpId = "localhost"; // Default
@@ -92,7 +93,7 @@ export function hexStringToArrayBuffer(hexString) {
     return arrayBuffer;
 }
 
-export function convertToPem(keyBuffer, type) {
+export function convertToPem(keyBuffer, type, is_base=false) {
     let typeString;
     if (type === 'public') {
         typeString = 'PUBLIC KEY';
@@ -101,7 +102,13 @@ export function convertToPem(keyBuffer, type) {
     } else {
         throw new Error('Invalid key type');
     }
-    const base64Key = arrayBufferToBase64(keyBuffer);
+    let base64Key
+    if (!is_base) {
+        base64Key = arrayBufferToBase64(keyBuffer);
+    }else{
+        base64Key = keyBuffer
+    }
+
     const formattedKey = base64Key.match(/.{1,64}/g).join('\n');
     return `-----BEGIN ${typeString}-----\n${formattedKey}\n-----END ${typeString}-----\n`;
 }
@@ -259,9 +266,9 @@ export async function decryptSymmetric(encryptedDataB64, password) {
 }
 
 
-export async function storePrivateKey(privateKeyBase64, username) {
+export async function storePublicKey(privateKeyBase64, username) {
     // Use a prefix for TB-specific keys to avoid collision and for easier management
-    const keyName = `tb_pk_${username}`;
+    const keyName = `tb_pb_${username}`;
     // Instead of hashing, just use the username. Hashing here doesn't add much security for localStorage.
     // The private key itself should be handled securely by the browser's crypto API if imported,
     // or if stored as base64, it's "as is".
@@ -274,17 +281,231 @@ export async function storePrivateKey(privateKeyBase64, username) {
     }
 }
 
-export async function retrievePrivateKey(username) {
-    const keyName = `tb_pk_${username}`;
+export async function retrievePublicKey(username) {
+    const keyName = `tb_pb_${username}`;
     const privateKeyBase64 = localStorage.getItem(keyName);
     if (!privateKeyBase64) {
         (TB.logger || console).warn(`[Crypto] No private key found for ${username}`);
         return null; // Return null or throw an error, rather than "Invalid user name..." string
     }
     (TB.logger || console).debug(`[Crypto] Private key retrieved for ${username}`);
-    return privateKeyBase64;
+    return  convertToPem(privateKeyBase64, 'public', true);
+}
+async function getEncryptedKeyId(username, salt) {
+    const key = await deriveKeyFromSaltedUsername(username, salt);
+    const enc = new TextEncoder();
+    const encrypted = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv: salt.slice(0, 12) },
+        key,
+        enc.encode(username)
+    );
+    return `tb_pk_${toHex(encrypted)}`;
+}
+async function deriveKeyFromSaltedUsername(username, salt) {
+    const enc = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey(
+        "raw",
+        enc.encode(username),
+        { name: "PBKDF2" },
+        false,
+        ["deriveKey"]
+    );
+    return crypto.subtle.deriveKey(
+        {
+            name: "PBKDF2",
+            salt,
+            iterations: 150000,
+            hash: "SHA-256",
+        },
+        keyMaterial,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["encrypt", "decrypt"]
+    );
 }
 
+export async function storePrivateKey(privateKeyBase64, username, ttlMs = DEFAULT_TTL_MS) {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const enc = new TextEncoder();
+    const data = enc.encode(atob(privateKeyBase64));
+
+    try {
+        // First, remove all existing private keys for this user
+        await removePrivateKeysForUser(username);
+
+        const aesKey = await deriveKeyFromSaltedUsername(username, salt);
+        const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, aesKey, data);
+
+        const keyId = await getEncryptedKeyId(username, salt);
+        const db = await getDB();
+
+        await db.put("keys", {
+            encrypted: arrayBufferToBase64(encrypted),
+            iv: arrayBufferToBase64(iv),
+            salt: arrayBufferToBase64(salt),
+            username: username, // Store username for easier identification
+            createdAt: Date.now(),
+            ttlMs
+        }, keyId);
+
+        (TB.logger || console).debug(`[Crypto] Encrypted key stored under ${keyId} for user ${username}`);
+    } catch (e) {
+        (TB.logger || console).error(`[Crypto] Failed to store encrypted key:`, e);
+        throw new Error("Private key storage failed.");
+    }
+}
+
+export async function retrievePrivateKey(username) {
+    try {
+        const db = await getDB();
+        let matchedKey = null;
+        let keyId = null;
+
+        for (let cursor = await db.transaction("keys", "readwrite").store.openCursor(); cursor; cursor = await cursor.continue()) {
+            const entry = cursor.value;
+            const salt = base64ToArrayBuffer(entry.salt);
+            const createdAt = entry.createdAt || 0;
+            const ttlMs = entry.ttlMs || DEFAULT_TTL_MS;
+
+            // Expired? Auto delete
+            if (Date.now() - createdAt > ttlMs) {
+                (TB.logger || console).info(`[Crypto] Deleting expired key: ${cursor.key}`);
+                await cursor.delete();
+                continue;
+            }
+
+            const candidateKeyId = await getEncryptedKeyId(username, salt);
+            if (cursor.key === candidateKeyId) {
+                matchedKey = entry;
+                keyId = candidateKeyId;
+                break;
+            }
+        }
+
+        if (!matchedKey) {
+            (TB.logger || console).warn(`[Crypto] No valid key found for ${username}`);
+            return null;
+        }
+
+        const salt = base64ToArrayBuffer(matchedKey.salt);
+        const iv = base64ToArrayBuffer(matchedKey.iv);
+        const encrypted = base64ToArrayBuffer(matchedKey.encrypted);
+
+        const aesKey = await deriveKeyFromSaltedUsername(username, salt);
+        const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, aesKey, encrypted);
+
+        const dec = new TextDecoder();
+        const keyBase64 = btoa(dec.decode(decrypted));
+
+        (TB.logger || console).debug(`[Crypto] Private key retrieved for ${username}`);
+        return keyBase64;
+    } catch (e) {
+        (TB.logger || console).error(`[Crypto] Key retrieval failed:`, e);
+        throw new Error("Decryption failed or key not found.");
+    }
+}
+
+export async function removePrivateKey(username) {
+    try {
+        const db = await getDB();
+
+        // Step 1: Collect all entries in a readonly transaction
+        const readTransaction = db.transaction("keys", "readonly");
+        const entries = [];
+
+        for (let cursor = await readTransaction.store.openCursor(); cursor; cursor = await cursor.continue()) {
+            entries.push({
+                key: cursor.key,
+                value: cursor.value
+            });
+        }
+
+        await readTransaction.complete;
+
+        // Step 2: Determine which keys belong to this user (outside of transaction)
+        const keysToDelete = [];
+        for (const entry of entries) {
+            const salt = base64ToArrayBuffer(entry.value.salt);
+            const candidateKeyId = await getEncryptedKeyId(username, salt);
+
+            if (entry.key === candidateKeyId) {
+                keysToDelete.push(entry.key);
+            }
+        }
+
+        // Step 3: Delete the identified keys in a new transaction
+        if (keysToDelete.length > 0) {
+            const writeTransaction = db.transaction("keys", "readwrite");
+            for (const keyId of keysToDelete) {
+                await writeTransaction.store.delete(keyId);
+            }
+            await writeTransaction.complete;
+        }
+
+        (TB.logger || console).debug(`[Crypto] Removed ${keysToDelete.length} private key(s) for user ${username}`);
+        return keysToDelete.length;
+    } catch (e) {
+        (TB.logger || console).error(`[Crypto] Failed to remove private key for ${username}:`, e);
+        throw new Error("Private key removal failed.");
+    }
+}
+
+async function removePrivateKeysForUser(username) {
+    try {
+        const db = await getDB();
+
+        // Step 1: Collect all entries in a readonly transaction
+        const readTransaction = db.transaction("keys", "readonly");
+        const entries = [];
+
+        for (let cursor = await readTransaction.store.openCursor(); cursor; cursor = await cursor.continue()) {
+            entries.push({
+                key: cursor.key,
+                value: cursor.value
+            });
+        }
+
+        await readTransaction.complete;
+
+        // Step 2: Determine which keys belong to this user (outside of transaction)
+        const keysToDelete = [];
+        for (const entry of entries) {
+            const salt = base64ToArrayBuffer(entry.value.salt);
+            const candidateKeyId = await getEncryptedKeyId(username, salt);
+
+            if (entry.key === candidateKeyId) {
+                keysToDelete.push(entry.key);
+            }
+        }
+
+        // Step 3: Delete the identified keys in a new transaction
+        if (keysToDelete.length > 0) {
+            const writeTransaction = db.transaction("keys", "readwrite");
+            for (const keyId of keysToDelete) {
+                await writeTransaction.store.delete(keyId);
+            }
+            await writeTransaction.complete;
+
+            (TB.logger || console).debug(`[Crypto] Removed ${keysToDelete.length} existing private key(s) for user ${username} before storing new key`);
+        }
+    } catch (e) {
+        (TB.logger || console).error(`[Crypto] Failed to remove existing private keys for ${username}:`, e);
+        throw new Error("Failed to clean up existing private keys.");
+    }
+}
+
+function toHex(buffer) {
+    return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function getDB() {
+    return openDB("TBKeys", 1, {
+        upgrade(db) {
+            db.createObjectStore("keys");
+        }
+    });
+}
 /**
  * WebAuthn Registration
  * @param {object} registrationData - { challenge, userId, username }
@@ -327,18 +548,19 @@ export async function registerWebAuthnCredential(registrationData, sing) {
             userId: userId, // Pass back original userId to server
             username: username,
             sing: sing, // Include original 'sing' parameter
+            client_json: {challenge, origin: window.location.origin},
             registration_credential: {
                 id: credential.id, // This is the credential ID, base64url encoded by browser
-                rawId: arrayBufferToBase64(credential.rawId), // rawId as base64
+                raw_id: credential.id, // rawId as base64
                 type: credential.type, // "public-key"
+                authenticator_attachment: credential.authenticatorAttachment,
                 response: {
-                    clientDataJSON: arrayBufferToBase64(credential.response.clientDataJSON),
-                    attestationObject: arrayBufferToBase64(credential.response.attestationObject),
+                    client_data_json: arrayBufferToBase64(credential.response.clientDataJSON),
+                    attestation_object: arrayBufferToBase64(credential.response.attestationObject),
                     // authenticatorData: arrayBufferToBase64(credential.response.getAuthenticatorData()), // Part of attestationObject
                     // publicKey: arrayBufferToBase64(credential.response.getPublicKey()), // Part of attestationObject
                     // publicKeyAlgorithm: credential.response.getPublicKeyAlgorithm() // COSE alg ID
                 },
-                authenticatorAttachment: credential.authenticatorAttachment, // "platform" or "cross-platform" or null
             }
             // The fields pk, pkAlgo from your original sendRegistrationResponseToServer seem redundant
             // if you are sending the full registration_credential structure, as the server

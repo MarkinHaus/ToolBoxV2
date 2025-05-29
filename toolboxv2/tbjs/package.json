@@ -1,4 +1,3 @@
-
 {
   "name": "tbjs",
   "version": "0.1.0",
@@ -49,9 +48,19 @@
     "dist",
     "src"
   ],
-    "babel": {
+  "babel": {
     "presets": [
-      ["@babel/preset-env", { "targets": { "node": "current" } }]
+      [
+        "@babel/preset-env",
+        {
+          "targets": {
+            "node": "current"
+          }
+        }
+      ]
     ]
+  },
+  "dependencies": {
+    "idb": "^8.0.3"
   }
 }
