@@ -38,15 +38,19 @@ def b64decode(s: str) -> bytes:
 
 
 class CustomAuthenticationCredential(AuthenticationCredential):
-    @field_validator('raw_id')
-    def convert_raw_id(cls, v: str):
-        assert isinstance(v, str), 'raw_id is not a string'
-        return b64decode(v)
+    @property
+    def id(self) -> str:
+        # base64url without padding (JavaScript uses unpadded base64url)
+        return base64.urlsafe_b64encode(self.raw_id).rstrip(b"=").decode("ascii")
 
-    @field_validator('response')
-    def convert_response(cls, data: dict):
-        assert isinstance(data, dict), 'response is not a dictionary'
-        return {k: b64decode(v) for k, v in data.items()}
+    @field_validator("raw_id", mode="before")
+    @classmethod
+    def decode_base64url_to_bytes(cls, v):
+        if isinstance(v, str):
+            # Pad base64url string if needed
+            padding = '=' * (-len(v) % 4)
+            return base64.urlsafe_b64decode(v + padding)
+        return v
 
 
 class CustomRegistrationCredential(RegistrationCredential):
@@ -390,7 +394,7 @@ def add_user_device(app: App, data: AddUserDeviceObject = None, username: str = 
 class PersonalData(BaseModel):
     userId: str
     username: str
-    #pk: str  # arrayBufferToBase64
+    pk: str  # arrayBufferToBase64
     #pkAlgo: int
     #authenticatorData: str  # arrayBufferToBase64
     client_json: dict  # arrayBufferToBase64
@@ -476,8 +480,8 @@ async def register_user_personal_key(app: App, data: PersonalData) -> ApiResult:
         return Result.default_user_error(info="Invalid registration not user verified")
 
     user_persona_pub_key = {
-        'public_key': base64.b64encode(registration_verification.credential_public_key).decode('ascii'),
-        'sign_count': base64.b64encode(registration_verification.sign_count).decode('ascii'),
+        'public_key': data.get("pk"),
+        'sign_count': registration_verification.sign_count,
         'credential_id': base64.b64encode(registration_verification.credential_id).decode('ascii'),
         'rawId': base64.b64encode(registration_credential.raw_id).decode('ascii'),
         'attestation_object': base64.b64encode(registration_verification.attestation_object).decode('ascii'),
@@ -597,6 +601,25 @@ class VpUSER(VdUSER, BaseModel):
 async def validate_persona(app: App, data: VpUSER) -> ApiResult:
     if app is None:
         app = get_app(".validate_persona")
+
+    def base64url_to_bytes(val: str) -> bytes:
+        # Add padding back (base64 must be a multiple of 4 chars)
+        padded = val + '=' * (-len(val) % 4)
+        return base64.urlsafe_b64decode(padded)
+
+    def base64_to_bytes(val: str) -> bytes:
+        # Ensure proper base64 padding
+        padded = val + '=' * (-len(val) % 4)
+        return base64.b64decode(padded)
+    if 'authentication_credential' not in data:
+        return Result.default_user_error(info="Invalid data")
+    if 'raw_id' not in data['authentication_credential']:
+        return Result.default_user_error(info="Invalid data")
+    data['authentication_credential']['raw_id'] = base64url_to_bytes(data['authentication_credential']['raw_id'])
+    data['authentication_credential']['response']['client_data_json'] = base64_to_bytes(
+        data['authentication_credential']['response']['client_data_json'])
+    data['authentication_credential']['response']['authenticator_data'] = base64_to_bytes(
+        data['authentication_credential']['response']['authenticator_data'])
     if isinstance(data, dict):
         data = VpUSER(**data)
     user_result = get_user_by_name(app, data.username)
@@ -609,7 +632,7 @@ async def validate_persona(app: App, data: VpUSER) -> ApiResult:
     if user.is_persona == "":
         return Result.default_user_error(info="No Persona key registered")
 
-    valid_origen = ["https://simplecore.app","https://simplecorehub.com" ] + (
+    valid_origen = ["https://simplecore.app","https://simplecorehub.com", os.getenv("APP_BASE_URL", "http://localhost:8080") ] + (
         ["http://localhost:5000"] if app.debug else [])
 
     try:

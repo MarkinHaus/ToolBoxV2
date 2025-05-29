@@ -135,16 +135,15 @@ const user = {
                 const { challenge, userId ,...rest } = result.get();
                 // The 'sing' parameter's purpose from original cryp.js unclear, may need token or specific server data.
                 // For adding a credential to an existing user, 'sing' might be the current session token.
-                const currentPrivateKey = await crypto.retrievePrivateKey(username);
                 const registrationPayload = await crypto.registerWebAuthnCredential({ challenge, userId, username },
-                await crypto.signMessage(currentPrivateKey, challenge));
+                await crypto.signMessage(keys.privateKey_base64, challenge));
                 // 3. Send new WebAuthn credential to server
-                const result = await TB.api.request('CloudM.AuthManager', 'register_user_personal_key', registrationPayload, 'POST');
-                if (result.error === TB.ToolBoxError.none) {
+                const _result = await TB.api.request('CloudM.AuthManager', 'register_user_personal_key', registrationPayload, 'POST');
+                if (_result.error === TB.ToolBoxError.none) {
                     TB.logger.info(`[User] WebAuthn (Persona) registration successful for ${username}`);
-                    return { success: true, message: result.info.help_text || "WebAuthn credential registered." };
+                    return { success: true, message: _result.info.help_text || "WebAuthn credential registered." };
                 } else {
-                    return { success: false, message: result.info.help_text || "Failed to register WebAuthn credential." };
+                    return { success: false, message: _result.info.help_text || "Failed to register WebAuthn credential." };
                 }
             } else {
                 TB.logger.warn(`[User] Signup failed for ${username}: ${result.info.help_text}`);

@@ -1234,24 +1234,31 @@ async def list_users_admin(app: App, request: RequestData):
         return Result.default_internal_error(info="Failed to fetch users: " + str(all_users_result.info))
     users_data = []
     user_list_raw = all_users_result.get()
-    if user_list_raw:
-        for user_bytes in user_list_raw:
+
+    def helper(user_bytes):
+        try:
+            user_str = user_bytes.decode() if isinstance(user_bytes, bytes) else str(user_bytes)
+            user_dict = {}
             try:
-                user_str = user_bytes.decode() if isinstance(user_bytes, bytes) else str(user_bytes)
-                user_dict = {}
-                try:
-                    user_dict = json.loads(user_str)
-                except json.JSONDecodeError:
-                    app.print("Warning: User data (admin list) not valid JSON, falling back to eval: " + str(
-                        user_str[:100]) + "...", "WARNING")
-                    user_dict = eval(user_str)
-                users_data.append({"uid": user_dict.get("uid", "N/A"), "name": user_dict.get("name", "N/A"),
-                                   "email": user_dict.get("email"), "level": user_dict.get("level", -1),
-                                   "is_persona": user_dict.get("is_persona", False),
-                                   "settings": user_dict.get("settings", {})})
-            except Exception as e:
-                app.print("Error parsing user data for admin list: " + str(user_bytes[:100]) + "... - Error: " + str(e),
-                          "ERROR")
+                user_dict = json.loads(user_str)
+            except json.JSONDecodeError:
+                app.print("Warning: User data (admin list) not valid JSON, falling back to eval: " + str(
+                    user_str[:100]) + "...", "WARNING")
+                user_dict = eval(user_str)
+            users_data.append({"uid": user_dict.get("uid", "N/A"), "name": user_dict.get("name", "N/A"),
+                               "email": user_dict.get("email"), "level": user_dict.get("level", -1),
+                               "is_persona": user_dict.get("is_persona", False),
+                               "settings": user_dict.get("settings", {})})
+        except Exception as e:
+            app.print("Error parsing user data for admin list: " + str(user_bytes[:100]) + "... - Error: " + str(e),
+                      "ERROR")
+    if user_list_raw:
+        if isinstance(user_list_raw, list):
+            for user_bytes_ in user_list_raw:
+                helper(user_bytes_)
+        else:
+            helper(user_list_raw)
+
     return Result.json(data=users_data)
 
 

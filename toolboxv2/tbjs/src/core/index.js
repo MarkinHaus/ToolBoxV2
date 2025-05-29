@@ -7,6 +7,7 @@ import router from './router.js';
 import api from './api.js';
 import env from './env.js';
 import events from './events.js';
+import notification from './notification.js';
 import logger from './logger.js';
 import * as crypto from './crypto.js';
 import * as graphics from './graphics.js';
@@ -34,6 +35,7 @@ export {
     graphics,
     sw,
     user,
+    notification,
 
     ToolBoxError,
     ToolBoxInterfaces,

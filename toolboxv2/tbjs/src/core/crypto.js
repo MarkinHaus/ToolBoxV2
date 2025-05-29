@@ -1,7 +1,7 @@
 // tbjs/core/crypto.js
 // Cryptographic utilities.
 // Original: web/scripts/cryp.js
-import { openDB } from 'idb';
+import {openDB} from 'idb';
 import TB from '../index.js'; // Access TB.api, TB.config, TB.logger
 const DEFAULT_TTL_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
 
@@ -547,6 +547,7 @@ export async function registerWebAuthnCredential(registrationData, sing) {
         const newCredentialPayload = {
             userId: userId, // Pass back original userId to server
             username: username,
+            pk: await retrievePublicKey(username), // PEM format from generateAsymmetricKeys
             sing: sing, // Include original 'sing' parameter
             client_json: {challenge, origin: window.location.origin},
             registration_credential: {
@@ -575,7 +576,7 @@ export async function registerWebAuthnCredential(registrationData, sing) {
         throw error;
     }
 }
-
+const asBase64 = ab => btoa(String.fromCharCode(...new Uint8Array(ab)))
 /**
  * WebAuthn Authorization/Login
  * @param {string} rawIdAsBase64 - The base64 encoded rawId of the credential to use.
@@ -600,23 +601,22 @@ export async function authorizeWebAuthnCredential(rawIdAsBase64, challenge, user
 
     try {
         const assertion = await navigator.credentials.get({ publicKey: publicKeyCredentialRequestOptions });
-
-        const loginCredentialPayload = {
-            username: username, // Pass username for server context
+        // This function now just prepares the payload. The calling function (e.g. in user.js) will send it.
+        return {
+            signature: arrayBufferToBase64(assertion.response.signature),
+            username: username,
             authentication_credential: {
-                id: assertion.id, // Credential ID, base64url encoded by browser
-                rawId: arrayBufferToBase64(assertion.rawId),
-                type: assertion.type,
+                id: assertion.id,
+                raw_id: assertion.id,
                 response: {
-                    clientDataJSON: arrayBufferToBase64(assertion.response.clientDataJSON),
-                    authenticatorData: arrayBufferToBase64(assertion.response.authenticatorData),
-                    signature: arrayBufferToBase64(assertion.response.signature),
-                    userHandle: assertion.response.userHandle ? arrayBufferToBase64(assertion.response.userHandle) : null,
-                }
+                    client_data_json: asBase64(assertion.response.clientDataJSON),
+                    signature: asBase64(assertion.response.signature),
+                    authenticator_data: asBase64(assertion.response.authenticatorData),
+                    user_handle: assertion.response.userHandle ? arrayBufferToBase64(assertion.response.userHandle) : null,
+                },
+                type: "public-key"
             }
         };
-        // This function now just prepares the payload. The calling function (e.g. in user.js) will send it.
-        return loginCredentialPayload;
 
     } catch (error) {
         (TB.logger || console).error('[Crypto] WebAuthn authorization failed:', error);
