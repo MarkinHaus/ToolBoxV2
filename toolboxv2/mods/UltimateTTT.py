@@ -338,11 +338,159 @@ class UltimateTTTGameEngine:  # Renamed for clarity
 
         return True
 
-    def handle_player_disconnect(self, player_id: str):  # Placeholder for future use
+    def handle_player_disconnect(self, player_id: str):
         player = self.gs.get_player_info(player_id)
-        if player: player.is_connected = False
-        # Add logic for game abortion or win for opponent if in online mode
+        app = get_app(GAME_NAME)  # Hol dir die App-Instanz
+        if player:
+            if not player.is_connected:  # Already marked as disconnected
+                app.logger.info(f"Player {player_id} was already marked as disconnected from game {self.gs.game_id}.")
+                return
+
+            player.is_connected = False
+            self.gs.updated_at = datetime.now(timezone.utc)
+            app.logger.info(f"Player {player_id} disconnected from game {self.gs.game_id}. Name: {player.name}")
+
+            if self.gs.mode == GameMode.ONLINE:
+                if self.gs.status == GameStatus.IN_PROGRESS:
+                    opponent = self.gs.get_opponent_info(player_id)
+                    if opponent and opponent.is_connected:
+                        self.gs.status = GameStatus.ABORTED  # Use ABORTED as "paused"
+                        self.gs.player_who_paused = player_id  # Store who disconnected
+                        # This message is for the game state, will be seen by the other player via SSE
+                        self.gs.last_error_message = f"Player {player.name} disconnected. Waiting for them to rejoin."
+                        app.logger.info(
+                            f"Game {self.gs.game_id} PAUSED, waiting for {player.name} ({player_id}) to reconnect.")
+                    else:
+                        # Opponent also disconnected or was already gone
+                        self.gs.status = GameStatus.ABORTED
+                        self.gs.last_error_message = "Both players disconnected. Game aborted."
+                        self.gs.player_who_paused = None  # No specific player to wait for
+                        app.logger.info(
+                            f"Game {self.gs.game_id} ABORTED, both players (or last active player) disconnected.")
+                elif self.gs.status == GameStatus.WAITING_FOR_OPPONENT:
+                    # If the creator (P1) disconnects while waiting for P2
+                    if len(self.gs.players) == 1 and self.gs.players[0].id == player_id:
+                        self.gs.status = GameStatus.ABORTED
+                        self.gs.last_error_message = "Game creator disconnected before opponent joined. Game aborted."
+                        self.gs.player_who_paused = None
+                        app.logger.info(
+                            f"Game {self.gs.game_id} ABORTED, creator {player.name} ({player_id}) disconnected while WAITING_FOR_OPPONENT.")
+                elif self.gs.status == GameStatus.ABORTED and self.gs.player_who_paused:
+                    # Game was already paused (e.g. P1 disconnected), and now P2 (the waiting one) disconnects
+                    if self.gs.player_who_paused != player_id:  # Ensure it's the other player
+                        self.gs.last_error_message = "Other player also disconnected during pause. Game aborted."
+                        self.gs.player_who_paused = None  # No one specific to wait for now
+                        app.logger.info(
+                            f"Game {self.gs.game_id} ABORTED, waiting player {player.name} ({player_id}) disconnected.")
+
+    def handle_player_reconnect(self, player_id: str) -> bool:
+        player = self.gs.get_player_info(player_id)
+        app = get_app(GAME_NAME)
+        if not player:
+            app.logger.warning(f"Reconnect attempt for unknown player {player_id} in game {self.gs.game_id}.")
+            return False
+
+        if player.is_connected:
+            app.logger.info(
+                f"Player {player.name} ({player_id}) attempted reconnect but was already marked as connected to game {self.gs.game_id}.")
+            # If game was paused by them and they refresh, it might still be ABORTED.
+            # Let's ensure status consistency if they were the pauser.
+            if self.gs.status == GameStatus.ABORTED and self.gs.player_who_paused == player_id:
+                opponent = self.gs.get_opponent_info(player_id)
+                if opponent and opponent.is_connected:
+                    self.gs.status = GameStatus.IN_PROGRESS
+                    self.gs.last_error_message = f"Connection for {player.name} re-established. Game resumed."
+                    self.gs.player_who_paused = None
+                    self.gs.updated_at = datetime.now(timezone.utc)
+                    app.logger.info(
+                        f"Game {self.gs.game_id} resumed as already-connected pauser {player.name} re-interacted.")
+                else:  # Opponent still not there
+                    self.gs.last_error_message = f"Welcome back, {player.name}! Your opponent is still not connected."
+                    # Status remains ABORTED, player_who_paused remains player_id
+            return True  # Treat as successful if already connected
+
+        # Player is in game, but marked as not connected. This is the main reconnect path.
+        player.is_connected = True
         self.gs.updated_at = datetime.now(timezone.utc)
+        app.logger.info(
+            f"Player {player.name} ({player_id}) reconnected to game {self.gs.game_id}. Previous status: {self.gs.status}, Paused by: {self.gs.player_who_paused}")
+
+        if self.gs.status == GameStatus.ABORTED:
+            if self.gs.player_who_paused == player_id:  # The player who caused the pause has reconnected
+                opponent = self.gs.get_opponent_info(player_id)
+                if opponent and opponent.is_connected:
+                    self.gs.status = GameStatus.IN_PROGRESS
+                    self.gs.last_error_message = f"Player {player.name} reconnected. Game resumed!"
+                    self.gs.player_who_paused = None
+                    # current_player_id is NOT changed here. It remains whoever's turn it was.
+                    app.logger.info(
+                        f"Game {self.gs.game_id} RESUMED. Pauser {player.name} reconnected, opponent {opponent.name} is present.")
+                else:
+                    # Pauser reconnected, but opponent is (still) gone. Game stays paused, waiting for opponent now.
+                    self.gs.last_error_message = f"Welcome back, {player.name}! Your opponent is not connected. Game remains paused."
+                    # self.gs.player_who_paused should now be the ID of the *other* player if known, or null if game is truly stuck
+                    # For now, let's keep it simple: game is ABORTED, this player is connected. If opponent also joins, it will resume.
+                    # If opponent was never there (e.g. P1 created, P1 disconnected, P1 reconnected before P2 joined)
+                    if not opponent:  # This implies it was a 1-player game waiting for P2, and P1 reconnected
+                        self.gs.status = GameStatus.WAITING_FOR_OPPONENT
+                        self.gs.player_who_paused = None
+                        self.gs.current_player_id = player_id  # P1 is the active one again
+                        self.gs.last_error_message = f"Creator {player.name} reconnected. Waiting for opponent."
+                    else:  # Opponent was there but is now disconnected
+                        self.gs.player_who_paused = opponent.id  # Now waiting for the other person
+                        app.logger.info(
+                            f"Game {self.gs.game_id} still PAUSED. {player.name} reconnected, but opponent {opponent.name} is NOT. Waiting for {opponent.name}.")
+
+
+            elif self.gs.player_who_paused and self.gs.player_who_paused != player_id:
+                # The *other* player (not the initial pauser) reconnected, while game was paused for initial pauser.
+                # This means both players are now connected. Initial pauser is still `player_who_paused`.
+                initial_pauser_info = self.gs.get_player_info(self.gs.player_who_paused)
+                if initial_pauser_info and initial_pauser_info.is_connected:  # Should not happen if state is consistent
+                    self.gs.status = GameStatus.IN_PROGRESS
+                    self.gs.last_error_message = f"Both players are now connected. Game resumed!"
+                    self.gs.player_who_paused = None
+                    app.logger.info(
+                        f"Game {self.gs.game_id} RESUMED. Waiting player {player.name} reconnected, initial pauser {initial_pauser_info.name} also (somehow) connected.")
+                else:
+                    # This player reconnected, but we are still waiting for the original pauser.
+                    self.gs.last_error_message = f"Welcome back, {player.name}! Still waiting for {initial_pauser_info.name if initial_pauser_info else 'the other player'} to reconnect."
+                    app.logger.info(
+                        f"Game {self.gs.game_id} still PAUSED. Player {player.name} reconnected, but still waiting for original pauser {self.gs.player_who_paused}.")
+            else:  # game is ABORTED but no specific player_who_paused (hard abort)
+                self.gs.last_error_message = f"Player {player.name} reconnected, but the game was fully aborted."
+                # Cannot resume a hard abort. Stays ABORTED.
+                app.logger.info(
+                    f"Game {self.gs.game_id} is HARD ABORTED. Player {player.name} reconnected, but game cannot resume.")
+
+        elif self.gs.status == GameStatus.IN_PROGRESS:
+            # Player reconnected to an already IN_PROGRESS game (e.g. refresh, brief network blip)
+            # Check if opponent is still there.
+            opponent = self.gs.get_opponent_info(player_id)
+            if not opponent or not opponent.is_connected:
+                # Opponent disconnected while this player was briefly gone. Game should pause.
+                self.gs.status = GameStatus.ABORTED
+                self.gs.player_who_paused = opponent.id if opponent else None  # Pause for the opponent
+                self.gs.last_error_message = f"Welcome back, {player.name}! Your opponent disconnected while you were away. Waiting for them."
+                app.logger.info(
+                    f"Game {self.gs.game_id} transitions to PAUSED. {player.name} reconnected to IN_PROGRESS, but opponent {opponent.id if opponent else 'N/A'} is gone.")
+            else:
+                self.gs.last_error_message = f"Player {player.name} re-established connection during active game."
+                app.logger.info(
+                    f"Player {player.name} ({player_id}) re-established connection to IN_PROGRESS game {self.gs.game_id}.")
+
+        elif self.gs.status == GameStatus.WAITING_FOR_OPPONENT:
+            # This is likely P1 (creator) who disconnected and reconnected before P2 joined.
+            if self.gs.players[0].id == player_id:  # Ensure it's P1
+                self.gs.last_error_message = f"Creator {player.name} reconnected. Still waiting for opponent."
+                self.gs.current_player_id = player_id  # P1 is active again
+                app.logger.info(
+                    f"Creator {player.name} ({player_id}) reconnected to WAITING_FOR_OPPONENT game {self.gs.game_id}.")
+            else:  # Should not happen if game state is consistent (P2 trying to reconnect to WAITING game)
+                app.logger.warning(
+                    f"Non-creator {player.name} tried to reconnect to WAITING_FOR_OPPONENT game {self.gs.game_id}.")
+
+        return True
 
 
 # --- Database Functions --- (Using model_dump(mode='json') and model_validate_json)
@@ -436,35 +584,86 @@ async def api_create_game(app: App, request: RequestData, data=None):  # Kept or
         return Result.default_internal_error("Could not create game.")
 
 
+# --- START OF BLOCK 3 (api_join_game) ---
+# FILE: ultimate_ttt_api.py
+# Replace the existing api_join_game function.
+
 @export(mod_name=GAME_NAME, name="join_game", api=True, request_as_kwarg=True, api_methods=['POST'])
-async def api_join_game(app: App, request: RequestData, data=None):  # Kept original name
-    try:
-        payload = data or {}
-        game_id = payload.get("game_id")
-        player_name = payload.get("player_name", "Player 2")
-        if not game_id: return Result.default_user_error("Game ID required.", 400)
+async def api_join_game(app: App, request: RequestData, data=None):
+ try:
+     payload = data or {}
+     game_id = payload.get("game_id")
+     player_name_from_join_attempt = payload.get("player_name", "Player 2")
 
-        game_state = await load_game_from_db_final(app, game_id)
-        if not game_state: return Result.default_user_error("Game not found.", 404)
+     if not game_id:
+         return Result.default_user_error("Game ID required.", 400)
 
-        if game_state.mode != GameMode.ONLINE: return Result.default_user_error("Not an online game.", 400)
-        if game_state.status != GameStatus.WAITING_FOR_OPPONENT: return Result.default_user_error(
-            "Game not waiting or full.", 400)
+     game_state = await load_game_from_db_final(app, game_id)
+     if not game_state:
+         return Result.default_user_error("Game not found.", 404)
 
-        user = await get_user_from_request(app, request)
-        joiner_id = user.uid if user and user.uid else f"guest_{uuid.uuid4().hex[:6]}"
+     user = await get_user_from_request(app, request)
+     joiner_id_from_request = user.uid if user and user.uid else f"guest_{uuid.uuid4().hex[:6]}"
 
-        engine = UltimateTTTGameEngine(game_state)
-        if engine.add_player(joiner_id, player_name):
-            await save_game_to_db_final(app, game_state)
-            app.logger.info(f"Player {joiner_id} ({player_name}) joined game {game_id}.")
-            return Result.json(data=game_state.model_dump_for_api())
-        else:
-            return Result.default_user_error(game_state.last_error_message or "Join failed.", 400)
-    except Exception as e:
-        app.logger.error(f"Error joining game: {e}", exc_info=True)
-        return Result.default_internal_error("Join game error.")
+     if game_state.mode != GameMode.ONLINE:
+         return Result.default_user_error("Not an online game.", 400)
 
+     engine = UltimateTTTGameEngine(game_state)
+     already_in_game_as_player = game_state.get_player_info(joiner_id_from_request)
+
+     # Case 1: Joining a game waiting for an opponent (as P2)
+     if game_state.status == GameStatus.WAITING_FOR_OPPONENT:
+         app.logger.info(f"Player {joiner_id_from_request} ({player_name_from_join_attempt}) attempting to join WAITING game {game_id}.")
+         if already_in_game_as_player: # P1 trying to "rejoin" while game is still waiting (e.g. after refresh)
+             if not already_in_game_as_player.is_connected:
+                 engine.handle_player_reconnect(joiner_id_from_request)
+             # else: P1 is already connected and in WAITING state, no action needed.
+         elif len(game_state.players) < 2: # New player (P2) joins
+             if not engine.add_player(joiner_id_from_request, player_name_from_join_attempt):
+                 return Result.default_user_error(game_state.last_error_message or "Could not join (add player failed).", 400)
+         else: # Game is WAITING but somehow full? Should not happen.
+              return Result.default_user_error("Game is waiting but seems full. Cannot join.", 409)
+
+
+     # Case 2: Reconnecting to a "paused" game (ABORTED + player_who_paused)
+     elif game_state.status == GameStatus.ABORTED and game_state.player_who_paused:
+         app.logger.info(f"Player {joiner_id_from_request} attempting to reconnect to PAUSED game {game_id} (paused by {game_state.player_who_paused}).")
+         if already_in_game_as_player and already_in_game_as_player.id == game_state.player_who_paused:
+             if not already_in_game_as_player.is_connected: # If they were marked disconnected
+                 engine.handle_player_reconnect(joiner_id_from_request)
+             # If they were already connected but game was paused (e.g. browser refresh), reconnect logic updates state
+         elif already_in_game_as_player and already_in_game_as_player.is_connected:
+              return Result.default_user_error("You are already connected. Game is paused waiting for opponent.", 400)
+         elif already_in_game_as_player and not already_in_game_as_player.is_connected: # The *other* player trying to reconnect to a game paused by their opponent
+             engine.handle_player_reconnect(joiner_id_from_request) # This will update their connected state
+         else: # A new player trying to join a game paused for a specific player
+             return Result.default_user_error(f"Game is paused and waiting for player {game_state.get_player_info(game_state.player_who_paused).name if game_state.get_player_info(game_state.player_who_paused) else 'previous player'} to reconnect.", 403)
+
+     # Case 3: Reconnecting to an IN_PROGRESS game (e.g., after brief disconnect/refresh)
+     elif game_state.status == GameStatus.IN_PROGRESS:
+         app.logger.info(f"Player {joiner_id_from_request} attempting to join/reconnect to IN_PROGRESS game {game_id}.")
+         if already_in_game_as_player:
+             if not already_in_game_as_player.is_connected:
+                 engine.handle_player_reconnect(joiner_id_from_request) # Mark as connected again
+             # If already connected, no specific action, game state is current.
+         else: # New player trying to join a full, in-progress game
+             return Result.default_user_error("Game is already in progress and full.", 403)
+
+     # Case 4: Game is truly ABORTED (no player_who_paused) or FINISHED
+     elif game_state.status == GameStatus.ABORTED or game_state.status == GameStatus.FINISHED:
+         return Result.default_user_error(f"Game is {game_state.status.value} and cannot be joined.", 400)
+
+     else: # Should not be reached
+         return Result.default_user_error(f"Game is in an unexpected state ({game_state.status.value}). Cannot join.", 500)
+
+     await save_game_to_db_final(app, game_state)
+     app.logger.info(f"Join/Reconnect attempt processed for player {joiner_id_from_request} in game {game_id}. New status: {game_state.status}")
+     return Result.json(data=game_state.model_dump_for_api())
+
+ except Exception as e:
+     app.logger.error(f"Error joining game: {e}", exc_info=True)
+     return Result.default_internal_error("Join game error.")
+# --- END OF BLOCK 3 ---
 
 @export(mod_name=GAME_NAME, name="get_game", api=True, request_as_kwarg=True)
 async def api_get_game(app: App, request: RequestData, game_id: str):
@@ -490,10 +689,11 @@ async def api_get_game_state(app: App, request: RequestData, game_id: str):  # g
 
 @export(mod_name=GAME_NAME, name="make_move", api=True, request_as_kwarg=True, api_methods=['POST'])
 async def api_make_move(app: App, request: RequestData, data=None):  # game_id as path/query
-
+    move_payload = data or {}
+    game_id: str = move_payload.get("game_id")
+    game_state = None
     try:
-        move_payload = data or {}
-        game_id: str = move_payload.get("game_id")
+
         game_state = await load_game_from_db_final(app, game_id)
         if not game_state: return Result.default_user_error("Game not found.", 404)
 
@@ -515,7 +715,7 @@ async def api_make_move(app: App, request: RequestData, data=None):  # game_id a
         else:
             return Result.default_user_error(
                 game_state.last_error_message or "Invalid move.", 400,
-                data_payload=game_state.model_dump_for_api()
+                data=game_state.model_dump_for_api()
             )
     except ValueError as e:
         return Result.default_user_error(f"Invalid move data: {str(e)}", 400)
@@ -549,26 +749,31 @@ import asyncio
 from typing import AsyncGenerator, Dict, Any  # Ensure these are imported if not already
 
 
+# --- START OF BLOCK 4 (api_open_game_stream) ---
+# FILE: ultimate_ttt_api.py
+# Replace the existing api_open_game_stream function.
+# Ensure you have: from typing import AsyncGenerator, Dict, Any, Optional
+# And: from datetime import datetime, timezone, timedelta
+
 @export(mod_name=GAME_NAME, name="open_game_stream", api=True, request_as_kwarg=True, api_methods=['GET'])
-async def api_open_game_stream(app: App, request: RequestData, game_id: str):
-    """
-    Provides a Server-Sent Event stream for real-time game updates.
-    Clients connect to this endpoint (e.g., /sse/UltimateTTT/open_game_stream?game_id={game_id})
-    to receive game state changes.
-    """
+async def api_open_game_stream(app: App, request: RequestData, game_id: str, player_id: Optional[str] = None):
     if not game_id:
         async def error_gen_no_id():
             yield {'event': 'error', 'data': {'message': 'game_id is required for stream'}}
 
         return Result.sse(stream_generator=error_gen_no_id())
 
+    # The player_id param from query helps identify who disconnected if the stream is cancelled.
+    listening_player_id = player_id
+
     async def game_event_generator() -> AsyncGenerator[Dict[str, Any], None]:
-        app.logger.info(f"SSE: Stream opened for game_id: {game_id}")
+        app.logger.info(f"SSE: Stream opened for game_id: {game_id} by player_id: {listening_player_id or 'Unknown'}")
         last_known_updated_at = None
-        last_status_sent = None  # To ensure we send an update if status changes even if timestamp is same (less likely)
+        last_status_sent = None
+        last_players_connected_state: Optional[Dict[str, bool]] = None
 
         try:
-            while True:  # Loop indefinitely until game ends, client disconnects, or error
+            while True:
                 game_state = await load_game_from_db_final(app, game_id)
 
                 if not game_state:
@@ -576,58 +781,108 @@ async def api_open_game_stream(app: App, request: RequestData, game_id: str):
                     yield {'event': 'error', 'data': {'message': 'Game not found. Stream closing.'}}
                     break
 
-                # Handle timeout for games waiting for an opponent
+                # Timeout for games WAITING_FOR_OPPONENT (initial join)
                 if game_state.status == GameStatus.WAITING_FOR_OPPONENT and \
                     game_state.waiting_since and \
                     (datetime.now(timezone.utc) - game_state.waiting_since > timedelta(
                         seconds=ONLINE_POLL_TIMEOUT_SECONDS)):
                     app.logger.info(f"SSE: Game {game_id} timed out waiting for opponent. Aborting.")
+                    # Update game state to ABORTED
                     game_state.status = GameStatus.ABORTED
                     game_state.last_error_message = "Game aborted: Opponent didn't join in time."
+                    game_state.player_who_paused = None  # No specific player paused
                     game_state.updated_at = datetime.now(timezone.utc)
                     await save_game_to_db_final(app, game_state)
-
-                    # Yield the aborted state and then break, as the game is over
                     yield {'event': 'game_update', 'data': game_state.model_dump_for_api()}
-                    app.logger.info(f"SSE: Game {game_id} aborted due to timeout. Closing stream.")
-                    break
+                    break  # End stream
+
+                # Timeout for games PAUSED (ABORTED with player_who_paused)
+                if game_state.status == GameStatus.ABORTED and \
+                    game_state.player_who_paused and \
+                    game_state.updated_at and \
+                    (datetime.now(timezone.utc) - game_state.updated_at > timedelta(
+                        seconds=ONLINE_POLL_TIMEOUT_SECONDS * 3)):  # e.g., 3x normal timeout
+                    disconnected_player_name = "Player"
+                    paused_player_info = game_state.get_player_info(game_state.player_who_paused)
+                    if paused_player_info: disconnected_player_name = paused_player_info.name
+
+                    app.logger.info(
+                        f"SSE: Game {game_id} (paused) timed out waiting for {disconnected_player_name} ({game_state.player_who_paused}) to reconnect. Fully aborting.")
+                    game_state.last_error_message = f"Game aborted: {disconnected_player_name} did not reconnect in time."
+                    game_state.player_who_paused = None  # Mark as fully aborted
+                    game_state.updated_at = datetime.now(timezone.utc)
+                    # Status remains ABORTED
+                    await save_game_to_db_final(app, game_state)
+                    yield {'event': 'game_update', 'data': game_state.model_dump_for_api()}
+                    break  # End stream
 
                 current_updated_at = game_state.updated_at
                 current_status = game_state.status
+                current_players_connected = {p.id: p.is_connected for p in game_state.players}
+                send_update = False
 
-                # Send update if it's the first pull, or if game state has changed
                 if last_known_updated_at is None or \
                     current_updated_at > last_known_updated_at or \
-                    current_status != last_status_sent:
+                    current_status != last_status_sent or \
+                    current_players_connected != last_players_connected_state:
+                    send_update = True
+
+                if send_update:
                     app.logger.debug(
-                        f"SSE: Sending update for game {game_id}. Status: {current_status}, Updated: {current_updated_at}")
+                        f"SSE: Sending update for game {game_id}. Status: {current_status}, Updated: {current_updated_at}, Connected: {current_players_connected}")
                     yield {'event': 'game_update', 'data': game_state.model_dump_for_api()}
                     last_known_updated_at = current_updated_at
                     last_status_sent = current_status
+                    last_players_connected_state = current_players_connected
 
-                # If game is finished or aborted (by means other than timeout above), send final state and close
-                if game_state.status in [GameStatus.FINISHED, GameStatus.ABORTED]:
-                    app.logger.info(f"SSE: Game {game_id} is {game_state.status}. Sent final update. Closing stream.")
+                if game_state.status == GameStatus.FINISHED or \
+                    (
+                        game_state.status == GameStatus.ABORTED and not game_state.player_who_paused):  # Game truly finished or hard aborted
+                    app.logger.info(
+                        f"SSE: Game {game_id} is {game_state.status.value} (final). Sent final update. Closing stream.")
                     break
 
-                # Wait before checking for updates again.
-                # This interval determines responsiveness vs. DB load.
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(0.75)  # Slightly increased sleep interval for polling
 
         except asyncio.CancelledError:
-            # This is typically raised when the client disconnects
-            app.logger.info(f"SSE: Stream for game_id: {game_id} was cancelled (client likely disconnected).")
+            app.logger.info(
+                f"SSE: Stream for game_id: {game_id}, listening_player_id: {listening_player_id} was CANCELLED (client likely disconnected).")
+            if listening_player_id and game_id:
+                # This is where we detect a client closing the connection.
+                # Load the latest game state to act upon it.
+                game_state_on_disconnect = await load_game_from_db_final(app, game_id)
+                if game_state_on_disconnect and game_state_on_disconnect.mode == GameMode.ONLINE:
+                    player_info = game_state_on_disconnect.get_player_info(listening_player_id)
+                    # Only process if the player was marked as connected and game is in a relevant state
+                    if player_info and player_info.is_connected and \
+                        (game_state_on_disconnect.status == GameStatus.IN_PROGRESS or game_state_on_disconnect.status == GameStatus.WAITING_FOR_OPPONENT or (
+                             game_state_on_disconnect.status == GameStatus.ABORTED and game_state_on_disconnect.player_who_paused)):  # also if game was paused and the *other* player disconnects
+
+                        app.logger.info(
+                            f"SSE: Processing server-side disconnect for player {listening_player_id} in game {game_id} due to stream cancellation.")
+                        engine = UltimateTTTGameEngine(game_state_on_disconnect)
+                        engine.handle_player_disconnect(
+                            listening_player_id)  # This updates status, player_who_paused etc.
+                        await save_game_to_db_final(app, game_state_on_disconnect)
+                        app.logger.info(
+                            f"SSE: Post-disconnect save for game {game_id}. New status: {game_state_on_disconnect.status}")
+                    else:
+                        app.logger.info(
+                            f"SSE: Player {listening_player_id} stream cancelled, but player already marked disconnected or game status ({game_state_on_disconnect.status if game_state_on_disconnect else 'N/A'}) not actionable for disconnect. No further action.")
+            # No yield here as the stream is broken.
         except Exception as e:
             app.logger.error(f"SSE: Stream error for game_id {game_id}: {e}", exc_info=True)
             try:
-                # Try to inform the client about the error before closing
                 yield {'event': 'error', 'data': {'message': f'Server error in stream: {str(e)}'}}
             except Exception as yield_e:
                 app.logger.error(f"SSE: Error yielding error message for game_id {game_id}: {yield_e}", exc_info=True)
         finally:
-            app.logger.info(f"SSE: Stream closed for game_id: {game_id}")
+            app.logger.info(f"SSE: Stream closed for game_id: {game_id}, listening_player_id: {listening_player_id}")
 
     return Result.sse(stream_generator=game_event_generator())
+
+
+# --- END OF BLOCK 4 ---
 
 
 # --- UI Initialization ---
@@ -918,6 +1173,16 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             .button { width: 100%; }
             .button:not(:last-child) { margin-bottom: 0.5rem; }
         }
+
+        .status-text {
+            font-size: 0.9em;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            text-align: center;
+        }
+        .status-text.info { background-color: rgba(var(--info-colorRGB, 13,202,240), 0.15); color: var(--info-color); }
+        .status-text.warning { background-color: rgba(var(--warning-colorRGB, 255,193,7), 0.15); color: var(--warning-color); }
+        .status-text.error { background-color: rgba(var(--danger-colorRGB, 220,53,69), 0.15); color: var(--danger-color); }
     </style>
 </head>
 <body>
@@ -1140,76 +1405,76 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             showScreen('gameSetup');
         }
 
-        function connectToGameStream(gameId) {
-            if (sseConnection && currentSseGameIdPath === `/sse/${API_MODULE_NAME}/open_game_stream?game_id=${gameId}`) {
-                console.log("SSE: Already connected to stream for game:", gameId);
-                return;
-            }
-            disconnectFromGameStream(); // Disconnect any existing stream first
+       function connectToGameStream(gameId) {
+             let ssePath = `/sse/${API_MODULE_NAME}/open_game_stream?game_id=${gameId}`;
+             // Pass client's player ID if known, so server can identify who disconnected if stream cancels
+             if (clientPlayerInfo && clientPlayerInfo.id) {
+                 ssePath += `&player_id=${clientPlayerInfo.id}`;
+             }
 
-            if (!gameId) {
-                console.error("SSE: Cannot connect, gameId is missing.");
-                return;
-            }
+             if (sseConnection && currentSseGameIdPath === ssePath) {
+                 console.log("SSE: Already connected to stream for game:", gameId, "player:", clientPlayerInfo ? clientPlayerInfo.id : "N/A");
+                 return;
+             }
+             disconnectFromGameStream();
 
-            // Construct the SSE URL. Assumes ToolboxV2 exposes SSE endpoints under /sse/MODULE_NAME/ENDPOINT_NAME
-            currentSseGameIdPath = `/sse/${API_MODULE_NAME}/open_game_stream?game_id=${gameId}`;
-            console.log(`SSE: Attempting to connect to ${currentSseGameIdPath}`);
+             if (!gameId) {
+                 console.error("SSE: Cannot connect, gameId is missing.");
+                 return;
+             }
 
-            sseConnection = TB.sse.connect(currentSseGameIdPath, {
-                onOpen: (event) => {
-                    console.log(`SSE: Connection opened to ${currentSseGameIdPath}`, event);
-                    if(window.TB?.ui?.Toast) TB.ui.Toast.showSuccess("Live game connection active!", {duration: 1500});
-                },
-                onError: (error) => {
-                    console.error(`SSE: Connection error with ${currentSseGameIdPath}`, error);
-                    if(window.TB?.ui?.Toast) TB.ui.Toast.showError("Live connection failed. Refresh may be needed.", {duration: 3000});
-                    sseConnection = null;
-                    currentSseGameIdPath = null;
-                    // Consider more robust error handling, e.g., navigating to setup or auto-retry
-                },
-                listeners: {
-                    'game_update': (eventPayload, event) => {
-                        console.log('SSE Event (game_update):', eventPayload);
-                        if (eventPayload && eventPayload.game_id) {
-                            if (currentGameId === eventPayload.game_id) { // Ensure update is for the current game
-                                processGameStateUpdate(eventPayload);
-                            } else {
-                                console.warn("SSE: Received game_update for a different game_id. Current:", currentGameId, "Received:", eventPayload.game_id);
-                            }
-                        } else {
-                            console.warn("SSE: Received game_update event without valid data.", eventPayload);
-                        }
-                    },
-                    'error': (eventPayload, event) => { // Application-level errors sent by the server stream
-                        console.error('SSE Event (server error):', eventPayload);
-                        let errorMessage = "An error occurred in the game stream.";
-                        if (eventPayload && typeof eventPayload.message === 'string') {
-                           errorMessage = eventPayload.message;
-                        }
-                        if(window.TB?.ui?.Toast) TB.ui.Toast.showError(`Stream error: ${errorMessage}`, {duration: 4000});
+             currentSseGameIdPath = ssePath; // Store the full path including player_id
+             console.log(`SSE: Attempting to connect to ${currentSseGameIdPath}`);
 
-                        if (errorMessage.includes("Game not found") || errorMessage.includes("game_id is required")) {
-                            disconnectFromGameStream();
-                            showModal("Game Error", "The game session is no longer available. Returning to menu.", () => showScreen('gameSetup'));
-                        }
-                        // If other critical errors, consider disconnecting or other actions.
-                    },
-                    'stream_start': (eventPayload, event) => { // Generic SSE event often sent by TB.sse wrapper
-                         console.log('SSE Event (stream_start):', eventPayload);
-                    },
-                    'stream_end': (eventPayload, event) => { // Generic SSE event, server closed the stream
-                         console.log('SSE Event (stream_end): Server closed stream for', gameId, eventPayload);
-                         // The server's SSE loop breaks on FINISHED/ABORTED, so this confirms closure.
-                         // Clean up client-side connection state if not already handled by onError or explicit disconnect.
-                         if (sseConnection && currentSseGameIdPath === `/sse/${API_MODULE_NAME}/open_game_stream?game_id=${gameId}`) {
-                             sseConnection = null;
-                             currentSseGameIdPath = null;
+             sseConnection = TB.sse.connect(currentSseGameIdPath, {
+                 onOpen: (event) => {
+                     console.log(`SSE: Connection opened to ${currentSseGameIdPath}`, event);
+                     // if(window.TB?.ui?.Toast) TB.ui.Toast.showSuccess("Live game connection active!", {duration: 1500});
+                 },
+                 onError: (error) => {
+                     console.error(`SSE: Connection error with ${currentSseGameIdPath}`, error);
+                     if(window.TB?.ui?.Toast) TB.ui.Toast.showError("Live connection failed. Refresh may be needed.", {duration: 3000});
+                     // sseConnection = null; // TB.sse.connect might handle this, or we ensure it in disconnect
+                     // currentSseGameIdPath = null;
+                     // Consider more robust error handling, e.g., navigating to setup or auto-retry
+                 },
+                 listeners: {
+                     'game_update': (eventPayload, event) => {
+                         console.log('SSE Event (game_update):', eventPayload);
+                         if (eventPayload && eventPayload.game_id) {
+                             if (currentGameId === eventPayload.game_id || !currentGameId) { // Process if current game or if no game was set yet
+                                 processGameStateUpdate(eventPayload);
+                             } else {
+                                 console.warn("SSE: Received game_update for a different game_id. Current:", currentGameId, "Received:", eventPayload.game_id);
+                             }
+                         } else {
+                             console.warn("SSE: Received game_update event without valid data.", eventPayload);
                          }
-                    }
-                }
-            });
-        }
+                     },
+                     'error': (eventPayload, event) => {
+                         console.error('SSE Event (server error):', eventPayload);
+                         let errorMessage = "An error occurred in the game stream.";
+                         if (eventPayload && typeof eventPayload.message === 'string') {
+                            errorMessage = eventPayload.message;
+                         }
+                         if(window.TB?.ui?.Toast) TB.ui.Toast.showError(`Stream error: ${errorMessage}`, {duration: 4000});
+
+                         if (errorMessage.includes("Game not found") || errorMessage.includes("game_id is required")) {
+                             disconnectFromGameStream();
+                             showModal("Game Error", "The game session is no longer available. Returning to menu.", () => showScreen('gameSetup'));
+                         }
+                     },
+                     'stream_end': (eventPayload, event) => {
+                          console.log('SSE Event (stream_end): Server closed stream for', gameId, "player:", clientPlayerInfo ? clientPlayerInfo.id : "N/A", eventPayload);
+                          // Server explicitly closed (e.g. game finished/aborted).
+                          // Client-side sseConnection might be cleared by TB.sse or here.
+                          if (sseConnection && currentSseGameIdPath === ssePath) { // Check if it's still our active stream
+                              disconnectFromGameStream(); // Ensure client state is clean
+                          }
+                     }
+                 }
+             });
+         }
         function disconnectFromGameStream() {
             if (sseConnection && currentSseGameIdPath) {
                 console.log(`SSE: Disconnecting from ${currentSseGameIdPath}`);
@@ -1631,120 +1896,185 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             const response = await apiRequest('join_game', { game_id: gameIdToJoin, player_name: playerName }, 'POST', {hideMainContentWhileLoading: true});
 
             if (!response.error && response.data?.game_id) {
-                // Client info needs to be set before processGameStateUpdate for online logic
-                clientPlayerInfo = response.data.players.find(p => p.id === currentSessionId);
-                if (!clientPlayerInfo) {
-                     // This situation implies the server assigned a new ID or there's a mismatch.
-                     // We need to find out which player this client is.
-                     // If two players, and one is known (e.g. from a previous context if any), the other is this client.
-                     // For robustness, assume the last player added (if ID doesn't match session) is "me".
-                     // This is heuristics; server should ideally ensure client knows its ID.
-                     if (response.data.players.length === 2) {
-                         const p1_id_from_server = response.data.players[0].id;
-                         clientPlayerInfo = response.data.players.find(p => p.id !== p1_id_from_server ); // find P2
-                         if(!clientPlayerInfo) clientPlayerInfo = response.data.players[1]; // Fallback to just P2 if P1 was hard to determine
+             // CRITICAL: Set clientPlayerInfo based on the response from the server and current session ID.
+             // currentSessionId should be established by determineSessionId() and be consistent.
+             clientPlayerInfo = response.data.players.find(p => p.id === currentSessionId);
+
+             if (!clientPlayerInfo) {
+                 // This is a fallback - ideally currentSessionId matches an ID in the game.
+                 // This could happen if the server assigned a guest_id and the client's currentSessionId is
+                 // a newly generated one that doesn't match.
+                 // For a join, the player joining should be the last one added or the one whose symbol is 'O' if P1 is 'X'.
+                 if (response.data.players.length === 2) {
+                      const playerX = response.data.players.find(p => p.symbol === 'X');
+                      const playerO = response.data.players.find(p => p.symbol === 'O');
+                      // If I am joining, I am likely player O if player X exists and is not me.
+                      if (playerO && playerO.id.startsWith("guest_") && currentSessionId.startsWith("guest_")) {
+                         clientPlayerInfo = playerO; // Tentatively assume this guest is me
+                      } else if (playerX && playerX.id !== currentSessionId && playerO) {
+                         clientPlayerInfo = playerO;
+                      }
+                      // If currentSessionId IS one of the players, the initial find should work.
+                 }
+                 console.warn("Online game joined: ClientPlayerInfo might not be perfectly matched. My session ID:", currentSessionId, "Inferred ClientInfo:", clientPlayerInfo, "Players in game:", response.data.players);
+             } else {
+                 console.log("Online game joined/rejoined: ClientPlayerInfo set to:", clientPlayerInfo);
+             }
+
+             processGameStateUpdate(response.data); // Handles UI, SSE connection logic, rendering
+
+             // Screen transition logic
+             if (response.data.status === 'in_progress' || (response.data.status === 'ABORTED' && response.data.player_who_paused)) {
+                  showScreen('game');
+             } else if (response.data.status === 'waiting_for_opponent'){
+                 gameIdShareEl.textContent = response.data.game_id; // For P1 rejoining their own waiting game
+                 waitingStatusEl.textContent = `Waiting for opponent... Game ID: ${response.data.game_id}`;
+                 showScreen('onlineWait');
+             } else { // Finished, or hard aborted
+                  if(window.TB?.ui?.Toast) TB.ui.Toast.showError(response.data.last_error_message || "Could not join game (unexpected status).");
+                  showScreen('gameSetup');
+             }
+         }
+        }
+
+         function processGameStateUpdate(newGameState) {
+         console.log("PROCESS_GAME_STATE_UPDATE - Received:", newGameState);
+
+         let previousPlayerConnectedStates = {};
+         let oldGameStatus = null;
+         let oldCurrentPlayerId = null;
+
+         if (currentGameState) { // Capture state *before* overwriting
+             oldGameStatus = currentGameState.status;
+             oldCurrentPlayerId = currentGameState.current_player_id;
+             if (currentGameState.players && clientPlayerInfo) {
+                 currentGameState.players.forEach(p => {
+                     if (p.id !== clientPlayerInfo.id) { // Opponent
+                         previousPlayerConnectedStates[p.id] = p.is_connected;
                      }
-                     console.warn("Online game joined: ClientPlayerInfo not found by currentSessionId. Attempted to infer. My session ID:", currentSessionId, "Players in game:", response.data.players);
-                }
+                 });
+             }
+         }
 
-                processGameStateUpdate(response.data); // Handles UI and SSE connection logic
+         currentGameState = newGameState; // Main state update
 
-                // Screen transition logic (mostly handled by processGameStateUpdate now)
-                if (response.data.status === 'in_progress' && document.getElementById('gameSection').classList.contains('hidden')) {
-                     showScreen('game');
-                } else if (response.data.status === 'waiting_for_opponent' && document.getElementById('onlineWaitSection').classList.contains('hidden')){
-                    waitingStatusEl.textContent = `Joined. Game status: ${response.data.status}. Game ID: ${response.data.game_id}`;
-                    showScreen('onlineWait'); // P2 might join a game that's still waiting if P1 had connection issues
-                } else if (response.data.status !== 'in_progress' && response.data.status !== 'waiting_for_opponent') {
-                     if(window.TB?.ui?.Toast) TB.ui.Toast.showError(response.data.last_error_message || "Could not join game (unexpected status).");
-                     showScreen('gameSetup');
-                }
-            }
-        }
+         if (!currentGameState || !currentGameState.game_id) {
+             console.error("Invalid newGameState received!");
+             if(window.TB?.ui?.Toast) TB.ui.Toast.showError("Error: Corrupted game update.");
+             disconnectFromGameStream();
+             showScreen('gameSetup');
+             return;
+         }
+         currentGameId = newGameState.game_id; // Ensure currentGameId is also updated
 
-        function processGameStateUpdate(newGameState) {
-            console.log("PROCESS_GAME_STATE_UPDATE - Received:", newGameState);
-            const oldStatus = currentGameState ? currentGameState.status : null;
-            const previousPlayerId = currentGameState ? currentGameState.current_player_id : null;
-            currentGameState = newGameState;
+         // Re-confirm clientPlayerInfo, especially if game was joined and this is the first update
+         if (currentGameState.mode === 'online' && (!clientPlayerInfo || !currentGameState.players.find(p => p.id === clientPlayerInfo.id))) {
+              clientPlayerInfo = currentGameState.players.find(p => p.id === currentSessionId);
+              console.log("PROCESS_GAME_STATE_UPDATE (Online) - ClientPlayerInfo (re)validated:", clientPlayerInfo);
+         }
 
-            if (!currentGameState || !currentGameState.game_id) {
-                console.error("Invalid newGameState received!");
-                if(window.TB?.ui?.Toast) TB.ui.Toast.showError("Error: Corrupted game update.");
-                disconnectFromGameStream();
-                showScreen('gameSetup');
-                return;
-            }
-            currentGameId = newGameState.game_id;
+         // --- Handle Toasts for Opponent Connect/Disconnect ---
+         if (currentGameState.mode === 'online' && clientPlayerInfo && currentGameState.players) {
+             currentGameState.players.forEach(opponent => {
+                 if (opponent.id !== clientPlayerInfo.id) {
+                     const wasConnected = previousPlayerConnectedStates[opponent.id]; // Could be undefined if first update
+                     const isConnected = opponent.is_connected;
 
-            if (currentGameState.mode === 'local') {
-                const currentPlayer = currentGameState.players.find(p => p.id === currentGameState.current_player_id);
-                localPlayerActiveSymbol = currentPlayer ? currentPlayer.symbol : '?';
-                disconnectFromGameStream(); // No SSE for local games
-                if (currentGameState.status === 'in_progress' && saveAndLeaveBtn) { // Sicherstellen, dass Button existiert
-                    saveAndLeaveBtn.classList.remove('hidden');
-                } else if (saveAndLeaveBtn) {
-                    saveAndLeaveBtn.classList.add('hidden');
-                }
-            } else if (currentGameState.mode === 'online') {
-                // Ensure clientPlayerInfo is correctly identified
-                if (!clientPlayerInfo || !currentGameState.players.find(p => p.id === clientPlayerInfo.id)) {
-                     clientPlayerInfo = currentGameState.players.find(p => p.id === currentSessionId);
-                     console.log("PROCESS_GAME_STATE_UPDATE (Online) - ClientPlayerInfo (re)set:", clientPlayerInfo);
-                }
+                     if (wasConnected === true && isConnected === false) {
+                         // Opponent just disconnected
+                         if (window.TB?.ui?.Toast) TB.ui.Toast.showWarning(`${opponent.name} disconnected. Waiting for reconnect...`, {duration: 3500});
+                     } else if (wasConnected === false && isConnected === true && previousPlayerConnectedStates.hasOwnProperty(opponent.id)) {
+                         // Opponent just reconnected
+                         if (window.TB?.ui?.Toast) TB.ui.Toast.showSuccess(`${opponent.name} reconnected! Game resumes.`, {duration: 3000});
+                     }
+                 }
+             });
+         }
+         // --- End Toasts ---
 
-                const onlineWaitScreenActive = !document.getElementById('onlineWaitSection').classList.contains('hidden');
-                if (onlineWaitScreenActive && currentGameState.status === 'in_progress') {
-                    if(window.TB?.ui?.Toast) TB.ui.Toast.showSuccess("Opponent connected! Game starting.", {duration: 2000});
-                    showScreen('game');
-                }
+         if (currentGameState.mode === 'local') {
+             const currentPlayer = currentGameState.players.find(p => p.id === currentGameState.current_player_id);
+             localPlayerActiveSymbol = currentPlayer ? currentPlayer.symbol : '?';
+             disconnectFromGameStream();
+             if (saveAndLeaveBtn) {
+                 saveAndLeaveBtn.classList.toggle('hidden', currentGameState.status !== 'in_progress');
+             }
+         } else if (currentGameState.mode === 'online') {
+             const onlineWaitScreenActive = !document.getElementById('onlineWaitSection').classList.contains('hidden');
+             if (onlineWaitScreenActive && currentGameState.status === 'in_progress') {
+                 if(window.TB?.ui?.Toast) TB.ui.Toast.showSuccess("Opponent connected! Game starting.", {duration: 2000});
+                 showScreen('game');
+             }
 
-                // Manage SSE connection based on game state
-                if (currentGameState.status === 'in_progress') {
-                    const isMyTurnOnline = clientPlayerInfo && currentGameState.current_player_id === clientPlayerInfo.id;
-                    if (isMyTurnOnline) {
-                        disconnectFromGameStream(); // My turn, stop listening
-                        if (previousPlayerId !== currentGameState.current_player_id && oldStatus === 'in_progress') {
-                            if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("It's your turn!", {duration: 2000});
-                        }
-                    } else {
-                        connectToGameStream(currentGameState.game_id); // Opponent's turn, ensure listening
-                    }
-                } else if (currentGameState.status === 'waiting_for_opponent') {
-                    // This client is P1 waiting, or P2 joined and game is still somehow waiting (e.g. P1 disconnected)
-                    // Ensure client who should be waiting is connected to stream
-                    const amIPlayer1 = clientPlayerInfo && currentGameState.players.length > 0 && currentGameState.players[0].id === clientPlayerInfo.id;
-                    const amIAPlayer = clientPlayerInfo && currentGameState.players.find(p => p.id === clientPlayerInfo.id);
+             // Manage SSE connection
+             const isMyTurnOnline = clientPlayerInfo && currentGameState.current_player_id === clientPlayerInfo.id;
 
-                    if (amIPlayer1 || (amIAPlayer && !clientPlayerInfo.id.startsWith("p1_"))) { // P1 connects, or P2 connects if game is waiting (e.g. P1 dropped after P2 joined)
-                         connectToGameStream(currentGameState.game_id);
-                    } else {
-                         disconnectFromGameStream(); // Not my concern if I'm not the active/waiting party
-                    }
-                } else if (currentGameState.status === 'finished' || currentGameState.status === 'aborted') {
-                    disconnectFromGameStream(); // Game over, stop listening
-                }
-                if (saveAndLeaveBtn) saveAndLeaveBtn.classList.add('hidden');
-            }
+             if (currentGameState.status === 'in_progress') {
+                 if (isMyTurnOnline) {
+                     disconnectFromGameStream();
+                     if (oldGameStatus === 'in_progress' && oldCurrentPlayerId !== currentGameState.current_player_id) { // Check if turn just changed to me
+                        if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("It's your turn!", {duration: 2000});
+                     } else if (oldGameStatus === 'ABORTED' && currentGameState.status === 'in_progress') { // Game just resumed to my turn
+                        if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("Game resumed. It's your turn!", {duration: 2000});
+                     }
+                 } else { // Opponent's turn or game not ready for my move
+                     connectToGameStream(currentGameState.game_id);
+                 }
+             } else if (currentGameState.status === 'waiting_for_opponent') {
+                 // If I am P1 and waiting, I should listen.
+                 if (clientPlayerInfo && currentGameState.players.length > 0 && currentGameState.players[0].id === clientPlayerInfo.id) {
+                     connectToGameStream(currentGameState.game_id);
+                 } else {
+                     disconnectFromGameStream(); // P2 doesn't need to listen if P1 is creating/waiting.
+                 }
+             } else if (currentGameState.status === 'ABORTED' && currentGameState.player_who_paused) {
+                 // Game is paused. If I am NOT the one who paused, I should listen for their reconnect or timeout.
+                 if (clientPlayerInfo && clientPlayerInfo.id !== currentGameState.player_who_paused) {
+                     connectToGameStream(currentGameState.game_id);
+                 } else { // I am the one who paused, I don't need to listen to my own pause.
+                     disconnectFromGameStream();
+                 }
+             } else if (currentGameState.status === 'finished' || (currentGameState.status === 'ABORTED' && !currentGameState.player_who_paused)) {
+                 disconnectFromGameStream(); // Game truly over.
+             }
+             if (saveAndLeaveBtn) saveAndLeaveBtn.classList.add('hidden'); // No save & leave for online
+         }
 
-            renderBoard();
-            updateStatusBar();
+         renderBoard(); // This is crucial for playability after reconnect
+         updateStatusBar();
 
-            if (currentGameState.status === 'finished' || currentGameState.status === 'aborted') {
-                 if (saveAndLeaveBtn) saveAndLeaveBtn.classList.add('hidden'); // Verstecke bei Spielende
-                // Wenn ein lokales Spiel beendet ist, lösche den gespeicherten Zustand
-                if (currentGameState.mode === 'local') {
-                    deleteLocalGame(currentGameState.config.grid_size);
-                }
-                disconnectFromGameStream();
-                if (currentGameState.status === 'finished') {
-                    showGameOverModal();
-                    loadSessionStats();
-                } else { // ABORTED
-                     showModal("Game Aborted", currentGameState.last_error_message || "The game was aborted.", () => showScreen('gameSetup'));
-                }
-            }
-        }
+         if (currentGameState.status === 'finished' || (currentGameState.status === 'ABORTED' && !currentGameState.player_who_paused)) {
+             if (saveAndLeaveBtn) saveAndLeaveBtn.classList.add('hidden');
+             if (currentGameState.mode === 'local' && currentGameState.status === 'finished') {
+                 deleteLocalGame(currentGameState.config.grid_size);
+             }
+             disconnectFromGameStream();
+             if (currentGameState.status === 'finished') {
+                 showGameOverModal();
+                 loadSessionStats();
+             } else { // Hard ABORTED
+                  showModal("Game Aborted", currentGameState.last_error_message || "The game was aborted.", () => showScreen('gameSetup'));
+             }
+         }
+
+         // Update Reset/Leave button text and style (from previous correct block)
+         if (resetGameBtn) {
+             if (currentGameState.mode === 'online' &&
+                 (currentGameState.status === 'in_progress' || (currentGameState.status === 'ABORTED' && currentGameState.player_who_paused))) {
+                 resetGameBtn.textContent = 'Leave Game';
+                 resetGameBtn.classList.add('danger');
+                 resetGameBtn.classList.remove('secondary');
+             } else if (currentGameState.mode === 'local') {
+                 resetGameBtn.textContent = 'Reset Game';
+                 resetGameBtn.classList.add('danger');
+                 resetGameBtn.classList.remove('secondary');
+             } else {
+                 resetGameBtn.textContent = 'Back to Menu';
+                 resetGameBtn.classList.remove('danger');
+                 resetGameBtn.classList.add('secondary');
+             }
+         }
+     }
 
 
         async function makePlayerMove(globalR, globalC, localR, localC) {
@@ -1778,18 +2108,34 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
         }
 
 
-        function confirmResetGame() { /* Same as before */
-            if (!currentGameState) return;
-            showModal('Reset Game?', 'Start a new game with current settings?',
-                async () => {
-                    if (currentGameState.mode === 'local') {
-                        await createNewGame('local'); // Uses current form values
-                    } else {
-                        if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("For online, please start a new game from the menu to reset.");
-                    }
-                }
-            );
-        }
+        function confirmResetGame() {
+         if (!currentGameState) return;
+
+         if (currentGameState.mode === 'online' &&
+             (currentGameState.status === 'in_progress' || (currentGameState.status === 'ABORTED' && currentGameState.player_who_paused))) {
+             showModal('Leave Game?', 'Are you sure you want to leave this online game? Your opponent will be notified.',
+                 async () => {
+                     // Client simply disconnects its SSE and goes to menu.
+                     // The server-side SSE CancelledError will handle marking the player as disconnected.
+                     disconnectFromGameStream();
+                     showScreen('gameSetup');
+                     // No explicit API call to "leave", relying on SSE stream cancellation to trigger backend logic.
+                 }
+             );
+         } else if (currentGameState.mode === 'local' && (currentGameState.status === 'in_progress' || currentGameState.status === 'finished' || currentGameState.status === 'ABORTED')) {
+             showModal('Reset Game?', 'Start a new local game with current settings?',
+                 async () => {
+                     deleteLocalGame(currentGameState.config.grid_size); // Clear any saved state for this size
+                     await createNewGame('local'); // Uses current form values
+                 }
+             );
+         } else if (currentGameState.status === 'finished' || (currentGameState.status === 'ABORTED' && !currentGameState.player_who_paused) ) {
+             // For finished/hard-aborted online games, "Reset" means go to menu essentially.
+             showModal('New Game?', 'Return to the menu to start a new game?', () => showScreen('gameSetup'));
+         } else {
+              if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("Cannot reset/leave from current game state like this.");
+         }
+     }
         function confirmBackToMenu() {
             if (currentGameState && currentGameState.status !== 'finished' && currentGameState.status !== 'aborted') {
                 let message = 'Current game progress will be lost. Are you sure?';
@@ -1928,63 +2274,114 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             // No separate highlightGuidance() function is needed if renderBoard fully handles it.
         }
 
-        function updateStatusBar() { /* Mostly same, ensure player names are used */
-            if (!statusBar || !currentGameState || !currentPlayerIndicator) return;
-            let message = ""; let msgType = "info";
+        // --- START OF BLOCK 7 (JS updateStatusBar) ---
+     function updateStatusBar() {
+             if (!statusBar || !currentGameState || !currentPlayerIndicator) return;
+             let message = ""; let msgType = "info";
 
-            currentPlayerIndicator.classList.remove('player-X', 'player-O');
+             currentPlayerIndicator.className = 'current-player-indicator'; // Reset classes
 
-            if (currentGameState.status === 'waiting_for_opponent') {
-                message = "Waiting for opponent...";
-                 if (currentGameState.players.length > 0) {
-                    const waitingPlayerSymbol = currentGameState.players[0].symbol; // Annahme: Erster Spieler ist der Wartende
-                    currentPlayerIndicator.classList.add(`player-${waitingPlayerSymbol}`);
-                }
-            } else if (currentGameState.status === 'in_progress') {
-                const currentPlayer = currentGameState.players.find(p => p.id === currentGameState.current_player_id);
-                const pName = currentPlayer ? currentPlayer.name : "Player";
-                const pSymbol = currentPlayer ? currentPlayer.symbol : "?";
+             if (currentGameState.status === 'waiting_for_opponent') {
+                 message = "Waiting for opponent to join...";
+                 if (currentGameState.players.length > 0 && currentGameState.players[0].is_connected) {
+                     currentPlayerIndicator.classList.add(`player-${currentGameState.players[0].symbol}`);
+                 }
+             } else if (currentGameState.status === 'in_progress') {
+                 const currentPlayer = currentGameState.players.find(p => p.id === currentGameState.current_player_id);
+                 const pName = currentPlayer ? currentPlayer.name : "Player";
+                 const pSymbol = currentPlayer ? currentPlayer.symbol : "?";
 
-                if (currentPlayer) {
-                    currentPlayerIndicator.classList.add(`player-${pSymbol}`);
-                }
+                 if (currentPlayer) {
+                     currentPlayerIndicator.classList.add(`player-${pSymbol}`);
+                 }
 
-                if (currentGameState.mode === 'local') {
-                    message = `${pName} (${pSymbol})'s Turn.`;
-                } else {
-                    message = (clientPlayerInfo && clientPlayerInfo.id === currentGameState.current_player_id) ?
-                              `Your Turn (${clientPlayerInfo.symbol})` :
-                              `Waiting for ${pName} (${pSymbol})...`;
-                }
+                 if (currentGameState.mode === 'local') {
+                     message = `${pName} (${pSymbol})'s Turn.`;
+                 } else { // Online
+                     const amICurrentPlayer = clientPlayerInfo && clientPlayerInfo.id === currentGameState.current_player_id;
+                     message = amICurrentPlayer ?
+                               `Your Turn (${clientPlayerInfo.symbol})` :
+                               `Waiting for ${pName} (${pSymbol})...`;
 
-                if (currentGameState.next_forced_global_board) {
-                    const [gr, gc] = currentGameState.next_forced_global_board;
-                    message += ` Play in highlighted board (${gr+1},${gc+1}).`;
-                } else {
-                    message += " Play in any valid highlighted board.";
-                }
-                if (currentGameState.last_error_message) {
-                    message = `Error: ${currentGameState.last_error_message}`; msgType = "error";
-                }
-            } else if (currentGameState.status === 'finished') {
-                msgType = "success";
-                if (currentGameState.is_draw) message = "Game Over: It's a DRAW!";
-                else {
-                    const winner = currentGameState.players.find(p => p.symbol === currentGameState.overall_winner_symbol);
-                    message = `Game Over: ${winner ? winner.name : 'Player'} (${currentGameState.overall_winner_symbol}) WINS!`;
-                    if (winner) { // NEU: Indikatorfarbe des Gewinners
-                        currentPlayerIndicator.classList.add(`player-${winner.symbol}`);
-                    }
-                }
-            } else if (currentGameState.status === 'aborted') {
-                 message = currentGameState.last_error_message || "Game Aborted."; msgType = "error";
-            }
-            statusBar.textContent = message;
-            statusBar.className = `status-bar ${msgType}`;
-            if (msgType) { // msgType sollte immer 'info', 'error', oder 'success' sein
-                statusBar.classList.add(msgType);
-            }
-        }
+                     // Check for opponent disconnect if game is IN_PROGRESS but an opponent is not connected
+                     const opponent = currentGameState.players.find(p => p.id !== currentGameState.current_player_id);
+                     if (opponent && !opponent.is_connected) {
+                         message = `Waiting for ${opponent.name} (${opponent.symbol}) to reconnect...`;
+                         msgType = "warning"; // Indicate a problem
+                         // Current player indicator should be for the one still connected and whose turn it effectively is to wait
+                         if (currentPlayer && currentPlayer.is_connected) {
+                              currentPlayerIndicator.className = `current-player-indicator player-${currentPlayer.symbol}`;
+                         } else if (clientPlayerInfo && clientPlayerInfo.is_connected) {
+                             currentPlayerIndicator.className = `current-player-indicator player-${clientPlayerInfo.symbol}`;
+                         }
+                     }
+                 }
+
+                 if (currentGameState.next_forced_global_board) {
+                     const [gr, gc] = currentGameState.next_forced_global_board;
+                     message += (currentGameState.mode === 'local' || (clientPlayerInfo && clientPlayerInfo.id === currentGameState.current_player_id)) ?
+                                ` Play in board (${gr+1},${gc+1}).` : "";
+                 } else if (currentGameState.status === 'in_progress') {
+                      message += (currentGameState.mode === 'local' || (clientPlayerInfo && clientPlayerInfo.id === currentGameState.current_player_id)) ?
+                                 " Play in any valid highlighted board." : "";
+                 }
+
+             } else if (currentGameState.status === 'ABORTED' && currentGameState.player_who_paused) {
+                 // This is the "paused" state, waiting for a specific player.
+                 msgType = "warning";
+                 const disconnectedPlayerInfo = currentGameState.players.find(p => p.id === currentGameState.player_who_paused);
+                 const disconnectedPlayerName = disconnectedPlayerInfo ? disconnectedPlayerInfo.name : "Opponent";
+                 message = `Player ${disconnectedPlayerName} disconnected. Waiting for them to rejoin...`;
+
+                 // Set indicator for the player who is still connected (if any)
+                 const waitingPlayer = currentGameState.players.find(p => p.id !== currentGameState.player_who_paused && p.is_connected);
+                 if (waitingPlayer) {
+                     currentPlayerIndicator.classList.add(`player-${waitingPlayer.symbol}`);
+                 } else if (clientPlayerInfo && clientPlayerInfo.id !== currentGameState.player_who_paused) {
+                     // If this client is the one waiting
+                     currentPlayerIndicator.classList.add(`player-${clientPlayerInfo.symbol}`);
+                 }
+             } else if (currentGameState.status === 'finished') {
+                 msgType = "success";
+                 if (currentGameState.is_draw) {
+                     message = "Game Over: It's a DRAW!";
+                 } else {
+                     const winner = currentGameState.players.find(p => p.symbol === currentGameState.overall_winner_symbol);
+                     message = `Game Over: ${winner ? winner.name : 'Player'} (${currentGameState.overall_winner_symbol}) WINS!`;
+                     if (winner) {
+                         currentPlayerIndicator.classList.add(`player-${winner.symbol}`);
+                     }
+                 }
+             } else if (currentGameState.status === 'ABORTED') { // Hard abort (no player_who_paused)
+                  message = currentGameState.last_error_message || "Game Aborted.";
+                  msgType = "error";
+             }
+
+             // Override message if there's a specific last_error_message not covered by status logic
+             // (but prioritize status-specific messages for clarity)
+             if (currentGameState.last_error_message &&
+                 (msgType === "info" || (currentGameState.status === 'in_progress' && !message.includes("Error")))) { // Only show if not already an error/warning from status
+                 // Don't show "Game resumed" as an error.
+                 if (!currentGameState.last_error_message.toLowerCase().includes("resumed") && !currentGameState.last_error_message.toLowerCase().includes("reconnected")) {
+                     // If the current message isn't already a waiting/disconnect message
+                     if(!(currentGameState.status === 'ABORTED' && currentGameState.player_who_paused) && !(currentGameState.status === 'IN_PROGRESS' && message.includes("reconnect"))){
+                         message = `Note: ${currentGameState.last_error_message}`;
+                         // Determine if it's an error or info based on content
+                         if (currentGameState.last_error_message.toLowerCase().includes("must play") ||
+                             currentGameState.last_error_message.toLowerCase().includes("not your turn") ||
+                             currentGameState.last_error_message.toLowerCase().includes("invalid") ||
+                             currentGameState.last_error_message.toLowerCase().includes("occupied") ) {
+                             msgType = "error";
+                         } else {
+                             msgType = "info"; // Or "warning" if appropriate
+                         }
+                     }
+                 }
+             }
+
+             statusBar.textContent = message;
+             statusBar.className = `status-bar ${msgType}`; // msgType will be info, error, success, or warning
+         }
 
         function showGameOverModal() { /* Same as before, ensure names used */
             let title = "Game Over!"; let content = "";
