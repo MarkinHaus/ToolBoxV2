@@ -12,7 +12,7 @@ from toolboxv2 import App, RequestData, Result, get_app
 from toolboxv2.utils.extras.base_widget import get_user_from_request
 
 # --- Constants ---
-GAME_NAME = Name = "UltimateTTT"  # Using your original name for consistency with JS API calls
+GAME_NAME = Name = "UltimateTTTSSe"  # Using your original name for consistency with JS API calls
 VERSION = "3.1.0"  # Incremented for this revision
 DB_GAMES_PREFIX = f"{GAME_NAME.lower()}_games"
 DB_USER_STATS_PREFIX = f"{GAME_NAME.lower()}_user_stats"
@@ -154,7 +154,7 @@ class UserSessionStats(BaseModel):
 
 
 # --- Game Engine ---
-class UltimateTTTGameEngine:  # Renamed for clarity
+class UltimateTTTSSeGameEngine:  # Renamed for clarity
     def __init__(self, game_state: GameState):
         self.gs = game_state
         self.size = game_state.config.grid_size
@@ -412,7 +412,7 @@ async def api_create_game(app: App, request: RequestData, data=None):  # Kept or
 
         initial_status = GameStatus.WAITING_FOR_OPPONENT if mode == GameMode.ONLINE else GameStatus.IN_PROGRESS
         game_state = GameState(config=config, mode=mode, status=initial_status)
-        engine = UltimateTTTGameEngine(game_state)
+        engine = UltimateTTTSSeGameEngine(game_state)
 
         if mode == GameMode.LOCAL:
             engine.add_player(LOCAL_PLAYER_X_ID, player1_name)
@@ -451,7 +451,7 @@ async def api_join_game(app: App, request: RequestData, data=None):  # Kept orig
         user = await get_user_from_request(app, request)
         joiner_id = user.uid if user and user.uid else f"guest_{uuid.uuid4().hex[:6]}"
 
-        engine = UltimateTTTGameEngine(game_state)
+        engine = UltimateTTTSSeGameEngine(game_state)
         if engine.add_player(joiner_id, player_name):
             await save_game_to_db_final(app, game_state)
             app.logger.info(f"Player {joiner_id} ({player_name}) joined game {game_id}.")
@@ -499,7 +499,7 @@ async def api_make_move(app: App, request: RequestData, data=None):  # game_id a
         # if strict auth per move is desired beyond just matching `current_player_id`.
         move = Move(**move_payload)
 
-        engine = UltimateTTTGameEngine(game_state)
+        engine = UltimateTTTSSeGameEngine(game_state)
         success = engine.make_move(move)
 
         await save_game_to_db_final(app, game_state)
@@ -542,12 +542,96 @@ async def api_get_session_stats(app: App, request: RequestData, session_id: Opti
     return Result.json(data=stats.model_dump(mode='json'))
 
 
+import asyncio
+from typing import AsyncGenerator, Dict, Any  # Ensure these are imported if not already
+
+
+@export(mod_name=GAME_NAME, name="game_stream", api=True, request_as_kwarg=True, api_methods=['GET'])
+async def api_game_stream(app: App, request: RequestData, game_id: str):
+     """
+     Provides a Server-Sent Event stream for real-time game updates.
+     Clients connect to this endpoint (e.g., /sse/UltimateTTTSSe/game_stream?game_id={game_id})
+     to receive game state changes.
+     """
+     if not game_id:
+         async def error_gen_no_id():
+             yield {'event': 'error', 'data': {'message': 'game_id is required for stream'}}
+
+         return Result.sse(stream_generator=error_gen_no_id())
+
+     async def game_event_generator() -> AsyncGenerator[Dict[str, Any], None]:
+         app.logger.info(f"SSE: Stream opened for game_id: {game_id}")
+         last_known_updated_at = None
+         last_status_sent = None  # To ensure we send an update if status changes even if timestamp is same (less likely)
+
+         try:
+             while True:  # Loop indefinitely until game ends, client disconnects, or error
+                 game_state = await load_game_from_db_final(app, game_id)
+
+                 if not game_state:
+                     app.logger.warning(f"SSE: Game {game_id} not found. Closing stream.")
+                     yield {'event': 'error', 'data': {'message': 'Game not found. Stream closing.'}}
+                     break
+
+                 # Handle timeout for games waiting for an opponent
+                 if game_state.status == GameStatus.WAITING_FOR_OPPONENT and \
+                     game_state.waiting_since and \
+                     (datetime.now(timezone.utc) - game_state.waiting_since > timedelta(
+                         seconds=ONLINE_POLL_TIMEOUT_SECONDS)):
+                     app.logger.info(f"SSE: Game {game_id} timed out waiting for opponent. Aborting.")
+                     game_state.status = GameStatus.ABORTED
+                     game_state.last_error_message = "Game aborted: Opponent didn't join in time."
+                     game_state.updated_at = datetime.now(timezone.utc)
+                     await save_game_to_db_final(app, game_state)
+
+                     # Yield the aborted state and then break, as the game is over
+                     yield {'event': 'game_update', 'data': game_state.model_dump_for_api()}
+                     app.logger.info(f"SSE: Game {game_id} aborted due to timeout. Closing stream.")
+                     break
+
+                 current_updated_at = game_state.updated_at
+                 current_status = game_state.status
+
+                 # Send update if it's the first pull, or if game state has changed
+                 if last_known_updated_at is None or \
+                     current_updated_at > last_known_updated_at or \
+                     current_status != last_status_sent:
+                     app.logger.debug(
+                         f"SSE: Sending update for game {game_id}. Status: {current_status}, Updated: {current_updated_at}")
+                     yield {'event': 'game_update', 'data': game_state.model_dump_for_api()}
+                     last_known_updated_at = current_updated_at
+                     last_status_sent = current_status
+
+                 # If game is finished or aborted (by means other than timeout above), send final state and close
+                 if game_state.status in [GameStatus.FINISHED, GameStatus.ABORTED]:
+                     app.logger.info(f"SSE: Game {game_id} is {game_state.status}. Sent final update. Closing stream.")
+                     break
+
+                 # Wait before checking for updates again.
+                 # This interval determines responsiveness vs. DB load.
+                 await asyncio.sleep(1.5)
+
+         except asyncio.CancelledError:
+             # This is typically raised when the client disconnects
+             app.logger.info(f"SSE: Stream for game_id: {game_id} was cancelled (client likely disconnected).")
+         except Exception as e:
+             app.logger.error(f"SSE: Stream error for game_id {game_id}: {e}", exc_info=True)
+             try:
+                 # Try to inform the client about the error before closing
+                 yield {'event': 'error', 'data': {'message': f'Server error in stream: {str(e)}'}}
+             except Exception as yield_e:
+                 app.logger.error(f"SSE: Error yielding error message for game_id {game_id}: {yield_e}", exc_info=True)
+         finally:
+             app.logger.info(f"SSE: Stream closed for game_id: {game_id}")
+
+     return Result.sse(stream_generator=game_event_generator())
+
 # --- UI Initialization ---
 @export(mod_name=GAME_NAME, name="init_config", initial=True)  # Kept original name
 def init_ultimate_ttt_module(app: App):
     app.run_any(("CloudM", "add_ui"),
                 name=GAME_NAME,
-                title="Ultimate Tic-Tac-Toe",  # Simpler title
+                title="Ultimate SSE Tic-Tac-Toe",  # Simpler title
                 path=f"/api/{GAME_NAME}/ui",
                 description="Strategic Tic-Tac-Toe with nested grids."
                 )
@@ -875,10 +959,12 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
         let currentGameId = null;
         let currentGameState = null;
         let clientPlayerInfo = null;
+        let sseConnection = null;
+        let currentSseGameIdPath = null
         let localPlayerActiveSymbol = 'X';
-        let onlineGamePollInterval = null;
-        const POLLING_RATE_MS = 2500; // Increased polling rate slightly
-        const API_MODULE_NAME = "UltimateTTT";
+        // let onlineGamePollInterval = null;
+        // const POLLING_RATE_MS = 2500; // Increased polling rate slightly
+        const API_MODULE_NAME = "UltimateTTTSSe";
 
         const LOCAL_P1_ID = "p1_local_utt";
         const LOCAL_P2_ID = "p2_local_utt";
@@ -929,6 +1015,86 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             showScreen('gameSetup');
         }
 
+        function connectToGameStream(gameId) {
+            if (sseConnection && currentSseGameIdPath === `/sse/${API_MODULE_NAME}/game_stream?game_id=${gameId}`) {
+                console.log("SSE: Already connected to stream for game:", gameId);
+                return;
+            }
+            disconnectFromGameStream(); // Disconnect any existing stream first
+
+            if (!gameId) {
+                console.error("SSE: Cannot connect, gameId is missing.");
+                return;
+            }
+
+            // Construct the SSE URL. Assumes ToolboxV2 exposes SSE endpoints under /sse/MODULE_NAME/ENDPOINT_NAME
+            currentSseGameIdPath = `/sse/${API_MODULE_NAME}/game_stream?game_id=${gameId}`;
+            console.log(`SSE: Attempting to connect to ${currentSseGameIdPath}`);
+
+            sseConnection = TB.sse.connect(currentSseGameIdPath, {
+                onOpen: (event) => {
+                    console.log(`SSE: Connection opened to ${currentSseGameIdPath}`, event);
+                    if(window.TB?.ui?.Toast) TB.ui.Toast.showSuccess("Live game connection active!", {duration: 1500});
+                },
+                onError: (error) => {
+                    console.error(`SSE: Connection error with ${currentSseGameIdPath}`, error);
+                    if(window.TB?.ui?.Toast) TB.ui.Toast.showError("Live connection failed. Refresh may be needed.", {duration: 3000});
+                    sseConnection = null;
+                    currentSseGameIdPath = null;
+                    // Consider more robust error handling, e.g., navigating to setup or auto-retry
+                },
+                listeners: {
+                    'game_update': (eventPayload, event) => {
+                        console.log('SSE Event (game_update):', eventPayload);
+                        if (eventPayload && eventPayload.game_id) {
+                            if (currentGameId === eventPayload.game_id) { // Ensure update is for the current game
+                                processGameStateUpdate(eventPayload);
+                            } else {
+                                console.warn("SSE: Received game_update for a different game_id. Current:", currentGameId, "Received:", eventPayload.game_id);
+                            }
+                        } else {
+                            console.warn("SSE: Received game_update event without valid data.", eventPayload);
+                        }
+                    },
+                    'error': (eventPayload, event) => { // Application-level errors sent by the server stream
+                        console.error('SSE Event (server error):', eventPayload);
+                        let errorMessage = "An error occurred in the game stream.";
+                        if (eventPayload && typeof eventPayload.message === 'string') {
+                           errorMessage = eventPayload.message;
+                        }
+                        if(window.TB?.ui?.Toast) TB.ui.Toast.showError(`Stream error: ${errorMessage}`, {duration: 4000});
+
+                        if (errorMessage.includes("Game not found") || errorMessage.includes("game_id is required")) {
+                            disconnectFromGameStream();
+                            showModal("Game Error", "The game session is no longer available. Returning to menu.", () => showScreen('gameSetup'));
+                        }
+                        // If other critical errors, consider disconnecting or other actions.
+                    },
+                    'stream_start': (eventPayload, event) => { // Generic SSE event often sent by TB.sse wrapper
+                         console.log('SSE Event (stream_start):', eventPayload);
+                    },
+                    'stream_end': (eventPayload, event) => { // Generic SSE event, server closed the stream
+                         console.log('SSE Event (stream_end): Server closed stream for', gameId, eventPayload);
+                         // The server's SSE loop breaks on FINISHED/ABORTED, so this confirms closure.
+                         // Clean up client-side connection state if not already handled by onError or explicit disconnect.
+                         if (sseConnection && currentSseGameIdPath === `/sse/${API_MODULE_NAME}/game_stream?game_id=${gameId}`) {
+                             sseConnection = null;
+                             currentSseGameIdPath = null;
+                         }
+                    }
+                }
+            });
+        }
+        function disconnectFromGameStream() {
+            if (sseConnection && currentSseGameIdPath) {
+                console.log(`SSE: Disconnecting from ${currentSseGameIdPath}`);
+                TB.sse.disconnect(currentSseGameIdPath); // Use Toolbox's method to close the connection
+                sseConnection = null;
+                currentSseGameIdPath = null;
+                // if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("Live connection closed.", {duration: 1000}); // Optional: can be noisy
+            }
+        }
+
         function setupEventListeners() {
             startLocalGameBtn.addEventListener('click', () => createNewGame('local'));
             startOnlineGameBtn.addEventListener('click', () => createNewGame('online'));
@@ -937,7 +1103,6 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             cancelOnlineWaitBtn.addEventListener('click', () => {
                 // TODO: API call to abort game if P1 created it and cancels
                 showScreen('gameSetup');
-                stopOnlinePolling();
             });
 
             resetGameBtn.addEventListener('click', confirmResetGame);
@@ -1016,7 +1181,7 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             if (screenName === 'gameSetup') {
                 statsSection?.classList.remove('hidden');
                 localP2NameGroup?.classList.remove('hidden');
-                stopOnlinePolling();
+                disconnectFromGameStream(); // Ensure SSE is disconnected when returning to menu
                 currentGameId = null; currentGameState = null; clientPlayerInfo = null;
             } else {
                 statsSection?.classList.add('hidden');
@@ -1024,7 +1189,7 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
                     localP2NameGroup.classList.add('hidden');
                 }
             }
-        }
+}
 
         function initializeTheme() { /* Same as previous */
             const savedTheme = localStorage.getItem('uttt_theme') ||
@@ -1051,7 +1216,7 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             }
 
             if ((endpoint.startsWith('get_game_state') || endpoint.startsWith('make_move')) && queryParams.game_id) {
-                 url = `/api/${API_MODULE_NAME}/${endpoint.split('/')[0]}/${queryParams.game_id}`; // Construct path
+                 url = `/api/${API_MODULE_NAME}/${endpoint.split('/')[0]}?game_id=${queryParams.game_id}`; // Construct path
                  delete queryParams.game_id; // Remove from general query if used in path
             }
 
@@ -1086,7 +1251,6 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             const size = parseInt(gridSizeSelect.value);
             const config = { grid_size: size };
             const p1Name = player1NameInput.value.trim() || (mode === 'local' ? "Player X" : "Me");
-
             const payload = { config, mode, player1_name: p1Name };
             if (mode === 'local') {
                 payload.player2_name = player2NameInput.value.trim() || "Player O";
@@ -1095,27 +1259,28 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             const response = await apiRequest('create_game', payload, 'POST', {hideMainContentWhileLoading: true});
 
             if (!response.error && response.data?.game_id) {
-                currentGameState = response.data;
-                currentGameId = currentGameState.game_id;
+                // currentGameState = response.data; // This will be set by processGameStateUpdate from SSE or initial load
+                // currentGameId = response.data.game_id; // Also set by processGameStateUpdate
 
                 if (mode === 'local') {
-                    // clientPlayerInfo is not used for local turn logic, localPlayerActiveSymbol handles display
-                    processGameStateUpdate(currentGameState); // Sets localPlayerActiveSymbol
+                    processGameStateUpdate(response.data); // Handles UI and disconnects SSE
                     showScreen('game');
                 } else if (mode === 'online') {
-                    // Creator is P1. Their clientPlayerInfo is based on currentSessionId (which should match player.id from server)
-                    clientPlayerInfo = currentGameState.players.find(p => p.id === currentSessionId);
-                    if (!clientPlayerInfo && currentGameState.players.length > 0) {
-                        clientPlayerInfo = currentGameState.players[0]; // Fallback if ID mismatch
-                        console.warn("Online game created: Forcing clientPlayerInfo to P1 from server. SessionID:", currentSessionId, "P1 ID:", clientPlayerInfo.id);
+                    // Client info needs to be set before processGameStateUpdate for online logic
+                    clientPlayerInfo = response.data.players.find(p => p.id === currentSessionId);
+                     if (!clientPlayerInfo && response.data.players.length > 0) { // Fallback if session ID somehow not yet in player list (should be)
+                        clientPlayerInfo = response.data.players[0];
+                        console.warn("Online game created: Forcing clientPlayerInfo to P1. SessionID:", currentSessionId, "P1 ID from server:", clientPlayerInfo.id);
                     }
-                    gameIdShareEl.textContent = currentGameId;
-                    waitingStatusEl.textContent = `Waiting for opponent... Game ID: ${currentGameId}`;
+                    gameIdShareEl.textContent = response.data.game_id;
+                    waitingStatusEl.textContent = `Waiting for opponent... Game ID: ${response.data.game_id}`;
                     showScreen('onlineWait');
-                    startOnlinePolling();
+                    processGameStateUpdate(response.data); // This will call connectToGameStream for P1
                 }
             }
         }
+
+
 
         async function joinOnlineGame() {
             const gameIdToJoin = joinGameIdInput.value.trim();
@@ -1127,136 +1292,138 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             const response = await apiRequest('join_game', { game_id: gameIdToJoin, player_name: playerName }, 'POST', {hideMainContentWhileLoading: true});
 
             if (!response.error && response.data?.game_id) {
-                currentGameState = response.data;
-                currentGameId = currentGameState.game_id;
-                // The joiner becomes a player. Their clientPlayerInfo is based on currentSessionId.
-                clientPlayerInfo = currentGameState.players.find(p => p.id === currentSessionId);
-                if (!clientPlayerInfo && currentGameState.players.length === 2) {
-                    // If currentSessionId didn't match (e.g. guest ID regeneration, or different browser used link)
-                    // The server assigned a new guest_id to this joiner, or used their Toolbox UID.
-                    // We need to find which of the two players is "me" (the one not already identified as P1 if P1 is known)
-                    // Or simply the one whose ID is our currentSessionId.
-                    // The backend's add_player now handles making the joiner the second player.
-                     console.warn("Online game joined: My session ID:", currentSessionId, "Players in game:", currentGameState.players);
-                     if(!clientPlayerInfo) clientPlayerInfo = currentGameState.players[1]; // Assume I am P2 if my session ID didn't match for some reason.
-                } else if (!clientPlayerInfo) {
-                     console.error("Could not identify client player after joining.");
+                // Client info needs to be set before processGameStateUpdate for online logic
+                clientPlayerInfo = response.data.players.find(p => p.id === currentSessionId);
+                if (!clientPlayerInfo) {
+                     // This situation implies the server assigned a new ID or there's a mismatch.
+                     // We need to find out which player this client is.
+                     // If two players, and one is known (e.g. from a previous context if any), the other is this client.
+                     // For robustness, assume the last player added (if ID doesn't match session) is "me".
+                     // This is heuristics; server should ideally ensure client knows its ID.
+                     if (response.data.players.length === 2) {
+                         const p1_id_from_server = response.data.players[0].id;
+                         clientPlayerInfo = response.data.players.find(p => p.id !== p1_id_from_server ); // find P2
+                         if(!clientPlayerInfo) clientPlayerInfo = response.data.players[1]; // Fallback to just P2 if P1 was hard to determine
+                     }
+                     console.warn("Online game joined: ClientPlayerInfo not found by currentSessionId. Attempted to infer. My session ID:", currentSessionId, "Players in game:", response.data.players);
                 }
 
-                processGameStateUpdate(currentGameState);
-                // processGameStateUpdate will handle screen transition if game becomes IN_PROGRESS
-                if (currentGameState.status === 'in_progress') {
-                     showScreen('game'); // Explicitly show game if already in progress
-                     startOnlinePolling();
-                } else if (currentGameState.status === 'waiting_for_opponent'){
-                    // This means I joined but the other player (P1) might have disconnected or something unusual
-                    waitingStatusEl.textContent = `Joined. Still waiting for P1 or game to start... Game ID: ${currentGameId}`;
-                    showScreen('onlineWait');
-                    startOnlinePolling(); // Poll for game start
-                } else {
-                     // Game might be full, finished, or aborted
-                     if(window.TB?.ui?.Toast) TB.ui.Toast.showError(currentGameState.last_error_message || "Could not join game (unexpected status).");
+                processGameStateUpdate(response.data); // Handles UI and SSE connection logic
+
+                // Screen transition logic (mostly handled by processGameStateUpdate now)
+                if (response.data.status === 'in_progress' && document.getElementById('gameSection').classList.contains('hidden')) {
+                     showScreen('game');
+                } else if (response.data.status === 'waiting_for_opponent' && document.getElementById('onlineWaitSection').classList.contains('hidden')){
+                    waitingStatusEl.textContent = `Joined. Game status: ${response.data.status}. Game ID: ${response.data.game_id}`;
+                    showScreen('onlineWait'); // P2 might join a game that's still waiting if P1 had connection issues
+                } else if (response.data.status !== 'in_progress' && response.data.status !== 'waiting_for_opponent') {
+                     if(window.TB?.ui?.Toast) TB.ui.Toast.showError(response.data.last_error_message || "Could not join game (unexpected status).");
                      showScreen('gameSetup');
                 }
             }
         }
 
         function processGameStateUpdate(newGameState) {
-            console.log("PROCESS_GAME_STATE_UPDATE - Received:", newGameState);
-            const oldStatus = currentGameState ? currentGameState.status : null;
-            const previousPlayerId = currentGameState ? currentGameState.current_player_id : null;
-            currentGameState = newGameState;
-            if (!currentGameState || !currentGameState.game_id) {
-                console.error("Invalid newGameState received!");
-                if(window.TB?.ui?.Toast) TB.ui.Toast.showError("Error: Corrupted game update.");
-                return;
-            }
+    console.log("PROCESS_GAME_STATE_UPDATE - Received:", newGameState);
+    const oldStatus = currentGameState ? currentGameState.status : null;
+    const previousPlayerId = currentGameState ? currentGameState.current_player_id : null;
+    currentGameState = newGameState;
 
-        if (currentGameState.mode === 'local') {
-            const currentPlayer = currentGameState.players.find(p => p.id === currentGameState.current_player_id);
-            localPlayerActiveSymbol = currentPlayer ? currentPlayer.symbol : '?';
-        } else if (currentGameState.mode === 'online') {
-            if (!clientPlayerInfo || !currentGameState.players.find(p => p.id === clientPlayerInfo.id)) {
-                 clientPlayerInfo = currentGameState.players.find(p => p.id === currentSessionId);
-                 console.log("PROCESS_GAME_STATE_UPDATE (Online) - ClientPlayerInfo (re)set:", clientPlayerInfo);
-            }
+    if (!currentGameState || !currentGameState.game_id) {
+        console.error("Invalid newGameState received!");
+        if(window.TB?.ui?.Toast) TB.ui.Toast.showError("Error: Corrupted game update.");
+        disconnectFromGameStream();
+        showScreen('gameSetup');
+        return;
+    }
+    currentGameId = newGameState.game_id;
 
-            // If this client was on the "onlineWaitScreen" and game is now "in_progress"
-            const onlineWaitScreenActive = !document.getElementById('onlineWaitSection').classList.contains('hidden');
-            if (onlineWaitScreenActive && currentGameState.status === 'in_progress') {
-                if(window.TB?.ui?.Toast) TB.ui.Toast.showSuccess("Opponent connected! Game starting.", {duration: 2000});
-                showScreen('game');
-            }
-            if (currentGameState.status === 'aborted') {
-                 showModal("Game Aborted", currentGameState.last_error_message || "Opponent did not join or left.", () => showScreen('gameSetup'));
-                 stopOnlinePolling();
-            }
+    if (currentGameState.mode === 'local') {
+        const currentPlayer = currentGameState.players.find(p => p.id === currentGameState.current_player_id);
+        localPlayerActiveSymbol = currentPlayer ? currentPlayer.symbol : '?';
+        disconnectFromGameStream(); // No SSE for local games
+    } else if (currentGameState.mode === 'online') {
+        // Ensure clientPlayerInfo is correctly identified
+        if (!clientPlayerInfo || !currentGameState.players.find(p => p.id === clientPlayerInfo.id)) {
+             clientPlayerInfo = currentGameState.players.find(p => p.id === currentSessionId);
+             console.log("PROCESS_GAME_STATE_UPDATE (Online) - ClientPlayerInfo (re)set:", clientPlayerInfo);
         }
 
-        renderBoard();
-        updateStatusBar();
+        const onlineWaitScreenActive = !document.getElementById('onlineWaitSection').classList.contains('hidden');
+        if (onlineWaitScreenActive && currentGameState.status === 'in_progress') {
+            if(window.TB?.ui?.Toast) TB.ui.Toast.showSuccess("Opponent connected! Game starting.", {duration: 2000});
+            showScreen('game');
+        }
 
-        if (currentGameState.status === 'finished') {
-            stopOnlinePolling();
-            showGameOverModal();
-            loadSessionStats();
-        } else if (currentGameState.mode === 'online' && currentGameState.status === 'in_progress') {
+        // Manage SSE connection based on game state
+        if (currentGameState.status === 'in_progress') {
             const isMyTurnOnline = clientPlayerInfo && currentGameState.current_player_id === clientPlayerInfo.id;
-            if (!isMyTurnOnline) {
-                startOnlinePolling(); // Opponent's turn, keep polling
-            } else {
-                stopOnlinePolling(); // My turn, stop polling
+            if (isMyTurnOnline) {
+                disconnectFromGameStream(); // My turn, stop listening
                 if (previousPlayerId !== currentGameState.current_player_id && oldStatus === 'in_progress') {
-                    // If turn just switched to me
                     if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("It's your turn!", {duration: 2000});
                 }
+            } else {
+                connectToGameStream(currentGameState.game_id); // Opponent's turn, ensure listening
             }
+        } else if (currentGameState.status === 'waiting_for_opponent') {
+            // This client is P1 waiting, or P2 joined and game is still somehow waiting (e.g. P1 disconnected)
+            // Ensure client who should be waiting is connected to stream
+            const amIPlayer1 = clientPlayerInfo && currentGameState.players.length > 0 && currentGameState.players[0].id === clientPlayerInfo.id;
+            const amIAPlayer = clientPlayerInfo && currentGameState.players.find(p => p.id === clientPlayerInfo.id);
+
+            if (amIPlayer1 || (amIAPlayer && !clientPlayerInfo.id.startsWith("p1_"))) { // P1 connects, or P2 connects if game is waiting (e.g. P1 dropped after P2 joined)
+                 connectToGameStream(currentGameState.game_id);
+            } else {
+                 disconnectFromGameStream(); // Not my concern if I'm not the active/waiting party
+            }
+        } else if (currentGameState.status === 'finished' || currentGameState.status === 'aborted') {
+            disconnectFromGameStream(); // Game over, stop listening
         }
     }
 
-    async function makePlayerMove(globalR, globalC, localR, localC) {
-        if (!currentGameState || !currentGameId || currentGameState.status !== 'in_progress') return;
+    renderBoard();
+    updateStatusBar();
 
-        let playerIdForMove;
-        if (currentGameState.mode === 'local') {
-            playerIdForMove = currentGameState.current_player_id;
-        } else {
-            if (!clientPlayerInfo || currentGameState.current_player_id !== clientPlayerInfo.id) {
-                if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("Not your turn."); return;
+    if (currentGameState.status === 'finished') {
+        showGameOverModal();
+        loadSessionStats();
+    } else if (currentGameState.status === 'aborted') {
+        showModal("Game Aborted", currentGameState.last_error_message || "The game was aborted.", () => showScreen('gameSetup'));
+    }
+}
+
+
+    async function makePlayerMove(globalR, globalC, localR, localC) {
+            if (!currentGameState || !currentGameId || currentGameState.status !== 'in_progress') return;
+
+            let playerIdForMove;
+            if (currentGameState.mode === 'local') {
+                playerIdForMove = currentGameState.current_player_id;
+            } else {
+                if (!clientPlayerInfo || currentGameState.current_player_id !== clientPlayerInfo.id) {
+                    if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("Not your turn."); return;
+                }
+                playerIdForMove = clientPlayerInfo.id;
             }
-            playerIdForMove = clientPlayerInfo.id;
-        }
 
             const movePayload = {
                 player_id: playerIdForMove, global_row: globalR, global_col: globalC,
-                local_row: localR, local_col: localC,game_id:currentGameId
+                local_row: localR, local_col: localC, game_id:currentGameId
             };
 
             if (globalGridDisplay) globalGridDisplay.style.pointerEvents = 'none';
-            // Pass game_id as path parameter for make_move
             const response = await apiRequest(`make_move`, movePayload, 'POST');
-  if (globalGridDisplay) globalGridDisplay.style.pointerEvents = 'auto';
+            if (globalGridDisplay) globalGridDisplay.style.pointerEvents = 'auto';
 
-        if (!response.error && response.data) {
-            processGameStateUpdate(response.data);
-        } else if (response.data?.game_id) {
-            processGameStateUpdate(response.data);
+            if (!response.error && response.data) {
+                processGameStateUpdate(response.data); // This will handle UI and new SSE connection if it's opponent's turn
+            } else if (response.data?.game_id) {
+                processGameStateUpdate(response.data); // Update UI even with error response containing state
+            }
+            // processGameStateUpdate, called above, will manage SSE connection (e.g., connect if now opponent's turn)
         }
-    }
 
-    function startOnlinePolling() {
-        stopOnlinePolling();
-        if (currentGameState && currentGameState.mode === 'online' &&
-            (currentGameState.status === 'waiting_for_opponent' ||
-             (currentGameState.status === 'in_progress' && (!clientPlayerInfo || currentGameState.current_player_id !== clientPlayerInfo.id))
-            )
-           ) {
-            console.log("Starting online polling for game:", currentGameId, "Status:", currentGameState.status);
-            onlineGamePollInterval = setInterval(fetchCurrentGameState, POLLING_RATE_MS);
-        } else {
-            // console.log("Not starting polling. Conditions not met.");
-        }
-    }
 
         function confirmResetGame() { /* Same as before */
             if (!currentGameState) return;
@@ -1270,54 +1437,17 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
                 }
             );
         }
-        function confirmBackToMenu() { /* Same as before */
-            if (currentGameState && currentGameState.status !== 'finished') {
-                showModal('Back to Menu?', 'Progress will be lost. Sure?', () => showScreen('gameSetup'));
+        function confirmBackToMenu() {
+            // disconnectFromGameStream will be called by showScreen('gameSetup')
+            if (currentGameState && currentGameState.status !== 'finished' && currentGameState.status !== 'aborted') {
+                showModal('Back to Menu?', 'Current game progress will be lost. Are you sure?', () => {
+                    // TODO: If online game, consider API call to forfeit/leave if polite.
+                    showScreen('gameSetup');
+                });
             } else {
                 showScreen('gameSetup');
             }
         }
-
-        function startOnlinePolling() {
-            stopOnlinePolling(); // Clear existing before starting a new one
-            if (currentGameState && currentGameState.mode === 'online' &&
-                (currentGameState.status === 'waiting_for_opponent' ||
-                 (currentGameState.status === 'in_progress' && (!clientPlayerInfo || currentGameState.current_player_id !== clientPlayerInfo.id))
-                )
-               ) {
-                console.log("Starting online polling for game:", currentGameId, "Status:", currentGameState.status);
-                onlineGamePollInterval = setInterval(fetchCurrentGameState, POLLING_RATE_MS);
-            } else {
-                console.log("Not starting online polling. Mode:", currentGameState?.mode, "Status:", currentGameState?.status, "Is my turn (if online):", clientPlayerInfo && currentGameState?.current_player_id === clientPlayerInfo?.id);
-            }
-        }
-        function stopOnlinePolling() { /* Same as before */
-            if (onlineGamePollInterval) clearInterval(onlineGamePollInterval);
-            onlineGamePollInterval = null;
-        }
-        async function fetchCurrentGameState(forceUpdate=true) {
-              if (!currentGameId || !currentGameState || currentGameState.mode !== 'online') {
-                stopOnlinePolling(); return;
-                }
-
-                const isMyTurnOnline = clientPlayerInfo && currentGameState.current_player_id === clientPlayerInfo.id;
-                if (currentGameState.status === 'in_progress' && isMyTurnOnline && !forceUpdate) {
-                     return;
-                }
-            // Pass game_id as path parameter for get_game_state
-            const response = await apiRequest(`get_game_state?game_id=${currentGameId}`, null, 'GET');
-
-                if (!response.error && response.data) {
-                    if (forceUpdate || !currentGameState || response.data.updated_at !== currentGameState.updated_at || response.data.status !== currentGameState.status) {
-                        processGameStateUpdate(response.data);
-                    }
-                } else if (response.error && response.message !== "API_UNAVAILABLE" && response.message !== "NETWORK_ERROR") {
-                    stopOnlinePolling();
-                    if(window.TB?.ui?.Toast && currentGameState.status !== 'finished' && currentGameState.status !== 'aborted') {
-                        TB.ui.Toast.showError("Comms error. Polling stopped.", {duration: 2000});
-                    }
-                }
-            }
 
 
         async function loadSessionStats() { /* Same as before */
