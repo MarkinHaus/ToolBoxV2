@@ -845,10 +845,10 @@ class Result:
         return cls(error=error, info=info, result=result)
 
     @classmethod
-    def json(cls, data, info="OK", interface=ToolBoxInterfaces.remote):
+    def json(cls, data, info="OK", interface=ToolBoxInterfaces.remote, exec_code=0, status_code=None):
         """Create a JSON response Result."""
         error = ToolBoxError.none
-        info_obj = ToolBoxInfo(exec_code=0, help_text=info)
+        info_obj = ToolBoxInfo(exec_code=status_code or exec_code, help_text=info)
 
         result = ToolBoxResult(
             data_to=interface,
