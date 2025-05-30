@@ -84,7 +84,7 @@ const Api = {
      * @param {boolean} [isSpecialAuthRoute=false] - Indicates if this is a special auth route that might have different token handling.
      * @returns {Promise<Result>} - A promise resolving to a Result object.
      */
-    request: async (moduleName, functionName, payload = null, method = 'POST', useTauri = 'auto', isSpecialAuthRoute = false) => {
+    request: async (moduleName, functionName, payload = null, method = 'POST', useTauri = 'never', isSpecialAuthRoute = false) => {
         let command = `${moduleName}.${functionName}`; // For Tauri invoke
         let isFullPath = moduleName.startsWith('/');
         const isFormDataPayload = payload instanceof FormData;

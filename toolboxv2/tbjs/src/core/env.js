@@ -1,47 +1,68 @@
-// tbjs/core/env.js
-// Detects and provides information about the current runtime environment.
-// Original: Logic checking window.__TAURI__ in original autoDetection.js and index.js.
-
 import logger from './logger.js';
 
 const Environment = {
-    _isTauri: undefined,
-    _isMobile: undefined, // Specifically for Tauri mobile if detectable
+    _isTauri: false,
+    _isWeb: true,
+    _isMobile: false,
+    _isDesktop: false,
+    _platformInfo: {},
 
     detect: () => {
-        Environment._isTauri = typeof window !== 'undefined' && !!window.__TAURI__;
-        if (Environment._isTauri) {
-            // Try to detect if it's Tauri mobile, this might need refinement
-            // based on how Tauri mobile exposes itself (e.g., specific __TAURI__ properties or navigator.userAgent checks)
-            // For now, a placeholder:
-            // Environment._isMobile = window.__TAURI__ && (window.__TAURI__.platform === 'android' || window.__TAURI__.platform === 'ios');
-            // logger.log(`[Env] Tauri detected. Mobile: ${Environment._isMobile}`);
-            logger.log(`[Env] Tauri detected.`);
-
-            // Original autoDetection.js logic for spawning commands might be exposed here or in a tauri specific submodule
-            // Example: Environment.tauriCommands.run('get-version').then(...)
-        } else {
-            // logger.log('[Env] Web environment detected.');
+        if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+            logger.warn('[Env] No window or navigator object found.');
+            return;
         }
+
+        const userAgent = navigator.userAgent || '';
+        const platform = navigator.platform || '';
+
+        // Tauri detection
+        const isTauri = !!window.__TAURI__;
+        Environment._isTauri = isTauri;
+
+        // Mobile detection
+        const ios = /iPad|iPhone|iPod/.test(userAgent) || (navigator.maxTouchPoints > 2 && /MacIntel/.test(platform));
+        const android = /Android/.test(userAgent);
+        const mobileUA = /webOS|BlackBerry|Opera Mini|Opera Mobi|IEMobile/i.test(userAgent);
+        const isMobile = ios || android || mobileUA;
+
+        // Desktop detection
+        const isDesktop = !isMobile;
+
+        // Platform
+        const isMac = ios || /Mac/.test(platform);
+        const isWindows = /Win/.test(platform);
+        const isLinux = /Linux/.test(platform);
+        const isChromeOS = /\bCrOS\b/.test(userAgent);
+
+        // Store values
+        Environment._isWeb = !isTauri;
+        Environment._isMobile = isMobile;
+        Environment._isDesktop = isDesktop;
+        Environment._platformInfo = {
+            userAgent,
+            platform,
+            isTauri,
+            isMobile,
+            isDesktop,
+            isMac,
+            isWindows,
+            isLinux,
+            isChromeOS
+        };
+
+        logger.log(`[Env] Detection Complete: Tauri=${isTauri}, Mobile=${isMobile}, Desktop=${isDesktop}`);
+        logger.debug('[Env] Platform Info:', Environment._platformInfo);
     },
 
     isTauri: () => Environment._isTauri,
-    isWeb: () => !Environment._isTauri,
-    isMobile: () => Environment._isTauri && Environment._isMobile, // Only true if Tauri and mobile
+    isWeb: () => Environment._isWeb,
+    isMobile: () => Environment._isMobile,
+    isDesktop: () => Environment._isDesktop,
+    getPlatformInfo: () => Environment._platformInfo,
 
-    // Placeholder for Tauri specific APIs that might be abstracted
     tauri: {
-        // Example:
-        // async invoke(command, args) {
-        //     if (!Environment.isTauri()) {
-        //         logger.warn('[Env] Tauri invoke called in non-Tauri environment.');
-        //         return Promise.reject('Not in Tauri environment');
-        //     }
-        //     return window.__TAURI__.invoke(command, args);
-        // },
-        // async showWindow(label) { ... }
-        // This overlaps with TB.api.request which already handles invoke.
-        // This tauri submodule could be for non-API tauri interactions like window management.
+        // Optional helpers for tauri-specific code
     }
 };
 
