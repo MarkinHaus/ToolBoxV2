@@ -1507,7 +1507,7 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
                     localP2NameGroup.classList.add('hidden');
                 }
             }
-}
+        }
 
         function initializeTheme() { /* Same as previous */
             const savedTheme = localStorage.getItem('uttt_theme') ||
