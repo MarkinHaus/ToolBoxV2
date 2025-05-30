@@ -56,6 +56,18 @@ class GameStatus(str, Enum):
     ABORTED = "aborted"
 
 
+class NPCDifficulty(str, Enum):
+    NONE = "none"  # Indicates a human player
+    EASY = "easy"
+    MEDIUM = "medium"
+    HARD = "hard"
+    # INSANE = "insane" # Add if you implement it
+
+NPC_PLAYER_ID_PREFIX = "npc_utt_"
+NPC_EASY_ID = f"{NPC_PLAYER_ID_PREFIX}{NPCDifficulty.EASY.value}"
+NPC_MEDIUM_ID = f"{NPC_PLAYER_ID_PREFIX}{NPCDifficulty.MEDIUM.value}"
+NPC_HARD_ID = f"{NPC_PLAYER_ID_PREFIX}{NPCDifficulty.HARD.value}"
+
 # --- Pydantic Models ---
 class GameConfig(BaseModel):
     grid_size: int = Field(default=3, ge=2, le=5)  # Max 5x5 for UI sanity for now
@@ -66,6 +78,8 @@ class PlayerInfo(BaseModel):
     symbol: PlayerSymbol
     name: str
     is_connected: bool = True
+    is_npc: bool = False  # New field
+    npc_difficulty: Optional[NPCDifficulty] = None
 
 
 class Move(BaseModel):
@@ -234,44 +248,73 @@ class UltimateTTTGameEngine:  # Renamed for clarity
                     return False
         return True
 
-    def add_player(self, player_id: str, player_name: str) -> bool:  # Renamed from add_player_to_game
+    def add_player(self, player_id: str, player_name: str,
+                   is_npc: bool = False, npc_difficulty: Optional[NPCDifficulty] = None) -> bool:
         if len(self.gs.players) >= 2:
             self.gs.last_error_message = "Game is already full (2 players max)."
             return False
-        if any(p.id == player_id for p in self.gs.players):
-            # Handle reconnect: if player ID exists and is_connected is false, set to true.
-            existing_player = self.gs.get_player_info(player_id)
-            if existing_player and not existing_player.is_connected:
+
+        # Reconnect logic for existing player (human or NPC if that makes sense)
+        existing_player = self.gs.get_player_info(player_id)
+        if existing_player:
+            if not existing_player.is_connected:
                 existing_player.is_connected = True
+                # If NPC "reconnects", ensure its properties are correct (though unlikely scenario for NPC)
+                if is_npc:
+                    existing_player.is_npc = True
+                    existing_player.npc_difficulty = npc_difficulty
+                    existing_player.name = player_name  # Update name if it changed for NPC
+
                 self.gs.last_error_message = None
                 self.gs.updated_at = datetime.now(timezone.utc)
-                # If game was waiting for this player, and now both are here, start it.
-                if len(self.gs.players) == 2 and all(
-                    p.is_connected for p in self.gs.players) and self.gs.status == GameStatus.WAITING_FOR_OPPONENT:
+
+                if len(self.gs.players) == 2 and all(p.is_connected for p in self.gs.players) and \
+                    self.gs.status == GameStatus.WAITING_FOR_OPPONENT:  # Should not be waiting if NPC is P2
                     self.gs.status = GameStatus.IN_PROGRESS
-                    # Ensure current_player_id is set to X if game starts now
                     player_x_info = next(p for p in self.gs.players if p.symbol == PlayerSymbol.X)
                     self.gs.current_player_id = player_x_info.id
                     self.gs.waiting_since = None
                 return True
-            self.gs.last_error_message = f"Player with ID {player_id} is already in the game."
-            return False
+            else:  # Player ID exists and is already connected
+                self.gs.last_error_message = f"Player with ID {player_id} is already in the game and connected."
+                return False
 
+        # Adding a new player
         symbol = PlayerSymbol.X if not self.gs.players else PlayerSymbol.O
-        new_player = PlayerInfo(id=player_id, symbol=symbol, name=player_name, is_connected=True)
+
+        # Construct PlayerInfo with NPC details if applicable
+        player_info_data = {
+            "id": player_id,
+            "symbol": symbol,
+            "name": player_name,
+            "is_connected": True,  # NPCs are always "connected"
+            "is_npc": is_npc
+        }
+        if is_npc and npc_difficulty:
+            player_info_data["npc_difficulty"] = npc_difficulty
+
+        new_player = PlayerInfo(**player_info_data)
         self.gs.players.append(new_player)
         self.gs.last_error_message = None
 
-        if len(self.gs.players) == 1 and self.gs.mode == GameMode.ONLINE:
-            self.gs.status = GameStatus.WAITING_FOR_OPPONENT
-            self.gs.current_player_id = player_id
-            self.gs.waiting_since = datetime.now(timezone.utc)
+        if len(self.gs.players) == 1:  # First player added
+            if self.gs.mode == GameMode.ONLINE:
+                self.gs.status = GameStatus.WAITING_FOR_OPPONENT
+                self.gs.current_player_id = player_id
+                self.gs.waiting_since = datetime.now(timezone.utc)
+            # For local mode with P1, we wait for P2 (human or NPC) to be added
+            # No status change yet, current_player_id not set until P2 joins
+
         elif len(self.gs.players) == 2:  # Both players now present
             self.gs.status = GameStatus.IN_PROGRESS
             player_x_info = next(p for p in self.gs.players if p.symbol == PlayerSymbol.X)
-            self.gs.current_player_id = player_x_info.id
-            self.gs.next_forced_global_board = None  # First actual game move is free choice
+            self.gs.current_player_id = player_x_info.id  # X always starts
+            self.gs.next_forced_global_board = None
             self.gs.waiting_since = None
+
+            # If the second player added is an NPC and it's their turn (e.g. P1 is human, P2 is NPC, P1 made a move)
+            # This specific logic is more for when make_move hands over to an NPC.
+            # Here, we just set up the game. X (P1) will make the first move.
 
         self.gs.updated_at = datetime.now(timezone.utc)
         return True
@@ -493,6 +536,198 @@ class UltimateTTTGameEngine:  # Renamed for clarity
         return True
 
 
+# -- NPC Agents ---
+import random  # Add this import at the top of your file if not already there
+
+
+def get_npc_move_easy(game_state: GameState, npc_player_info: PlayerInfo) -> Optional[Move]:
+    """
+    Easy NPC: Plays "perfect" Tic-Tac-Toe on the current local board it's sent to,
+    or a random valid move if it can play anywhere. Ignores global strategy.
+    """
+    gs = game_state
+    size = gs.config.grid_size
+    npc_symbol = npc_player_info.symbol
+
+    possible_moves = []
+
+    forced_gr, forced_gc = -1, -1
+    play_anywhere = False
+
+    if gs.next_forced_global_board:
+        forced_gr, forced_gc = gs.next_forced_global_board
+        if gs.global_board_winners[forced_gr][forced_gc] != BoardWinner.NONE or \
+            UltimateTTTGameEngine(gs)._is_local_board_full(gs.local_boards_state[forced_gr][forced_gc]):
+            play_anywhere = True  # Sent to a finished board
+        else:  # Play in the forced board
+            for lr in range(size):
+                for lc in range(size):
+                    if gs.local_boards_state[forced_gr][forced_gc][lr][lc] == CellState.EMPTY:
+                        possible_moves.append({'gr': forced_gr, 'gc': forced_gc, 'lr': lr, 'lc': lc})
+    else:
+        play_anywhere = True  # Can play anywhere
+
+    if play_anywhere:
+        possible_moves = []  # Reset, as we now look at all valid boards
+        for gr_idx in range(size):
+            for gc_idx in range(size):
+                if gs.global_board_winners[gr_idx][gc_idx] == BoardWinner.NONE and \
+                    not UltimateTTTGameEngine(gs)._is_local_board_full(gs.local_boards_state[gr_idx][gc_idx]):
+                    for lr in range(size):
+                        for lc in range(size):
+                            if gs.local_boards_state[gr_idx][gc_idx][lr][lc] == CellState.EMPTY:
+                                possible_moves.append({'gr': gr_idx, 'gc': gc_idx, 'lr': lr, 'lc': lc})
+
+    if not possible_moves:
+        gs.last_error_message = "NPC Error: No possible moves found (should not happen in valid game state)."
+        return None
+
+    # Easy strategy:
+    # 1. If playing in a specific local board (forced_gr, forced_gc is valid):
+    #    - Try to win that local board.
+    #    - If not, try to block opponent from winning that local board.
+    #    - Else, pick a random valid cell in that local board.
+    # 2. If play_anywhere:
+    #    - Pick a random valid move from `possible_moves`.
+
+    target_board_coords_for_ttt = None
+    if not play_anywhere and forced_gr != -1:  # Focused on one board
+        target_board_coords_for_ttt = (forced_gr, forced_gc)
+
+    if target_board_coords_for_ttt:
+        gr, gc = target_board_coords_for_ttt
+        local_board_cells = gs.local_boards_state[gr][gc]
+
+        # Check for winning move in this local board
+        for move_coords in possible_moves:
+            if move_coords['gr'] == gr and move_coords['gc'] == gc:
+                temp_board = [row[:] for row in local_board_cells]
+                temp_board[move_coords['lr']][move_coords['lc']] = CellState(npc_symbol.value)
+                if UltimateTTTGameEngine(gs)._get_board_winner_symbol(temp_board, CellState) == CellState(
+                    npc_symbol.value):
+                    return Move(player_id=npc_player_info.id, global_row=gr, global_col=gc, local_row=move_coords['lr'],
+                                local_col=move_coords['lc'])
+
+        # Check for blocking move in this local board
+        opponent_symbol = PlayerSymbol.O if npc_symbol == PlayerSymbol.X else PlayerSymbol.X
+        for move_coords in possible_moves:
+            if move_coords['gr'] == gr and move_coords['gc'] == gc:
+                temp_board = [row[:] for row in local_board_cells]
+                temp_board[move_coords['lr']][move_coords['lc']] = CellState(
+                    opponent_symbol.value)  # Simulate opponent's move
+                if UltimateTTTGameEngine(gs)._get_board_winner_symbol(temp_board, CellState) == CellState(
+                    opponent_symbol.value):
+                    # Block here
+                    return Move(player_id=npc_player_info.id, global_row=gr, global_col=gc, local_row=move_coords['lr'],
+                                local_col=move_coords['lc'])
+
+        # If no win/block, pick a random move within the forced board
+        moves_in_forced_board = [m for m in possible_moves if m['gr'] == gr and m['gc'] == gc]
+        if moves_in_forced_board:
+            chosen_move_coords = random.choice(moves_in_forced_board)
+            return Move(player_id=npc_player_info.id, global_row=chosen_move_coords['gr'],
+                        global_col=chosen_move_coords['gc'],
+                        local_row=chosen_move_coords['lr'], local_col=chosen_move_coords['lc'])
+
+    # If play_anywhere or specific board logic didn't yield a move (shouldn't happen if moves_in_forced_board existed)
+    if possible_moves:
+        chosen_move_coords = random.choice(possible_moves)
+        return Move(player_id=npc_player_info.id, global_row=chosen_move_coords['gr'],
+                    global_col=chosen_move_coords['gc'],
+                    local_row=chosen_move_coords['lr'], local_col=chosen_move_coords['lc'])
+
+    return None  # Should not be reached if logic is correct
+
+
+def get_npc_move_medium(game_state: GameState, npc_player_info: PlayerInfo) -> Optional[Move]:
+    """
+    Medium NPC:
+    1. Tries to win the current local board.
+    2. Tries to block opponent on current local board.
+    3. Global considerations:
+        a. If it can win the GLOBAL game with a move, take it.
+        b. If it can block opponent from winning GLOBAL game, take it.
+        c. Avoid sending opponent to a local board where opponent can win that local board,
+           IF there's an alternative move that doesn't lead to an immediate local loss.
+        d. Prefer moves that send opponent to an already won/drawn local board (giving NPC free move).
+        e. Prefer moves that set up a future local win for NPC.
+    4. If none of the above, fallback to Easy's local TTT logic or a "good heuristic" move.
+    (This is a simplified placeholder; true medium AI is complex)
+    """
+    # For now, let's make medium slightly better than easy by picking a center if available on forced board
+    # or a random board's center if play_anywhere. This is a very basic heuristic.
+    gs = game_state
+    size = gs.config.grid_size
+
+    # Fallback to Easy's logic for now until more complex strategy is built
+    # This requires careful implementation of evaluating global board states,
+    # simulating future moves, etc. which is non-trivial.
+
+    # Basic Heuristic Enhancement for Medium (very simplified):
+    # Try to take center of forced local board, or center of a random playable local board.
+    # This is a placeholder for more advanced logic.
+
+    possible_moves = []  # Collect all raw possible moves first
+    forced_gr, forced_gc = gs.next_forced_global_board if gs.next_forced_global_board else (-1, -1)
+    play_anywhere = not gs.next_forced_global_board or \
+                    gs.global_board_winners[forced_gr][forced_gc] != BoardWinner.NONE or \
+                    UltimateTTTGameEngine(gs)._is_local_board_full(gs.local_boards_state[forced_gr][forced_gc])
+
+    if not play_anywhere:
+        for lr in range(size):
+            for lc in range(size):
+                if gs.local_boards_state[forced_gr][forced_gc][lr][lc] == CellState.EMPTY:
+                    possible_moves.append({'gr': forced_gr, 'gc': forced_gc, 'lr': lr, 'lc': lc})
+    else:
+        for gr_idx in range(size):
+            for gc_idx in range(size):
+                if gs.global_board_winners[gr_idx][gc_idx] == BoardWinner.NONE and \
+                    not UltimateTTTGameEngine(gs)._is_local_board_full(gs.local_boards_state[gr_idx][gc_idx]):
+                    for lr in range(size):
+                        for lc in range(size):
+                            if gs.local_boards_state[gr_idx][gc_idx][lr][lc] == CellState.EMPTY:
+                                possible_moves.append({'gr': gr_idx, 'gc': gc_idx, 'lr': lr, 'lc': lc})
+
+    if not possible_moves: return None
+
+    # Try to find a move that wins a local board AND sends opponent to a non-losing board for NPC
+    # (This is a sketch of a more advanced thought process)
+
+    # Placeholder: Medium will just use Easy's logic for now due to complexity.
+    # You would replace this with a more sophisticated evaluation.
+    # For example, iterate through possible_moves, simulate each one, evaluate the resulting game state.
+    # Key considerations for medium:
+    # - Global win/block checks (most important)
+    # - Local win/block checks
+    # - "Sending" opponent to a safe/advantageous board.
+    # - Avoiding sending opponent to a board where they can win locally.
+    # - Setting up two-in-a-rows (locally or globally).
+
+    return get_npc_move_easy(game_state, npc_player_info)  # Fallback for now
+
+
+def get_npc_move_hard(game_state: GameState, npc_player_info: PlayerInfo) -> Optional[Move]:
+    """
+    Hard NPC: (Placeholder - very complex)
+    - Minimax or Monte Carlo Tree Search (MCTS) on a simplified version or a few plies deep.
+    - Stronger global awareness.
+    - Forcing sequences ("Zwickmühlen" / Forks).
+    - Definitely plays perfect local TTT.
+    - Tries to control key global squares (center, corners).
+    """
+    # Placeholder: Hard will also use Easy's logic for now.
+    # Implementing a truly "Hard" UTTT bot is a significant AI challenge.
+    return get_npc_move_easy(game_state, npc_player_info)
+
+
+NPC_DISPATCHER = {
+    NPCDifficulty.EASY: get_npc_move_easy,
+    NPCDifficulty.MEDIUM: get_npc_move_medium,
+    NPCDifficulty.HARD: get_npc_move_hard,
+    # NPCDifficulty.INSANE: get_npc_move_insane,
+}
+
+
 # --- Database Functions --- (Using model_dump(mode='json') and model_validate_json)
 async def save_game_to_db_final(app: App, game_state: GameState):  # Renamed
     db = app.get_mod("DB")
@@ -553,28 +788,58 @@ async def update_stats_after_game_final(app: App, game_state: GameState):  # Ren
 
 
 # --- API Endpoints ---
+# --- START OF BLOCK 5 (Modify api_create_game) ---
+# FILE: ultimate_ttt_api.py
+# Modify the api_create_game endpoint function
+
 @export(mod_name=GAME_NAME, name="create_game", api=True, request_as_kwarg=True, api_methods=['POST'])
-async def api_create_game(app: App, request: RequestData, data=None):  # Kept original name for JS
+async def api_create_game(app: App, request: RequestData, data=None):
     try:
         payload = data or {}
-        config = GameConfig(**payload.get("config", {}))
-        mode = GameMode(payload.get("mode", "local"))
-        player1_name = payload.get("player1_name", "Player 1")
+        config_data = payload.get("config", {})
+        config = GameConfig(**config_data)  # Validate grid_size here
 
-        initial_status = GameStatus.WAITING_FOR_OPPONENT if mode == GameMode.ONLINE else GameStatus.IN_PROGRESS
+        mode = GameMode(payload.get("mode", "local"))
+        player1_name = payload.get("player1_name", "Player 1").strip()
+
+        initial_status = GameStatus.IN_PROGRESS  # Default for local, or online if P2 joins immediately
+
+        if mode == GameMode.ONLINE:
+            initial_status = GameStatus.WAITING_FOR_OPPONENT
+
         game_state = GameState(config=config, mode=mode, status=initial_status)
         engine = UltimateTTTGameEngine(game_state)
 
+        # Add Player 1 (always human for now in create_game context)
+        engine.add_player(LOCAL_PLAYER_X_ID if mode == GameMode.LOCAL else (await get_user_from_request(app,
+                                                                                                        request)).uid or f"guest_{uuid.uuid4().hex[:6]}",
+                          player1_name)
+
         if mode == GameMode.LOCAL:
-            engine.add_player(LOCAL_PLAYER_X_ID, player1_name)
-            engine.add_player(LOCAL_PLAYER_O_ID, payload.get("player2_name", "Player 2"))
-        elif mode == GameMode.ONLINE:
-            user = await get_user_from_request(app, request)
-            creator_id = user.uid if user and user.uid else f"guest_{uuid.uuid4().hex[:6]}"
-            engine.add_player(creator_id, player1_name)
+            player2_type = payload.get("player2_type", "human")  # "human" or "npc"
+            player2_name_human = payload.get("player2_name", "Player 2").strip()
+
+            if player2_type == "npc":
+                npc_difficulty_str = payload.get("npc_difficulty", NPCDifficulty.EASY.value)
+                npc_difficulty = NPCDifficulty(npc_difficulty_str)
+                npc_id = f"{NPC_PLAYER_ID_PREFIX}{npc_difficulty.value}"
+                npc_name = f"NPC ({npc_difficulty.value.capitalize()})"
+                engine.add_player(npc_id, npc_name, is_npc=True, npc_difficulty=npc_difficulty)
+            else:  # Human Player 2
+                engine.add_player(LOCAL_PLAYER_O_ID, player2_name_human)
+
+            # For local games, P1 (X) always starts.
+            # engine.add_player already sets current_player_id to X when 2 players are in.
+            # game_state.status is already IN_PROGRESS by add_player when P2 is added.
 
         await save_game_to_db_final(app, game_state)
-        app.logger.info(f"Created {mode.value} game {game_state.game_id} (Size: {config.grid_size})")
+        app.logger.info(
+            f"Created {mode.value} game {game_state.game_id} (Size: {config.grid_size}) P1: {player1_name}, P2 setup: {payload.get('player2_type', 'human')}")
+
+        # If P1 is human and P2 is NPC, and it's P1's turn, game state is fine.
+        # If P1 is NPC (not supported by this flow yet) and P2 human, would need NPC move.
+        # For now, P1 is human starting.
+
         return Result.json(data=game_state.model_dump_for_api())
     except ValueError as e:
         app.logger.warning(f"Create game input error: {e}")
@@ -582,6 +847,9 @@ async def api_create_game(app: App, request: RequestData, data=None):  # Kept or
     except Exception as e:
         app.logger.error(f"Error creating game: {e}", exc_info=True)
         return Result.default_internal_error("Could not create game.")
+
+
+# --- END OF BLOCK 5 ---
 
 
 # --- START OF BLOCK 3 (api_join_game) ---
@@ -687,48 +955,127 @@ async def api_get_game_state(app: App, request: RequestData, game_id: str):  # g
     return Result.json(data=game_state.model_dump_for_api())
 
 
+# --- START OF BLOCK 6 (Modify api_make_move for NPC) ---
+# FILE: ultimate_ttt_api.py
+# Modify the api_make_move endpoint function
+
 @export(mod_name=GAME_NAME, name="make_move", api=True, request_as_kwarg=True, api_methods=['POST'])
-async def api_make_move(app: App, request: RequestData, data=None):  # game_id as path/query
+async def api_make_move(app: App, request: RequestData, data=None):
     move_payload = data or {}
     game_id: str = move_payload.get("game_id")
+    human_player_id_making_move: Optional[str] = move_payload.get("player_id")  # ID of human submitting the move
     game_state = None
-    try:
 
+    try:
         game_state = await load_game_from_db_final(app, game_id)
         if not game_state: return Result.default_user_error("Game not found.", 404)
 
-        del move_payload["game_id"]
-        # Server-side validation of player_id against current_player_id is done in engine.
-        # For online, could add an extra check here if `user.uid` matches `move_payload['player_id']`
-        # if strict auth per move is desired beyond just matching `current_player_id`.
-        move = Move(**move_payload)
+        # Initial human move processing
+        if "game_id" in move_payload: del move_payload["game_id"]
 
+        # Validate human move first
+        current_player_info = game_state.get_current_player_info()
+        if not current_player_info or current_player_info.is_npc:
+            # This should not happen if UI prevents human from moving for NPC
+            # Or, if it's an NPC's turn initiated by server after a human move.
+            # For now, assume make_move is always initiated by a human player's action.
+            if current_player_info and current_player_info.is_npc:
+                app.logger.warning(
+                    f"make_move API called but current player {current_player_info.id} is NPC. Game: {game_id}. This implies server-side NPC turn logic is expected elsewhere or flow is mixed.")
+                # This path is if the API is called FOR an NPC - which we will do internally.
+                # If called EXTERNALLY for an NPC, it's an issue.
+                # The code below assumes this API call is for a HUMAN move, then it triggers NPC if needed.
+
+        human_move = Move(**move_payload)
         engine = UltimateTTTGameEngine(game_state)
-        success = engine.make_move(move)
 
-        await save_game_to_db_final(app, game_state)
-
-        if success:
-            if game_state.status == GameStatus.FINISHED:
-                await update_stats_after_game_final(app, game_state)
-            return Result.json(data=game_state.model_dump_for_api())
-        else:
+        if not engine.make_move(human_move):
             return Result.default_user_error(
-                game_state.last_error_message or "Invalid move.", 400,
+                game_state.last_error_message or "Invalid human move.", 400,
                 data=game_state.model_dump_for_api()
             )
-    except ValueError as e:
+
+        # Loop for NPC moves if it's their turn after a human move
+        while game_state.status == GameStatus.IN_PROGRESS:
+            current_player_info = game_state.get_current_player_info()
+            if not current_player_info:  # Should not happen
+                game_state.last_error_message = "Error: No current player identified after a move."
+                break
+
+            if current_player_info.is_npc and current_player_info.npc_difficulty:
+                app.logger.info(
+                    f"NPC {current_player_info.name} ({current_player_info.id}) turn in game {game_id}. Diff: {current_player_info.npc_difficulty.value}")
+
+                # Brief delay to make NPC seem like it's "thinking"
+                # For local play, this might be too fast. For UI, it's good.
+                # Consider only delaying if the *next* player is NPC, not if P1 is NPC on game start.
+                await asyncio.sleep(0.3)  # Adjust delay as needed
+
+                npc_logic_func = NPC_DISPATCHER.get(current_player_info.npc_difficulty)
+                if not npc_logic_func:
+                    game_state.last_error_message = f"NPC Error: No logic for difficulty {current_player_info.npc_difficulty.value}"
+                    app.logger.error(game_state.last_error_message)
+                    # Potentially abort game or mark as error state
+                    break
+
+                npc_move = npc_logic_func(game_state, current_player_info)
+
+                if not npc_move:
+                    # This means NPC couldn't find a move, game might be a draw or error.
+                    # The NPC logic should ideally not return None if valid moves exist.
+                    # The make_move in engine will check for overall game end if no moves left.
+                    app.logger.warning(
+                        f"NPC {current_player_info.name} could not determine a move. Game state: {game_state.status}")
+                    # If no moves were possible, engine.make_move would have already set draw/finished
+                    # or the NPC logic itself identified no moves.
+                    # This break is if npc_logic_func returns None when it shouldn't.
+                    if game_state.status == GameStatus.IN_PROGRESS:  # If NPC logic failed but game thinks it's on
+                        game_state.is_draw = True  # Fallback, assume draw if NPC fails weirdly
+                        game_state.status = GameStatus.FINISHED
+                        game_state.last_error_message = "NPC failed to move; game ended as draw."
+                    break
+
+                app.logger.info(
+                    f"NPC {current_player_info.name} chose move: G({npc_move.global_row},{npc_move.global_col}) L({npc_move.local_row},{npc_move.local_col})")
+
+                if not engine.make_move(npc_move):
+                    # This is a more critical error: NPC generated an invalid move.
+                    game_state.last_error_message = f"NPC Error: Generated invalid move. {game_state.last_error_message or ''}"
+                    app.logger.error(
+                        f"CRITICAL NPC ERROR: NPC {current_player_info.name} made invalid move {npc_move.model_dump_json()} in game {game_id}. Error: {game_state.last_error_message}")
+                    # Abort or handle error appropriately. For now, break and let current state be saved.
+                    game_state.status = GameStatus.ABORTED  # Or some error status
+                    break
+            else:
+                # It's a human player's turn now, or game ended. Break the NPC move loop.
+                break
+
+        # Save game state after all human and subsequent NPC moves are done
+        await save_game_to_db_final(app, game_state)
+
+        if game_state.status == GameStatus.FINISHED:
+            await update_stats_after_game_final(app, game_state)
+
+        return Result.json(data=game_state.model_dump_for_api())
+
+    except ValueError as e:  # Pydantic validation error for human_move usually
+        app.logger.warning(f"Make move input error for game {game_id}: {e}")
+        if game_state:  # Try to return current game state with the error
+            game_state.last_error_message = f"Invalid move data: {str(e)}"
+            return Result.default_user_error(game_state.last_error_message, 400, data=game_state.model_dump_for_api())
         return Result.default_user_error(f"Invalid move data: {str(e)}", 400)
     except Exception as e:
         app.logger.error(f"Error making move in game {game_id}: {e}", exc_info=True)
-        # Attempt to save error in game state for debugging if possible
         if game_state:
             game_state.last_error_message = "Internal server error during move processing."
             try:
-                await save_game_to_db_final(app, game_state)
+                await save_game_to_db_final(app, game_state)  # Attempt to save error state
             except:
-                pass  # Ignore save error here
+                pass
+            return Result.default_internal_error("Could not process move.", data=game_state.model_dump_for_api())
         return Result.default_internal_error("Could not process move.")
+
+
 
 
 @export(mod_name=GAME_NAME, name="get_session_stats", api=True, request_as_kwarg=True)
@@ -1204,17 +1551,33 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
                     <option value="2">2x2</option>
                     <option value="3" selected>3x3 (Classic)</option>
                     <option value="4">4x4</option>
-                    <option value="5">5x5</option>
+                    <option value="5" disabled info="Bug" class="none">5x5</option>
                 </select>
             </div>
             <div class="form-group">
                 <label for="player1NameInput">Player 1 (X) Name:</label>
                 <input type="text" id="player1NameInput" class="form-input" value="Player X">
             </div>
-            <div id="localP2NameGroup" class="form-group">
-                <label for="player2NameInput">Player 2 (O) Name:</label>
-                <input type="text" id="player2NameInput" class="form-input" value="Player O">
-            </div>
+            <div class="form-group"> <!-- Player 2 Setup Group -->
+             <label for="player2TypeSelect">Player 2 (O):</label>
+             <select id="player2TypeSelect" class="form-select">
+                 <option value="human" selected>Human</option>
+                 <option value="npc">NPC (Computer)</option>
+             </select>
+         </div>
+         <div id="localP2NameGroup" class="form-group"> <!-- Shows if P2 is Human -->
+             <label for="player2NameInput">Player 2 (O) Name:</label>
+             <input type="text" id="player2NameInput" class="form-input" value="Player O">
+         </div>
+         <div id="npcDifficultyGroup" class="form-group hidden"> <!-- Shows if P2 is NPC -->
+             <label for="npcDifficultySelect">NPC Difficulty:</label>
+             <select id="npcDifficultySelect" class="form-select">
+                 <option value="easy" selected>Easy</option>
+                 <option value="medium">Medium</option>
+                 <option value="hard">Hard</option>
+                 <!-- <option value="insane">Insane</option> -->
+             </select>
+         </div>
 
             <div class="button-row">
                 <button id="startLocalGameBtn" class="button">Play Local Game</button>
@@ -1254,7 +1617,7 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             <div class="game-controls-ingame section-card button-row" style="max-width: none; margin-top: 1rem;">
                 <button id="resetGameBtn" class="button danger">Reset Game</button>
                 <button id="saveAndLeaveBtn" class="button secondary hidden">Save & Leave</button>
-                <button id="backToMenuBtn" class="button secondary none">Back to Menu</button>
+                <button id="backToMenuBtn" class="button secondary hidden">Back to Menu</button>
             </div>
         </section>
     </main>
@@ -1332,6 +1695,8 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
         let currentPlayerIndicatorContainer, currentPlayerIndicator
         let modalConfirmCallback = null;
 
+        let player2TypeSelect, npcDifficultyGroup, npcDifficultySelect;
+
         let resumeLocalGameBtn, resumeGridSizeTextEl;
         let saveAndLeaveBtn;
 
@@ -1364,6 +1729,10 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             player1NameInput = document.getElementById('player1NameInput');
             player2NameInput = document.getElementById('player2NameInput');
             localP2NameGroup = document.getElementById('localP2NameGroup');
+
+            player2TypeSelect = document.getElementById('player2TypeSelect');
+            npcDifficultyGroup = document.getElementById('npcDifficultyGroup');
+            npcDifficultySelect = document.getElementById('npcDifficultySelect');
 
             startLocalGameBtn = document.getElementById('startLocalGameBtn');
             startOnlineGameBtn = document.getElementById('startOnlineGameBtn');
@@ -1500,6 +1869,8 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
                 showScreen('gameSetup');
             });
 
+            player2TypeSelect.addEventListener('change', togglePlayer2Setup)
+
             resetGameBtn.addEventListener('click', confirmResetGame);
             backToMenuBtn.addEventListener('click', confirmBackToMenu);
             themeToggleBtn.addEventListener('click', toggleTheme);
@@ -1536,6 +1907,17 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
                 }
             } else if (cell && (!currentGameState || currentGameState.status !== 'in_progress')) {
                 console.log("CLICK_DELEGATION - Clicked a cell, but game not in progress or no game state.");
+            }
+        }
+
+        function togglePlayer2Setup() {
+            const isNPC = player2TypeSelect.value === 'npc';
+            localP2NameGroup.classList.toggle('hidden', isNPC);
+            npcDifficultyGroup.classList.toggle('hidden', !isNPC);
+
+            // If switching to local, re-enable P2 name group if it was hidden by online mode logic
+            if (currentGameState && currentGameState.mode === 'local' && !isNPC) {
+                 localP2NameGroup.classList.remove('hidden');
             }
         }
 
@@ -1748,25 +2130,26 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
                 targetScreen.classList.remove('hidden');
             }
 
-            saveAndLeaveBtn?.classList.add('hidden');
+            if(saveAndLeaveBtn) saveAndLeaveBtn.classList.add('hidden');
 
             if (screenName === 'gameSetup') {
-                statsSection?.classList.remove('hidden');
-                localP2NameGroup?.classList.remove('hidden');
-                disconnectFromGameStream(); // Ensure SSE is disconnected when returning to menu
+                if(statsSection) statsSection.classList.remove('hidden');
+                // Call togglePlayer2Setup to ensure correct P2 input fields are shown based on select value
+                if(player2TypeSelect) togglePlayer2Setup(); // Important for resetting view
+
+                disconnectFromGameStream();
                 currentGameId = null; currentGameState = null; clientPlayerInfo = null;
-                currentPlayerIndicatorContainer?.classList.add('hidden');
-                updateResumeButtonVisibility()
+                if(currentPlayerIndicatorContainer) currentPlayerIndicatorContainer.classList.add('hidden');
+                updateResumeButtonVisibility();
             } else {
-                statsSection?.classList.add('hidden');
+                if(statsSection) statsSection.classList.add('hidden');
                 if (screenName === 'game') {
-                    currentPlayerIndicatorContainer?.classList.remove('hidden');
-                    // Zeige "Save & Leave" nur für lokale Spiele, die laufen
-                    if (currentGameState && currentGameState.mode === 'local' && currentGameState.status === 'in_progress') {
-                         saveAndLeaveBtn?.classList.remove('hidden');
+                    if(currentPlayerIndicatorContainer) currentPlayerIndicatorContainer.classList.remove('hidden');
+                    if (currentGameState && currentGameState.mode === 'local' && currentGameState.status === 'in_progress' && saveAndLeaveBtn) {
+                         saveAndLeaveBtn.classList.remove('hidden');
                     }
                 } else if (screenName === 'onlineWait') {
-                    currentPlayerIndicatorContainer?.classList.remove('hidden');
+                    if(currentPlayerIndicatorContainer) currentPlayerIndicatorContainer.classList.remove('hidden');
                 }
                 if (screenName === 'onlineWait' && localP2NameGroup) {
                     localP2NameGroup.classList.add('hidden');
@@ -1837,44 +2220,49 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
                 const existingGame = loadLocalGame(size);
                 if (existingGame && existingGame.status === 'in_progress') {
                     console.log("Resuming local game:", existingGame);
-                    // Client-Info für lokale Spiele wird nicht benötigt, da es keine SSE-Verbindung gibt
-                    // und die Spieler-IDs fest sind.
-                    clientPlayerInfo = null; // Sicherstellen, dass es für lokale Spiele zurückgesetzt ist
-                    processGameStateUpdate(existingGame); // GameState verarbeiten
+                    clientPlayerInfo = null;
+                    processGameStateUpdate(existingGame);
                     showScreen('game');
-                    saveAndLeaveBtn.classList.remove('hidden'); // Zeige Save & Leave Button
-                    return; // Frühzeitiger Ausstieg, da das Spiel fortgesetzt wird
+                    if(saveAndLeaveBtn) saveAndLeaveBtn.classList.remove('hidden');
+                    return;
                 } else {
                     console.log("No local game to resume for size", size, "or game was finished. Starting new one.");
-                    // Wenn kein Spiel zum Fortsetzen da ist, fahre normal mit dem Erstellen eines neuen fort.
                 }
             }
 
             const config = { grid_size: size };
             const p1Name = player1NameInput.value.trim() || (mode === 'local' ? "Player X" : "Me");
             const payload = { config, mode, player1_name: p1Name };
+
             if (mode === 'local') {
-                payload.player2_name = player2NameInput.value.trim() || "Player O";
-                deleteLocalGame(size);
+                deleteLocalGame(size); // Clear any old saved game of this size before starting new
+                payload.player2_type = player2TypeSelect.value;
+                if (payload.player2_type === 'npc') {
+                    payload.npc_difficulty = npcDifficultySelect.value;
+                    // Player 2 name for NPC is set server-side
+                } else { // Human P2
+                    payload.player2_name = player2NameInput.value.trim() || "Player O";
+                }
             }
+
+            // For local games, ensure player2 specific inputs are correctly shown/hidden before showing screen
+            if(mode === 'local') togglePlayer2Setup();
+
 
             const response = await apiRequest('create_game', payload, 'POST', {hideMainContentWhileLoading: true});
 
             if (!response.error && response.data?.game_id) {
-                // currentGameState = response.data; // This will be set by processGameStateUpdate from SSE or initial load
-                // currentGameId = response.data.game_id; // Also set by processGameStateUpdate
-
                 if (mode === 'local') {
-                    processGameStateUpdate(response.data); // Handles UI and disconnects SSE
+                    clientPlayerInfo = null; // No specific client info for local, turns are just X/O
+                    processGameStateUpdate(response.data);
                     showScreen('game');
-                    saveAndLeaveBtn.classList.remove('hidden'); // Zeige Save & Leave Button
+                    if(saveAndLeaveBtn) saveAndLeaveBtn.classList.remove('hidden');
                     updateResumeButtonVisibility();
                 } else if (mode === 'online') {
-                    // Client info needs to be set before processGameStateUpdate for online logic
                     clientPlayerInfo = response.data.players.find(p => p.id === currentSessionId);
-                     if (!clientPlayerInfo && response.data.players.length > 0) { // Fallback if session ID somehow not yet in player list (should be)
+                    if (!clientPlayerInfo && response.data.players.length > 0) {
                         clientPlayerInfo = response.data.players[0];
-                        console.warn("Online game created: Forcing clientPlayerInfo to P1. SessionID:", currentSessionId, "P1 ID from server:", clientPlayerInfo.id);
+                        console.warn("Online game created: Forcing clientPlayerInfo to P1.", currentSessionId, clientPlayerInfo.id);
                     }
                     gameIdShareEl.textContent = response.data.game_id;
                     waitingStatusEl.textContent = `Waiting for opponent... Game ID: ${response.data.game_id}`;
@@ -2078,33 +2466,49 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
 
 
         async function makePlayerMove(globalR, globalC, localR, localC) {
-            if (!currentGameState || !currentGameId || currentGameState.status !== 'in_progress') return;
+            if (!currentGameState || !currentGameId || currentGameState.status !== 'in_progress') {
+                console.warn("Make move called but game not in a playable state.");
+                return;
+            }
 
             let playerIdForMove;
+            const currentPlayerOnClient = currentGameState.players.find(p => p.id === currentGameState.current_player_id);
+
             if (currentGameState.mode === 'local') {
+                // In local mode, the current_player_id from game state IS the one making the move.
+                // This could be LOCAL_P1_ID, LOCAL_P2_ID, or an NPC_ID.
+                // The UI click should only be enabled for the human player if it's their turn.
+                // If an NPC is current_player_id, this function shouldn't be directly triggerable by UI click for that NPC.
+                // Server will handle NPC moves.
                 playerIdForMove = currentGameState.current_player_id;
-            } else {
+                if (currentPlayerOnClient && currentPlayerOnClient.is_npc) {
+                    console.warn("UI tried to make a move for an NPC. This should be handled server-side. Ignoring.");
+                    return;
+                }
+            } else { // Online mode
                 if (!clientPlayerInfo || currentGameState.current_player_id !== clientPlayerInfo.id) {
-                    if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("Not your turn."); return;
+                    if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("Not your turn.");
+                    return;
                 }
                 playerIdForMove = clientPlayerInfo.id;
             }
 
             const movePayload = {
                 player_id: playerIdForMove, global_row: globalR, global_col: globalC,
-                local_row: localR, local_col: localC, game_id:currentGameId
+                local_row: localR, local_col: localC, game_id: currentGameId
             };
 
-            if (globalGridDisplay) globalGridDisplay.style.pointerEvents = 'none';
+            if (globalGridDisplay) globalGridDisplay.style.pointerEvents = 'none'; // Prevent double-clicks
             const response = await apiRequest(`make_move`, movePayload, 'POST');
             if (globalGridDisplay) globalGridDisplay.style.pointerEvents = 'auto';
 
             if (!response.error && response.data) {
-                processGameStateUpdate(response.data); // This will handle UI and new SSE connection if it's opponent's turn
-            } else if (response.data?.game_id) {
-                processGameStateUpdate(response.data); // Update UI even with error response containing state
+                // Server response includes state after human move AND any subsequent NPC move.
+                processGameStateUpdate(response.data);
+            } else if (response.data?.game_id) { // Error response but contains game state
+                processGameStateUpdate(response.data);
             }
-            // processGameStateUpdate, called above, will manage SSE connection (e.g., connect if now opponent's turn)
+            // processGameStateUpdate manages SSE connection (e.g., connect if now opponent's turn in online)
         }
 
 
@@ -2168,7 +2572,7 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
 
         function renderBoard() {
             if (!currentGameState || !globalGridDisplay) return;
-            const N = currentGameState.config.grid_size;
+            const N = currentGameState.config?.grid_size;
             dynamicallySetGridStyles(N); // Ensure styles are set for current N
             globalGridDisplay.innerHTML = '';
 
