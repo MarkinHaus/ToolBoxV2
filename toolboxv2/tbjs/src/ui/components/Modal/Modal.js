@@ -313,6 +313,98 @@ class Modal {
             modalInstance.show();
         });
     }
+
+/**
+ * Shows a prompt modal with an input field and returns a Promise that resolves to the input string or null.
+ * @param {object} options - Configuration for the prompt modal.
+ * @param {string} options.title - The title of the prompt modal.
+ * @param {string} [options.placeholder=''] - Placeholder text for the input field.
+ * @param {string} [options.defaultValue=''] - Default value in the input field.
+ * @param {string} [options.type='text'] - Type of the input (e.g., 'text', 'password', 'email').
+ * @param {string} [options.confirmButtonText='OK'] - Text for the confirm button.
+ * @param {string} [options.cancelButtonText='Cancel'] - Text for the cancel button.
+ * @param {string} [options.confirmButtonVariant='primary'] - Variant for the confirm button.
+ * @param {string} [options.cancelButtonVariant='secondary'] - Variant for the cancel button.
+ * @param {string} [options.confirmButtonClass=''] - Additional CSS classes for the confirm button.
+ * @param {string} [options.cancelButtonClass=''] - Additional CSS classes for the cancel button.
+ * @param {boolean} [options.resolveOnClose=false] - If true, resolve with current input value on ESC or outside click. Otherwise, resolve null.
+ * @param {object} [options.extraModalOptions={}] - Additional modal options.
+ * @returns {Promise<string|null>} A promise that resolves to the entered input or null if cancelled.
+ */
+static async prompt({
+    title,
+    placeholder = '',
+    defaultValue = '',
+    type = 'text',
+    confirmButtonText = 'OK',
+    cancelButtonText = 'Cancel',
+    confirmButtonVariant = 'primary',
+    cancelButtonVariant = 'secondary',
+    confirmButtonClass = '',
+    cancelButtonClass = '',
+    resolveOnClose = false,
+    ...extraModalOptions
+} = {}) {
+    if (!title) {
+        TB.logger.error('[Modal.prompt] Option "title" is required.');
+        return Promise.resolve(null);
+    }
+
+    return new Promise((resolve) => {
+        const input = document.createElement('input');
+        input.type = type;
+        input.value = defaultValue;
+        input.placeholder = placeholder;
+        input.className = 'w-full border p-2 rounded focus:outline-none focus:ring focus:border-blue-300';
+
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                confirmAction();
+            }
+        });
+
+        const confirmAction = () => {
+            modal.close(false);
+            resolve(input.value);
+        };
+
+        const cancelAction = () => {
+            modal.close(false);
+            resolve(null);
+        };
+
+        const modal = new Modal({
+            title,
+            content: input,
+            buttons: [
+                {
+                    text: cancelButtonText,
+                    action: cancelAction,
+                    variant: cancelButtonVariant,
+                    className: cancelButtonClass,
+                },
+                {
+                    text: confirmButtonText,
+                    action: confirmAction,
+                    variant: confirmButtonVariant,
+                    className: confirmButtonClass,
+                },
+            ],
+            maxWidth: 'max-w-md',
+            closeOnEsc: true,
+            closeOnOutsideClick: true,
+            onClose: () => resolve(resolveOnClose ? input.value : null),
+            ...extraModalOptions,
+        });
+
+        modal.show();
+
+        // Focus the input after the modal opens
+        setTimeout(() => input.focus(), 50);
+    });
+}
+
 }
 
 export default Modal;
