@@ -1,4 +1,4 @@
- # --- START OF FILE ultimate_ttt_api.py ---
+# --- START OF FILE ultimate_ttt_api.py ---
 import asyncio
 import json
 import uuid
@@ -12,7 +12,7 @@ from toolboxv2 import App, RequestData, Result, get_app
 from toolboxv2.utils.extras.base_widget import get_user_from_request
 
 # --- Constants ---
-GAME_NAME = Name = "UltimateTTTSSe"  # Using your original name for consistency with JS API calls
+GAME_NAME = Name = "UltimateTTT"  # Using your original name for consistency with JS API calls
 VERSION = "3.1.0"  # Incremented for this revision
 DB_GAMES_PREFIX = f"{GAME_NAME.lower()}_games"
 DB_USER_STATS_PREFIX = f"{GAME_NAME.lower()}_user_stats"
@@ -89,6 +89,7 @@ class GameState(BaseModel):
     global_board_winners: List[List[BoardWinner]]
     local_boards_state: List[List[List[List[CellState]]]]
 
+    last_made_move_coords: Optional[Tuple[int, int, int, int]] = None
     next_forced_global_board: Optional[Tuple[int, int]] = None  # If set, player MUST play here
 
     overall_winner_symbol: Optional[PlayerSymbol] = None
@@ -154,7 +155,7 @@ class UserSessionStats(BaseModel):
 
 
 # --- Game Engine ---
-class UltimateTTTSSeGameEngine:  # Renamed for clarity
+class UltimateTTTGameEngine:  # Renamed for clarity
     def __init__(self, game_state: GameState):
         self.gs = game_state
         self.size = game_state.config.grid_size
@@ -225,7 +226,7 @@ class UltimateTTTSSeGameEngine:  # Renamed for clarity
             return (target_gr, target_gc)
         return None  # Play anywhere valid
 
-    def _is_local_board_full(self, local_board_cells: List[List[CellState]], cell_type = CellState.EMPTY) -> bool:
+    def _is_local_board_full(self, local_board_cells: List[List[CellState]], cell_type=CellState.EMPTY) -> bool:
         """Checks if a specific local board (passed as a 2D list of CellState) is full."""
         for r in range(self.size):
             for c in range(self.size):
@@ -333,6 +334,8 @@ class UltimateTTTSSeGameEngine:  # Renamed for clarity
                         self.gs.status = GameStatus.FINISHED
 
         self.gs.updated_at = datetime.now(timezone.utc)
+        self.gs.last_made_move_coords = (move.global_row, move.global_col, move.local_row, move.local_col)
+
         return True
 
     def handle_player_disconnect(self, player_id: str):  # Placeholder for future use
@@ -412,7 +415,7 @@ async def api_create_game(app: App, request: RequestData, data=None):  # Kept or
 
         initial_status = GameStatus.WAITING_FOR_OPPONENT if mode == GameMode.ONLINE else GameStatus.IN_PROGRESS
         game_state = GameState(config=config, mode=mode, status=initial_status)
-        engine = UltimateTTTSSeGameEngine(game_state)
+        engine = UltimateTTTGameEngine(game_state)
 
         if mode == GameMode.LOCAL:
             engine.add_player(LOCAL_PLAYER_X_ID, player1_name)
@@ -451,7 +454,7 @@ async def api_join_game(app: App, request: RequestData, data=None):  # Kept orig
         user = await get_user_from_request(app, request)
         joiner_id = user.uid if user and user.uid else f"guest_{uuid.uuid4().hex[:6]}"
 
-        engine = UltimateTTTSSeGameEngine(game_state)
+        engine = UltimateTTTGameEngine(game_state)
         if engine.add_player(joiner_id, player_name):
             await save_game_to_db_final(app, game_state)
             app.logger.info(f"Player {joiner_id} ({player_name}) joined game {game_id}.")
@@ -461,6 +464,7 @@ async def api_join_game(app: App, request: RequestData, data=None):  # Kept orig
     except Exception as e:
         app.logger.error(f"Error joining game: {e}", exc_info=True)
         return Result.default_internal_error("Join game error.")
+
 
 @export(mod_name=GAME_NAME, name="get_game", api=True, request_as_kwarg=True)
 async def api_get_game(app: App, request: RequestData, game_id: str):
@@ -499,7 +503,7 @@ async def api_make_move(app: App, request: RequestData, data=None):  # game_id a
         # if strict auth per move is desired beyond just matching `current_player_id`.
         move = Move(**move_payload)
 
-        engine = UltimateTTTSSeGameEngine(game_state)
+        engine = UltimateTTTGameEngine(game_state)
         success = engine.make_move(move)
 
         await save_game_to_db_final(app, game_state)
@@ -527,7 +531,6 @@ async def api_make_move(app: App, request: RequestData, data=None):  # game_id a
         return Result.default_internal_error("Could not process move.")
 
 
-
 @export(mod_name=GAME_NAME, name="get_session_stats", api=True, request_as_kwarg=True)
 async def api_get_session_stats(app: App, request: RequestData, session_id: Optional[str] = None):
     id_for_stats = session_id
@@ -546,85 +549,86 @@ import asyncio
 from typing import AsyncGenerator, Dict, Any  # Ensure these are imported if not already
 
 
-@export(mod_name=GAME_NAME, name="game_stream", api=True, request_as_kwarg=True, api_methods=['GET'])
-async def api_game_stream(app: App, request: RequestData, game_id: str):
-     """
-     Provides a Server-Sent Event stream for real-time game updates.
-     Clients connect to this endpoint (e.g., /sse/UltimateTTTSSe/game_stream?game_id={game_id})
-     to receive game state changes.
-     """
-     if not game_id:
-         async def error_gen_no_id():
-             yield {'event': 'error', 'data': {'message': 'game_id is required for stream'}}
+@export(mod_name=GAME_NAME, name="open_game_stream", api=True, request_as_kwarg=True, api_methods=['GET'])
+async def api_open_game_stream(app: App, request: RequestData, game_id: str):
+    """
+    Provides a Server-Sent Event stream for real-time game updates.
+    Clients connect to this endpoint (e.g., /sse/UltimateTTT/open_game_stream?game_id={game_id})
+    to receive game state changes.
+    """
+    if not game_id:
+        async def error_gen_no_id():
+            yield {'event': 'error', 'data': {'message': 'game_id is required for stream'}}
 
-         return Result.sse(stream_generator=error_gen_no_id())
+        return Result.sse(stream_generator=error_gen_no_id())
 
-     async def game_event_generator() -> AsyncGenerator[Dict[str, Any], None]:
-         app.logger.info(f"SSE: Stream opened for game_id: {game_id}")
-         last_known_updated_at = None
-         last_status_sent = None  # To ensure we send an update if status changes even if timestamp is same (less likely)
+    async def game_event_generator() -> AsyncGenerator[Dict[str, Any], None]:
+        app.logger.info(f"SSE: Stream opened for game_id: {game_id}")
+        last_known_updated_at = None
+        last_status_sent = None  # To ensure we send an update if status changes even if timestamp is same (less likely)
 
-         try:
-             while True:  # Loop indefinitely until game ends, client disconnects, or error
-                 game_state = await load_game_from_db_final(app, game_id)
+        try:
+            while True:  # Loop indefinitely until game ends, client disconnects, or error
+                game_state = await load_game_from_db_final(app, game_id)
 
-                 if not game_state:
-                     app.logger.warning(f"SSE: Game {game_id} not found. Closing stream.")
-                     yield {'event': 'error', 'data': {'message': 'Game not found. Stream closing.'}}
-                     break
+                if not game_state:
+                    app.logger.warning(f"SSE: Game {game_id} not found. Closing stream.")
+                    yield {'event': 'error', 'data': {'message': 'Game not found. Stream closing.'}}
+                    break
 
-                 # Handle timeout for games waiting for an opponent
-                 if game_state.status == GameStatus.WAITING_FOR_OPPONENT and \
-                     game_state.waiting_since and \
-                     (datetime.now(timezone.utc) - game_state.waiting_since > timedelta(
-                         seconds=ONLINE_POLL_TIMEOUT_SECONDS)):
-                     app.logger.info(f"SSE: Game {game_id} timed out waiting for opponent. Aborting.")
-                     game_state.status = GameStatus.ABORTED
-                     game_state.last_error_message = "Game aborted: Opponent didn't join in time."
-                     game_state.updated_at = datetime.now(timezone.utc)
-                     await save_game_to_db_final(app, game_state)
+                # Handle timeout for games waiting for an opponent
+                if game_state.status == GameStatus.WAITING_FOR_OPPONENT and \
+                    game_state.waiting_since and \
+                    (datetime.now(timezone.utc) - game_state.waiting_since > timedelta(
+                        seconds=ONLINE_POLL_TIMEOUT_SECONDS)):
+                    app.logger.info(f"SSE: Game {game_id} timed out waiting for opponent. Aborting.")
+                    game_state.status = GameStatus.ABORTED
+                    game_state.last_error_message = "Game aborted: Opponent didn't join in time."
+                    game_state.updated_at = datetime.now(timezone.utc)
+                    await save_game_to_db_final(app, game_state)
 
-                     # Yield the aborted state and then break, as the game is over
-                     yield {'event': 'game_update', 'data': game_state.model_dump_for_api()}
-                     app.logger.info(f"SSE: Game {game_id} aborted due to timeout. Closing stream.")
-                     break
+                    # Yield the aborted state and then break, as the game is over
+                    yield {'event': 'game_update', 'data': game_state.model_dump_for_api()}
+                    app.logger.info(f"SSE: Game {game_id} aborted due to timeout. Closing stream.")
+                    break
 
-                 current_updated_at = game_state.updated_at
-                 current_status = game_state.status
+                current_updated_at = game_state.updated_at
+                current_status = game_state.status
 
-                 # Send update if it's the first pull, or if game state has changed
-                 if last_known_updated_at is None or \
-                     current_updated_at > last_known_updated_at or \
-                     current_status != last_status_sent:
-                     app.logger.debug(
-                         f"SSE: Sending update for game {game_id}. Status: {current_status}, Updated: {current_updated_at}")
-                     yield {'event': 'game_update', 'data': game_state.model_dump_for_api()}
-                     last_known_updated_at = current_updated_at
-                     last_status_sent = current_status
+                # Send update if it's the first pull, or if game state has changed
+                if last_known_updated_at is None or \
+                    current_updated_at > last_known_updated_at or \
+                    current_status != last_status_sent:
+                    app.logger.debug(
+                        f"SSE: Sending update for game {game_id}. Status: {current_status}, Updated: {current_updated_at}")
+                    yield {'event': 'game_update', 'data': game_state.model_dump_for_api()}
+                    last_known_updated_at = current_updated_at
+                    last_status_sent = current_status
 
-                 # If game is finished or aborted (by means other than timeout above), send final state and close
-                 if game_state.status in [GameStatus.FINISHED, GameStatus.ABORTED]:
-                     app.logger.info(f"SSE: Game {game_id} is {game_state.status}. Sent final update. Closing stream.")
-                     break
+                # If game is finished or aborted (by means other than timeout above), send final state and close
+                if game_state.status in [GameStatus.FINISHED, GameStatus.ABORTED]:
+                    app.logger.info(f"SSE: Game {game_id} is {game_state.status}. Sent final update. Closing stream.")
+                    break
 
-                 # Wait before checking for updates again.
-                 # This interval determines responsiveness vs. DB load.
-                 await asyncio.sleep(1.5)
+                # Wait before checking for updates again.
+                # This interval determines responsiveness vs. DB load.
+                await asyncio.sleep(1.5)
 
-         except asyncio.CancelledError:
-             # This is typically raised when the client disconnects
-             app.logger.info(f"SSE: Stream for game_id: {game_id} was cancelled (client likely disconnected).")
-         except Exception as e:
-             app.logger.error(f"SSE: Stream error for game_id {game_id}: {e}", exc_info=True)
-             try:
-                 # Try to inform the client about the error before closing
-                 yield {'event': 'error', 'data': {'message': f'Server error in stream: {str(e)}'}}
-             except Exception as yield_e:
-                 app.logger.error(f"SSE: Error yielding error message for game_id {game_id}: {yield_e}", exc_info=True)
-         finally:
-             app.logger.info(f"SSE: Stream closed for game_id: {game_id}")
+        except asyncio.CancelledError:
+            # This is typically raised when the client disconnects
+            app.logger.info(f"SSE: Stream for game_id: {game_id} was cancelled (client likely disconnected).")
+        except Exception as e:
+            app.logger.error(f"SSE: Stream error for game_id {game_id}: {e}", exc_info=True)
+            try:
+                # Try to inform the client about the error before closing
+                yield {'event': 'error', 'data': {'message': f'Server error in stream: {str(e)}'}}
+            except Exception as yield_e:
+                app.logger.error(f"SSE: Error yielding error message for game_id {game_id}: {yield_e}", exc_info=True)
+        finally:
+            app.logger.info(f"SSE: Stream closed for game_id: {game_id}")
 
-     return Result.sse(stream_generator=game_event_generator())
+    return Result.sse(stream_generator=game_event_generator())
+
 
 # --- UI Initialization ---
 @export(mod_name=GAME_NAME, name="init_config", initial=True)  # Kept original name
@@ -727,6 +731,36 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
         }
         .theme-switcher:hover { opacity: 0.8; }
 
+        .current-player-indicator-container {
+            width: 100%;
+            max-width: 900px; /* Angleichen an app-header Breite */
+            margin-bottom: 1rem; /* Abstand nach unten */
+            display: flex;
+            justify-content: center; /* Zentriert den Indikator, falls er nicht volle Breite hat */
+        }
+
+        .current-player-indicator {
+            height: 10px; /* Höhe des Farbbalkens */
+            width: 100%; /* Volle Breite des Containers */
+            max-width: 500px; /* Max-Breite, kann an section-card angepasst werden */
+            border-radius: 5px;
+            background-color: var(--border-color); /* Standardfarbe, wenn kein Spieler aktiv */
+            transition: background-color 0.3s ease-in-out;
+            box-shadow: var(--shadow-light); /* Optionaler leichter Schatten */
+        }
+
+        html[data-theme="dark"] .current-player-indicator {
+            box-shadow: var(--shadow-dark);
+        }
+
+        .current-player-indicator.player-X {
+            background-color: var(--player-x-color);
+        }
+
+        .current-player-indicator.player-O {
+            background-color: var(--player-o-color);
+        }
+
         .main-content-wrapper { display: flex; flex-direction: column; align-items: center; width: 100%; max-width: 900px; }
         .section-card {
             background-color: var(--bg-card); padding: clamp(1rem, 3vw, 1.5rem); border-radius: 0.5rem;
@@ -779,8 +813,9 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
         }
         .local-board-container {
             border: 2px solid var(--border-color); display: flex; align-items: center; justify-content: center;
-            transition: box-shadow 0.2s, border-color 0.2s, background-color 0.2s; position: relative;
+            transition: box-shadow 0.2s, border-color 0.2s, background-color 0.2s; position: relative; outline-color 0.2s, outline-width 0.2s;
         }
+
         .local-board-container.forced-target {
             box-shadow: var(--forced-target-shadow); border-color: var(--forced-target-border) !important;
         }
@@ -789,7 +824,16 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
         .local-board-container.won-X { background-color: var(--local-won-x-bg); }
         .local-board-container.won-O { background-color: var(--local-won-o-bg); }
         .local-board-container.won-DRAW { background-color: var(--local-draw-bg); }
-
+        .local-board-container.preview-forced-for-x {
+            outline: 3px dashed var(--player-x-color);
+            outline-offset: -3px; /* Damit der Outline innerhalb des Borders ist */
+            /* box-shadow: 0 0 10px var(--player-x-color); Alternativ ein Glow */
+        }
+        .local-board-container.preview-forced-for-o {
+            outline: 3px dashed var(--player-o-color);
+            outline-offset: -3px;
+            /* box-shadow: 0 0 10px var(--player-o-color); Alternativ ein Glow */
+        }
         .local-board-container .winner-overlay {
             position: absolute; top: 0; left: 0; right: 0; bottom: 0;
             display: flex; align-items: center; justify-content: center;
@@ -812,6 +856,19 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
         .cell.playable:hover { background-color: var(--cell-hover); }
         .cell.player-X { color: var(--player-x-color); }
         .cell.player-O { color: var(--player-o-color); }
+
+        .cell.last-move {
+            /* Beispiel: ein heller, auffälliger Innenrand */
+            box-shadow: inset 0 0 0 2.5px gold;
+            /* Oder ein subtilerer Hintergrund, je nach Präferenz */
+            /* background-color: rgba(255, 215, 0, 0.15); */
+        }
+        .cell.last-move.player-X { /* Stellt sicher, dass der Rand auch bei Spieler-X sichtbar ist */
+             box-shadow: inset 0 0 0 2.5px gold, 0 0 0 0 var(--player-x-color); /* Trick um Default-Schatten zu resetten, falls vorhanden */
+        }
+        .cell.last-move.player-O { /* Stellt sicher, dass der Rand auch bei Spieler-O sichtbar ist */
+             box-shadow: inset 0 0 0 2.5px gold, 0 0 0 0 var(--player-o-color);
+        }
 
         .local-board-container.won-X .local-grid,
         .local-board-container.won-O .local-grid,
@@ -869,6 +926,10 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
         <h1 class="app-title">Ultimate TTT</h1>
         <button id="themeToggleBtn" class="theme-switcher none">Dark Mode</button>
     </header>
+
+    <div id="currentPlayerIndicatorContainer" class="current-player-indicator-container hidden">
+        <div id="currentPlayerIndicator" class="current-player-indicator"></div>
+    </div>
 
     <main class="main-content-wrapper">
         <section id="gameSetupSection" class="section-card">
@@ -942,6 +1003,55 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             </div>
         </div>
     </div>
+    <div id="rulesContainer" style="font-family: Arial, Helvetica, sans-serif; margin-bottom: 15px; max-width: 400px;">
+        <button id="toggleRulesButton" onclick="toggleRulesVisibility()" style="padding: 8px 12px; cursor: pointer; border: 1px solid #bbb; background-color: var(--theme-secondary); border-radius: 4px; font-size: 0.9em; color:var(--text-color);">
+            Show Rules
+        </button>
+       <div id="rulesContent" style="display: none; border: 1px solid #d0d0d0; padding: 10px 15px; margin-top: 10px; background-color: var(--theme-bg);color:var(--text-color); border-radius: 4px; font-size: 0.95em; line-height: 1.4;">
+        <h4 style="margin-top: 0; margin-bottom: 12px; color: #333;">Ultimate Tic-Tac-Toe: Quick Rules</h4>
+
+        <p style="margin-bottom: 8px; color: #444;">
+            <strong>Grid:</strong> Played on an <strong>N x N</strong> global grid (e.g., 3x3, 4x4, up to 5x5). Each cell of this global grid is a smaller, independent <strong>N x N</strong> "local board".
+        </p>
+
+        <p style="margin-bottom: 10px; color: #444;">
+            <strong>Goal:</strong> Win <strong>N local boards in a row</strong> (horizontally, vertically, or diagonally) on the global grid.
+        </p>
+
+        <hr style="border: 0; border-top: 1px solid #e0e0e0; margin: 15px 0;">
+
+        <strong style="display: block; margin-bottom: 5px; color: #333; font-size: 1.05em;">Gameplay Mechanics:</strong>
+        <ol style="padding-left: 20px; margin-top: 0; margin-bottom: 12px; color: #555;">
+            <li style="margin-bottom: 5px;">Players alternate turns placing their mark (X or O).</li>
+            <li style="margin-bottom: 5px;">Winning a local board claims that corresponding cell on the global grid for that player.</li>
+            <li style="margin-bottom: 5px;">
+                <strong>The "Send" Rule:</strong> The specific cell (e.g., top-left) where you play within a local board dictates which local board (e.g., the top-left local board) your opponent <strong>must</strong> play in on their next turn.
+            </li>
+        </ol>
+
+        <strong style="display: block; margin-bottom: 5px; color: #333; font-size: 1.05em;">Special Conditions:</strong>
+        <ul style="padding-left: 20px; margin-top: 0; color: #555;">
+            <li style="margin-bottom: 5px;">
+                <strong>Sent to a Decided/Full Board:</strong> If the local board you are "sent" to is already won or completely full (a draw), you can then play your mark in <strong>any other available cell</strong> on <strong>any other local board</strong> that is not yet decided.
+            </li>
+            <li style="margin-bottom: 5px;">The first move of the game is a free choice anywhere.</li>
+            <li style="margin-bottom: 5px;">A local board can end in a draw. The overall game can also end in a draw if no valid moves remain.</li>
+        </ul>
+    </div>
+
+    <script unsave="true">
+         function toggleRulesVisibility() {
+            var rulesDiv = document.getElementById('rulesContent');
+            var button = document.getElementById('toggleRulesButton');
+            if (rulesDiv.style.display === 'none' || rulesDiv.style.display === '') {
+                rulesDiv.style.display = 'block';
+                button.textContent = 'Hide Rules';
+            } else {
+                rulesDiv.style.display = 'none';
+                button.textContent = 'Show Rules';
+            }
+        }
+    </script>
 
     <script unsave="true">
     (function() {
@@ -953,6 +1063,7 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
         let resetGameBtn, backToMenuBtn, themeToggleBtn;
         let statsGamesPlayedEl, statsWinsEl, statsLossesEl, statsDrawsEl, statsSessionIdEl;
         let modalOverlay, modalTitle, modalMessage, modalCancelBtn, modalConfirmBtn;
+        let currentPlayerIndicatorContainer, currentPlayerIndicator
         let modalConfirmCallback = null;
 
         let currentSessionId = null;
@@ -964,7 +1075,7 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
         let localPlayerActiveSymbol = 'X';
         // let onlineGamePollInterval = null;
         // const POLLING_RATE_MS = 2500; // Increased polling rate slightly
-        const API_MODULE_NAME = "UltimateTTTSSe";
+        const API_MODULE_NAME = "UltimateTTT";
 
         const LOCAL_P1_ID = "p1_local_utt";
         const LOCAL_P2_ID = "p2_local_utt";
@@ -1007,6 +1118,9 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             modalCancelBtn = document.getElementById('modalCancelBtn');
             modalConfirmBtn = document.getElementById('modalConfirmBtn');
 
+            currentPlayerIndicatorContainer = document.getElementById('currentPlayerIndicatorContainer');
+            currentPlayerIndicator = document.getElementById('currentPlayerIndicator');
+
             setupEventListeners();
             initializeTheme();
             determineSessionId();
@@ -1016,7 +1130,7 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
         }
 
         function connectToGameStream(gameId) {
-            if (sseConnection && currentSseGameIdPath === `/sse/${API_MODULE_NAME}/game_stream?game_id=${gameId}`) {
+            if (sseConnection && currentSseGameIdPath === `/sse/${API_MODULE_NAME}/open_game_stream?game_id=${gameId}`) {
                 console.log("SSE: Already connected to stream for game:", gameId);
                 return;
             }
@@ -1028,7 +1142,7 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             }
 
             // Construct the SSE URL. Assumes ToolboxV2 exposes SSE endpoints under /sse/MODULE_NAME/ENDPOINT_NAME
-            currentSseGameIdPath = `/sse/${API_MODULE_NAME}/game_stream?game_id=${gameId}`;
+            currentSseGameIdPath = `/sse/${API_MODULE_NAME}/open_game_stream?game_id=${gameId}`;
             console.log(`SSE: Attempting to connect to ${currentSseGameIdPath}`);
 
             sseConnection = TB.sse.connect(currentSseGameIdPath, {
@@ -1077,7 +1191,7 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
                          console.log('SSE Event (stream_end): Server closed stream for', gameId, eventPayload);
                          // The server's SSE loop breaks on FINISHED/ABORTED, so this confirms closure.
                          // Clean up client-side connection state if not already handled by onError or explicit disconnect.
-                         if (sseConnection && currentSseGameIdPath === `/sse/${API_MODULE_NAME}/game_stream?game_id=${gameId}`) {
+                         if (sseConnection && currentSseGameIdPath === `/sse/${API_MODULE_NAME}/open_game_stream?game_id=${gameId}`) {
                              sseConnection = null;
                              currentSseGameIdPath = null;
                          }
@@ -1109,6 +1223,9 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             backToMenuBtn.addEventListener('click', confirmBackToMenu);
             themeToggleBtn.addEventListener('click', toggleTheme);
             globalGridDisplay.addEventListener('click', onBoardClickDelegation);
+
+            globalGridDisplay.addEventListener('mouseover', handleCellMouseOver);
+            globalGridDisplay.addEventListener('mouseout', handleCellMouseOut);
 
             modalCancelBtn.addEventListener('click', hideModal);
             modalConfirmBtn.addEventListener('click', () => {
@@ -1157,6 +1274,96 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             console.log("Session ID for stats/online:", currentSessionId);
         }
 
+                function getPlayerInfoById(playerId) {
+            if (!currentGameState || !currentGameState.players) return null;
+            return currentGameState.players.find(p => p.id === playerId);
+        }
+
+        function getOpponentInfo(playerId) {
+            if (!currentGameState || !currentGameState.players) return null;
+            return currentGameState.players.find(p => p.id !== playerId);
+        }
+
+
+        function handleCellMouseOver(event) {
+            if (!currentGameState || currentGameState.status !== 'in_progress') return;
+
+            const cell = event.target.closest('.cell');
+            if (!cell || !cell.classList.contains('playable')) return; // Nur auf spielbaren Zellen reagieren
+
+            // Ist der aktuelle Spieler am Zug?
+            let isMyTurn;
+            if (currentGameState.mode === 'local') {
+                isMyTurn = true; // Im lokalen Modus kann man immer für den aktuellen Spieler hovern
+            } else {
+                isMyTurn = clientPlayerInfo && currentGameState.current_player_id === clientPlayerInfo.id;
+            }
+            if (!isMyTurn) return;
+
+
+            const N = currentGameState.config.grid_size;
+            const hovered_lr = parseInt(cell.dataset.lr);
+            const hovered_lc = parseInt(cell.dataset.lc);
+
+            // Zielkoordinaten für das nächste Board
+            const target_gr = hovered_lr;
+            const target_gc = hovered_lc;
+
+            // Prüfen, ob das Ziel-Board überhaupt existiert (sollte es, wenn N korrekt ist)
+            if (target_gr < 0 || target_gr >= N || target_gc < 0 || target_gc >= N) {
+                console.warn("Preview: Target global coords out of bounds", target_gr, target_gc);
+                return;
+            }
+
+            const currentPlayer = getPlayerInfoById(currentGameState.current_player_id);
+            if (!currentPlayer) return;
+
+            const opponent = getOpponentInfo(currentGameState.current_player_id);
+            if (!opponent) return; // Sollte im 2-Spieler-Modus nicht passieren
+
+            // Finde das DOM-Element des Ziel-Global-Boards
+            const targetBoardElement = globalGridDisplay.querySelector(
+                `.local-board-container[data-gr="${target_gr}"][data-gc="${target_gc}"]`
+            );
+
+            if (targetBoardElement) {
+                // Ist das Ziel-Board bereits gewonnen oder voll?
+                const isTargetBoardWon = currentGameState.global_board_winners[target_gr][target_gc] !== 'NONE';
+
+                let isTargetBoardFull = false;
+                if (!isTargetBoardWon) {
+                    const targetLocalCells = currentGameState.local_boards_state[target_gr][target_gc];
+                    isTargetBoardFull = targetLocalCells.every(row => row.every(cellState => cellState !== '.'));
+                }
+
+                if (isTargetBoardWon || isTargetBoardFull) {
+                    // "Play Anywhere"-Szenario: Alle *noch nicht gewonnenen und nicht vollen* Boards hervorheben
+                    // oder keine spezifische Vorschau anzeigen. Fürs Erste keine spezifische Vorschau,
+                    // da die "playable-anywhere"-Klasse bereits alle gültigen Boards markiert.
+                    // Man könnte hier eine subtile generische Vorschau für alle "playable-anywhere" Boards hinzufügen.
+                    // console.log("Preview: Target board won/full, would be 'play anywhere'");
+                } else {
+                    // Das spezifische Board wird das Ziel sein
+                    const previewClass = opponent.symbol === 'X' ? 'preview-forced-for-x' : 'preview-forced-for-o';
+                    targetBoardElement.classList.add(previewClass);
+                }
+            }
+        }
+
+        function handleCellMouseOut(event) {
+            if (!currentGameState) return; // Sicherstellen, dass ein Spielstatus existiert
+
+            const cell = event.target.closest('.cell');
+            // Auch wenn wir von einer Zelle zu einer anderen im selben Board wechseln,
+            // ist es am einfachsten, alle Vorschauen zu entfernen und sie bei Bedarf neu zu erstellen.
+            if (cell) { // Nur wenn der Mauszeiger eine Zelle verlässt
+                const allBoardContainers = globalGridDisplay.querySelectorAll('.local-board-container');
+                allBoardContainers.forEach(board => {
+                    board.classList.remove('preview-forced-for-x', 'preview-forced-for-o');
+                });
+            }
+        }
+
         function checkUrlForJoin() {
             const urlParams = new URLSearchParams(window.location.search);
             const gameIdToJoin = urlParams.get('join_game_id');
@@ -1183,8 +1390,12 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
                 localP2NameGroup?.classList.remove('hidden');
                 disconnectFromGameStream(); // Ensure SSE is disconnected when returning to menu
                 currentGameId = null; currentGameState = null; clientPlayerInfo = null;
+                 currentPlayerIndicatorContainer?.classList.add('hidden');
             } else {
                 statsSection?.classList.add('hidden');
+                if (screenName === 'game' || screenName === 'onlineWait') { // NEU: Indikator anzeigen, wenn ein Spiel läuft oder gewartet wird
+                    currentPlayerIndicatorContainer?.classList.remove('hidden');
+                }
                 if (screenName === 'onlineWait' && localP2NameGroup) {
                     localP2NameGroup.classList.add('hidden');
                 }
@@ -1468,7 +1679,14 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             dynamicallySetGridStyles(N); // Ensure styles are set for current N
             globalGridDisplay.innerHTML = '';
 
+            const tempAllBoardContainers = globalGridDisplay.querySelectorAll('.local-board-container');
+             tempAllBoardContainers.forEach(board => {
+                 board.classList.remove('preview-forced-for-x', 'preview-forced-for-o');
+             });
+
             console.log("RENDER_BOARD - Forced target from state:", currentGameState.next_forced_global_board);
+
+            const lastMoveCoords = currentGameState.last_made_move_coords;
 
             for (let gr = 0; gr < N; gr++) {
                 for (let gc = 0; gc < N; gc++) {
@@ -1526,6 +1744,13 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
                                 cell.classList.add('player-' + cellState);
                             }
 
+                            if (lastMoveCoords) {
+                                const [last_gr, last_gc, last_lr, last_lc] = lastMoveCoords;
+                                if (gr === last_gr && gc === last_gc && lr === last_lr && lc === last_lc) {
+                                    cell.classList.add('last-move');
+                                }
+                            }
+
                             // --- Determine if this specific cell is playable ---
                             let isCellCurrentlyPlayable = false;
                             if (currentGameState.status === 'in_progress' && localWinner === 'NONE' && cellState === '.') {
@@ -1557,15 +1782,25 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
         }
 
         function updateStatusBar() { /* Mostly same, ensure player names are used */
-            if (!statusBar || !currentGameState) return;
+            if (!statusBar || !currentGameState || !currentPlayerIndicator) return;
             let message = ""; let msgType = "info";
+
+            currentPlayerIndicator.classList.remove('player-X', 'player-O');
 
             if (currentGameState.status === 'waiting_for_opponent') {
                 message = "Waiting for opponent...";
+                 if (currentGameState.players.length > 0) {
+                    const waitingPlayerSymbol = currentGameState.players[0].symbol; // Annahme: Erster Spieler ist der Wartende
+                    currentPlayerIndicator.classList.add(`player-${waitingPlayerSymbol}`);
+                }
             } else if (currentGameState.status === 'in_progress') {
                 const currentPlayer = currentGameState.players.find(p => p.id === currentGameState.current_player_id);
                 const pName = currentPlayer ? currentPlayer.name : "Player";
                 const pSymbol = currentPlayer ? currentPlayer.symbol : "?";
+
+                if (currentPlayer) {
+                    currentPlayerIndicator.classList.add(`player-${pSymbol}`);
+                }
 
                 if (currentGameState.mode === 'local') {
                     message = `${pName} (${pSymbol})'s Turn.`;
@@ -1590,12 +1825,18 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
                 else {
                     const winner = currentGameState.players.find(p => p.symbol === currentGameState.overall_winner_symbol);
                     message = `Game Over: ${winner ? winner.name : 'Player'} (${currentGameState.overall_winner_symbol}) WINS!`;
+                    if (winner) { // NEU: Indikatorfarbe des Gewinners
+                        currentPlayerIndicator.classList.add(`player-${winner.symbol}`);
+                    }
                 }
             } else if (currentGameState.status === 'aborted') {
                  message = currentGameState.last_error_message || "Game Aborted."; msgType = "error";
             }
             statusBar.textContent = message;
             statusBar.className = `status-bar ${msgType}`;
+            if (msgType) { // msgType sollte immer 'info', 'error', oder 'success' sein
+                statusBar.classList.add(msgType);
+            }
         }
 
         function showGameOverModal() { /* Same as before, ensure names used */
