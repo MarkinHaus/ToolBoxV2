@@ -712,6 +712,9 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             --local-draw-bg: var(--local-draw-bg-dark); --forced-target-border: var(--forced-target-border-dark);
             --forced-target-shadow: var(--forced-target-shadow-dark);
             --playable-anywhere-border: var(--playable-anywhere-border-dark);
+            .current-player-indicator {
+                box-shadow: var(--shadow-dark);
+            }
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -747,10 +750,6 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             background-color: var(--border-color); /* Standardfarbe, wenn kein Spieler aktiv */
             transition: background-color 0.3s ease-in-out;
             box-shadow: var(--shadow-light); /* Optionaler leichter Schatten */
-        }
-
-        html[data-theme="dark"] .current-player-indicator {
-            box-shadow: var(--shadow-dark);
         }
 
         .current-player-indicator.player-X {
@@ -954,6 +953,7 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
 
             <div class="button-row">
                 <button id="startLocalGameBtn" class="button">Play Local Game</button>
+                 <button id="resumeLocalGameBtn" class="button secondary hidden">Resume Local <span id="resumeGridSizeText"></span> Game</button>
                 <button id="startOnlineGameBtn" class="button secondary">Create Online Game</button>
             </div>
             <div class="form-group" style="margin-top: 1.5rem;">
@@ -988,7 +988,8 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             <div id="globalGridDisplay" class="global-grid-display"></div>
             <div class="game-controls-ingame section-card button-row" style="max-width: none; margin-top: 1rem;">
                 <button id="resetGameBtn" class="button danger">Reset Game</button>
-                <button id="backToMenuBtn" class="button secondary">Back to Menu</button>
+                <button id="saveAndLeaveBtn" class="button secondary hidden">Save & Leave</button>
+                <button id="backToMenuBtn" class="button secondary none">Back to Menu</button>
             </div>
         </section>
     </main>
@@ -1066,6 +1067,11 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
         let currentPlayerIndicatorContainer, currentPlayerIndicator
         let modalConfirmCallback = null;
 
+        let resumeLocalGameBtn, resumeGridSizeTextEl;
+        let saveAndLeaveBtn;
+
+        const LOCAL_STORAGE_GAME_PREFIX = "uttt_local_game_";
+
         let currentSessionId = null;
         let currentGameId = null;
         let currentGameState = null;
@@ -1121,11 +1127,16 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             currentPlayerIndicatorContainer = document.getElementById('currentPlayerIndicatorContainer');
             currentPlayerIndicator = document.getElementById('currentPlayerIndicator');
 
+            resumeLocalGameBtn = document.getElementById('resumeLocalGameBtn');
+            resumeGridSizeTextEl = document.getElementById('resumeGridSizeText');
+            saveAndLeaveBtn = document.getElementById('saveAndLeaveBtn');
+
             setupEventListeners();
             initializeTheme();
             determineSessionId();
             loadSessionStats();
             checkUrlForJoin();
+            updateResumeButtonVisibility();
             showScreen('gameSetup');
         }
 
@@ -1210,8 +1221,13 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
         }
 
         function setupEventListeners() {
-            startLocalGameBtn.addEventListener('click', () => createNewGame('local'));
+            startLocalGameBtn.addEventListener('click', () => createNewGame('local', false));
             startOnlineGameBtn.addEventListener('click', () => createNewGame('online'));
+
+            resumeLocalGameBtn.addEventListener('click', () => createNewGame('local', true)); // true = fortsetzen
+            saveAndLeaveBtn.addEventListener('click', saveLocalGameAndLeave);
+            gridSizeSelect.addEventListener('change', updateResumeButtonVisibility);
+
             joinOnlineGameBtn.addEventListener('click', joinOnlineGame);
             gameIdShareEl.addEventListener('click', copyGameIdToClipboard);
             cancelOnlineWaitBtn.addEventListener('click', () => {
@@ -1256,7 +1272,89 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             } else if (cell && (!currentGameState || currentGameState.status !== 'in_progress')) {
                 console.log("CLICK_DELEGATION - Clicked a cell, but game not in progress or no game state.");
             }
-}
+        }
+
+        function getLocalStorageKeyForSize(size) {
+            return `${LOCAL_STORAGE_GAME_PREFIX}${size}x${size}`;
+        }
+
+        function saveLocalGame(gameState) {
+            if (!gameState || gameState.mode !== 'local' || gameState.status !== 'in_progress') {
+                console.warn("Cannot save game: Not a local game in progress.", gameState);
+                return false;
+            }
+            try {
+                const key = getLocalStorageKeyForSize(gameState.config.grid_size);
+                // Pydantic model_dump_for_api gibt bereits ein serialisierbares Objekt zurück.
+                // Wir müssen sicherstellen, dass alle Datumsangaben Strings sind, was model_dump_for_api tun sollte.
+                localStorage.setItem(key, JSON.stringify(gameState));
+                console.log(`Local game ${key} saved.`, gameState);
+                if(window.TB?.ui?.Toast) TB.ui.Toast.showSuccess("Game saved locally!", {duration: 1500});
+                return true;
+            } catch (e) {
+                console.error("Error saving local game to localStorage:", e);
+                if(window.TB?.ui?.Toast) TB.ui.Toast.showError("Could not save game locally.", {duration: 2000});
+                return false;
+            }
+        }
+
+        function loadLocalGame(size) {
+            try {
+                const key = getLocalStorageKeyForSize(size);
+                const savedGameJSON = localStorage.getItem(key);
+                if (savedGameJSON) {
+                    const savedGameState = JSON.parse(savedGameJSON);
+                    console.log(`Local game ${key} loaded.`, savedGameState);
+                    // Wichtig: Hier könnten wir eine Validierung mit Pydantic-ähnlicher Struktur durchführen,
+                    // aber für localStorage ist eine einfache Prüfung oft ausreichend, oder man vertraut den Daten.
+                    // Sicherstellen, dass es ein valides GameState-Objekt ist (zumindest rudimentär).
+                    if (savedGameState && savedGameState.game_id && savedGameState.config && savedGameState.mode === 'local') {
+                        // Datumsfelder könnten als Strings gespeichert sein, Pydantic im Backend behandelt das beim Laden aus DB.
+                        // Hier brauchen wir das nicht unbedingt, da JS damit umgehen kann, es sei denn, wir machen Berechnungen damit.
+                        return savedGameState;
+                    }
+                }
+            } catch (e) {
+                console.error("Error loading local game from localStorage:", e);
+            }
+            return null;
+        }
+
+        function deleteLocalGame(size) {
+            try {
+                const key = getLocalStorageKeyForSize(size);
+                localStorage.removeItem(key);
+                console.log(`Local game ${key} deleted.`);
+                updateResumeButtonVisibility(); // Aktualisiere Button-Sichtbarkeit
+            } catch (e) {
+                console.error("Error deleting local game from localStorage:", e);
+            }
+        }
+
+        function updateResumeButtonVisibility() {
+            if (!gridSizeSelect || !resumeLocalGameBtn || !resumeGridSizeTextEl) return;
+
+            const selectedSize = parseInt(gridSizeSelect.value);
+            const savedGame = loadLocalGame(selectedSize);
+
+            if (savedGame && savedGame.status === 'in_progress') { // Nur fortsetzen, wenn es noch läuft
+                resumeGridSizeTextEl.textContent = `${selectedSize}x${selectedSize}`;
+                resumeLocalGameBtn.classList.remove('hidden');
+            } else {
+                resumeLocalGameBtn.classList.add('hidden');
+            }
+        }
+
+        function saveLocalGameAndLeave() {
+            if (currentGameState && currentGameState.mode === 'local' && currentGameState.status === 'in_progress') {
+                if (saveLocalGame(currentGameState)) {
+                    showScreen('gameSetup');
+                    // currentGameState und currentGameId werden in showScreen('gameSetup') zurückgesetzt
+                }
+            } else {
+                 if(window.TB?.ui?.Toast) TB.ui.Toast.showWarning("No active local game to save.", {duration: 2000});
+            }
+        }
 
         function determineSessionId() {
             if (window.TB?.user?.getUid && typeof window.TB.user.getUid === 'function') {
@@ -1385,15 +1483,24 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
                 targetScreen.classList.remove('hidden');
             }
 
+            saveAndLeaveBtn?.classList.add('hidden');
+
             if (screenName === 'gameSetup') {
                 statsSection?.classList.remove('hidden');
                 localP2NameGroup?.classList.remove('hidden');
                 disconnectFromGameStream(); // Ensure SSE is disconnected when returning to menu
                 currentGameId = null; currentGameState = null; clientPlayerInfo = null;
-                 currentPlayerIndicatorContainer?.classList.add('hidden');
+                currentPlayerIndicatorContainer?.classList.add('hidden');
+                updateResumeButtonVisibility()
             } else {
                 statsSection?.classList.add('hidden');
-                if (screenName === 'game' || screenName === 'onlineWait') { // NEU: Indikator anzeigen, wenn ein Spiel läuft oder gewartet wird
+                if (screenName === 'game') {
+                    currentPlayerIndicatorContainer?.classList.remove('hidden');
+                    // Zeige "Save & Leave" nur für lokale Spiele, die laufen
+                    if (currentGameState && currentGameState.mode === 'local' && currentGameState.status === 'in_progress') {
+                         saveAndLeaveBtn?.classList.remove('hidden');
+                    }
+                } else if (screenName === 'onlineWait') {
                     currentPlayerIndicatorContainer?.classList.remove('hidden');
                 }
                 if (screenName === 'onlineWait' && localP2NameGroup) {
@@ -1458,13 +1565,32 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             }
         }
 
-         async function createNewGame(mode) {
+         async function createNewGame(mode, resumeIfAvailable = false) {
             const size = parseInt(gridSizeSelect.value);
+
+            if (mode === 'local' && resumeIfAvailable) {
+                const existingGame = loadLocalGame(size);
+                if (existingGame && existingGame.status === 'in_progress') {
+                    console.log("Resuming local game:", existingGame);
+                    // Client-Info für lokale Spiele wird nicht benötigt, da es keine SSE-Verbindung gibt
+                    // und die Spieler-IDs fest sind.
+                    clientPlayerInfo = null; // Sicherstellen, dass es für lokale Spiele zurückgesetzt ist
+                    processGameStateUpdate(existingGame); // GameState verarbeiten
+                    showScreen('game');
+                    saveAndLeaveBtn.classList.remove('hidden'); // Zeige Save & Leave Button
+                    return; // Frühzeitiger Ausstieg, da das Spiel fortgesetzt wird
+                } else {
+                    console.log("No local game to resume for size", size, "or game was finished. Starting new one.");
+                    // Wenn kein Spiel zum Fortsetzen da ist, fahre normal mit dem Erstellen eines neuen fort.
+                }
+            }
+
             const config = { grid_size: size };
             const p1Name = player1NameInput.value.trim() || (mode === 'local' ? "Player X" : "Me");
             const payload = { config, mode, player1_name: p1Name };
             if (mode === 'local') {
                 payload.player2_name = player2NameInput.value.trim() || "Player O";
+                deleteLocalGame(size);
             }
 
             const response = await apiRequest('create_game', payload, 'POST', {hideMainContentWhileLoading: true});
@@ -1476,6 +1602,8 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
                 if (mode === 'local') {
                     processGameStateUpdate(response.data); // Handles UI and disconnects SSE
                     showScreen('game');
+                    saveAndLeaveBtn.classList.remove('hidden'); // Zeige Save & Leave Button
+                    updateResumeButtonVisibility();
                 } else if (mode === 'online') {
                     // Client info needs to be set before processGameStateUpdate for online logic
                     clientPlayerInfo = response.data.players.find(p => p.id === currentSessionId);
@@ -1535,77 +1663,91 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
         }
 
         function processGameStateUpdate(newGameState) {
-    console.log("PROCESS_GAME_STATE_UPDATE - Received:", newGameState);
-    const oldStatus = currentGameState ? currentGameState.status : null;
-    const previousPlayerId = currentGameState ? currentGameState.current_player_id : null;
-    currentGameState = newGameState;
+            console.log("PROCESS_GAME_STATE_UPDATE - Received:", newGameState);
+            const oldStatus = currentGameState ? currentGameState.status : null;
+            const previousPlayerId = currentGameState ? currentGameState.current_player_id : null;
+            currentGameState = newGameState;
 
-    if (!currentGameState || !currentGameState.game_id) {
-        console.error("Invalid newGameState received!");
-        if(window.TB?.ui?.Toast) TB.ui.Toast.showError("Error: Corrupted game update.");
-        disconnectFromGameStream();
-        showScreen('gameSetup');
-        return;
-    }
-    currentGameId = newGameState.game_id;
+            if (!currentGameState || !currentGameState.game_id) {
+                console.error("Invalid newGameState received!");
+                if(window.TB?.ui?.Toast) TB.ui.Toast.showError("Error: Corrupted game update.");
+                disconnectFromGameStream();
+                showScreen('gameSetup');
+                return;
+            }
+            currentGameId = newGameState.game_id;
 
-    if (currentGameState.mode === 'local') {
-        const currentPlayer = currentGameState.players.find(p => p.id === currentGameState.current_player_id);
-        localPlayerActiveSymbol = currentPlayer ? currentPlayer.symbol : '?';
-        disconnectFromGameStream(); // No SSE for local games
-    } else if (currentGameState.mode === 'online') {
-        // Ensure clientPlayerInfo is correctly identified
-        if (!clientPlayerInfo || !currentGameState.players.find(p => p.id === clientPlayerInfo.id)) {
-             clientPlayerInfo = currentGameState.players.find(p => p.id === currentSessionId);
-             console.log("PROCESS_GAME_STATE_UPDATE (Online) - ClientPlayerInfo (re)set:", clientPlayerInfo);
-        }
-
-        const onlineWaitScreenActive = !document.getElementById('onlineWaitSection').classList.contains('hidden');
-        if (onlineWaitScreenActive && currentGameState.status === 'in_progress') {
-            if(window.TB?.ui?.Toast) TB.ui.Toast.showSuccess("Opponent connected! Game starting.", {duration: 2000});
-            showScreen('game');
-        }
-
-        // Manage SSE connection based on game state
-        if (currentGameState.status === 'in_progress') {
-            const isMyTurnOnline = clientPlayerInfo && currentGameState.current_player_id === clientPlayerInfo.id;
-            if (isMyTurnOnline) {
-                disconnectFromGameStream(); // My turn, stop listening
-                if (previousPlayerId !== currentGameState.current_player_id && oldStatus === 'in_progress') {
-                    if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("It's your turn!", {duration: 2000});
+            if (currentGameState.mode === 'local') {
+                const currentPlayer = currentGameState.players.find(p => p.id === currentGameState.current_player_id);
+                localPlayerActiveSymbol = currentPlayer ? currentPlayer.symbol : '?';
+                disconnectFromGameStream(); // No SSE for local games
+                if (currentGameState.status === 'in_progress' && saveAndLeaveBtn) { // Sicherstellen, dass Button existiert
+                    saveAndLeaveBtn.classList.remove('hidden');
+                } else if (saveAndLeaveBtn) {
+                    saveAndLeaveBtn.classList.add('hidden');
                 }
-            } else {
-                connectToGameStream(currentGameState.game_id); // Opponent's turn, ensure listening
-            }
-        } else if (currentGameState.status === 'waiting_for_opponent') {
-            // This client is P1 waiting, or P2 joined and game is still somehow waiting (e.g. P1 disconnected)
-            // Ensure client who should be waiting is connected to stream
-            const amIPlayer1 = clientPlayerInfo && currentGameState.players.length > 0 && currentGameState.players[0].id === clientPlayerInfo.id;
-            const amIAPlayer = clientPlayerInfo && currentGameState.players.find(p => p.id === clientPlayerInfo.id);
+            } else if (currentGameState.mode === 'online') {
+                // Ensure clientPlayerInfo is correctly identified
+                if (!clientPlayerInfo || !currentGameState.players.find(p => p.id === clientPlayerInfo.id)) {
+                     clientPlayerInfo = currentGameState.players.find(p => p.id === currentSessionId);
+                     console.log("PROCESS_GAME_STATE_UPDATE (Online) - ClientPlayerInfo (re)set:", clientPlayerInfo);
+                }
 
-            if (amIPlayer1 || (amIAPlayer && !clientPlayerInfo.id.startsWith("p1_"))) { // P1 connects, or P2 connects if game is waiting (e.g. P1 dropped after P2 joined)
-                 connectToGameStream(currentGameState.game_id);
-            } else {
-                 disconnectFromGameStream(); // Not my concern if I'm not the active/waiting party
+                const onlineWaitScreenActive = !document.getElementById('onlineWaitSection').classList.contains('hidden');
+                if (onlineWaitScreenActive && currentGameState.status === 'in_progress') {
+                    if(window.TB?.ui?.Toast) TB.ui.Toast.showSuccess("Opponent connected! Game starting.", {duration: 2000});
+                    showScreen('game');
+                }
+
+                // Manage SSE connection based on game state
+                if (currentGameState.status === 'in_progress') {
+                    const isMyTurnOnline = clientPlayerInfo && currentGameState.current_player_id === clientPlayerInfo.id;
+                    if (isMyTurnOnline) {
+                        disconnectFromGameStream(); // My turn, stop listening
+                        if (previousPlayerId !== currentGameState.current_player_id && oldStatus === 'in_progress') {
+                            if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("It's your turn!", {duration: 2000});
+                        }
+                    } else {
+                        connectToGameStream(currentGameState.game_id); // Opponent's turn, ensure listening
+                    }
+                } else if (currentGameState.status === 'waiting_for_opponent') {
+                    // This client is P1 waiting, or P2 joined and game is still somehow waiting (e.g. P1 disconnected)
+                    // Ensure client who should be waiting is connected to stream
+                    const amIPlayer1 = clientPlayerInfo && currentGameState.players.length > 0 && currentGameState.players[0].id === clientPlayerInfo.id;
+                    const amIAPlayer = clientPlayerInfo && currentGameState.players.find(p => p.id === clientPlayerInfo.id);
+
+                    if (amIPlayer1 || (amIAPlayer && !clientPlayerInfo.id.startsWith("p1_"))) { // P1 connects, or P2 connects if game is waiting (e.g. P1 dropped after P2 joined)
+                         connectToGameStream(currentGameState.game_id);
+                    } else {
+                         disconnectFromGameStream(); // Not my concern if I'm not the active/waiting party
+                    }
+                } else if (currentGameState.status === 'finished' || currentGameState.status === 'aborted') {
+                    disconnectFromGameStream(); // Game over, stop listening
+                }
+                if (saveAndLeaveBtn) saveAndLeaveBtn.classList.add('hidden');
             }
-        } else if (currentGameState.status === 'finished' || currentGameState.status === 'aborted') {
-            disconnectFromGameStream(); // Game over, stop listening
+
+            renderBoard();
+            updateStatusBar();
+
+            if (currentGameState.status === 'finished' || currentGameState.status === 'aborted') {
+                 if (saveAndLeaveBtn) saveAndLeaveBtn.classList.add('hidden'); // Verstecke bei Spielende
+                // Wenn ein lokales Spiel beendet ist, lösche den gespeicherten Zustand
+                if (currentGameState.mode === 'local') {
+                    deleteLocalGame(currentGameState.config.grid_size);
+                }
+                disconnectFromGameStream();
+                if (currentGameState.status === 'finished') {
+                    showGameOverModal();
+                    loadSessionStats();
+                } else { // ABORTED
+                     showModal("Game Aborted", currentGameState.last_error_message || "The game was aborted.", () => showScreen('gameSetup'));
+                }
+            }
         }
-    }
-
-    renderBoard();
-    updateStatusBar();
-
-    if (currentGameState.status === 'finished') {
-        showGameOverModal();
-        loadSessionStats();
-    } else if (currentGameState.status === 'aborted') {
-        showModal("Game Aborted", currentGameState.last_error_message || "The game was aborted.", () => showScreen('gameSetup'));
-    }
-}
 
 
-    async function makePlayerMove(globalR, globalC, localR, localC) {
+        async function makePlayerMove(globalR, globalC, localR, localC) {
             if (!currentGameState || !currentGameId || currentGameState.status !== 'in_progress') return;
 
             let playerIdForMove;
@@ -1649,10 +1791,15 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
             );
         }
         function confirmBackToMenu() {
-            // disconnectFromGameStream will be called by showScreen('gameSetup')
             if (currentGameState && currentGameState.status !== 'finished' && currentGameState.status !== 'aborted') {
-                showModal('Back to Menu?', 'Current game progress will be lost. Are you sure?', () => {
-                    // TODO: If online game, consider API call to forfeit/leave if polite.
+                let message = 'Current game progress will be lost. Are you sure?';
+                if (currentGameState.mode === 'local' && currentGameState.status === 'in_progress') {
+                    message = 'Game is not saved. Progress will be lost. Use "Save & Leave" to save. Continue to menu?';
+                }
+                showModal('Back to Menu?', message, () => {
+                    // Wenn ein lokales Spiel nicht gespeichert und verlassen wurde, könnte es hier explizit gelöscht werden,
+                    // oder man verlässt sich darauf, dass beim Start eines neuen Spiels der alte Speicher gelöscht wird.
+                    // deleteLocalGame(currentGameState.config.grid_size); // Optional: Sofort löschen
                     showScreen('gameSetup');
                 });
             } else {
