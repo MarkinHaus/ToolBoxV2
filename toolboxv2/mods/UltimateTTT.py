@@ -1255,6 +1255,11 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ultimate Tic-Tac-Toe</title>
+    <meta property="og:title" content="Ultimate Tic-Tac-Toe">
+    <meta property="og:description" content="Officell ToolBoxV2 Interface">
+    <meta property="og:image" content="https://simplecore.app/web/webapp/TTTimg.png">
+    <meta property="og:url" content="https://simplecore.app/api/UltimateTTT/ui">
+    <meta property="og:type" content="website"/>
     <style>
         :root {
             --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
