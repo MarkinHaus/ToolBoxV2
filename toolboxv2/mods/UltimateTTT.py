@@ -1237,7 +1237,7 @@ async def api_open_game_stream(app: App, request: RequestData, game_id: str, pla
 def init_ultimate_ttt_module(app: App):
     app.run_any(("CloudM", "add_ui"),
                 name=GAME_NAME,
-                title="Ultimate SSE Tic-Tac-Toe",  # Simpler title
+                title="Ultimate Tic-Tac-Toe",  # Simpler title
                 path=f"/api/{GAME_NAME}/ui",
                 description="Strategic Tic-Tac-Toe with nested grids."
                 )
@@ -1880,6 +1880,9 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
 
             globalGridDisplay.addEventListener('mouseover', handleCellMouseOver);
             globalGridDisplay.addEventListener('mouseout', handleCellMouseOut);
+
+            globalGridDisplay.addEventListener('touchstart', handleCellMouseOver, { passive: true });
+            globalGridDisplay.addEventListener('touchend', handleCellMouseOut, { passive: true });
 
             modalCancelBtn.addEventListener('click', hideModal);
             modalConfirmBtn.addEventListener('click', () => {
