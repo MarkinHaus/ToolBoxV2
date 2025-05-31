@@ -122,7 +122,6 @@ class Tools(MainTool):
                           name=self.name,
                           color=self.color,
                           on_exit=self.on_exit)
-        self.on_start()
 
     def on_start(self):
         self.shares_metadata_path = Path(self.app.data_dir) / SHARES_METADATA_FILENAME

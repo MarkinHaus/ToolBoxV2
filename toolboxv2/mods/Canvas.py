@@ -8,11 +8,14 @@ import asyncio
 import json
 import os
 import uuid
-from typing import Dict, Optional, List, Any, Union
+from collections import defaultdict
+from datetime import datetime, timezone
+from typing import Dict, Optional, List, Any, Union, AsyncGenerator
 
 from pydantic import BaseModel, Field as PydanticField
 
 from toolboxv2 import App, Result, RequestData, get_app, MainTool
+from toolboxv2.utils.extras.base_widget import get_user_from_request
 
 # --- Module Definition ---
 MOD_NAME = Name = "Canvas"  # Renamed slightly for clarity if this is a new version
@@ -96,9 +99,22 @@ class Tools(MainTool):
         self.version = VERSION
         self.color = "GREEN"  # Changed color for distinction
         self.tools = {"name": MOD_NAME, "Version": self.show_version}
-        MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools, name=self.name, color=self.color)
         self.db_mod = None
         self.app.logger.info(f"{self.name} v{self.version} instance created.")
+        # For SSE Collaboration:
+        # Stores a list of asyncio.Queue objects for each active canvas_id
+        # Key: canvas_id (str), Value: List[asyncio.Queue]
+        # For SSE Collaboration:
+        self.live_canvas_sessions: Dict[str, List[asyncio.Queue]] = defaultdict(list)
+
+        # For managing shared state of user previews safely across async tasks
+        self.active_user_previews: Dict[str, Dict[str, Any]] = defaultdict(lambda: defaultdict(dict))
+        self.previews_lock = asyncio.Lock()  # Lock for active_user_previews
+
+        # Internal event queue for decoupling action handling from broadcasting
+        self.internal_broadcast_queue = asyncio.Queue()
+        self._internal_broadcast_processor_task = None
+        MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools, name=self.name, color=self.color)
 
     def on_start(self):
         self.app.logger.info(f"Initializing {self.name} v{self.version}...")
@@ -107,18 +123,39 @@ class Tools(MainTool):
             if not self.db_mod:
                 self.app.logger.error(f"{self.name}: DB module not found. Session persistence will not work.")
         except Exception as e:
-            self.app.logger.error(f"Error during {self.name} on_start: {e}", exc_info=True)
-            return
+            self.app.logger.error(f"Error during {self.name} on_start (DB init): {e}", exc_info=True)
+            # Continue if DB is not critical for core logic, or return if it is.
 
-        self.app.run_any(
-            ("CloudM", "add_ui"),
-            name=f"{MOD_NAME}UI_v010",  # Updated UI name
-            title=f"Enhanced Canvas Studio v{VERSION}",
-            path=f"/api/{MOD_NAME}/ui",
-            description="Interactive Canvas with draw/move modes and enhanced configuration.",
-            auth=True
-        )
-        self.app.logger.info(f"{self.name} UI (v{VERSION}) registered with CloudM.")
+        # Start the internal broadcast processor task
+        if self._internal_broadcast_processor_task is None or self._internal_broadcast_processor_task.done():
+
+            try:
+                current_loop = asyncio.get_event_loop()
+            except RuntimeError:
+                current_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(current_loop)
+            if hasattr(self.app, 'loop') and self.app.loop is not None: # If app has a designated loop
+                 current_loop = self.app.loop
+            self._internal_broadcast_processor_task = current_loop.create_task(self._process_internal_broadcasts())
+            self.app.logger.info(f"{self.name} internal broadcast processor task started.")
+        else:
+            self.app.logger.info(f"{self.name} internal broadcast processor task already running.")
+
+
+        # UI Registration
+        try:
+            self.app.run_any(
+                ("CloudM", "add_ui"),
+                name=f"{MOD_NAME}UI_v010",
+                title=f"Enhanced Canvas Studio v{VERSION}",
+                path=f"/api/{MOD_NAME}/ui",
+                description="Interactive Canvas with draw/move modes and enhanced configuration.",
+                auth=True
+            )
+            self.app.logger.info(f"{self.name} UI (v{VERSION}) registered with CloudM.")
+        except Exception as e:
+            self.app.logger.error(f"Error registering UI for {self.name}: {e}", exc_info=True)
+
         self.app.logger.info(f"{self.name} (v{VERSION}) initialized successfully.")
 
     def show_version(self):
@@ -126,16 +163,101 @@ class Tools(MainTool):
         return self.version
 
     async def _get_user_specific_db_key(self, request: RequestData, base_key: str) -> Optional[str]:
-        user = await self.app.run_any(("UserM", "get_user_from_request"), request=request)
+        """user = await get_user_from_request(self.app, request)
         if user and hasattr(user, 'uid') and user.uid:
             return f"{base_key}_{user.uid}"
-        if request and request.session and request.session.get('SiID'):
-            return f"{base_key}_{request.session.get('SiID')}"
+        if request and request.session and request.session.SiID:
+            return f"{base_key}_public"# {request.session.SiID}"
         self.app.logger.warning(f"Could not get UID for user to form DB key. Request session: {request.session}")
-        return None
+        return f"{base_key}_public"""
+        return f"{base_key}_public"
+
+    async def _process_internal_broadcasts(self):
+        """
+        Consumes events from an internal queue and calls _broadcast_to_canvas_listeners.
+        This ensures broadcasting logic is centralized and decoupled.
+        """
+        self.app.logger.info(f"[{self.name}] Internal broadcast processing loop starting...")
+        try:
+            while True:
+                try:
+                    event_payload = await self.internal_broadcast_queue.get()
+                    canvas_id = event_payload.get("canvas_id")
+                    event_type = event_payload.get("event_type")
+                    data = event_payload.get("data")
+                    originator_user_id = event_payload.get("originator_user_id")
+
+                    if not all([canvas_id, event_type, data is not None]):
+                        self.app.logger.error(f"Invalid internal broadcast event payload: {event_payload}")
+                        self.internal_broadcast_queue.task_done()
+                        continue
+
+                    # self.app.logger.debug(f"Processing internal broadcast: {event_type} for C:{canvas_id} from U:{originator_user_id}")
+                    await self._broadcast_to_canvas_listeners(canvas_id, event_type, data, originator_user_id)
+                except Exception as e:
+                    self.app.logger.error(f"Error during internal broadcast processing: {e}. Payload: {event_payload}",
+                                          exc_info=True)
+                finally:
+                    self.internal_broadcast_queue.task_done()
+        except asyncio.CancelledError:
+            self.app.logger.info(f"[{self.name}] Internal broadcast processing loop cancelled.")
+        except Exception as e:
+            self.app.logger.error(f"[{self.name}] Internal broadcast processing loop CRASHED: {e}", exc_info=True)
+        finally:
+            self.app.logger.info(f"[{self.name}] Internal broadcast processing loop stopped.")
+
+    async def _broadcast_to_canvas_listeners(self, canvas_id: str, event_type: str, data: Dict[str, Any],
+                                             originator_user_id: Optional[str] = None):
+        """Helper to put a message onto queues for a given canvas_id."""
+        # This method remains largely the same, but is now called by _process_internal_broadcasts
+        message_obj = {
+            "event": event_type,
+            "data": json.dumps({
+                "canvas_id": canvas_id,
+                "originator_user_id": originator_user_id,
+                **data
+            })
+        }
+
+        queues_to_remove = []
+        # Critical section for accessing live_canvas_sessions list, though list itself is modified less often.
+        # If additions/removals to live_canvas_sessions[canvas_id] list are frequent and from multiple tasks,
+        # this list might also need a lock or be copied before iteration. For now, assuming low contention.
+        active_queues = list(self.live_canvas_sessions.get(canvas_id, []))  # Iterate over a copy
+
+        if not active_queues:
+            # self.app.logger.debug(f"No active listeners for canvas {canvas_id} to broadcast {event_type}.")
+            return
+
+        # self.app.logger.debug(f"Broadcasting '{event_type}' to {len(active_queues)} listeners for canvas {canvas_id}")
+        for q in active_queues:
+            try:
+                q.put_nowait(message_obj)
+            except asyncio.QueueFull:
+                self.app.logger.warning(
+                    f"SSE queue full for canvas {canvas_id} during broadcast of {event_type}. Message dropped for one client.")
+                queues_to_remove.append(q)  # Mark for potential removal from original list
+            except Exception as e:
+                self.app.logger.error(f"Error putting message on SSE queue for canvas {canvas_id} ({event_type}): {e}")
+                queues_to_remove.append(q)
+
+        if queues_to_remove:
+            # This part needs to carefully modify the original list structure
+            if canvas_id in self.live_canvas_sessions:
+                original_queues = self.live_canvas_sessions[canvas_id]
+                self.live_canvas_sessions[canvas_id] = [
+                    q for q in original_queues if q not in queues_to_remove
+                ]
+                if not self.live_canvas_sessions[canvas_id]:
+                    async with self.previews_lock:  # Ensure atomicity if also clearing previews
+                        if canvas_id in self.live_canvas_sessions:  # Check again before del
+                            del self.live_canvas_sessions[canvas_id]
+                        if canvas_id in self.active_user_previews:  # Also clear previews if no listeners
+                            del self.active_user_previews[canvas_id]
+                    self.app.logger.info(f"Removed all listeners for canvas {canvas_id} due to queue errors/fullness.")
 
     @export(mod_name=MOD_NAME, api=True, version=VERSION, name="ui", api_methods=['GET'])
-    async def get_main_ui(self, request: Optional[RequestData] = None) -> Result:
+    async def get_main_ui(self, request: Optional[RequestData] = None, **kwargs) -> Result:
         # The HTML template will be named differently to reflect the new version
         html_content = ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0
         return Result.html(data=self.app.web_context() + html_content)
@@ -220,7 +342,6 @@ class Tools(MainTool):
 
         session_list_key = f"{user_db_key_base}{SESSION_LIST_KEY_SUFFIX}"
         list_res_obj = self.db_mod.get(session_list_key)
-        if asyncio.iscoroutine(list_res_obj): list_res_obj = await list_res_obj
 
         user_sessions = []
         if list_res_obj and not list_res_obj.is_error() and list_res_obj.is_data():
@@ -228,7 +349,7 @@ class Tools(MainTool):
                 list_content = list_res_obj.get()  # Get can return list or string based on DB adapter
                 json_str_to_load = list_content[0] if isinstance(list_content,
                                                                  list) and list_content else list_content if isinstance(
-                    list_content, str) else "[]"
+                    list_content, str) or isinstance(list_content, bytes) else "[]"
                 user_sessions = json.loads(json_str_to_load)
                 if not isinstance(user_sessions, list): user_sessions = []
             except (json.JSONDecodeError, TypeError) as e:
@@ -250,31 +371,31 @@ class Tools(MainTool):
 
         session_db_key = f"{user_db_key_base}_{session_id}"
         get_res_obj = self.db_mod.get(session_db_key)
-        if asyncio.iscoroutine(get_res_obj): get_res_obj = await get_res_obj
 
-        if get_res_obj and not get_res_obj.is_error() and get_res_obj.is_data():
-            try:
-                get_content = get_res_obj.get()
-                session_data_str = get_content[0] if isinstance(get_content,
-                                                                list) and get_content else get_content if isinstance(
-                    get_content, str) else "{}"
-
-                if session_data_str and session_data_str != "{}":
-                    session_data_dict = json.loads(session_data_str)
-                    # Ensure defaults are applied for new fields if loading old data
-                    merged_app_state = {**IdeaSessionData().model_fields['canvas_app_state'].default,
-                                        **session_data_dict.get("canvas_app_state", {})}
-                    session_data_dict["canvas_app_state"] = merged_app_state
-
-                    session_data = IdeaSessionData(**session_data_dict)
-                    return Result.json(data=session_data.model_dump())
-                else:
-                    return Result.default_user_error(info="Session data is empty.", exec_code=404)
-            except (json.JSONDecodeError, TypeError, Exception) as e:
-                self.app.logger.error(f"Error loading or parsing session {session_id}: {e}", exc_info=True)
-                return Result.custom_error(info=f"Failed to load session data: {e}", exec_code=500)
-        else:
+        if get_res_obj and get_res_obj.is_error():
             return Result.default_user_error(info="Session not found.", exec_code=404)
+
+        get_res_obj = get_res_obj.get()
+
+        if isinstance(get_res_obj, list):
+            get_res_obj = get_res_obj[0]
+
+        try:
+            session_data_str = get_res_obj
+            if session_data_str and session_data_str != "{}":
+                session_data_dict = json.loads(session_data_str)
+                # Ensure defaults are applied for new fields if loading old data
+                merged_app_state = {**IdeaSessionData().model_fields['canvas_app_state'].default,
+                                    **session_data_dict.get("canvas_app_state", {})}
+                session_data_dict["canvas_app_state"] = merged_app_state
+
+                session_data = IdeaSessionData(**session_data_dict)
+                return Result.json(data=session_data.model_dump())
+            else:
+                return Result.default_user_error(info="Session data is empty.", exec_code=404)
+        except (json.JSONDecodeError, TypeError, Exception) as e:
+            self.app.logger.error(f"Error loading or parsing session {session_id}: {e}", exc_info=True)
+            return Result.custom_error(info=f"Failed to load session data: {e}", exec_code=500)
 
     @export(mod_name=MOD_NAME, api=True, version=VERSION, name="export_canvas_json", api_methods=['POST'],
             request_as_kwarg=True)
@@ -288,6 +409,183 @@ class Tools(MainTool):
             self.app.logger.error(f"Error preparing canvas JSON export: {e}", exc_info=True)
             return Result.default_user_error(info=f"Invalid data for JSON export: {e}", exec_code=400)
 
+    @export(mod_name=MOD_NAME, api=True, version=VERSION, name="open_canvas_stream", api_methods=['GET'],
+            request_as_kwarg=True)
+    async def stream_canvas_updates_sse(self, request: RequestData, canvas_id: str,
+                                        client_id: Optional[str] = None) -> Result:
+        if not canvas_id:
+            async def _error_gen(): yield {'event': 'error', 'data': json.dumps({'message': 'canvas_id is required'})}
+
+            return Result.sse(stream_generator=_error_gen())
+
+        session_client_id = client_id or str(uuid.uuid4().hex[:12])
+        queue = asyncio.Queue()
+        self.live_canvas_sessions[canvas_id].append(
+            queue)  # Appending to defaultdict list is thread/async safe for append itself
+        self.app.logger.info(
+            f"SSE: Client {session_client_id} connected to stream for canvas_id: {canvas_id}. Total listeners: {len(self.live_canvas_sessions[canvas_id])}")
+
+        try:
+            await queue.put({
+                "event": "stream_connected",
+                "data": json.dumps(
+                    {"message": "Connected to canvas stream.", "canvasId": canvas_id, "clientId": session_client_id})
+            })
+            async with self.previews_lock:  # Read active_user_previews safely
+                if canvas_id in self.active_user_previews:
+                    for uid, pdata in self.active_user_previews[canvas_id].items():
+                        if uid != session_client_id:
+                            await queue.put({
+                                "event": "user_preview_update",
+                                "data": json.dumps({"canvas_id": canvas_id, "user_id": uid, "preview_data": pdata})
+                            })
+        except Exception as e:
+            self.app.logger.error(
+                f"SSE: Error sending initial message/previews to client {session_client_id} for canvas {canvas_id}: {e}")
+
+        async def event_generator() -> AsyncGenerator[Dict[str, Any], None]:
+            nonlocal queue  # Ensure we are referring to the queue created above
+            should_continue = True
+            try:
+                while should_continue:
+                    try:
+                        message = await asyncio.wait_for(queue.get(), timeout=300)
+                        if message is None:  # Sentinel for explicit close
+                            should_continue = False;
+                            break
+                        yield message
+                        queue.task_done()
+                    except asyncio.TimeoutError:
+                        yield {"event": "ping",
+                               "data": json.dumps({"timestamp": datetime.now(timezone.utc).isoformat()})}
+            except asyncio.CancelledError:
+                self.app.logger.info(
+                    f"SSE: Client {session_client_id} (canvas {canvas_id}) disconnected (stream cancelled).")
+                should_continue = False
+            except Exception as e:
+                self.app.logger.error(
+                    f"SSE: Error in event_generator for client {session_client_id}, canvas {canvas_id}: {e}",
+                    exc_info=True)
+                should_continue = False
+            finally:
+                self.app.logger.info(f"SSE: Cleaning up for client {session_client_id}, canvas {canvas_id}.")
+                # Remove queue from live sessions
+                # This modification needs to be careful if other tasks are iterating
+                if canvas_id in self.live_canvas_sessions:
+                    try:
+                        self.live_canvas_sessions[canvas_id].remove(queue)
+                        if not self.live_canvas_sessions[canvas_id]:
+                            del self.live_canvas_sessions[canvas_id]  # remove canvas_id if list empty
+                            self.app.logger.info(
+                                f"SSE: All listeners disconnected for canvas {canvas_id}, removing from live_canvas_sessions.")
+                    except ValueError:
+                        self.app.logger.warning(
+                            f"SSE: Queue for client {session_client_id} (canvas {canvas_id}) not found in list during cleanup.")
+
+                # Clear this user's preview and notify others
+                preview_cleared_for_disconnecting_user = False
+                async with self.previews_lock:
+                    if canvas_id in self.active_user_previews and session_client_id in self.active_user_previews[
+                        canvas_id]:
+                        del self.active_user_previews[canvas_id][session_client_id]
+                        preview_cleared_for_disconnecting_user = True
+                        if not self.active_user_previews[canvas_id]:  # Clean up if no previews left for canvas
+                            del self.active_user_previews[canvas_id]
+                            self.app.logger.info(
+                                f"SSE: All previews cleared for canvas {canvas_id}, removing from active_user_previews.")
+
+                if preview_cleared_for_disconnecting_user:
+                    # Broadcast that this user's preview should be cleared (using internal queue)
+                    broadcast_payload = {
+                        "canvas_id": canvas_id,
+                        "event_type": "clear_user_preview",
+                        "data": {"user_id": session_client_id},
+                        "originator_user_id": session_client_id  # Originator is self for this system msg
+                    }
+                    await self.internal_broadcast_queue.put(broadcast_payload)
+                self.app.logger.info(
+                    f"SSE: Client {session_client_id} (canvas {canvas_id}) cleanup complete. Remaining listeners: {len(self.live_canvas_sessions.get(canvas_id, []))}")
+
+        return Result.sse(stream_generator=event_generator())
+
+    @export(mod_name=MOD_NAME, api=True, version=VERSION, name="send_canvas_action", api_methods=['POST'],
+            request_as_kwarg=True)
+    async def handle_send_canvas_action(self, request: RequestData, data: Dict[str, Any]):
+        canvas_id = data.get("canvas_id")
+        action_type = data.get("action_type")
+        element_payload = data.get("payload")
+        user_id = data.get("user_id")
+
+        if not all([canvas_id, action_type, user_id]) or element_payload is None:
+            return Result.default_user_error(
+                "Missing required fields (canvas_id, action_type, payload, user_id). Payload can be {} but not null.",
+                400)
+        if not isinstance(element_payload, dict):
+            return Result.default_user_error("Payload must be a dictionary.", 400)
+
+        self.app.logger.debug(
+            f"Action received: C:{canvas_id}, A:{action_type}, U:{user_id}, P: {str(element_payload)[:100]}")
+
+        event_to_broadcast = ""
+        data_to_broadcast = {}
+        clear_originator_preview_after_crud = False
+
+        if action_type == "preview_update":
+            event_to_broadcast = "user_preview_update"
+            async with self.previews_lock:
+                self.active_user_previews[canvas_id][user_id] = element_payload
+            data_to_broadcast = {"user_id": user_id, "preview_data": element_payload}
+
+        elif action_type == "preview_clear":
+            event_to_broadcast = "clear_user_preview"
+            async with self.previews_lock:
+                if user_id in self.active_user_previews.get(canvas_id, {}):
+                    del self.active_user_previews[canvas_id][user_id]
+                    if not self.active_user_previews[canvas_id]:
+                        del self.active_user_previews[canvas_id]
+            data_to_broadcast = {"user_id": user_id}
+
+        elif action_type in ["element_add", "element_update", "element_remove"]:
+            if action_type == "element_remove" and not element_payload.get("id"):
+                return Result.default_user_error("Payload for element_remove must contain an 'id'.", 400)
+
+            event_to_broadcast = "canvas_elements_changed"
+            data_to_broadcast = {"action": action_type, "element": element_payload}
+            clear_originator_preview_after_crud = True  # Flag to clear preview after this main action
+
+        else:
+            return Result.default_user_error(f"Unknown action_type: {action_type}", 400)
+
+        # Primary broadcast for the action itself
+        if event_to_broadcast:
+            internal_event_payload = {
+                "canvas_id": canvas_id,
+                "event_type": event_to_broadcast,
+                "data": data_to_broadcast,
+                "originator_user_id": user_id
+            }
+            await self.internal_broadcast_queue.put(internal_event_payload)
+
+        # If a CRUD action was performed, also broadcast a clear_user_preview for the originator
+        if clear_originator_preview_after_crud:
+            originator_preview_cleared = False
+            async with self.previews_lock:
+                if user_id in self.active_user_previews.get(canvas_id, {}):
+                    del self.active_user_previews[canvas_id][user_id]
+                    originator_preview_cleared = True
+                    if not self.active_user_previews[canvas_id]:
+                        del self.active_user_previews[canvas_id]
+
+            if originator_preview_cleared:
+                clear_preview_payload_for_broadcast = {
+                    "canvas_id": canvas_id,
+                    "event_type": "clear_user_preview",
+                    "data": {"user_id": user_id},
+                    "originator_user_id": user_id  # Originator is self for this system msg
+                }
+                await self.internal_broadcast_queue.put(clear_preview_payload_for_broadcast)
+
+        return Result.ok(info=f"Action '{action_type}' processed for canvas {canvas_id}.")
 
 # --- HTML Template for v0.1.0 ---
 # (This will be a new variable name and contain the updated HTML)
@@ -442,7 +740,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             <button id="toolEllipseBtn" title="Ellipse (O)" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">circle</span></button>
             <button id="toolTextBtn" title="Text (T)" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">title</span></button>
             <button id="toolImageBtn" title="Image" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">image</span></button>
-            <button id="managePresetsBtn" title="Manage Presets" class="tb-btn tb-btn-neutral tb-btn-sm tb-btn-icon none" style="margin-left:10px;"><span class="material-symbols-outlined">palette</span></button>
+
         </div>
         <div id="commonToolsGroup" class="toolbar-group"> <!-- Common properties -->
             <label for="strokeColorPicker" title="Stroke Color">S:</label><input type="color" id="strokeColorPicker" value="#000000">
@@ -462,6 +760,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             <label for="importJsonInput" title="Import JSON" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">file_upload</span></label>
             <input type="file" id="importJsonInput" accept=".json" style="display: none;">
             <div id="darkModeToggleContainer" style="display: inline-flex; align-items: center;"></div>
+            <button id="shareCanvasBtn"> </button>
         </div>
     </div>
     <div class="main-layout">
@@ -569,6 +868,15 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
     let settingsModalInstance = null;
     let presetManagementModalInstance = null;
 
+    let sseConnection = null;
+    let sseCanvasId = null; // Track which canvas the SSE is for
+    let localClientId = null; // Unique ID for this browser session/user
+
+    // For remote user previews
+    // Structure: { "remote_user_id_1": element_preview_data_1, "remote_user_id_2": element_preview_data_2 }
+    let remoteUserPreviews = {};
+    let sendPreviewDataThrottled; // For throttling preview updates
+
 
     const DEFAULT_CANVAS_APP_STATE = {
         viewBackgroundColor: "#ffffff",
@@ -629,6 +937,16 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             new TB.ui.DarkModeToggle({ target: document.getElementById('darkModeToggleContainer') });
         }
 
+        localClientId = localStorage.getItem('canvasClientId');
+        if (!localClientId) {
+            localClientId = TB.utils.uniqueId('client_');
+            localStorage.setItem('canvasClientId', localClientId);
+        }
+        TB.logger.info(`Canvas Client ID: ${localClientId}`);
+
+        // Initialize throttled function for sending previews
+        sendPreviewDataThrottled = TB.utils.throttle(sendCurrentPreviewDataToServer, 100);
+
         const canvasNameInputEl = document.getElementById('canvasNameInput');
         const newSessionBtnEl = document.getElementById('newSessionBtn');
         const saveSessionBtnEl = document.getElementById('saveSessionBtn');
@@ -654,7 +972,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             rectangle: document.getElementById('toolRectBtn'),
             ellipse: document.getElementById('toolEllipseBtn'),
             text: document.getElementById('toolTextBtn'),
-            image: document.getElementById('toolImageBtn'),
+             // image tool is handled separately now
         };
 
         const strokeColorPickerEl = document.getElementById('strokeColorPicker');
@@ -699,6 +1017,11 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         Object.entries(activeToolButtons).forEach(([toolName, btn]) => {
             btn.addEventListener('click', () => setActiveTool(toolName));
         });
+        const toolImageBtnEl = document.getElementById('toolImageBtn');
+
+        if (toolImageBtnEl) {
+            toolImageBtnEl.addEventListener('click', handleAddImageByURL);
+        }
 
         strokeColorPickerEl.addEventListener('input', (e) => {
             const newColor = e.target.value;
@@ -766,6 +1089,13 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         document.getElementById('savePresetChangesBtn')?.addEventListener('click', saveCurrentPresetFromForm);
         document.getElementById('presetToolTypeSelect')?.addEventListener('change', () => populatePresetPropertyFields()); // Pass no args to use selected value
 
+        const shareBtnEl = document.getElementById('shareCanvasBtn');
+
+        shareBtnEl.title = 'Share & Collaborate';
+        shareBtnEl.className = 'tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon';
+        shareBtnEl.innerHTML = '<span class="material-symbols-outlined">share</span>';
+        shareBtnEl.addEventListener('click', handleShareCanvas);
+
         canvas.addEventListener('mousedown', handleCanvasMouseDown);
         canvas.addEventListener('mousemove', handleCanvasMouseMove);
         canvas.addEventListener('mouseup', handleCanvasMouseUp);
@@ -797,7 +1127,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
     // --- Global Keydown Handler ---
     function handleGlobalKeyDown(e) {
         if (document.activeElement === textInputOverlayEl ||
-            document.activeElement === textNotesAreaEl ||
+            // document.activeElement === textNotesAreaEl ||
             document.activeElement === canvasNameInputEl ||
             (presetManagementModalInstance && presetManagementModalInstance.isOpen && presetManagementModalInstance.isVisible) ||
             (settingsModalInstance && settingsModalInstance.isOpen && settingsModalInstance.isVisible)) {
@@ -1014,24 +1344,17 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
 
     // --- Mouse Event Handlers ---
     function handleCanvasMouseDown(e) {
-        if (e.button !== 0) return;
+if (e.button !== 0) return;
         e.preventDefault();
         finalizeTextInput();
 
         const coords = getCanvasCoordinates(e);
-        if (coords.error) {
-            console.error("Mousedown: Failed to get coordinates.");
-            return;
-        }
+        if (coords.error) return;
         const { x: worldX, y: worldY, viewX, viewY } = coords;
 
-
         if ((e.ctrlKey || e.metaKey || e.button === 1 ) && canvasAppState.currentMode !== 'draw') {
-            isPanning = true;
-            panStartViewX = viewX;
-            panStartViewY = viewY;
-            canvas.style.cursor = 'grabbing';
-            return;
+            isPanning = true; panStartViewX = viewX; panStartViewY = viewY;
+            canvas.style.cursor = 'grabbing'; return;
         }
 
         if (canvasAppState.currentMode === 'select') {
@@ -1048,7 +1371,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                      if (!isAlreadySelected || selectedElements.length > 1 || (selectedElements.length === 1 && selectedElements[0].id !== clickedElement.id) ) {
                          selectedElements = [clickedElement];
                      }
-                }
+            }
 
                 isDraggingSelection = true;
                 selectionDragStartWorldX = worldX;
@@ -1111,6 +1434,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                     opacity: canvasAppState.toolDefaults.pen.opacity || 1.0,
                     angle: 0
                 };
+                if (currentPenStroke) sendPreviewDataThrottled(currentPenStroke);
             } else if (canvasAppState.currentTool === 'text') {
                 isDrawing = false;
                 showTextInputOverlay(worldX, worldY);
@@ -1156,6 +1480,13 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                     }
                 });
                 renderCanvas();
+                // Send preview of multiple elements being dragged
+                if (selectedElements.length > 0) {
+                    // For simplicity, send all selected elements as a "preview group"
+                    // Or send individual updates if preferred by backend
+                    const previewDragData = selectedElements.map(el => ({...el})); // Send copies
+                    sendPreviewDataThrottled({ type: "group_drag", elements: previewDragData });
+                }
             } else {
                 const hoveredElement = getElementAtPosition(worldX, worldY);
                 canvas.style.cursor = hoveredElement ? 'move' : 'default';
@@ -1171,6 +1502,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                 ctx.scale(canvasAppState.zoom, canvasAppState.zoom);
                 drawTemporaryPenStroke(currentPenStroke);
                 ctx.restore();
+                sendPreviewDataThrottled(currentPenStroke);
             } else if (['rectangle', 'ellipse'].includes(canvasAppState.currentTool)) {
                 renderCanvas();
                 ctx.save();
@@ -1193,6 +1525,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                 };
                 drawElementOnCanvas(tempShape);
                 ctx.restore();
+                sendPreviewDataThrottled(tempShape);
             }
         }
     }
@@ -1220,7 +1553,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             // No renderCanvas() here, assume mousemove handled it or it's not needed if just a pan stop.
             return;
         }
-
+        let actionSent = false;
         if (canvasAppState.currentMode === 'select') {
             if (isDraggingSelection && selectedElements.length > 0) {
                 selectedElements.forEach(selEl => {
@@ -1230,7 +1563,12 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                         delete selEl.originalPoints;
                     }
                 });
+                selectedElements.forEach(selEl => {
+                    const { originalDragX, originalDragY, originalPoints, ...elementToSend } = selEl; // Strip temp drag props
+                    sendActionToServer("element_update", elementToSend);
+                });
                 pushToHistory("Move Elements");
+                actionSent = true;
             }
             isDraggingSelection = false;
             // renderCanvas(); // Render to finalize positions, though mousemove might have done it. Good for consistency.
@@ -1238,11 +1576,12 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             if (!isDrawing) return; // Should not happen if logic is correct, but good guard
 
             isDrawing = false; // Crucial: stop drawing state
-
+            let newElement = null;
             if (canvasAppState.currentTool === 'pen' && currentPenStroke) {
                 if (currentPenStroke.points.length > 1) {
                     canvasElements.push(currentPenStroke);
                     pushToHistory("Draw Pen");
+                    newElement = {...currentPenStroke};
                 }
                 currentPenStroke = null;
             } else if (['rectangle', 'ellipse'].includes(canvasAppState.currentTool)) {
@@ -1252,7 +1591,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                 // Check for minimum size to avoid creating tiny/zero-size elements
                 if (width > 2 && height > 2) {
                     const toolDefaults = canvasAppState.toolDefaults[canvasAppState.currentTool] || {};
-                    const newElement = {
+                    newElement = {
                         id: TB.utils.uniqueId(`${canvasAppState.currentTool}_`), type: canvasAppState.currentTool,
                         x: Math.min(startDragX, worldX), y: Math.min(startDragY, worldY),
                         width: width, height: height,
@@ -1269,8 +1608,39 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                     pushToHistory(`Draw ${canvasAppState.currentTool}`);
                 }
             }
+            if (newElement) {
+                sendActionToServer("element_add", newElement);
+                actionSent = true;
+            }
+        }
+        if (actionSent) { // If an action was finalized and sent
+            clearOwnPreviewOnServer();
         }
         renderCanvas(); // Final render after any operation
+    }
+
+     function checkAndJoinCollabSessionFromUrl() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const collabSessionId = urlParams.get('collab_session_id');
+        if (collabSessionId) {
+            TB.logger.info(`Found collab_session_id in URL: ${collabSessionId}. Attempting to load and join.`);
+            // Load the session data first (this sets currentSessionId)
+            // then connect to the stream.
+            // This assumes collabSessionId is the same as a normal sessionId.
+            // If they are different, the logic to load/join would need adjustment.
+            actuallyLoadSessionData(collabSessionId).then(() => {
+                if (currentSessionId === collabSessionId) { // Successfully loaded
+                    connectToCanvasStream(collabSessionId);
+                     // Remove from URL to prevent re-joining on refresh if user navigates away and back
+                    // window.history.replaceState({}, document.title, window.location.pathname);
+                } else {
+                    TB.ui.Toast.showError(`Could not load shared canvas: ${collabSessionId}`);
+                }
+            }).catch(err => {
+                 TB.ui.Toast.showError(`Error loading shared canvas: ${collabSessionId}`);
+                 TB.logger.error("Error in actuallyLoadSessionData for collab join:", err);
+            });
+        }
     }
 
     // --- The rest of your JavaScript functions (drawTemporaryPenStroke, handleCanvasMouseLeave, etc.) ---
@@ -1482,13 +1852,22 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
     }
 
      function deleteSelectedElements() {
-        if (selectedElements.length === 0) return;
-        const idsToDelete = new Set(selectedElements.map(el => el.id));
-        canvasElements = canvasElements.filter(el => !idsToDelete.has(el.id));
-        selectedElements = [];
-        pushToHistory("Delete Elements");
-        renderCanvas();
-    }
+    if (selectedElements.length === 0) return;
+
+    // Capture payload for each element to be deleted *before* modifying selections or canvasElements
+    const elementsToBroadcastDelete = selectedElements.map(el => ({ id: el.id }));
+
+    const idsToDelete = new Set(selectedElements.map(el => el.id));
+    canvasElements = canvasElements.filter(el => !idsToDelete.has(el.id));
+    selectedElements = []; // Now it's safe to clear selection
+
+    pushToHistory("Delete Elements");
+    renderCanvas();
+
+    // Send action for each deleted element
+    elementsToBroadcastDelete.forEach(payload => sendActionToServer("element_remove", payload));
+    clearOwnPreviewOnServer(); // Clear any lingering preview for this client
+}
 
     function showTextInputOverlay(worldX, worldY) {
         finalizeTextInput();
@@ -1537,6 +1916,8 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             delete newElement.startY;
             canvasElements.push(newElement);
             pushToHistory("Add Text");
+            sendActionToServer("element_add", newElement);
+            clearOwnPreviewOnServer();
         }
         textInputOverlayEl.style.display = 'none';
         textInputOverlayEl.value = '';
@@ -1569,8 +1950,10 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
     }
 
     async function handleAddImageByURL() {
-        if (canvasAppState.currentMode !== 'draw') setActiveMode('draw');
-        finalizeTextInput();
+        // Ensure drawing mode is active if necessary, or simply allow adding images anytime
+        // if (canvasAppState.currentMode !== 'draw') setActiveMode('draw');
+        finalizeTextInput(); // Finalize any pending text input
+
         const imageUrl = await TB.ui.Modal.prompt({title: "Add Image by URL", placeholder: "Enter image URL", useTextArea: false});
         if (!imageUrl || !imageUrl.trim()) return;
 
@@ -1578,9 +1961,10 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         try {
             const imgObject = await loadImageAsync(imageUrl.trim());
             const aspectRatio = imgObject.width / imgObject.height;
-            const defaultWidth = 200 / canvasAppState.zoom;
+            const defaultWidth = 200 / canvasAppState.zoom; // Adjust size based on current zoom
             const defaultHeight = defaultWidth / aspectRatio;
 
+            // Calculate center of the current view in world coordinates
             const viewCenterX = (canvas.width / (window.devicePixelRatio || 1)) / 2;
             const viewCenterY = (canvas.height / (window.devicePixelRatio || 1)) / 2;
             const worldCenterX = (viewCenterX - canvasAppState.offsetX) / canvasAppState.zoom;
@@ -1590,12 +1974,20 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                 id: TB.utils.uniqueId('image_'), type: 'image', src: imageUrl.trim(),
                 x: worldCenterX - defaultWidth / 2, y: worldCenterY - defaultHeight / 2,
                 width: defaultWidth, height: defaultHeight,
-                imgObject: imgObject,
+                imgObject: imgObject, // Keep locally for rendering
                 opacity: canvasAppState.toolDefaults.image?.opacity || 1.0, angle: 0
             };
             canvasElements.push(imageElement);
             pushToHistory("Add Image");
             renderCanvas();
+
+            // Broadcast the new image element (without imgObject)
+            const { imgObject: _, ...elementToSend } = imageElement; // Destructure to exclude imgObject
+            sendActionToServer("element_add", elementToSend);
+            // No preview phase for image adding, so clearOwnPreviewOnServer might not be strictly needed,
+            // but good practice if any generic preview state could be active.
+            clearOwnPreviewOnServer();
+
             TB.ui.Toast.showSuccess("Image added.");
         } catch (err) {
             TB.logger.error("Failed to load image from URL:", imageUrl, err);
@@ -1604,8 +1996,6 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             TB.ui.Loader.hide(loaderId);
         }
     }
-    // Ensure toolImageBtn listener is correctly set up in initializeCanvasStudio
-    // document.getElementById('toolImageBtn').addEventListener('click', handleAddImageByURL); // This is already in init
 
     function loadImageAsync(src) {
         return new Promise((resolve, reject) => {
@@ -1617,19 +2007,294 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         });
     }
 
-    function renderCanvas() {
-        const dpr = window.devicePixelRatio || 1;
-        ctx.save();
-        ctx.fillStyle = canvasAppState.viewBackgroundColor;
-        ctx.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
-        ctx.translate(canvasAppState.offsetX, canvasAppState.offsetY);
-        ctx.scale(canvasAppState.zoom, canvasAppState.zoom);
-        canvasElements.forEach(el => drawElementOnCanvas(el));
-        if (canvasAppState.currentMode === 'select' && selectedElements.length > 0) {
-            selectedElements.forEach(selEl => drawSelectionHighlight(selEl));
+    function getUniqueClientId() {
+        if (!localClientId) {
+            localClientId = localStorage.getItem('canvasClientId');
+            if (!localClientId) {
+                localClientId = TB.utils.uniqueId('client_');
+                localStorage.setItem('canvasClientId', localClientId);
+            }
         }
-        ctx.restore();
-        updateUndoRedoButtons();
+        return localClientId;
+    }
+
+
+    async function handleShareCanvas() {
+        if (!currentSessionId) {
+            await handleSaveSession(); // Ensure session is saved and has an ID
+            if (!currentSessionId) {
+                TB.ui.Toast.showError("Could not save session to get a sharable ID.");
+                return;
+            }
+        }
+
+        // For simplicity, just use currentSessionId as the collaboration ID
+        // In a real app, you might generate a separate "share ID" or have explicit join flows.
+        const collabId = currentSessionId;
+
+        const shareUrl = `${window.location.origin}${window.location.pathname}?collab_session_id=${collabId}`;
+
+        try {
+            await navigator.clipboard.writeText(shareUrl);
+            TB.ui.Toast.showSuccess("Share link copied to clipboard!");
+        } catch (err) {
+            TB.logger.error("Failed to copy share link:", err);
+            TB.ui.Modal.alert({title: "Share Link", message: `Share this link: ${shareUrl}`});
+        }
+
+        // Start or ensure SSE connection for this canvas_id
+        connectToCanvasStream(collabId);
+    }
+
+    function connectToCanvasStream(canvasIdToStream) {
+        if (sseConnection && sseCanvasId === canvasIdToStream) {
+            TB.logger.info(`SSE: Already connected to stream for canvas: ${canvasIdToStream}`);
+            return;
+        }
+        disconnectFromCanvasStream(); // Disconnect any existing stream
+
+        if (!canvasIdToStream) {
+            TB.logger.error("SSE: Cannot connect, canvas_id is missing.");
+            return;
+        }
+
+        sseCanvasId = canvasIdToStream;
+        // Corrected SSE Path: Use /api/ModuleName/endpoint_name
+        const ssePath = `/sse/Canvas/open_canvas_stream?canvas_id=${sseCanvasId}&client_id=${getUniqueClientId()}`;
+        TB.logger.info(`SSE: Attempting to connect to ${ssePath}`);
+
+        remoteUserPreviews = {}; // Clear old remote previews when connecting to a new stream
+
+        sseConnection = TB.sse.connect(ssePath, {
+            onOpen: (event) => {
+                TB.logger.info(`SSE: Connection opened to ${ssePath}`, event);
+                TB.ui.Toast.showSuccess("Live collaboration active!", { duration: 2000 });
+            },
+            onError: (error) => {
+                TB.logger.error(`SSE: Connection error with ${ssePath}`, error);
+                TB.ui.Toast.showError("Live collaboration connection failed.", { duration: 3000 });
+                sseConnection = null; sseCanvasId = null; remoteUserPreviews = {}; renderCanvas();
+            },
+            listeners: {
+                'stream_connected': (payload, event) => {
+                    TB.logger.info('SSE Event (stream_connected):', payload);
+                    // Client ID specific logic can go here if needed from payload.clientId
+                },
+                'canvas_elements_changed': (payload, event) => {
+                    TB.logger.info('SSE Event (canvas_elements_changed):', payload);
+                    if (payload.originator_user_id === getUniqueClientId()) {
+                        return;
+                    }
+                    if (payload.canvas_id !== sseCanvasId) {
+                        TB.logger.warn(`SSE: Received elements_changed for wrong canvas. Expected ${sseCanvasId}, got ${payload.canvas_id}`);
+                        return;
+                    }
+                    handleIncomingCanvasAction(payload.action, payload.element);
+                },
+                'user_preview_update': (payload, event) => {
+                    if (payload.user_id === getUniqueClientId()) {
+                        return;
+                    }
+                     if (payload.canvas_id !== sseCanvasId) {
+                        return;
+                    }
+                    remoteUserPreviews[payload.user_id] = payload.preview_data;
+                    renderCanvas();
+                },
+                'clear_user_preview': (payload, event) => {
+                     if (payload.user_id === getUniqueClientId()) {
+                        return;
+                    }
+                     if (payload.canvas_id !== sseCanvasId) return;
+
+                    if (remoteUserPreviews[payload.user_id]) {
+                        delete remoteUserPreviews[payload.user_id];
+                        renderCanvas();
+                    }
+                },
+                'ping': (payload, event) => {
+                    // TB.logger.debug("SSE Ping received:", payload.timestamp);
+                },
+                'error': (payload, event) => {
+                    TB.logger.error('SSE Event (server error):', payload);
+                    TB.ui.Toast.showError(`Collaboration Error: ${payload.message || 'Unknown stream error'}`);
+                    if (payload.message && (payload.message.includes("canvas_id is required") || payload.message.toLowerCase().includes("not found"))){
+                        disconnectFromCanvasStream();
+                    }
+                }
+            }
+        });
+    }
+
+    function disconnectFromCanvasStream() {
+        if (sseConnection && sseCanvasId) {
+            TB.logger.info(`SSE: Disconnecting from canvas stream: ${sseCanvasId}`);
+            // Corrected SSE Path for disconnect
+            const ssePath = `/sse/Canvas/open_canvas_stream?canvas_id=${sseCanvasId}&client_id=${getUniqueClientId()}`;
+            TB.sse.disconnect(ssePath);
+        }
+        sseConnection = null;
+        sseCanvasId = null;
+        remoteUserPreviews = {};
+        renderCanvas(); // Clear any remote previews
+    }
+
+    // Function to send client's actions to the server for broadcast
+    async function sendActionToServer(actionType, payloadData) {
+        if (!sseCanvasId || !sseConnection) { // Only send if in a collaborative session
+            // TB.logger.debug("Not in collaborative session, action not sent to server:", actionType);
+            return;
+        }
+
+        const actionPayload = {
+            canvas_id: sseCanvasId,
+            user_id: getUniqueClientId(),
+            action_type: actionType,
+            payload: payloadData
+        };
+
+        try {
+            // Using a fire-and-forget approach for most actions, assuming server handles broadcast.
+            // For critical actions, you might want to await and handle response.
+            TB.api.request('Canvas', 'send_canvas_action', actionPayload, 'POST').catch(err => {
+                TB.logger.error("Error sending canvas action to server:", err, actionPayload);
+                // Potentially show a non-blocking error to the user
+            });
+        } catch (err) {
+            TB.logger.error("Exception sending canvas action:", err);
+        }
+    }
+
+    // Wrapper to send preview data (throttled)
+    function sendCurrentPreviewDataToServer(previewElementData) {
+        if (!isDrawing && !isDraggingSelection) return; // Only send if actively drawing/dragging
+        if (previewElementData) {
+             // TB.logger.debug("Throttled: Sending preview data for client:", getUniqueClientId());
+            sendActionToServer("preview_update", previewElementData);
+        }
+    }
+
+    // Call this when a local drawing/drag operation finishes to clear its preview on other clients
+    function clearOwnPreviewOnServer() {
+        if (sseCanvasId && sseConnection) {
+            // TB.logger.debug("Clearing own preview on server for client:", getUniqueClientId());
+            sendActionToServer("preview_clear", {}); // Payload can be empty or {action: "cleared"}
+        }
+    }
+
+
+    // Handle incoming actions from other users
+    function handleIncomingCanvasAction(action, element) {
+        TB.logger.info(`Handling incoming action: ${action}`, element);
+        let elementExists = false;
+        let existingElementIndex = -1;
+        if (element && element.id) {
+             existingElementIndex = canvasElements.findIndex(el => el.id === element.id);
+             elementExists = existingElementIndex !== -1;
+        }
+
+        switch (action) {
+            case 'element_add':
+                if (!elementExists && element && element.id) { // Ensure it's not a duplicate
+                    // If it's an image, we need to load it
+                    if (element.type === 'image' && element.src && !element.imgObject) {
+                        loadImageAsync(element.src)
+                            .then(img => {
+                                element.imgObject = img;
+                                canvasElements.push(element);
+                                renderCanvas();
+                            })
+                            .catch(err => {
+                                TB.logger.error("Failed to load incoming image element:", err, element);
+                                // Add placeholder or skip
+                            });
+                    } else {
+                        canvasElements.push(element);
+                    }
+                } else if (!element || !element.id) {
+                     TB.logger.warn("Incoming 'element_add' without valid element or ID.", element);
+                }
+                break;
+            case 'element_update':
+                if (elementExists && element && element.id) {
+                    // Preserve imgObject if it exists locally and not in payload
+                    const localImgObject = canvasElements[existingElementIndex].imgObject;
+                    canvasElements[existingElementIndex] = {...canvasElements[existingElementIndex], ...element};
+                    if (element.type === 'image' && localImgObject && !element.imgObject) {
+                        canvasElements[existingElementIndex].imgObject = localImgObject;
+                    }
+                    // If it's an image and src changed OR imgObject is missing, reload
+                    else if (element.type === 'image' && element.src &&
+                             (!canvasElements[existingElementIndex].imgObject || canvasElements[existingElementIndex].imgObject.src !== element.src)) {
+                        loadImageAsync(element.src)
+                            .then(img => {
+                                canvasElements[existingElementIndex].imgObject = img;
+                                renderCanvas(); // Render after image loaded
+                            })
+                            .catch(err => TB.logger.error("Failed to load updated image element:", err, element));
+                    }
+                } else if (element && element.id) { // Element not found locally, treat as add
+                    TB.logger.warn("Incoming 'element_update' for non-existent element. Treating as 'add'.", element);
+                     if (element.type === 'image' && element.src && !element.imgObject) {
+                        loadImageAsync(element.src).then(img => { element.imgObject = img; canvasElements.push(element); renderCanvas(); });
+                    } else { canvasElements.push(element); }
+                }
+                break;
+            case 'element_remove':
+                if (elementExists && element && element.id) {
+                    canvasElements.splice(existingElementIndex, 1);
+                }
+                break;
+            default:
+                TB.logger.warn("Unknown canvas action received:", action);
+                return; // Don't render if unknown
+        }
+        renderCanvas(); // Re-render after applying changes from others
+    }
+
+    function renderCanvas() {
+            const dpr = window.devicePixelRatio || 1;
+            ctx.save();
+            ctx.fillStyle = canvasAppState.viewBackgroundColor;
+            ctx.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
+            ctx.translate(canvasAppState.offsetX, canvasAppState.offsetY);
+            ctx.scale(canvasAppState.zoom, canvasAppState.zoom);
+
+            // Render all committed local elements
+            canvasElements.forEach(el => drawElementOnCanvas(el));
+
+            // Render remote user previews (after main elements, before local selection/previews)
+            if (sseConnection && Object.keys(remoteUserPreviews).length > 0) {
+                ctx.save();
+                // ctx.globalAlpha = 0.7; // Example: make remote previews slightly transparent
+                for (const userId in remoteUserPreviews) {
+                    const previewEl = remoteUserPreviews[userId];
+                    if (previewEl && previewEl.type) { // Basic check for valid preview data
+                        // Add a temporary ID for drawing if needed, or adapt drawElementOnCanvas
+                        // For RoughJS, seed might be important. If not provided, it will be random.
+                        // Ensure preview_data has all necessary fields for drawElementOnCanvas
+                        const tempDrawEl = {...previewEl};
+                        if(!tempDrawEl.opacity) tempDrawEl.opacity = 0.5; // Default preview opacity
+                         // Give remote previews a distinct visual style if desired, e.g., different stroke
+                        // const originalStroke = tempDrawEl.strokeColor;
+                        // tempDrawEl.strokeColor = TB.ui.theme.isDark() ? "#7777ff" : "#aaaaff"; // Example: light blue preview stroke
+                        drawElementOnCanvas(tempDrawEl);
+                        // tempDrawEl.strokeColor = originalStroke; // Restore if changed
+                    }
+                }
+                ctx.restore();
+            }
+
+            // Draw local selection highlight
+            if (canvasAppState.currentMode === 'select' && selectedElements.length > 0) {
+                selectedElements.forEach(selEl => drawSelectionHighlight(selEl));
+            }
+
+            // Local drawing previews (pen, shapes) are handled in handleCanvasMouseMove after this full render.
+            // handleCanvasMouseMove will save/transform/draw-preview/restore.
+
+            ctx.restore(); // Restore from main pan/zoom transform
+            updateUndoRedoButtons();
     }
 
     function drawElementOnCanvas(el) {
@@ -1897,11 +2562,11 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         };
         currentSessionId = sessionData.id;
         try {
-            const response = await TB.api.request(MOD_NAME, 'save_session', sessionData, 'POST');
-            if (response.isSuccess()) {
+            const response = await TB.api.request('Canvas', 'save_session', sessionData, 'POST');
+            if (response.error === window.TB.ToolBoxError.none) {
                 TB.ui.Toast.showSuccess("Session saved!");
-                if (response.data && response.data.last_modified) {
-                    // canvasAppState.last_modified = response.data.last_modified; // Server sets this
+                if (response.get() && response.get().last_modified) {
+                    // canvasAppState.last_modified = response.get().last_modified; // Server sets this
                 }
             } else {
                 TB.ui.Toast.showError(`Save error: ${response.info?.message || response.info?.help_text || 'Unknown error'}`);
@@ -1916,9 +2581,9 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
     async function handleLoadSession() {
         const loaderId = TB.ui.Loader.show("Fetching session list...");
         try {
-            const response = await TB.api.request(MOD_NAME, 'list_sessions', null, 'GET');
+            const response = await TB.api.request('Canvas', 'list_sessions', null, 'GET');
             TB.ui.Loader.hide(loaderId);
-            if (response.isSuccess() && response.get()) {
+            if (response.error === window.TB.ToolBoxError.none && response.get()) {
                 const sessions = response.get();
                 if (sessions.length === 0) {
                     TB.ui.Toast.showInfo("No saved sessions found."); return;
@@ -1953,8 +2618,8 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
     async function actuallyLoadSessionData(sessionId) {
         const loaderId = TB.ui.Loader.show("Loading session data...");
         try {
-            const response = await TB.api.request(MOD_NAME, `load_session?session_id=${sessionId}`, null, 'GET');
-            if (response.isSuccess() && response.get()) {
+            const response = await TB.api.request('Canvas', `load_session?session_id=${sessionId}`, null, 'GET');
+            if (response.error === TB.ToolBoxError.none && response.get()) {
                 const data = response.get();
                 startNewSession(false);
                 currentSessionId = data.id;
@@ -2005,7 +2670,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         const dataToExport = {
             id: currentSessionId || TB.utils.uniqueId('canvas-export-'),
             name: currentCanvasName,
-            version: VERSION,
+            version: '0.1.0',
             canvas_elements: serializableElements,
             canvas_app_state: canvasAppState,
             text_notes: textNotesContent,
@@ -2014,7 +2679,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         const jsonString = JSON.stringify(dataToExport, null, 2);
         const blob = new Blob([jsonString], { type: 'application/json' });
         const safeFilename = (currentCanvasName.replace(/[^a-z0-9_.-]/gi, '_') || 'canvas_export').substring(0,50);
-        TB.utils.downloadBlob(blob, `${safeFilename}.json`);
+        TB.utils.downloadBlob(`${safeFilename}.json`, blob);
         TB.ui.Toast.showSuccess("Canvas exported as JSON.");
     }
 
@@ -2333,16 +2998,20 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         }
     }
 
+    const init = () => {
+        initializeCanvasStudio();
+        checkAndJoinCollabSessionFromUrl();
+    }
     if (window.TB?.ready) {
-        window.TB.ready.then(initializeCanvasStudio);
+        window.TB.ready.then(init);
     } else if (window.TB?.events?.on) {
          if (window.TB.config?.get('appRootId') || document.readyState === 'complete' || document.readyState === 'interactive') {
-            initializeCanvasStudio();
+            init();
         } else {
-            window.TB.events.on('tbjs:initialized', initializeCanvasStudio, { once: true });
+            window.TB.events.on('tbjs:initialized', init, { once: true });
         }
     } else {
-        document.addEventListener('DOMContentLoaded', initializeCanvasStudio, { once: true });
+        document.addEventListener('DOMContentLoaded', init, { once: true });
     }
 </script>
 """

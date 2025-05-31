@@ -215,3 +215,108 @@ export function getCssVarHex(varName) {
     console.warn(`CSS variable ${varName} is not a hex color.`);
     return 0xffffff;
 }
+
+
+
+/**
+ * Initiates a browser download for the given data.
+ *
+ * @param {string} filename - The desired name for the downloaded file.
+ * @param {Blob|string|ArrayBuffer|TypedArray|DataView} sourceData - The data to download.
+ *        If this is not already a Blob, it will be converted into one.
+ * @param {string} [mimeType='application/octet-stream'] - The MIME type to use if
+ *        `sourceData` needs to be converted to a Blob. Ignored if `sourceData` is already a Blob.
+ * @returns {boolean} True if the download was initiated, false otherwise (e.g., due to missing parameters).
+ */
+export function downloadBlob(filename, sourceData, mimeType = 'application/octet-stream') {
+    if (!filename || typeof filename !== 'string' || filename.trim() === '') {
+        TB.logger.error('[TB.utils.downloadBlob] Filename is required and must be a non-empty string.');
+        return false;
+    }
+
+    if (sourceData === undefined || sourceData === null) {
+        TB.logger.error('[TB.utils.downloadBlob] sourceData is required.');
+        return false;
+    }
+
+    let blobToDownload;
+
+    if (sourceData instanceof Blob) {
+        blobToDownload = sourceData;
+        // Optionally, you could override the blob's type if mimeType is explicitly passed and different
+        // but generally, if it's already a blob, its type is likely correct.
+        // if (mimeType && mimeType !== blobToDownload.type) {
+        //     TB.logger.warn(`[TB.utils.downloadBlob] Provided mimeType '${mimeType}' differs from existing Blob type '${blobToDownload.type}'. Using existing Blob type.`);
+        // }
+    } else {
+        try {
+            // The Blob constructor expects an array of parts.
+            blobToDownload = new Blob([sourceData], { type: mimeType });
+        } catch (e) {
+            TB.logger.error('[TB.utils.downloadBlob] Failed to create Blob from sourceData.', e);
+            return false;
+        }
+    }
+
+    // Create an Object URL for the blob
+    const url = URL.createObjectURL(blobToDownload);
+
+    // Create a temporary anchor element
+    const a = document.createElement('a');
+    a.style.display = 'none'; // Make it invisible
+    a.href = url;
+    a.download = filename; // Set the download attribute to the desired filename
+
+    // Append the anchor to the body, click it, and then remove it
+    document.body.appendChild(a);
+    try {
+        a.click();
+        TB.logger.log(`[TB.utils.downloadBlob] Download initiated for "${filename}" (Type: ${blobToDownload.type}, Size: ${blobToDownload.size} bytes).`);
+    } catch (e) {
+        TB.logger.error('[TB.utils.downloadBlob] Failed to trigger download click.', e);
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url); // Clean up the Object URL
+        return false;
+    }
+
+
+    // Clean up: remove the anchor and revoke the Object URL
+    // Use a timeout to ensure the download has time to start, especially in Firefox
+    setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, 100);
+
+    return true;
+};
+
+// --- Example Usage ---
+function exampleUsage() {
+    // 1. Download a string as a text file
+    const textData = "Hello, this is a test file.\nIt contains some text content.";
+    downloadBlob("myTextFile.txt", textData, "text/plain");
+
+    // 2. Download a JSON object as a .json file
+    const jsonData = { name: "Test Object", version: 1.0, active: true };
+    const jsonString = JSON.stringify(jsonData, null, 2); // Pretty print JSON
+    downloadBlob("myJsonData.json", jsonString, "application/json");
+
+    // 3. Create a Blob manually and download it
+    const customBlobParts = [
+        new Uint8Array([0x48, 0x65, 0x6c, 0x6c, 0x6f]), // "Hello"
+        " ",
+        "World!"
+    ];
+    const myBlob = new Blob(customBlobParts, { type: "application/octet-stream" });
+    downloadBlob("myCustomBlob.bin", myBlob);
+
+    // 4. Download an ArrayBuffer (e.g., from an AJAX request or file reader)
+    const buffer = new Uint8Array([1, 2, 3, 4, 5]).buffer;
+    downloadBlob("myArrayBuffer.dat", buffer, "application/octet-stream");
+
+    // 5. Example of an error case (missing filename)
+    downloadBlob(null, "some data");
+
+    // 6. Example of an error case (missing data)
+    downloadBlob("file.txt", null);
+}
