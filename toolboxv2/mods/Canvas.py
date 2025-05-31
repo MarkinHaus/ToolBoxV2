@@ -1,4 +1,4 @@
-# toolboxv2/mods/idea_enhancer/module.py
+# toolboxv2/mods/Canvas.py
 # (No significant changes needed in the Python part for the requested frontend features)
 # The existing IdeaSessionData model can store the canvas_app_state which might include
 # new fields like currentMode or toolDefaults if you decide to persist them.
@@ -16,7 +16,7 @@ from toolboxv2 import App, Result, RequestData, get_app, MainTool
 
 # --- Module Definition ---
 MOD_NAME = Name = "Canvas"  # Renamed slightly for clarity if this is a new version
-VERSION = "0.1.0"  # Incremented version
+VERSION = "0.1.0"
 export = get_app(f"widgets.{MOD_NAME}").tb
 
 # --- Constants ---
@@ -43,6 +43,7 @@ class CanvasElement(BaseModel):
     fillStyle: Optional[str] = "hachure"
     roughness: Optional[float] = 1
     fill: Optional[str] = None
+    seed: Optional[int] = None
 
     text: Optional[str] = None
     fontSize: int = 16
@@ -82,7 +83,8 @@ class IdeaSessionData(BaseModel):
             "ellipse": {"strokeColor": "#000000", "fillColor": "#cccccc", "strokeWidth": 2, "fillStyle": "hachure"},
             "text": {"strokeColor": "#000000", "fontSize": 16, "fontFamily": "Arial"},
             # image doesn't have defaults in the same way
-        }
+        },
+        "elementPresets": []
     }
     text_notes: str = ""
     last_modified: float = PydanticField(default_factory=lambda: float(uuid.uuid4().int & (1 << 32) - 1))
@@ -293,7 +295,8 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
 <title>Enhanced Canvas Studio v0.1.0</title>
 <!-- Rough.js and Perfect Freehand will be loaded via CDN in the script module -->
 <style>
-    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    /*body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    */
     .studio-container { display: flex; flex-direction: column; height: 100%; }
     .toolbar {
         padding: 6px 10px; background-color: var(--tb-bg-secondary, #f0f0f0);
@@ -360,7 +363,69 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
 
 
 </style>
-
+<div id="presetManagementModal" class="tb-modal" style="display:none;">
+    <div class="tb-modal-dialog tb-modal-lg">
+        <div class="tb-modal-content">
+            <div class="tb-modal-header">
+                <h5 class="tb-modal-title">Manage Element Presets</h5>
+                <button type="button" class="tb-btn-close" data-dismiss="modal" aria-label="Close" onclick="closePresetModal()"></button> <!-- Updated close method -->
+            </div>
+            <div class="tb-modal-body" style="max-height: 70vh; overflow-y: auto; padding: 15px;">
+                <div class="tb-mb-3">
+                    <button id="addNewPresetBtn" class="tb-btn tb-btn-success tb-btn-sm">
+                        <span class="material-symbols-outlined tb-mr-1" style="font-size: 1em; vertical-align: middle;">add_circle</span>Add New Preset
+                    </button>
+                </div>
+                <div id="presetListContainer" class="tb-mb-3">
+                    <!-- Presets will be dynamically listed here, e.g.:
+                    <div class="preset-item" data-preset-id="xyz">
+                        <span>Preset Name (Tool Type)</span>
+                        <div>
+                            <button class="apply-preset-btn tb-btn tb-btn-xs tb-btn-primary">Apply</button>
+                            <button class="edit-preset-btn tb-btn tb-btn-xs tb-btn-secondary">Edit</button>
+                            <button class="delete-preset-btn tb-btn tb-btn-xs tb-btn-danger">Delete</button>
+                        </div>
+                    </div>
+                    -->
+                </div>
+                <hr>
+                <div id="presetEditFormContainer" style="display:none;">
+                    <h4 id="presetFormTitle">Add New Preset</h4>
+                    <input type="hidden" id="presetEditId">
+                    <div class="tb-form-group tb-mb-2">
+                        <label for="presetNameInput" class="tb-form-label tb-form-label-sm">Preset Name:</label>
+                        <input type="text" id="presetNameInput" class="tb-input tb-input-sm">
+                    </div>
+                    <div class="tb-form-group tb-mb-2">
+                        <label for="presetToolTypeSelect" class="tb-form-label tb-form-label-sm">For Tool Type:</label>
+                        <select id="presetToolTypeSelect" class="tb-input tb-input-sm">
+                            <option value="pen">Pen</option>
+                            <option value="rectangle">Rectangle</option>
+                            <option value="ellipse">Ellipse</option>
+                            <option value="text">Text</option>
+                        </select>
+                    </div>
+                    <div id="presetPropertiesFields" class="tb-mb-2">
+                        <!-- Property fields (strokeColor, strokeWidth, etc.) will be dynamically added here based on tool type -->
+                        <!-- Example for pen:
+                        <div class="tb-form-group tb-mb-1">
+                            <label class="tb-form-label tb-form-label-xs">Stroke Color:</label> <input type="color" data-prop="strokeColor">
+                        </div>
+                        <div class="tb-form-group tb-mb-1">
+                            <label class="tb-form-label tb-form-label-xs">Stroke Width:</label> <input type="number" data-prop="strokeWidth" min="1" class="tb-input tb-input-xs">
+                        </div>
+                        -->
+                    </div>
+                    <button id="savePresetChangesBtn" class="tb-btn tb-btn-primary tb-btn-sm">Save Preset</button>
+                    <button type="button" id="cancelPresetEditBtn" class="tb-btn tb-btn-secondary tb-btn-sm">Cancel</button>
+                </div>
+            </div>
+            <div class="tb-modal-footer">
+                <button type="button" class="tb-btn tb-btn-secondary" onclick="closePresetModal()">Close</button> <!-- Updated close method -->
+            </div>
+        </div>
+    </div>
+</div>
 <div id="studioAppContainerV010" class="studio-container tb-bg-primary dark:tb-bg-primary-dark tb-text-primary dark:tb-text-primary-dark">
     <div class="toolbar">
         <div class="toolbar-group">
@@ -377,6 +442,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             <button id="toolEllipseBtn" title="Ellipse (O)" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">circle</span></button>
             <button id="toolTextBtn" title="Text (T)" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">title</span></button>
             <button id="toolImageBtn" title="Image" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">image</span></button>
+            <button id="managePresetsBtn" title="Manage Presets" class="tb-btn tb-btn-neutral tb-btn-sm tb-btn-icon none" style="margin-left:10px;"><span class="material-symbols-outlined">palette</span></button>
         </div>
         <div id="commonToolsGroup" class="toolbar-group"> <!-- Common properties -->
             <label for="strokeColorPicker" title="Stroke Color">S:</label><input type="color" id="strokeColorPicker" value="#000000">
@@ -392,15 +458,15 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             <button id="settingsBtn" title="Settings" class="tb-btn tb-btn-neutral tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">settings</span></button>
             <button id="saveSessionBtn" title="Save Session" class="tb-btn tb-btn-primary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">save</span></button>
             <button id="loadSessionBtn" title="Load Session" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">folder_open</span></button>
-            <button id="exportJsonBtn" title="Export JSON" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">file_download</span></label>
+            <button id="exportJsonBtn" title="Export JSON" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">file_download</span></button>
             <label for="importJsonInput" title="Import JSON" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">file_upload</span></label>
-            <input type="file" id="importJsonInput" accept=".json">
+            <input type="file" id="importJsonInput" accept=".json" style="display: none;">
             <div id="darkModeToggleContainer" style="display: inline-flex; align-items: center;"></div>
         </div>
     </div>
     <div class="main-layout">
         <div class="canvas-panel">
-            <canvas id="mainCanvas" style="height: 100vh; width: 100vw;"></canvas>
+            <canvas id="mainCanvas" style="height: 80vh; width: 100vw;"></canvas>
             <textarea id="textInputOverlay" style="display:none;"></textarea>
         </div>
         <div class="notes-panel none">
@@ -411,12 +477,12 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
 </div>
 
 <!-- Settings Modal HTML (initially hidden) -->
-<div id="settingsModal" class="tb-modal" style="display:none;">
+<div id="settingsModal" class="tb-modal" style="display:none; width: 100%;">
     <div class="tb-modal-dialog tb-modal-lg">
         <div class="tb-modal-content">
             <div class="tb-modal-header">
                 <h5 class="tb-modal-title">Default Tool Settings</h5>
-                <button type="button" class="tb-btn-close" data-dismiss="modal" aria-label="Close" onclick="TB.ui.Modal.getById('settingsModal').close()"></button>
+                <button type="button" class="tb-btn-close none" data-dismiss="modal" aria-label="Close" onclick="closeSettingsModal()"></button>
             </div>
             <div class="tb-modal-body settings-modal-content">
                 <!-- Pen Defaults -->
@@ -476,7 +542,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                 </div>
             </div>
             <div class="tb-modal-footer">
-                <button type="button" class="tb-btn tb-btn-secondary" onclick="TB.ui.Modal.getById('settingsModal').close()">Close</button>
+                <button type="button" class="tb-btn tb-btn-secondary" onclick="closeSettingsModal()">Close</button>
                 <button type="button" class="tb-btn tb-btn-primary" id="saveSettingsBtn">Save Defaults</button>
             </div>
         </div>
@@ -493,22 +559,23 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
 
     if (!window.TB) {
         console.error("TB (ToolBox Client-Side Library) is not loaded. Canvas UI cannot function.");
-        // Display error in UI
     }
 
     // --- Global State & Configuration ---
     let currentSessionId = null;
-    let currentCanvasName = "Untitled Canvas"; // Renamed from ideaName for clarity
+    let currentCanvasName = "Untitled Canvas";
     let canvasElements = [];
     let textNotesContent = "";
+    let settingsModalInstance = null;
+    let presetManagementModalInstance = null;
 
-    // Default canvas app state - this will be merged with loaded session data
+
     const DEFAULT_CANVAS_APP_STATE = {
         viewBackgroundColor: "#ffffff",
-        currentMode: "draw", // 'draw' or 'select'
-        currentTool: "pen",  // Active tool in 'draw' mode
+        currentMode: "draw",
+        currentTool: "pen",
         strokeColor: "#000000",
-        fillColor: "transparent", // Default to transparent for shapes initially
+        fillColor: "transparent",
         strokeWidth: 2,
         fontFamily: "Arial",
         fontSize: 16,
@@ -516,30 +583,34 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         offsetX: 0,
         offsetY: 0,
         toolDefaults: {
-            pen: { strokeColor: "#000000", strokeWidth: 2, opacity: 1.0 },
-            rectangle: { strokeColor: "#000000", fillColor: "#cccccc", strokeWidth: 2, fillStyle: "solid", roughness: 1, opacity: 1.0 },
-            ellipse: { strokeColor: "#000000", fillColor: "#dddddd", strokeWidth: 2, fillStyle: "hachure", roughness: 1, opacity: 1.0 },
+            pen: { strokeColor: "#000000", strokeWidth: 2, opacity: 1.0, previewOpacity: 0.8 },
+            rectangle: { strokeColor: "#000000", fillColor: "#cccccc", strokeWidth: 2, fillStyle: "solid", roughness: 1, opacity: 1.0, previewOpacity: 0.6, seed: 0  },
+            ellipse: { strokeColor: "#000000", fillColor: "#dddddd", strokeWidth: 2, fillStyle: "hachure", roughness: 1, opacity: 1.0, previewOpacity: 0.6, seed: 0  },
             text: { strokeColor: "#000000", fontSize: 16, fontFamily: "Arial", textAlign: "left", opacity: 1.0 },
-            image: { opacity: 1.0 } // No color/stroke defaults needed
-        }
+            image: { opacity: 1.0 }
+        },
+        elementPresets: [
+            { id: TB.utils.uniqueId('preset_'), name: "Fine Red Pen", toolType: "pen", properties: { strokeColor: "#FF0000", strokeWidth: 1, opacity: 1.0 } },
+            { id: TB.utils.uniqueId('preset_'), name: "Blue Dashed Box", toolType: "rectangle", properties: { strokeColor: "#0000FF", strokeWidth: 2, fillStyle: "dashed", fillColor: "transparent", roughness: 0.5, opacity: 1.0 } }
+        ]
     };
-    let canvasAppState = JSON.parse(JSON.stringify(DEFAULT_CANVAS_APP_STATE)); // Deep copy
+    let canvasAppState = JSON.parse(JSON.stringify(DEFAULT_CANVAS_APP_STATE));
 
     // Canvas, context, and drawing related
     let canvas, ctx, roughCanvasInstance;
-    let isDrawing = false; // For drawing new shapes/pen strokes
+    let isDrawing = false;
     let currentPenStroke = null;
-    let startDragX, startDragY; // World coordinates for drawing shapes
+    let startDragX, startDragY;
 
     // Panning state
     let isPanning = false;
-    let panStartViewX, panStartViewY; // View coordinates for panning calculation
+    let panStartViewX, panStartViewY;
 
     // Selection and Moving state
-    let selectedElement = null; // The actual element object
+    let selectedElements = [];
     let isDraggingSelection = false;
-    let selectionDragStartWorldX, selectionDragStartWorldY; // Mouse down point in world for dragging
-    let selectedElementOriginalX, selectedElementOriginalY; // Original pos of element for drag delta
+    let selectionDragStartWorldX, selectionDragStartWorldY;
+    // selectedElementOriginalX, selectedElementOriginalY removed, use per-element originalDragX/Y
 
     // Undo/Redo
     let historyStack = [];
@@ -558,7 +629,6 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             new TB.ui.DarkModeToggle({ target: document.getElementById('darkModeToggleContainer') });
         }
 
-        // DOM Elements
         const canvasNameInputEl = document.getElementById('canvasNameInput');
         const newSessionBtnEl = document.getElementById('newSessionBtn');
         const saveSessionBtnEl = document.getElementById('saveSessionBtn');
@@ -568,6 +638,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         const textNotesAreaEl = document.getElementById('textNotesArea');
         const settingsBtnEl = document.getElementById('settingsBtn');
         const saveSettingsBtnEl = document.getElementById('saveSettingsBtn');
+        const managePresetsBtnEl = document.getElementById('managePresetsBtn');
 
         canvas = document.getElementById('mainCanvas');
         ctx = canvas.getContext('2d');
@@ -584,7 +655,6 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             ellipse: document.getElementById('toolEllipseBtn'),
             text: document.getElementById('toolTextBtn'),
             image: document.getElementById('toolImageBtn'),
-            // 'pan' tool was removed, panning is via Ctrl/Meta key or select mode + drag empty space
         };
 
         const strokeColorPickerEl = document.getElementById('strokeColorPicker');
@@ -593,39 +663,34 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         const strokeWidthInputEl = document.getElementById('strokeWidthInput');
         const undoBtnEl = document.getElementById('undoBtn');
         const redoBtnEl = document.getElementById('redoBtn');
-
         const canvasPanel = document.querySelector('.canvas-panel');
 
         function resizeCanvas() {
             const dpr = window.devicePixelRatio || 1;
             const panelRect = canvasPanel.getBoundingClientRect();
-
             canvas.width = panelRect.width * dpr;
             canvas.height = panelRect.height * dpr;
             canvas.style.width = panelRect.width + 'px';
             canvas.style.height = panelRect.height + 'px';
-
-            ctx.resetTransform(); // Clear previous transforms
-            ctx.scale(dpr, dpr); // Apply DPR scaling FIRST
-            // The main renderCanvas function will apply zoom and pan transforms on top of this
+            ctx.resetTransform();
+            ctx.scale(dpr, dpr);
             renderCanvas();
         }
         window.addEventListener('resize', resizeCanvas);
-        setTimeout(resizeCanvas, 50); // Initial resize
+        setTimeout(resizeCanvas, 50);
 
-        // --- Event Listeners ---
         canvasNameInputEl.addEventListener('input', () => currentCanvasName = canvasNameInputEl.value);
         newSessionBtnEl.addEventListener('click', startNewSession);
         saveSessionBtnEl.addEventListener('click', handleSaveSession);
-        loadSessionBtnEl.addEventListener('click', handleLoadSession); // Uses TB.ui.Modal
+        loadSessionBtnEl.addEventListener('click', handleLoadSession);
         exportJsonBtnEl.addEventListener('click', handleExportJSON);
         importJsonInputEl.addEventListener('change', handleImportJSON);
         textNotesAreaEl.addEventListener('input', () => {
             textNotesContent = textNotesAreaEl.value;
-            // Consider debouncing save or indicate unsaved changes here
         });
         settingsBtnEl.addEventListener('click', openSettingsModal);
         saveSettingsBtnEl.addEventListener('click', saveToolDefaults);
+        if(managePresetsBtnEl) managePresetsBtnEl.addEventListener('click', openPresetManagementModal);
 
 
         Object.entries(activeModeButtons).forEach(([modeName, btn]) => {
@@ -635,40 +700,88 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             btn.addEventListener('click', () => setActiveTool(toolName));
         });
 
-        strokeColorPickerEl.addEventListener('input', (e) => { canvasAppState.strokeColor = e.target.value; if(selectedElement) { selectedElement.strokeColor = e.target.value; pushToHistory(); renderCanvas();} });
-        fillColorPickerEl.addEventListener('input', (e) => { canvasAppState.fillColor = e.target.value; if(selectedElement && (selectedElement.type === 'rectangle' || selectedElement.type === 'ellipse')) { selectedElement.fill = e.target.value; pushToHistory(); renderCanvas(); }});
+        strokeColorPickerEl.addEventListener('input', (e) => {
+            const newColor = e.target.value;
+            canvasAppState.strokeColor = newColor;
+            if (selectedElements.length > 0) {
+                let changed = false;
+                selectedElements.forEach(selEl => {
+                    if (selEl.strokeColor !== newColor) { selEl.strokeColor = newColor; changed = true; }
+                });
+                if (changed) { pushToHistory("Change Stroke Color"); renderCanvas(); }
+            }
+        });
+        fillColorPickerEl.addEventListener('input', (e) => {
+            const newFill = e.target.value;
+            canvasAppState.fillColor = newFill;
+            if (selectedElements.length > 0) {
+                let changed = false;
+                selectedElements.forEach(selEl => {
+                    if (selEl.type === 'rectangle' || selEl.type === 'ellipse') {
+                        if (selEl.fill !== newFill) { selEl.fill = newFill; changed = true; }
+                    }
+                });
+                if (changed) { pushToHistory("Change Fill Color"); renderCanvas(); }
+            }
+        });
+         strokeWidthInputEl.addEventListener('input', (e) => { // Combined original and new logic
+            const newWidth = parseInt(e.target.value, 10);
+            canvasAppState.strokeWidth = newWidth;
+            if (selectedElements.length > 0) { // For multi-select
+                let changed = false;
+                selectedElements.forEach(selEl => {
+                    if (selEl.strokeWidth !== newWidth) { selEl.strokeWidth = newWidth; changed = true; }
+                });
+                if (changed) { pushToHistory("Change Stroke Width Multiple"); renderCanvas(); }
+            }
+            // Kept old single selectedElement logic in case it's still used somewhere, but should be covered by above.
+            // if(selectedElement && selectedElement.strokeWidth !== newWidth) { selectedElement.strokeWidth = newWidth; pushToHistory("Change Stroke Width Single"); renderCanvas(); }
+        });
         bgColorPickerEl.addEventListener('input', (e) => {
             canvasAppState.viewBackgroundColor = e.target.value;
             renderCanvas();
         });
-        strokeWidthInputEl.addEventListener('input', (e) => { canvasAppState.strokeWidth = parseInt(e.target.value, 10); if(selectedElement) { selectedElement.strokeWidth = canvasAppState.strokeWidth; pushToHistory(); renderCanvas(); }});
 
         undoBtnEl.addEventListener('click', undo);
         redoBtnEl.addEventListener('click', redo);
-
         document.addEventListener('keydown', handleGlobalKeyDown);
 
-        // Canvas Mouse Events
+        if (TB.ui && TB.ui.Modal && document.getElementById('presetManagementModal')) {
+            presetManagementModalInstance = TB.ui.Modal.getById('presetManagementModal') || new TB.ui.Modal({
+                id: 'presetManagementModal', target: '#presetManagementModal',
+            });
+        } else {
+            console.error("Preset management modal HTML or TB.ui.Modal not found.");
+        }
+        if (TB.ui && TB.ui.Modal && document.getElementById('settingsModal')) {
+            settingsModalInstance = TB.ui.Modal.getById('settingsModal') || new TB.ui.Modal({
+                id: 'settingsModal', target: '#settingsModal',
+            });
+        } else {
+            console.error("Settings modal HTML or TB.ui.Modal not found.");
+        }
+
+        document.getElementById('addNewPresetBtn')?.addEventListener('click', showPresetEditForm);
+        document.getElementById('cancelPresetEditBtn')?.addEventListener('click', hidePresetEditForm);
+        document.getElementById('savePresetChangesBtn')?.addEventListener('click', saveCurrentPresetFromForm);
+        document.getElementById('presetToolTypeSelect')?.addEventListener('change', () => populatePresetPropertyFields()); // Pass no args to use selected value
+
         canvas.addEventListener('mousedown', handleCanvasMouseDown);
         canvas.addEventListener('mousemove', handleCanvasMouseMove);
         canvas.addEventListener('mouseup', handleCanvasMouseUp);
-        canvas.addEventListener('mouseleave', handleCanvasMouseLeave); // Important for finishing drags/pans
+        canvas.addEventListener('mouseleave', handleCanvasMouseLeave);
         canvas.addEventListener('wheel', handleCanvasWheel, { passive: false });
-
-        // Canvas Touch Events
         canvas.addEventListener('touchstart', handleCanvasTouchStart, { passive: false });
         canvas.addEventListener('touchmove', handleCanvasTouchMove, { passive: false });
         canvas.addEventListener('touchend', handleCanvasTouchEnd);
-        canvas.addEventListener('touchcancel', handleCanvasTouchEnd); // Treat cancel like end
-
+        canvas.addEventListener('touchcancel', handleCanvasTouchEnd);
         textInputOverlayEl.addEventListener('blur', finalizeTextInput);
         textInputOverlayEl.addEventListener('keydown', handleTextInputKeyDown);
 
         TB.events.on('theme:changed', (themeData) => {
             const isDark = themeData.mode === 'dark';
-            const lightBg = DEFAULT_CANVAS_APP_STATE.viewBackgroundColor; // e.g. #ffffff
-            const darkBg = canvasAppState.toolDefaults?.viewBackgroundColorDark || '#1e1e1e'; // A default dark bg
-
+            const lightBg = DEFAULT_CANVAS_APP_STATE.viewBackgroundColor;
+            const darkBg = canvasAppState.toolDefaults?.viewBackgroundColorDark || '#1e1e1e';
             if (canvasAppState.viewBackgroundColor === lightBg && isDark) {
                  bgColorPickerEl.value = darkBg;
             } else if (canvasAppState.viewBackgroundColor === darkBg && !isDark) {
@@ -677,7 +790,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             bgColorPickerEl.dispatchEvent(new Event('input'));
         });
 
-        startNewSession(); // Initialize with default state
+        startNewSession();
         TB.logger.info("Canvas Studio v0.1.0: Initialized.");
     }
 
@@ -686,31 +799,30 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         if (document.activeElement === textInputOverlayEl ||
             document.activeElement === textNotesAreaEl ||
             document.activeElement === canvasNameInputEl ||
-            TB.ui.Modal.isAnyModalOpen()) { // Don't process shortcuts if typing in inputs or modal is open
+            (presetManagementModalInstance && presetManagementModalInstance.isOpen && presetManagementModalInstance.isVisible) ||
+            (settingsModalInstance && settingsModalInstance.isOpen && settingsModalInstance.isVisible)) {
             if (e.key === 'Escape' && document.activeElement === textInputOverlayEl) textInputOverlayEl.blur();
             return;
         }
 
-        if (e.ctrlKey || e.metaKey) { // Ctrl/Cmd shortcuts
+        if (e.ctrlKey || e.metaKey) {
             switch (e.key.toLowerCase()) {
                 case 'z': e.preventDefault(); undo(); break;
                 case 'y': e.preventDefault(); redo(); break;
                 case 's': e.preventDefault(); handleSaveSession(); break;
-                // Add more like copy/paste for selected elements later
             }
-        } else { // Single key shortcuts
+        } else {
             switch(e.key.toLowerCase()) {
                 case 'd': setActiveMode('draw'); break;
-                case 'v': case 's': setActiveMode('select'); break; // V for select/move (common in vector apps), S for Select
+                case 'v': case 's': setActiveMode('select'); break;
                 case 'p': if(canvasAppState.currentMode === 'draw') setActiveTool('pen'); break;
                 case 'r': if(canvasAppState.currentMode === 'draw') setActiveTool('rectangle'); break;
                 case 'o': if(canvasAppState.currentMode === 'draw') setActiveTool('ellipse'); break;
                 case 't': if(canvasAppState.currentMode === 'draw') setActiveTool('text'); break;
-                // 'h' for pan is now implicit with Ctrl/Meta + drag or spacebar + drag (if implemented)
                 case 'delete': case 'backspace':
-                    if (canvasAppState.currentMode === 'select' && selectedElement) {
+                    if (canvasAppState.currentMode === 'select' && selectedElements.length > 0) {
                         e.preventDefault();
-                        deleteSelectedElement();
+                        deleteSelectedElements();
                     }
                     break;
             }
@@ -718,9 +830,9 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
     }
 
     // --- History Management (Undo/Redo) ---
-    function pushToHistory(actionName = "unknown") { // Optional action name for debugging
+    function pushToHistory(actionName = "unknown") {
         const serializableElements = canvasElements.map(el => {
-            const { imgObject, ...rest } = el; // Always strip out non-serializable imgObject
+            const { imgObject, ...rest } = el;
             return rest;
         });
         historyStack.push(JSON.stringify(serializableElements));
@@ -729,27 +841,24 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         }
         redoStack = [];
         updateUndoRedoButtons();
-        // TB.logger.debug(`History: ${actionName}, Stack: ${historyStack.length}, Redo: ${redoStack.length}`);
     }
 
     async function restoreElementsFromHistory(elementsData) {
-        // This is used by undo/redo AND by loading sessions.
-        // It needs to correctly re-create image objects.
         const newElements = [];
         for (const elData of elementsData) {
-            const newEl = { ...elData }; // Copy element data
+            const newEl = { ...elData };
             if (newEl.type === 'image' && newEl.src) {
                 try {
                     newEl.imgObject = await loadImageAsync(newEl.src);
                 } catch (err) {
                     TB.logger.error("Failed to reload image during history restore/load:", newEl.src, err);
-                    newEl.imgObject = null; // Or a placeholder
+                    newEl.imgObject = null;
                 }
             }
             newElements.push(newEl);
         }
         canvasElements = newElements;
-        selectedElement = null; // Deselect after history change or load
+        selectedElements = []; // Deselect after history change or load
         renderCanvas();
     }
 
@@ -761,10 +870,12 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             const prevState = JSON.parse(historyStack[historyStack.length - 1]);
             await restoreElementsFromHistory(prevState);
         } else if (historyStack.length === 1 && canvasElements.length > 0) {
-            redoStack.push(historyStack.pop());
-            canvasElements = [];
-            historyStack.push(JSON.stringify([])); // Push the empty state as current
-            await restoreElementsFromHistory([]); // Will call renderCanvas
+            // This means we are at the initial state (which might have elements if loaded)
+            // and want to undo to an empty canvas.
+            redoStack.push(historyStack.pop()); // Save the current state (which has elements)
+            canvasElements = []; // Make canvas empty
+            historyStack.push(JSON.stringify([])); // Push the new empty state as "current" for history
+            await restoreElementsFromHistory([]); // This will call renderCanvas
         }
         updateUndoRedoButtons();
     }
@@ -787,7 +898,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
     function setActiveMode(modeName) {
         if (canvasAppState.currentMode === modeName) return;
         finalizeTextInput();
-        selectedElement = null; // Deselect when changing modes
+        selectedElements = []; // Deselect when changing modes
 
         canvasAppState.currentMode = modeName;
         TB.logger.info(`Mode changed to: ${modeName}`);
@@ -798,30 +909,37 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             btn.classList.toggle('tb-btn-secondary', name !== modeName);
         }
         document.getElementById('drawToolsGroup').style.display = (modeName === 'draw') ? 'flex' : 'none';
+        const fillColorPickerParent = document.getElementById('fillColorPicker').parentElement;
+
 
         if (modeName === 'select') {
-            canvas.style.cursor = 'default'; // Or 'grab' if you want to indicate panning possibility
-            setActiveTool(null); // No drawing tool active in select mode
+            canvas.style.cursor = 'default';
+            setActiveTool(null);
+            // In select mode, fill picker should generally be hidden unless a shape that uses it is selected
+             if (fillColorPickerParent) fillColorPickerParent.style.display = 'none';
+
         } else { // 'draw' mode
-            setActiveTool(canvasAppState.currentTool || 'pen'); // Reactivate last drawing tool
+            setActiveTool(canvasAppState.currentTool || 'pen');
         }
-        renderCanvas(); // To clear selection highlights if any
+        renderCanvas();
     }
 
     function setActiveTool(toolName) {
-        // If toolName is null, it means no specific drawing tool is active (e.g., in select mode)
-        if (toolName === null) {
+        if (toolName === null) { // Deactivating draw tool (e.g., going to select mode)
              Object.values(activeToolButtons).forEach(btn => {
                 btn.classList.remove('active', 'tb-btn-primary');
                 btn.classList.add('tb-btn-secondary');
             });
-            canvas.style.cursor = (canvasAppState.currentMode === 'select') ? 'default' : 'crosshair'; // Default for select, crosshair if somehow draw mode without tool
+            canvas.style.cursor = (canvasAppState.currentMode === 'select') ? 'default' : 'crosshair';
             canvasAppState.currentTool = null;
+            // Hide fill color picker if no shape tool is active implicitly
+            const fillColorPickerParent = document.getElementById('fillColorPicker').parentElement;
+            if (fillColorPickerParent) fillColorPickerParent.style.display = 'none';
             return;
         }
 
         if (canvasAppState.currentMode !== 'draw') {
-            setActiveMode('draw'); // Switch to draw mode if a tool is selected
+            setActiveMode('draw');
         }
         finalizeTextInput();
         canvasAppState.currentTool = toolName;
@@ -833,19 +951,19 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             btn.classList.toggle('tb-btn-secondary', !isActive);
         }
 
-        // Apply default settings for this tool to the main controls
         const defaults = canvasAppState.toolDefaults[toolName];
+        const fillColorPickerParent = document.getElementById('fillColorPicker').parentElement;
+
         if (defaults) {
             document.getElementById('strokeColorPicker').value = defaults.strokeColor || canvasAppState.strokeColor;
             canvasAppState.strokeColor = defaults.strokeColor || canvasAppState.strokeColor;
 
-            // Fill color is relevant for shapes
             if (toolName === 'rectangle' || toolName === 'ellipse') {
                 document.getElementById('fillColorPicker').value = defaults.fillColor || canvasAppState.fillColor;
                 canvasAppState.fillColor = defaults.fillColor || canvasAppState.fillColor;
-                document.getElementById('fillColorPicker').parentElement.style.display = '';
+                if(fillColorPickerParent) fillColorPickerParent.style.display = '';
             } else {
-                 document.getElementById('fillColorPicker').parentElement.style.display = 'none';
+                 if(fillColorPickerParent) fillColorPickerParent.style.display = 'none';
             }
 
             document.getElementById('strokeWidthInput').value = defaults.strokeWidth || canvasAppState.strokeWidth;
@@ -855,11 +973,13 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                 canvasAppState.fontFamily = defaults.fontFamily || canvasAppState.fontFamily;
                 canvasAppState.fontSize = defaults.fontSize || canvasAppState.fontSize;
             }
+        } else { // No defaults for this tool (e.g. 'image' or custom), hide fill picker
+            if(fillColorPickerParent) fillColorPickerParent.style.display = 'none';
         }
 
 
         if (toolName === 'text') canvas.style.cursor = 'text';
-        else if (toolName === 'pan') canvas.style.cursor = 'grab'; // Kept for consistency, though pan is now implicit
+        else if (toolName === 'pan') canvas.style.cursor = 'grab';
         else canvas.style.cursor = 'crosshair';
     }
 
@@ -868,36 +988,47 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         const rect = canvas.getBoundingClientRect();
         let clientX, clientY;
 
-        if (eventOrTouch.clientX !== undefined) { // MouseEvent
+        if (eventOrTouch.clientX !== undefined && eventOrTouch.clientY !== undefined) {
             clientX = eventOrTouch.clientX;
             clientY = eventOrTouch.clientY;
-        } else { // Touch object
-            clientX = eventOrTouch.clientX;
-            clientY = eventOrTouch.clientY;
+        } else if (eventOrTouch.touches && eventOrTouch.touches.length > 0) {
+            clientX = eventOrTouch.touches[0].clientX;
+            clientY = eventOrTouch.touches[0].clientY;
+        } else if (eventOrTouch.changedTouches && eventOrTouch.changedTouches.length > 0) {
+            clientX = eventOrTouch.changedTouches[0].clientX;
+            clientY = eventOrTouch.changedTouches[0].clientY;
+        } else {
+            console.error("getCanvasCoordinates: Could not determine clientX/Y from event:", eventOrTouch);
+            return { x: 0, y: 0, viewX: 0, viewY: 0, error: true }; // Indicate error
         }
 
         const viewX = clientX - rect.left;
         const viewY = clientY - rect.top;
 
-        const worldX = (viewX - canvasAppState.offsetX) / canvasAppState.zoom;
-        const worldY = (viewY - canvasAppState.offsetY) / canvasAppState.zoom;
+        const zoom = canvasAppState.zoom || 1.0;
+        const worldX = (viewX - canvasAppState.offsetX) / zoom;
+        const worldY = (viewY - canvasAppState.offsetY) / zoom;
         return { x: worldX, y: worldY, viewX: viewX, viewY: viewY };
     }
 
 
     // --- Mouse Event Handlers ---
     function handleCanvasMouseDown(e) {
-        if (e.button !== 0) return; // Only main (left) button
+        if (e.button !== 0) return;
         e.preventDefault();
         finalizeTextInput();
 
-        const { x: worldX, y: worldY, viewX, viewY } = getCanvasCoordinates(e);
+        const coords = getCanvasCoordinates(e);
+        if (coords.error) {
+            console.error("Mousedown: Failed to get coordinates.");
+            return;
+        }
+        const { x: worldX, y: worldY, viewX, viewY } = coords;
 
-        // Universal Panning: Ctrl/Meta + Drag, or Middle Mouse Button
-        // Or Spacebar + Drag (needs keydown/up for spacebar state)
-        if (e.ctrlKey || e.metaKey || e.button === 1 /* Middle Mouse */) {
+
+        if ((e.ctrlKey || e.metaKey || e.button === 1 ) && canvasAppState.currentMode !== 'draw') {
             isPanning = true;
-            panStartViewX = viewX; // Panning is based on view coordinate delta
+            panStartViewX = viewX;
             panStartViewY = viewY;
             canvas.style.cursor = 'grabbing';
             return;
@@ -906,33 +1037,66 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         if (canvasAppState.currentMode === 'select') {
             const clickedElement = getElementAtPosition(worldX, worldY);
             if (clickedElement) {
-                selectedElement = clickedElement;
+                const isAlreadySelected = selectedElements.find(el => el.id === clickedElement.id);
+                if (e.shiftKey) {
+                    if (isAlreadySelected) {
+                        selectedElements = selectedElements.filter(el => el.id !== clickedElement.id);
+                    } else {
+                        selectedElements.push(clickedElement);
+                    }
+                } else {
+                     if (!isAlreadySelected || selectedElements.length > 1 || (selectedElements.length === 1 && selectedElements[0].id !== clickedElement.id) ) {
+                         selectedElements = [clickedElement];
+                     }
+                }
+
                 isDraggingSelection = true;
                 selectionDragStartWorldX = worldX;
                 selectionDragStartWorldY = worldY;
-                selectedElementOriginalX = selectedElement.x; // For all types, x,y is top-left or start
-                selectedElementOriginalY = selectedElement.y;
-                // If it's a path, we'd need to store original points or use a different drag mechanism
-                if (selectedElement.type === 'pen') { // Store initial points for pen stroke dragging
-                    selectedElement.originalPoints = JSON.parse(JSON.stringify(selectedElement.points));
-                }
 
-                // Update color pickers to reflect selected element's properties
-                document.getElementById('strokeColorPicker').value = selectedElement.strokeColor || canvasAppState.strokeColor;
-                if(selectedElement.type === 'rectangle' || selectedElement.type === 'ellipse'){
-                    document.getElementById('fillColorPicker').value = selectedElement.fill || canvasAppState.fillColor;
-                }
-                document.getElementById('strokeWidthInput').value = selectedElement.strokeWidth || canvasAppState.strokeWidth;
+                selectedElements.forEach(selEl => {
+                    selEl.originalDragX = selEl.x;
+                    selEl.originalDragY = selEl.y;
+                    if (selEl.type === 'pen') {
+                        selEl.originalPoints = JSON.parse(JSON.stringify(selEl.points));
+                    }
+                });
 
-            } else {
-                selectedElement = null;
+                // Update UI based on selection
+                const fillColorPickerParent = document.getElementById('fillColorPicker').parentElement;
+                if (selectedElements.length === 1) {
+                    const primarySelected = selectedElements[0];
+                    document.getElementById('strokeColorPicker').value = primarySelected.strokeColor || canvasAppState.strokeColor;
+                    if(primarySelected.type === 'rectangle' || primarySelected.type === 'ellipse'){
+                        document.getElementById('fillColorPicker').value = primarySelected.fill || canvasAppState.fillColor;
+                        if (fillColorPickerParent) fillColorPickerParent.style.display = '';
+                    } else {
+                        if (fillColorPickerParent) fillColorPickerParent.style.display = 'none';
+                    }
+                    document.getElementById('strokeWidthInput').value = primarySelected.strokeWidth || canvasAppState.strokeWidth;
+                } else if (selectedElements.length > 1) {
+                    const canAnySelectedHaveFill = selectedElements.some(el => el.type === 'rectangle' || el.type === 'ellipse');
+                    if (fillColorPickerParent) {
+                         fillColorPickerParent.style.display = canAnySelectedHaveFill ? '' : 'none';
+                    }
+                    // For multiple, maybe set pickers to a "mixed" state or app defaults
+                    document.getElementById('strokeColorPicker').value = canvasAppState.strokeColor; // Default
+                    document.getElementById('fillColorPicker').value = canvasAppState.fillColor; // Default
+                    document.getElementById('strokeWidthInput').value = canvasAppState.strokeWidth; // Default
+                } else { // No elements selected
+                     if (fillColorPickerParent) fillColorPickerParent.style.display = 'none';
+                }
+            } else { // Clicked on empty space in select mode
+                if (!e.shiftKey) {
+                    selectedElements = [];
+                }
                 // Allow pan by dragging empty space in select mode
                 isPanning = true;
                 panStartViewX = viewX;
                 panStartViewY = viewY;
                 canvas.style.cursor = 'grabbing';
             }
-            renderCanvas(); // To show selection
+            renderCanvas();
         } else { // Draw mode
             isDrawing = true;
             startDragX = worldX;
@@ -942,23 +1106,30 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                 currentPenStroke = {
                     id: TB.utils.uniqueId('pen_'), type: 'pen',
                     points: [[worldX, worldY, e.pressure || 0.5]],
-                    strokeColor: canvasAppState.strokeColor, strokeWidth: canvasAppState.strokeWidth,
-                    opacity: canvasAppState.toolDefaults.pen.opacity || 1.0, angle: 0
+                    strokeColor: canvasAppState.strokeColor,
+                    strokeWidth: canvasAppState.strokeWidth,
+                    opacity: canvasAppState.toolDefaults.pen.opacity || 1.0,
+                    angle: 0
                 };
             } else if (canvasAppState.currentTool === 'text') {
-                isDrawing = false; // Text placement doesn't involve dragging to draw
+                isDrawing = false;
                 showTextInputOverlay(worldX, worldY);
             }
-            // Other tools like rect/ellipse start drawing on mousemove
+            // For rectangle/ellipse, isDrawing is set, actual preview happens in mousemove
         }
     }
 
     function handleCanvasMouseMove(e) {
         e.preventDefault();
-        const { x: worldX, y: worldY, viewX, viewY } = getCanvasCoordinates(e);
+        const coords = getCanvasCoordinates(e);
+         if (coords.error) {
+            console.error("Mousemove: Failed to get coordinates.");
+            return;
+        }
+        const { x: worldX, y: worldY, viewX, viewY } = coords;
 
         if (isPanning) {
-            const dxView = viewX - panStartViewX; // Delta in view coordinates
+            const dxView = viewX - panStartViewX;
             const dyView = viewY - panStartViewY;
             canvasAppState.offsetX += dxView;
             canvasAppState.offsetY += dyView;
@@ -969,25 +1140,23 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         }
 
         if (canvasAppState.currentMode === 'select') {
-            if (isDraggingSelection && selectedElement) {
+            if (isDraggingSelection && selectedElements.length > 0) {
                 const deltaX = worldX - selectionDragStartWorldX;
                 const deltaY = worldY - selectionDragStartWorldY;
-
-                if (selectedElement.type === 'pen') {
-                    // Translate all points of the pen stroke
-                    selectedElement.points = selectedElement.originalPoints.map(p => [
-                        p[0] + deltaX,
-                        p[1] + deltaY,
-                        p[2] // pressure remains the same
-                    ]);
-                } else {
-                    // For other shapes, just move their top-left (x,y)
-                    selectedElement.x = selectedElementOriginalX + deltaX;
-                    selectedElement.y = selectedElementOriginalY + deltaY;
-                }
+                selectedElements.forEach(selEl => {
+                    if (selEl.type === 'pen') {
+                        if (selEl.originalPoints) { // Check if originalPoints exists
+                           selEl.points = selEl.originalPoints.map(p => [ p[0] + deltaX, p[1] + deltaY, p[2] ]);
+                        }
+                    } else {
+                        if (selEl.originalDragX !== undefined && selEl.originalDragY !== undefined) { // Check if originalDrag properties exist
+                           selEl.x = selEl.originalDragX + deltaX;
+                           selEl.y = selEl.originalDragY + deltaY;
+                        }
+                    }
+                });
                 renderCanvas();
             } else {
-                // Hover effect or change cursor over elements could be done here
                 const hoveredElement = getElementAtPosition(worldX, worldY);
                 canvas.style.cursor = hoveredElement ? 'move' : 'default';
             }
@@ -996,13 +1165,17 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
 
             if (canvasAppState.currentTool === 'pen' && currentPenStroke) {
                 currentPenStroke.points.push([worldX, worldY, e.pressure || 0.5]);
-                // For pen, preview is drawn by adding to currentPenStroke and re-rendering everything
-                // then drawing the "live" part. The provided code was a bit complex for live pen.
-                // Simplification: render all committed, then draw current stroke on top as temp.
-                renderCanvas(); // Render committed elements
-                drawTemporaryPenStroke(currentPenStroke); // Draw the current stroke live
+                renderCanvas();
+                ctx.save();
+                ctx.translate(canvasAppState.offsetX, canvasAppState.offsetY);
+                ctx.scale(canvasAppState.zoom, canvasAppState.zoom);
+                drawTemporaryPenStroke(currentPenStroke);
+                ctx.restore();
             } else if (['rectangle', 'ellipse'].includes(canvasAppState.currentTool)) {
-                renderCanvas(); // Redraw existing elements
+                renderCanvas();
+                ctx.save();
+                ctx.translate(canvasAppState.offsetX, canvasAppState.offsetY);
+                ctx.scale(canvasAppState.zoom, canvasAppState.zoom);
                 const tempShape = {
                     type: canvasAppState.currentTool,
                     x: Math.min(startDragX, worldX),
@@ -1012,86 +1185,62 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                     strokeColor: canvasAppState.strokeColor,
                     fill: canvasAppState.fillColor,
                     strokeWidth: canvasAppState.strokeWidth,
-                    opacity: 0.6, // Preview opacity
+                    opacity: canvasAppState.toolDefaults[canvasAppState.currentTool]?.previewOpacity || 0.6,
                     fillStyle: canvasAppState.toolDefaults[canvasAppState.currentTool]?.fillStyle || (canvasAppState.currentTool === 'rectangle' ? 'solid' : 'hachure'),
-                    roughness: canvasAppState.toolDefaults[canvasAppState.currentTool]?.roughness || 1,
-                    angle: 0
+                    roughness: canvasAppState.toolDefaults[canvasAppState.currentTool]?.roughness === undefined ? 1 : canvasAppState.toolDefaults[canvasAppState.currentTool]?.roughness,
+                    angle: 0,
+                    seed: Math.floor(Math.random() * Math.pow(2, 31)) // Generate a new seed for preview on each move
                 };
-                // This temporary shape is drawn using world coordinates.
-                // The canvas context is already transformed in renderCanvas/drawElementOnCanvas.
                 drawElementOnCanvas(tempShape);
+                ctx.restore();
             }
         }
     }
-    function drawTemporaryPenStroke(strokeData) {
-        if (!strokeData || strokeData.points.length < 1) return;
-        ctx.save();
-        // Ensure context is transformed for world coordinates (already done by renderCanvas if called before)
-        // If not, apply transforms here:
-        // ctx.translate(canvasAppState.offsetX, canvasAppState.offsetY);
-        // ctx.scale(canvasAppState.zoom, canvasAppState.zoom);
-
-        if (getStroke && typeof getStroke === 'function') {
-            const strokeOptions = {
-                size: strokeData.strokeWidth, // perfect-freehand size is in world units if context is scaled
-                thinning: 0.6, smoothing: 0.5, streamline: 0.5,
-                last: false, // false for live drawing
-            };
-            const strokePathPoints = getStroke(strokeData.points, strokeOptions);
-            const pathData = getSvgPathFromStroke(strokePathPoints);
-            const path2d = new Path2D(pathData);
-            ctx.fillStyle = strokeData.strokeColor;
-            ctx.globalAlpha = strokeData.opacity || 1.0;
-            ctx.fill(path2d);
-        } else { // Fallback simple line preview
-            ctx.beginPath();
-            ctx.moveTo(strokeData.points[0][0], strokeData.points[0][1]);
-            for (let i = 1; i < strokeData.points.length; i++) {
-                ctx.lineTo(strokeData.points[i][0], strokeData.points[i][1]);
-            }
-            ctx.strokeStyle = strokeData.strokeColor;
-            ctx.lineWidth = strokeData.strokeWidth;
-            ctx.globalAlpha = strokeData.opacity || 1.0;
-            ctx.stroke();
-        }
-        ctx.restore();
-    }
-
 
     function handleCanvasMouseUp(e) {
+        const coords = getCanvasCoordinates(e); // Get coords even if not strictly needed for all paths
+         if (coords.error && (isDrawing || isDraggingSelection)) { // Only critical if an action was in progress
+            console.error("Mouseup: Failed to get coordinates during an active operation.");
+            // Reset states to avoid being stuck
+            isDrawing = false; isPanning = false; isDraggingSelection = false;
+            currentPenStroke = null;
+            renderCanvas(); // Try to refresh UI
+            return;
+        }
+        const { x: worldX, y: worldY } = coords;
+
+
         if (isPanning) {
             isPanning = false;
-            // Restore cursor based on mode/tool
             if (canvasAppState.currentMode === 'select') {
-                 canvas.style.cursor = selectedElement ? 'move' : 'default';
+                 canvas.style.cursor = selectedElements.length > 0 ? 'move' : 'default'; // Based on if something is selected
             } else {
-                 setActiveTool(canvasAppState.currentTool); // This will set cursor
+                 setActiveTool(canvasAppState.currentTool);
             }
+            // No renderCanvas() here, assume mousemove handled it or it's not needed if just a pan stop.
             return;
         }
 
         if (canvasAppState.currentMode === 'select') {
-            if (isDraggingSelection && selectedElement) {
-                // Finalize position - already done in mousemove
-                // If it was a pen stroke, clean up temporary data
-                if (selectedElement.type === 'pen') {
-                    delete selectedElement.originalPoints;
-                }
-                pushToHistory("Move Element");
+            if (isDraggingSelection && selectedElements.length > 0) {
+                selectedElements.forEach(selEl => {
+                    delete selEl.originalDragX;
+                    delete selEl.originalDragY;
+                    if (selEl.type === 'pen') {
+                        delete selEl.originalPoints;
+                    }
+                });
+                pushToHistory("Move Elements");
             }
             isDraggingSelection = false;
-            // Don't deselect here, click on empty space to deselect (handled in mousedown)
-        } else { // Draw mode
-            if (!isDrawing) return;
-            isDrawing = false;
-            const { x: worldX, y: worldY } = getCanvasCoordinates(e);
+            // renderCanvas(); // Render to finalize positions, though mousemove might have done it. Good for consistency.
+        } else {  // Draw mode
+            if (!isDrawing) return; // Should not happen if logic is correct, but good guard
+
+            isDrawing = false; // Crucial: stop drawing state
 
             if (canvasAppState.currentTool === 'pen' && currentPenStroke) {
                 if (currentPenStroke.points.length > 1) {
-                    // Smooth the final stroke if desired
-                    const finalStrokeOptions = { size: currentPenStroke.strokeWidth, thinning: 0.6, smoothing: 0.5, streamline: 0.5, last: true };
-                    // currentPenStroke.points = getStroke(currentPenStroke.points, finalStrokeOptions); // This changes structure, careful
-                    // For now, just use raw points.
                     canvasElements.push(currentPenStroke);
                     pushToHistory("Draw Pen");
                 }
@@ -1099,67 +1248,104 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             } else if (['rectangle', 'ellipse'].includes(canvasAppState.currentTool)) {
                 const width = Math.abs(worldX - startDragX);
                 const height = Math.abs(worldY - startDragY);
-                if (width > 5 && height > 5) { // Minimum size to add shape
+
+                // Check for minimum size to avoid creating tiny/zero-size elements
+                if (width > 2 && height > 2) {
                     const toolDefaults = canvasAppState.toolDefaults[canvasAppState.currentTool] || {};
                     const newElement = {
                         id: TB.utils.uniqueId(`${canvasAppState.currentTool}_`), type: canvasAppState.currentTool,
                         x: Math.min(startDragX, worldX), y: Math.min(startDragY, worldY),
                         width: width, height: height,
                         strokeColor: canvasAppState.strokeColor,
-                        fill: canvasAppState.fillColor,
+                        fill: canvasAppState.fillColor, // Use the one from appState (tool might have set it)
                         strokeWidth: canvasAppState.strokeWidth,
                         opacity: toolDefaults.opacity || 1.0,
                         fillStyle: toolDefaults.fillStyle || (canvasAppState.currentTool === 'rectangle' ? 'solid' : 'hachure'),
-                        roughness: toolDefaults.roughness || 1,
-                        angle: 0
+                        roughness: toolDefaults.roughness === undefined ? 1 : toolDefaults.roughness,
+                        angle: 0,
+                        seed: Math.floor(Math.random() * Math.pow(2, 31)) // Final seed for the element
                     };
                     canvasElements.push(newElement);
                     pushToHistory(`Draw ${canvasAppState.currentTool}`);
                 }
             }
         }
-        renderCanvas(); // Final render after operation
+        renderCanvas(); // Final render after any operation
     }
 
-    function handleCanvasMouseLeave(e) {
-        // If actively drawing or panning, treat mouse leave as a mouse up to finalize action
-        if (isDrawing || isPanning || isDraggingSelection) {
-            handleCanvasMouseUp(e); // Pass the event for coordinates if needed, though often not relevant for leave
+    // --- The rest of your JavaScript functions (drawTemporaryPenStroke, handleCanvasMouseLeave, etc.) ---
+    // --- Make sure they are also reviewed for correctness, especially those interacting with drawing or selection state ---
+
+    function drawTemporaryPenStroke(strokeData) {
+        if (!strokeData || strokeData.points.length < 1) return;
+        // ctx is already transformed by the caller (handleCanvasMouseMove)
+        // ctx.save(); // Not needed if caller saves/restores and only this is drawn
+
+        if (getStroke && typeof getStroke === 'function') {
+            const strokeOptions = {
+                size: strokeData.strokeWidth,
+                thinning: 0.6, smoothing: 0.5, streamline: 0.5,
+                last: false,
+            };
+            const strokePathPoints = getStroke(strokeData.points, strokeOptions);
+            const pathData = getSvgPathFromStroke(strokePathPoints);
+            const path2d = new Path2D(pathData);
+            ctx.fillStyle = strokeData.strokeColor;
+            ctx.globalAlpha = strokeData.opacity || canvasAppState.toolDefaults.pen.previewOpacity || 0.8; // Use specific preview opacity
+            ctx.fill(path2d);
+        } else {
+            ctx.beginPath();
+            ctx.moveTo(strokeData.points[0][0], strokeData.points[0][1]);
+            for (let i = 1; i < strokeData.points.length; i++) {
+                ctx.lineTo(strokeData.points[i][0], strokeData.points[i][1]);
+            }
+            ctx.strokeStyle = strokeData.strokeColor;
+            ctx.lineWidth = strokeData.strokeWidth;
+            ctx.globalAlpha = strokeData.opacity || canvasAppState.toolDefaults.pen.previewOpacity || 0.8;
+            ctx.stroke();
         }
+        // ctx.restore(); // Not needed if caller saves/restores
+    }
+
+
+    function handleCanvasMouseLeave(e) {
+        if (isDrawing || isPanning || isDraggingSelection) {
+            handleCanvasMouseUp(e);
+        }
+        // Reset states more defensively
         isDrawing = false;
         isPanning = false;
         isDraggingSelection = false;
-        // Restore cursor if needed
+        currentPenStroke = null; // Ensure pen stroke is cleared
+
         if (canvasAppState.currentMode === 'draw' && canvasAppState.currentTool) {
-            setActiveTool(canvasAppState.currentTool); // Resets cursor
+            setActiveTool(canvasAppState.currentTool);
         } else {
             canvas.style.cursor = 'default';
         }
     }
 
     function handleCanvasWheel(e) {
-        e.preventDefault(); // Prevent page scroll
+        if (canvasAppState.currentMode === 'draw') {
+            e.preventDefault();
+            return;
+        }
+        e.preventDefault();
 
-        // Get mouse position in world coordinates *before* zoom change.
-        // This is the point we want to zoom towards/away from.
-        const { x: mouseWorldX, y: mouseWorldY } = getCanvasCoordinates(e);
+        const coords = getCanvasCoordinates(e);
+         if (coords.error) return;
+        const { x: mouseWorldX, y: mouseWorldY } = coords;
+
 
         const zoomIntensity = 0.1;
-        const direction = e.deltaY < 0 ? 1 : -1; // 1 for zoom in, -1 for zoom out
+        const direction = e.deltaY < 0 ? 1 : -1;
         const oldZoom = canvasAppState.zoom;
         const newZoom = Math.max(0.05, Math.min(20, oldZoom * (1 + direction * zoomIntensity)));
-
-        // Calculate new offsets to keep mouseWorldX, mouseWorldY at the same view position
-        // mouseWorldX = (viewX - newOffsetX) / newZoom  => newOffsetX = viewX - mouseWorldX * newZoom
-        // viewX = mouseWorldX * oldZoom + oldOffsetX (current viewX of the mouse pointer)
-        // newOffsetX = (mouseWorldX * oldZoom + oldOffsetX) - mouseWorldX * newZoom
-        // newOffsetX = oldOffsetX + mouseWorldX * (oldZoom - newZoom)
 
         canvasAppState.offsetX = canvasAppState.offsetX + mouseWorldX * (oldZoom - newZoom);
         canvasAppState.offsetY = canvasAppState.offsetY + mouseWorldY * (oldZoom - newZoom);
         canvasAppState.zoom = newZoom;
 
-        // Update text input overlay if visible due to zoom
         if (textInputOverlayEl.style.display !== 'none' && currentTextElementData) {
             const viewX = currentTextElementData.startX * canvasAppState.zoom + canvasAppState.offsetX;
             const viewY = currentTextElementData.startY * canvasAppState.zoom + canvasAppState.offsetY;
@@ -1168,67 +1354,44 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             textInputOverlayEl.style.top =  `${viewY + panelRect.top}px`;
             textInputOverlayEl.style.fontSize = `${currentTextElementData.fontSize * canvasAppState.zoom}px`;
         }
-
         renderCanvas();
     }
 
-    // --- Touch Event Handlers (basic mirror of mouse, single touch) ---
-    let lastTouch = null; // For calculating movement delta for panning in touch
+    let lastTouch = null;
 
     function handleCanvasTouchStart(e) {
-        if (e.touches.length > 1) { // Handle multi-touch for pinch-zoom later if needed
-            isPanning = false; isDrawing = false; isDraggingSelection = false; // Stop other ops
+        if (e.touches.length > 1) {
+            isPanning = false; isDrawing = false; isDraggingSelection = false;
             return;
         }
         e.preventDefault();
         const touch = e.touches[0];
-        lastTouch = { clientX: touch.clientX, clientY: touch.clientY }; // For panning
-        // Simulate mouse down with the first touch
-        handleCanvasMouseDown({ ...touch, button: 0, preventDefault: () => {} }); // Spread touch and add button property
+        lastTouch = { clientX: touch.clientX, clientY: touch.clientY };
+        handleCanvasMouseDown({ button: 0, clientX: touch.clientX, clientY: touch.clientY, preventDefault: () => {}, target: e.target });
     }
 
     function handleCanvasTouchMove(e) {
         if (e.touches.length > 1) {
-             // Basic Pinch Zoom (DEBUG THIS AREA CAREFULLY)
-            // This is a simplified version and might need refinement
-            // if (e.touches.length === 2 && !isDrawing && !isDraggingSelection) {
-            //     handlePinchZoom(e); // Implement handlePinchZoom
-            //     lastTouch = null; // Reset for next single touch
-            //     return;
-            // }
-            return; // For now, ignore multi-touch move after start
+            return;
         }
         e.preventDefault();
         const touch = e.touches[0];
-
-        // If panning was initiated by touch (e.g. drag empty space in select mode, or Ctrl+Touch),
-        // we need to use the delta from lastTouch to update panStartViewX/Y for handleCanvasMouseMove's pan logic.
-        if (isPanning && lastTouch) {
-            // This part is tricky because handleCanvasMouseMove expects panStartViewX to be set.
-            // We're essentially simulating the mouse's clientX/Y behavior.
-            // The pan logic in handleCanvasMouseMove uses clientX/Y of the event.
-            // So, we pass the touch event directly.
+        handleCanvasMouseMove({ clientX: touch.clientX, clientY: touch.clientY, preventDefault: () => {}, target: e.target });
+        if(lastTouch && isPanning) { // Update lastTouch for panning delta calculation if panning
+             // The panning logic in handleCanvasMouseMove implicitly uses its current event's coords
+             // and panStartViewX/Y set in mousedown. So this update of lastTouch is for other potential uses.
         }
-        handleCanvasMouseMove({ ...touch, preventDefault: () => {} }); // Spread touch
-        if(lastTouch) { // Update lastTouch for next move delta if panning.
-            lastTouch = { clientX: touch.clientX, clientY: touch.clientY };
-        }
+        // lastTouch = { clientX: touch.clientX, clientY: touch.clientY }; // update last touch for next delta - moved to handleCanvasMouseMove if needed.
     }
 
     function handleCanvasTouchEnd(e) {
-        // If e.touches.length > 0, it means some fingers are still on screen (e.g., pinch ended)
-        // For simplicity, we treat any touchend as finishing the current operation.
         e.preventDefault();
-        // Use changedTouches to get the touch that was lifted
-        const touch = e.changedTouches[0] || lastTouch || { clientX:0, clientY:0 }; // Fallback if changedTouches is empty
-        handleCanvasMouseUp({ ...touch, button: 0, preventDefault: () => {} });
+        const touch = e.changedTouches[0] || lastTouch || { clientX:0, clientY:0, button: 0, preventDefault: () => {}, target: e.target };
+        handleCanvasMouseUp({ button: 0, clientX: touch.clientX, clientY: touch.clientY, preventDefault: () => {}, target: e.target });
         lastTouch = null;
     }
 
-
-    // --- Element Selection & Manipulation ---
     function getElementAtPosition(worldX, worldY) {
-        // Iterate in reverse to select top-most element
         for (let i = canvasElements.length - 1; i >= 0; i--) {
             const el = canvasElements[i];
             if (isPointInsideElement(el, worldX, worldY)) {
@@ -1239,22 +1402,16 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
     }
 
     function isPointInsideElement(element, worldX, worldY) {
-        // DEBUG: This function is critical for selection. Add detailed checks.
-        // Consider a small tolerance for selection, especially for lines/paths.
-        const tolerance = 5 / canvasAppState.zoom; // 5px tolerance in view space, converted to world space
-
-        // Apply inverse rotation if element is rotated (more complex, for simplicity assume no rotation for hit test first)
-        // Or, rotate the point: P' = R(-angle) * (P - Center) + Center
+        const tolerance = Math.max(2, 5 / canvasAppState.zoom); // Ensure minimum tolerance
 
         switch (element.type) {
             case 'rectangle':
-            case 'image': // Images are also rectangular
+            case 'image':
                 return worldX >= element.x - tolerance &&
                        worldX <= element.x + element.width + tolerance &&
                        worldY >= element.y - tolerance &&
                        worldY <= element.y + element.height + tolerance;
             case 'ellipse':
-                // Check point in ellipse equation: ((x-h)^2 / a^2) + ((y-k)^2 / b^2) <= 1
                 const cx = element.x + element.width / 2;
                 const cy = element.y + element.height / 2;
                 const rx = element.width / 2 + tolerance;
@@ -1264,20 +1421,27 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                 const term2 = Math.pow((worldY - cy) / ry, 2);
                 return term1 + term2 <= 1;
             case 'text':
-                // Approximate bounding box for text. ctx.measureText is tricky with multiline & zoom.
-                // For simplicity, using a rough estimate based on fontSize and text length.
-                // A more accurate way involves rendering text to a hidden canvas or better metrics.
                 if (!element.text) return false;
+                // This is a very rough approximation. For better accuracy, measure text on a hidden canvas or use DOM.
+                // For now, let's assume ctx is already set up with transformations for font metrics.
+                ctx.save();
+                ctx.font = `${element.fontSize || canvasAppState.fontSize}px ${element.fontFamily || canvasAppState.fontFamily}`;
+                const metrics = ctx.measureText(element.text.split('\\n')[0]); // Measure first line for width approx
                 const lines = element.text.split('\\n');
-                const charWidthApprox = (element.fontSize || 16) * 0.6; // Very rough estimate
-                const estWidth = Math.max(...lines.map(l => l.length)) * charWidthApprox + tolerance;
                 const estHeight = lines.length * (element.fontSize || 16) * 1.2 + tolerance; // 1.2 for line height
+                // This estimated width is still problematic for multiline text.
+                // Use a bounding box that covers the rough area.
+                let textWidth = 0;
+                lines.forEach(line => {
+                    textWidth = Math.max(textWidth, ctx.measureText(line).width);
+                });
+                ctx.restore();
+
                 return worldX >= element.x - tolerance &&
-                       worldX <= element.x + estWidth &&
-                       worldY >= element.y - tolerance && // y is typically baseline start
-                       worldY <= element.y + estHeight;
+                       worldX <= element.x + textWidth + tolerance &&
+                       worldY >= element.y - tolerance &&
+                       worldY <= element.y + estHeight; // y is typically baseline or top-left start
             case 'pen':
-                // Bounding box check first for performance
                 if (!element.points || element.points.length === 0) return false;
                 let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
                 element.points.forEach(p => {
@@ -1286,18 +1450,21 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                     maxX = Math.max(maxX, p[0]);
                     maxY = Math.max(maxY, p[1]);
                 });
-                if (worldX < minX - tolerance || worldX > maxX + tolerance || worldY < minY - tolerance || worldY > maxY + tolerance) {
-                    return false; // Outside bounding box
+                 const penTolerance = (element.strokeWidth || canvasAppState.strokeWidth) / 2 + tolerance;
+                if (worldX < minX - penTolerance || worldX > maxX + penTolerance || worldY < minY - penTolerance || worldY > maxY + penTolerance) {
+                    return false;
                 }
-                // More precise: Check distance to line segments or polygon defined by perfect-freehand outline
-                // For now, bounding box is a coarse approximation.
-                // A simple improvement: check distance to each segment.
                 for (let i = 0; i < element.points.length - 1; i++) {
-                    if (isPointNearLine(worldX, worldY, element.points[i], element.points[i+1], (element.strokeWidth / 2) + tolerance)) {
+                    if (isPointNearLine(worldX, worldY, element.points[i], element.points[i+1], penTolerance)) {
                         return true;
                     }
                 }
-                return false; // If only one point or no segment close enough
+                 // Check last point if only one point or if near endpoint
+                if (element.points.length === 1) {
+                    return Math.hypot(worldX - element.points[0][0], worldY - element.points[0][1]) <= penTolerance;
+                }
+
+                return false;
             default:
                 return false;
         }
@@ -1306,37 +1473,34 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         const [x1, y1] = startPt;
         const [x2, y2] = endPt;
         const L2 = Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2);
-        if (L2 === 0) return Math.hypot(px - x1, py - y1) <= maxDistance; // Point, not line
+        if (L2 === 0) return Math.hypot(px - x1, py - y1) <= maxDistance;
         let t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / L2;
-        t = Math.max(0, Math.min(1, t)); // Clamp t to the segment
+        t = Math.max(0, Math.min(1, t));
         const closestX = x1 + t * (x2 - x1);
         const closestY = y1 + t * (y2 - y1);
         return Math.hypot(px - closestX, py - closestY) <= maxDistance;
     }
 
-
-    function deleteSelectedElement() {
-        if (!selectedElement) return;
-        canvasElements = canvasElements.filter(el => el.id !== selectedElement.id);
-        selectedElement = null;
-        pushToHistory("Delete Element");
+     function deleteSelectedElements() {
+        if (selectedElements.length === 0) return;
+        const idsToDelete = new Set(selectedElements.map(el => el.id));
+        canvasElements = canvasElements.filter(el => !idsToDelete.has(el.id));
+        selectedElements = [];
+        pushToHistory("Delete Elements");
         renderCanvas();
     }
 
-
-    // --- Text Element Specific ---
     function showTextInputOverlay(worldX, worldY) {
         finalizeTextInput();
         const toolDefaults = canvasAppState.toolDefaults.text || {};
         currentTextElementData = {
             type: 'text', text: '',
-            strokeColor: canvasAppState.strokeColor, // Use current, or default from tool
+            strokeColor: canvasAppState.strokeColor,
             fontSize: canvasAppState.fontSize || toolDefaults.fontSize,
             fontFamily: canvasAppState.fontFamily || toolDefaults.fontFamily,
             textAlign: toolDefaults.textAlign || 'left',
             opacity: toolDefaults.opacity || 1.0,
             angle: 0,
-            // Store world coordinates where text input was initiated
             startX: worldX,
             startY: worldY
         };
@@ -1348,11 +1512,11 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         textInputOverlayEl.style.left = `${viewX + panelRect.left}px`;
         textInputOverlayEl.style.top =  `${viewY + panelRect.top}px`;
         textInputOverlayEl.style.fontFamily = currentTextElementData.fontFamily;
-        textInputOverlayEl.style.fontSize = `${currentTextElementData.fontSize * canvasAppState.zoom}px`; // Scale font for input field
+        textInputOverlayEl.style.fontSize = `${currentTextElementData.fontSize * canvasAppState.zoom}px`;
         textInputOverlayEl.style.color = currentTextElementData.strokeColor;
         textInputOverlayEl.value = '';
         textInputOverlayEl.style.display = 'block';
-        textInputOverlayEl.style.minWidth = '50px'; // ensure it's visible
+        textInputOverlayEl.style.minWidth = '50px';
         textInputOverlayEl.style.minHeight = `${currentTextElementData.fontSize * canvasAppState.zoom * 1.2}px`;
         textInputOverlayEl.focus();
     }
@@ -1361,16 +1525,15 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         if (textInputOverlayEl.style.display === 'none' || !currentTextElementData) return;
 
         const text = textInputOverlayEl.value;
-        if (text.trim()) { // Only add if text is not just whitespace
+        if (text.trim()) {
             const newElement = {
                 id: TB.utils.uniqueId('text_'),
-                ...currentTextElementData, // Includes type, color, font, etc.
+                ...currentTextElementData,
                 text: text,
-                x: currentTextElementData.startX, // Use stored world coordinates
+                x: currentTextElementData.startX,
                 y: currentTextElementData.startY,
-                // width/height can be estimated later if needed for bounding boxes
             };
-            delete newElement.startX; // Clean up temporary properties
+            delete newElement.startX;
             delete newElement.startY;
             canvasElements.push(newElement);
             pushToHistory("Add Text");
@@ -1390,17 +1553,21 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             textInputOverlayEl.style.display = 'none';
             textInputOverlayEl.value = '';
             currentTextElementData = null;
+             renderCanvas(); // Render to remove any lingering visual artifacts
         }
-        // Auto-resize textarea (simple version)
+
         setTimeout(() => {
-            textInputOverlayEl.style.height = 'auto';
-            textInputOverlayEl.style.width = 'auto';
-            textInputOverlayEl.style.height = `${Math.max(textInputOverlayEl.scrollHeight, currentTextElementData.fontSize * canvasAppState.zoom * 1.2)}px`;
-            textInputOverlayEl.style.width = `${Math.max(textInputOverlayEl.scrollWidth, 50)}px`;
+            if (textInputOverlayEl.style.display !== 'none' && currentTextElementData) { // Check if still active
+                textInputOverlayEl.style.height = 'auto';
+                textInputOverlayEl.style.width = 'auto'; // Allow it to shrink if text is deleted
+                // Ensure a minimum height based on font size, and use scrollHeight for content
+                const minHeight = currentTextElementData.fontSize * canvasAppState.zoom * 1.2;
+                textInputOverlayEl.style.height = `${Math.max(textInputOverlayEl.scrollHeight, minHeight)}px`;
+                textInputOverlayEl.style.width = `${Math.max(textInputOverlayEl.scrollWidth, 50)}px`;
+            }
         }, 0);
     }
 
-    // --- Image Element Specific ---
     async function handleAddImageByURL() {
         if (canvasAppState.currentMode !== 'draw') setActiveMode('draw');
         finalizeTextInput();
@@ -1411,10 +1578,9 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         try {
             const imgObject = await loadImageAsync(imageUrl.trim());
             const aspectRatio = imgObject.width / imgObject.height;
-            const defaultWidth = 200 / canvasAppState.zoom; // Target 200px width in current view
+            const defaultWidth = 200 / canvasAppState.zoom;
             const defaultHeight = defaultWidth / aspectRatio;
 
-            // Center in current view (world coordinates)
             const viewCenterX = (canvas.width / (window.devicePixelRatio || 1)) / 2;
             const viewCenterY = (canvas.height / (window.devicePixelRatio || 1)) / 2;
             const worldCenterX = (viewCenterX - canvasAppState.offsetX) / canvasAppState.zoom;
@@ -1424,7 +1590,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                 id: TB.utils.uniqueId('image_'), type: 'image', src: imageUrl.trim(),
                 x: worldCenterX - defaultWidth / 2, y: worldCenterY - defaultHeight / 2,
                 width: defaultWidth, height: defaultHeight,
-                imgObject: imgObject, // Store loaded Image object
+                imgObject: imgObject,
                 opacity: canvasAppState.toolDefaults.image?.opacity || 1.0, angle: 0
             };
             canvasElements.push(imageElement);
@@ -1438,53 +1604,39 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             TB.ui.Loader.hide(loaderId);
         }
     }
-    document.getElementById('toolImageBtn').addEventListener('click', handleAddImageByURL);
-    // Utility to load an image
+    // Ensure toolImageBtn listener is correctly set up in initializeCanvasStudio
+    // document.getElementById('toolImageBtn').addEventListener('click', handleAddImageByURL); // This is already in init
+
     function loadImageAsync(src) {
         return new Promise((resolve, reject) => {
             const img = new Image();
-            img.crossOrigin = "Anonymous"; // Attempt to avoid CORS issues for images from URLs
+            img.crossOrigin = "Anonymous";
             img.onload = () => resolve(img);
             img.onerror = (err) => reject(err);
             img.src = src;
         });
     }
 
-    // --- Main Canvas Rendering Logic ---
     function renderCanvas() {
         const dpr = window.devicePixelRatio || 1;
         ctx.save();
-
-        // Clear canvas with background color (respecting DPR)
         ctx.fillStyle = canvasAppState.viewBackgroundColor;
-        ctx.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr); // Fill using device-independent pixels
-
-        // Apply pan and zoom AFTER DPR scaling is set up
-        // The order is: scale(dpr), then translate(offsetX, offsetY), then scale(zoom)
-        // However, offsetX/Y are already in view pixels.
-        // The getCanvasCoordinates converts view to world. Drawing happens in world.
-        // So, the context needs to be set up to map world to view.
+        ctx.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
         ctx.translate(canvasAppState.offsetX, canvasAppState.offsetY);
         ctx.scale(canvasAppState.zoom, canvasAppState.zoom);
-
-        // Render all stored elements
         canvasElements.forEach(el => drawElementOnCanvas(el));
-
-        // Draw selection highlight if an element is selected in 'select' mode
-        if (canvasAppState.currentMode === 'select' && selectedElement) {
-            drawSelectionHighlight(selectedElement);
+        if (canvasAppState.currentMode === 'select' && selectedElements.length > 0) {
+            selectedElements.forEach(selEl => drawSelectionHighlight(selEl));
         }
-
-        ctx.restore(); // Restore to state before pan/zoom/DPR scaling for next frame
+        ctx.restore();
         updateUndoRedoButtons();
     }
 
     function drawElementOnCanvas(el) {
-        // Assumes ctx is already transformed (pan, zoom) to draw in world coordinates.
         ctx.save();
         ctx.globalAlpha = el.opacity === undefined ? 1.0 : el.opacity;
 
-        if (el.angle) { // Basic rotation handling
+        if (el.angle) {
             const centerX = el.x + (el.width || 0) / 2;
             const centerY = el.y + (el.height || 0) / 2;
             ctx.translate(centerX, centerY);
@@ -1493,28 +1645,24 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         }
 
         const stroke = el.strokeColor || canvasAppState.strokeColor;
-        const fill = el.fill; // Can be 'transparent' or a color
+        const fill = el.fill;
         const strokeWidth = el.strokeWidth || canvasAppState.strokeWidth;
-
-        // DEBUG: Check coordinates and dimensions here if displacement occurs.
-        // console.log(`Drawing ${el.type} at x:${el.x}, y:${el.y}, w:${el.width}, h:${el.height} with zoom ${canvasAppState.zoom}`);
 
         switch (el.type) {
             case 'pen':
                 if (el.points && el.points.length > 0) {
                     if (getStroke && typeof getStroke === 'function') {
                         const strokeOptions = {
-                            size: strokeWidth, // perfect-freehand size is in world units when ctx is scaled
+                            size: strokeWidth,
                             thinning: 0.6, smoothing: 0.5, streamline: 0.5,
-                            last: true, // For finalized strokes
+                            last: true,
                         };
-                        // Ensure points are in correct format for getStroke [[x,y,pressure],...]
                         const strokePathPoints = getStroke(el.points.map(p => [p[0], p[1], p[2] || 0.5]), strokeOptions);
                         const pathData = getSvgPathFromStroke(strokePathPoints);
                         const path2d = new Path2D(pathData);
-                        ctx.fillStyle = stroke; // Perfect Freehand creates filled paths
+                        ctx.fillStyle = stroke;
                         ctx.fill(path2d);
-                    } else { // Fallback if getStroke not available
+                    } else {
                         ctx.beginPath();
                         ctx.moveTo(el.points[0][0], el.points[0][1]);
                         for (let i = 1; i < el.points.length; i++) {
@@ -1534,6 +1682,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                         strokeWidth: strokeWidth,
                         fillStyle: el.fillStyle || 'solid',
                         roughness: el.roughness === undefined ? 1 : el.roughness,
+                        seed: el.seed
                     });
                 }
                 break;
@@ -1545,6 +1694,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                         strokeWidth: strokeWidth,
                         fillStyle: el.fillStyle || 'hachure',
                         roughness: el.roughness === undefined ? 1 : el.roughness,
+                        seed: el.seed
                     });
                 }
                 break;
@@ -1552,10 +1702,9 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                 ctx.fillStyle = stroke;
                 ctx.font = `${el.fontSize || canvasAppState.fontSize}px ${el.fontFamily || canvasAppState.fontFamily}`;
                 ctx.textAlign = el.textAlign || 'left';
-                const lines = (el.text || "").split('\\n');
+                const lines = (el.text || "").split('\\n'); // Changed from \\n to \\n for actual newlines
                 const lineHeight = (el.fontSize || canvasAppState.fontSize) * 1.2;
-                // Adjust Y for baseline. ForfillText's y is baseline.
-                const textRenderYOffset = (el.fontSize || canvasAppState.fontSize) * 0.85; // Approx to align top of text with y
+                const textRenderYOffset = (el.fontSize || canvasAppState.fontSize) * 0.85;
                 lines.forEach((line, index) => {
                     ctx.fillText(line, el.x, el.y + textRenderYOffset + (index * lineHeight));
                 });
@@ -1564,22 +1713,21 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                 if (el.imgObject && el.imgObject.complete) {
                     try {
                          ctx.drawImage(el.imgObject, el.x, el.y, el.width, el.height);
-                    } catch (e) { // Handles tainted canvas error for cross-origin images if not properly handled by server/image
+                    } catch (e) {
                         TB.logger.warn("Error drawing image (possibly tainted canvas):", el.src, e);
                         ctx.strokeStyle = 'red'; ctx.lineWidth = 1;
                         ctx.strokeRect(el.x, el.y, el.width, el.height);
                         ctx.fillText("Image Error", el.x + 5, el.y + 15);
                     }
-                } else if (el.src && !el.imgObject) { // Lazy load if imgObject missing
+                } else if (el.src && !el.imgObject) {
                     loadImageAsync(el.src).then(img => {
                         el.imgObject = img;
-                        renderCanvas(); // Redraw once loaded
+                        renderCanvas();
                     }).catch(err => {
                         TB.logger.error("Failed to lazy-load image for drawing:", el.src, err);
-                        el.imgObject = null; // Prevent repeated attempts
-                        renderCanvas(); // Re-render to potentially show placeholder
+                        el.imgObject = null;
+                        renderCanvas();
                     });
-                    // Draw placeholder while loading
                     ctx.strokeStyle = 'gray'; ctx.lineWidth = 1;
                     ctx.strokeRect(el.x, el.y, el.width, el.height);
                     ctx.fillText("Loading...", el.x + 5, el.y + 15);
@@ -1591,52 +1739,47 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
 
     function drawSelectionHighlight(element) {
         if (!element) return;
-        // Get bounding box of the element in world coordinates.
-        // This needs to be accurate for each element type.
         let bbox = getElementBoundingBox(element);
         if (!bbox) return;
 
         ctx.save();
-        // No need to re-apply pan/zoom, context is already transformed.
-        ctx.strokeStyle = 'rgba(0, 123, 255, 0.8)'; // Blue selection color
-        ctx.lineWidth = 1.5 / canvasAppState.zoom; // Keep line width visually constant
-        ctx.setLineDash([6 / canvasAppState.zoom, 3 / canvasAppState.zoom]); // Dashed line, scaled with zoom
+        ctx.strokeStyle = 'rgba(0, 123, 255, 0.8)';
+        ctx.lineWidth = Math.max(0.5, 1.5 / canvasAppState.zoom); // Ensure minimum visible line width
+        ctx.setLineDash([Math.max(2, 6 / canvasAppState.zoom), Math.max(1, 3 / canvasAppState.zoom)]);
 
-        // Apply element's rotation to the bounding box highlight
         if (element.angle) {
-            const centerX = element.x + (element.width || 0) / 2; // Use element's center for bbox rotation
-            const centerY = element.y + (element.height || 0) / 2;
+            const centerX = bbox.x + bbox.width / 2; // Use BBOX center for rotation of highlight
+            const centerY = bbox.y + bbox.height / 2;
             ctx.translate(centerX, centerY);
             ctx.rotate(element.angle * Math.PI / 180);
             ctx.translate(-centerX, -centerY);
         }
-
         ctx.strokeRect(bbox.x, bbox.y, bbox.width, bbox.height);
         ctx.setLineDash([]);
         ctx.restore();
-
-        // TODO: Add resize/rotate handles if needed
     }
 
     function getElementBoundingBox(element) {
-        // Returns {x, y, width, height} in world coordinates
-        // This is simplified. For pen strokes, it should be the tightest bounding box.
-        // For rotated elements, this bbox is pre-rotation. The highlight drawing handles rotation.
+        if (!element) return null; // Added guard
         switch (element.type) {
             case 'rectangle':
-            case 'ellipse': // Ellipse uses its defined x,y,width,height as bbox
+            case 'ellipse':
             case 'image':
                 return { x: element.x, y: element.y, width: element.width, height: element.height };
             case 'text':
-                // Crude bbox for text, similar to hit test
-                if (!element.text) return null;
+                if (!element.text) return { x: element.x, y: element.y, width: 0, height: 0 }; // Default for empty text
+                ctx.save(); // Save context before changing font
+                ctx.font = `${element.fontSize || canvasAppState.fontSize}px ${element.fontFamily || canvasAppState.fontFamily}`;
                 const lines = element.text.split('\\n');
-                const charWidthApprox = (element.fontSize || 16) * 0.6;
-                const estWidth = Math.max(...lines.map(l => l.length)) * charWidthApprox;
+                let maxWidth = 0;
+                lines.forEach(line => {
+                    maxWidth = Math.max(maxWidth, ctx.measureText(line).width);
+                });
                 const estHeight = lines.length * (element.fontSize || 16) * 1.2;
-                return { x: element.x, y: element.y, width: estWidth, height: estHeight };
+                ctx.restore(); // Restore context
+                return { x: element.x, y: element.y, width: maxWidth, height: estHeight };
             case 'pen':
-                if (!element.points || element.points.length === 0) return null;
+                if (!element.points || element.points.length === 0) return { x:0, y:0, width:0, height:0}; // Default for no points
                 let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
                 element.points.forEach(p => {
                     minX = Math.min(minX, p[0]);
@@ -1644,15 +1787,13 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                     maxX = Math.max(maxX, p[0]);
                     maxY = Math.max(maxY, p[1]);
                 });
-                const buffer = (element.strokeWidth || 2) / 2; // Add half stroke width as buffer
+                const buffer = (element.strokeWidth || 2) / 2;
                 return { x: minX - buffer, y: minY - buffer, width: (maxX - minX) + 2 * buffer, height: (maxY - minY) + 2 * buffer };
             default:
                 return null;
         }
     }
 
-
-    // --- Perfect Freehand Helpers (from docs, adapted) ---
     function getSvgPathFromStroke(strokePoints) {
         if (!strokePoints || strokePoints.length === 0) return '';
         const d = strokePoints.reduce(
@@ -1661,42 +1802,47 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                 acc.push(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
                 return acc;
             },
-            ['M', ...strokePoints[0], 'Q'] // Start with M command, first point, then Q
+            ['M', strokePoints[0][0], strokePoints[0][1], 'Q'] // Corrected initial M command
         );
-        d.push('Z'); // Close the path for a filled shape
+        d.push('Z');
         return d.join(' ');
     }
-    // drawPath was integrated into drawElementOnCanvas for 'pen'
 
-    // --- Settings Modal & Tool Defaults ---
     function openSettingsModal() {
-        // Populate modal with current defaults from canvasAppState.toolDefaults
-        for (const tool in canvasAppState.toolDefaults) {
-            for (const prop in canvasAppState.toolDefaults[tool]) {
-                const inputId = `default${tool.charAt(0).toUpperCase() + tool.slice(1)}${prop.charAt(0).toUpperCase() + prop.slice(1)}`;
-                const inputEl = document.getElementById(inputId);
-                if (inputEl) {
-                    if (inputEl.type === 'color' || inputEl.type === 'text' || inputEl.tagName === 'SELECT') {
-                        inputEl.value = canvasAppState.toolDefaults[tool][prop];
-                    } else if (inputEl.type === 'number') {
-                        inputEl.value = parseFloat(canvasAppState.toolDefaults[tool][prop]);
+            if (!settingsModalInstance) {
+                TB.ui.Toast.showError("Settings modal not initialized.");
+                console.error("Attempted to open settings modal, but instance is null.");
+                return;
+            }
+            for (const tool in canvasAppState.toolDefaults) {
+                for (const prop in canvasAppState.toolDefaults[tool]) {
+                    if (prop === 'seed' || prop === 'previewOpacity') continue;
+                    const inputId = `default${tool.charAt(0).toUpperCase() + tool.slice(1)}${prop.charAt(0).toUpperCase() + prop.slice(1)}`;
+                    const inputEl = document.getElementById(inputId);
+                    if (inputEl) {
+                        if (inputEl.type === 'color' || inputEl.type === 'text' || inputEl.tagName === 'SELECT') {
+                            inputEl.value = canvasAppState.toolDefaults[tool][prop];
+                        } else if (inputEl.type === 'number') {
+                            inputEl.value = parseFloat(canvasAppState.toolDefaults[tool][prop]);
+                        }
                     }
-                } else {
-                    // TB.logger.warn(`Settings input not found: ${inputId} for tool ${tool}, prop ${prop}`);
                 }
             }
+            settingsModalInstance.show();
+    }
+
+     function closeSettingsModal() {
+        if (settingsModalInstance) {
+            settingsModalInstance.close();
         }
-        TB.ui.Modal.show({ id: 'settingsModal', target: '#settingsModal' });
     }
 
     function saveToolDefaults() {
-        // Read values from modal inputs and save to canvasAppState.toolDefaults
         const inputs = document.querySelectorAll('#settingsModal .tool-config-group [data-tool]');
         inputs.forEach(input => {
             const tool = input.dataset.tool;
             const prop = input.dataset.prop;
-            if (tool && prop) {
-                if (!canvasAppState.toolDefaults[tool]) canvasAppState.toolDefaults[tool] = {};
+            if (tool && prop && canvasAppState.toolDefaults[tool]) { // Added check for canvasAppState.toolDefaults[tool]
                 if (input.type === 'number') {
                     canvasAppState.toolDefaults[tool][prop] = parseFloat(input.value);
                 } else {
@@ -1705,41 +1851,29 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             }
         });
         TB.ui.Toast.showSuccess("Default settings saved.");
-        TB.ui.Modal.getById('settingsModal').close();
-        // If current tool's defaults changed, re-apply them
+        closeSettingsModal();
         if (canvasAppState.currentTool && canvasAppState.currentMode === 'draw') {
             setActiveTool(canvasAppState.currentTool);
         }
-        // Consider persisting these defaults to localStorage or backend user profile
-        // For now, they are part of the session data if saved.
     }
 
-
-    // --- Session Management (New, Load, Save, Import, Export) ---
     function startNewSession(showToast = true) {
         currentSessionId = null;
         currentCanvasName = "Untitled Canvas";
         document.getElementById('canvasNameInput').value = currentCanvasName;
         canvasElements = [];
-        selectedElement = null;
+        selectedElements = []; // Reset multi-selection
         textNotesContent = "";
         document.getElementById('textNotesArea').value = "";
-
-        // Reset app state to a deep copy of defaults
         canvasAppState = JSON.parse(JSON.stringify(DEFAULT_CANVAS_APP_STATE));
-
-        // Update UI controls to reflect new state
-        const currentTheme = TB.ui.theme.getCurrentMode ? TB.ui.theme.getCurrentMode() : 'light';
-        canvasAppState.viewBackgroundColor = currentTheme === 'dark' ? (canvasAppState.toolDefaults?.viewBackgroundColorDark || '#1e1e1e') : DEFAULT_CANVAS_APP_STATE.viewBackgroundColor;
+        const currentTheme = (TB.ui && TB.ui.theme && TB.ui.theme.getCurrentMode) ? TB.ui.theme.getCurrentMode() : 'light';
+        canvasAppState.viewBackgroundColor = currentTheme === 'dark' ? (canvasAppState.toolDefaults?.viewBackgroundColorDark || '#333333') : DEFAULT_CANVAS_APP_STATE.viewBackgroundColor; // Darker default
         document.getElementById('bgColorPicker').value = canvasAppState.viewBackgroundColor;
-
-        // Set mode to draw and pen tool by default
-        setActiveMode('draw'); // This will also call setActiveTool
-        setActiveTool(canvasAppState.currentTool || 'pen'); // Ensure tool defaults are applied
-
-        historyStack = [JSON.stringify([])]; // Initial empty state for history
+        setActiveMode('draw');
+        setActiveTool(canvasAppState.currentTool || 'pen');
+        historyStack = [JSON.stringify([])];
         redoStack = [];
-        renderCanvas(); // This also calls updateUndoRedoButtons
+        renderCanvas();
         if (showToast) TB.ui.Toast.showInfo("New canvas started.");
     }
 
@@ -1751,25 +1885,23 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         }
         const loaderId = TB.ui.Loader.show("Saving session...");
         const serializableElements = canvasElements.map(el => {
-            const { imgObject, ...rest } = el; return rest; // Strip non-serializable imgObject
+            const { imgObject, originalDragX, originalDragY, originalPoints, ...rest } = el; // Strip non-serializable/temp properties
+            return rest;
         });
         const sessionData = {
             id: currentSessionId || TB.utils.uniqueId('canvas-session-'),
             name: currentCanvasName,
             canvas_elements: serializableElements,
-            canvas_app_state: canvasAppState, // Includes modes, tool defaults, zoom/pan etc.
+            canvas_app_state: canvasAppState,
             text_notes: textNotesContent,
-            // last_modified is set by server
         };
         currentSessionId = sessionData.id;
-
         try {
             const response = await TB.api.request(MOD_NAME, 'save_session', sessionData, 'POST');
             if (response.isSuccess()) {
                 TB.ui.Toast.showSuccess("Session saved!");
                 if (response.data && response.data.last_modified) {
-                    // Update internal last_modified if server sends it back, for consistency
-                    canvasAppState.last_modified = response.data.last_modified;
+                    // canvasAppState.last_modified = response.data.last_modified; // Server sets this
                 }
             } else {
                 TB.ui.Toast.showError(`Save error: ${response.info?.message || response.info?.help_text || 'Unknown error'}`);
@@ -1786,22 +1918,18 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         try {
             const response = await TB.api.request(MOD_NAME, 'list_sessions', null, 'GET');
             TB.ui.Loader.hide(loaderId);
-
             if (response.isSuccess() && response.get()) {
                 const sessions = response.get();
                 if (sessions.length === 0) {
                     TB.ui.Toast.showInfo("No saved sessions found."); return;
                 }
-                // Sort sessions by last_modified descending if not already sorted
                 sessions.sort((a, b) => (b.last_modified || 0) - (a.last_modified || 0));
-
-                let modalContent = '<select id="sessionSelectModal" class="tb-input tb-w-full">';
+                let modalContent = '<p class="tb-text-sm tb-mb-2">Select a session to load:</p><select id="sessionSelectModal" class="tb-input tb-w-full">';
                 sessions.forEach(s => {
-                    const dateStr = s.last_modified ? new Date(s.last_modified / 100000).toLocaleString() : 'N/A';
+                    const dateStr = s.last_modified ? new Date(s.last_modified).toLocaleString() : 'N/A'; // Assuming last_modified is a standard timestamp
                     modalContent += `<option value="${s.id}">${TB.utils.escapeHtml(s.name)} (Saved: ${dateStr})</option>`;
                 });
                 modalContent += '</select>';
-
                 TB.ui.Modal.show({
                     title: "Load Session", content: modalContent,
                     buttons: [
@@ -1828,31 +1956,23 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             const response = await TB.api.request(MOD_NAME, `load_session?session_id=${sessionId}`, null, 'GET');
             if (response.isSuccess() && response.get()) {
                 const data = response.get();
-
-                // Start with a fresh default state and merge loaded data
-                // This helps if old sessions are missing new appState fields
-                startNewSession(false); // false to suppress "New canvas started" toast
-
+                startNewSession(false);
                 currentSessionId = data.id;
                 currentCanvasName = data.name;
                 textNotesContent = data.text_notes || "";
-
-                // Carefully merge canvas_app_state
                 canvasAppState = {
-                    ...JSON.parse(JSON.stringify(DEFAULT_CANVAS_APP_STATE)), // Start with fresh defaults
-                    ...(data.canvas_app_state || {}) // Overlay loaded state
+                    ...JSON.parse(JSON.stringify(DEFAULT_CANVAS_APP_STATE)),
+                    ...(data.canvas_app_state || {})
                 };
-                 // Ensure toolDefaults are fully populated even if partially saved
                 canvasAppState.toolDefaults = {
                     ...JSON.parse(JSON.stringify(DEFAULT_CANVAS_APP_STATE.toolDefaults)),
                     ...(data.canvas_app_state?.toolDefaults || {})
                 };
+                 canvasAppState.elementPresets = data.canvas_app_state?.elementPresets || JSON.parse(JSON.stringify(DEFAULT_CANVAS_APP_STATE.elementPresets));
 
 
                 document.getElementById('canvasNameInput').value = currentCanvasName;
                 document.getElementById('textNotesArea').value = textNotesContent;
-
-                // Update UI controls from the potentially merged canvasAppState
                 document.getElementById('bgColorPicker').value = canvasAppState.viewBackgroundColor;
                 document.getElementById('strokeColorPicker').value = canvasAppState.strokeColor;
                 document.getElementById('fillColorPicker').value = canvasAppState.fillColor;
@@ -1860,15 +1980,11 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
 
                 setActiveMode(canvasAppState.currentMode || 'draw');
                 setActiveTool(canvasAppState.currentTool || 'pen');
-
-                // Restore elements (this also calls renderCanvas)
                 await restoreElementsFromHistory(data.canvas_elements || []);
-                // Set history for loaded data
                 historyStack = [JSON.stringify(data.canvas_elements || [])];
                 redoStack = [];
                 updateUndoRedoButtons();
-
-                TB.ui.Toast.showSuccess(`Session '${currentCanvasName}' loaded.`);
+                TB.ui.Toast.showSuccess(`Session '${TB.utils.escapeHtml(currentCanvasName)}' loaded.`);
             } else {
                 TB.ui.Toast.showError(`Error loading session: ${response.info?.message || 'Unknown error'}`);
             }
@@ -1881,14 +1997,15 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
     }
 
     function handleExportJSON() {
-        finalizeTextInput(); // Ensure any pending text is captured
+        finalizeTextInput();
         const serializableElements = canvasElements.map(el => {
-            const { imgObject, ...rest } = el; return rest;
+            const { imgObject, originalDragX, originalDragY, originalPoints, ...rest } = el;
+            return rest;
         });
         const dataToExport = {
             id: currentSessionId || TB.utils.uniqueId('canvas-export-'),
             name: currentCanvasName,
-            version: VERSION, // Add app version to export
+            version: VERSION,
             canvas_elements: serializableElements,
             canvas_app_state: canvasAppState,
             text_notes: textNotesContent,
@@ -1896,7 +2013,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         };
         const jsonString = JSON.stringify(dataToExport, null, 2);
         const blob = new Blob([jsonString], { type: 'application/json' });
-        const safeFilename = currentCanvasName.replace(/[^a-z0-9_.-]/gi, '_').substring(0,50) || 'canvas_export';
+        const safeFilename = (currentCanvasName.replace(/[^a-z0-9_.-]/gi, '_') || 'canvas_export').substring(0,50);
         TB.utils.downloadBlob(blob, `${safeFilename}.json`);
         TB.ui.Toast.showSuccess("Canvas exported as JSON.");
     }
@@ -1909,13 +2026,10 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             try {
                 const importedData = JSON.parse(e.target.result);
                 if (importedData.canvas_elements && importedData.canvas_app_state) {
-                    // Similar to loading a session:
-                    startNewSession(false); // Reset to defaults first
-
+                    startNewSession(false);
                     currentSessionId = importedData.id || TB.utils.uniqueId('canvas-imported-');
                     currentCanvasName = importedData.name || "Imported Canvas";
                     textNotesContent = importedData.text_notes || "";
-
                     canvasAppState = {
                          ...JSON.parse(JSON.stringify(DEFAULT_CANVAS_APP_STATE)),
                         ...(importedData.canvas_app_state || {})
@@ -1924,7 +2038,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                         ...JSON.parse(JSON.stringify(DEFAULT_CANVAS_APP_STATE.toolDefaults)),
                         ...(importedData.canvas_app_state?.toolDefaults || {})
                     };
-
+                    canvasAppState.elementPresets = importedData.canvas_app_state?.elementPresets || JSON.parse(JSON.stringify(DEFAULT_CANVAS_APP_STATE.elementPresets));
 
                     document.getElementById('canvasNameInput').value = currentCanvasName;
                     document.getElementById('textNotesArea').value = textNotesContent;
@@ -1932,15 +2046,12 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
                     document.getElementById('strokeColorPicker').value = canvasAppState.strokeColor;
                     document.getElementById('fillColorPicker').value = canvasAppState.fillColor;
                     document.getElementById('strokeWidthInput').value = canvasAppState.strokeWidth;
-
                     setActiveMode(canvasAppState.currentMode || 'draw');
                     setActiveTool(canvasAppState.currentTool || 'pen');
-
                     await restoreElementsFromHistory(importedData.canvas_elements || []);
                     historyStack = [JSON.stringify(importedData.canvas_elements || [])];
                     redoStack = [];
                     updateUndoRedoButtons();
-
                     TB.ui.Toast.showSuccess("Canvas imported successfully.");
                 } else {
                     TB.ui.Toast.showError("Invalid JSON format. Missing canvas_elements or canvas_app_state.");
@@ -1951,21 +2062,287 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             }
         };
         reader.readAsText(file);
-        event.target.value = null; // Reset file input
+        event.target.value = null;
     }
 
-    // Initialize after TB.js is ready
-    if (window.TB?.ready) { // TB.ready is a promise in modern tb.js
+    function openPresetManagementModal() {
+        if (!presetManagementModalInstance) {
+            TB.ui.Toast.showError("Preset modal not initialized.");
+            return;
+        }
+        loadAndDisplayPresets();
+        hidePresetEditForm();
+        presetManagementModalInstance.show();
+    }
+
+    function closePresetModal() {
+        if (presetManagementModalInstance) {
+            presetManagementModalInstance.close();
+        }
+    }
+
+    function loadAndDisplayPresets() {
+        const container = document.getElementById('presetListContainer');
+        if (!container) return;
+        container.innerHTML = '';
+
+        const presets = canvasAppState.elementPresets || [];
+        if (presets.length === 0) {
+            container.innerHTML = '<p class="tb-text-secondary tb-text-sm">No presets defined yet.</p>';
+            return;
+        }
+
+        presets.forEach(preset => {
+            const itemDiv = document.createElement('div');
+            itemDiv.className = 'preset-item tb-p-2 tb-border tb-rounded tb-mb-2 tb-flex tb-justify-between tb-items-center dark:tb-border-neutral-700';
+            itemDiv.dataset.presetId = preset.id;
+            itemDiv.innerHTML = `
+                <span class="tb-font-medium">${TB.utils.escapeHtml(preset.name)} <span class="tb-text-xs tb-text-secondary">(${preset.toolType})</span></span>
+                <div>
+                    <button class="apply-preset-btn tb-btn tb-btn-xs tb-btn-primary tb-mr-1" title="Apply Preset"><span class="material-symbols-outlined" style="font-size:1em; vertical-align:middle;">check_circle</span></button>
+                    <button class="edit-preset-btn tb-btn tb-btn-xs tb-btn-secondary tb-mr-1" title="Edit Preset"><span class="material-symbols-outlined" style="font-size:1em; vertical-align:middle;">edit_note</span></button>
+                    <button class="delete-preset-btn tb-btn tb-btn-xs tb-btn-danger" title="Delete Preset"><span class="material-symbols-outlined" style="font-size:1em; vertical-align:middle;">delete_forever</span></button>
+                </div>
+            `;
+            itemDiv.querySelector('.apply-preset-btn').addEventListener('click', () => applyPreset(preset.id));
+            itemDiv.querySelector('.edit-preset-btn').addEventListener('click', () => showPresetEditForm(preset.id));
+            itemDiv.querySelector('.delete-preset-btn').addEventListener('click', () => deletePreset(preset.id));
+            container.appendChild(itemDiv);
+        });
+    }
+
+    function showPresetEditForm(presetIdToEdit = null) {
+        const formContainer = document.getElementById('presetEditFormContainer');
+        const formTitle = document.getElementById('presetFormTitle');
+        const presetIdInput = document.getElementById('presetEditId');
+        const presetNameInput = document.getElementById('presetNameInput');
+        const presetToolTypeSelect = document.getElementById('presetToolTypeSelect');
+
+        if (!formContainer || !formTitle || !presetIdInput || !presetNameInput || !presetToolTypeSelect) {
+            console.error("Preset edit form elements not found."); return;
+        }
+
+        let propertiesToPopulate = {};
+        if (presetIdToEdit) {
+            const preset = canvasAppState.elementPresets.find(p => p.id === presetIdToEdit);
+            if (!preset) {
+                TB.ui.Toast.showError("Preset not found for editing.");
+                return;
+            }
+            formTitle.textContent = "Edit Preset";
+            presetIdInput.value = preset.id;
+            presetNameInput.value = preset.name;
+            presetToolTypeSelect.value = preset.toolType;
+            propertiesToPopulate = preset.properties;
+        } else {
+            formTitle.textContent = "Add New Preset";
+            presetIdInput.value = "";
+            presetNameInput.value = "";
+            presetToolTypeSelect.value = "pen";
+            // For new preset, propertiesToPopulate will be empty, so defaults from config will be used
+        }
+        populatePresetPropertyFields(propertiesToPopulate); // Pass properties or empty object
+        presetToolTypeSelect.disabled = !!presetIdToEdit;
+        formContainer.style.display = 'block';
+    }
+
+    function hidePresetEditForm() {
+        const formContainer = document.getElementById('presetEditFormContainer');
+        if (formContainer) {
+            formContainer.style.display = 'none';
+        }
+        const presetToolTypeSelect = document.getElementById('presetToolTypeSelect');
+        if (presetToolTypeSelect) {
+            presetToolTypeSelect.disabled = false;
+        }
+    }
+
+    function getPresetPropertyFieldsConfig() {
+        return {
+            pen: [
+                { name: "strokeColor", label: "Stroke Color", type: "color", default: "#000000" },
+                { name: "strokeWidth", label: "Stroke Width", type: "number", min: 1, default: 2 },
+                { name: "opacity", label: "Opacity", type: "number", min:0, max:1, step: 0.1, default: 1.0 }
+            ],
+            rectangle: [
+                { name: "strokeColor", label: "Stroke Color", type: "color", default: "#000000" },
+                { name: "strokeWidth", label: "Stroke Width", type: "number", min: 1, default: 2 },
+                { name: "fillColor", label: "Fill Color", type: "color", default: "#cccccc" },
+                { name: "fillStyle", label: "Fill Style", type: "select", options: ["solid", "hachure", "zigzag", "cross-hatch", "dots", "dashed", "zigzag-line"], default: "solid" },
+                { name: "roughness", label: "Roughness", type: "number", min:0, max:3, step: 0.1, default: 1 },
+                { name: "opacity", label: "Opacity", type: "number", min:0, max:1, step: 0.1, default: 1.0 }
+            ],
+            ellipse: [
+                { name: "strokeColor", label: "Stroke Color", type: "color", default: "#000000" },
+                { name: "strokeWidth", label: "Stroke Width", type: "number", min: 1, default: 2 },
+                { name: "fillColor", label: "Fill Color", type: "color", default: "#dddddd" },
+                { name: "fillStyle", label: "Fill Style", type: "select", options: ["hachure", "solid", "zigzag", "cross-hatch", "dots"], default: "hachure" },
+                { name: "roughness", label: "Roughness", type: "number", min:0, max:3, step: 0.1, default: 1 },
+                { name: "opacity", label: "Opacity", type: "number", min:0, max:1, step: 0.1, default: 1.0 }
+            ],
+            text: [
+                { name: "strokeColor", label: "Text Color", type: "color", default: "#000000" },
+                { name: "fontSize", label: "Font Size", type: "number", min: 8, default: 16 },
+                { name: "fontFamily", label: "Font Family", type: "text", default: "Arial" },
+                { name: "opacity", label: "Opacity", type: "number", min:0, max:1, step: 0.1, default: 1.0 }
+            ]
+        };
+    }
+
+    function populatePresetPropertyFields(currentValues = {}) {
+        const toolType = document.getElementById('presetToolTypeSelect').value;
+        const container = document.getElementById('presetPropertiesFields');
+        if (!container) { console.error("Preset properties container not found."); return; }
+        container.innerHTML = '';
+
+        const config = getPresetPropertyFieldsConfig()[toolType];
+        if (!config) { console.warn(`No preset field config for tool type: ${toolType}`); return; }
+
+        config.forEach(field => {
+            const group = document.createElement('div');
+            group.className = 'tb-form-group tb-flex tb-items-center tb-mb-1';
+            const label = document.createElement('label');
+            label.className = 'tb-form-label tb-form-label-xs tb-mr-2';
+            label.style.minWidth = '90px';
+            label.textContent = field.label + ':';
+            label.htmlFor = `presetProp_${field.name}`;
+            group.appendChild(label);
+            let input;
+            if (field.type === 'select') {
+                input = document.createElement('select');
+                input.className = 'tb-input tb-input-xs dark:tb-input-dark';
+                field.options.forEach(opt => {
+                    const option = document.createElement('option');
+                    option.value = opt;
+                    option.textContent = opt.charAt(0).toUpperCase() + opt.slice(1);
+                    input.appendChild(option);
+                });
+            } else {
+                input = document.createElement('input');
+                input.type = field.type;
+                input.className = 'tb-input tb-input-xs dark:tb-input-dark';
+                if (field.type === 'number') {
+                    if(field.min !== undefined) input.min = field.min;
+                    if(field.max !== undefined) input.max = field.max;
+                    if(field.step !== undefined) input.step = field.step;
+                }
+                if (field.type === 'color') {
+                    input.style.padding = '1px';
+                    input.style.height = '24px';
+                } else if (field.type !== 'checkbox') { // Checkbox doesn't need width styling
+                     input.style.width = '120px';
+                }
+            }
+            input.id = `presetProp_${field.name}`;
+            input.dataset.prop = field.name;
+            input.value = currentValues[field.name] !== undefined ? currentValues[field.name] : field.default;
+            group.appendChild(input);
+            container.appendChild(group);
+        });
+    }
+
+    function saveCurrentPresetFromForm() {
+        const presetId = document.getElementById('presetEditId').value;
+        const presetName = document.getElementById('presetNameInput').value.trim();
+        const toolType = document.getElementById('presetToolTypeSelect').value;
+
+        if (!presetName) {
+            TB.ui.Toast.showWarning("Preset name cannot be empty.");
+            return;
+        }
+
+        const properties = {};
+        const propInputs = document.querySelectorAll('#presetPropertiesFields [data-prop]');
+        propInputs.forEach(input => {
+            const propName = input.dataset.prop;
+            properties[propName] = input.type === 'number' ? parseFloat(input.value) : (input.type === 'checkbox' ? input.checked : input.value);
+        });
+
+        if (presetId) {
+            const index = canvasAppState.elementPresets.findIndex(p => p.id === presetId);
+            if (index > -1) {
+                canvasAppState.elementPresets[index].name = presetName;
+                canvasAppState.elementPresets[index].properties = properties;
+                TB.ui.Toast.showSuccess("Preset updated.");
+            }
+        } else {
+            const newPreset = {
+                id: TB.utils.uniqueId('preset_'),
+                name: presetName,
+                toolType: toolType,
+                properties: properties
+            };
+            canvasAppState.elementPresets.push(newPreset);
+            TB.ui.Toast.showSuccess("Preset added.");
+        }
+        loadAndDisplayPresets();
+        hidePresetEditForm();
+    }
+
+    function deletePreset(presetId) {
+        TB.ui.Modal.confirm({
+            title: "Delete Preset",
+            message: "Are you sure you want to delete this preset?",
+            confirmButtonText: "Delete",
+            confirmAction: () => {
+                canvasAppState.elementPresets = canvasAppState.elementPresets.filter(p => p.id !== presetId);
+                loadAndDisplayPresets();
+                TB.ui.Toast.showInfo("Preset deleted.");
+            }
+        });
+    }
+
+    function applyPreset(presetId) {
+        const preset = canvasAppState.elementPresets.find(p => p.id === presetId);
+        if (!preset) {
+            TB.ui.Toast.showError("Preset not found.");
+            return;
+        }
+        setActiveMode('draw');
+        setActiveTool(preset.toolType);
+        const propsToUpdate = preset.properties;
+        for (const prop in propsToUpdate) {
+            if (prop === 'strokeColor') {
+                document.getElementById('strokeColorPicker').value = propsToUpdate[prop];
+                canvasAppState.strokeColor = propsToUpdate[prop];
+            } else if (prop === 'fillColor' && (preset.toolType === 'rectangle' || preset.toolType === 'ellipse')) {
+                document.getElementById('fillColorPicker').value = propsToUpdate[prop];
+                canvasAppState.fillColor = propsToUpdate[prop];
+            } else if (prop === 'strokeWidth') {
+                document.getElementById('strokeWidthInput').value = propsToUpdate[prop];
+                canvasAppState.strokeWidth = parseInt(propsToUpdate[prop], 10);
+            } else if (prop === 'fontSize' && preset.toolType === 'text') {
+                canvasAppState.fontSize = parseInt(propsToUpdate[prop], 10);
+            } else if (prop === 'fontFamily' && preset.toolType === 'text') {
+                canvasAppState.fontFamily = propsToUpdate[prop];
+            }
+            // Update current app state directly, not just tool defaults, for immediate effect
+            canvasAppState[prop] = propsToUpdate[prop];
+
+            // Optionally, also update the specific tool's defaults for persistence if that's desired
+            // if (canvasAppState.toolDefaults[preset.toolType]) {
+            //      canvasAppState.toolDefaults[preset.toolType][prop] = propsToUpdate[prop];
+            // }
+        }
+        // Re-apply tool settings from main controls now that canvasAppState has preset values
+        setActiveTool(preset.toolType);
+
+        TB.ui.Toast.showSuccess(`Preset "${TB.utils.escapeHtml(preset.name)}" applied.`);
+        if (presetManagementModalInstance && presetManagementModalInstance.isOpen) {
+            presetManagementModalInstance.close();
+        }
+    }
+
+    if (window.TB?.ready) {
         window.TB.ready.then(initializeCanvasStudio);
-    } else if (window.TB?.events?.on) { // Fallback for older tb.js or if TB.ready isn't there
-         if (window.TB.config?.get('appRootId')) {
+    } else if (window.TB?.events?.on) {
+         if (window.TB.config?.get('appRootId') || document.readyState === 'complete' || document.readyState === 'interactive') {
             initializeCanvasStudio();
         } else {
             window.TB.events.on('tbjs:initialized', initializeCanvasStudio, { once: true });
         }
-    } else { // Absolute fallback
-        document.addEventListener('tbjs:initialized', initializeCanvasStudio, { once: true });
-         // Or window.addEventListener('load', ...) if tbjs:initialized is not guaranteed
+    } else {
+        document.addEventListener('DOMContentLoaded', initializeCanvasStudio, { once: true });
     }
 </script>
 """
