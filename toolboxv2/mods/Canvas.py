@@ -1,12 +1,6 @@
 # toolboxv2/mods/Canvas.py
-# (No significant changes needed in the Python part for the requested frontend features)
-# The existing IdeaSessionData model can store the canvas_app_state which might include
-# new fields like currentMode or toolDefaults if you decide to persist them.
-# The primary changes are in the HTML and JavaScript.
-
 import asyncio
 import json
-import os
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -17,14 +11,40 @@ from pydantic import BaseModel, Field as PydanticField
 from toolboxv2 import App, Result, RequestData, get_app, MainTool
 from toolboxv2.utils.extras.base_widget import get_user_from_request
 
+# Attempt to import EventManager related classes
+# This assumes EventManager.py is accessible in the Python path
+try:
+    from EventManager import EventManagerClass, Event, EventID, SourceTypes, Scope, ExecIn
+    EVENT_MANAGER_AVAILABLE = True
+except ImportError as e:
+    # Fallback or error if EventManager is critical
+    print(f"WARNING: EventManager module not found. Canvas collaboration might be limited. Error: {e}")
+    EVENT_MANAGER_AVAILABLE = False
+    # Define dummy classes if you want the code to run without EventManager for non-collaborative features
+    class EventManagerClass: # type: ignore
+        def __init__(self, source_id, _identification): pass
+        async def register_event(self, event): pass
+        async def trigger_event(self, event_id): pass
+        # Add other methods if absolutely necessary for code structure, but they'll be no-ops
+    class Event: # type: ignore
+        def __init__(self, name, source, source_types, scope, exec_in, event_id, threaded=False, args=None, kwargs_=None): pass
+    class EventID: # type: ignore
+        @classmethod
+        def crate(cls, source, ID, path, payload): return cls()
+        def __init__(self, *args, **kwargs): self.payload = None # Dummy payload
+    class SourceTypes: F = "F"; AP = "AP" # type: ignore
+    class Scope: instance = "instance"; local_network = "local_network" # type: ignore
+    class ExecIn: local = "local" # type: ignore
+
 # --- Module Definition ---
 MOD_NAME = Name = "Canvas"  # Renamed slightly for clarity if this is a new version
 VERSION = "0.1.0"
 export = get_app(f"widgets.{MOD_NAME}").tb
 
 # --- Constants ---
-SESSION_DATA_PREFIX = "enhancedcanvas_session"  # Adjusted prefix if it's a distinct app
+SESSION_DATA_PREFIX = "enhancedcanvas_session"
 SESSION_LIST_KEY_SUFFIX = "_list"
+CANVAS_INTERNAL_BROADCAST_HANDLER_EVENT_PREFIX = "canvas_internal_sse_dispatcher_"
 
 
 # --- Pydantic Models for Canvas Elements and Session Data ---
@@ -93,123 +113,99 @@ class IdeaSessionData(BaseModel):
     last_modified: float = PydanticField(default_factory=lambda: float(uuid.uuid4().int & (1 << 32) - 1))
 
 
-class Tools(MainTool):
+class Tools(MainTool, EventManagerClass if EVENT_MANAGER_AVAILABLE else object):  # Inherit EventManagerClass
     def __init__(self, app: App):
         self.name = MOD_NAME
         self.version = VERSION
-        self.color = "GREEN"  # Changed color for distinction
-        self.tools = {"name": MOD_NAME, "Version": self.show_version}
-        self.db_mod = None
-        self.app.logger.info(f"{self.name} v{self.version} instance created.")
-        # For SSE Collaboration:
-        # Stores a list of asyncio.Queue objects for each active canvas_id
-        # Key: canvas_id (str), Value: List[asyncio.Queue]
-        # For SSE Collaboration:
-        self.live_canvas_sessions: Dict[str, List[asyncio.Queue]] = defaultdict(list)
+        self.color = "GREEN"
+        self.tools_dict = {"name": MOD_NAME, "Version": self.show_version}  # Renamed to avoid conflict
 
-        # For managing shared state of user previews safely across async tasks
-        self.active_user_previews: Dict[str, Dict[str, Any]] = defaultdict(lambda: defaultdict(dict))
-        self.previews_lock = asyncio.Lock()  # Lock for active_user_previews
+        # Call MainTool's __init__ first
+        self.app.logger.info(f"Canvas MainTool part initialized for app {self.app.id if self.app else 'None'}")
 
-        # Internal event queue for decoupling action handling from broadcasting
-        self.internal_broadcast_queue = asyncio.Queue()
-        self._internal_broadcast_processor_task = None
-        MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools, name=self.name, color=self.color)
+        if EVENT_MANAGER_AVAILABLE:
+            # EventManagerClass initialization
+            # Determine identification: 'CanvasP0' if central, 'CanvasPN' (Peer Node) otherwise.
+            # This logic might need to be more sophisticated based on your deployment.
+            canvas_identification = "CanvasPN"
+            if hasattr(self.app, 'args_sto') and self.app.args_sto.background_application_runner:
+                # Assuming background_application_runner implies it's a central/P0-like instance for Canvas
+                canvas_identification = "CanvasP0"
 
-    def on_start(self):
-        self.app.logger.info(f"Initializing {self.name} v{self.version}...")
-        try:
-            self.db_mod = self.app.get_mod("DB")
-            if not self.db_mod:
-                self.app.logger.error(f"{self.name}: DB module not found. Session persistence will not work.")
-        except Exception as e:
-            self.app.logger.error(f"Error during {self.name} on_start (DB init): {e}", exc_info=True)
-            # Continue if DB is not critical for core logic, or return if it is.
+            canvas_source_id = f"CanvasInstance.{self.app.id}"  # Unique source ID for this Canvas instance
 
-        # Start the internal broadcast processor task
-        if self._internal_broadcast_processor_task is None or self._internal_broadcast_processor_task.done():
+            EventManagerClass.__init__(self, source_id=canvas_source_id, _identification=canvas_identification)
+            self.app.logger.info(
+                f"Canvas EventManager part initialized (SID: {self.source_id}, Ident: {self.identification})")
 
-            try:
-                current_loop = asyncio.get_event_loop()
-            except RuntimeError:
-                current_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(current_loop)
-            if hasattr(self.app, 'loop') and self.app.loop is not None: # If app has a designated loop
-                 current_loop = self.app.loop
-            self._internal_broadcast_processor_task = current_loop.create_task(self._process_internal_broadcasts())
-            self.app.logger.info(f"{self.name} internal broadcast processor task started.")
+            # Name for the locally registered event handler, specific to this EventManager source_id
+            self.canvas_internal_handler_event_name = f"{CANVAS_INTERNAL_BROADCAST_HANDLER_EVENT_PREFIX}{self.source_id}"
         else:
-            self.app.logger.info(f"{self.name} internal broadcast processor task already running.")
+            self.app.logger.warning(
+                "Canvas EventManager part NOT initialized (module unavailable). Collaboration will be local only.")
+            self.source_id = f"CanvasInstance.{self.app.id}_LOCAL_ONLY"  # Dummy for logging
+            self.identification = "LOCAL_ONLY"
+            self.canvas_internal_handler_event_name = f"{CANVAS_INTERNAL_BROADCAST_HANDLER_EVENT_PREFIX}{self.source_id}"
+
+        # Canvas specific state
+        self.live_canvas_sessions: Dict[str, List[asyncio.Queue]] = defaultdict(list)
+        self.active_user_previews: Dict[str, Dict[str, Any]] = defaultdict(lambda: defaultdict(dict))
+        self.previews_lock = asyncio.Lock()
 
 
-        # UI Registration
+        MainTool.__ainit__(self, load=on_start, v=self.version, tool=self.tools_dict, name=self.name,
+                          color=self.color, app=app)
+    @property
+    def db_mod(self):
+        return self.app.get_mod("DB")
+
+    @db_mod.setter
+    def _set_db_mod(self, val):
+        pass
+
+    async def _handle_canvas_action_for_sse_broadcast(self, event_manager_event_id: EventID):
+        """
+        This method is called by this instance's EventManager when the
+        `self.canvas_internal_handler_event_name` is triggered.
+        Its job is to take the payload and use the original SSE broadcasting logic.
+        """
+        if not EVENT_MANAGER_AVAILABLE: return Result.default_internal_error("EventManager not available")
+
         try:
-            self.app.run_any(
-                ("CloudM", "add_ui"),
-                name=f"{MOD_NAME}UI_v010",
-                title=f"Enhanced Canvas Studio v{VERSION}",
-                path=f"/api/{MOD_NAME}/ui",
-                description="Interactive Canvas with draw/move modes and enhanced configuration.",
-                auth=True
+            broadcast_details = event_manager_event_id.payload
+            if not isinstance(broadcast_details, dict):
+                self.app.logger.error(
+                    f"CanvasSSEBroadcast: Invalid payload type from EM: {type(broadcast_details)}. Expected dict. Payload: {broadcast_details}")
+                return Result.default_internal_error("Invalid payload for SSE broadcast from EM")
+
+            canvas_id = broadcast_details.get("canvas_id")
+            sse_event_type = broadcast_details.get("sse_event_type")
+            sse_data = broadcast_details.get("sse_data")
+            originator_user_id = broadcast_details.get("originator_user_id")
+
+            if not all([canvas_id, sse_event_type, sse_data is not None]):
+                self.app.logger.error(
+                    f"CanvasSSEBroadcast: Missing details in EM payload: C:{canvas_id}, E:{sse_event_type}, D_is_None:{sse_data is None}, O:{originator_user_id}")
+                return Result.default_internal_error("Missing data for SSE broadcast from EM")
+
+            self.app.logger.debug(
+                f"Canvas: EM triggered internal SSE broadcast for C:{canvas_id}, Event:'{sse_event_type}', Originator:{originator_user_id}")
+
+            await self._broadcast_to_canvas_listeners(
+                canvas_id=canvas_id,
+                event_type=sse_event_type,
+                data=sse_data,
+                originator_user_id=originator_user_id
             )
-            self.app.logger.info(f"{self.name} UI (v{VERSION}) registered with CloudM.")
+            return Result.ok(info="Broadcast dispatched to local SSE listeners via EM.")
         except Exception as e:
-            self.app.logger.error(f"Error registering UI for {self.name}: {e}", exc_info=True)
-
-        self.app.logger.info(f"{self.name} (v{VERSION}) initialized successfully.")
-
-    def show_version(self):
-        self.app.logger.info(f"{self.name} Version: {self.version}")
-        return self.version
-
-    async def _get_user_specific_db_key(self, request: RequestData, base_key: str) -> Optional[str]:
-        """user = await get_user_from_request(self.app, request)
-        if user and hasattr(user, 'uid') and user.uid:
-            return f"{base_key}_{user.uid}"
-        if request and request.session and request.session.SiID:
-            return f"{base_key}_public"# {request.session.SiID}"
-        self.app.logger.warning(f"Could not get UID for user to form DB key. Request session: {request.session}")
-        return f"{base_key}_public"""
-        return f"{base_key}_public"
-
-    async def _process_internal_broadcasts(self):
-        """
-        Consumes events from an internal queue and calls _broadcast_to_canvas_listeners.
-        This ensures broadcasting logic is centralized and decoupled.
-        """
-        self.app.logger.info(f"[{self.name}] Internal broadcast processing loop starting...")
-        try:
-            while True:
-                try:
-                    event_payload = await self.internal_broadcast_queue.get()
-                    canvas_id = event_payload.get("canvas_id")
-                    event_type = event_payload.get("event_type")
-                    data = event_payload.get("data")
-                    originator_user_id = event_payload.get("originator_user_id")
-
-                    if not all([canvas_id, event_type, data is not None]):
-                        self.app.logger.error(f"Invalid internal broadcast event payload: {event_payload}")
-                        self.internal_broadcast_queue.task_done()
-                        continue
-
-                    # self.app.logger.debug(f"Processing internal broadcast: {event_type} for C:{canvas_id} from U:{originator_user_id}")
-                    await self._broadcast_to_canvas_listeners(canvas_id, event_type, data, originator_user_id)
-                except Exception as e:
-                    self.app.logger.error(f"Error during internal broadcast processing: {e}. Payload: {event_payload}",
-                                          exc_info=True)
-                finally:
-                    self.internal_broadcast_queue.task_done()
-        except asyncio.CancelledError:
-            self.app.logger.info(f"[{self.name}] Internal broadcast processing loop cancelled.")
-        except Exception as e:
-            self.app.logger.error(f"[{self.name}] Internal broadcast processing loop CRASHED: {e}", exc_info=True)
-        finally:
-            self.app.logger.info(f"[{self.name}] Internal broadcast processing loop stopped.")
+            self.app.logger.error(f"Canvas: Error in _handle_canvas_action_for_sse_broadcast: {e}", exc_info=True)
+            return Result.default_internal_error(f"Error handling SSE broadcast via EM: {e}")
 
     async def _broadcast_to_canvas_listeners(self, canvas_id: str, event_type: str, data: Dict[str, Any],
                                              originator_user_id: Optional[str] = None):
-        """Helper to put a message onto queues for a given canvas_id."""
-        # This method remains largely the same, but is now called by _process_internal_broadcasts
+        # This method remains the same as your previous version that puts messages on asyncio.Queues
+        # It's now called by _handle_canvas_action_for_sse_broadcast
         message_obj = {
             "event": event_type,
             "data": json.dumps({
@@ -218,50 +214,50 @@ class Tools(MainTool):
                 **data
             })
         }
-
         queues_to_remove = []
-        # Critical section for accessing live_canvas_sessions list, though list itself is modified less often.
-        # If additions/removals to live_canvas_sessions[canvas_id] list are frequent and from multiple tasks,
-        # this list might also need a lock or be copied before iteration. For now, assuming low contention.
-        active_queues = list(self.live_canvas_sessions.get(canvas_id, []))  # Iterate over a copy
+        # Ensure thread-safe iteration if live_canvas_sessions could be modified elsewhere.
+        # defaultdict list append is thread-safe, but iteration during modification is not.
+        # Creating a copy of the list of queues for iteration is safer.
+        current_queues_for_canvas = list(self.live_canvas_sessions.get(canvas_id, []))
 
-        if not active_queues:
-            # self.app.logger.debug(f"No active listeners for canvas {canvas_id} to broadcast {event_type}.")
+        if not current_queues_for_canvas:
+            # self.app.logger.debug(f"No SSE listeners for canvas {canvas_id} to broadcast '{event_type}'.")
             return
 
-        # self.app.logger.debug(f"Broadcasting '{event_type}' to {len(active_queues)} listeners for canvas {canvas_id}")
-        for q in active_queues:
+        # self.app.logger.debug(f"Canvas: Broadcasting '{event_type}' to {len(current_queues_for_canvas)} SSE listeners for C:{canvas_id}")
+        for q in current_queues_for_canvas:
             try:
                 q.put_nowait(message_obj)
             except asyncio.QueueFull:
                 self.app.logger.warning(
-                    f"SSE queue full for canvas {canvas_id} during broadcast of {event_type}. Message dropped for one client.")
-                queues_to_remove.append(q)  # Mark for potential removal from original list
+                    f"SSE queue full for canvas {canvas_id} ({event_type}). Message dropped for one client.")
+                queues_to_remove.append(q)
             except Exception as e:
                 self.app.logger.error(f"Error putting message on SSE queue for canvas {canvas_id} ({event_type}): {e}")
                 queues_to_remove.append(q)
 
         if queues_to_remove:
-            # This part needs to carefully modify the original list structure
+            # This modification needs to be careful.
             if canvas_id in self.live_canvas_sessions:
-                original_queues = self.live_canvas_sessions[canvas_id]
                 self.live_canvas_sessions[canvas_id] = [
-                    q for q in original_queues if q not in queues_to_remove
+                    q for q in self.live_canvas_sessions[canvas_id] if q not in queues_to_remove
                 ]
                 if not self.live_canvas_sessions[canvas_id]:
-                    async with self.previews_lock:  # Ensure atomicity if also clearing previews
+                    async with self.previews_lock:  # Protect active_user_previews
                         if canvas_id in self.live_canvas_sessions:  # Check again before del
                             del self.live_canvas_sessions[canvas_id]
-                        if canvas_id in self.active_user_previews:  # Also clear previews if no listeners
+                        if canvas_id in self.active_user_previews:
                             del self.active_user_previews[canvas_id]
-                    self.app.logger.info(f"Removed all listeners for canvas {canvas_id} due to queue errors/fullness.")
+                    self.app.logger.info(f"SSE: All listeners removed for canvas {canvas_id} due to queue issues.")
 
-    @export(mod_name=MOD_NAME, api=True, version=VERSION, name="ui", api_methods=['GET'])
-    async def get_main_ui(self, request: Optional[RequestData] = None, **kwargs) -> Result:
-        # The HTML template will be named differently to reflect the new version
-        html_content = ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0
-        return Result.html(data=self.app.web_context() + html_content)
 
+    def show_version(self):
+        self.app.logger.info(f"{self.name} Version: {self.version} (EventManager SID: {self.source_id})")
+        return self.version
+
+
+    async def _get_user_specific_db_key(self, request: RequestData, base_key: str) -> Optional[str]:
+        return f"{base_key}_public"  # Simplified from original
     # Save, List, Load, Export session methods remain largely the same.
     # Ensure IdeaSessionData is correctly (de)serialized.
     # For brevity, I'm not re-listing them fully, but they would use the updated
@@ -269,323 +265,475 @@ class Tools(MainTool):
     # Make sure that when saving, the full canvas_app_state (including new fields) is saved.
     # When loading, ensure these new fields are properly restored or defaulted.
 
-    @export(mod_name=MOD_NAME, api=True, version=VERSION, name="save_session", api_methods=['POST'],
-            request_as_kwarg=True)
-    async def save_session(self, request: RequestData, data: Union[Dict[str, Any], IdeaSessionData]) -> Result:
+
+@export(mod_name=MOD_NAME, api=False, version=VERSION, name="on_start", initial=True)
+async def on_start(self):  # Renamed from on_start to avoid conflict if MainTool calls it `load`
+    self.app.logger.info(
+        f"Initializing {self.name} v{self.version} (EventManager SID: {self.source_id}, Ident: {self.identification})...")
+    try:
+        self.db_mod = self.app.get_mod("DB")
         if not self.db_mod:
-            return Result.custom_error(info="Database module not available for saving.", exec_code=503)
+            self.app.logger.error(f"{self.name}: DB module not found. Session persistence will not work.")
+    except Exception as e:
+        self.app.logger.error(f"Error during {self.name} on_start (DB init): {e}", exc_info=True)
 
-        user_db_key_base = await self._get_user_specific_db_key(request, SESSION_DATA_PREFIX)
-        if not user_db_key_base:
-            return Result.default_user_error(info="User authentication required to save session.", exec_code=401)
-
+    if EVENT_MANAGER_AVAILABLE:
+        # Register the local handler event with the EventManager instance
+        # This event's source is a method within this Canvas.Tools instance.
+        # Its scope is 'instance' because it's handled by this specific instance.
+        local_broadcast_handler_event = Event(
+            name=self.canvas_internal_handler_event_name,  # Unique name for the handler event
+            source=self._handle_canvas_action_for_sse_broadcast,  # Method to call
+            source_types=SourceTypes.AP,  # Async function with payload (EventID)
+            scope=Scope.instance,  # Handled by this specific instance
+            exec_in=ExecIn.local,
+            event_id=EventID.crate(source=self.source_id, ID=self.canvas_internal_handler_event_name,
+                                   path="CanvasLocalSSEHandler")
+        )
         try:
-            # Allow partial updates to canvas_app_state if only that is sent for some reason
-            # or ensure the client always sends the full structure.
-            # For simplicity, assume client sends full structure or IdeaSessionData correctly populates defaults.
-            session_data_obj = IdeaSessionData(**data) if isinstance(data, dict) else data
+            await self.register_event(local_broadcast_handler_event)
+            self.app.logger.info(
+                f"Canvas: Registered internal SSE broadcast handler event: {self.canvas_internal_handler_event_name}")
         except Exception as e:
-            self.app.logger.error(f"Invalid session data for save: {e}. Data: {data}", exc_info=True)
-            return Result.default_user_error(info=f"Invalid session data: {e}", exec_code=400)
+            self.app.logger.error(f"Canvas: FAILED to register internal SSE broadcast handler event: {e}",
+                                  exc_info=True)
 
-        session_data_obj.last_modified = float(uuid.uuid4().int & (1 << 32) - 1)  # Or time.time()
-        session_db_key = f"{user_db_key_base}_{session_data_obj.id}"
+        # If this Canvas instance is meant to be a "server" in EventManager terms (e.g. P0 for canvas events)
+        # it might need to call add_server_route here.
+        # Example: if self.identification == "CanvasP0":
+        #    await self.add_server_route(self.source_id, ('0.0.0.0', YOUR_CANVAS_EVENT_PORT))
+        # This part depends heavily on your EventManager's intended architecture.
+        # The provided EventManager.Tools calls startEventManager which sets identification and might start server routes.
+        # Let's assume EventManagerClass.start() is called by the EventManager framework if this instance is a server.
+        if hasattr(EventManagerClass, 'start') and callable(getattr(EventManagerClass, 'start')):
+            if not getattr(self, 'running', False):  # Check if EventManager's loop is running
+                self.app.logger.info(
+                    f"Canvas: Attempting to start EventManager's receiver loop for SID {self.source_id}")
+                try:
+                    # EventManager's start might be synchronous or async, adapt as needed
+                    # If EventManagerClass.start() is synchronous and blocking, it needs its own thread.
+                    # The example EventManagerClass.start() starts a thread for self.receiver()
+                    if hasattr(self, 'start'):  # Check if start method exists from EventManagerClass
+                        self.start()  # This should start the EventManager's internal receiver loop.
+                        self.app.logger.info(f"Canvas: EventManager for SID {self.source_id} started/verified.")
+                except Exception as e_em_start:
+                    self.app.logger.error(
+                        f"Canvas: Error starting EventManager for SID {self.source_id}: {e_em_start}",
+                        exc_info=True)
 
-        db_op_result = self.db_mod.set(session_db_key, session_data_obj.model_dump_json())
-        if asyncio.iscoroutine(db_op_result): await db_op_result
+    # UI Registration
+    try:
+        self.app.run_any(
+            ("CloudM", "add_ui"),
+            name=f"{MOD_NAME}UI_v{VERSION.replace('.', '_')}",
+            title=f"Enhanced Canvas Studio v{VERSION}",
+            path=f"/api/{MOD_NAME}/ui",
+            description="Interactive Canvas with draw/move modes and enhanced configuration.",
+            auth=True
+        )
+        self.app.logger.info(f"{self.name} UI (v{VERSION}) registered with CloudM.")
+    except Exception as e:
+        self.app.logger.error(f"Error registering UI for {self.name}: {e}", exc_info=True)
 
-        session_list_key = f"{user_db_key_base}{SESSION_LIST_KEY_SUFFIX}"
-        list_res_obj = self.db_mod.get(session_list_key)
-        if asyncio.iscoroutine(list_res_obj): list_res_obj = await list_res_obj
+    self.app.logger.info(f"{self.name} (v{VERSION}) initialized successfully.")
 
-        user_sessions = []
-        if list_res_obj and not list_res_obj.is_error() and list_res_obj.is_data():
-            try:
-                list_content = list_res_obj.get()
-                json_str_to_load = ""
-                if isinstance(list_content, list) and len(list_content) > 0:
-                    json_str_to_load = list_content[0]
-                elif isinstance(list_content, str):
-                    json_str_to_load = list_content
 
-                if json_str_to_load: user_sessions = json.loads(json_str_to_load)
-                if not isinstance(user_sessions, list): user_sessions = []
-            except (json.JSONDecodeError, TypeError):
-                user_sessions = []
+@export(mod_name=MOD_NAME, api=True, version=VERSION, name="ui", api_methods=['GET'])
+async def get_main_ui(self, **kwargs) -> Result:
+    # The HTML template will be named differently to reflect the new version
+    html_content = ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0
+    return Result.html(data=self.app.web_context() + html_content)
 
-        found_in_list = False
-        for i, sess_meta in enumerate(user_sessions):
-            if sess_meta.get("id") == session_data_obj.id:
-                user_sessions[i] = {"id": session_data_obj.id, "name": session_data_obj.name,
-                                    "last_modified": session_data_obj.last_modified}
-                found_in_list = True;
-                break
-        if not found_in_list:
-            user_sessions.append({"id": session_data_obj.id, "name": session_data_obj.name,
-                                  "last_modified": session_data_obj.last_modified})
+@export(mod_name=MOD_NAME, api=True, version=VERSION, name="save_session", api_methods=['POST'],
+        request_as_kwarg=True)
+async def save_session(self, request: RequestData, data: Union[Dict[str, Any], IdeaSessionData]) -> Result:
+    if not self.db_mod:
+        return Result.custom_error(info="Database module not available for saving.", exec_code=503)
 
-        list_set_res = self.db_mod.set(session_list_key, json.dumps(user_sessions))
-        if asyncio.iscoroutine(list_set_res): await list_set_res
+    user_db_key_base = await self._get_user_specific_db_key(request, SESSION_DATA_PREFIX)
+    if not user_db_key_base:
+        return Result.default_user_error(info="User authentication required to save session.", exec_code=401)
 
-        return Result.ok(info="Session saved successfully.",
-                         data={"id": session_data_obj.id, "last_modified": session_data_obj.last_modified})
+    try:
+        # Allow partial updates to canvas_app_state if only that is sent for some reason
+        # or ensure the client always sends the full structure.
+        # For simplicity, assume client sends full structure or IdeaSessionData correctly populates defaults.
+        session_data_obj = IdeaSessionData(**data) if isinstance(data, dict) else data
+    except Exception as e:
+        self.app.logger.error(f"Invalid session data for save: {e}. Data: {data}", exc_info=True)
+        return Result.default_user_error(info=f"Invalid session data: {e}", exec_code=400)
 
-    @export(mod_name=MOD_NAME, api=True, version=VERSION, name="list_sessions", api_methods=['GET'],
-            request_as_kwarg=True)
-    async def list_sessions(self, request: RequestData) -> Result:
-        # This function should remain largely the same
-        if not self.db_mod:
-            return Result.custom_error(info="Database module not available.", exec_code=503)
-        user_db_key_base = await self._get_user_specific_db_key(request, SESSION_DATA_PREFIX)
-        if not user_db_key_base:
-            return Result.default_user_error(info="User authentication required.", exec_code=401)
+    session_data_obj.last_modified = float(uuid.uuid4().int & (1 << 32) - 1)  # Or time.time()
+    session_db_key = f"{user_db_key_base}_{session_data_obj.id}"
 
-        session_list_key = f"{user_db_key_base}{SESSION_LIST_KEY_SUFFIX}"
-        list_res_obj = self.db_mod.get(session_list_key)
+    db_op_result = self.db_mod.set(session_db_key, session_data_obj.model_dump_json())
+    if asyncio.iscoroutine(db_op_result): await db_op_result
 
-        user_sessions = []
-        if list_res_obj and not list_res_obj.is_error() and list_res_obj.is_data():
-            try:
-                list_content = list_res_obj.get()  # Get can return list or string based on DB adapter
-                json_str_to_load = list_content[0] if isinstance(list_content,
-                                                                 list) and list_content else list_content if isinstance(
-                    list_content, str) or isinstance(list_content, bytes) else "[]"
-                user_sessions = json.loads(json_str_to_load)
-                if not isinstance(user_sessions, list): user_sessions = []
-            except (json.JSONDecodeError, TypeError) as e:
-                self.app.logger.warning(f"Error decoding session list for {user_db_key_base}: {e}")
-                user_sessions = []
+    session_list_key = f"{user_db_key_base}{SESSION_LIST_KEY_SUFFIX}"
+    list_res_obj = self.db_mod.get(session_list_key)
+    if asyncio.iscoroutine(list_res_obj): list_res_obj = await list_res_obj
 
-        user_sessions.sort(key=lambda x: x.get("last_modified", 0), reverse=True)
-        return Result.json(data=user_sessions)
-
-    @export(mod_name=MOD_NAME, api=True, version=VERSION, name="load_session", api_methods=['GET'],
-            request_as_kwarg=True)
-    async def load_session(self, request: RequestData, session_id: str) -> Result:
-        # This function should remain largely the same
-        if not self.db_mod:
-            return Result.custom_error(info="Database module not available.", exec_code=503)
-        user_db_key_base = await self._get_user_specific_db_key(request, SESSION_DATA_PREFIX)
-        if not user_db_key_base:
-            return Result.default_user_error(info="User authentication required.", exec_code=401)
-
-        session_db_key = f"{user_db_key_base}_{session_id}"
-        get_res_obj = self.db_mod.get(session_db_key)
-
-        if get_res_obj and get_res_obj.is_error():
-            return Result.default_user_error(info="Session not found.", exec_code=404)
-
-        get_res_obj = get_res_obj.get()
-
-        if isinstance(get_res_obj, list):
-            get_res_obj = get_res_obj[0]
-
+    user_sessions = []
+    if list_res_obj and not list_res_obj.is_error() and list_res_obj.is_data():
         try:
-            session_data_str = get_res_obj
-            if session_data_str and session_data_str != "{}":
-                session_data_dict = json.loads(session_data_str)
-                # Ensure defaults are applied for new fields if loading old data
-                merged_app_state = {**IdeaSessionData().model_fields['canvas_app_state'].default,
-                                    **session_data_dict.get("canvas_app_state", {})}
-                session_data_dict["canvas_app_state"] = merged_app_state
+            list_content = list_res_obj.get()
+            json_str_to_load = ""
+            if isinstance(list_content, list) and len(list_content) > 0:
+                json_str_to_load = list_content[0]
+            elif isinstance(list_content, str):
+                json_str_to_load = list_content
 
-                session_data = IdeaSessionData(**session_data_dict)
-                return Result.json(data=session_data.model_dump())
-            else:
-                return Result.default_user_error(info="Session data is empty.", exec_code=404)
-        except (json.JSONDecodeError, TypeError, Exception) as e:
-            self.app.logger.error(f"Error loading or parsing session {session_id}: {e}", exc_info=True)
-            return Result.custom_error(info=f"Failed to load session data: {e}", exec_code=500)
+            if json_str_to_load: user_sessions = json.loads(json_str_to_load)
+            if not isinstance(user_sessions, list): user_sessions = []
+        except (json.JSONDecodeError, TypeError):
+            user_sessions = []
 
-    @export(mod_name=MOD_NAME, api=True, version=VERSION, name="export_canvas_json", api_methods=['POST'],
-            request_as_kwarg=True)
-    async def export_canvas_json(self, request: RequestData, data: Dict[str, Any]) -> Result:
-        # This function remains largely the same
+    found_in_list = False
+    for i, sess_meta in enumerate(user_sessions):
+        if sess_meta.get("id") == session_data_obj.id:
+            user_sessions[i] = {"id": session_data_obj.id, "name": session_data_obj.name,
+                                "last_modified": session_data_obj.last_modified}
+            found_in_list = True
+            break
+    if not found_in_list:
+        user_sessions.append({"id": session_data_obj.id, "name": session_data_obj.name,
+                              "last_modified": session_data_obj.last_modified})
+
+    list_set_res = self.db_mod.set(session_list_key, json.dumps(user_sessions))
+    if asyncio.iscoroutine(list_set_res): await list_set_res
+
+    return Result.ok(info="Session saved successfully.",
+                     data={"id": session_data_obj.id, "last_modified": session_data_obj.last_modified})
+
+@export(mod_name=MOD_NAME, api=True, version=VERSION, name="list_sessions", api_methods=['GET'],
+        request_as_kwarg=True)
+async def list_sessions(self, request: RequestData) -> Result:
+    # This function should remain largely the same
+    if not self.db_mod:
+        return Result.custom_error(info="Database module not available.", exec_code=503)
+    user_db_key_base = await self._get_user_specific_db_key(request, SESSION_DATA_PREFIX)
+    if not user_db_key_base:
+        return Result.default_user_error(info="User authentication required.", exec_code=401)
+
+    session_list_key = f"{user_db_key_base}{SESSION_LIST_KEY_SUFFIX}"
+    list_res_obj = self.db_mod.get(session_list_key)
+
+    user_sessions = []
+    if list_res_obj and not list_res_obj.is_error() and list_res_obj.is_data():
         try:
-            session_data_to_export = IdeaSessionData(**data)
-            filename = f"{session_data_to_export.name.replace(' ', '_') or 'canvas_export'}.json"
-            return Result.json(data=session_data_to_export.model_dump(), download_name=filename)
-        except Exception as e:
-            self.app.logger.error(f"Error preparing canvas JSON export: {e}", exc_info=True)
-            return Result.default_user_error(info=f"Invalid data for JSON export: {e}", exec_code=400)
+            list_content = list_res_obj.get()  # Get can return list or string based on DB adapter
+            json_str_to_load = list_content[0] if isinstance(list_content,
+                                                             list) and list_content else list_content if isinstance(
+                list_content, str) or isinstance(list_content, bytes) else "[]"
+            user_sessions = json.loads(json_str_to_load)
+            if not isinstance(user_sessions, list): user_sessions = []
+        except (json.JSONDecodeError, TypeError) as e:
+            self.app.logger.warning(f"Error decoding session list for {user_db_key_base}: {e}")
+            user_sessions = []
 
-    @export(mod_name=MOD_NAME, api=True, version=VERSION, name="open_canvas_stream", api_methods=['GET'],
-            request_as_kwarg=True)
-    async def stream_canvas_updates_sse(self, request: RequestData, canvas_id: str,
-                                        client_id: Optional[str] = None) -> Result:
-        if not canvas_id:
-            async def _error_gen(): yield {'event': 'error', 'data': json.dumps({'message': 'canvas_id is required'})}
+    user_sessions.sort(key=lambda x: x.get("last_modified", 0), reverse=True)
+    return Result.json(data=user_sessions)
 
-            return Result.sse(stream_generator=_error_gen())
+@export(mod_name=MOD_NAME, api=True, version=VERSION, name="load_session", api_methods=['GET'],
+        request_as_kwarg=True)
+async def load_session(self, request: RequestData, session_id: str) -> Result:
+    # This function should remain largely the same
+    if not self.db_mod:
+        return Result.custom_error(info="Database module not available.", exec_code=503)
+    user_db_key_base = await self._get_user_specific_db_key(request, SESSION_DATA_PREFIX)
+    if not user_db_key_base:
+        return Result.default_user_error(info="User authentication required.", exec_code=401)
 
-        session_client_id = client_id or str(uuid.uuid4().hex[:12])
-        queue = asyncio.Queue()
-        self.live_canvas_sessions[canvas_id].append(
-            queue)  # Appending to defaultdict list is thread/async safe for append itself
-        self.app.logger.info(
-            f"SSE: Client {session_client_id} connected to stream for canvas_id: {canvas_id}. Total listeners: {len(self.live_canvas_sessions[canvas_id])}")
+    session_db_key = f"{user_db_key_base}_{session_id}"
+    get_res_obj = self.db_mod.get(session_db_key)
 
+    if get_res_obj and get_res_obj.is_error():
+        return Result.default_user_error(info="Session not found.", exec_code=404)
+
+    get_res_obj = get_res_obj.get()
+
+    if isinstance(get_res_obj, list):
+        get_res_obj = get_res_obj[0]
+
+    try:
+        session_data_str = get_res_obj
+        if session_data_str and session_data_str != "{}":
+            session_data_dict = json.loads(session_data_str)
+            # Ensure defaults are applied for new fields if loading old data
+            merged_app_state = {**IdeaSessionData().model_fields['canvas_app_state'].default,
+                                **session_data_dict.get("canvas_app_state", {})}
+            session_data_dict["canvas_app_state"] = merged_app_state
+
+            session_data = IdeaSessionData(**session_data_dict)
+            return Result.json(data=session_data.model_dump())
+        else:
+            return Result.default_user_error(info="Session data is empty.", exec_code=404)
+    except (json.JSONDecodeError, TypeError, Exception) as e:
+        self.app.logger.error(f"Error loading or parsing session {session_id}: {e}", exc_info=True)
+        return Result.custom_error(info=f"Failed to load session data: {e}", exec_code=500)
+
+@export(mod_name=MOD_NAME, api=True, version=VERSION, name="export_canvas_json", api_methods=['POST'],
+        request_as_kwarg=True)
+async def export_canvas_json(self, request: RequestData, data: Dict[str, Any]) -> Result:
+    # This function remains largely the same
+    try:
+        session_data_to_export = IdeaSessionData(**data)
+        filename = f"{session_data_to_export.name.replace(' ', '_') or 'canvas_export'}.json"
+        return Result.file(data=session_data_to_export.model_dump(), filename=filename)
+    except Exception as e:
+        self.app.logger.error(f"Error preparing canvas JSON export: {e}", exc_info=True)
+        return Result.default_user_error(info=f"Invalid data for JSON export: {e}", exec_code=400)
+
+@export(mod_name=MOD_NAME, api=True, version=VERSION, name="open_canvas_stream", api_methods=['GET'],
+        request_as_kwarg=True)
+async def stream_canvas_updates_sse(self, request: RequestData, canvas_id: str,
+                                    client_id: Optional[str] = None) -> Result:
+    if not canvas_id:
+        async def _error_gen(): yield {'event': 'error', 'data': json.dumps({'message': 'canvas_id is required'})}
+
+        return Result.sse(stream_generator=_error_gen())
+
+    session_client_id = client_id or str(uuid.uuid4().hex[:12])
+    # This queue is for this specific SSE connection's outgoing messages
+    sse_client_queue = asyncio.Queue()
+    self.live_canvas_sessions[canvas_id].append(sse_client_queue)
+    self.app.logger.info(
+        f"SSE: Client {session_client_id} connected to stream for C:{canvas_id}. Total listeners: {len(self.live_canvas_sessions[canvas_id])}")
+
+    try:
+        # Send connection acknowledgment to the newly connected client
+        await sse_client_queue.put({
+            "event": "stream_connected",
+            "data": json.dumps(
+                {"message": "Connected to canvas stream.", "canvasId": canvas_id, "clientId": session_client_id})
+        })
+        # Send existing previews from other users to this new client
+        async with self.previews_lock:
+            if canvas_id in self.active_user_previews:
+                for uid, pdata in self.active_user_previews[canvas_id].items():
+                    if uid != session_client_id:  # Don't send own stale preview if any
+                        await sse_client_queue.put({
+                            "event": "user_preview_update",
+                            "data": json.dumps({"canvas_id": canvas_id, "user_id": uid, "preview_data": pdata})
+                        })
+    except Exception as e:
+        self.app.logger.error(
+            f"SSE: Error sending initial message/previews to client {session_client_id} for C:{canvas_id}: {e}")
+
+    async def event_generator() -> AsyncGenerator[Dict[str, Any], None]:
+        nonlocal sse_client_queue  # Explicitly capture the correct queue
+        should_continue = True
         try:
-            await queue.put({
-                "event": "stream_connected",
-                "data": json.dumps(
-                    {"message": "Connected to canvas stream.", "canvasId": canvas_id, "clientId": session_client_id})
-            })
-            async with self.previews_lock:  # Read active_user_previews safely
-                if canvas_id in self.active_user_previews:
-                    for uid, pdata in self.active_user_previews[canvas_id].items():
-                        if uid != session_client_id:
-                            await queue.put({
-                                "event": "user_preview_update",
-                                "data": json.dumps({"canvas_id": canvas_id, "user_id": uid, "preview_data": pdata})
-                            })
+            while should_continue:
+                try:
+                    message = await asyncio.wait_for(sse_client_queue.get(), timeout=300)
+                    if message is None:  # Sentinel for explicit close from server side
+                        should_continue = False
+                        break
+                    yield message
+                    sse_client_queue.task_done()
+                except asyncio.TimeoutError:
+                    # Send a keep-alive ping if no actual data
+                    yield {"event": "ping",
+                           "data": json.dumps({"timestamp": datetime.now(timezone.utc).isoformat()})}
+        except asyncio.CancelledError:
+            self.app.logger.info(
+                f"SSE: Client {session_client_id} (C:{canvas_id}) disconnected (stream cancelled).")
+            should_continue = False
         except Exception as e:
             self.app.logger.error(
-                f"SSE: Error sending initial message/previews to client {session_client_id} for canvas {canvas_id}: {e}")
+                f"SSE: Error in event_generator for client {session_client_id}, C:{canvas_id}: {e}",
+                exc_info=True)
+            should_continue = False
+        finally:
+            self.app.logger.info(f"SSE: Cleaning up for client {session_client_id}, C:{canvas_id}.")
+            # Remove this client's queue from live sessions
+            if canvas_id in self.live_canvas_sessions:
+                try:
+                    self.live_canvas_sessions[canvas_id].remove(sse_client_queue)
+                    if not self.live_canvas_sessions[canvas_id]:
+                        del self.live_canvas_sessions[canvas_id]
+                        self.app.logger.info(
+                            f"SSE: All listeners disconnected for C:{canvas_id}, removing from live_canvas_sessions.")
+                except ValueError:
+                    # This can happen if cleanup is somehow called twice or queue was already removed
+                    self.app.logger.warning(
+                        f"SSE: Queue for client {session_client_id} (C:{canvas_id}) not found for removal during cleanup.")
 
-        async def event_generator() -> AsyncGenerator[Dict[str, Any], None]:
-            nonlocal queue  # Ensure we are referring to the queue created above
-            should_continue = True
-            try:
-                while should_continue:
-                    try:
-                        message = await asyncio.wait_for(queue.get(), timeout=300)
-                        if message is None:  # Sentinel for explicit close
-                            should_continue = False;
-                            break
-                        yield message
-                        queue.task_done()
-                    except asyncio.TimeoutError:
-                        yield {"event": "ping",
-                               "data": json.dumps({"timestamp": datetime.now(timezone.utc).isoformat()})}
-            except asyncio.CancelledError:
-                self.app.logger.info(
-                    f"SSE: Client {session_client_id} (canvas {canvas_id}) disconnected (stream cancelled).")
-                should_continue = False
-            except Exception as e:
-                self.app.logger.error(
-                    f"SSE: Error in event_generator for client {session_client_id}, canvas {canvas_id}: {e}",
-                    exc_info=True)
-                should_continue = False
-            finally:
-                self.app.logger.info(f"SSE: Cleaning up for client {session_client_id}, canvas {canvas_id}.")
-                # Remove queue from live sessions
-                # This modification needs to be careful if other tasks are iterating
-                if canvas_id in self.live_canvas_sessions:
-                    try:
-                        self.live_canvas_sessions[canvas_id].remove(queue)
-                        if not self.live_canvas_sessions[canvas_id]:
-                            del self.live_canvas_sessions[canvas_id]  # remove canvas_id if list empty
-                            self.app.logger.info(
-                                f"SSE: All listeners disconnected for canvas {canvas_id}, removing from live_canvas_sessions.")
-                    except ValueError:
-                        self.app.logger.warning(
-                            f"SSE: Queue for client {session_client_id} (canvas {canvas_id}) not found in list during cleanup.")
-
-                # Clear this user's preview and notify others
-                preview_cleared_for_disconnecting_user = False
-                async with self.previews_lock:
-                    if canvas_id in self.active_user_previews and session_client_id in self.active_user_previews[
-                        canvas_id]:
-                        del self.active_user_previews[canvas_id][session_client_id]
-                        preview_cleared_for_disconnecting_user = True
-                        if not self.active_user_previews[canvas_id]:  # Clean up if no previews left for canvas
-                            del self.active_user_previews[canvas_id]
-                            self.app.logger.info(
-                                f"SSE: All previews cleared for canvas {canvas_id}, removing from active_user_previews.")
-
-                if preview_cleared_for_disconnecting_user:
-                    # Broadcast that this user's preview should be cleared (using internal queue)
-                    broadcast_payload = {
-                        "canvas_id": canvas_id,
-                        "event_type": "clear_user_preview",
-                        "data": {"user_id": session_client_id},
-                        "originator_user_id": session_client_id  # Originator is self for this system msg
-                    }
-                    await self.internal_broadcast_queue.put(broadcast_payload)
-                self.app.logger.info(
-                    f"SSE: Client {session_client_id} (canvas {canvas_id}) cleanup complete. Remaining listeners: {len(self.live_canvas_sessions.get(canvas_id, []))}")
-
-        return Result.sse(stream_generator=event_generator())
-
-    @export(mod_name=MOD_NAME, api=True, version=VERSION, name="send_canvas_action", api_methods=['POST'],
-            request_as_kwarg=True)
-    async def handle_send_canvas_action(self, request: RequestData, data: Dict[str, Any]):
-        canvas_id = data.get("canvas_id")
-        action_type = data.get("action_type")
-        element_payload = data.get("payload")
-        user_id = data.get("user_id")
-
-        if not all([canvas_id, action_type, user_id]) or element_payload is None:
-            return Result.default_user_error(
-                "Missing required fields (canvas_id, action_type, payload, user_id). Payload can be {} but not null.",
-                400)
-        if not isinstance(element_payload, dict):
-            return Result.default_user_error("Payload must be a dictionary.", 400)
-
-        self.app.logger.debug(
-            f"Action received: C:{canvas_id}, A:{action_type}, U:{user_id}, P: {str(element_payload)[:100]}")
-
-        event_to_broadcast = ""
-        data_to_broadcast = {}
-        clear_originator_preview_after_crud = False
-
-        if action_type == "preview_update":
-            event_to_broadcast = "user_preview_update"
+            # Clear this user's preview from the server cache
+            preview_cleared_for_disconnecting_user = False
             async with self.previews_lock:
-                self.active_user_previews[canvas_id][user_id] = element_payload
-            data_to_broadcast = {"user_id": user_id, "preview_data": element_payload}
-
-        elif action_type == "preview_clear":
-            event_to_broadcast = "clear_user_preview"
-            async with self.previews_lock:
-                if user_id in self.active_user_previews.get(canvas_id, {}):
-                    del self.active_user_previews[canvas_id][user_id]
-                    if not self.active_user_previews[canvas_id]:
+                if canvas_id in self.active_user_previews and session_client_id in self.active_user_previews[
+                    canvas_id]:
+                    del self.active_user_previews[canvas_id][session_client_id]
+                    preview_cleared_for_disconnecting_user = True
+                    if not self.active_user_previews[canvas_id]:  # Clean up if no previews left for canvas
                         del self.active_user_previews[canvas_id]
-            data_to_broadcast = {"user_id": user_id}
+                        self.app.logger.info(
+                            f"SSE: All previews cleared for C:{canvas_id}, removing from active_user_previews.")
 
-        elif action_type in ["element_add", "element_update", "element_remove"]:
-            if action_type == "element_remove" and not element_payload.get("id"):
-                return Result.default_user_error("Payload for element_remove must contain an 'id'.", 400)
-
-            event_to_broadcast = "canvas_elements_changed"
-            data_to_broadcast = {"action": action_type, "element": element_payload}
-            clear_originator_preview_after_crud = True  # Flag to clear preview after this main action
-
-        else:
-            return Result.default_user_error(f"Unknown action_type: {action_type}", 400)
-
-        # Primary broadcast for the action itself
-        if event_to_broadcast:
-            internal_event_payload = {
-                "canvas_id": canvas_id,
-                "event_type": event_to_broadcast,
-                "data": data_to_broadcast,
-                "originator_user_id": user_id
-            }
-            await self.internal_broadcast_queue.put(internal_event_payload)
-
-        # If a CRUD action was performed, also broadcast a clear_user_preview for the originator
-        if clear_originator_preview_after_crud:
-            originator_preview_cleared = False
-            async with self.previews_lock:
-                if user_id in self.active_user_previews.get(canvas_id, {}):
-                    del self.active_user_previews[canvas_id][user_id]
-                    originator_preview_cleared = True
-                    if not self.active_user_previews[canvas_id]:
-                        del self.active_user_previews[canvas_id]
-
-            if originator_preview_cleared:
-                clear_preview_payload_for_broadcast = {
+            # If preview was cleared and EventManager is available, broadcast this fact
+            if preview_cleared_for_disconnecting_user and EVENT_MANAGER_AVAILABLE:
+                # Prepare payload for the internal SSE dispatcher event
+                em_payload_for_preview_clear = {
                     "canvas_id": canvas_id,
-                    "event_type": "clear_user_preview",
-                    "data": {"user_id": user_id},
-                    "originator_user_id": user_id  # Originator is self for this system msg
+                    "sse_event_type": "clear_user_preview",
+                    "sse_data": {"user_id": session_client_id},  # Data for the SSE event itself
+                    "originator_user_id": session_client_id  # This client "originated" its disconnect
                 }
-                await self.internal_broadcast_queue.put(clear_preview_payload_for_broadcast)
 
-        return Result.ok(info=f"Action '{action_type}' processed for canvas {canvas_id}.")
+                # Create EventID to trigger the local SSE dispatcher
+                event_id_for_dispatch = EventID.crate(
+                    source=self.source_id,  # Originates from this EventManager instance
+                    ID=self.canvas_internal_handler_event_name,  # Target the locally registered handler
+                    path="CanvasSSE:ClientDisconnectClearPreview",  # For debugging/logging
+                    payload=em_payload_for_preview_clear
+                )
+
+                self.app.logger.debug(
+                    f"SSE Cleanup: Triggering EM event '{self.canvas_internal_handler_event_name}' for disconnect preview clear (User: {session_client_id})")
+                try:
+                    # Use asyncio.create_task because we are in a 'finally' block
+                    # and cannot reliably 'await' if the generator was cancelled.
+                    asyncio.create_task(self.trigger_event(event_id_for_dispatch))
+                except Exception as e_trigger:
+                    self.app.logger.error(
+                        f"SSE Cleanup: Error creating task to trigger EM event for disconnect preview clear: {e_trigger}",
+                        exc_info=True)
+
+            self.app.logger.info(
+                f"SSE: Client {session_client_id} (C:{canvas_id}) cleanup complete. Listeners left: {len(self.live_canvas_sessions.get(canvas_id, []))}")
+
+    return Result.sse(stream_generator=event_generator())
+
+@export(mod_name=MOD_NAME, api=True, version=VERSION, name="send_canvas_action", api_methods=['POST'],
+        request_as_kwarg=True)
+async def handle_send_canvas_action(self, request: RequestData, data: Dict[str, Any]):
+    canvas_id = data.get("canvas_id")
+    action_type = data.get("action_type")
+    element_payload = data.get("payload")  # This is the payload for the canvas action (e.g., element data)
+    user_id = data.get("user_id")
+
+    if not all([canvas_id, action_type, user_id]) or element_payload is None:
+        return Result.default_user_error(
+            "Missing required fields (canvas_id, action_type, payload, user_id). Payload can be {} but not null.",
+            400)
+    if not isinstance(element_payload, dict):
+        return Result.default_user_error("Payload must be a dictionary.", 400)
+
+    self.app.logger.debug(
+        f"Canvas Action Rcvd: C:{canvas_id}, A:{action_type}, U:{user_id}, P:{str(element_payload)[:100]}")
+
+    if not EVENT_MANAGER_AVAILABLE:
+        self.app.logger.error(
+            "Canvas: EventManager not available. Cannot process send_canvas_action for broadcast.")
+        return Result.custom_error("Collaboration backend (EventManager) not available.", exec_code=503)
+
+    sse_event_type_for_broadcast = ""
+    # This is the data that will go *inside* the SSE event's 'data' field,
+    # after being wrapped with canvas_id and originator_user_id.
+    sse_data_for_broadcast_payload = {}
+    clear_originator_preview_after_crud = False
+
+    # 1. Determine the SSE event type and its specific data based on action_type
+    #    Also, manage local preview state (self.active_user_previews)
+    if action_type == "preview_update":
+        sse_event_type_for_broadcast = "user_preview_update"
+        async with self.previews_lock:
+            self.active_user_previews[canvas_id][user_id] = element_payload  # element_payload is the preview_data
+        sse_data_for_broadcast_payload = {"user_id": user_id, "preview_data": element_payload}
+
+    elif action_type == "preview_clear":
+        sse_event_type_for_broadcast = "clear_user_preview"
+        async with self.previews_lock:
+            if user_id in self.active_user_previews.get(canvas_id, {}):
+                del self.active_user_previews[canvas_id][user_id]
+                if not self.active_user_previews[canvas_id]:
+                    del self.active_user_previews[canvas_id]
+        sse_data_for_broadcast_payload = {"user_id": user_id}  # element_payload is {} here
+
+    elif action_type in ["element_add", "element_update", "element_remove"]:
+        if action_type == "element_remove" and not element_payload.get("id"):
+            return Result.default_user_error("Payload for element_remove must contain an 'id'.", 400)
+
+        sse_event_type_for_broadcast = "canvas_elements_changed"
+        sse_data_for_broadcast_payload = {"action": action_type, "element": element_payload}
+        clear_originator_preview_after_crud = True  # Flag to clear this user's preview afterwards
+
+    else:
+        return Result.default_user_error(f"Unknown action_type: {action_type}", 400)
+
+    # 2. Prepare the payload for the EventManager's internal SSE dispatcher event
+    # This payload is what _handle_canvas_action_for_sse_broadcast will receive.
+    em_payload_for_dispatcher = {
+        "canvas_id": canvas_id,
+        "sse_event_type": sse_event_type_for_broadcast,
+        "sse_data": sse_data_for_broadcast_payload,  # The specific data for this SSE event
+        "originator_user_id": user_id
+    }
+
+    # 3. Create EventID to trigger the local SSE dispatcher via EventManager
+    event_id_for_dispatch = EventID.crate(
+        source=self.source_id,  # Originates from this EventManager instance
+        ID=self.canvas_internal_handler_event_name,  # Target the locally registered handler
+        path=f"CanvasActionDispatch:{action_type}",  # For debugging/logging
+        payload=em_payload_for_dispatcher
+    )
+
+    self.app.logger.debug(
+        f"Canvas: Triggering EM event '{self.canvas_internal_handler_event_name}' for local SSE dispatch (Action: {action_type})")
+    try:
+        # This call should invoke self._handle_canvas_action_for_sse_broadcast
+        trigger_result = await self.trigger_event(event_id_for_dispatch)
+        if isinstance(trigger_result, Result) and trigger_result.is_error():
+            self.app.logger.error(
+                f"Canvas: Error response from triggering EM for local dispatch: {trigger_result.info}")
+            # Potentially return this error to the client if it's critical
+    except Exception as e_trigger:
+        self.app.logger.error(f"Canvas: Exception during self.trigger_event for local dispatch: {e_trigger}",
+                              exc_info=True)
+        return Result.default_internal_error("Error processing action via EventManager for broadcast.")
+
+    # 4. If a CRUD action was performed, also clear the originator's preview
+    #    by triggering another event for the local SSE dispatcher.
+    if clear_originator_preview_after_crud:
+        originator_preview_cleared_locally = False
+        async with self.previews_lock:  # First, update local preview state
+            if user_id in self.active_user_previews.get(canvas_id, {}):
+                del self.active_user_previews[canvas_id][user_id]
+                originator_preview_cleared_locally = True
+                if not self.active_user_previews[canvas_id]:
+                    del self.active_user_previews[canvas_id]
+
+        if originator_preview_cleared_locally:  # If a preview was actually there and cleared
+            em_payload_for_crud_preview_clear = {
+                "canvas_id": canvas_id,
+                "sse_event_type": "clear_user_preview",
+                "sse_data": {"user_id": user_id},  # Data for the SSE "clear_user_preview" event
+                "originator_user_id": user_id  # Originator is self for this system message
+            }
+            event_id_for_crud_preview_clear = EventID.crate(
+                source=self.source_id,
+                ID=self.canvas_internal_handler_event_name,  # Target local SSE dispatcher
+                path="CanvasActionDispatch:ClearPreviewCRUD",
+                payload=em_payload_for_crud_preview_clear
+            )
+            self.app.logger.debug(f"Canvas: Triggering EM event for CRUD action's preview clear (User: {user_id})")
+            try:
+                await self.trigger_event(event_id_for_crud_preview_clear)
+            except Exception as e_crud_clear:
+                self.app.logger.error(f"Canvas: Exception triggering EM for CRUD preview clear: {e_crud_clear}",
+                                      exc_info=True)
+
+    # Note on cross-process/network broadcast:
+    # If this Canvas instance also needs to notify *other* Canvas instances (via EventManager routing),
+    # it would trigger a *different* EventID here, one that's globally recognized (e.g., ID="GLOBAL_CANVAS_UPDATE")
+    # and has a broader scope (e.g., Scope.local_network or Scope.global_network).
+    # That global event would then be handled by a P0/router which in turn would trigger the
+    # `self.canvas_internal_handler_event_name` on each relevant remote Canvas instance.
+    # This current implementation focuses on using EventManager to robustly trigger the *local* SSE dispatch.
+
+    return Result.ok(info=f"Action '{action_type}' (from user {user_id}) submitted for broadcast processing.")
 
 # --- HTML Template for v0.1.0 ---
 # (This will be a new variable name and contain the updated HTML)
