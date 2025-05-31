@@ -377,8 +377,8 @@ class LLMMessage:
     """Represents a message in a conversation, compatible with LiteLLM."""
     role: Literal["user", "assistant", "system", "tool"]
     content: str | list[dict[str, Any]] # String or multimodal content (LiteLLM format)
-    tool_call_id: str | None = None # For tool responses
-    name: str | None = None # For tool calls/responses (function name)
+    tool_call_id: Optional[str] = None # For tool responses
+    name: Optional[str] = None # For tool calls/responses (function name)
 
     # Add tool_calls for assistant messages requesting tool use (LiteLLM format)
     tool_calls: list[dict[str, Any]] | None = None # e.g., [{"id": "call_123", "function": {"name": "...", "arguments": "{...}"}}]
@@ -946,11 +946,11 @@ class EnhancedAgent(*_AgentBaseClass):
 
     async def a_run(self,
                     user_input: str,
-                    session_id: str | None = None,
+                    session_id: Optional[str] = None,
                     persist_history: bool = True,
                     strategy_override: ProcessingStrategy | None = None,
                     kwargs_override: dict[str, Any] | None = None, # For fine-grained control
-                    a2a_task_id: str | None = None # Context if called from A2A task
+                    a2a_task_id: Optional[str] = None # Context if called from A2A task
                     ) -> str:
         """
         Main asynchronous execution logic for the agent turn.
@@ -1113,7 +1113,7 @@ class EnhancedAgent(*_AgentBaseClass):
 
         return str(response) # Ensure string output
 
-    def run(self, user_input: str, session_id: str | None = None, **kwargs) -> str:
+    def run(self, user_input: str, session_id: Optional[str] = None, **kwargs) -> str:
         """Synchronous wrapper for a_run."""
         try:
             # get_event_loop() is deprecated in 3.10+, use get_running_loop() or new_event_loop()
@@ -1940,7 +1940,7 @@ class EnhancedAgent(*_AgentBaseClass):
                                         tool_context: ToolContext | None,
                                         target_agent_url: str,
                                         task_prompt: str,
-                                        session_id: str | None = None
+                                        session_id: Optional[str] = None
                                         ) -> str:
         """ADK Tool: Sends a task to another agent via A2A and returns the task ID immediately.
 

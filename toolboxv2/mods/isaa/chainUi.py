@@ -1,760 +1,841 @@
-# Add these to your existing module.py or a new one
-# ... (keep existing imports and MOD_NAME, VERSION, export, etc.)
+# toolboxv2/mods/isaa/chainUi.py
+import asyncio
 import json
-import os  # Ensure os is imported
 import uuid
+from pathlib import Path
 from typing import Optional, List, Dict, Any
 
-# Assuming Task and TaskChain are defined, e.g., in toolboxv2.mods.isaa.types
-# from toolboxv2.mods.isaa.types import Task, TaskChain
-# If they are not, here are placeholder Pydantic models:
 from pydantic import BaseModel, Field as PydanticField
 
-from toolboxv2 import get_app, App, RequestData, Result, ToolBoxError, ToolBoxResult, ToolBoxInfo, ToolBoxInterfaces
-from toolboxv2.mods.isaa.types import TaskChain, Task
+from toolboxv2 import get_app, App, RequestData, Result
+from toolboxv2.mods.isaa.types import TaskChain as ISAAPydanticTaskChain, Task as ISAAPydanticTask
 
-# Moduldefinition
+# Module Definition
 MOD_NAME = "isaa.chainUi"
-VERSION = "0.1.0"
+VERSION = "0.2.0"  # Version bump for Drawflow integration
 export = get_app(f"{MOD_NAME}.API").tb
 Name = MOD_NAME
 
-# --- API Endpunkte für Aufgaben-Ketten (Task Chains) ---
-CHAIN_DATA_PREFIX = "task_chains"
-CHAIN_LIST_KEY_SUFFIX = "_list"
 
-def get_current_username(request: Optional[RequestData] = None) -> str:
-    if request:
-        return request.session.user_name
-    return "default_user"  # Fallback
-
-
-async def get_user_data(app: App, username: str, data_key_prefix: str) -> List[Dict[str, Any]]:
-    db = app.get_mod("DB")  # Standard DB-Instanz
-    # db.edit_cli("RR") # Sicherstellen, dass der Read-Replica-Modus aktiv ist, falls nötig
-
-    key = f"{data_key_prefix}_{username}"
-    db_result = db.get(key)  # db.get ist jetzt async
-
-    if not db_result.is_error() and db_result.is_data():
-        try:
-            data_json = db_result.get()
-            if isinstance(data_json, bytes):
-                data_json = data_json.decode()
-            app.logger.info(f"ISAA Chain User data : {data_json}")
-            if isinstance(data_json, list) and len(data_json) > 0:  # db.get kann eine Liste zurückgeben
-                return json.loads(data_json[0])
-            elif isinstance(data_json, str):
-                return json.loads(data_json)
-            return []
-        except (json.JSONDecodeError, TypeError):
-            return []
-    return []
+# --- Helper to get ISAA instance ---
+def get_isaa_instance(app: App):
+    isaa_mod = app.get_mod("isaa")
+    if not isaa_mod:
+        raise ValueError("ISAA module not found or loaded.")
+    return isaa_mod
 
 
-async def save_user_data(app: App, username: str, data_key_prefix: str, data: List[Dict[str, Any]]):
-    db = app.get_mod("DB")
-    # db.edit_cli("RR") # oder einen spezifischen Schreibmodus, falls konfiguriert
-    key = f"{data_key_prefix}_{username}"
-    db.set(key, json.dumps(data))  # db.set ist jetzt async
+# --- Pydantic Models (alias for clarity if needed, but directly using ISAA's types is fine) ---
+# class Task(ISAAPydanticTask): pass
+# class TaskChain(ISAAPydanticTaskChain): pass
 
 
-async def get_task_chain_names(app: App, username: str) -> List[str]:
-    # Chains are stored individually, but we maintain a list of names for discovery
-    chain_list_data = await get_user_data(app, username, f"{CHAIN_DATA_PREFIX}{CHAIN_LIST_KEY_SUFFIX}")
-    if chain_list_data and isinstance(chain_list_data, list):  # Should be a list of names
-        return chain_list_data
-    return []
-
-
-async def save_task_chain_names(app: App, username: str, chain_names: List[str]):
-    await save_user_data(app, username, f"{CHAIN_DATA_PREFIX}{CHAIN_LIST_KEY_SUFFIX}", chain_names)
-
+# --- API Endpoints for Task Chains using Drawflow & Global ISAA Chains ---
 
 @export(mod_name=MOD_NAME, api=True, version=VERSION, request_as_kwarg=True, api_methods=['GET'])
 async def get_task_chain_list(app: App, request: Optional[RequestData] = None):
-    username = get_current_username(request)
-    chain_names = await get_task_chain_names(app, username)
-    return Result.json(data=chain_names)
+    """Lists all available global task chains."""
+    isaa = get_isaa_instance(app)
+    try:
+        chain_names = list(isaa.agent_chain.chains.keys() ) # This should return List[str]
+        return Result.json(data=chain_names)
+    except Exception as e:
+        app.logger.error(f"Error listing task chains: {e}", exc_info=True)
+        return Result.custom_error(info=f"Failed to list task chains: {str(e)}", exec_code=500)
 
 
 @export(mod_name=MOD_NAME, api=True, version=VERSION, request_as_kwarg=True, api_methods=['GET'])
 async def get_task_chain_definition(app: App, request: Optional[RequestData] = None):
-    username = get_current_username(request)
+    """Gets the definition of a specific task chain, including its Drawflow export if available."""
     chain_name = request.query_params.get("chain_name") if request and request.query_params else None
-
     if not chain_name:
         return Result.default_user_error(info="Chain name is required.", exec_code=400)
 
-    # Chain definitions are stored under keys like "task_chains_MY_CHAIN_NAME"
-    chain_data_list = await get_user_data(app, username, f"{CHAIN_DATA_PREFIX}_{chain_name}")
-    if chain_data_list and isinstance(chain_data_list, dict):  # Expecting a single dict for the chain definition
-        return Result.json(data=chain_data_list)
-    # Compatibility for old format where it might be a list containing one dict
-    elif chain_data_list and isinstance(chain_data_list, list) and len(chain_data_list) > 0 and isinstance(
-        chain_data_list[0], dict):
-        return Result.json(data=chain_data_list[0])
-    return Result.default_user_error(info="Task chain not found.", exec_code=404)
+    isaa = get_isaa_instance(app)
+    try:
+        # Get logical task definition
+        tasks_list_dicts = isaa.get_task(chain_name)
+        if tasks_list_dicts is None:  # Check if chain exists
+            return Result.default_user_error(info=f"Task chain '{chain_name}' not found.", exec_code=404)
+
+        description = isaa.agent_chain.get_discr(chain_name) or ""
+
+        # Attempt to load Drawflow specific data if it exists
+        # This assumes Drawflow data is saved in a parallel file or embedded
+        drawflow_data = None
+        drawflow_file_path = isaa.agent_chain.directory / f"{chain_name}.drawflow.json"
+        if drawflow_file_path.exists():
+            try:
+                with open(drawflow_file_path, 'r') as f:
+                    drawflow_data = json.load(f)
+            except Exception as e:
+                app.logger.warning(f"Could not load Drawflow data for chain '{chain_name}': {e}")
+
+        chain_pydantic_tasks = [ISAAPydanticTask(**task_dict) for task_dict in tasks_list_dicts]
+
+        response_data = ISAAPydanticTaskChain(
+            name=chain_name,
+            description=description,
+            tasks=chain_pydantic_tasks
+        ).model_dump()
+
+        if drawflow_data:
+            response_data["drawflow_export"] = drawflow_data  # Embed Drawflow data
+
+        return Result.json(data=response_data)
+
+    except Exception as e:
+        app.logger.error(f"Error getting task chain definition for '{chain_name}': {e}", exc_info=True)
+        return Result.custom_error(info=f"Failed to get task chain definition: {str(e)}", exec_code=500)
+
+
+class SaveTaskChainRequest(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    tasks: List[ISAAPydanticTask]  # Logical tasks
+    drawflow_export: Optional[Dict[str, Any]] = None  # Full Drawflow export data
 
 
 @export(mod_name=MOD_NAME, api=True, version=VERSION, request_as_kwarg=True, api_methods=['POST'])
 async def save_task_chain_definition(app: App, request: Optional[RequestData] = None,
-                                     data: Optional[Dict[str, Any]] = None, **kwargs):
-    username = get_current_username(request)
-    if data and not getattr(request, 'body', None):  # Compatibility for direct data passthrough
-        if not hasattr(request, 'body'):
-            class DummyRequest:
-                pass
-
-            _request = DummyRequest()
-            _request.body = data
-            _request.session = request.session if hasattr(request, 'session') else type('DummySession', (),
-                                                                                        {'user_name': username})()
-            request = _request
+                                     data: SaveTaskChainRequest = None):
+    """Saves a task chain definition. Expects logical tasks and optional Drawflow export."""
+    if not data:  # Compatibility for direct data passthrough if decorator doesn't parse body for Pydantic model
+        if request and request.body and isinstance(request.body, dict):
+            try:
+                data = SaveTaskChainRequest(**request.body)
+            except Exception as e:
+                return Result.default_user_error(info=f"Invalid chain data provided: {e}", exec_code=400)
         else:
-            request.body = data
+            return Result.default_user_error(info="No chain data provided.", exec_code=400)
+    elif isinstance(data, dict):
+        data = SaveTaskChainRequest(**data)
 
-    if not request or not request.body or not isinstance(request.body, dict):
-        return Result.default_user_error(info="Invalid chain data provided.", exec_code=400)
-
-    chain_name = request.body.get("name")
-    tasks_data = request.body.get("tasks")
-    description = request.body.get("description", "")
-
-    if not chain_name:
+    if not data.name:
         return Result.default_user_error(info="Chain name cannot be empty.", exec_code=400)
-    if not isinstance(tasks_data, list):
-        return Result.default_user_error(info="Tasks must be a list.", exec_code=400)
 
-    # Validate tasks using Pydantic model Task (optional but good practice)
-    valid_tasks = []
-    for i, task_dict in enumerate(tasks_data):
-        try:
-            # Ensure each task has a client-side ID or generate one
-            if 'id' not in task_dict or not task_dict['id']:
-                task_dict['id'] = str(uuid.uuid4())
-            task_model = Task(**task_dict)
-            valid_tasks.append(task_model.model_dump())
-        except Exception as e:  # Pydantic ValidationError
-            return Result.default_user_error(info=f"Invalid data for task at index {i}: {e}", exec_code=400)
+    isaa = get_isaa_instance(app)
+    try:
+        # Save logical tasks to ISAA's AgentChain
+        task_dicts = [task.model_dump() for task in data.tasks]
+        isaa.add_task(data.name, task_dicts)  # add_task replaces if exists
+        if data.description is not None:  # Allow empty description
+            isaa.agent_chain.add_discr(data.name, data.description)
+        isaa.save_task(data.name)  # Persists the .chain.json file
 
-    chain_definition = TaskChain(name=chain_name, description=description, tasks=valid_tasks).model_dump()
+        # Save Drawflow specific data if provided
+        if data.drawflow_export:
+            drawflow_file_path = Path(isaa.agent_chain.directory) / f"{data.name}.drawflow.json"
+            try:
+                with open(drawflow_file_path, 'w') as f:
+                    json.dump(data.drawflow_export, f, indent=2)
+                app.logger.info(f"Saved Drawflow data for chain '{data.name}' to {drawflow_file_path}")
+            except Exception as e:
+                app.logger.error(f"Failed to save Drawflow data for chain '{data.name}': {e}")
+                # Optionally, inform client that logical save succeeded but visual save failed
+                return Result.ok(
+                    info=f"Task chain '{data.name}' saved (logical part), but Drawflow visual data failed to save.")
 
-    # Save the chain definition
-    await save_user_data(app, username, f"{CHAIN_DATA_PREFIX}_{chain_name}", chain_definition)
+        return Result.ok(info=f"Task chain '{data.name}' saved successfully.")
 
-    # Update the list of chain names
-    chain_names = await get_task_chain_names(app, username)
-    if chain_name not in chain_names:
-        chain_names.append(chain_name)
-        await save_task_chain_names(app, username, chain_names)
-
-    return Result.json(data=chain_definition, info="Task chain saved successfully.")
+    except Exception as e:
+        app.logger.error(f"Error saving task chain '{data.name}': {e}", exc_info=True)
+        return Result.custom_error(info=f"Failed to save task chain: {str(e)}", exec_code=500)
 
 
 @export(mod_name=MOD_NAME, api=True, version=VERSION, request_as_kwarg=True, api_methods=['DELETE'])
-async def delete_task_chain(app: App, request: Optional[RequestData] = None, **kwargs):
-    username = get_current_username(request)
+async def delete_task_chain(app: App, request: Optional[RequestData] = None):
+    """Deletes a task chain."""
     chain_name = request.query_params.get("chain_name") if request and request.query_params else None
-
     if not chain_name:
         return Result.default_user_error(info="Chain name is required for deletion.", exec_code=400)
 
-    # Delete the specific chain data
-    db = app.get_mod("DB")
-    key_to_delete = f"{CHAIN_DATA_PREFIX}_{chain_name}_{username}"  # Note: DB key format was prefix_username
+    isaa = get_isaa_instance(app)
+    try:
+        isaa.remove_task(chain_name)  # Removes from memory
+        isaa.save_task()  # Saves all chains, effectively removing the deleted one from file
+        # This also deletes the .chain.json file
 
-    # Correct key to delete based on save_user_data structure
-    # save_user_data creates key as: f"{data_key_prefix}_{username}"
-    # So, data_key_prefix here is f"{CHAIN_DATA_PREFIX}_{chain_name}"
-    key_to_delete_actual = f"{CHAIN_DATA_PREFIX}_{chain_name}_{username}"
-    # Ah, the save_user_data appends username to the prefix. So, the prefix passed to it should be just CHAIN_DATA_PREFIX_{chain_name}
-    # Let's fix the key for deletion:
-    prefix_for_chain = f"{CHAIN_DATA_PREFIX}_{chain_name}"
-    key_for_db_operation = f"{prefix_for_chain}_{username}"
+        # Delete associated Drawflow file if it exists
+        drawflow_file_path = isaa.agent_chain.directory / f"{chain_name}.drawflow.json"
+        if drawflow_file_path.exists():
+            try:
+                drawflow_file_path.unlink()
+                app.logger.info(f"Deleted Drawflow data for chain '{chain_name}'.")
+            except Exception as e:
+                app.logger.warning(f"Could not delete Drawflow data file for chain '{chain_name}': {e}")
 
-    # In your DB mod, you'd have a delete method. Let's assume `db.delete(key)`
-    # For now, to "delete", we can save an empty list or a specific marker,
-    # or if your DB mod supports actual deletion, use that.
-    # Let's assume db.set(key, None) or db.set(key, "DELETED_MARKER") effectively deletes.
-    # Or, if your db.delete returns a status:
-    delete_op_result = db.delete(
-        key_for_db_operation)  # Assuming db.delete exists and is async or sync based on your DB mod
-    if hasattr(delete_op_result, 'is_error') and delete_op_result.is_error():
-        app.logger.warning(f"Failed to delete chain data for {chain_name} from DB or key not found.")
-        # We can proceed to remove from list anyway if it exists there
-
-    # Update the list of chain names
-    chain_names = await get_task_chain_names(app, username)
-    if chain_name in chain_names:
-        chain_names.remove(chain_name)
-        await save_task_chain_names(app, username, chain_names)
         return Result.ok(info=f"Task chain '{chain_name}' deleted successfully.")
-    else:
-        return Result.default_user_error(info=f"Task chain '{chain_name}' not found in the list.", exec_code=404)
+    except KeyError:  # If isaa.remove_task raises KeyError for non-existent chain
+        return Result.default_user_error(info=f"Task chain '{chain_name}' not found.", exec_code=404)
+    except Exception as e:
+        app.logger.error(f"Error deleting task chain '{chain_name}': {e}", exc_info=True)
+        return Result.custom_error(info=f"Failed to delete task chain: {str(e)}", exec_code=500)
 
 
-# --- Endpoint for the Task Chain Editor UI ---
-@export(mod_name=MOD_NAME, api=True, version=VERSION, name="task_chain_editor", api_methods=['GET'])
-async def get_task_chain_editor_page(app: App, request: Optional[RequestData] = None):
-    if app is None:
+class RunChainRequest(BaseModel):
+    chain_name: str
+    task_input: str
+    # Potentially, allow passing a full chain definition for unsaved execution
+    chain_definition: Optional[ISAAPydanticTaskChain] = None
+
+
+@export(mod_name=MOD_NAME, api=True, version=VERSION, request_as_kwarg=True, api_methods=['POST'])
+async def run_chain_visualized(app: App, request: Optional[RequestData] = None, data: RunChainRequest = None):
+    """Executes a specified task chain with the given input."""
+    if not data:  # Compatibility
+        if request and request.body and isinstance(request.body, dict):
+            try:
+                data = RunChainRequest(**request.body)
+            except Exception as e:
+                return Result.default_user_error(info=f"Invalid run chain data: {e}", exec_code=400)
+        else:
+            return Result.default_user_error(info="No run chain data provided.", exec_code=400)
+    elif isinstance(data, dict):
+        data = RunChainRequest(**data)
+
+    if not data.chain_name:
+        return Result.default_user_error(info="Chain name is required for execution.", exec_code=400)
+    if data.task_input is None:  # Allow empty string as input
+        return Result.default_user_error(info="Task input is required.", exec_code=400)
+
+    isaa = get_isaa_instance(app)
+
+    # TODO: Add SSE streaming for execution progress if desired in the future.
+    # For now, simple blocking execution.
+
+    try:
+        # If chain_definition is provided, use it directly (for running unsaved chains)
+        if data.chain_definition:
+            app.logger.info(
+                f"Executing unsaved chain definition for '{data.chain_name}' with input: {data.task_input[:50]}...")
+            # Temporarily add this chain definition to isaa.agent_chain without saving to file
+            # This requires isaa.agent_chain to support in-memory, non-persistent additions or direct execution
+            # For simplicity, let's assume isaa.run_task can accept a task list directly if AgentChain is adapted.
+            # If not, we'd save it temporarily or find another way.
+            # For now, assuming run_task primarily uses named, saved chains.
+            # A more robust solution would be to modify `isaa.run_task` or `ChainTreeExecutor`
+            # to accept a raw list of task dictionaries.
+            # This example will proceed assuming the chain must be saved first if not already.
+            # Let's add a note that this feature (running unsaved chains from UI) needs more work on ISAA core.
+            app.logger.warning(
+                "Running unsaved chain definitions directly is not fully supported by this endpoint version. The chain should be saved first.")
+            # Fallback to trying to run by name, assuming it was saved.
+
+        app.logger.info(f"Executing chain '{data.chain_name}' with input: {data.task_input[:50]}...")
+        # `isaa.run_task` is already async
+        execution_result = await isaa.run_task(task_input=data.task_input, chain_name=data.chain_name)
+
+        # `execution_result` structure depends on `ChainTreeExecutor.execute`
+        # It's usually a dictionary of results.
+        return Result.json(data={"output": execution_result, "final_message": "Chain execution completed."})
+
+    except Exception as e:
+        app.logger.error(f"Error executing task chain '{data.chain_name}': {e}", exc_info=True)
+        return Result.custom_error(info=f"Chain execution failed: {str(e)}", exec_code=500)
+
+
+# --- Endpoint for the Drawflow Task Chain Editor UI ---
+@export(mod_name=MOD_NAME, api=True, version=VERSION, name="task_chain_editor_drawflow", api_methods=['GET'])
+async def get_task_chain_editor_page_drawflow(app: App, request: Optional[RequestData] = None):
+    """Serves the HTML page for the Drawflow-based Task Chain Editor."""
+    if app is None:  # Should not happen if called via export
         app = get_app()
-    html_content = app.web_context() + """
-    <div class="main-content frosted-glass">
-    <title>Task Chain Editor</title>
-    <style>
-        .task-chain-editor-grid { display: grid; grid-template-columns: 300px 1fr; gap: 1.5rem; height: calc(100vh - 150px); }
-        .chain-list-panel { border-right: 1px solid var(--tb-border-color, #e5e7eb); padding-right: 1rem; overflow-y: auto; }
-        .task-editor-panel { overflow-y: auto; }
-        .task-card {
-            background-color: var(--tb-card-bg, #ffffff);
-            border: 1px solid var(--tb-border-color, #e0e0e0);
-            border-radius: 0.5rem;
-            padding: 1rem;
-            margin-bottom: 0.75rem;
-            cursor: grab;
-            box-shadow: var(--tb-shadow-md, 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06));
-        }
-        .dark .task-card { background-color: var(--tb-card-bg-dark, #374151); border-color: var(--tb-border-color-dark, #4b5563); }
-        .task-card:active { cursor: grabbing; background-color: var(--tb-primary-100, #ebf8ff); }
-        .dark .task-card:active { background-color: var(--tb-primary-700, #2c5282); }
-        .drag-over-placeholder { border: 2px dashed var(--tb-primary-500, #4299e1); background-color: var(--tb-primary-50, #ebf8ff); min-height: 50px; margin-bottom: 0.75rem; border-radius: 0.5rem; }
-        .task-actions button { margin-left: 0.5rem; }
-    </style>
-    <div id="app-root" class="tb-container tb-mx-auto tb-p-4">
-        <header class="tb-flex tb-justify-between tb-items-center tb-mb-6">
-            <h1 class="tb-text-3xl tb-font-bold">Task Chain Editor</h1>
-            <div>
-                <span id="currentUserChainEditor" class="tb-mr-4"></span>
-                 <div id="darkModeToggleContainerChainEditor" style="display: inline-block;"></div>
-            </div>
-        </header>
 
-        <div class="task-chain-editor-grid">
-            <!-- Linke Spalte: Kettenauswahl und -verwaltung -->
-            <div class="chain-list-panel">
-                <h2 class="tb-text-xl tb-font-semibold tb-mb-3">Chains</h2>
-                <div class="tb-mb-3">
-                    <select id="chainSelector" class="tb-input tb-w-full"></select>
-                </div>
-                <button id="newChainBtn" class="tb-btn tb-btn-success tb-w-full tb-mb-2">
-                    <span class="material-symbols-outlined tb-mr-1">add</span> Neue Kette
-                </button>
-                <button id="deleteChainBtn" class="tb-btn tb-btn-danger tb-w-full tb-mb-2" disabled>
-                    <span class="material-symbols-outlined tb-mr-1">delete</span> Kette Löschen
-                </button>
-                 <button id="saveChainBtn" class="tb-btn tb-btn-primary tb-w-full" disabled>
-                    <span class="material-symbols-outlined tb-mr-1">save</span> Kette Speichern
-                </button>
-            </div>
+    # The Drawflow HTML and JS will be substantial.
+    # It's better to load it from a separate .html file for maintainability.
+    # For this example, I'll provide a condensed version here.
+    # In a real setup, use:
+    #   ui_file_path = Path(__file__).parent / "task_chain_editor_drawflow.html"
+    #   with open(ui_file_path, "r") as f:
+    #       html_content = f.read()
+    # And then inject app.web_context() if needed, or ensure tb.js handles it.
 
-            <!-- Rechte Spalte: Aufgaben-Editor für ausgewählte Kette -->
-            <div class="task-editor-panel">
-                <div class="tb-mb-4">
-                    <label for="chainNameInput" class="tb-label">Name der Kette:</label>
-                    <input type="text" id="chainNameInput" class="tb-input tb-w-full" placeholder="Name der Kette" disabled>
-                </div>
-                <div class="tb-mb-4">
-                    <label for="chainDescriptionInput" class="tb-label">Beschreibung:</label>
-                    <textarea id="chainDescriptionInput" class="tb-input tb-w-full" rows="2" placeholder="Optionale Beschreibung" disabled></textarea>
-                </div>
-
-                <div class="tb-flex tb-justify-between tb-items-center tb-mb-3">
-                    <h2 class="tb-text-xl tb-font-semibold">Aufgaben</h2>
-                    <button id="addTaskToChainBtn" class="tb-btn tb-btn-primary" disabled>
-                         <span class="material-symbols-outlined tb-mr-1">playlist_add</span> Aufgabe Hinzufügen
-                    </button>
-                </div>
-                <div id="taskListContainer" class="tb-min-h-[200px] tb-border tb-p-2 tb-rounded tb-bg-gray-50 dark:tb-bg-gray-800">
-                    <!-- Aufgaben werden hier per Drag & Drop eingefügt und sortiert -->
-                    <p id="noTasksMessage" class="tb-text-gray-500 dark:tb-text-gray-400">Wähle oder erstelle eine Kette.</p>
-                </div>
-            </div>
-        </div>
-    </div>
-    <script defer src="https://unpkg.com/htmx.org@2.0.2/dist/htmx.min.js"></script>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.153.0/three.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/marked-highlight/lib/index.umd.min.js"></script>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <script defer type="module">
-        let currentChainName = null;
-        let currentTasks = [];
-        let currentChainDescription = "";
-        let allChainNames = [];
-        let draggedTaskElement = null;
-        let placeholder = null;
-
-        const TASK_TYPES = ["agent", "tool", "chain"]; // For 'use' field
-
-        if (window.TB?.events) {
-            if (window.TB.config?.get('appRootId')) {
-                 initializeChainEditor();
-            } else {
-                window.TB.events.on('tbjs:initialized', initializeChainEditor, { once: true });
-            }
-        } else {
-            document.addEventListener('tbjs:initialized', initializeChainEditor, { once: true });
-        }
-
-        function initializeChainEditor() {
-            const username = TB.user.getUsername() || 'default_user';
-            document.getElementById('currentUserChainEditor').textContent = `Benutzer: ${username}`;
-
-            // Init DarkModeToggle specifically for this container if it's separate
-            if (TB.ui && TB.ui.DarkModeToggle && document.getElementById('darkModeToggleContainerChainEditor')) {
-                new TB.ui.DarkModeToggle({target: document.getElementById('darkModeToggleContainerChainEditor')});
-            }
+    html_content = DRAWFLOW_TASK_CHAIN_EDITOR_HTML_TEMPLATE  # Defined below
+    return Result.html(data=app.web_context() + html_content)
 
 
-            document.getElementById('chainSelector').addEventListener('change', handleChainSelectionChange);
-            document.getElementById('newChainBtn').addEventListener('click', handleNewChain);
-            document.getElementById('saveChainBtn').addEventListener('click', handleSaveChain);
-            document.getElementById('deleteChainBtn').addEventListener('click', handleDeleteChain);
-            document.getElementById('addTaskToChainBtn').addEventListener('click', () => showTaskModal(null));
-
-            document.getElementById('chainNameInput').addEventListener('input', (e) => {
-                if (currentChainName !== null) { // Only allow editing name if a chain is "active"
-                     // This change is temporary until saved.
-                }
-            });
-            document.getElementById('chainDescriptionInput').addEventListener('input', (e) => {
-                currentChainDescription = e.target.value;
-            });
-
-
-            loadChainList();
-            updateEditorState(); // Initial UI state
-        }
-
-        async function loadChainList() {
-            TB.ui.Loader.show('Lade Ketten...');
-            try {
-                const response = await TB.api.request('isaa.chainUi', 'get_task_chain_list', null, 'GET');
-                if (response.error === TB.ToolBoxError.none && response.get()) {
-                    allChainNames = response.get();
-                    populateChainSelector();
-                } else {
-                    TB.ui.Toast.showError('Fehler beim Laden der Kettenliste: ' + response.info.help_text);
-                    allChainNames = [];
-                }
-            } catch (e) {
-                TB.ui.Toast.showError('Netzwerkfehler beim Laden der Kettenliste.');
-                console.error(e);
-                allChainNames = [];
-            } finally {
-                TB.ui.Loader.hide();
-            }
-        }
-
-        function populateChainSelector() {
-            const selector = document.getElementById('chainSelector');
-            selector.innerHTML = '<option value="">-- Kette auswählen --</option>';
-            allChainNames.forEach(name => {
-                const option = document.createElement('option');
-                option.value = name;
-                option.textContent = name;
-                selector.appendChild(option);
-            });
-        }
-
-        async function handleChainSelectionChange() {
-            const selector = document.getElementById('chainSelector');
-            const selectedName = selector.value;
-            if (selectedName) {
-                await loadChainDefinition(selectedName);
-            } else {
-                currentChainName = null;
-                currentTasks = [];
-                currentChainDescription = "";
-                updateEditorState();
-                renderCurrentTasks();
-            }
-        }
-
-        async function loadChainDefinition(chainName) {
-            TB.ui.Loader.show('Lade Kettendetails...');
-            try {
-                const response = await TB.api.request('isaa.chainUi', `get_task_chain_definition?chain_name=${encodeURIComponent(chainName)}`, null, 'GET');
-                if (response.error === TB.ToolBoxError.none && response.get()) {
-                    const chainDef = response.get();
-                    currentChainName = chainDef.name;
-                    currentTasks = chainDef.tasks.map(task => ({ ...task, id: task.id || TB.utils.uniqueId('task_') })); // Ensure client-side ID
-                    currentChainDescription = chainDef.description || "";
-                    renderCurrentTasks();
-                } else {
-                    TB.ui.Toast.showError('Kette nicht gefunden oder Fehler: ' + response.info.help_text);
-                    currentChainName = null; // Or perhaps set to chainName to allow creating it if not found
-                    currentTasks = [];
-                    currentChainDescription = "";
-                    renderCurrentTasks();
-                }
-            } catch (e) {
-                TB.ui.Toast.showError('Netzwerkfehler beim Laden der Kettendetails.');
-                console.error(e);
-                currentChainName = null; currentTasks = []; currentChainDescription = ""; renderCurrentTasks();
-            } finally {
-                updateEditorState();
-                TB.ui.Loader.hide();
-            }
-        }
-
-        function updateEditorState() {
-            const chainSelected = currentChainName !== null;
-            document.getElementById('chainNameInput').value = currentChainName || '';
-            document.getElementById('chainNameInput').disabled = !chainSelected; // Allow editing name if a chain is "active" for saving
-            document.getElementById('chainDescriptionInput').value = currentChainDescription || '';
-            document.getElementById('chainDescriptionInput').disabled = !chainSelected;
-            document.getElementById('saveChainBtn').disabled = !chainSelected;
-            document.getElementById('deleteChainBtn').disabled = !chainSelected;
-            document.getElementById('addTaskToChainBtn').disabled = !chainSelected;
-            document.getElementById('noTasksMessage').style.display = (chainSelected && currentTasks.length === 0) ? 'block' : 'none';
-             if (!chainSelected) {
-                 document.getElementById('taskListContainer').innerHTML = '<p id="noTasksMessage" class="tb-text-gray-500 dark:tb-text-gray-400">Wähle oder erstelle eine Kette.</p>';
-             }
-        }
-
-
-        function renderCurrentTasks() {
-            const container = document.getElementById('taskListContainer');
-            container.innerHTML = ''; // Clear previous tasks
-            if (currentChainName === null) {
-                 container.innerHTML = '<p id="noTasksMessage" class="tb-text-gray-500 dark:tb-text-gray-400">Wähle oder erstelle eine Kette.</p>';
-                 return;
-            }
-             if (currentTasks.length === 0) {
-                container.innerHTML = '<p id="noTasksMessage" class="tb-text-gray-500 dark:tb-text-gray-400">Noch keine Aufgaben in dieser Kette. Füge eine hinzu!</p>';
-                return;
-            }
-
-
-            currentTasks.forEach((task, index) => {
-                const taskCard = document.createElement('div');
-                taskCard.className = 'task-card';
-                taskCard.setAttribute('draggable', 'true');
-                taskCard.dataset.taskId = task.id; // Use client-side ID for dragging
-                taskCard.dataset.index = index; // Keep original index for actions
-
-                taskCard.innerHTML = `
-                    <div class="tb-font-semibold tb-text-lg">${TB.utils.escapeHtml(task.name)} (${TB.utils.escapeHtml(task.use)})</div>
-                    <p class="tb-text-sm tb-text-gray-600 dark:tb-text-gray-300 tb-mb-1">Args: <code class="tb-bg-gray-200 dark:tb-bg-gray-600 tb-px-1 tb-rounded">${TB.utils.escapeHtml(task.args)}</code></p>
-                    <p class="tb-text-sm tb-text-gray-600 dark:tb-text-gray-300">Return Key: <code class="tb-bg-gray-200 dark:tb-bg-gray-600 tb-px-1 tb-rounded">${TB.utils.escapeHtml(task.return_key)}</code></p>
-                    <div class="task-actions tb-text-right tb-mt-2">
-                        <button class="tb-btn tb-btn-sm tb-btn-icon tb-text-blue-500" data-action="edit" title="Bearbeiten"><span class="material-symbols-outlined">edit</span></button>
-                        <button class="tb-btn tb-btn-sm tb-btn-icon tb-text-red-500" data-action="delete" title="Löschen"><span class="material-symbols-outlined">delete</span></button>
-                    </div>
-                `;
-                taskCard.addEventListener('dragstart', dragStart);
-                taskCard.addEventListener('dragend', dragEnd);
-                container.appendChild(taskCard);
-
-                taskCard.querySelector('button[data-action="edit"]').addEventListener('click', () => showTaskModal(task, index));
-                taskCard.querySelector('button[data-action="delete"]').addEventListener('click', () => handleRemoveTask(index));
-            });
-            // Add dragover and drop listeners to the container
-            container.addEventListener('dragover', dragOver);
-            container.addEventListener('drop', dropTask);
-        }
-
-        function handleNewChain() {
-            TB.ui.Modal.show({
-                title: 'Neue Kette erstellen',
-                content: '<input type="text" id="newChainNameModal" class="tb-input tb-w-full" placeholder="Name der neuen Kette">',
-                buttons: [
-                    {text: 'Abbrechen', action: modal => modal.close()},
-                    {
-                        text: 'Erstellen',
-                        variant: 'primary',
-                        action: async modal => {
-                            const newName = document.getElementById('newChainNameModal').value.trim();
-                            if (!newName) {
-                                TB.ui.Toast.showWarning('Kettenname darf nicht leer sein.');
-                                return;
-                            }
-                            if (allChainNames.includes(newName)) {
-                                TB.ui.Toast.showWarning('Eine Kette mit diesem Namen existiert bereits.');
-                                return;
-                            }
-                            currentChainName = newName;
-                            currentTasks = [];
-                            currentChainDescription = ""; // Reset description for new chain
-
-                            // Add to selector and select it
-                            const selector = document.getElementById('chainSelector');
-                            const option = document.createElement('option');
-                            option.value = newName;
-                            option.textContent = newName;
-                            selector.appendChild(option);
-                            selector.value = newName;
-                            allChainNames.push(newName); // Add to client-side list
-
-                            updateEditorState();
-                            renderCurrentTasks();
-                            modal.close();
-                            TB.ui.Toast.showSuccess(`Neue Kette '${newName}' initialisiert. Speichern nicht vergessen!`);
-                        }
-                    }
-                ],
-                onOpen: () => document.getElementById('newChainNameModal')?.focus()
-            });
-        }
-
-        async function handleSaveChain() {
-            const chainNameFromInput = document.getElementById('chainNameInput').value.trim();
-            if (!chainNameFromInput) {
-                TB.ui.Toast.showWarning('Kettenname darf nicht leer sein.');
-                return;
-            }
-
-            // If the name was changed from the input field and it's different from currentChainName,
-            // it implies a rename or saving a new chain if currentChainName was from a newly created (unsaved) chain.
-            let effectiveChainName = chainNameFromInput;
-            let isRename = currentChainName && currentChainName !== chainNameFromInput && allChainNames.includes(currentChainName);
-
-            if (isRename) {
-                // Potentially handle rename logic: delete old, save new.
-                // For simplicity now, we'll just save under the new name.
-                // User might need to delete the old one manually if this is a "Save As" like behavior.
-                // Or, prompt for confirmation of rename.
-                 const confirmRename = await TB.ui.Modal.confirm({title: 'Kette umbenennen?', content: `Möchtest du die Kette von '${currentChainName}' zu '${effectiveChainName}' umbenennen? Die alte Kette wird dann gelöscht.`});
-                 if (!confirmRename) return;
-            }
-
-
-            const payload = {
-                name: effectiveChainName,
-                description: currentChainDescription,
-                tasks: currentTasks.map(({id, ...task}) => task) // Remove client-side ID before saving
-            };
-
-            TB.ui.Loader.show('Speichere Kette...');
-            try {
-                const response = await TB.api.request('isaa.chainUi', 'save_task_chain_definition', payload, 'POST');
-                if (response.error === TB.ToolBoxError.none) {
-                    TB.ui.Toast.showSuccess(`Kette '${effectiveChainName}' erfolgreich gespeichert.`);
-                     if (isRename) {
-                        // Delete the old chain definition from backend
-                        await TB.api.request('isaa.chainUi', `delete_task_chain?chain_name=${encodeURIComponent(currentChainName)}`, null, 'DELETE');
-                        // Update client-side list
-                        allChainNames = allChainNames.filter(name => name !== currentChainName);
-                    }
-                    currentChainName = effectiveChainName; // Update current name to the saved one
-                    if (!allChainNames.includes(effectiveChainName)) {
-                        allChainNames.push(effectiveChainName);
-                    }
-                    populateChainSelector(); // Repopulate to reflect changes
-                    document.getElementById('chainSelector').value = effectiveChainName; // Reselect
-                    updateEditorState();
-                } else {
-                    TB.ui.Toast.showError('Fehler beim Speichern der Kette: ' + response.info.help_text);
-                }
-            } catch (e) {
-                TB.ui.Toast.showError('Netzwerkfehler beim Speichern der Kette.');
-                console.error(e);
-            } finally {
-                TB.ui.Loader.hide();
-            }
-        }
-
-        async function handleDeleteChain() {
-            if (!currentChainName) return;
-            const confirmed = await TB.ui.Modal.confirm({
-                title: 'Kette löschen?',
-                content: `Möchtest du die Kette '${currentChainName}' wirklich löschen? Dies kann nicht rückgängig gemacht werden.`
-            });
-            if (!confirmed) return;
-
-            TB.ui.Loader.show('Lösche Kette...');
-            try {
-                const response = await TB.api.request('isaa.chainUi', `delete_task_chain?chain_name=${encodeURIComponent(currentChainName)}`, null, 'DELETE');
-                 if (response.error === TB.ToolBoxError.none) {
-                    TB.ui.Toast.showSuccess(`Kette '${currentChainName}' gelöscht.`);
-                    currentChainName = null;
-                    currentTasks = [];
-                    currentChainDescription = "";
-                    await loadChainList(); // Reload list from server
-                    updateEditorState();
-                    renderCurrentTasks();
-                } else {
-                    TB.ui.Toast.showError('Fehler beim Löschen der Kette: ' + response.info.help_text);
-                }
-            } catch (e) {
-                TB.ui.Toast.showError('Netzwerkfehler beim Löschen der Kette.');
-                console.error(e);
-            } finally {
-                TB.ui.Loader.hide();
-            }
-        }
-
-
-        function showTaskModal(task = null, index = -1) {
-            const isEditing = task !== null;
-            const modalTitle = isEditing ? 'Aufgabe bearbeiten' : 'Neue Aufgabe hinzufügen';
-            const useOptions = TASK_TYPES.map(type => `<option value="${type}" ${task?.use === type ? 'selected' : ''}>${type}</option>`).join('');
-
-            TB.ui.Modal.show({
-                title: modalTitle,
-                content: `
-                    <form id="taskFormModal" class="tb-space-y-4">
-                        <div>
-                            <label for="taskUse" class="tb-label">Use (Typ):</label>
-                            <select id="taskUseModal" class="tb-input tb-w-full">${useOptions}</select>
-                        </div>
-                        <div>
-                            <label for="taskName" class="tb-label">Name (Agent/Tool/Chain):</label>
-                            <input type="text" id="taskNameModal" class="tb-input tb-w-full" value="${TB.utils.escapeHtml(task?.name || '')}" required>
-                        </div>
-                        <div>
-                            <label for="taskArgs" class="tb-label">Argumente:</label>
-                            <input type="text" id="taskArgsModal" class="tb-input tb-w-full" value="${TB.utils.escapeHtml(task?.args || '$user-input')}">
-                            <p class="tb-text-xs tb-text-gray-500 dark:tb-text-gray-400">Verwende $user-input für Benutzereingabe, $variablenName für vorherige Ergebnisse.</p>
-                        </div>
-                        <div>
-                            <label for="taskReturnKey" class="tb-label">Return Key (Variable für Ergebnis):</label>
-                            <input type="text" id="taskReturnKeyModal" class="tb-input tb-w-full" value="${TB.utils.escapeHtml(task?.return_key || 'result')}">
-                        </div>
-                    </form>
-                `,
-                buttons: [
-                    { text: 'Abbrechen', action: modal => modal.close(), variant: 'secondary' },
-                    {
-                        text: isEditing ? 'Speichern' : 'Hinzufügen',
-                        variant: 'primary',
-                        action: modal => {
-                            const newTask = {
-                                id: task?.id || TB.utils.uniqueId('task_'), // Retain ID if editing, else new
-                                use: document.getElementById('taskUseModal').value,
-                                name: document.getElementById('taskNameModal').value.trim(),
-                                args: document.getElementById('taskArgsModal').value.trim(),
-                                return_key: document.getElementById('taskReturnKeyModal').value.trim()
-                            };
-                            if (!newTask.name) {
-                                TB.ui.Toast.showWarning('Aufgabenname darf nicht leer sein.');
-                                return;
-                            }
-                            if (isEditing) {
-                                currentTasks[index] = newTask;
-                            } else {
-                                currentTasks.push(newTask);
-                            }
-                            renderCurrentTasks();
-                            modal.close();
-                        }
-                    }
-                ],
-                onOpen: () => document.getElementById('taskNameModal')?.focus()
-            });
-        }
-
-        function handleRemoveTask(index) {
-            currentTasks.splice(index, 1);
-            renderCurrentTasks();
-        }
-
-        // --- Drag and Drop Logic ---
-        function dragStart(e) {
-            draggedTaskElement = e.target;
-            e.dataTransfer.effectAllowed = 'move';
-            e.dataTransfer.setData('text/plain', e.target.dataset.taskId); // Use client-side ID
-            // Optional: add a class for styling the dragged item
-            setTimeout(() => e.target.classList.add('tb-opacity-50'), 0);
-
-            // Create placeholder
-            placeholder = document.createElement('div');
-            placeholder.className = 'drag-over-placeholder';
-            placeholder.style.height = `${draggedTaskElement.offsetHeight}px`;
-        }
-
-        function dragEnd(e) {
-            draggedTaskElement.classList.remove('tb-opacity-50');
-            draggedTaskElement = null;
-            if (placeholder && placeholder.parentNode) {
-                placeholder.parentNode.removeChild(placeholder);
-            }
-            placeholder = null;
-            // Remove any hover styles from all cards
-             document.querySelectorAll('.task-card').forEach(card => card.style.borderTop = '');
-        }
-
-        function dragOver(e) {
-            e.preventDefault(); // Necessary to allow dropping
-            e.dataTransfer.dropEffect = 'move';
-            const targetCard = e.target.closest('.task-card');
-            const taskList = document.getElementById('taskListContainer');
-
-            if (targetCard && targetCard !== draggedTaskElement) {
-                const rect = targetCard.getBoundingClientRect();
-                const isAfter = e.clientY > rect.top + rect.height / 2;
-
-                // Remove existing placeholder before inserting new one
-                if (placeholder && placeholder.parentNode) {
-                    placeholder.parentNode.removeChild(placeholder);
-                }
-
-                if (isAfter) {
-                    taskList.insertBefore(placeholder, targetCard.nextSibling);
-                } else {
-                    taskList.insertBefore(placeholder, targetCard);
-                }
-            } else if (!targetCard && taskList.children.length > 0 && placeholder && !placeholder.parentNode) {
-                 // If dragging over empty space in container, append placeholder at the end
-                 taskList.appendChild(placeholder);
-            } else if (taskList.children.length === 0 && placeholder && !placeholder.parentNode) {
-                taskList.appendChild(placeholder);
-            }
-        }
-
-        function dropTask(e) {
-            e.preventDefault();
-            if (!draggedTaskElement || !placeholder || !placeholder.parentNode) return;
-
-            const draggedTaskId = draggedTaskElement.dataset.taskId;
-            const originalIndex = currentTasks.findIndex(t => t.id === draggedTaskId);
-            if (originalIndex === -1) return;
-
-            const taskToMove = currentTasks[originalIndex];
-
-            // Find new index based on placeholder's position
-            const children = Array.from(placeholder.parentNode.children);
-            let newIndex = children.indexOf(placeholder);
-
-            // Remove the task from its original position
-            currentTasks.splice(originalIndex, 1);
-
-            // Adjust newIndex if the original item was before the drop target
-            if (originalIndex < newIndex && placeholder.previousSibling === draggedTaskElement) {
-                // This case might not be perfectly accurate with placeholder logic, test thoroughly
-            } else if (draggedTaskElement === placeholder.previousSibling) {
-                // If dragging down, the placeholder index is effectively one less for the splice
-                newIndex = Math.max(0, newIndex -1);
-            }
-
-
-            // Insert the task at the new position
-            currentTasks.splice(newIndex, 0, taskToMove);
-
-            renderCurrentTasks(); // Re-render the entire list to reflect new order
-        }
-
-    </script>
-    </div>
-    """
-    return Result.html(data=html_content)
-
-
-# Update initialize_module to register the new UI
+# --- Initialization ---
 @export(mod_name=MOD_NAME, version=VERSION)
 def initialize_module(app: App):
-    print(f"ISAA Chains Modul ({MOD_NAME} v{VERSION}) initialisiert.")
+    """Initializes the ISAA ChainUI module and registers its UI with CloudM."""
+    print(f"ISAA Drawflow ChainUI Modul ({MOD_NAME} v{VERSION}) initialisiert.")
     if app is None:
         app = get_app()
 
-
-    # Register new Task Chain Editor UI
+    # Register the new Drawflow-based Task Chain Editor UI
     app.run_any(("CloudM", "add_ui"),
-                name=f"{Name}_TaskChainEditor",  # Unique name for this UI
-                title="Task Chain Editor",
-                path=f"/api/{Name}/task_chain_editor",  # Unique path
-                description="Visueller Editor für Aufgaben-Ketten (Task Chains)",auth=True,
+                name=f"{Name}_TaskChainEditorDrawflow",  # Unique name
+                title="Task Chain Editor (Drawflow)",
+                path=f"/api/{Name}/task_chain_editor_drawflow",  # Unique path
+                description="Visual editor for ISAA Task Chains using Drawflow.",
+                auth=True
                 )
-    return Result.ok(info="Modul und Task Chain Editor UI bereit.")
+    return Result.ok(info="ISAA Drawflow ChainUI Modul und Editor UI bereit.")
+
+
+# --- HTML Template for Drawflow Task Chain Editor ---
+# This is a placeholder and would be a more complex HTML file.
+DRAWFLOW_TASK_CHAIN_EDITOR_HTML_TEMPLATE = """
+<title>Task Chain Editor (Drawflow)</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jerosoler/Drawflow/dist/drawflow.min.css">
+<script src="https://cdn.jsdelivr.net/gh/jerosoler/Drawflow/dist/drawflow.min.js"></script>
+<style>
+    /* Basic styling for the editor layout */
+    .drawflow-editor-container { display: flex; height: calc(100vh - 180px); /* Adjust based on header/footer */ }
+    .drawflow-sidebar { width: 250px; padding: 10px; border-right: 1px solid #ccc; overflow-y: auto; background: #f9f9f9; }
+    .drawflow-sidebar h3 { margin-top: 0; font-size: 1.1em; }
+    .drawflow-sidebar button { display: block; width: 100%; margin-bottom: 8px; }
+    #drawflowCanvas { flex-grow: 1; position: relative; } /* Ensure drawflow div takes space */
+    .drawflow-controls { padding: 10px; border-top: 1px solid #ccc; background: #f9f9f9; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .drawflow-controls .tb-input, .drawflow-controls .tb-btn { margin-bottom: 0; }
+    /* Styles for node content */
+    .drawflow-node .task-node-content { padding: 8px; font-size: 0.9em; }
+    .drawflow-node .task-node-content strong { display: block; margin-bottom: 4px; }
+    .drawflow-node .task-node-content p { margin: 2px 0; white-space: pre-wrap; word-break: break-all; }
+
+    /* Dark mode considerations for Drawflow itself (may need more specific targeting) */
+    .dark .drawflow-sidebar { background-color: var(--tb-bg-secondary-dark, #2d3748); border-right-color: var(--tb-border-color-dark, #4a5562); }
+    .dark .drawflow-controls { background-color: var(--tb-bg-secondary-dark, #2d3748); border-top-color: var(--tb-border-color-dark, #4a5562); }
+    /* Drawflow nodes are styled by its library, custom HTML within nodes should adapt */
+    .dark .drawflow-node .task-node-content { /* Basic dark mode for custom content */ }
+    .drawflow-node .inputs .input, .drawflow-node .outputs .output { background-color: var(--tb-primary-500) !important; } /* Example: Color connection points */
+</style>
+
+<div id="app-root" class="tb-container tb-mx-auto tb-p-4">
+    <header class="tb-flex tb-justify-between tb-items-center tb-mb-4">
+        <h1 class="tb-text-3xl tb-font-bold">Task Chain Editor (Drawflow)</h1>
+        <div>
+            <div id="darkModeToggleContainerDrawflow" style="display: inline-block;"></div>
+        </div>
+    </header>
+
+    <div class="drawflow-controls">
+        <select id="chainSelectorDrawflow" class="tb-input tb-input-sm" style="min-width: 150px;"></select>
+        <input type="text" id="chainNameInputDrawflow" class="tb-input tb-input-sm" placeholder="Chain Name" style="flex-grow: 1; min-width: 150px;">
+        <button id="newChainBtnDrawflow" class="tb-btn tb-btn-neutral tb-btn-sm"><span class="material-symbols-outlined tb-mr-1">add</span>New</button>
+        <button id="saveChainBtnDrawflow" class="tb-btn tb-btn-primary tb-btn-sm"><span class="material-symbols-outlined tb-mr-1">save</span>Save</button>
+        <button id="deleteChainBtnDrawflow" class="tb-btn tb-btn-danger tb-btn-sm"><span class="material-symbols-outlined tb-mr-1">delete</span>Delete</button>
+        <hr class="tb-w-full tb-my-1 md:tb-w-auto md:tb-h-6 md:tb-border-l md:tb-mx-2">
+        <input type="text" id="chainTaskInputDrawflow" class="tb-input tb-input-sm" placeholder="Input for chain execution" style="flex-grow: 2; min-width: 200px;">
+        <button id="executeChainBtnDrawflow" class="tb-btn tb-btn-success tb-btn-sm"><span class="material-symbols-outlined tb-mr-1">play_arrow</span>Execute</button>
+    </div>
+
+    <div class="drawflow-editor-container tb-mt-2">
+        <div class="drawflow-sidebar">
+            <h3>Task Palette</h3>
+            <button class="tb-btn tb-btn-secondary tb-btn-sm" data-task-type="agent">Agent Task</button>
+            <button class="tb-btn tb-btn-secondary tb-btn-sm" data-task-type="tool">Tool Task</button>
+            <button class="tb-btn tb-btn-secondary tb-btn-sm" data-task-type="chain">Sub-Chain Task</button>
+            <hr class="tb-my-2">
+            <div id="chainDescriptionContainer">
+                 <label for="chainDescriptionInputDrawflow" class="tb-label tb-text-sm">Description:</label>
+                 <textarea id="chainDescriptionInputDrawflow" class="tb-input tb-input-sm tb-w-full" rows="3" placeholder="Chain description..."></textarea>
+            </div>
+             <hr class="tb-my-2">
+            <h3>Execution Log</h3>
+            <div id="executionLogDrawflow" class="tb-text-xs tb-p-1 tb-bg-gray-100 dark:tb-bg-gray-800 tb-rounded tb-h-32 tb-overflow-y-auto">
+                Ready.
+            </div>
+        </div>
+        <div id="drawflowCanvas"></div> <!-- Drawflow will attach here -->
+    </div>
+</div>
+# Last
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jerosoler/Drawflow/dist/drawflow.min.css">
+<script src="https://cdn.jsdelivr.net/gh/jerosoler/Drawflow/dist/drawflow.min.js"></script>
+# or version view releases https://github.com/jerosoler/Drawflow/releases
+<link rel="stylesheet" href="https://unpkg.com/drawflow@0.0.60/dist/drawflow.min.css" />
+<script src="https://unpkg.com/drawflow@0.0.60/dist/drawflow.min.js"></script>
+<script type="module">
+    // Ensure TB is loaded
+    if (!window.TB) { console.error("TB.js not loaded!"); }
+
+    let editor;
+    let currentChain = { name: "", description: "", tasks: [], drawflow_export: null };
+    let availableAgents = []; // To be fetched from ISAA UI or a dedicated endpoint
+    let availableTools = [];  // Same as above
+    // --- Initialization ---
+
+    // Wait for tbjs to be initialized
+if (window.TB?.events) {
+    if (window.TB.config?.get('appRootId')) { // A sign that TB.init might have run
+         initializeDrawflowEditor();
+    } else {
+        window.TB.events.on('tbjs:initialized', initializeDrawflowEditor, { once: true });
+    }
+} else {
+    // Fallback if TB is not even an object yet, very early load
+    document.addEventListener('tbjs:initialized', initializeDrawflowEditor, { once: true }); // Custom event dispatch from TB.init
+}
+
+
+    function initializeDrawflowEditor() {
+        const drawflowContainer = document.getElementById('drawflowCanvas');
+        if (!drawflowContainer) {
+            console.error("Drawflow container not found!");
+            return;
+        }
+        editor = new Drawflow(drawflowContainer, window.Vue, window.Vue // If using Vue, otherwise null or an empty object
+        // { render: null, parent: null } // For vanilla JS
+        );
+        editor.reroute = true; // Enable rerouting connections
+        editor.start();
+        TB.logger.info("Drawflow editor initialized.");
+
+        // Init DarkModeToggle
+        if (TB.ui && TB.ui.DarkModeToggle && document.getElementById('darkModeToggleContainerDrawflow')) {
+            new TB.ui.DarkModeToggle({ target: document.getElementById('darkModeToggleContainerDrawflow') });
+        }
+
+        // Event Listeners for UI controls
+        document.getElementById('chainSelectorDrawflow').addEventListener('change', loadSelectedChain);
+        document.getElementById('newChainBtnDrawflow').addEventListener('click', startNewChain);
+        document.getElementById('saveChainBtnDrawflow').addEventListener('click', saveCurrentChain);
+        document.getElementById('deleteChainBtnDrawflow').addEventListener('click', deleteCurrentChain);
+        document.getElementById('executeChainBtnDrawflow').addEventListener('click', executeCurrentChain);
+
+        document.querySelectorAll('.drawflow-sidebar button[data-task-type]').forEach(btn => {
+            btn.addEventListener('click', () => addNodeToCanvas(btn.dataset.taskType));
+        });
+
+        // Listener for node selection to show properties (simplified)
+        editor.on('nodeSelected', (nodeId) => {
+            const nodeData = editor.getNodeFromId(nodeId);
+            // For now, editing is via modal on double click (see node registration)
+            TB.logger.info("Node selected:", nodeId, nodeData);
+        });
+
+        editor.on('connectionCreated', (connection) => {
+            TB.logger.info("Connection created:", connection);
+            // Auto-update internal chain structure if needed, or on save
+        });
+
+        loadChainList();
+        // Potentially load available agents/tools for palette
+        // loadAvailableAgentsAndTools();
+    }
+
+    // --- Chain Management API Calls ---
+    async function loadChainList() {
+        TB.ui.Loader.show("Loading chains...");
+        try {
+            const response = await TB.api.request('isaa.chainUi', 'get_task_chain_list', null, 'GET');
+            if (response.error === TB.ToolBoxError.none && response.get()) {
+                const chainNames = response.get();
+                const selector = document.getElementById('chainSelectorDrawflow');
+                selector.innerHTML = '<option value="">-- Select Chain --</option>';
+                chainNames.forEach(name => {
+                    const option = document.createElement('option');
+                    option.value = name;
+                    option.textContent = name;
+                    selector.appendChild(option);
+                });
+            } else {
+                TB.ui.Toast.showError("Error loading chain list: " + response.info?.help_text);
+            }
+        } catch(e) {
+            TB.ui.Toast.showError("Network error loading chain list.");
+            console.error(e);
+        } finally {
+            TB.ui.Loader.hide();
+        }
+    }
+
+    async function loadSelectedChain() {
+        const chainName = document.getElementById('chainSelectorDrawflow').value;
+        if (!chainName) {
+            startNewChain(); // Or clear editor
+            return;
+        }
+        TB.ui.Loader.show(`Loading chain: ${chainName}...`);
+        try {
+            const response = await TB.api.request('isaa.chainUi', `get_task_chain_definition?chain_name=${encodeURIComponent(chainName)}`, null, 'GET');
+            if (response.error === TB.ToolBoxError.none && response.get()) {
+                const chainData = response.get();
+                currentChain.name = chainData.name;
+                currentChain.description = chainData.description || "";
+                currentChain.tasks = chainData.tasks || []; // Logical tasks
+                currentChain.drawflow_export = chainData.drawflow_export || null; // Drawflow visual data
+
+                document.getElementById('chainNameInputDrawflow').value = currentChain.name;
+                document.getElementById('chainDescriptionInputDrawflow').value = currentChain.description;
+
+                editor.clearModuleSelected(); // Clear current Drawflow canvas
+                if (currentChain.drawflow_export) {
+                    editor.import(currentChain.drawflow_export);
+                } else {
+                    // Reconstruct Drawflow from logical tasks if no visual data
+                    reconstructDrawflowFromTasks(currentChain.tasks);
+                }
+                TB.ui.Toast.showSuccess(`Chain '${chainName}' loaded.`);
+            } else {
+                TB.ui.Toast.showError("Error loading chain definition: " + response.info?.help_text);
+            }
+        } catch(e) {
+            TB.ui.Toast.showError("Network error loading chain definition.");
+            console.error(e);
+        } finally {
+            TB.ui.Loader.hide();
+        }
+    }
+
+    function startNewChain() {
+        const newName = "UntitledChain_" + TB.utils.uniqueId('').substring(0,4);
+        currentChain = { name: newName, description: "", tasks: [], drawflow_export: null };
+        document.getElementById('chainNameInputDrawflow').value = currentChain.name;
+        document.getElementById('chainDescriptionInputDrawflow').value = "";
+        document.getElementById('chainSelectorDrawflow').value = ""; // Deselect
+        editor.clearModuleSelected();
+        TB.ui.Toast.showInfo("New chain started. Remember to save.");
+    }
+
+    async function saveCurrentChain() {
+        const chainName = document.getElementById('chainNameInputDrawflow').value.trim();
+        const chainDescription = document.getElementById('chainDescriptionInputDrawflow').value.trim();
+
+        if (!chainName) {
+            TB.ui.Toast.showWarning("Chain name cannot be empty.");
+            return;
+        }
+
+        // Update currentChain with latest from Drawflow export
+        const drawflowExportData = editor.export();
+        currentChain.name = chainName;
+        currentChain.description = chainDescription;
+        currentChain.drawflow_export = drawflowExportData;
+
+        // Extract logical tasks from Drawflow data
+        currentChain.tasks = extractLogicalTasksFromDrawflow(drawflowExportData);
+
+        const payload = {
+            name: currentChain.name,
+            description: currentChain.description,
+            tasks: currentChain.tasks,
+            drawflow_export: currentChain.drawflow_export
+        };
+
+        TB.ui.Loader.show("Saving chain...");
+        try {
+            const response = await TB.api.request('isaa.chainUi', 'save_task_chain_definition', payload, 'POST');
+            if (response.error === TB.ToolBoxError.none) {
+                TB.ui.Toast.showSuccess(`Chain '${currentChain.name}' saved.`);
+                await loadChainList(); // Refresh list
+                document.getElementById('chainSelectorDrawflow').value = currentChain.name; // Reselect
+            } else {
+                TB.ui.Toast.showError("Error saving chain: " + response.info?.help_text);
+            }
+        } catch(e) {
+            TB.ui.Toast.showError("Network error saving chain.");
+            console.error(e);
+        } finally {
+            TB.ui.Loader.hide();
+        }
+    }
+
+    async function deleteCurrentChain() {
+        const chainName = document.getElementById('chainSelectorDrawflow').value;
+        if (!chainName) {
+            TB.ui.Toast.showWarning("No chain selected to delete.");
+            return;
+        }
+        const confirmed = await TB.ui.Modal.confirm({
+            title: "Delete Chain?",
+            content: `Are you sure you want to delete the chain '${chainName}'?`
+        });
+        if (!confirmed) return;
+
+        TB.ui.Loader.show("Deleting chain...");
+        try {
+            const response = await TB.api.request('isaa.chainUi', `delete_task_chain?chain_name=${encodeURIComponent(chainName)}`, null, 'DELETE');
+            if (response.error === TB.ToolBoxError.none) {
+                TB.ui.Toast.showSuccess(`Chain '${chainName}' deleted.`);
+                startNewChain(); // Reset to a new chain state
+                await loadChainList(); // Refresh list
+            } else {
+                TB.ui.Toast.showError("Error deleting chain: " + response.info?.help_text);
+            }
+        } catch(e) {
+            TB.ui.Toast.showError("Network error deleting chain.");
+            console.error(e);
+        } finally {
+            TB.ui.Loader.hide();
+        }
+    }
+
+    async function executeCurrentChain() {
+        const chainName = document.getElementById('chainNameInputDrawflow').value.trim(); // Use current name in editor
+        const taskInput = document.getElementById('chainTaskInputDrawflow').value;
+        const logDiv = document.getElementById('executionLogDrawflow');
+
+        if (!chainName) {
+            TB.ui.Toast.showWarning("Cannot execute: Chain name is empty. Save the chain first or load an existing one.");
+            return;
+        }
+
+        // Optional: Check if the chain is saved or has changes, prompt to save first.
+        // For now, we assume execution uses the *saved version* of the chain by its name.
+        // To execute the *current editor state* without saving, the backend would need to accept
+        // the full chain definition (currentChain.tasks) along with the input.
+
+        logDiv.innerHTML = `Executing chain '${chainName}' with input: "${TB.utils.escapeHtml(taskInput.substring(0,50))}..."\\n`;
+        TB.ui.Loader.show(`Executing '${chainName}'...`);
+
+        try {
+            const payload = { chain_name: chainName, task_input: taskInput };
+            // If you want to execute the current unsaved state:
+            // payload.chain_definition = { name: chainName, description: currentChain.description, tasks: currentChain.tasks };
+
+            const response = await TB.api.request('isaa.chainUi', 'run_chain_visualized', payload, 'POST');
+            if (response.error === TB.ToolBoxError.none && response.get()) {
+                const result = response.get();
+                logDiv.innerHTML += "Execution Result:\\n" + JSON.stringify(result.output, null, 2) + "\\n";
+                TB.ui.Toast.showSuccess(result.final_message || "Chain executed.");
+            } else {
+                logDiv.innerHTML += "Execution Error: " + response.info?.help_text + "\\n";
+                TB.ui.Toast.showError("Error executing chain: " + response.info?.help_text);
+            }
+        } catch(e) {
+            logDiv.innerHTML += "Network Error: " + e.message + "\\n";
+            TB.ui.Toast.showError("Network error during execution.");
+            console.error(e);
+        } finally {
+            TB.ui.Loader.hide();
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+    }
+
+    // --- Drawflow Node and Data Handling ---
+    function addNodeToCanvas(taskType) {
+        // Default task data
+        const defaultTaskData = {
+            id: TB.utils.uniqueId('task_df_'), // Client-side Drawflow specific ID if needed, distinct from logical task ID
+            logical_task_id: TB.utils.uniqueId('task_'), // The ISAAPydanticTask ID
+            use: taskType,
+            name: `New ${taskType.charAt(0).toUpperCase() + taskType.slice(1)} Task`,
+            args: taskType === 'agent' ? '$user-input' : (taskType === 'tool' ? 'param=value' : 'sub_chain_name'),
+            return_key: 'result'
+        };
+
+        // Customize HTML content for the node
+        const nodeHTML = `
+            <div class="task-node-content" ondblclick="showTaskEditModal(event, ${editor.id})">
+                <strong>${defaultTaskData.name}</strong>
+                <p>Use: ${defaultTaskData.use}</p>
+                <p>Args: ${TB.utils.escapeHtml(defaultTaskData.args)}</p>
+                <p>Returns: ${defaultTaskData.return_key}</p>
+            </div>
+        `;
+
+        // Add node to Drawflow: addNode(name, inputs, outputs, posx, posy, class, data, html, typenode = false)
+        // Let's make all tasks have 1 input and 1 output for sequential chaining.
+        const newNodeId = editor.addNode(taskType, 1, 1, 150, 150, `task-node ${taskType}-node`, defaultTaskData, nodeHTML);
+        TB.logger.info(`Added ${taskType} node with ID: ${newNodeId}`);
+    }
+
+    window.showTaskEditModal = (event, nodeId_numeric) => { // Make it global for ondblclick
+        const nodeId = 'node-' + nodeId_numeric; // Drawflow IDs are usually node-X
+        const node = editor.getNodeFromId(nodeId_numeric); // getNodeFromId expects numeric part
+        if (!node || !node.data) {
+            TB.ui.Toast.showError("Could not find node data to edit.");
+            return;
+        }
+
+        const taskData = node.data; // This is our defaultTaskData structure
+
+        const TASK_TYPES_OPTIONS = ["agent", "tool", "chain"].map(type =>
+            `<option value="${type}" ${taskData.use === type ? 'selected' : ''}>${type}</option>`).join('');
+
+        TB.ui.Modal.show({
+            title: 'Edit Task Properties',
+            content: `
+                <form id="drawflowTaskFormModal" class="tb-space-y-3">
+                    <div><label class="tb-label">Type (Use):</label><select id="dfTaskUse" class="tb-input tb-w-full">${TASK_TYPES_OPTIONS}</select></div>
+                    <div><label class="tb-label">Name (Agent/Tool/Chain):</label><input type="text" id="dfTaskName" class="tb-input tb-w-full" value="${TB.utils.escapeHtml(taskData.name)}"></div>
+                    <div><label class="tb-label">Arguments:</label><input type="text" id="dfTaskArgs" class="tb-input tb-w-full" value="${TB.utils.escapeHtml(taskData.args)}"></div>
+                    <div><label class="tb-label">Return Key:</label><input type="text" id="dfTaskReturnKey" class="tb-input tb-w-full" value="${TB.utils.escapeHtml(taskData.return_key)}"></div>
+                    <input type="hidden" id="dfTaskLogicalId" value="${taskData.logical_task_id}">
+                </form>
+            `,
+            buttons: [
+                { text: 'Cancel', action: modal => modal.close(), variant: 'secondary' },
+                { text: 'Save Changes', variant: 'primary', action: modal => {
+                    const updatedData = {
+                        ...taskData, // Preserve existing fields like id
+                        use: document.getElementById('dfTaskUse').value,
+                        name: document.getElementById('dfTaskName').value.trim(),
+                        args: document.getElementById('dfTaskArgs').value.trim(),
+                        return_key: document.getElementById('dfTaskReturnKey').value.trim(),
+                        logical_task_id: document.getElementById('dfTaskLogicalId').value // Ensure logical ID is preserved
+                    };
+                    // Update node's data and HTML content in Drawflow
+                    editor.updateNodeDataFromId(nodeId_numeric, updatedData);
+
+                    const newHTML = `
+                        <div class="task-node-content" ondblclick="showTaskEditModal(event, ${nodeId_numeric})">
+                            <strong>${updatedData.name}</strong>
+                            <p>Use: ${updatedData.use}</p>
+                            <p>Args: ${TB.utils.escapeHtml(updatedData.args)}</p>
+                            <p>Returns: ${updatedData.return_key}</p>
+                        </div>
+                    `;
+                    editor.updateNodeHTML(nodeId_numeric, newHTML); // Assumes such a method exists or find alternative
+                                                              // Drawflow might re-render on data change if HTML is template-based,
+                                                              // or need specific update like `editor.drawflow.drawflow.Home.data[nodeId_numeric].html = newHTML; editor.updateNodeValue(editor.drawflow.drawflow.Home.data[nodeId_numeric]);` (complex)
+                                                              // Simpler: updateNodeDataFromId should be enough if HTML generation is dynamic in Drawflow core
+                                                              // For now, we will assume updateNodeDataFromId re-renders if needed, or we handle HTML update on task extraction.
+
+                    modal.close();
+                    TB.ui.Toast.showSuccess("Task updated.");
+                }}
+            ]
+        });
+    };
+
+    function reconstructDrawflowFromTasks(tasks) {
+        editor.clearModuleSelected();
+        let lastNodeId = null;
+        let yPos = 50;
+
+        tasks.forEach((task, index) => {
+            const taskData = {
+                id: TB.utils.uniqueId('task_df_'), // New Drawflow ID
+                logical_task_id: task.id || TB.utils.uniqueId('task_'), // Use existing logical ID or generate
+                use: task.use,
+                name: task.name,
+                args: task.args,
+                return_key: task.return_key
+            };
+            const nodeHTML = `
+                <div class="task-node-content" ondblclick="showTaskEditModal(event, ${editor.id})">
+                     <strong>${taskData.name}</strong>
+                     <p>Use: ${taskData.use}</p>
+                     <p>Args: ${TB.utils.escapeHtml(taskData.args)}</p>
+                     <p>Returns: ${taskData.return_key}</p>
+                </div>
+            `;
+            const newNodeId = editor.addNode(task.use, 1, 1, 150, yPos, `task-node ${task.use}-node`, taskData, nodeHTML);
+            yPos += 120; // Increment y position for next node
+
+            if (lastNodeId !== null) {
+                // Connect output_1 of lastNode to input_1 of newNode
+                editor.addConnection(lastNodeId, newNodeId, 'output_1', 'input_1');
+            }
+            lastNodeId = newNodeId;
+        });
+    }
+
+    function extractLogicalTasksFromDrawflow(drawflowExport) {
+        // This is a critical and potentially complex function.
+        // It needs to traverse the Drawflow graph (nodes and connections)
+        // and reconstruct the ordered list of logical ISAAPydanticTask objects.
+
+        if (!drawflowExport || !drawflowExport.drawflow || !drawflowExport.drawflow.Home || !drawflowExport.drawflow.Home.data) {
+            TB.logger.warning("Invalid or empty Drawflow export data.");
+            return [];
+        }
+        const dfNodes = drawflowExport.drawflow.Home.data;
+        const nodesMap = new Map(Object.entries(dfNodes)); // Map of node_id_numeric -> node_object
+        const tasks = [];
+
+        // Find starting nodes (nodes with no inputs connected from other tasks in this export)
+        const startNodeIds = [];
+        nodesMap.forEach((node, nodeId) => {
+            let isStartNode = true;
+            if (node.inputs) {
+                for (const inputClass in node.inputs) {
+                    if (node.inputs[inputClass].connections && node.inputs[inputClass].connections.length > 0) {
+                        // Check if any connection comes from a node within this export
+                        node.inputs[inputClass].connections.forEach(conn => {
+                            if (nodesMap.has(conn.node)) { // conn.node is the source node's numeric ID
+                                isStartNode = false;
+                            }
+                        });
+                    }
+                }
+            }
+            // A simpler heuristic for sequential chains: if a node has inputs but no *incoming* connections from *other drawn nodes*.
+            // For now, let's assume a simple linear chain and try to sort by Y position, then follow connections.
+            // This needs a proper graph traversal for complex flows.
+            if(isStartNode) startNodeIds.push(nodeId);
+        });
+
+        // Simplified: if multiple start nodes, pick one (e.g., lowest Y). For robust handling, support multiple parallel starts or error.
+        // Or, assume the order in Object.values(dfNodes) might be somewhat indicative of creation order if not edited much.
+        // For now, let's try a very basic traversal from the first start node found.
+
+        let sortedTasks = [];
+        let visited = new Set();
+
+        function traverse(nodeIdNumeric) {
+            if (visited.has(nodeIdNumeric)) return;
+            visited.add(nodeIdNumeric);
+
+            const node = nodesMap.get(String(nodeIdNumeric)); // Ensure key is string for Map
+            if (node && node.data) {
+                // Create logical task from node.data
+                const logicalTask = {
+                    id: node.data.logical_task_id || TB.utils.uniqueId('task_'),
+                    use: node.data.use,
+                    name: node.data.name,
+                    args: node.data.args,
+                    return_key: node.data.return_key
+                };
+                // Validate with Pydantic if desired: ISAAPydanticTask(**logicalTask)
+                sortedTasks.push(logicalTask);
+
+                // Follow outputs to next node
+                if (node.outputs) {
+                    for (const outputClass in node.outputs) {
+                        if (node.outputs[outputClass].connections) {
+                            node.outputs[outputClass].connections.forEach(conn => {
+                                traverse(conn.node); // conn.node is the target node's numeric ID
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: iterate nodes as they appear in the export if no clear start or complex graph.
+        // This might not preserve logical order perfectly if the graph is not simple.
+        // A better approach is topological sort if it's a DAG.
+        // For now, let's process in the order they appear if startNodeIds logic is too simple.
+        if (startNodeIds.length > 0) {
+             // Sort start nodes by Y position, then X, to get a more predictable entry point
+            startNodeIds.sort((a, b) => {
+                const nodeA = nodesMap.get(a);
+                const nodeB = nodesMap.get(b);
+                if (nodeA.pos_y === nodeB.pos_y) return nodeA.pos_x - nodeB.pos_x;
+                return nodeA.pos_y - nodeB.pos_y;
+            });
+            traverse(startNodeIds[0]); // Traverse from the "top-most, left-most" start node
+        } else {
+             // If no clear start nodes (e.g., a cycle or all nodes have inputs), process in order of map
+             TB.logger.warning("Could not determine clear start nodes for task extraction. Processing in exported order. Order may not be correct for complex graphs.");
+             nodesMap.forEach((node, nodeId) => {
+                 if (!visited.has(nodeId)) { // Process components if graph is disconnected
+                     traverse(nodeId);
+                 }
+             });
+        }
+
+        if (sortedTasks.length !== nodesMap.size && nodesMap.size > 0) {
+            TB.logger.warning(`Task extraction mismatch: extracted ${sortedTasks.length} tasks from ${nodesMap.size} Drawflow nodes. Graph might be complex or disconnected.`);
+             // As a very naive fallback if traversal missed nodes, append them. THIS IS NOT ORDER-PRESERVING.
+            nodesMap.forEach((node, nodeId) => {
+                if (!sortedTasks.some(t => t.id === node.data.logical_task_id)) {
+                    sortedTasks.push({
+                        id: node.data.logical_task_id || TB.utils.uniqueId('task_'),
+                        use: node.data.use, name: node.data.name,
+                        args: node.data.args, return_key: node.data.return_key
+                    });
+                }
+            });
+        }
+
+        return sortedTasks;
+    }
+
+</script>
+"""

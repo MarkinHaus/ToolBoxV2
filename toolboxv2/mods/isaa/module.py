@@ -44,7 +44,7 @@ import platform
 import shlex
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Optional
 
 from toolboxv2 import FileHandler, MainTool, Spinner, Style, get_app, get_logger
 
@@ -281,12 +281,8 @@ class Tools(MainTool, FileHandler):
 
     async def run_task(self, task_input: str, chain_name: str, sum_up=True):
         self.agent_chain_executor.reset()
-        # ChainTreeExecutor.execute is sync, but its runners are now async
-        # This requires ChainTreeExecutor to be adapted for async execution
-        # For now, wrap in asyncio.to_thread or make ChainTreeExecutor.execute async
-        # Simplified: Assume ChainTreeExecutor.execute becomes async or is called via thread
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.agent_chain_executor.execute, task_input,
+
+        return self.agent_chain_executor.execute(task_input,
                                           self.agent_chain.get(chain_name), sum_up)
 
     async def crate_task_chain(self, prompt):
@@ -776,7 +772,7 @@ class Tools(MainTool, FileHandler):
     async def run_agent(self, name: str | EnhancedAgent,
                         text: str,
                         verbose: bool = False,  # Handled by agent's own config mostly
-                        session_id: str | None = None,
+                        session_id: Optional[str] = None,
                         persist_history: bool = True,
                         strategy_override: str | None = None,  # Maps to ProcessingStrategy enum
                         **kwargs):  # Other kwargs for a_run
