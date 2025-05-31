@@ -23,6 +23,7 @@ LOCAL_PLAYER_O_ID = "p2_local_utt"
 ONLINE_POLL_TIMEOUT_SECONDS = 180  # Increased timeout
 
 export = get_app(f"{GAME_NAME}.Export").tb
+MINIMAX_SEARCH_DEPTH = 4 # Adjust this for strength vs. speed (e.g., 4, 5, or 6)
 
 
 # --- Enums ---
@@ -539,186 +540,953 @@ class UltimateTTTGameEngine:  # Renamed for clarity
 # -- NPC Agents ---
 import random  # Add this import at the top of your file if not already there
 
+import random
+from typing import List, Optional, Dict, Tuple, Union  # Ensure these are imported
+
+
+# Assuming the following classes and enums are defined as in your provided code:
+# from pydantic import BaseModel, Field, model_validator
+# from enum import Enum
+# from datetime import datetime, timezone
+# import uuid
+# class PlayerSymbol(str, Enum): ...
+# class CellState(str, Enum): ...
+# class BoardWinner(str, Enum): ...
+# class NPCDifficulty(str, Enum): ...
+# class GameStatus(str, Enum): ...
+# class GameMode(str, Enum): ...
+# class GameConfig(BaseModel): ...
+# class PlayerInfo(BaseModel): ...
+# class Move(BaseModel): ...
+# class GameState(BaseModel): ...
+# class UltimateTTTGameEngine: ...
+
 
 def get_npc_move_easy(game_state: GameState, npc_player_info: PlayerInfo) -> Optional[Move]:
-    """
-    Easy NPC: Plays "perfect" Tic-Tac-Toe on the current local board it's sent to,
-    or a random valid move if it can play anywhere. Ignores global strategy.
-    """
     gs = game_state
     size = gs.config.grid_size
     npc_symbol = npc_player_info.symbol
+    opponent_symbol = PlayerSymbol.O if npc_symbol == PlayerSymbol.X else PlayerSymbol.X
 
-    possible_moves = []
+    engine = UltimateTTTGameEngine(gs)
 
+    all_raw_possible_moves: List[Dict[str, int]] = []
+
+    is_forced_to_play_specific_board = False
     forced_gr, forced_gc = -1, -1
-    play_anywhere = False
 
     if gs.next_forced_global_board:
-        forced_gr, forced_gc = gs.next_forced_global_board
-        if gs.global_board_winners[forced_gr][forced_gc] != BoardWinner.NONE or \
-            UltimateTTTGameEngine(gs)._is_local_board_full(gs.local_boards_state[forced_gr][forced_gc]):
-            play_anywhere = True  # Sent to a finished board
-        else:  # Play in the forced board
+        fgr, fgc = gs.next_forced_global_board
+        if gs.global_board_winners[fgr][fgc] == BoardWinner.NONE and \
+            not engine._is_local_board_full(gs.local_boards_state[fgr][fgc]):
+            is_forced_to_play_specific_board = True
+            forced_gr, forced_gc = fgr, fgc
             for lr in range(size):
                 for lc in range(size):
-                    if gs.local_boards_state[forced_gr][forced_gc][lr][lc] == CellState.EMPTY:
-                        possible_moves.append({'gr': forced_gr, 'gc': forced_gc, 'lr': lr, 'lc': lc})
-    else:
-        play_anywhere = True  # Can play anywhere
+                    if gs.local_boards_state[fgr][fgc][lr][lc] == CellState.EMPTY:
+                        all_raw_possible_moves.append({'gr': fgr, 'gc': fgc, 'lr': lr, 'lc': lc})
 
-    if play_anywhere:
-        possible_moves = []  # Reset, as we now look at all valid boards
+    if not is_forced_to_play_specific_board:
+        all_raw_possible_moves = []
         for gr_idx in range(size):
             for gc_idx in range(size):
                 if gs.global_board_winners[gr_idx][gc_idx] == BoardWinner.NONE and \
-                    not UltimateTTTGameEngine(gs)._is_local_board_full(gs.local_boards_state[gr_idx][gc_idx]):
+                    not engine._is_local_board_full(gs.local_boards_state[gr_idx][gc_idx]):
                     for lr in range(size):
                         for lc in range(size):
                             if gs.local_boards_state[gr_idx][gc_idx][lr][lc] == CellState.EMPTY:
-                                possible_moves.append({'gr': gr_idx, 'gc': gc_idx, 'lr': lr, 'lc': lc})
+                                all_raw_possible_moves.append({'gr': gr_idx, 'gc': gc_idx, 'lr': lr, 'lc': lc})
 
-    if not possible_moves:
-        gs.last_error_message = "NPC Error: No possible moves found (should not happen in valid game state)."
+    if not all_raw_possible_moves:
+        gs.last_error_message = "NPC Error (Easy): No possible moves found."
         return None
 
-    # Easy strategy:
-    # 1. If playing in a specific local board (forced_gr, forced_gc is valid):
-    #    - Try to win that local board.
-    #    - If not, try to block opponent from winning that local board.
-    #    - Else, pick a random valid cell in that local board.
-    # 2. If play_anywhere:
-    #    - Pick a random valid move from `possible_moves`.
+    strategically_safer_moves: List[Dict[str, int]] = []
+    for move_dict in all_raw_possible_moves:
+        opponent_target_gr, opponent_target_gc = move_dict['lr'], move_dict['lc']
 
-    target_board_coords_for_ttt = None
-    if not play_anywhere and forced_gr != -1:  # Focused on one board
-        target_board_coords_for_ttt = (forced_gr, forced_gc)
+        if gs.global_board_winners[opponent_target_gr][opponent_target_gc] != BoardWinner.NONE or \
+            engine._is_local_board_full(gs.local_boards_state[opponent_target_gr][opponent_target_gc]):
+            strategically_safer_moves.append(move_dict)
+            continue
 
-    if target_board_coords_for_ttt:
-        gr, gc = target_board_coords_for_ttt
-        local_board_cells = gs.local_boards_state[gr][gc]
+        opponent_can_win_target_board = False
+        target_local_board_for_opponent = gs.local_boards_state[opponent_target_gr][opponent_target_gc]
+        opponent_cell_state_val = CellState(opponent_symbol.value)
+        for r_opp in range(size):
+            for c_opp in range(size):
+                if target_local_board_for_opponent[r_opp][c_opp] == CellState.EMPTY:
+                    temp_board = [row[:] for row in target_local_board_for_opponent]
+                    temp_board[r_opp][c_opp] = opponent_cell_state_val
+                    if engine._get_board_winner_symbol(temp_board, CellState) == opponent_cell_state_val:
+                        opponent_can_win_target_board = True
+                        break
+            if opponent_can_win_target_board:
+                break
 
-        # Check for winning move in this local board
-        for move_coords in possible_moves:
-            if move_coords['gr'] == gr and move_coords['gc'] == gc:
-                temp_board = [row[:] for row in local_board_cells]
-                temp_board[move_coords['lr']][move_coords['lc']] = CellState(npc_symbol.value)
-                if UltimateTTTGameEngine(gs)._get_board_winner_symbol(temp_board, CellState) == CellState(
-                    npc_symbol.value):
-                    return Move(player_id=npc_player_info.id, global_row=gr, global_col=gc, local_row=move_coords['lr'],
-                                local_col=move_coords['lc'])
+        if not opponent_can_win_target_board:
+            strategically_safer_moves.append(move_dict)
 
-        # Check for blocking move in this local board
-        opponent_symbol = PlayerSymbol.O if npc_symbol == PlayerSymbol.X else PlayerSymbol.X
-        for move_coords in possible_moves:
-            if move_coords['gr'] == gr and move_coords['gc'] == gc:
-                temp_board = [row[:] for row in local_board_cells]
-                temp_board[move_coords['lr']][move_coords['lc']] = CellState(
-                    opponent_symbol.value)  # Simulate opponent's move
-                if UltimateTTTGameEngine(gs)._get_board_winner_symbol(temp_board, CellState) == CellState(
-                    opponent_symbol.value):
-                    # Block here
-                    return Move(player_id=npc_player_info.id, global_row=gr, global_col=gc, local_row=move_coords['lr'],
-                                local_col=move_coords['lc'])
+    candidate_moves_for_decision = strategically_safer_moves if strategically_safer_moves else all_raw_possible_moves
 
-        # If no win/block, pick a random move within the forced board
-        moves_in_forced_board = [m for m in possible_moves if m['gr'] == gr and m['gc'] == gc]
-        if moves_in_forced_board:
-            chosen_move_coords = random.choice(moves_in_forced_board)
-            return Move(player_id=npc_player_info.id, global_row=chosen_move_coords['gr'],
-                        global_col=chosen_move_coords['gc'],
-                        local_row=chosen_move_coords['lr'], local_col=chosen_move_coords['lc'])
+    if not candidate_moves_for_decision:
+        gs.last_error_message = "NPC Error (Easy): No candidate moves after filtering."
+        # This case should be extremely rare if all_raw_possible_moves was not empty.
+        # If it happens, it means all moves were deemed unsafe and strategically_safer_moves is empty,
+        # so candidate_moves_for_decision becomes all_raw_possible_moves.
+        # So, this specific error message path is unlikely unless all_raw_possible_moves was initially empty.
+        if all_raw_possible_moves:  # Should always be true if we reach here unless logic error above.
+            candidate_moves_for_decision = all_raw_possible_moves
+        else:
+            return None  # Truly no moves.
 
-    # If play_anywhere or specific board logic didn't yield a move (shouldn't happen if moves_in_forced_board existed)
-    if possible_moves:
-        chosen_move_coords = random.choice(possible_moves)
-        return Move(player_id=npc_player_info.id, global_row=chosen_move_coords['gr'],
-                    global_col=chosen_move_coords['gc'],
-                    local_row=chosen_move_coords['lr'], local_col=chosen_move_coords['lc'])
+    chosen_move_dict: Optional[Dict[str, int]] = None
 
-    return None  # Should not be reached if logic is correct
+    if is_forced_to_play_specific_board:
+        if not candidate_moves_for_decision:
+            gs.last_error_message = "NPC Error (Easy): No candidate moves for forced board (logic error)."
+            return None
 
+        current_local_board_state = gs.local_boards_state[forced_gr][forced_gc]
+        npc_cell_state_val = CellState(npc_symbol.value)
+        opponent_cell_state_on_forced_board = CellState(opponent_symbol.value)
+
+        for move_d in candidate_moves_for_decision:
+            temp_board = [row[:] for row in current_local_board_state]
+            temp_board[move_d['lr']][move_d['lc']] = npc_cell_state_val
+            if engine._get_board_winner_symbol(temp_board, CellState) == npc_cell_state_val:
+                chosen_move_dict = move_d
+                break
+        if chosen_move_dict:
+            return Move(player_id=npc_player_info.id,
+                        global_row=chosen_move_dict['gr'], global_col=chosen_move_dict['gc'],
+                        local_row=chosen_move_dict['lr'], local_col=chosen_move_dict['lc'])
+
+        for move_d in candidate_moves_for_decision:
+            temp_board = [row[:] for row in current_local_board_state]
+            temp_board[move_d['lr']][move_d['lc']] = opponent_cell_state_on_forced_board
+            if engine._get_board_winner_symbol(temp_board, CellState) == opponent_cell_state_on_forced_board:
+                chosen_move_dict = move_d
+                break
+        if chosen_move_dict:
+            return Move(player_id=npc_player_info.id,
+                        global_row=chosen_move_dict['gr'], global_col=chosen_move_dict['gc'],
+                        local_row=chosen_move_dict['lr'], local_col=chosen_move_dict['lc'])
+
+        if candidate_moves_for_decision:
+            chosen_move_dict = random.choice(candidate_moves_for_decision)
+            # Fallthrough to return statement at the end
+
+    else:  # Play anywhere
+        winning_moves_local_board = []
+        blocking_moves_local_board = []
+        send_opponent_to_finished_board_moves = []
+        other_neutral_moves = []
+
+        npc_cell_state_val = CellState(npc_symbol.value)
+        opponent_cell_state_for_play_anywhere = CellState(opponent_symbol.value)
+
+        for move_d in candidate_moves_for_decision:
+            gr, gc, lr, lc = move_d['gr'], move_d['gc'], move_d['lr'], move_d['lc']
+            board_to_play_on = gs.local_boards_state[gr][gc]
+
+            temp_board_win = [row[:] for row in board_to_play_on]
+            temp_board_win[lr][lc] = npc_cell_state_val
+            if engine._get_board_winner_symbol(temp_board_win, CellState) == npc_cell_state_val:
+                winning_moves_local_board.append(move_d)
+                continue
+
+            temp_board_block = [row[:] for row in board_to_play_on]
+            temp_board_block[lr][lc] = opponent_cell_state_for_play_anywhere
+            # Check if placing opponent's symbol in this cell would make them win (so NPC should block it by taking it)
+            # This logic for blocking_moves_local_board is subtle: the NPC wants to *take* this cell
+            # because if the *opponent* took it on *their* turn, they would win.
+            # So, simulating the opponent's symbol is correct to identify the cell, but the NPC makes the move.
+            if engine._get_board_winner_symbol(temp_board_block, CellState) == opponent_cell_state_for_play_anywhere:
+                blocking_moves_local_board.append(move_d)
+                continue
+
+            opponent_target_gr_pa, opponent_target_gc_pa = lr, lc
+            if gs.global_board_winners[opponent_target_gr_pa][opponent_target_gc_pa] != BoardWinner.NONE or \
+                engine._is_local_board_full(gs.local_boards_state[opponent_target_gr_pa][opponent_target_gc_pa]):
+                send_opponent_to_finished_board_moves.append(move_d)
+                continue
+
+            other_neutral_moves.append(move_d)
+
+        if winning_moves_local_board:
+            chosen_move_dict = random.choice(winning_moves_local_board)
+        elif blocking_moves_local_board:
+            chosen_move_dict = random.choice(blocking_moves_local_board)
+        elif send_opponent_to_finished_board_moves:
+            chosen_move_dict = random.choice(send_opponent_to_finished_board_moves)
+        elif other_neutral_moves:  # This list must contain elements if candidate_moves_for_decision had elements
+            chosen_move_dict = random.choice(other_neutral_moves)
+        elif candidate_moves_for_decision:  # Fallback if all moves fell into categories that were empty
+            chosen_move_dict = random.choice(candidate_moves_for_decision)
+
+    if chosen_move_dict:
+        return Move(player_id=npc_player_info.id,
+                    global_row=chosen_move_dict['gr'], global_col=chosen_move_dict['gc'],
+                    local_row=chosen_move_dict['lr'], local_col=chosen_move_dict['lc'])
+
+    # This fallback should ideally not be reached if candidate_moves_for_decision always has something.
+    # But as a final safeguard, if chosen_move_dict is still None, pick from all_raw_possible_moves
+    # This implies some logic flaw above or an edge case where no categories matched.
+    if all_raw_possible_moves:
+        gs.last_error_message = "NPC Error (Easy): Critical Fallback to totally random move from raw list."
+        safety_choice = random.choice(all_raw_possible_moves)
+        return Move(player_id=npc_player_info.id,
+                    global_row=safety_choice['gr'], global_col=safety_choice['gc'],
+                    local_row=safety_choice['lr'], local_col=safety_choice['lc'])
+
+    return None
+
+
+import random
+from typing import List, Optional, Dict, Tuple, Union
+
+
+# Assume your existing imports for GameState, PlayerInfo, Move, Enums, etc.
+# from ... import GameState, PlayerInfo, Move, PlayerSymbol, CellState, BoardWinner, UltimateTTTGameEngine
+# --- Helper functions for Zwickmühle detection (for 3x3 primarily) ---
+
+def _check_line_for_potential_win(line: List[CellState], player_symbol_cell: CellState, size: int) -> bool:
+    """Checks if a line has (size-1) of player's symbols and one empty cell."""
+    if size <= 1: return False  # Not meaningful for 1x1 or smaller
+    player_pieces = line.count(player_symbol_cell)
+    empty_cells = line.count(CellState.EMPTY)
+    return player_pieces == size - 1 and empty_cells == 1
+
+
+def _count_potential_wins_on_board(board: List[List[CellState]], player_symbol_cell: CellState, size: int) -> int:
+    """Counts how many lines on the board are potential wins for the player."""
+    if not board or len(board) != size or not board[0] or len(board[0]) != size:
+        # Invalid board structure for counting
+        return 0
+
+    potential_wins = 0
+    # Rows
+    for r in range(size):
+        if _check_line_for_potential_win(board[r], player_symbol_cell, size):
+            potential_wins += 1
+    # Columns
+    for c in range(size):
+        col_line = [board[r][c] for r in range(size)]
+        if _check_line_for_potential_win(col_line, player_symbol_cell, size):
+            potential_wins += 1
+    # Diagonal 1 (top-left to bottom-right)
+    diag1_line = [board[i][i] for i in range(size)]
+    if _check_line_for_potential_win(diag1_line, player_symbol_cell, size):
+        potential_wins += 1
+    # Diagonal 2 (top-right to bottom-left)
+    diag2_line = [board[i][size - 1 - i] for i in range(size)]
+    if _check_line_for_potential_win(diag2_line, player_symbol_cell, size):
+        potential_wins += 1
+    return potential_wins
+
+
+# --- End Helper functions ---
+# --- Helper functions from previous (ensure they are available) ---
+# _check_line_for_potential_win(line: List[CellState], player_symbol_cell: CellState, size: int) -> bool
+# _count_potential_wins_on_board(board: List[List[CellState]], player_symbol_cell: CellState, size: int) -> int
+
+# --- New/Refined Helper functions for scoring/evaluation ---
+
+def _get_npc_move_outcome_on_board(
+    local_board_state: List[List[CellState]],
+    move_lr: int, move_lc: int,
+    npc_symbol_cell: CellState,
+    opponent_symbol_cell: CellState,
+    engine: UltimateTTTGameEngine,
+    zwick_eval_size: int
+) -> Dict[str, Union[bool, int]]:
+    """
+    Evaluates what the NPC achieves by playing at (move_lr, move_lc) on local_board_state.
+    Returns: {'wins': bool, 'creates_zwick': bool, 'blocks_opponent_win': bool, 'sets_up_line': bool}
+    """
+    outcome = {'wins': False, 'creates_zwick': False, 'blocks_opponent_win': False, 'sets_up_line': False}
+
+    # Simulate NPC's move
+    temp_board_npc_plays = [row[:] for row in local_board_state]
+    temp_board_npc_plays[move_lr][move_lc] = npc_symbol_cell
+
+    if engine._get_board_winner_symbol(temp_board_npc_plays, CellState) == npc_symbol_cell:
+        outcome['wins'] = True
+
+    # Zwickmühle implies setting up lines, so check Zwick first.
+    num_potential_wins_after_npc_move = _count_potential_wins_on_board(temp_board_npc_plays, npc_symbol_cell,
+                                                                       zwick_eval_size)
+    if num_potential_wins_after_npc_move >= 2:
+        outcome['creates_zwick'] = True
+    elif num_potential_wins_after_npc_move == 1:  # and not already winning/zwicking
+        outcome['sets_up_line'] = True
+
+    # Check if this move blocks an opponent's immediate win
+    # This means if the opponent played at (move_lr, move_lc), they would have won.
+    temp_board_opponent_hypothetical_move = [row[:] for row in local_board_state]  # Fresh board
+    temp_board_opponent_hypothetical_move[move_lr][move_lc] = opponent_symbol_cell
+    if engine._get_board_winner_symbol(temp_board_opponent_hypothetical_move, CellState) == opponent_symbol_cell:
+        outcome['blocks_opponent_win'] = True
+
+    return outcome
+
+
+def _get_opponent_threat_on_sent_board(
+    target_local_board_state: List[List[CellState]],  # Board where opponent will be sent
+    opponent_symbol_cell: CellState,
+    engine: UltimateTTTGameEngine,
+    zwick_eval_size: int,
+    game_board_size: int
+) -> Dict[str, bool]:
+    """
+    Evaluates if the opponent, IF SENT TO target_local_board_state,
+    can immediately win or create a Zwickmühle there.
+    Returns: {'can_win': bool, 'can_zwick': bool}
+    """
+    threats = {'can_win': False, 'can_zwick': False}
+
+    # Iterate through all empty cells on the target board for the opponent
+    for r_opp in range(game_board_size):
+        for c_opp in range(game_board_size):
+            if target_local_board_state[r_opp][c_opp] == CellState.EMPTY:
+                # Simulate opponent playing in this empty cell
+                temp_board_opp_plays = [row[:] for row in target_local_board_state]
+                temp_board_opp_plays[r_opp][c_opp] = opponent_symbol_cell
+
+                if engine._get_board_winner_symbol(temp_board_opp_plays, CellState) == opponent_symbol_cell:
+                    threats['can_win'] = True
+                    return threats  # Max threat, no need to check further
+
+                if not threats['can_zwick']:  # Only check Zwick if not already found for this board
+                    if _count_potential_wins_on_board(temp_board_opp_plays, opponent_symbol_cell, zwick_eval_size) >= 2:
+                        threats['can_zwick'] = True
+                        # Continue checking other opponent moves; one might be an immediate win.
+    return threats
+
+
+# --- Main Medium NPC function with scoring ---
 
 def get_npc_move_medium(game_state: GameState, npc_player_info: PlayerInfo) -> Optional[Move]:
-    """
-    Medium NPC:
-    1. Tries to win the current local board.
-    2. Tries to block opponent on current local board.
-    3. Global considerations:
-        a. If it can win the GLOBAL game with a move, take it.
-        b. If it can block opponent from winning GLOBAL game, take it.
-        c. Avoid sending opponent to a local board where opponent can win that local board,
-           IF there's an alternative move that doesn't lead to an immediate local loss.
-        d. Prefer moves that send opponent to an already won/drawn local board (giving NPC free move).
-        e. Prefer moves that set up a future local win for NPC.
-    4. If none of the above, fallback to Easy's local TTT logic or a "good heuristic" move.
-    (This is a simplified placeholder; true medium AI is complex)
-    """
-    # For now, let's make medium slightly better than easy by picking a center if available on forced board
-    # or a random board's center if play_anywhere. This is a very basic heuristic.
     gs = game_state
-    size = gs.config.grid_size
+    game_board_size = gs.config.grid_size
+    zwick_eval_size = 3  # Zwickmühle logic is primarily for 3x3 boards
 
-    # Fallback to Easy's logic for now until more complex strategy is built
-    # This requires careful implementation of evaluating global board states,
-    # simulating future moves, etc. which is non-trivial.
+    npc_symbol = npc_player_info.symbol
+    npc_symbol_cellstate = CellState(npc_symbol.value)
+    opponent_symbol = PlayerSymbol.O if npc_symbol == PlayerSymbol.X else PlayerSymbol.X
+    opponent_symbol_cellstate = CellState(opponent_symbol.value)
 
-    # Basic Heuristic Enhancement for Medium (very simplified):
-    # Try to take center of forced local board, or center of a random playable local board.
-    # This is a placeholder for more advanced logic.
+    engine = UltimateTTTGameEngine(gs)
 
-    possible_moves = []  # Collect all raw possible moves first
-    forced_gr, forced_gc = gs.next_forced_global_board if gs.next_forced_global_board else (-1, -1)
-    play_anywhere = not gs.next_forced_global_board or \
-                    gs.global_board_winners[forced_gr][forced_gc] != BoardWinner.NONE or \
-                    UltimateTTTGameEngine(gs)._is_local_board_full(gs.local_boards_state[forced_gr][forced_gc])
+    # 1. Determine all raw possible moves
+    all_raw_possible_moves: List[Dict[str, int]] = []
+    # This flag indicates if the NPC *must* play on a specific board vs. having free choice.
+    # Free choice arises if gs.next_forced_global_board is None, OR if it points to a completed board.
+    npc_has_free_choice = True
+    forced_board_coords_for_npc: Optional[Tuple[int, int]] = None
 
-    if not play_anywhere:
-        for lr in range(size):
-            for lc in range(size):
-                if gs.local_boards_state[forced_gr][forced_gc][lr][lc] == CellState.EMPTY:
-                    possible_moves.append({'gr': forced_gr, 'gc': forced_gc, 'lr': lr, 'lc': lc})
-    else:
-        for gr_idx in range(size):
-            for gc_idx in range(size):
+    if gs.next_forced_global_board:
+        fgr, fgc = gs.next_forced_global_board
+        if gs.global_board_winners[fgr][fgc] == BoardWinner.NONE and \
+            not engine._is_local_board_full(gs.local_boards_state[fgr][fgc]):
+            npc_has_free_choice = False  # NPC is forced to this specific, active board
+            forced_board_coords_for_npc = (fgr, fgc)
+            # Populate moves only for this board
+            for lr in range(game_board_size):
+                for lc in range(game_board_size):
+                    if gs.local_boards_state[fgr][fgc][lr][lc] == CellState.EMPTY:
+                        all_raw_possible_moves.append({'gr': fgr, 'gc': fgc, 'lr': lr, 'lc': lc})
+
+    if npc_has_free_choice:  # NPC can play anywhere (either initially or got a free move)
+        all_raw_possible_moves = []  # Ensure it's empty before populating
+        for gr_idx in range(game_board_size):
+            for gc_idx in range(game_board_size):
+                # NPC can only play on global boards that are NOT YET WON/DRAWN
                 if gs.global_board_winners[gr_idx][gc_idx] == BoardWinner.NONE and \
-                    not UltimateTTTGameEngine(gs)._is_local_board_full(gs.local_boards_state[gr_idx][gc_idx]):
-                    for lr in range(size):
-                        for lc in range(size):
-                            if gs.local_boards_state[gr_idx][gc_idx][lr][lc] == CellState.EMPTY:
-                                possible_moves.append({'gr': gr_idx, 'gc': gc_idx, 'lr': lr, 'lc': lc})
+                    not engine._is_local_board_full(gs.local_boards_state[gr_idx][gc_idx]):
+                    for lr_idx in range(game_board_size):
+                        for lc_idx in range(game_board_size):
+                            if gs.local_boards_state[gr_idx][gc_idx][lr_idx][lc_idx] == CellState.EMPTY:
+                                all_raw_possible_moves.append({'gr': gr_idx, 'gc': gc_idx, 'lr': lr_idx, 'lc': lc_idx})
 
-    if not possible_moves: return None
+    if not all_raw_possible_moves:
+        gs.last_error_message = "NPC Error (Medium): No possible moves found (engine state might be stuck)."
+        return None
 
-    # Try to find a move that wins a local board AND sends opponent to a non-losing board for NPC
-    # (This is a sketch of a more advanced thought process)
+    # 2. Score each possible move
+    scored_moves: List[Tuple[Dict[str, int], float]] = []
 
-    # Placeholder: Medium will just use Easy's logic for now due to complexity.
-    # You would replace this with a more sophisticated evaluation.
-    # For example, iterate through possible_moves, simulate each one, evaluate the resulting game state.
-    # Key considerations for medium:
-    # - Global win/block checks (most important)
-    # - Local win/block checks
-    # - "Sending" opponent to a safe/advantageous board.
-    # - Avoiding sending opponent to a board where they can win locally.
-    # - Setting up two-in-a-rows (locally or globally).
+    for move_dict in all_raw_possible_moves:
+        npc_play_gr, npc_play_gc = move_dict['gr'], move_dict['gc']
+        npc_play_lr, npc_play_lc = move_dict['lr'], move_dict['lc']
 
-    return get_npc_move_easy(game_state, npc_player_info)  # Fallback for now
+        # --- A. Evaluate NPC's gain on the board it's playing (npc_play_gr, npc_play_gc) ---
+        current_board_for_npc_to_play_on = gs.local_boards_state[npc_play_gr][npc_play_gc]
+        npc_gain_details = _get_npc_move_outcome_on_board(
+            current_board_for_npc_to_play_on, npc_play_lr, npc_play_lc,
+            npc_symbol_cellstate, opponent_symbol_cellstate,
+            engine, zwick_eval_size
+        )
 
+        npc_gain_score = 0
+        if npc_gain_details['wins']:
+            npc_gain_score += 10000  # Highest priority: win the local board
+        elif npc_gain_details['creates_zwick']:
+            npc_gain_score += 5000  # Next: create a Zwickmühle
+        elif npc_gain_details['blocks_opponent_win']:
+            npc_gain_score += 2000  # Then: block opponent's win on this board
+        elif npc_gain_details['sets_up_line']:
+            npc_gain_score += 500  # Lower: set up a single line
+
+        # Positional bonus for 3x3 (playing on the local board)
+        if game_board_size == 3 and gs.global_board_winners[npc_play_gr][npc_play_gc] == BoardWinner.NONE:
+            if (npc_play_lr, npc_play_lc) == (1, 1):
+                npc_gain_score += 20  # Center
+            elif (npc_play_lr, npc_play_lc) in [(0, 0), (0, 2), (2, 0), (2, 2)]:
+                npc_gain_score += 10  # Corner
+
+        # --- B. Evaluate consequence for opponent on the board they are SENT TO ---
+        sends_opponent_to_gr, sends_opponent_to_gc = npc_play_lr, npc_play_lc
+        opponent_target_board_state = gs.local_boards_state[sends_opponent_to_gr][sends_opponent_to_gc]
+
+        opponent_consequence_penalty = 0
+        gives_opponent_free_move_on_next_turn = False
+
+        if gs.global_board_winners[sends_opponent_to_gr][sends_opponent_to_gc] != BoardWinner.NONE or \
+            engine._is_local_board_full(opponent_target_board_state):
+            gives_opponent_free_move_on_next_turn = True
+            # If NPC is not achieving a win/Zwick with its own move, heavily penalize giving a free move.
+            if npc_gain_score < 5000:
+                opponent_consequence_penalty += 4000  # High penalty
+            else:  # NPC wins/Zwicks - giving free move might be an acceptable trade-off
+                opponent_consequence_penalty += 200  # Lower penalty
+        else:
+            # Board opponent is sent to is active, check for immediate threats
+            opponent_threats_on_sent_board = _get_opponent_threat_on_sent_board(
+                opponent_target_board_state, opponent_symbol_cellstate,
+                engine, zwick_eval_size, game_board_size
+            )
+            if opponent_threats_on_sent_board['can_win']:
+                opponent_consequence_penalty += 20000  # Extremely high penalty
+            elif opponent_threats_on_sent_board['can_zwick']:
+                opponent_consequence_penalty += 8000  # Very high penalty
+
+        total_score = npc_gain_score - opponent_consequence_penalty
+        scored_moves.append((move_dict, total_score))
+
+    if not scored_moves:  # Should only happen if all_raw_possible_moves was empty
+        gs.last_error_message = "NPC Error (Medium): No moves scored (implies no raw moves)."
+        return None
+
+    # Sort by score descending
+    scored_moves.sort(key=lambda item: item[1], reverse=True)
+
+    # For debugging, you might want to print the top few scored moves:
+    # print(f"NPC {npc_player_info.name} Top Scored Moves:")
+    # for i, (m, s) in enumerate(scored_moves[:5]):
+    #     print(f"  {i+1}. Move: {m}, Score: {s}")
+
+    top_score = scored_moves[0][1]
+    best_options = [m_dict for m_dict, score in scored_moves if score == top_score]
+
+    chosen_move_dict = random.choice(best_options)
+
+    return Move(player_id=npc_player_info.id,
+                global_row=chosen_move_dict['gr'], global_col=chosen_move_dict['gc'],
+                local_row=chosen_move_dict['lr'], local_col=chosen_move_dict['lc'])
+
+
+# --- Helper functions from previous (ensure they are available) ---
+# _check_line_for_potential_win(line: List[CellState], player_symbol_cell: CellState, size: int) -> bool
+# _count_potential_wins_on_board(board: List[List[CellState]], player_symbol_cell: CellState, size: int) -> int
+# _get_npc_move_outcome_on_board(...) -> Dict[str, Union[bool, int]]
+# _get_opponent_threat_on_sent_board(...) -> Dict[str, bool]
+
+# --- New/Refined Helper functions for HARD NPC ---
+
+def _simulate_and_evaluate_next_global_state(
+    current_gs: GameState,
+    npc_move_gr: int, npc_move_gc: int, npc_move_lr: int, npc_move_lc: int,
+    npc_player_info: PlayerInfo,
+    opponent_player_info: PlayerInfo,  # Need opponent info for simulation
+    engine_class: type,  # Pass the UltimateTTTGameEngine class
+    zwick_eval_size: int,
+    game_board_size: int
+) -> Tuple[
+    Optional[GameState], Optional[BoardWinner], bool]:  # (new_gs, local_winner_of_npc_move, game_over_after_npc_move)
+    """
+    Simulates the NPC making a move and returns the new game state.
+    This is a shallow simulation, doesn't play out opponent's turn.
+    Returns the game state *after* the NPC's move is made and local/global winners updated.
+    """
+    # Create a deep copy of the game state to simulate on
+    sim_gs = current_gs.model_copy(deep=True)
+    sim_engine = engine_class(sim_gs)
+
+    move_to_make = Move(
+        player_id=npc_player_info.id,
+        global_row=npc_move_gr, global_col=npc_move_gc,
+        local_row=npc_move_lr, local_col=npc_move_lc
+    )
+
+    if not sim_engine.make_move(move_to_make):
+        # This should not happen if the move was valid from all_raw_possible_moves
+        return None, None, True  # Indicate error / game over
+
+    local_winner_of_this_move = sim_gs.global_board_winners[npc_move_gr][npc_move_gc]
+    game_over = sim_gs.status == GameStatus.FINISHED
+
+    return sim_gs, local_winner_of_this_move, game_over
+
+
+def _count_global_potential_wins(global_board_winners: List[List[BoardWinner]], npc_board_winner_symbol: BoardWinner,
+                                 size: int) -> int:
+    """Counts potential global winning lines for the NPC."""
+    potential_wins = 0
+    # Rows
+    for r in range(size):
+        line = [global_board_winners[r][c] for c in range(size)]
+        if line.count(npc_board_winner_symbol) == size - 1 and line.count(BoardWinner.NONE) == 1:
+            potential_wins += 1
+    # Columns
+    for c in range(size):
+        line = [global_board_winners[r][c] for r in range(size)]
+        if line.count(npc_board_winner_symbol) == size - 1 and line.count(BoardWinner.NONE) == 1:
+            potential_wins += 1
+    # Diagonals
+    diag1 = [global_board_winners[i][i] for i in range(size)]
+    if diag1.count(npc_board_winner_symbol) == size - 1 and diag1.count(BoardWinner.NONE) == 1:
+        potential_wins += 1
+    diag2 = [global_board_winners[i][size - 1 - i] for i in range(size)]
+    if diag2.count(npc_board_winner_symbol) == size - 1 and diag2.count(BoardWinner.NONE) == 1:
+        potential_wins += 1
+    return potential_wins
+
+
+# --- Minimax with Alpha-Beta Pruning ---
+import math  # For infinity
+
+
+# We'll reuse the simulation and scoring logic from get_npc_move_hard
+# as the heuristic evaluation function. Let's rename/adapt it slightly.
+
+def heuristic_evaluate_game_state(
+    current_gs: GameState,
+    npc_player_info: PlayerInfo,
+    opponent_player_info: PlayerInfo,
+    engine_class: type,  # type of UltimateTTTGameEngine
+    zwick_eval_size: int,  # Typically 3 for Zwickmühle logic
+    game_board_size: int
+) -> float:
+    # Get integer mappings for players and the enum_to_int conversion map
+    npc_int, opponent_int, enum_to_int_map = _get_int_symbol_maps(npc_player_info, opponent_player_info)
+
+    # Check for terminal state first (no NumPy needed here, uses GameState status)
+    if current_gs.status == GameStatus.FINISHED:
+        if current_gs.overall_winner_symbol == npc_player_info.symbol:  # Compare PlayerSymbol directly
+            return 1000000.0
+        elif current_gs.overall_winner_symbol == opponent_player_info.symbol:  # Compare PlayerSymbol directly
+            return -1000000.0
+        else:  # Draw
+            return 0.0
+
+    score = 0.0
+
+    # 1. Convert global_board_winners to NumPy array
+    # Ensure all enum values are handled by enum_to_int_map; otherwise, map to a default like -1
+    # or raise an error if an unknown enum is encountered.
+    try:
+        global_winners_np = np.array(
+            [[enum_to_int_map[winner] for winner in row] for row in current_gs.global_board_winners],
+            dtype=int
+        )
+    except KeyError as e:
+        print(f"KeyError during global_winners_np conversion: {e}. Enum value not in map.")
+        # Handle error appropriately, e.g., return a neutral score or raise
+        return 0.0  # Or some other error indicator
+
+    num_global_potential_wins_npc = _count_global_potential_wins_np(global_winners_np, npc_int, game_board_size)
+    num_global_potential_wins_opp = _count_global_potential_wins_np(global_winners_np, opponent_int, game_board_size)
+
+    if num_global_potential_wins_npc >= 2:
+        score += 200000
+    elif num_global_potential_wins_npc == 1:
+        score += 75000
+    if num_global_potential_wins_opp >= 2:
+        score -= 180000
+    elif num_global_potential_wins_opp == 1:
+        score -= 70000
+
+    npc_global_boards_won_count = np.sum(global_winners_np == npc_int)
+    opp_global_boards_won_count = np.sum(global_winners_np == opponent_int)
+    score += npc_global_boards_won_count * 50000
+    score -= opp_global_boards_won_count * 45000
+
+    # 2. Local board advantages
+    current_engine_instance = engine_class(current_gs)  # For _is_local_board_full check
+
+    for r_glob in range(game_board_size):
+        for c_glob in range(game_board_size):
+            if current_gs.global_board_winners[r_glob][c_glob] == BoardWinner.NONE and \
+                not current_engine_instance._is_local_board_full(current_gs.local_boards_state[r_glob][c_glob]):
+
+                local_board_list = current_gs.local_boards_state[r_glob][c_glob]
+                try:
+                    local_board_np = np.array(
+                        [[enum_to_int_map[cell] for cell in row] for row in local_board_list],
+                        dtype=int
+                    )
+                except KeyError as e:
+                    print(
+                        f"KeyError during local_board_np conversion (board {r_glob},{c_glob}): {e}. Enum value not in map.")
+                    continue  # Skip this board or handle error
+
+                # Use zwick_eval_size for these local board evaluations
+                npc_local_pot_wins = _count_potential_wins_on_board_np(local_board_np, npc_int, zwick_eval_size)
+                opp_local_pot_wins = _count_potential_wins_on_board_np(local_board_np, opponent_int, zwick_eval_size)
+
+                if npc_local_pot_wins >= 2:
+                    score += 1000
+                elif npc_local_pot_wins == 1:
+                    score += 300
+
+                if opp_local_pot_wins >= 2:
+                    score -= 900
+                elif opp_local_pot_wins == 1:
+                    score -= 270
+
+                if zwick_eval_size == 3:  # Positional bonus only for 3x3 interpretation
+                    if local_board_np[1, 1] == npc_int:
+                        score += 20
+                    elif local_board_np[1, 1] == opponent_int:
+                        score -= 18
+
+                    # Using direct indexing for corners for 3x3
+                    corners_coords = [(0, 0), (0, 2), (2, 0), (2, 2)]
+                    for r_corn, c_corn in corners_coords:
+                        if local_board_np[r_corn, c_corn] == npc_int:
+                            score += 10
+                        elif local_board_np[r_corn, c_corn] == opponent_int:
+                            score -= 9
+    return score
+
+
+import math  # For infinity
+import random  # For shuffling
+from typing import List, Optional, Dict, Tuple, Union  # Ensure these are imported
+
+
+def minimax(
+    current_gs: GameState,
+    depth: int,
+    alpha: float,
+    beta: float,
+    is_maximizing_player: bool,
+    npc_player_info: PlayerInfo,
+    opponent_player_info: PlayerInfo,
+    engine_class: type,
+    zwick_eval_size: int,
+    game_board_size: int,
+    initial_call: bool = False  # Default to False for recursive calls
+) -> Union[float, Tuple[float, Optional[Dict[str, int]]]]:  # Return type depends on initial_call
+
+    if depth == 0 or current_gs.status == GameStatus.FINISHED:
+        eval_score = heuristic_evaluate_game_state(
+            current_gs, npc_player_info, opponent_player_info,
+            engine_class, zwick_eval_size, game_board_size
+        )
+        # For the initial call, if it hits depth 0 or terminal state immediately,
+        # it means no moves were possible from the root, or depth was 0.
+        # It should still return a move (None in this case) if initial_call is True.
+        if initial_call:
+            return eval_score, None
+        return eval_score  # For recursive calls, just return the score
+
+    active_player_id_in_gs = current_gs.current_player_id
+    if not active_player_id_in_gs:
+        # Error case or unexpected state, return worst possible score for current player
+        worst_score = -math.inf if is_maximizing_player else math.inf
+        if initial_call: return worst_score, None
+        return worst_score
+
+    possible_moves_dicts: List[Dict[str, int]] = []
+    current_engine_instance = engine_class(current_gs)
+    forced_board = current_gs.next_forced_global_board
+    can_play_anywhere_active_player = True
+
+    if forced_board:
+        fgr, fgc = forced_board
+        if current_gs.global_board_winners[fgr][fgc] == BoardWinner.NONE and \
+            not current_engine_instance._is_local_board_full(current_gs.local_boards_state[fgr][fgc]):
+            can_play_anywhere_active_player = False
+            for lr in range(game_board_size):
+                for lc in range(game_board_size):
+                    if current_gs.local_boards_state[fgr][fgc][lr][lc] == CellState.EMPTY:
+                        possible_moves_dicts.append({'gr': fgr, 'gc': fgc, 'lr': lr, 'lc': lc})
+
+    if can_play_anywhere_active_player:
+        possible_moves_dicts = []
+        for gr_idx in range(game_board_size):
+            for gc_idx in range(game_board_size):
+                if current_gs.global_board_winners[gr_idx][gc_idx] == BoardWinner.NONE and \
+                    not current_engine_instance._is_local_board_full(current_gs.local_boards_state[gr_idx][gc_idx]):
+                    for lr_idx in range(game_board_size):
+                        for lc_idx in range(game_board_size):
+                            if current_gs.local_boards_state[gr_idx][gc_idx][lr_idx][lc_idx] == CellState.EMPTY:
+                                possible_moves_dicts.append({'gr': gr_idx, 'gc': gc_idx, 'lr': lr_idx, 'lc': lc_idx})
+
+    if not possible_moves_dicts:
+        eval_score = heuristic_evaluate_game_state(
+            current_gs, npc_player_info, opponent_player_info,
+            engine_class, zwick_eval_size, game_board_size
+        )
+        if initial_call: return eval_score, None
+        return eval_score
+
+    best_move_for_this_level: Optional[Dict[str, int]] = None  # Only used if initial_call is True
+
+    # Determine which player object to use for simulating the move
+    # based on who is the active_player_id_in_gs for the *current recursion level*
+    player_info_for_sim_move: PlayerInfo
+    other_player_info_for_sim: PlayerInfo
+
+    if active_player_id_in_gs == npc_player_info.id:
+        player_info_for_sim_move = npc_player_info
+        other_player_info_for_sim = opponent_player_info
+    elif active_player_id_in_gs == opponent_player_info.id:
+        player_info_for_sim_move = opponent_player_info
+        other_player_info_for_sim = npc_player_info
+    else:  # Should not happen
+        worst_score = -math.inf if is_maximizing_player else math.inf
+        if initial_call: return worst_score, None
+        return worst_score
+
+    if is_maximizing_player:  # Corresponds to the NPC's interest (Maximizer)
+        max_eval = -math.inf
+        random.shuffle(possible_moves_dicts)
+        for move_dict in possible_moves_dicts:
+            sim_gs_after_move, _, _ = _simulate_and_evaluate_next_global_state(
+                current_gs, move_dict['gr'], move_dict['gc'], move_dict['lr'], move_dict['lc'],
+                player_info_for_sim_move,  # Player whose turn it is in current_gs
+                other_player_info_for_sim,  # The other player
+                engine_class, zwick_eval_size, game_board_size
+            )
+            if sim_gs_after_move is None: continue
+
+            # Recursive call: initial_call is False, is_maximizing_player flips
+            eval_score_from_recursion = minimax(
+                sim_gs_after_move, depth - 1, alpha, beta, False,  # Now Minimizer's turn
+                npc_player_info, opponent_player_info, engine_class,
+                zwick_eval_size, game_board_size, initial_call=False  # Explicitly False
+            )
+            # eval_score_from_recursion is guaranteed to be a float here
+
+            if eval_score_from_recursion > max_eval:
+                max_eval = eval_score_from_recursion
+                if initial_call:  # Store the move that led to this max_eval
+                    best_move_for_this_level = move_dict
+
+            alpha = max(alpha, eval_score_from_recursion)
+            if beta <= alpha:
+                break
+
+        if initial_call: return max_eval, best_move_for_this_level
+        return max_eval
+
+    else:  # Corresponds to the Opponent's interest (Minimizer)
+        min_eval = math.inf
+        random.shuffle(possible_moves_dicts)
+        for move_dict in possible_moves_dicts:
+            sim_gs_after_move, _, _ = _simulate_and_evaluate_next_global_state(
+                current_gs, move_dict['gr'], move_dict['gc'], move_dict['lr'], move_dict['lc'],
+                player_info_for_sim_move,  # Player whose turn it is in current_gs
+                other_player_info_for_sim,  # The other player
+                engine_class, zwick_eval_size, game_board_size
+            )
+            if sim_gs_after_move is None: continue
+
+            # Recursive call: initial_call is False, is_maximizing_player flips
+            eval_score_from_recursion = minimax(
+                sim_gs_after_move, depth - 1, alpha, beta, True,  # Now Maximizer's turn
+                npc_player_info, opponent_player_info, engine_class,
+                zwick_eval_size, game_board_size, initial_call=False  # Explicitly False
+            )
+            # eval_score_from_recursion is guaranteed to be a float here
+
+            if eval_score_from_recursion < min_eval:
+                min_eval = eval_score_from_recursion
+                if initial_call:  # This path is tricky for initial call, as NPC is maximizer.
+                    # If by some chance initial_call was true and is_maximizing_player was false,
+                    # it would mean we are asking for the opponent's best move.
+                    best_move_for_this_level = move_dict
+
+            beta = min(beta, eval_score_from_recursion)
+            if beta <= alpha:
+                break
+
+        if initial_call: return min_eval, best_move_for_this_level  # Should not be the primary path for NPC move
+        return min_eval
+
+
+import numpy as np  # Add this at the top of your file
+
+# --- Constants for NumPy representation ---
+EMPTY_INT = 0
+# We'll determine NPC_INT and OPPONENT_INT dynamically based on player symbols
+# DRAW_INT for BoardWinner.DRAW
+DRAW_INT = 3
+
+
+# Helper to get integer representations for players and the enum-to-int map
+def _get_int_symbol_maps(npc_player_info: PlayerInfo, opponent_player_info: PlayerInfo) -> Tuple[
+    int, int, Dict[Union[CellState, BoardWinner], int]]:
+    """
+    Determines integer mapping for NPC (1), Opponent (2) and creates a full enum-to-int map.
+    """
+    # Assign 1 to NPC, 2 to Opponent consistently.
+    # The actual symbol (X or O) doesn't matter for the int value, only who is who.
+    npc_int_val = 1
+    opponent_int_val = 2
+
+    enum_to_int_map = {
+        CellState.EMPTY: EMPTY_INT,
+        BoardWinner.NONE: EMPTY_INT,
+        BoardWinner.DRAW: DRAW_INT,
+    }
+    # Map NPC's symbols
+    enum_to_int_map[npc_player_info.symbol] = npc_int_val  # For overall_winner_symbol check
+    enum_to_int_map[CellState(npc_player_info.symbol.value)] = npc_int_val
+    enum_to_int_map[BoardWinner(npc_player_info.symbol.value)] = npc_int_val
+
+    # Map Opponent's symbols
+    enum_to_int_map[opponent_player_info.symbol] = opponent_int_val  # For overall_winner_symbol check
+    enum_to_int_map[CellState(opponent_player_info.symbol.value)] = opponent_int_val
+    enum_to_int_map[BoardWinner(opponent_player_info.symbol.value)] = opponent_int_val
+
+    return npc_int_val, opponent_int_val, enum_to_int_map
+
+
+def _count_lines_on_board_np(
+    board_np: np.ndarray,  # 2D NumPy array
+    player_int_symbol: int,
+    size: int,
+    check_type: str = "potential_win"  # "potential_win" or "actual_win"
+) -> int:
+    """
+    Counts lines (potential or actual wins) on a NumPy board for the player.
+    For "potential_win": player_int_symbol == size - 1 and EMPTY_INT == 1
+    For "actual_win": player_int_symbol == size
+    """
+    if board_np.shape != (size, size):
+        return 0
+
+    count = 0
+
+    lines_to_check = []
+    # Rows
+    for r in range(size): lines_to_check.append(board_np[r, :])
+    # Columns
+    for c in range(size): lines_to_check.append(board_np[:, c])
+    # Diagonals
+    lines_to_check.append(np.diag(board_np))
+    lines_to_check.append(np.diag(np.fliplr(board_np)))  # Flipped left-right for other diagonal
+
+    for line in lines_to_check:
+        if check_type == "potential_win":
+            if np.sum(line == player_int_symbol) == size - 1 and np.sum(line == EMPTY_INT) == 1:
+                count += 1
+        elif check_type == "actual_win":
+            if np.all(line == player_int_symbol):  # If all elements in the line match player symbol
+                # For actual_win, we usually just need to know if one exists, not count them.
+                # But to fit the "count" structure, we'll count. If used for win check, >0 means win.
+                count += 1
+    return count
+
+
+# Wrapper for clarity, though _count_lines_on_board_np can do both
+def _count_potential_wins_on_board_np(board_np: np.ndarray, player_int_symbol: int, size: int) -> int:
+    return _count_lines_on_board_np(board_np, player_int_symbol, size, "potential_win")
+
+
+def _check_actual_win_on_board_np(board_np: np.ndarray, player_int_symbol: int, size: int) -> bool:
+    return _count_lines_on_board_np(board_np, player_int_symbol, size, "actual_win") > 0
+
+
+def _count_global_potential_wins_np(global_board_winners_np: np.ndarray, player_int_board_winner_symbol: int,
+                                    size: int) -> int:
+    return _count_potential_wins_on_board_np(global_board_winners_np, player_int_board_winner_symbol, size)
 
 def get_npc_move_hard(game_state: GameState, npc_player_info: PlayerInfo) -> Optional[Move]:
-    """
-    Hard NPC: (Placeholder - very complex)
-    - Minimax or Monte Carlo Tree Search (MCTS) on a simplified version or a few plies deep.
-    - Stronger global awareness.
-    - Forcing sequences ("Zwickmühlen" / Forks).
-    - Definitely plays perfect local TTT.
-    - Tries to control key global squares (center, corners).
-    """
-    # Placeholder: Hard will also use Easy's logic for now.
-    # Implementing a truly "Hard" UTTT bot is a significant AI challenge.
-    return get_npc_move_easy(game_state, npc_player_info)
+    gs = game_state
+    game_board_size = gs.config.grid_size
+    zwick_eval_size = 3
 
+    opponent_info = gs.get_opponent_info(npc_player_info.id)
+    if not opponent_info:
+        gs.last_error_message = "NPC Error (Hard): Opponent info not found."
+        # Fallback to a simpler NPC or random move if opponent info is missing
+        # For simplicity, let's assume this means error or we can't proceed with complex logic
+        print("Error: Opponent info missing for Hard NPC, cannot use Minimax.")
+        # Attempt to use Medium as a fallback
+        medium_move = get_npc_move_medium(game_state, npc_player_info)
+        if medium_move: return medium_move
+        # If medium also fails, or as a very basic fallback:
+        # Find any valid random move (simplified from minimax's move generation)
+        # This fallback part needs robust valid move generation if used.
+        # For now, main path assumes opponent_info is present.
+        return None
+
+
+    EngineClass = UltimateTTTGameEngine
+
+    # Initial call to minimax
+    # The NPC is the maximizing player, and it's their turn effectively for this decision.
+    # current_gs.current_player_id should be npc_player_info.id at the point of calling this function
+    if gs.current_player_id != npc_player_info.id:
+        gs.last_error_message = "NPC Error (Hard): Called when not NPC's turn."
+        print(f"Error: Hard NPC called when not its turn. Current: {gs.current_player_id}, NPC: {npc_player_info.id}")
+        return None # Cannot make a move if it's not its turn
+
+    # Note: The `is_maximizing_player` in the minimax call refers to the player whose perspective
+    # we are maximizing *at that level of the tree*.
+    # The first call to minimax for the NPC's move decision should consider the NPC as the maximizer for that initial state.
+    # The minimax function itself will then alternate is_maximizing_player for subsequent recursive calls.
+    #total_num_bord = game_board_size ** 2
+    #total_num_on_board = sum(1 for row in gs.local_boards_state for board in row for cell in board if cell != CellState.EMPTY)
+    # if over 60% full increc MINIMAX_SEARCH_DEPTH
+    #used_depth = min(MINIMAX_SEARCH_DEPTH, int(5 * (total_num_bord / total_num_on_board) + 1))
+    #print(f"NPC USED DEPTH: {used_depth}", int(5 * (total_num_bord / total_num_on_board) + 1))
+    best_score, best_move_dict = minimax(
+        current_gs=gs,
+        depth=MINIMAX_SEARCH_DEPTH,
+        alpha=-math.inf,
+        beta=math.inf,
+        is_maximizing_player=True, # NPC is the maximizer for its own turn
+        npc_player_info=npc_player_info,
+        opponent_player_info=opponent_info,
+        engine_class=EngineClass,
+        zwick_eval_size=zwick_eval_size,
+        game_board_size=game_board_size,
+        initial_call=True # This is the top-level call to get the best move
+    )
+
+    if best_move_dict:
+        # print(f"HARD NPC MINIMAX best_score: {best_score}, best_move: {best_move_dict}")
+        return Move(
+            player_id=npc_player_info.id,
+            global_row=best_move_dict['gr'],
+            global_col=best_move_dict['gc'],
+            local_row=best_move_dict['lr'],
+            local_col=best_move_dict['lc']
+        )
+    else:
+        # This means no move was found (e.g., game already over or no possible moves from initial state)
+        # or an error occurred in minimax.
+        gs.last_error_message = "NPC Error (Hard): Minimax did not return a valid move."
+        print(f"Hard NPC Minimax failed to find a move. Score: {best_score}. Falling back if possible.")
+        # Fallback to medium or simpler logic if Minimax fails (e.g., unexpected state)
+        return get_npc_move_medium(gs, npc_player_info)
 
 NPC_DISPATCHER = {
     NPCDifficulty.EASY: get_npc_move_easy,
@@ -1259,67 +2027,308 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
 
     <style>
         :root {
-            --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+    /* Font System */
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+    --font-serif: Georgia, Cambria, 'Times New Roman', Times, serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+    --font-base: var(--font-sans);
 
-            /* Light Theme */
-            --bg-main-light: #f8f9fa; --bg-card-light: #ffffff; --text-primary-light: #212529;
-            --text-secondary-light: #495057; --border-light: #dee2e6; --shadow-light: 0 0.125rem 0.25rem rgba(0,0,0,0.075);
-            --primary-light: #007bff; --primary-hover-light: #0056b3; --secondary-light: #6c757d;
-            --danger-light: #dc3545; --success-light: #198754; --warning-light: #ffc107; --info-light: #0dcaf0;
-            --text-on-primary-light: #fff; --cell-bg-light: #fff; --cell-hover-light: #e9ecef;
-            --cell-border-light: #ced4da; --player-x-color-light: #dc3545; --player-o-color-light: #007bff;
-            --local-won-x-bg-light: rgba(220, 53, 69, 0.1); --local-won-o-bg-light: rgba(0, 123, 255, 0.1);
-            --local-draw-bg-light: rgba(108, 117, 125, 0.1);
-            --forced-target-border-light: gold; --forced-target-shadow-light: 0 0 0 3px gold;
-            --playable-anywhere-border-light: var(--primary-light);
+    /* Fluid Font Sizes */
+    --font-size-xs: clamp(0.75rem, 0.7rem + 0.25vw, 0.875rem);
+    --font-size-sm: clamp(0.875rem, 0.8rem + 0.375vw, 1rem);
+    --font-size-base: clamp(1rem, 0.9rem + 0.5vw, 1.125rem);
+    --font-size-lg: clamp(1.125rem, 1rem + 0.625vw, 1.3rem);
+    --font-size-xl: clamp(1.3rem, 1.125rem + 0.75vw, 1.6rem);
+    --font-size-2xl: clamp(1.6rem, 1.375rem + 1vw, 2.1rem);
+    --font-size-3xl: clamp(2rem, 1.75rem + 1.25vw, 2.7rem);
+    --font-size-4xl: clamp(2.5rem, 2rem + 1.5vw, 3.3rem);
 
-            /* Dark Theme */
-            --bg-main-dark: #121212; --bg-card-dark: #1e1e1e; --text-primary-dark: #e0e0e0;
-            --text-secondary-dark: #a0a0a0; --border-dark: #3a3a3a; --shadow-dark: 0 0.125rem 0.25rem rgba(0,0,0,0.3);
-            --primary-dark: #3b82f6; --primary-hover-dark: #2563eb; --secondary-dark: #868e96;
-            --danger-dark: #f87171; --success-dark: #4ade80; --warning-dark: #facc15; --info-dark: #2dd4bf;
-            --text-on-primary-dark: #fff; --cell-bg-dark: #2a2a2a; --cell-hover-dark: #383838;
-            --cell-border-dark: #4f4f4f; --player-x-color-dark: #f87171; --player-o-color-dark: #60a5fa;
-            --local-won-x-bg-dark: rgba(248, 113, 113, 0.15); --local-won-o-bg-dark: rgba(96, 165, 250, 0.15);
-            --local-draw-bg-dark: rgba(134, 142, 150, 0.15);
-            --forced-target-border-dark: #ffd700; --forced-target-shadow-dark: 0 0 0 3px #ffd700;
-            --playable-anywhere-border-dark: var(--primary-dark);
-        }
+    /* Font Weights */
+    --font-weight-light: 300;
+    --font-weight-regular: 400;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
 
-        html[data-theme="light"] {
-            --bg-main: var(--bg-main-light); --bg-card: var(--bg-card-light); --text-primary: var(--text-primary-light);
-            --text-secondary: var(--text-secondary-light); --border-color: var(--border-light);
-            --shadow-color: var(--shadow-light); --primary-color: var(--primary-light);
-            --primary-hover: var(--primary-hover-light); --secondary-color: var(--secondary-light);
-            --danger-color: var(--danger-light); --success-color: var(--success-light);
-            --warning-color: var(--warning-light); --info-color: var(--info-light);
-            --text-on-primary: var(--text-on-primary-light); --cell-bg: var(--cell-bg-light);
-            --cell-hover: var(--cell-hover-light); --cell-border: var(--cell-border-light);
-            --player-x-color: var(--player-x-color-light); --player-o-color: var(--player-o-color-light);
-            --local-won-x-bg: var(--local-won-x-bg-light); --local-won-o-bg: var(--local-won-o-bg-light);
-            --local-draw-bg: var(--local-draw-bg-light); --forced-target-border: var(--forced-target-border-light);
-            --forced-target-shadow: var(--forced-target-shadow-light);
-            --playable-anywhere-border: var(--playable-anywhere-border-light);
-        }
+    /* Line Heights */
+    --line-height-tight: 1.2;
+    --line-height-snug: 1.375;
+    --line-height-normal: 1.6;
+    --line-height-relaxed: 1.75;
+    --line-height-loose: 2;
 
-        html[data-theme="dark"] {
-            --bg-main: var(--bg-main-dark); --bg-card: var(--bg-card-dark); --text-primary: var(--text-primary-dark);
-            --text-secondary: var(--text-secondary-dark); --border-color: var(--border-dark);
-            --shadow-color: var(--shadow-dark); --primary-color: var(--primary-dark);
-            --primary-hover: var(--primary-hover-dark); --secondary-color: var(--secondary-dark);
-            --danger-color: var(--danger-dark); --success-color: var(--success-dark);
-            --warning-color: var(--warning-dark); --info-color: var(--info-dark);
-            --text-on-primary: var(--text-on-primary-dark); --cell-bg: var(--cell-bg-dark);
-            --cell-hover: var(--cell-hover-dark); --cell-border: var(--cell-border-dark);
-            --player-x-color: var(--player-x-color-dark); --player-o-color: var(--player-o-color-dark);
-            --local-won-x-bg: var(--local-won-x-bg-dark); --local-won-o-bg: var(--local-won-o-bg-dark);
-            --local-draw-bg: var(--local-draw-bg-dark); --forced-target-border: var(--forced-target-border-dark);
-            --forced-target-shadow: var(--forced-target-shadow-dark);
-            --playable-anywhere-border: var(--playable-anywhere-border-dark);
-            .current-player-indicator {
-                box-shadow: var(--shadow-dark);
-            }
-        }
+    /* Letter Spacing */
+    --letter-spacing-tight: -0.02em;
+    --letter-spacing-normal: 0em;
+    --letter-spacing-wide: 0.02em;
+    --letter-spacing-wider: 0.05em;
+
+    /* Spacing & Layout */
+    --spacing-base: 1rem;
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 16px;
+
+    /* Transitions */
+    --transition-fast: 0.15s ease-in-out;
+    --transition-medium: 0.3s ease-in-out;
+
+    /* Z-Index System */
+    --z-background: -1;
+    --z-content: 1;
+    --z-navigation: 100;
+    --z-overlay: 500;
+    --z-modal: 10000;
+    --z-cookie-banner: 10010;
+    --z-nav-controls: 10001;
+    --z-nav-dropdown: 10005;
+
+    /* Scrollbar */
+    --scrollbar-width: 8px;
+    --scrollbar-height: 8px;
+
+    /* Text Shadows */
+    --text-shadow-light: 0 1px 3px rgba(0, 0, 0, 0.3);
+    --text-shadow-dark: 0 1px 3px rgba(255, 255, 255, 0.2);
+
+    /* Light Theme Variables */
+    --bg-main-light: #f8f9fa;
+    --bg-card-light: #ffffff;
+    --text-primary-light: #212529;
+    --text-secondary-light: #495057;
+    --text-muted-light: #6c757d;
+    --border-light: #dee2e6;
+    --shadow-light: 0 0.125rem 0.25rem rgba(0,0,0,0.075);
+
+    /* Primary Colors Light */
+    --primary-light: #3b82f6;
+    --primary-hover-light: #2563eb;
+    --primary-focus-light: rgba(59, 130, 246, 0.25);
+    --text-on-primary-light: #ffffff;
+
+    /* Secondary Colors Light */
+    --secondary-light: #6c757d;
+    --accent-light: #045fab;
+
+    /* Status Colors Light */
+    --danger-light: #dc3545;
+    --success-light: #198754;
+    --warning-light: #ffc107;
+    --info-light: #0dcaf0;
+    --error-light: #9c1079;
+
+    /* Glass Effect Light */
+    --glass-bg-light: rgba(255, 255, 255, 0.6);
+    --glass-blur-light: 10px;
+    --glass-border-light: rgba(255, 255, 255, 0.3);
+    --glass-shadow-light: 0 4px 15px rgba(0, 0, 0, 0.1);
+
+    /* Form Elements Light */
+    --input-bg-light: #ffffff;
+    --input-border-light: var(--border-light);
+    --input-focus-border-light: var(--primary-light);
+
+    /* Game-specific Light */
+    --cell-bg-light: #ffffff;
+    --cell-hover-light: #e9ecef;
+    --cell-border-light: #ced4da;
+    --player-x-color-light: #dc3545;
+    --player-o-color-light: #007bff;
+    --local-won-x-bg-light: rgba(220, 53, 69, 0.1);
+    --local-won-o-bg-light: rgba(0, 123, 255, 0.1);
+    --local-draw-bg-light: rgba(108, 117, 125, 0.1);
+    --forced-target-border-light: gold;
+    --forced-target-shadow-light: 0 0 0 3px gold;
+    --playable-anywhere-border-light: var(--primary-light);
+
+    /* Scrollbar Light */
+    --scrollbar-track-light: color-mix(in srgb, var(--bg-main-light) 90%, black);
+    --scrollbar-thumb-light: var(--secondary-light);
+    --scrollbar-thumb-hover-light: var(--primary-light);
+    --scrollbar-thumb-active-light: var(--accent-light);
+
+    /* Dark Theme Variables */
+    --bg-main-dark: #181823;
+    --bg-card-dark: #1e1e1e;
+    --text-primary-dark: #E9F8F9;
+    --text-secondary-dark: #a0a0a0;
+    --text-muted-dark: #adb5bd;
+    --border-dark: #4b5563;
+    --shadow-dark: 0 0.125rem 0.25rem rgba(0,0,0,0.3);
+
+    /* Primary Colors Dark */
+    --primary-dark: #6c8ee8;
+    --primary-hover-dark: #7ba3ff;
+    --primary-focus-dark: rgba(108, 142, 232, 0.25);
+    --text-on-primary-dark: #181823;
+
+    /* Secondary Colors Dark */
+    --secondary-dark: #E9F8F9;
+    --accent-dark: #1a8cff;
+
+    /* Status Colors Dark */
+    --danger-dark: #f87171;
+    --success-dark: #4ade80;
+    --warning-dark: #facc15;
+    --info-dark: #2dd4bf;
+    --error-dark: #ef4444;
+
+    /* Glass Effect Dark */
+    --glass-bg-dark: rgba(2, 2, 3, 0.35);
+    --glass-blur-dark: 12px;
+    --glass-border-dark: rgba(255, 255, 255, 0.1);
+    --glass-shadow-dark: 0 4px 20px rgba(0, 0, 0, 0.3);
+
+    /* Form Elements Dark */
+    --input-bg-dark: #2a2a3a;
+    --input-border-dark: var(--border-dark);
+    --input-focus-border-dark: var(--primary-dark);
+
+    /* Game-specific Dark */
+    --cell-bg-dark: #2a2a2a;
+    --cell-hover-dark: #383838;
+    --cell-border-dark: #4f4f4f;
+    --player-x-color-dark: #f87171;
+    --player-o-color-dark: #60a5fa;
+    --local-won-x-bg-dark: rgba(248, 113, 113, 0.15);
+    --local-won-o-bg-dark: rgba(96, 165, 250, 0.15);
+    --local-draw-bg-dark: rgba(134, 142, 150, 0.15);
+    --forced-target-border-dark: #ffd700;
+    --forced-target-shadow-dark: 0 0 0 3px #ffd700;
+    --playable-anywhere-border-dark: var(--primary-dark);
+
+    /* Scrollbar Dark */
+    --scrollbar-track-dark: color-mix(in srgb, var(--bg-main-dark) 80%, white);
+    --scrollbar-thumb-dark: var(--secondary-dark);
+    --scrollbar-thumb-hover-dark: var(--primary-dark);
+    --scrollbar-thumb-active-dark: var(--accent-dark);
+
+    /* Font Rendering */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+}
+
+/* Light Theme Active Variables */
+html[data-theme="light"] {
+    --bg-main: var(--bg-main-light);
+    --bg-card: var(--bg-card-light);
+    --text-primary: var(--text-primary-light);
+    --text-secondary: var(--text-secondary-light);
+    --text-muted: var(--text-muted-light);
+    --border-color: var(--border-light);
+    --shadow-color: var(--shadow-light);
+
+    --primary-color: var(--primary-light);
+    --primary-hover: var(--primary-hover-light);
+    --primary-focus: var(--primary-focus-light);
+    --text-on-primary: var(--text-on-primary-light);
+
+    --secondary-color: var(--secondary-light);
+    --accent-color: var(--accent-light);
+
+    --danger-color: var(--danger-light);
+    --success-color: var(--success-light);
+    --warning-color: var(--warning-light);
+    --info-color: var(--info-light);
+    --error-color: var(--error-light);
+
+    --glass-bg: var(--glass-bg-light);
+    --glass-blur: var(--glass-blur-light);
+    --glass-border: var(--glass-border-light);
+    --glass-shadow: var(--glass-shadow-light);
+    --text-shadow-current: var(--text-shadow-light);
+
+    --input-bg: var(--input-bg-light);
+    --input-border: var(--input-border-light);
+    --input-focus-border: var(--input-focus-border-light);
+
+    --cell-bg: var(--cell-bg-light);
+    --cell-hover: var(--cell-hover-light);
+    --cell-border: var(--cell-border-light);
+    --player-x-color: var(--player-x-color-light);
+    --player-o-color: var(--player-o-color-light);
+    --local-won-x-bg: var(--local-won-x-bg-light);
+    --local-won-o-bg: var(--local-won-o-bg-light);
+    --local-draw-bg: var(--local-draw-bg-light);
+    --forced-target-border: var(--forced-target-border-light);
+    --forced-target-shadow: var(--forced-target-shadow-light);
+    --playable-anywhere-border: var(--playable-anywhere-border-light);
+
+    --scrollbar-track-color: var(--scrollbar-track-light);
+    --scrollbar-thumb-color: var(--scrollbar-thumb-light);
+    --scrollbar-thumb-hover-color: var(--scrollbar-thumb-hover-light);
+    --scrollbar-thumb-active-color: var(--scrollbar-thumb-active-light);
+
+    --link-color: var(--primary-color);
+    --link-hover-color: var(--primary-hover);
+    --button-bg: var(--primary-color);
+    --button-text: var(--text-on-primary);
+    --button-hover-bg: var(--primary-hover);
+}
+
+/* Dark Theme Active Variables */
+html[data-theme="dark"] {
+    --bg-main: var(--bg-main-dark);
+    --bg-card: var(--bg-card-dark);
+    --text-primary: var(--text-primary-dark);
+    --text-secondary: var(--text-secondary-dark);
+    --text-muted: var(--text-muted-dark);
+    --border-color: var(--border-dark);
+    --shadow-color: var(--shadow-dark);
+
+    --primary-color: var(--primary-dark);
+    --primary-hover: var(--primary-hover-dark);
+    --primary-focus: var(--primary-focus-dark);
+    --text-on-primary: var(--text-on-primary-dark);
+
+    --secondary-color: var(--secondary-dark);
+    --accent-color: var(--accent-dark);
+
+    --danger-color: var(--danger-dark);
+    --success-color: var(--success-dark);
+    --warning-color: var(--warning-dark);
+    --info-color: var(--info-dark);
+    --error-color: var(--error-dark);
+
+    --glass-bg: var(--glass-bg-dark);
+    --glass-blur: var(--glass-blur-dark);
+    --glass-border: var(--glass-border-dark);
+    --glass-shadow: var(--glass-shadow-dark);
+    --text-shadow-current: var(--text-shadow-dark);
+
+    --input-bg: var(--input-bg-dark);
+    --input-border: var(--input-border-dark);
+    --input-focus-border: var(--input-focus-border-dark);
+
+    --cell-bg: var(--cell-bg-dark);
+    --cell-hover: var(--cell-hover-dark);
+    --cell-border: var(--cell-border-dark);
+    --player-x-color: var(--player-x-color-dark);
+    --player-o-color: var(--player-o-color-dark);
+    --local-won-x-bg: var(--local-won-x-bg-dark);
+    --local-won-o-bg: var(--local-won-o-bg-dark);
+    --local-draw-bg: var(--local-draw-bg-dark);
+    --forced-target-border: var(--forced-target-border-dark);
+    --forced-target-shadow: var(--forced-target-shadow-dark);
+    --playable-anywhere-border: var(--playable-anywhere-border-dark);
+
+    --scrollbar-track-color: var(--scrollbar-track-dark);
+    --scrollbar-thumb-color: var(--scrollbar-thumb-dark);
+    --scrollbar-thumb-hover-color: var(--scrollbar-thumb-hover-dark);
+    --scrollbar-thumb-active-color: var(--scrollbar-thumb-active-dark);
+
+    --link-color: var(--primary-color);
+    --link-hover-color: var(--primary-hover);
+    --button-bg: var(--primary-color);
+    --button-text: var(--text-on-primary);
+    --button-hover-bg: var(--primary-hover);
+}
+
+/* Dark theme specific shadow override */
+html[data-theme="dark"] .current-player-indicator {
+    box-shadow: var(--shadow-dark);
+}
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -1392,7 +2401,7 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
         }
         .button:hover { background-color: var(--primary-hover); }
         .button:active { transform: translateY(1px); }
-        .button.secondary { background-color: var(--secondary-color); color: var(--text-color); }
+        .button.secondary { color: var(--text-color); }
         .button.secondary:hover { filter: brightness(0.9); }
         .button.danger { background-color: var(--danger-color); }
         .button.danger:hover { filter: brightness(0.9); }
@@ -2197,7 +3206,7 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
                 showModal("API Error", "Framework error: Cannot communicate with server.", null, "OK", "");
                 return { error: true, message: "API_UNAVAILABLE" };
             }
-            if(window.TB?.ui?.Loader) TB.ui.Loader.show({text: "Processing...", hideMainContent:false, playAnimation: "Y2+41:R2+61"});
+            if(window.TB?.ui?.Loader) TB.ui.Loader.show({text: "Processing...", hideMainContent:false, playAnimation: "Y2+41:R2+61", fullscreen:false});
             try {
                 // Toolbox `request` function: moduleName, toolName, data, method, options ({queryParams})
                 const response = await window.TB.api.request(API_MODULE_NAME, endpoint, payload, method, {queryParams});
