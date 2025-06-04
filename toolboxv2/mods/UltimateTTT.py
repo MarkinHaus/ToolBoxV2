@@ -1,10 +1,13 @@
 # --- START OF FILE ultimate_ttt_api.py ---
 import asyncio
 import json
+import os
 import uuid
 from datetime import datetime, timezone, timedelta
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+
+import asyncio
+from typing import Any, Dict, List, Optional, Tuple, Union, AsyncGenerator
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -20,7 +23,9 @@ DB_USER_STATS_PREFIX = f"{GAME_NAME.lower()}_user_stats"
 LOCAL_PLAYER_X_ID = "p1_local_utt"  # Shortened for less verbosity
 LOCAL_PLAYER_O_ID = "p2_local_utt"
 
-ONLINE_POLL_TIMEOUT_SECONDS = 180  # Increased timeout
+ONLINE_POLL_TIMEOUT_SECONDS = 180  # For initial opponent join
+PAUSED_GAME_RESUME_WINDOW_SECONDS = 24 * 60 * 60  # 24 hours for a paused game
+
 
 export = get_app(f"{GAME_NAME}.Export").tb
 MINIMAX_SEARCH_DEPTH = 4 # Adjust this for strength vs. speed (e.g., 4, 5, or 6)
@@ -437,8 +442,6 @@ class UltimateTTTGameEngine:  # Renamed for clarity
         if player.is_connected:
             app.logger.info(
                 f"Player {player.name} ({player_id}) attempted reconnect but was already marked as connected to game {self.gs.game_id}.")
-            # If game was paused by them and they refresh, it might still be ABORTED.
-            # Let's ensure status consistency if they were the pauser.
             if self.gs.status == GameStatus.ABORTED and self.gs.player_who_paused == player_id:
                 opponent = self.gs.get_opponent_info(player_id)
                 if opponent and opponent.is_connected:
@@ -448,12 +451,10 @@ class UltimateTTTGameEngine:  # Renamed for clarity
                     self.gs.updated_at = datetime.now(timezone.utc)
                     app.logger.info(
                         f"Game {self.gs.game_id} resumed as already-connected pauser {player.name} re-interacted.")
-                else:  # Opponent still not there
+                else:
                     self.gs.last_error_message = f"Welcome back, {player.name}! Your opponent is still not connected."
-                    # Status remains ABORTED, player_who_paused remains player_id
-            return True  # Treat as successful if already connected
+            return True
 
-        # Player is in game, but marked as not connected. This is the main reconnect path.
         player.is_connected = True
         self.gs.updated_at = datetime.now(timezone.utc)
         app.logger.info(
@@ -466,55 +467,73 @@ class UltimateTTTGameEngine:  # Renamed for clarity
                     self.gs.status = GameStatus.IN_PROGRESS
                     self.gs.last_error_message = f"Player {player.name} reconnected. Game resumed!"
                     self.gs.player_who_paused = None
-                    # current_player_id is NOT changed here. It remains whoever's turn it was.
                     app.logger.info(
                         f"Game {self.gs.game_id} RESUMED. Pauser {player.name} reconnected, opponent {opponent.name} is present.")
-                else:
-                    # Pauser reconnected, but opponent is (still) gone. Game stays paused, waiting for opponent now.
-                    self.gs.last_error_message = f"Welcome back, {player.name}! Your opponent is not connected. Game remains paused."
-                    # self.gs.player_who_paused should now be the ID of the *other* player if known, or null if game is truly stuck
-                    # For now, let's keep it simple: game is ABORTED, this player is connected. If opponent also joins, it will resume.
-                    # If opponent was never there (e.g. P1 created, P1 disconnected, P1 reconnected before P2 joined)
-                    if not opponent:  # This implies it was a 1-player game waiting for P2, and P1 reconnected
+                else:  # Pauser reconnected, opponent (still) gone or never joined (if P1 disconnected from WAITING)
+                    if not opponent and len(
+                        self.gs.players) == 1:  # P1 reconnected to a game they created but no P2 yet
                         self.gs.status = GameStatus.WAITING_FOR_OPPONENT
                         self.gs.player_who_paused = None
-                        self.gs.current_player_id = player_id  # P1 is the active one again
+                        self.gs.current_player_id = player_id
                         self.gs.last_error_message = f"Creator {player.name} reconnected. Waiting for opponent."
-                    else:  # Opponent was there but is now disconnected
+                        self.gs.waiting_since = datetime.now(timezone.utc)  # Reset waiting timer
+                    elif opponent:  # Opponent was there but is now disconnected
                         self.gs.player_who_paused = opponent.id  # Now waiting for the other person
+                        self.gs.last_error_message = f"Welcome back, {player.name}! Your opponent ({opponent.name}) is not connected. Game remains paused."
                         app.logger.info(
                             f"Game {self.gs.game_id} still PAUSED. {player.name} reconnected, but opponent {opponent.name} is NOT. Waiting for {opponent.name}.")
+                    else:  # Should be rare: 2 players in list, but opponent object not found for P1
+                        self.gs.last_error_message = f"Welcome back, {player.name}! Opponent details unclear. Game remains paused."
 
 
             elif self.gs.player_who_paused and self.gs.player_who_paused != player_id:
-                # The *other* player (not the initial pauser) reconnected, while game was paused for initial pauser.
-                # This means both players are now connected. Initial pauser is still `player_who_paused`.
+                # The *other* player reconnected, while game was paused for initial pauser.
                 initial_pauser_info = self.gs.get_player_info(self.gs.player_who_paused)
-                if initial_pauser_info and initial_pauser_info.is_connected:  # Should not happen if state is consistent
+                if initial_pauser_info and initial_pauser_info.is_connected:  # This implies both are now connected.
                     self.gs.status = GameStatus.IN_PROGRESS
                     self.gs.last_error_message = f"Both players are now connected. Game resumed!"
                     self.gs.player_who_paused = None
                     app.logger.info(
-                        f"Game {self.gs.game_id} RESUMED. Waiting player {player.name} reconnected, initial pauser {initial_pauser_info.name} also (somehow) connected.")
+                        f"Game {self.gs.game_id} RESUMED. Waiting player {player.name} reconnected, initial pauser {initial_pauser_info.name} also present.")
                 else:
-                    # This player reconnected, but we are still waiting for the original pauser.
                     self.gs.last_error_message = f"Welcome back, {player.name}! Still waiting for {initial_pauser_info.name if initial_pauser_info else 'the other player'} to reconnect."
                     app.logger.info(
                         f"Game {self.gs.game_id} still PAUSED. Player {player.name} reconnected, but still waiting for original pauser {self.gs.player_who_paused}.")
-            else:  # game is ABORTED but no specific player_who_paused (hard abort)
-                self.gs.last_error_message = f"Player {player.name} reconnected, but the game was fully aborted."
-                # Cannot resume a hard abort. Stays ABORTED.
-                app.logger.info(
-                    f"Game {self.gs.game_id} is HARD ABORTED. Player {player.name} reconnected, but game cannot resume.")
+
+            else:  # game is ABORTED but no specific player_who_paused (hard abort by timeout or both disconnected)
+                if len(self.gs.players) == 2:  # Was a two-player game
+                    opponent = self.gs.get_opponent_info(player_id)
+                    if opponent:
+                        # Revive the game to a paused state, waiting for the other player
+                        self.gs.player_who_paused = opponent.id
+                        self.gs.status = GameStatus.ABORTED  # Remains aborted, but now specifically for opponent
+                        self.gs.last_error_message = f"Welcome back, {player.name}! Game was fully aborted. Now waiting for {opponent.name} to rejoin."
+                        app.logger.info(
+                            f"Game {self.gs.game_id} REVIVED from HARD ABORT by {player.name}. Now paused, waiting for {opponent.name} ({opponent.id}).")
+                    else:  # Should not happen if two players were in game and player_id is one of them
+                        self.gs.last_error_message = f"Player {player.name} reconnected, but game state is inconsistent (opponent not found)."
+                        app.logger.warning(
+                            f"Game {self.gs.game_id} HARD ABORT revival by {player.name} failed, opponent info missing.")
+                elif len(self.gs.players) == 1 and self.gs.players[0].id == player_id:
+                    # P1 created, P1 disconnected, game WAITING_FOR_OPPONENT timed out & hard aborted. P1 tries to rejoin.
+                    self.gs.status = GameStatus.WAITING_FOR_OPPONENT
+                    self.gs.player_who_paused = None
+                    self.gs.current_player_id = player_id
+                    self.gs.last_error_message = f"Creator {player.name} reconnected. Waiting for opponent."
+                    self.gs.waiting_since = datetime.now(timezone.utc)  # Reset waiting timer
+                    app.logger.info(
+                        f"Game {self.gs.game_id} (previously hard aborted while waiting) revived by creator {player.name}. Now WAITING_FOR_OPPONENT.")
+                else:
+                    self.gs.last_error_message = f"Player {player.name} reconnected, but the game was aborted and cannot be revived in its current player configuration."
+                    app.logger.info(
+                        f"Game {self.gs.game_id} HARD ABORTED. Player {player.name} reconnected, but game cannot resume in current configuration.")
+
 
         elif self.gs.status == GameStatus.IN_PROGRESS:
-            # Player reconnected to an already IN_PROGRESS game (e.g. refresh, brief network blip)
-            # Check if opponent is still there.
             opponent = self.gs.get_opponent_info(player_id)
             if not opponent or not opponent.is_connected:
-                # Opponent disconnected while this player was briefly gone. Game should pause.
                 self.gs.status = GameStatus.ABORTED
-                self.gs.player_who_paused = opponent.id if opponent else None  # Pause for the opponent
+                self.gs.player_who_paused = opponent.id if opponent else None
                 self.gs.last_error_message = f"Welcome back, {player.name}! Your opponent disconnected while you were away. Waiting for them."
                 app.logger.info(
                     f"Game {self.gs.game_id} transitions to PAUSED. {player.name} reconnected to IN_PROGRESS, but opponent {opponent.id if opponent else 'N/A'} is gone.")
@@ -524,15 +543,15 @@ class UltimateTTTGameEngine:  # Renamed for clarity
                     f"Player {player.name} ({player_id}) re-established connection to IN_PROGRESS game {self.gs.game_id}.")
 
         elif self.gs.status == GameStatus.WAITING_FOR_OPPONENT:
-            # This is likely P1 (creator) who disconnected and reconnected before P2 joined.
-            if self.gs.players[0].id == player_id:  # Ensure it's P1
+            if len(self.gs.players) == 1 and self.gs.players[0].id == player_id:
                 self.gs.last_error_message = f"Creator {player.name} reconnected. Still waiting for opponent."
-                self.gs.current_player_id = player_id  # P1 is active again
+                self.gs.current_player_id = player_id
+                self.gs.waiting_since = datetime.now(timezone.utc)  # Reset waiting timer
                 app.logger.info(
                     f"Creator {player.name} ({player_id}) reconnected to WAITING_FOR_OPPONENT game {self.gs.game_id}.")
-            else:  # Should not happen if game state is consistent (P2 trying to reconnect to WAITING game)
+            else:
                 app.logger.warning(
-                    f"Non-creator {player.name} tried to reconnect to WAITING_FOR_OPPONENT game {self.gs.game_id}.")
+                    f"Non-creator {player.name} or unexpected player count for reconnect to WAITING_FOR_OPPONENT game {self.gs.game_id}.")
 
         return True
 
@@ -1497,14 +1516,27 @@ NPC_DISPATCHER = {
 
 
 # --- Database Functions --- (Using model_dump(mode='json') and model_validate_json)
+init = [False]
+
+def get_db(app: App, name="Main"):
+    if not init[0]:
+        app.save_load("DB", spec=f"{Name}_DB")
+        db = app.get_mod("DB", spec=f"{Name}_DB")
+        db.edit_cli("LD")
+        init.append(db)
+        init[0] = True
+        print("DB initialized")
+    return init[-1]
+
+
 async def save_game_to_db_final(app: App, game_state: GameState):  # Renamed
-    db = app.get_mod("DB")
+    db = get_db(app, name="save_game_to_db_final")
     key = f"{DB_GAMES_PREFIX}_{game_state.game_id}"
     db.set(key, game_state.model_dump_json(exclude_none=True))  # Pydantic v2 handles json string
 
 
 async def load_game_from_db_final(app: App, game_id: str) -> Optional[GameState]:  # Renamed
-    db = app.get_mod("DB")
+    db = get_db(app, name="load_game_from_db_final")
     key = f"{DB_GAMES_PREFIX}_{game_id}"
     result = db.get(key)
     if result.is_data() and result.get():
@@ -1520,7 +1552,7 @@ async def load_game_from_db_final(app: App, game_id: str) -> Optional[GameState]
 
 
 async def get_user_stats(app: App, session_id: str) -> UserSessionStats:  # Renamed
-    db = app.get_mod("DB")
+    db = get_db(app, name="get_user_stats")
     key = f"{DB_USER_STATS_PREFIX}_{session_id}"
     result = db.get(key)
     if result.is_data() and result.get():
@@ -1536,7 +1568,7 @@ async def get_user_stats(app: App, session_id: str) -> UserSessionStats:  # Rena
 
 
 async def save_user_stats(app: App, stats: UserSessionStats):  # Renamed
-    db = app.get_mod("DB")
+    db = get_db(app, name="save_user_stats")
     key = f"{DB_USER_STATS_PREFIX}_{stats.session_id}"
     db.set(key, stats.model_dump_json())
 
@@ -1556,9 +1588,6 @@ async def update_stats_after_game_final(app: App, game_state: GameState):  # Ren
 
 
 # --- API Endpoints ---
-# --- START OF BLOCK 5 (Modify api_create_game) ---
-# FILE: ultimate_ttt_api.py
-# Modify the api_create_game endpoint function
 
 @export(mod_name=GAME_NAME, name="create_game", api=True, request_as_kwarg=True, api_methods=['POST'])
 async def api_create_game(app: App, request: RequestData, data=None):
@@ -1567,10 +1596,14 @@ async def api_create_game(app: App, request: RequestData, data=None):
         config_data = payload.get("config", {})
         config = GameConfig(**config_data)  # Validate grid_size here
 
-        mode = GameMode(payload.get("mode", "local"))
-        player1_name = payload.get("player1_name", "Player 1").strip()
+        mode_str = payload.get("mode", GameMode.LOCAL.value) # Default to local if not specified
+        mode = GameMode(mode_str)
 
-        initial_status = GameStatus.IN_PROGRESS  # Default for local, or online if P2 joins immediately
+        player1_name = payload.get("player1_name", "Player 1").strip()
+        if not player1_name: player1_name = "Player 1"
+
+
+        initial_status = GameStatus.IN_PROGRESS
 
         if mode == GameMode.ONLINE:
             initial_status = GameStatus.WAITING_FOR_OPPONENT
@@ -1578,44 +1611,67 @@ async def api_create_game(app: App, request: RequestData, data=None):
         game_state = GameState(config=config, mode=mode, status=initial_status)
         engine = UltimateTTTGameEngine(game_state)
 
-        # Add Player 1 (always human for now in create_game context)
-        engine.add_player(LOCAL_PLAYER_X_ID if mode == GameMode.LOCAL else (await get_user_from_request(app,
-                                                                                                        request)).uid or f"guest_{uuid.uuid4().hex[:6]}",
-                          player1_name)
+        async def get_p1_id_helper():
+            user = await get_user_from_request(app, request)
+            if user and user.uid:
+                return user.uid
+            # Fallback for guests or environments where user.uid might not be set for P1.
+            # Using a consistent session_id based part is better than pure random for potential reconnects.
+            if request and request.session_id:
+                 # Ensure a unique prefix to avoid clashes if P2 also becomes a guest with similar session ID part.
+                return f"p1_guest_{request.session_id[:8]}"
+            return f"p1_guest_{uuid.uuid4().hex[:8]}" # Ultimate fallback
+
+        player1_id = LOCAL_PLAYER_X_ID if mode == GameMode.LOCAL else await get_p1_id_helper()
+        engine.add_player(player1_id, player1_name)
 
         if mode == GameMode.LOCAL:
-            player2_type = payload.get("player2_type", "human")  # "human" or "npc"
+            # Default player2_type to "npc" if not provided in payload
+            player2_type = payload.get("player2_type", "npc")
             player2_name_human = payload.get("player2_name", "Player 2").strip()
+            if not player2_name_human and player2_type == "human": player2_name_human = "Player 2"
+
 
             if player2_type == "npc":
                 npc_difficulty_str = payload.get("npc_difficulty", NPCDifficulty.EASY.value)
-                npc_difficulty = NPCDifficulty(npc_difficulty_str)
+                try:
+                    npc_difficulty = NPCDifficulty(npc_difficulty_str)
+                except ValueError:
+                    app.logger.warning(f"Invalid NPC difficulty '{npc_difficulty_str}' provided. Defaulting to Easy.")
+                    npc_difficulty = NPCDifficulty.EASY
                 npc_id = f"{NPC_PLAYER_ID_PREFIX}{npc_difficulty.value}"
                 npc_name = f"NPC ({npc_difficulty.value.capitalize()})"
                 engine.add_player(npc_id, npc_name, is_npc=True, npc_difficulty=npc_difficulty)
             else:  # Human Player 2
                 engine.add_player(LOCAL_PLAYER_O_ID, player2_name_human)
-
-            # For local games, P1 (X) always starts.
-            # engine.add_player already sets current_player_id to X when 2 players are in.
             # game_state.status is already IN_PROGRESS by add_player when P2 is added.
 
         await save_game_to_db_final(app, game_state)
         app.logger.info(
-            f"Created {mode.value} game {game_state.game_id} (Size: {config.grid_size}) P1: {player1_name}, P2 setup: {payload.get('player2_type', 'human')}")
+            f"Created {mode.value} game {game_state.game_id} (Size: {config.grid_size}) P1: {player1_name} ({player1_id}). P2 setup: {payload.get('player2_type', 'npc' if mode == GameMode.LOCAL else 'online_joiner')}")
 
-        # If P1 is human and P2 is NPC, and it's P1's turn, game state is fine.
-        # If P1 is NPC (not supported by this flow yet) and P2 human, would need NPC move.
-        # For now, P1 is human starting.
+        response_data = game_state.model_dump_for_api()
 
-        return Result.json(data=game_state.model_dump_for_api())
-    except ValueError as e:
+        if mode == GameMode.ONLINE and game_state.status == GameStatus.WAITING_FOR_OPPONENT:
+            app_base_url = os.environ.get('APP_BASE_URL')
+            if not app_base_url:
+                app.logger.warning("APP_BASE_URL environment variable is not set. Join links may be incomplete or use relative paths.")
+                # Fallback to relative path if APP_BASE_URL is not set
+                # This assumes the UI is served relative to the API path structure.
+                # A more robust solution might involve request.host_url if available from the framework.
+                # For now, using a path that should work if API and UI are on same domain.
+                app_base_url = "" # Results in a relative path like /api/UltimateTTT/ui?...
+
+            join_url = f"{app_base_url}/api/{GAME_NAME}/ui?join={game_state.game_id}"
+            response_data['join_url'] = join_url
+
+        return Result.json(data=response_data)
+    except ValueError as e: # Handles GameMode, NPCDifficulty enum errors, Pydantic validation
         app.logger.warning(f"Create game input error: {e}")
         return Result.default_user_error(f"Invalid input: {str(e)}", 400)
     except Exception as e:
         app.logger.error(f"Error creating game: {e}", exc_info=True)
         return Result.default_internal_error("Could not create game.")
-
 
 # --- END OF BLOCK 5 ---
 
@@ -1626,80 +1682,95 @@ async def api_create_game(app: App, request: RequestData, data=None):
 
 @export(mod_name=GAME_NAME, name="join_game", api=True, request_as_kwarg=True, api_methods=['POST'])
 async def api_join_game(app: App, request: RequestData, data=None):
- try:
-     payload = data or {}
-     game_id = payload.get("game_id")
-     player_name_from_join_attempt = payload.get("player_name", "Player 2")
+    try:
+        payload = data or {}
+        game_id = payload.get("game_id")
+        player_name_from_join_attempt = payload.get("player_name", "Player 2").strip()
+        if not player_name_from_join_attempt: player_name_from_join_attempt = "Player 2"
 
-     if not game_id:
-         return Result.default_user_error("Game ID required.", 400)
+        if not game_id:
+            return Result.default_user_error("Game ID required.", 400)
 
-     game_state = await load_game_from_db_final(app, game_id)
-     if not game_state:
-         return Result.default_user_error("Game not found.", 404)
+        game_state = await load_game_from_db_final(app, game_id)
+        if not game_state:
+            return Result.default_user_error("Game not found.", 404)
 
-     user = await get_user_from_request(app, request)
-     joiner_id_from_request = user.uid if user and user.uid else f"guest_{uuid.uuid4().hex[:6]}"
+        user = await get_user_from_request(app, request)
+        # Generate a more robust guest ID for joining if user.uid is not available
+        joiner_id_from_request = user.uid if user and user.uid else f"p2_guest_{request.session_id[:8]}" if request and request.session_id else f"p2_guest_{uuid.uuid4().hex[:8]}"
 
-     if game_state.mode != GameMode.ONLINE:
-         return Result.default_user_error("Not an online game.", 400)
+        if game_state.mode != GameMode.ONLINE:
+            return Result.default_user_error("Not an online game.", 400)
 
-     engine = UltimateTTTGameEngine(game_state)
-     already_in_game_as_player = game_state.get_player_info(joiner_id_from_request)
+        engine = UltimateTTTGameEngine(game_state)
+        already_in_game_as_player = game_state.get_player_info(joiner_id_from_request)
 
-     # Case 1: Joining a game waiting for an opponent (as P2)
-     if game_state.status == GameStatus.WAITING_FOR_OPPONENT:
-         app.logger.info(f"Player {joiner_id_from_request} ({player_name_from_join_attempt}) attempting to join WAITING game {game_id}.")
-         if already_in_game_as_player: # P1 trying to "rejoin" while game is still waiting (e.g. after refresh)
-             if not already_in_game_as_player.is_connected:
-                 engine.handle_player_reconnect(joiner_id_from_request)
-             # else: P1 is already connected and in WAITING state, no action needed.
-         elif len(game_state.players) < 2: # New player (P2) joins
-             if not engine.add_player(joiner_id_from_request, player_name_from_join_attempt):
-                 return Result.default_user_error(game_state.last_error_message or "Could not join (add player failed).", 400)
-         else: # Game is WAITING but somehow full? Should not happen.
-              return Result.default_user_error("Game is waiting but seems full. Cannot join.", 409)
+        if game_state.status == GameStatus.WAITING_FOR_OPPONENT:
+            app.logger.info(
+                f"Player {joiner_id_from_request} ({player_name_from_join_attempt}) attempting to join WAITING game {game_id}.")
+            if already_in_game_as_player:  # P1 trying to "rejoin"
+                if not already_in_game_as_player.is_connected:
+                    engine.handle_player_reconnect(joiner_id_from_request)
+            elif len(game_state.players) < 2:  # New player (P2) joins
+                # Ensure P2's ID doesn't clash with P1's ID if P1 is also a guest from a similar session
+                if game_state.players[0].id == joiner_id_from_request:
+                    joiner_id_from_request = f"p2_guest_{uuid.uuid4().hex[:8]}"  # Force unique if P1 has same generated ID
+                    app.logger.warning(
+                        f"Potential P2 ID clash with P1 guest ID. Regenerated P2 ID to: {joiner_id_from_request}")
+
+                if not engine.add_player(joiner_id_from_request, player_name_from_join_attempt):
+                    return Result.default_user_error(
+                        game_state.last_error_message or "Could not join (add player failed).", 400)
+            else:
+                return Result.default_user_error("Game is waiting but seems full. Cannot join.", 409)
+
+        elif game_state.status == GameStatus.ABORTED:
+            app.logger.info(
+                f"Player {joiner_id_from_request} attempting to join/reconnect to ABORTED game {game_id} (paused by {game_state.player_who_paused}).")
+            if already_in_game_as_player:
+                # This player is one of the original players.
+                engine.handle_player_reconnect(joiner_id_from_request)  # This will handle paused or hard-aborted cases.
+            elif len(game_state.players) < 2 and not game_state.player_who_paused:
+                # Game was WAITING, P1 left, game hard-aborted. Now a *new* P2 tries to join.
+                # This is not directly supported by current handle_reconnect, treat as cannot join.
+                return Result.default_user_error(
+                    "Game was aborted before an opponent joined and cannot be joined by a new player now.", 403)
+            else:  # A new player trying to join a game that was already started and then aborted
+                return Result.default_user_error(f"Game was aborted. Only original players can attempt to resume.", 403)
 
 
-     # Case 2: Reconnecting to a "paused" game (ABORTED + player_who_paused)
-     elif game_state.status == GameStatus.ABORTED and game_state.player_who_paused:
-         app.logger.info(f"Player {joiner_id_from_request} attempting to reconnect to PAUSED game {game_id} (paused by {game_state.player_who_paused}).")
-         if already_in_game_as_player and already_in_game_as_player.id == game_state.player_who_paused:
-             if not already_in_game_as_player.is_connected: # If they were marked disconnected
-                 engine.handle_player_reconnect(joiner_id_from_request)
-             # If they were already connected but game was paused (e.g. browser refresh), reconnect logic updates state
-         elif already_in_game_as_player and already_in_game_as_player.is_connected:
-              return Result.default_user_error("You are already connected. Game is paused waiting for opponent.", 400)
-         elif already_in_game_as_player and not already_in_game_as_player.is_connected: # The *other* player trying to reconnect to a game paused by their opponent
-             engine.handle_player_reconnect(joiner_id_from_request) # This will update their connected state
-         else: # A new player trying to join a game paused for a specific player
-             return Result.default_user_error(f"Game is paused and waiting for player {game_state.get_player_info(game_state.player_who_paused).name if game_state.get_player_info(game_state.player_who_paused) else 'previous player'} to reconnect.", 403)
+        elif game_state.status == GameStatus.IN_PROGRESS:
+            app.logger.info(
+                f"Player {joiner_id_from_request} attempting to join/reconnect to IN_PROGRESS game {game_id}.")
+            if already_in_game_as_player:
+                if not already_in_game_as_player.is_connected:
+                    engine.handle_player_reconnect(joiner_id_from_request)
+            else:
+                return Result.default_user_error("Game is already in progress and full.", 403)
 
-     # Case 3: Reconnecting to an IN_PROGRESS game (e.g., after brief disconnect/refresh)
-     elif game_state.status == GameStatus.IN_PROGRESS:
-         app.logger.info(f"Player {joiner_id_from_request} attempting to join/reconnect to IN_PROGRESS game {game_id}.")
-         if already_in_game_as_player:
-             if not already_in_game_as_player.is_connected:
-                 engine.handle_player_reconnect(joiner_id_from_request) # Mark as connected again
-             # If already connected, no specific action, game state is current.
-         else: # New player trying to join a full, in-progress game
-             return Result.default_user_error("Game is already in progress and full.", 403)
+        elif game_state.status == GameStatus.FINISHED:
+            return Result.default_user_error(f"Game is {game_state.status.value} and cannot be joined.", 400)
 
-     # Case 4: Game is truly ABORTED (no player_who_paused) or FINISHED
-     elif game_state.status == GameStatus.ABORTED or game_state.status == GameStatus.FINISHED:
-         return Result.default_user_error(f"Game is {game_state.status.value} and cannot be joined.", 400)
+        else:  # Should not be reached
+            return Result.default_user_error(
+                f"Game is in an unexpected state ({game_state.status.value}). Cannot join.", 500)
 
-     else: # Should not be reached
-         return Result.default_user_error(f"Game is in an unexpected state ({game_state.status.value}). Cannot join.", 500)
+        await save_game_to_db_final(app, game_state)
+        app.logger.info(
+            f"Join/Reconnect attempt processed for player {joiner_id_from_request} in game {game_id}. New status: {game_state.status}")
 
-     await save_game_to_db_final(app, game_state)
-     app.logger.info(f"Join/Reconnect attempt processed for player {joiner_id_from_request} in game {game_id}. New status: {game_state.status}")
-     return Result.json(data=game_state.model_dump_for_api())
+        response_data = game_state.model_dump_for_api()
+        # Ensure join_url is included if game becomes WAITING_FOR_OPPONENT after a reconnect
+        if game_state.mode == GameMode.ONLINE and game_state.status == GameStatus.WAITING_FOR_OPPONENT:
+            app_base_url = os.environ.get('APP_BASE_URL', "")
+            join_url = f"{app_base_url}/api/{GAME_NAME}/ui?join={game_state.game_id}"
+            response_data['join_url'] = join_url
 
- except Exception as e:
-     app.logger.error(f"Error joining game: {e}", exc_info=True)
-     return Result.default_internal_error("Join game error.")
-# --- END OF BLOCK 3 ---
+        return Result.json(data=response_data)
+
+    except Exception as e:
+        app.logger.error(f"Error joining game: {e}", exc_info=True)
+        return Result.default_internal_error("Join game error.")
 
 @export(mod_name=GAME_NAME, name="get_game", api=True, request_as_kwarg=True)
 async def api_get_game(app: App, request: RequestData, game_id: str):
@@ -1711,17 +1782,31 @@ async def api_get_game_state(app: App, request: RequestData, game_id: str):  # g
     game_state = await load_game_from_db_final(app, game_id)
     if not game_state: return Result.default_user_error("Game not found.", 404)
 
+    response_data = game_state.model_dump_for_api()
+
     if game_state.mode == GameMode.ONLINE and \
-        game_state.status == GameStatus.WAITING_FOR_OPPONENT and \
-        game_state.waiting_since and \
-        (datetime.now(timezone.utc) - game_state.waiting_since > timedelta(seconds=ONLINE_POLL_TIMEOUT_SECONDS)):
-        game_state.status = GameStatus.ABORTED
-        game_state.last_error_message = "Game aborted: Opponent didn't join."
-        game_state.updated_at = datetime.now(timezone.utc)
-        await save_game_to_db_final(app, game_state)
+        game_state.status == GameStatus.WAITING_FOR_OPPONENT:
+        # Generate join_url for sharing
+        app_base_url = os.environ.get('APP_BASE_URL')
+        if not app_base_url:
+            app.logger.warning("APP_BASE_URL environment variable is not set for get_game_state. Join links may be incomplete or use relative paths.")
+            app_base_url = "" # Results in a relative path
 
-    return Result.json(data=game_state.model_dump_for_api())
+        join_url = f"{app_base_url}/api/{GAME_NAME}/ui?join={game_state.game_id}"
+        response_data['join_url'] = join_url
 
+        # Timeout logic
+        if game_state.waiting_since and \
+           (datetime.now(timezone.utc) - game_state.waiting_since > timedelta(seconds=ONLINE_POLL_TIMEOUT_SECONDS)):
+            game_state.status = GameStatus.ABORTED
+            game_state.last_error_message = "Game aborted: Opponent didn't join in time."
+            game_state.updated_at = datetime.now(timezone.utc)
+            await save_game_to_db_final(app, game_state)
+            # Update response_data with the new status etc.
+            response_data = game_state.model_dump_for_api()
+            response_data['join_url'] = join_url # Re-add join_url as model_dump_for_api won't have it
+
+    return Result.json(data=response_data)
 
 # --- START OF BLOCK 6 (Modify api_make_move for NPC) ---
 # FILE: ultimate_ttt_api.py
@@ -1860,15 +1945,9 @@ async def api_get_session_stats(app: App, request: RequestData, session_id: Opti
     return Result.json(data=stats.model_dump(mode='json'))
 
 
-import asyncio
-from typing import AsyncGenerator, Dict, Any  # Ensure these are imported if not already
 
-
-# --- START OF BLOCK 4 (api_open_game_stream) ---
+# --- START OF MODIFIED FUNCTION: api_open_game_stream ---
 # FILE: ultimate_ttt_api.py
-# Replace the existing api_open_game_stream function.
-# Ensure you have: from typing import AsyncGenerator, Dict, Any, Optional
-# And: from datetime import datetime, timezone, timedelta
 
 @export(mod_name=GAME_NAME, name="open_game_stream", api=True, request_as_kwarg=True, api_methods=['GET'])
 async def api_open_game_stream(app: App, request: RequestData, game_id: str, player_id: Optional[str] = None):
@@ -1878,7 +1957,6 @@ async def api_open_game_stream(app: App, request: RequestData, game_id: str, pla
 
         return Result.sse(stream_generator=error_gen_no_id())
 
-    # The player_id param from query helps identify who disconnected if the stream is cancelled.
     listening_player_id = player_id
 
     async def game_event_generator() -> AsyncGenerator[Dict[str, Any], None]:
@@ -1894,6 +1972,7 @@ async def api_open_game_stream(app: App, request: RequestData, game_id: str, pla
                 if not game_state:
                     app.logger.warning(f"SSE: Game {game_id} not found. Closing stream.")
                     yield {'event': 'error', 'data': {'message': 'Game not found. Stream closing.'}}
+                    yield {'event': 'stream_end', 'data': {'message': 'Game not found.'}}  # Ensure client knows to stop
                     break
 
                 # Timeout for games WAITING_FOR_OPPONENT (initial join)
@@ -1901,39 +1980,41 @@ async def api_open_game_stream(app: App, request: RequestData, game_id: str, pla
                     game_state.waiting_since and \
                     (datetime.now(timezone.utc) - game_state.waiting_since > timedelta(
                         seconds=ONLINE_POLL_TIMEOUT_SECONDS)):
-                    app.logger.info(f"SSE: Game {game_id} timed out waiting for opponent. Aborting.")
-                    # Update game state to ABORTED
+                    app.logger.info(f"SSE: Game {game_id} timed out waiting for opponent (initial join). Aborting.")
                     game_state.status = GameStatus.ABORTED
                     game_state.last_error_message = "Game aborted: Opponent didn't join in time."
-                    game_state.player_who_paused = None  # No specific player paused
+                    game_state.player_who_paused = None
                     game_state.updated_at = datetime.now(timezone.utc)
                     await save_game_to_db_final(app, game_state)
                     yield {'event': 'game_update', 'data': game_state.model_dump_for_api()}
-                    break  # End stream
+                    yield {'event': 'stream_end', 'data': {'message': 'Game timed out waiting for opponent.'}}
+                    break
 
-                # Timeout for games PAUSED (ABORTED with player_who_paused)
+                # Timeout for games PAUSED (ABORTED with player_who_paused) - now 24 hours
                 if game_state.status == GameStatus.ABORTED and \
                     game_state.player_who_paused and \
                     game_state.updated_at and \
                     (datetime.now(timezone.utc) - game_state.updated_at > timedelta(
-                        seconds=ONLINE_POLL_TIMEOUT_SECONDS * 3)):  # e.g., 3x normal timeout
+                        seconds=PAUSED_GAME_RESUME_WINDOW_SECONDS)):
+
                     disconnected_player_name = "Player"
                     paused_player_info = game_state.get_player_info(game_state.player_who_paused)
                     if paused_player_info: disconnected_player_name = paused_player_info.name
 
                     app.logger.info(
-                        f"SSE: Game {game_id} (paused) timed out waiting for {disconnected_player_name} ({game_state.player_who_paused}) to reconnect. Fully aborting.")
-                    game_state.last_error_message = f"Game aborted: {disconnected_player_name} did not reconnect in time."
-                    game_state.player_who_paused = None  # Mark as fully aborted
+                        f"SSE: Game {game_id} (paused) timed out after {PAUSED_GAME_RESUME_WINDOW_SECONDS // 3600} hours waiting for {disconnected_player_name} ({game_state.player_who_paused}) to reconnect. Fully aborting.")
+                    game_state.last_error_message = f"Game aborted: {disconnected_player_name} did not reconnect within the extended timeframe."
+                    game_state.player_who_paused = None
                     game_state.updated_at = datetime.now(timezone.utc)
-                    # Status remains ABORTED
                     await save_game_to_db_final(app, game_state)
                     yield {'event': 'game_update', 'data': game_state.model_dump_for_api()}
-                    break  # End stream
+                    yield {'event': 'stream_end', 'data': {'message': 'Paused game timed out.'}}
+                    break
 
                 current_updated_at = game_state.updated_at
                 current_status = game_state.status
-                current_players_connected = {p.id: p.is_connected for p in game_state.players}
+                current_players_connected = {p.id: p.is_connected for p in
+                                             game_state.players} if game_state.players else {}
                 send_update = False
 
                 if last_known_updated_at is None or \
@@ -1951,27 +2032,27 @@ async def api_open_game_stream(app: App, request: RequestData, game_id: str, pla
                     last_players_connected_state = current_players_connected
 
                 if game_state.status == GameStatus.FINISHED or \
-                    (
-                        game_state.status == GameStatus.ABORTED and not game_state.player_who_paused):  # Game truly finished or hard aborted
+                    (game_state.status == GameStatus.ABORTED and not game_state.player_who_paused):
                     app.logger.info(
                         f"SSE: Game {game_id} is {game_state.status.value} (final). Sent final update. Closing stream.")
+                    yield {'event': 'stream_end', 'data': {'message': f'Game is {game_state.status.value}.'}}
                     break
 
-                await asyncio.sleep(0.75)  # Slightly increased sleep interval for polling
+                await asyncio.sleep(1.0)
 
         except asyncio.CancelledError:
             app.logger.info(
                 f"SSE: Stream for game_id: {game_id}, listening_player_id: {listening_player_id} was CANCELLED (client likely disconnected).")
             if listening_player_id and game_id:
-                # This is where we detect a client closing the connection.
-                # Load the latest game state to act upon it.
                 game_state_on_disconnect = await load_game_from_db_final(app, game_id)
                 if game_state_on_disconnect and game_state_on_disconnect.mode == GameMode.ONLINE:
                     player_info = game_state_on_disconnect.get_player_info(listening_player_id)
-                    # Only process if the player was marked as connected and game is in a relevant state
+
                     if player_info and player_info.is_connected and \
-                        (game_state_on_disconnect.status == GameStatus.IN_PROGRESS or game_state_on_disconnect.status == GameStatus.WAITING_FOR_OPPONENT or (
-                             game_state_on_disconnect.status == GameStatus.ABORTED and game_state_on_disconnect.player_who_paused)):  # also if game was paused and the *other* player disconnects
+                        (game_state_on_disconnect.status == GameStatus.IN_PROGRESS or \
+                         game_state_on_disconnect.status == GameStatus.WAITING_FOR_OPPONENT or \
+                         (
+                             game_state_on_disconnect.status == GameStatus.ABORTED and game_state_on_disconnect.player_who_paused)):
 
                         app.logger.info(
                             f"SSE: Processing server-side disconnect for player {listening_player_id} in game {game_id} due to stream cancellation.")
@@ -1980,22 +2061,22 @@ async def api_open_game_stream(app: App, request: RequestData, game_id: str, pla
                             listening_player_id)  # This updates status, player_who_paused etc.
                         await save_game_to_db_final(app, game_state_on_disconnect)
                         app.logger.info(
-                            f"SSE: Post-disconnect save for game {game_id}. New status: {game_state_on_disconnect.status}")
+                            f"SSE: Post-disconnect save for game {game_id}. New status: {game_state_on_disconnect.status}, Paused by: {game_state_on_disconnect.player_who_paused}")
                     else:
                         app.logger.info(
-                            f"SSE: Player {listening_player_id} stream cancelled, but player already marked disconnected or game status ({game_state_on_disconnect.status if game_state_on_disconnect else 'N/A'}) not actionable for disconnect. No further action.")
-            # No yield here as the stream is broken.
-        except Exception as e:
-            app.logger.error(f"SSE: Stream error for game_id {game_id}: {e}", exc_info=True)
+                            f"SSE: Player {listening_player_id} stream cancelled, but no server-side action needed. Player might have been already marked disconnected, or game status ({game_state_on_disconnect.status if game_state_on_disconnect else 'N/A'}) not actionable for this disconnect event.")
+        except Exception as e:  # pragma: no cover
+            app.logger.error(f"SSE: Stream error for game_id {game_id}, player {listening_player_id}: {e}",
+                             exc_info=True)
             try:
                 yield {'event': 'error', 'data': {'message': f'Server error in stream: {str(e)}'}}
-            except Exception as yield_e:
+            except Exception as yield_e:  # pragma: no cover
                 app.logger.error(f"SSE: Error yielding error message for game_id {game_id}: {yield_e}", exc_info=True)
         finally:
             app.logger.info(f"SSE: Stream closed for game_id: {game_id}, listening_player_id: {listening_player_id}")
 
     return Result.sse(stream_generator=game_event_generator())
-
+# --- END OF MODIFIED FUNCTION: api_open_game_stream ---
 
 # --- END OF BLOCK 4 ---
 
@@ -2013,10 +2094,13 @@ def init_ultimate_ttt_module(app: App):
 
 
 # --- UI Endpoint ---
-@get_app().tb(mod_name=GAME_NAME, version=VERSION, level=0, api=True, name="ui", state=False)
-def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
+# --- START OF MODIFIED FUNCTION: ultimate_ttt_ui_page ---
+# FILE: ultimate_ttt_api.py
+
+@export(mod_name=GAME_NAME, version=VERSION, level=0, api=True, name="ui", state=False)
+def ultimate_ttt_ui_page(app_ref: Optional[App] = None, **kwargs):
     app_instance = app_ref if app_ref else get_app(GAME_NAME)
-    # Full HTML, CSS, and JS will be provided in the next message block
+    # Full HTML, CSS, and JS
     html_and_js_content = """<!DOCTYPE html>
 <html lang="en" data-theme="light">
 <head>
@@ -2025,523 +2109,495 @@ def ultimate_ttt_ui_page(app_ref: Optional[App] = None):
     <title>Ultimate Tic-Tac-Toe</title>
     <meta property="og:image" content="https://simplecore.app/web/webapp/TTTimg.png">
 
-    <style>
-        :root {
-    /* Font System */
-    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
-    --font-serif: Georgia, Cambria, 'Times New Roman', Times, serif;
-    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-    --font-base: var(--font-sans);
-
-    /* Fluid Font Sizes */
-    --font-size-xs: clamp(0.75rem, 0.7rem + 0.25vw, 0.875rem);
-    --font-size-sm: clamp(0.875rem, 0.8rem + 0.375vw, 1rem);
-    --font-size-base: clamp(1rem, 0.9rem + 0.5vw, 1.125rem);
-    --font-size-lg: clamp(1.125rem, 1rem + 0.625vw, 1.3rem);
-    --font-size-xl: clamp(1.3rem, 1.125rem + 0.75vw, 1.6rem);
-    --font-size-2xl: clamp(1.6rem, 1.375rem + 1vw, 2.1rem);
-    --font-size-3xl: clamp(2rem, 1.75rem + 1.25vw, 2.7rem);
-    --font-size-4xl: clamp(2.5rem, 2rem + 1.5vw, 3.3rem);
-
-    /* Font Weights */
-    --font-weight-light: 300;
-    --font-weight-regular: 400;
-    --font-weight-medium: 500;
-    --font-weight-semibold: 600;
-    --font-weight-bold: 700;
-
-    /* Line Heights */
-    --line-height-tight: 1.2;
-    --line-height-snug: 1.375;
-    --line-height-normal: 1.6;
-    --line-height-relaxed: 1.75;
-    --line-height-loose: 2;
-
-    /* Letter Spacing */
-    --letter-spacing-tight: -0.02em;
-    --letter-spacing-normal: 0em;
-    --letter-spacing-wide: 0.02em;
-    --letter-spacing-wider: 0.05em;
-
-    /* Spacing & Layout */
-    --spacing-base: 1rem;
-    --radius-sm: 4px;
-    --radius-md: 8px;
-    --radius-lg: 16px;
-
-    /* Transitions */
-    --transition-fast: 0.15s ease-in-out;
-    --transition-medium: 0.3s ease-in-out;
-
-    /* Z-Index System */
-    --z-background: -1;
-    --z-content: 1;
-    --z-navigation: 100;
-    --z-overlay: 500;
-    --z-modal: 10000;
-    --z-cookie-banner: 10010;
-    --z-nav-controls: 10001;
-    --z-nav-dropdown: 10005;
-
-    /* Scrollbar */
-    --scrollbar-width: 8px;
-    --scrollbar-height: 8px;
-
-    /* Text Shadows */
-    --text-shadow-light: 0 1px 3px rgba(0, 0, 0, 0.3);
-    --text-shadow-dark: 0 1px 3px rgba(255, 255, 255, 0.2);
-
-    /* Light Theme Variables */
-    --bg-main-light: #f8f9fa;
-    --bg-card-light: #ffffff;
-    --text-primary-light: #212529;
-    --text-secondary-light: #495057;
-    --text-muted-light: #6c757d;
-    --border-light: #dee2e6;
-    --shadow-light: 0 0.125rem 0.25rem rgba(0,0,0,0.075);
-
-    /* Primary Colors Light */
-    --primary-light: #3b82f6;
-    --primary-hover-light: #2563eb;
-    --primary-focus-light: rgba(59, 130, 246, 0.25);
-    --text-on-primary-light: #ffffff;
-
-    /* Secondary Colors Light */
-    --secondary-light: #6c757d;
-    --accent-light: #045fab;
-
-    /* Status Colors Light */
-    --danger-light: #dc3545;
-    --success-light: #198754;
-    --warning-light: #ffc107;
-    --info-light: #0dcaf0;
-    --error-light: #9c1079;
-
-    /* Glass Effect Light */
-    --glass-bg-light: rgba(255, 255, 255, 0.6);
-    --glass-blur-light: 10px;
-    --glass-border-light: rgba(255, 255, 255, 0.3);
-    --glass-shadow-light: 0 4px 15px rgba(0, 0, 0, 0.1);
-
-    /* Form Elements Light */
-    --input-bg-light: #ffffff;
-    --input-border-light: var(--border-light);
-    --input-focus-border-light: var(--primary-light);
-
-    /* Game-specific Light */
-    --cell-bg-light: #ffffff;
-    --cell-hover-light: #e9ecef;
-    --cell-border-light: #ced4da;
-    --player-x-color-light: #dc3545;
-    --player-o-color-light: #007bff;
-    --local-won-x-bg-light: rgba(220, 53, 69, 0.1);
-    --local-won-o-bg-light: rgba(0, 123, 255, 0.1);
-    --local-draw-bg-light: rgba(108, 117, 125, 0.1);
-    --forced-target-border-light: gold;
-    --forced-target-shadow-light: 0 0 0 3px gold;
-    --playable-anywhere-border-light: var(--primary-light);
-
-    /* Scrollbar Light */
-    --scrollbar-track-light: color-mix(in srgb, var(--bg-main-light) 90%, black);
-    --scrollbar-thumb-light: var(--secondary-light);
-    --scrollbar-thumb-hover-light: var(--primary-light);
-    --scrollbar-thumb-active-light: var(--accent-light);
-
-    /* Dark Theme Variables */
-    --bg-main-dark: #181823;
-    --bg-card-dark: #1e1e1e;
-    --text-primary-dark: #E9F8F9;
-    --text-secondary-dark: #a0a0a0;
-    --text-muted-dark: #adb5bd;
-    --border-dark: #4b5563;
-    --shadow-dark: 0 0.125rem 0.25rem rgba(0,0,0,0.3);
-
-    /* Primary Colors Dark */
-    --primary-dark: #6c8ee8;
-    --primary-hover-dark: #7ba3ff;
-    --primary-focus-dark: rgba(108, 142, 232, 0.25);
-    --text-on-primary-dark: #181823;
-
-    /* Secondary Colors Dark */
-    --secondary-dark: #E9F8F9;
-    --accent-dark: #1a8cff;
-
-    /* Status Colors Dark */
-    --danger-dark: #f87171;
-    --success-dark: #4ade80;
-    --warning-dark: #facc15;
-    --info-dark: #2dd4bf;
-    --error-dark: #ef4444;
-
-    /* Glass Effect Dark */
-    --glass-bg-dark: rgba(2, 2, 3, 0.35);
-    --glass-blur-dark: 12px;
-    --glass-border-dark: rgba(255, 255, 255, 0.1);
-    --glass-shadow-dark: 0 4px 20px rgba(0, 0, 0, 0.3);
-
-    /* Form Elements Dark */
-    --input-bg-dark: #2a2a3a;
-    --input-border-dark: var(--border-dark);
-    --input-focus-border-dark: var(--primary-dark);
-
-    /* Game-specific Dark */
-    --cell-bg-dark: #2a2a2a;
-    --cell-hover-dark: #383838;
-    --cell-border-dark: #4f4f4f;
-    --player-x-color-dark: #f87171;
-    --player-o-color-dark: #60a5fa;
-    --local-won-x-bg-dark: rgba(248, 113, 113, 0.15);
-    --local-won-o-bg-dark: rgba(96, 165, 250, 0.15);
-    --local-draw-bg-dark: rgba(134, 142, 150, 0.15);
-    --forced-target-border-dark: #ffd700;
-    --forced-target-shadow-dark: 0 0 0 3px #ffd700;
-    --playable-anywhere-border-dark: var(--primary-dark);
-
-    /* Scrollbar Dark */
-    --scrollbar-track-dark: color-mix(in srgb, var(--bg-main-dark) 80%, white);
-    --scrollbar-thumb-dark: var(--secondary-dark);
-    --scrollbar-thumb-hover-dark: var(--primary-dark);
-    --scrollbar-thumb-active-dark: var(--accent-dark);
-
-    /* Font Rendering */
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    text-rendering: optimizeLegibility;
+<style>
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
 }
 
-/* Light Theme Active Variables */
-html[data-theme="light"] {
-    --bg-main: var(--bg-main-light);
-    --bg-card: var(--bg-card-light);
-    --text-primary: var(--text-primary-light);
-    --text-secondary: var(--text-secondary-light);
-    --text-muted: var(--text-muted-light);
-    --border-color: var(--border-light);
-    --shadow-color: var(--shadow-light);
-
-    --primary-color: var(--primary-light);
-    --primary-hover: var(--primary-hover-light);
-    --primary-focus: var(--primary-focus-light);
-    --text-on-primary: var(--text-on-primary-light);
-
-    --secondary-color: var(--secondary-light);
-    --accent-color: var(--accent-light);
-
-    --danger-color: var(--danger-light);
-    --success-color: var(--success-light);
-    --warning-color: var(--warning-light);
-    --info-color: var(--info-light);
-    --error-color: var(--error-light);
-
-    --glass-bg: var(--glass-bg-light);
-    --glass-blur: var(--glass-blur-light);
-    --glass-border: var(--glass-border-light);
-    --glass-shadow: var(--glass-shadow-light);
-    --text-shadow-current: var(--text-shadow-light);
-
-    --input-bg: var(--input-bg-light);
-    --input-border: var(--input-border-light);
-    --input-focus-border: var(--input-focus-border-light);
-
-    --cell-bg: var(--cell-bg-light);
-    --cell-hover: var(--cell-hover-light);
-    --cell-border: var(--cell-border-light);
-    --player-x-color: var(--player-x-color-light);
-    --player-o-color: var(--player-o-color-light);
-    --local-won-x-bg: var(--local-won-x-bg-light);
-    --local-won-o-bg: var(--local-won-o-bg-light);
-    --local-draw-bg: var(--local-draw-bg-light);
-    --forced-target-border: var(--forced-target-border-light);
-    --forced-target-shadow: var(--forced-target-shadow-light);
-    --playable-anywhere-border: var(--playable-anywhere-border-light);
-
-    --scrollbar-track-color: var(--scrollbar-track-light);
-    --scrollbar-thumb-color: var(--scrollbar-thumb-light);
-    --scrollbar-thumb-hover-color: var(--scrollbar-thumb-hover-light);
-    --scrollbar-thumb-active-color: var(--scrollbar-thumb-active-light);
-
-    --link-color: var(--primary-color);
-    --link-hover-color: var(--primary-hover);
-    --button-bg: var(--primary-color);
-    --button-text: var(--text-on-primary);
-    --button-hover-bg: var(--primary-hover);
+body {
+    font-family: var(--font-family-base);
+    background-color: var(--theme-bg);
+    color: var(--theme-text);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: var(--spacing);
+    min-height: 100vh;
 }
 
-/* Dark Theme Active Variables */
-html[data-theme="dark"] {
-    --bg-main: var(--bg-main-dark);
-    --bg-card: var(--bg-card-dark);
-    --text-primary: var(--text-primary-dark);
-    --text-secondary: var(--text-secondary-dark);
-    --text-muted: var(--text-muted-dark);
-    --border-color: var(--border-dark);
-    --shadow-color: var(--shadow-dark);
-
-    --primary-color: var(--primary-dark);
-    --primary-hover: var(--primary-hover-dark);
-    --primary-focus: var(--primary-focus-dark);
-    --text-on-primary: var(--text-on-primary-dark);
-
-    --secondary-color: var(--secondary-dark);
-    --accent-color: var(--accent-dark);
-
-    --danger-color: var(--danger-dark);
-    --success-color: var(--success-dark);
-    --warning-color: var(--warning-dark);
-    --info-color: var(--info-dark);
-    --error-color: var(--error-dark);
-
-    --glass-bg: var(--glass-bg-dark);
-    --glass-blur: var(--glass-blur-dark);
-    --glass-border: var(--glass-border-dark);
-    --glass-shadow: var(--glass-shadow-dark);
-    --text-shadow-current: var(--text-shadow-dark);
-
-    --input-bg: var(--input-bg-dark);
-    --input-border: var(--input-border-dark);
-    --input-focus-border: var(--input-focus-border-dark);
-
-    --cell-bg: var(--cell-bg-dark);
-    --cell-hover: var(--cell-hover-dark);
-    --cell-border: var(--cell-border-dark);
-    --player-x-color: var(--player-x-color-dark);
-    --player-o-color: var(--player-o-color-dark);
-    --local-won-x-bg: var(--local-won-x-bg-dark);
-    --local-won-o-bg: var(--local-won-o-bg-dark);
-    --local-draw-bg: var(--local-draw-bg-dark);
-    --forced-target-border: var(--forced-target-border-dark);
-    --forced-target-shadow: var(--forced-target-shadow-dark);
-    --playable-anywhere-border: var(--playable-anywhere-border-dark);
-
-    --scrollbar-track-color: var(--scrollbar-track-dark);
-    --scrollbar-thumb-color: var(--scrollbar-thumb-dark);
-    --scrollbar-thumb-hover-color: var(--scrollbar-thumb-hover-dark);
-    --scrollbar-thumb-active-color: var(--scrollbar-thumb-active-dark);
-
-    --link-color: var(--primary-color);
-    --link-hover-color: var(--primary-hover);
-    --button-bg: var(--primary-color);
-    --button-text: var(--text-on-primary);
-    --button-hover-bg: var(--primary-hover);
+.app-header {
+    width: 100%;
+    max-width: 900px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    padding: 0.5rem 0;
 }
 
-/* Dark theme specific shadow override */
-html[data-theme="dark"] .current-player-indicator {
-    box-shadow: var(--shadow-dark);
+.app-title {
+    font-size: var(--font-size-3xl);
+    color: var(--theme-primary);
+    margin: 0;
+    font-weight: var(--font-weight-semibold);
 }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-            font-family: var(--font-sans); background-color: var(--bg-main); color: var(--text-primary);
-            display: flex; flex-direction: column; align-items: center; padding: 1rem; min-height: 100vh;
-        }
-        .app-header {
-            width: 100%; max-width: 900px; display: flex; justify-content: space-between; align-items: center;
-            margin-bottom: 1.5rem; padding: 0.5rem 0;
-        }
-        .app-title { font-size: clamp(1.8em, 4vw, 2.2em); color: var(--primary-color); margin: 0; font-weight: 600;}
-        .theme-switcher {
-            padding: 0.5rem 1rem; background-color: var(--bg-card); color: var(--text-primary);
-            border: 1px solid var(--border-color); border-radius: 0.375rem; cursor: pointer;
-            font-size: 0.9em; box-shadow: var(--shadow-color);
-        }
-        .theme-switcher:hover { opacity: 0.8; }
+.theme-switcher {
+    padding: 0.5rem var(--spacing);
+    background-color: var(--glass-bg);
+    color: var(--theme-text);
+    border: 1px solid var(--theme-border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    box-shadow: var(--glass-shadow);
+}
 
-        .current-player-indicator-container {
-            width: 100%;
-            max-width: 900px; /* Angleichen an app-header Breite */
-            margin-bottom: 1rem; /* Abstand nach unten */
-            display: flex;
-            justify-content: center; /* Zentriert den Indikator, falls er nicht volle Breite hat */
-        }
+.theme-switcher:hover {
+    opacity: 0.8;
+}
 
-        .current-player-indicator {
-            height: 10px; /* Höhe des Farbbalkens */
-            width: 100%; /* Volle Breite des Containers */
-            max-width: 500px; /* Max-Breite, kann an section-card angepasst werden */
-            border-radius: 5px;
-            background-color: var(--border-color); /* Standardfarbe, wenn kein Spieler aktiv */
-            transition: background-color 0.3s ease-in-out;
-            box-shadow: var(--shadow-light); /* Optionaler leichter Schatten */
-        }
+.current-player-indicator-container {
+    width: 100%;
+    max-width: 900px;
+    margin-bottom: var(--spacing);
+    display: flex;
+    justify-content: center;
+}
 
-        .current-player-indicator.player-X {
-            background-color: var(--player-x-color);
-        }
+.current-player-indicator {
+    height: 10px;
+    width: 100%;
+    max-width: 500px;
+    border-radius: 5px;
+    background-color: var(--theme-border);
+    transition: background-color var(--transition-medium);
+    box-shadow: var(--glass-shadow);
+}
 
-        .current-player-indicator.player-O {
-            background-color: var(--player-o-color);
-        }
+.current-player-indicator.player-X {
+    background-color: var(--tb-color-info-500);
+}
 
-        .main-content-wrapper { display: flex; flex-direction: column; align-items: center; width: 100%; max-width: 900px; }
-        .section-card {
-            background-color: var(--bg-card); padding: clamp(1rem, 3vw, 1.5rem); border-radius: 0.5rem;
-            box-shadow: var(--shadow-color); margin-bottom: 1.5rem; width: 100%; max-width: 500px;
-            border: 1px solid var(--border-color);
-        }
-        .section-card h2, .section-card h3 {
-            font-size: clamp(1.2em, 3vw, 1.5em); margin-bottom: 1rem; color: var(--primary-color);
-            padding-bottom: 0.5rem; border-bottom: 1px solid var(--border-color);
-        }
-        .form-group { margin-bottom: 1rem; }
-        .form-group label { display: block; font-weight: 500; margin-bottom: 0.5rem; color: var(--text-secondary); font-size: 0.9em;}
-        .form-input, .form-select {
-            width: 100%; padding: 0.6rem 0.75rem; border-radius: 0.375rem;
-            border: 1px solid var(--border-color); background-color: var(--cell-bg); color: var(--text-primary);
-            font-size: 0.95em;
-        }
-        .form-input:focus, .form-select:focus { outline: none; border-color: var(--primary-color); box-shadow: 0 0 0 0.15rem rgba(var(--primary-colorRGB, 0,123,255), 0.25); }
+.current-player-indicator.player-O {
+    background-color: var(--tb-color-error-500);
+}
 
-        .button-row { display: flex; gap: 0.75rem; margin-top: 1rem; flex-wrap: wrap; }
-        .button {
-            padding: 0.6rem 1.2rem; border-radius: 0.375rem; border: none; cursor: pointer;
-            font-weight: 500; font-size: 0.9em; transition: background-color 0.2s, transform 0.1s;
-            text-align: center; display: inline-flex; align-items: center; justify-content: center;
-            background-color: var(--primary-color); color: var(--text-on-primary);
-        }
-        .button:hover { background-color: var(--primary-hover); }
-        .button:active { transform: translateY(1px); }
-        .button.secondary { color: var(--text-color); }
-        .button.secondary:hover { filter: brightness(0.9); }
-        .button.danger { background-color: var(--danger-color); }
-        .button.danger:hover { filter: brightness(0.9); }
-        .button:disabled { opacity: 0.6; cursor: not-allowed; }
+.main-content-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    max-width: 900px;
+}
 
-        .status-bar {
-            font-size: clamp(0.95em, 2.5vw, 1.1em); font-weight: 500; text-align: center;
-            padding: 0.75rem 1rem; border-radius: 0.375rem; min-height: 48px;
-            display: flex; align-items: center; justify-content: center;
-            border: 1px solid transparent; margin-bottom: 1rem;
-        }
-        .status-bar.info { background-color: var(--info-color); color: var(--text-on-primary); border-color: var(--info-color); opacity:0.9;}
-        .status-bar.error { background-color: var(--danger-color); color: var(--text-on-primary); border-color: var(--danger-color); }
-        .status-bar.success { background-color: var(--success-color); color: var(--text-on-primary); border-color: var(--success-color); }
+.section-card {
+    background-color: var(--glass-bg);
+    padding: clamp(1rem, 3vw, 1.5rem);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--glass-shadow);
+    margin-bottom: 1.5rem;
+    width: 100%;
+    max-width: 500px;
+    border: 1px solid var(--glass-border);
+}
 
-        .game-board-area { width: 100%; display: flex; flex-direction: column; align-items: center; }
-        .global-grid-display {
-            display: grid; border: 3px solid var(--border-color-strong);
-            background-color: var(--bg-card); box-shadow: var(--shadow-color);
-            border-radius: 0.5rem; padding: clamp(3px, 1vw, 5px); gap: clamp(3px, 1vw, 5px);
-        }
-        .local-board-container {
-            border: 2px solid var(--border-color); display: flex; align-items: center; justify-content: center;
-            transition: box-shadow 0.2s, border-color 0.2s, background-color 0.2s; position: relative; outline-color 0.2s, outline-width 0.2s;
-        }
+.section-card h2, .section-card h3 {
+    font-size: var(--font-size-xl);
+    margin-bottom: var(--spacing);
+    color: var(--theme-primary);
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--theme-border);
+}
 
-        .local-board-container.forced-target {
-            box-shadow: var(--forced-target-shadow); border-color: var(--forced-target-border) !important;
-        }
-        .local-board-container.playable-anywhere { border-color: var(--playable-anywhere-border) !important; opacity: 0.9; }
+.form-group {
+    margin-bottom: var(--spacing);
+}
 
-        .local-board-container.won-X { background-color: var(--local-won-x-bg); }
-        .local-board-container.won-O { background-color: var(--local-won-o-bg); }
-        .local-board-container.won-DRAW { background-color: var(--local-draw-bg); }
-        .local-board-container.preview-forced-for-x {
-            outline: 3px dashed var(--player-x-color);
-            outline-offset: -3px; /* Damit der Outline innerhalb des Borders ist */
-            /* box-shadow: 0 0 10px var(--player-x-color); Alternativ ein Glow */
-        }
-        .local-board-container.preview-forced-for-o {
-            outline: 3px dashed var(--player-o-color);
-            outline-offset: -3px;
-            /* box-shadow: 0 0 10px var(--player-o-color); Alternativ ein Glow */
-        }
-        .local-board-container .winner-overlay {
-            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-            display: flex; align-items: center; justify-content: center;
-            font-weight: bold; pointer-events: none; opacity: 0;
-        }
-        .local-board-container.won-X .winner-overlay.player-X,
-        .local-board-container.won-O .winner-overlay.player-O,
-        .local-board-container.won-DRAW .winner-overlay.draw { opacity: 1; }
-        .winner-overlay.player-X { color: var(--player-x-color); }
-        .winner-overlay.player-O { color: var(--player-o-color); }
-        .winner-overlay.draw { color: var(--text-secondary); }
+.form-group label {
+    display: block;
+    font-weight: var(--font-weight-medium);
+    margin-bottom: 0.5rem;
+    color: var(--theme-text-muted);
+    font-size: var(--font-size-sm);
+}
 
-        .local-grid { display: grid; width: 100%; height: 100%; gap: clamp(1px, 0.5vw, 2px); }
-        .cell {
-            border: 1px solid var(--cell-border); display: flex; align-items: center; justify-content: center;
-            font-weight: bold; background-color: var(--cell-bg);
-            transition: background-color 0.1s; cursor: default; aspect-ratio: 1/1;
-        }
-        .cell.playable { cursor: pointer; }
-        .cell.playable:hover { background-color: var(--cell-hover); }
-        .cell.player-X { color: var(--player-x-color); }
-        .cell.player-O { color: var(--player-o-color); }
+.form-input, .form-select {
+    width: 100%;
+    padding: 0.6rem 0.75rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--input-border);
+    background-color: var(--input-bg);
+    color: var(--theme-text);
+    font-size: var(--font-size-base);
+}
 
-        .cell.last-move {
-            /* Beispiel: ein heller, auffälliger Innenrand */
-            box-shadow: inset 0 0 0 2.5px gold;
-            /* Oder ein subtilerer Hintergrund, je nach Präferenz */
-            /* background-color: rgba(255, 215, 0, 0.15); */
-        }
-        .cell.last-move.player-X { /* Stellt sicher, dass der Rand auch bei Spieler-X sichtbar ist */
-             box-shadow: inset 0 0 0 2.5px gold, 0 0 0 0 var(--player-x-color); /* Trick um Default-Schatten zu resetten, falls vorhanden */
-        }
-        .cell.last-move.player-O { /* Stellt sicher, dass der Rand auch bei Spieler-O sichtbar ist */
-             box-shadow: inset 0 0 0 2.5px gold, 0 0 0 0 var(--player-o-color);
-        }
+.form-input:focus, .form-select:focus {
+    outline: none;
+    border-color: var(--input-focus-border);
+    box-shadow: 0 0 0 0.15rem rgba(59, 130, 246, 0.25);
+}
 
-        .local-board-container.won-X .local-grid,
-        .local-board-container.won-O .local-grid,
-        .local-board-container.won-DRAW .local-grid { opacity: 0.5; }
-        .local-board-container.won-X .cell, .local-board-container.won-O .cell, .local-board-container.won-DRAW .cell {
-            cursor: not-allowed !important; background-color: transparent !important;
-        }
+.button-row {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: var(--spacing);
+    flex-wrap: wrap;
+}
 
-        .game-controls-ingame { margin-top: 1.5rem; display: flex; gap: 0.75rem; justify-content: center; }
-        .stats-area { text-align: center; }
-        .stats-area p { margin: 0.2rem 0; font-size: 0.9em; color: var(--text-secondary); }
-        .stats-area strong { color: var(--text-primary); font-weight: 600; }
-        .hidden { display: none !important; }
+.button {
+    padding: 0.6rem 1.2rem;
+    border-radius: var(--radius-md);
+    border: none;
+    cursor: pointer;
+    font-weight: var(--font-weight-medium);
+    font-size: var(--font-size-sm);
+    transition: background-color var(--transition-fast), transform 0.1s;
+    text-align: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--button-bg);
+    color: var(--button-text);
+}
 
-        .local-board-container.inactive-target {
-            opacity: 0.6; /* Dim boards that are not the current target */
-            /* You might want to visually differentiate more, e.g., a slightly different border */
-            /* border-color: var(--text-secondary) !important; */ /* Example */
-        }
+.button:hover {
+    background-color: var(--link-hover-color);
+}
 
-        .local-board-container.inactive-target .cell.playable {
-            /* This should ideally not happen - if a board is inactive, its cells shouldn't be playable.
-               But as a safeguard for styling if .playable somehow gets added. */
-            cursor: not-allowed;
-            background-color: var(--disabled-cell-bg) !important; /* From your theme */
-        }
-        .local-board-container.inactive-target .cell:not(.player-X):not(.player-O):hover {
-            background-color: var(--cell-bg); /* Prevent hover effect on inactive boards' empty cells */
-        }
+.button:active {
+    transform: translateY(1px);
+}
 
-        .modal-overlay {
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background-color: rgba(0,0,0,0.6); display: flex;
-            align-items: center; justify-content: center; z-index: 1050;
-        }
-        .modal-content {
-            background-color: var(--bg-card); padding: 1.5rem 2rem; border-radius: 0.5rem;
-            box-shadow: var(--shadow-color); max-width: 420px; width: 90%; text-align: center;
-            border: 1px solid var(--border-color);
-        }
-        .modal-title { font-size: 1.3em; color: var(--primary-color); margin-bottom: 1rem; font-weight: 600;}
-        .modal-message { margin-bottom: 1.5rem; font-size: 1em; color: var(--text-secondary); line-height: 1.5; }
-        .modal-buttons { display: flex; gap: 0.75rem; justify-content: flex-end; }
+.button.secondary {
+    background-color: var(--theme-secondary);
+    color: var(--theme-text-on-primary);
+}
 
-        @media (max-width: 600px) {
-            .app-header { flex-direction: column; gap: 0.75rem; }
-            .button-row { flex-direction: column; }
-            .button { width: 100%; }
-            .button:not(:last-child) { margin-bottom: 0.5rem; }
-        }
+.button.secondary:hover {
+    filter: brightness(0.9);
+}
 
-        .status-text {
-            font-size: 0.9em;
-            padding: 0.25rem 0.5rem;
-            border-radius: 0.25rem;
-            text-align: center;
-        }
-        .status-text.info { background-color: rgba(var(--info-colorRGB, 13,202,240), 0.15); color: var(--info-color); }
-        .status-text.warning { background-color: rgba(var(--warning-colorRGB, 255,193,7), 0.15); color: var(--warning-color); }
-        .status-text.error { background-color: rgba(var(--danger-colorRGB, 220,53,69), 0.15); color: var(--danger-color); }
-    </style>
+.button.danger {
+    background-color: var(--color-error);
+    color: var(--theme-text-on-primary);
+}
+
+.button.danger:hover {
+    filter: brightness(0.9);
+}
+
+.button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.status-bar {
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-medium);
+    text-align: center;
+    padding: 0.75rem var(--spacing);
+    border-radius: var(--radius-md);
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid transparent;
+    margin-bottom: var(--spacing);
+}
+
+.status-bar.info {
+    background-color: var(--color-info);
+    color: var(--theme-text-on-primary);
+    border-color: var(--color-info);
+    opacity: 0.9;
+}
+
+.status-bar.error {
+    background-color: var(--color-error);
+    color: var(--theme-text-on-primary);
+    border-color: var(--color-error);
+}
+
+.status-bar.success {
+    background-color: var(--color-success);
+    color: var(--theme-text-on-primary);
+    border-color: var(--color-success);
+}
+
+.game-board-area {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.global-grid-display {
+    display: grid;
+    border: 3px solid var(--theme-border);
+    background-color: var(--glass-bg);
+    box-shadow: var(--glass-shadow);
+    border-radius: var(--radius-lg);
+    padding: clamp(3px, 1vw, 5px);
+    gap: clamp(3px, 1vw, 5px);
+}
+
+.local-board-container {
+    border: 2px solid var(--theme-border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: box-shadow var(--transition-fast), border-color var(--transition-fast), background-color var(--transition-fast);
+    position: relative;
+}
+
+.local-board-container.forced-target {
+    box-shadow: var(--glass-shadow);
+    border-color: var(--theme-primary) !important;
+}
+
+.local-board-container.playable-anywhere {
+    border-color: var(--theme-secondary) !important;
+    opacity: 0.9;
+}
+
+.local-board-container.won-X {
+    background-color: rgba(13, 202, 240, 0.2);
+}
+
+.local-board-container.won-O {
+    background-color: rgba(239, 68, 68, 0.2);
+}
+
+.local-board-container.won-DRAW {
+    background-color: rgba(108, 117, 125, 0.2);
+}
+
+.local-board-container.preview-forced-for-x {
+    outline: 3px dashed var(--tb-color-info-500);
+    outline-offset: -3px;
+}
+
+.local-board-container.preview-forced-for-o {
+    outline: 3px dashed var(--tb-color-error-500);
+    outline-offset: -3px;
+}
+
+.local-board-container .winner-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: var(--font-weight-bold);
+    pointer-events: none;
+    opacity: 0;
+}
+
+.local-board-container.won-X .winner-overlay.player-X,
+.local-board-container.won-O .winner-overlay.player-O,
+.local-board-container.won-DRAW .winner-overlay.draw {
+    opacity: 1;
+}
+
+.winner-overlay.player-X {
+    color: var(--tb-color-info-500);
+}
+
+.winner-overlay.player-O {
+    color: var(--tb-color-error-500);
+}
+
+.winner-overlay.draw {
+    color: var(--theme-text-muted);
+}
+
+.local-grid {
+    display: grid;
+    width: 100%;
+    height: 100%;
+    gap: clamp(1px, 0.5vw, 2px);
+}
+
+.cell {
+    border: 1px solid var(--theme-border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: var(--font-weight-bold);
+    background-color: var(--input-bg);
+    transition: background-color 0.1s;
+    cursor: default;
+    aspect-ratio: 1/1;
+}
+
+.cell.playable {
+    cursor: pointer;
+}
+
+.cell.playable:hover {
+    background-color: var(--glass-bg);
+}
+
+.cell.player-X {
+    color: var(--tb-color-info-500);
+}
+
+.cell.player-O {
+    color: var(--tb-color-error-500);
+}
+
+.cell.last-move {
+    box-shadow: inset 0 0 0 2.5px gold;
+}
+
+.cell.last-move.player-X {
+    box-shadow: inset 0 0 0 2.5px gold, 0 0 0 0 var(--tb-color-info-500);
+}
+
+.cell.last-move.player-O {
+    box-shadow: inset 0 0 0 2.5px gold, 0 0 0 0 var(--tb-color-error-500);
+}
+
+.local-board-container.won-X .local-grid,
+.local-board-container.won-O .local-grid,
+.local-board-container.won-DRAW .local-grid {
+    opacity: 0.5;
+}
+
+.local-board-container.won-X .cell,
+.local-board-container.won-O .cell,
+.local-board-container.won-DRAW .cell {
+    cursor: not-allowed !important;
+    background-color: transparent !important;
+}
+
+.game-controls-ingame {
+    margin-top: 1.5rem;
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+}
+
+.stats-area {
+    text-align: center;
+}
+
+.stats-area p {
+    margin: 0.2rem 0;
+    font-size: var(--font-size-sm);
+    color: var(--theme-text-muted);
+}
+
+.stats-area strong {
+    color: var(--theme-text);
+    font-weight: var(--font-weight-semibold);
+}
+
+.hidden {
+    display: none !important;
+}
+
+.local-board-container.inactive-target {
+    opacity: 0.6;
+}
+
+.local-board-container.inactive-target .cell.playable {
+    cursor: not-allowed;
+    background-color: var(--theme-border) !important;
+}
+
+.local-board-container.inactive-target .cell:not(.player-X):not(.player-O):hover {
+    background-color: var(--input-bg);
+}
+
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: var(--z-modal);
+}
+
+.modal-content {
+    background-color: var(--glass-bg);
+    padding: 1.5rem 2rem;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--glass-shadow);
+    max-width: 420px;
+    width: 90%;
+    text-align: center;
+    border: 1px solid var(--glass-border);
+}
+
+.modal-title {
+    font-size: var(--font-size-xl);
+    color: var(--theme-primary);
+    margin-bottom: var(--spacing);
+    font-weight: var(--font-weight-semibold);
+}
+
+.modal-message {
+    margin-bottom: 1.5rem;
+    font-size: var(--font-size-base);
+    color: var(--theme-text-muted);
+    line-height: var(--line-height-normal);
+}
+
+.modal-buttons {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+}
+
+@media (max-width: 600px) {
+    .app-header {
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+    .button-row {
+        flex-direction: column;
+    }
+    .button {
+        width: 100%;
+    }
+    .button:not(:last-child) {
+        margin-bottom: 0.5rem;
+    }
+}
+
+.status-text {
+    font-size: var(--font-size-sm);
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius-sm);
+    text-align: center;
+}
+
+.status-text.info {
+    background-color: rgba(13, 202, 240, 0.15);
+    color: var(--color-info);
+}
+
+.status-text.warning {
+    background-color: rgba(234, 179, 8, 0.15);
+    color: var(--color-warning);
+}
+
+.status-text.error {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: var(--color-error);
+}
+</style>
 </head>
 <body>
     <header class="app-header">
@@ -2569,26 +2625,30 @@ html[data-theme="dark"] .current-player-indicator {
                 <label for="player1NameInput">Player 1 (X) Name:</label>
                 <input type="text" id="player1NameInput" class="form-input" value="Player X">
             </div>
-            <div class="form-group"> <!-- Player 2 Setup Group -->
-             <label for="player2TypeSelect">Player 2 (O):</label>
-             <select id="player2TypeSelect" class="form-select">
-                 <option value="human" selected>Human</option>
-                 <option value="npc">NPC (Computer)</option>
-             </select>
-         </div>
-         <div id="localP2NameGroup" class="form-group"> <!-- Shows if P2 is Human -->
-             <label for="player2NameInput">Player 2 (O) Name:</label>
-             <input type="text" id="player2NameInput" class="form-input" value="Player O">
-         </div>
-         <div id="npcDifficultyGroup" class="form-group hidden"> <!-- Shows if P2 is NPC -->
-             <label for="npcDifficultySelect">NPC Difficulty:</label>
-             <select id="npcDifficultySelect" class="form-select">
-                 <option value="easy" selected>Easy</option>
-                 <option value="medium">Medium</option>
-                 <option value="hard">Hard</option>
-                 <!-- <option value="insane">Insane</option> -->
-             </select>
-         </div>
+
+            <!-- Player 2 Setup: Default to NPC. Hidden for Online Game creation. -->
+            <div id="player2LocalOptions"> <!-- Wrapper for P2 local options -->
+                <div class="form-group">
+                    <label for="player2TypeSelect">Player 2 (O) - Local Game:</label>
+                    <select id="player2TypeSelect" class="form-select">
+                        <option value="npc" selected>NPC (Computer)</option>
+                        <option value="human">Human</option>
+                    </select>
+                </div>
+                <div id="localP2NameGroup" class="form-group hidden"> <!-- Hidden by default as NPC is default -->
+                    <label for="player2NameInput">Player 2 (O) Name:</label>
+                    <input type="text" id="player2NameInput" class="form-input" value="Player O">
+                </div>
+                <div id="npcDifficultyGroup" class="form-group"> <!-- Shown by default as NPC is default -->
+                    <label for="npcDifficultySelect">NPC Difficulty:</label>
+                    <select id="npcDifficultySelect" class="form-select">
+                        <option value="easy" selected>Easy</option>
+                        <option value="medium">Medium</option>
+                        <option value="hard">Hard</option>
+                        <!-- <option value="insane">Insane</option> -->
+                    </select>
+                </div>
+            </div>
 
             <div class="button-row">
                 <button id="startLocalGameBtn" class="button">Play Local Game</button>
@@ -2596,9 +2656,9 @@ html[data-theme="dark"] .current-player-indicator {
                 <button id="startOnlineGameBtn" class="button secondary">Create Online Game</button>
             </div>
             <div class="form-group" style="margin-top: 1.5rem;">
-                <label for="joinGameIdInput">Join Online Game by ID:</label>
+                <label for="joinGameIdInput">Join Online Game by ID or Link:</label>
                 <div style="display: flex; gap: 0.5rem;">
-                    <input type="text" id="joinGameIdInput" class="form-input" placeholder="Enter Game ID">
+                    <input type="text" id="joinGameIdInput" class="form-input" placeholder="Enter Game ID or Full Link">
                     <button id="joinOnlineGameBtn" class="button secondary">Join</button>
                 </div>
             </div>
@@ -2606,8 +2666,8 @@ html[data-theme="dark"] .current-player-indicator {
 
         <section id="onlineWaitSection" class="section-card hidden">
             <h2>Online Game Lobby</h2>
-            <p>Share this Game ID with your opponent:</p>
-            <div id="gameIdShare" class="form-input" style="font-weight: bold; text-align: center; margin: 0.75rem 0; cursor: pointer; background-color: var(--cell-hover);" title="Click to copy Game ID">GAME_ID_HERE</div>
+            <p>Share this Link or Game ID with your opponent:</p>
+            <div id="gameIdShare" class="form-input" style="font-weight: bold; text-align: center; margin: 0.75rem 0; cursor: pointer; background-color: var(--cell-hover); word-break: break-all;" title="Click to copy Game Link/ID">GAME_ID_OR_LINK_HERE</div>
             <p id="waitingStatus" style="margin-top: 0.5rem; font-style: italic;">Waiting for opponent to join...</p>
             <div class="button-row" style="margin-top: 1.5rem;">
                  <button id="cancelOnlineWaitBtn" class="button danger">Cancel Game</button>
@@ -2706,7 +2766,8 @@ html[data-theme="dark"] .current-player-indicator {
         let currentPlayerIndicatorContainer, currentPlayerIndicator
         let modalConfirmCallback = null;
 
-        let player2TypeSelect, npcDifficultyGroup, npcDifficultySelect;
+        let player2TypeSelect, npcDifficultyGroup, npcDifficultySelect, player2LocalOptionsDiv;
+
 
         let resumeLocalGameBtn, resumeGridSizeTextEl;
         let saveAndLeaveBtn;
@@ -2720,8 +2781,6 @@ html[data-theme="dark"] .current-player-indicator {
         let sseConnection = null;
         let currentSseGameIdPath = null
         let localPlayerActiveSymbol = 'X';
-        // let onlineGamePollInterval = null;
-        // const POLLING_RATE_MS = 2500; // Increased polling rate slightly
         const API_MODULE_NAME = "UltimateTTT";
 
         const LOCAL_P1_ID = "p1_local_utt";
@@ -2732,18 +2791,20 @@ html[data-theme="dark"] .current-player-indicator {
             gameSetupSection = document.getElementById('gameSetupSection');
             statsSection = document.getElementById('statsSection');
             onlineWaitSection = document.getElementById('onlineWaitSection');
-            gameArea = document.getElementById('gameSection'); // Corrected ID
+            gameArea = document.getElementById('gameSection');
             statusBar = document.getElementById('statusBar');
             globalGridDisplay = document.getElementById('globalGridDisplay');
 
             gridSizeSelect = document.getElementById('gridSizeSelect');
             player1NameInput = document.getElementById('player1NameInput');
             player2NameInput = document.getElementById('player2NameInput');
-            localP2NameGroup = document.getElementById('localP2NameGroup');
 
+            player2LocalOptionsDiv = document.getElementById('player2LocalOptions');
             player2TypeSelect = document.getElementById('player2TypeSelect');
+            localP2NameGroup = document.getElementById('localP2NameGroup');
             npcDifficultyGroup = document.getElementById('npcDifficultyGroup');
             npcDifficultySelect = document.getElementById('npcDifficultySelect');
+
 
             startLocalGameBtn = document.getElementById('startLocalGameBtn');
             startOnlineGameBtn = document.getElementById('startOnlineGameBtn');
@@ -2780,14 +2841,13 @@ html[data-theme="dark"] .current-player-indicator {
             initializeTheme();
             determineSessionId();
             loadSessionStats();
-            checkUrlForJoin();
+            checkUrlForJoin(); // Detects ?join=GAMEID
             updateResumeButtonVisibility();
-            showScreen('gameSetup');
+            showScreen('gameSetup'); // This will also call togglePlayer2Setup for initial state
         }
 
        function connectToGameStream(gameId) {
              let ssePath = `/sse/${API_MODULE_NAME}/open_game_stream?game_id=${gameId}`;
-             // Pass client's player ID if known, so server can identify who disconnected if stream cancels
              if (clientPlayerInfo && clientPlayerInfo.id) {
                  ssePath += `&player_id=${clientPlayerInfo.id}`;
              }
@@ -2803,26 +2863,22 @@ html[data-theme="dark"] .current-player-indicator {
                  return;
              }
 
-             currentSseGameIdPath = ssePath; // Store the full path including player_id
+             currentSseGameIdPath = ssePath;
              console.log(`SSE: Attempting to connect to ${currentSseGameIdPath}`);
 
              sseConnection = TB.sse.connect(currentSseGameIdPath, {
                  onOpen: (event) => {
                      console.log(`SSE: Connection opened to ${currentSseGameIdPath}`, event);
-                     // if(window.TB?.ui?.Toast) TB.ui.Toast.showSuccess("Live game connection active!", {duration: 1500});
                  },
                  onError: (error) => {
                      console.error(`SSE: Connection error with ${currentSseGameIdPath}`, error);
                      if(window.TB?.ui?.Toast) TB.ui.Toast.showError("Live connection failed. Refresh may be needed.", {duration: 3000});
-                     // sseConnection = null; // TB.sse.connect might handle this, or we ensure it in disconnect
-                     // currentSseGameIdPath = null;
-                     // Consider more robust error handling, e.g., navigating to setup or auto-retry
                  },
                  listeners: {
                      'game_update': (eventPayload, event) => {
                          console.log('SSE Event (game_update):', eventPayload);
                          if (eventPayload && eventPayload.game_id) {
-                             if (currentGameId === eventPayload.game_id || !currentGameId) { // Process if current game or if no game was set yet
+                             if (currentGameId === eventPayload.game_id || !currentGameId) {
                                  processGameStateUpdate(eventPayload);
                              } else {
                                  console.warn("SSE: Received game_update for a different game_id. Current:", currentGameId, "Received:", eventPayload.game_id);
@@ -2846,10 +2902,8 @@ html[data-theme="dark"] .current-player-indicator {
                      },
                      'stream_end': (eventPayload, event) => {
                           console.log('SSE Event (stream_end): Server closed stream for', gameId, "player:", clientPlayerInfo ? clientPlayerInfo.id : "N/A", eventPayload);
-                          // Server explicitly closed (e.g. game finished/aborted).
-                          // Client-side sseConnection might be cleared by TB.sse or here.
-                          if (sseConnection && currentSseGameIdPath === ssePath) { // Check if it's still our active stream
-                              disconnectFromGameStream(); // Ensure client state is clean
+                          if (sseConnection && currentSseGameIdPath === ssePath) {
+                              disconnectFromGameStream();
                           }
                      }
                  }
@@ -2858,26 +2912,28 @@ html[data-theme="dark"] .current-player-indicator {
         function disconnectFromGameStream() {
             if (sseConnection && currentSseGameIdPath) {
                 console.log(`SSE: Disconnecting from ${currentSseGameIdPath}`);
-                TB.sse.disconnect(currentSseGameIdPath); // Use Toolbox's method to close the connection
+                TB.sse.disconnect(currentSseGameIdPath);
                 sseConnection = null;
                 currentSseGameIdPath = null;
-                // if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("Live connection closed.", {duration: 1000}); // Optional: can be noisy
             }
         }
 
         function setupEventListeners() {
             startLocalGameBtn.addEventListener('click', () => createNewGame('local', false));
-            startOnlineGameBtn.addEventListener('click', () => createNewGame('online'));
+            startOnlineGameBtn.addEventListener('click', () => {
+                if(player2LocalOptionsDiv) player2LocalOptionsDiv.classList.add('hidden'); // Hide P2 local options for online game
+                createNewGame('online');
+            });
 
-            resumeLocalGameBtn.addEventListener('click', () => createNewGame('local', true)); // true = fortsetzen
+
+            resumeLocalGameBtn.addEventListener('click', () => createNewGame('local', true));
             saveAndLeaveBtn.addEventListener('click', saveLocalGameAndLeave);
             gridSizeSelect.addEventListener('change', updateResumeButtonVisibility);
 
             joinOnlineGameBtn.addEventListener('click', joinOnlineGame);
             gameIdShareEl.addEventListener('click', copyGameIdToClipboard);
             cancelOnlineWaitBtn.addEventListener('click', () => {
-                // TODO: API call to abort game if P1 created it and cancels
-                showScreen('gameSetup');
+                showScreen('gameSetup'); // P1 cancelling their own game just returns to menu
             });
 
             player2TypeSelect.addEventListener('change', togglePlayer2Setup)
@@ -2900,17 +2956,14 @@ html[data-theme="dark"] .current-player-indicator {
             });
         }
 
-        // Event listener (already in your full JS, ensure it's correctly placed)
         function onBoardClickDelegation(event) {
-            const cell = event.target.closest('.cell.playable'); // Only react to clicks on playable cells
+            const cell = event.target.closest('.cell.playable');
             if (cell && currentGameState && currentGameState.status === 'in_progress') {
                 const gr = parseInt(cell.dataset.gr);
                 const gc = parseInt(cell.dataset.gc);
                 const lr = parseInt(cell.dataset.lr);
                 const lc = parseInt(cell.dataset.lc);
 
-                // Additional check: ensure the board containing this cell is indeed an active target
-                // This is a safeguard, as .playable should only be on cells in active boards.
                 const parentBoardContainer = cell.closest('.local-board-container');
                 if (parentBoardContainer &&
                     (parentBoardContainer.classList.contains('forced-target') || parentBoardContainer.classList.contains('playable-anywhere'))) {
@@ -2928,94 +2981,49 @@ html[data-theme="dark"] .current-player-indicator {
             const isNPC = player2TypeSelect.value === 'npc';
             localP2NameGroup.classList.toggle('hidden', isNPC);
             npcDifficultyGroup.classList.toggle('hidden', !isNPC);
-
-            // If switching to local, re-enable P2 name group if it was hidden by online mode logic
-            if (currentGameState && currentGameState.mode === 'local' && !isNPC) {
-                 localP2NameGroup.classList.remove('hidden');
-            }
         }
+
 
         function getLocalStorageKeyForSize(size) {
             return `${LOCAL_STORAGE_GAME_PREFIX}${size}x${size}`;
         }
-
         function saveLocalGame(gameState) {
-            if (!gameState || gameState.mode !== 'local' || gameState.status !== 'in_progress') {
-                console.warn("Cannot save game: Not a local game in progress.", gameState);
-                return false;
-            }
+            if (!gameState || gameState.mode !== 'local' || gameState.status !== 'in_progress') return false;
             try {
-                const key = getLocalStorageKeyForSize(gameState.config.grid_size);
-                // Pydantic model_dump_for_api gibt bereits ein serialisierbares Objekt zurück.
-                // Wir müssen sicherstellen, dass alle Datumsangaben Strings sind, was model_dump_for_api tun sollte.
-                localStorage.setItem(key, JSON.stringify(gameState));
-                console.log(`Local game ${key} saved.`, gameState);
+                localStorage.setItem(getLocalStorageKeyForSize(gameState.config.grid_size), JSON.stringify(gameState));
                 if(window.TB?.ui?.Toast) TB.ui.Toast.showSuccess("Game saved locally!", {duration: 1500});
                 return true;
-            } catch (e) {
-                console.error("Error saving local game to localStorage:", e);
-                if(window.TB?.ui?.Toast) TB.ui.Toast.showError("Could not save game locally.", {duration: 2000});
-                return false;
-            }
+            } catch (e) { console.error("Error saving local game:", e); return false; }
         }
-
         function loadLocalGame(size) {
             try {
-                const key = getLocalStorageKeyForSize(size);
-                const savedGameJSON = localStorage.getItem(key);
+                const savedGameJSON = localStorage.getItem(getLocalStorageKeyForSize(size));
                 if (savedGameJSON) {
                     const savedGameState = JSON.parse(savedGameJSON);
-                    console.log(`Local game ${key} loaded.`, savedGameState);
-                    // Wichtig: Hier könnten wir eine Validierung mit Pydantic-ähnlicher Struktur durchführen,
-                    // aber für localStorage ist eine einfache Prüfung oft ausreichend, oder man vertraut den Daten.
-                    // Sicherstellen, dass es ein valides GameState-Objekt ist (zumindest rudimentär).
                     if (savedGameState && savedGameState.game_id && savedGameState.config && savedGameState.mode === 'local') {
-                        // Datumsfelder könnten als Strings gespeichert sein, Pydantic im Backend behandelt das beim Laden aus DB.
-                        // Hier brauchen wir das nicht unbedingt, da JS damit umgehen kann, es sei denn, wir machen Berechnungen damit.
                         return savedGameState;
                     }
                 }
-            } catch (e) {
-                console.error("Error loading local game from localStorage:", e);
-            }
+            } catch (e) { console.error("Error loading local game:", e); }
             return null;
         }
-
         function deleteLocalGame(size) {
-            try {
-                const key = getLocalStorageKeyForSize(size);
-                localStorage.removeItem(key);
-                console.log(`Local game ${key} deleted.`);
-                updateResumeButtonVisibility(); // Aktualisiere Button-Sichtbarkeit
-            } catch (e) {
-                console.error("Error deleting local game from localStorage:", e);
-            }
+            try { localStorage.removeItem(getLocalStorageKeyForSize(size)); updateResumeButtonVisibility(); }
+            catch (e) { console.error("Error deleting local game:", e); }
         }
-
         function updateResumeButtonVisibility() {
             if (!gridSizeSelect || !resumeLocalGameBtn || !resumeGridSizeTextEl) return;
-
             const selectedSize = parseInt(gridSizeSelect.value);
             const savedGame = loadLocalGame(selectedSize);
-
-            if (savedGame && savedGame.status === 'in_progress') { // Nur fortsetzen, wenn es noch läuft
-                resumeGridSizeTextEl.textContent = `${selectedSize}x${selectedSize}`;
-                resumeLocalGameBtn.classList.remove('hidden');
-            } else {
-                resumeLocalGameBtn.classList.add('hidden');
-            }
+            resumeLocalGameBtn.classList.toggle('hidden', !(savedGame && savedGame.status === 'in_progress'));
+            if (savedGame && savedGame.status === 'in_progress') resumeGridSizeTextEl.textContent = `${selectedSize}x${selectedSize}`;
         }
-
         function saveLocalGameAndLeave() {
             if (currentGameState && currentGameState.mode === 'local' && currentGameState.status === 'in_progress') {
-                if (saveLocalGame(currentGameState)) {
-                    showScreen('gameSetup');
-                    // currentGameState und currentGameId werden in showScreen('gameSetup') zurückgesetzt
-                }
-            } else {
-                 if(window.TB?.ui?.Toast) TB.ui.Toast.showWarning("No active local game to save.", {duration: 2000});
-            }
+                if (saveLocalGame(currentGameState)) showScreen('gameSetup');
+            } else if(window.TB?.ui?.Toast) TB.ui.Toast.showWarning("No active local game to save.", {duration: 2000});
         }
+
 
         function determineSessionId() {
             if (window.TB?.user?.getUid && typeof window.TB.user.getUid === 'function') {
@@ -3032,107 +3040,64 @@ html[data-theme="dark"] .current-player-indicator {
             if(statsSessionIdEl) statsSessionIdEl.textContent = currentSessionId.substring(0, 12) + "...";
             console.log("Session ID for stats/online:", currentSessionId);
         }
-
-                function getPlayerInfoById(playerId) {
+        function getPlayerInfoById(playerId) {
             if (!currentGameState || !currentGameState.players) return null;
             return currentGameState.players.find(p => p.id === playerId);
         }
-
         function getOpponentInfo(playerId) {
             if (!currentGameState || !currentGameState.players) return null;
             return currentGameState.players.find(p => p.id !== playerId);
         }
 
-
-        function handleCellMouseOver(event) {
+        function handleCellMouseOver(event) { /* No change from original, keep as is */
             if (!currentGameState || currentGameState.status !== 'in_progress') return;
-
             const cell = event.target.closest('.cell');
-            if (!cell || !cell.classList.contains('playable')) return; // Nur auf spielbaren Zellen reagieren
-
-            // Ist der aktuelle Spieler am Zug?
-            let isMyTurn;
-            if (currentGameState.mode === 'local') {
-                isMyTurn = true; // Im lokalen Modus kann man immer für den aktuellen Spieler hovern
-            } else {
-                isMyTurn = clientPlayerInfo && currentGameState.current_player_id === clientPlayerInfo.id;
-            }
+            if (!cell || !cell.classList.contains('playable')) return;
+            let isMyTurn = (currentGameState.mode === 'local') || (clientPlayerInfo && currentGameState.current_player_id === clientPlayerInfo.id);
             if (!isMyTurn) return;
 
-
             const N = currentGameState.config.grid_size;
-            const hovered_lr = parseInt(cell.dataset.lr);
-            const hovered_lc = parseInt(cell.dataset.lc);
+            const hovered_lr = parseInt(cell.dataset.lr), hovered_lc = parseInt(cell.dataset.lc);
+            const target_gr = hovered_lr, target_gc = hovered_lc;
 
-            // Zielkoordinaten für das nächste Board
-            const target_gr = hovered_lr;
-            const target_gc = hovered_lc;
-
-            // Prüfen, ob das Ziel-Board überhaupt existiert (sollte es, wenn N korrekt ist)
-            if (target_gr < 0 || target_gr >= N || target_gc < 0 || target_gc >= N) {
-                console.warn("Preview: Target global coords out of bounds", target_gr, target_gc);
-                return;
-            }
-
-            const currentPlayer = getPlayerInfoById(currentGameState.current_player_id);
-            if (!currentPlayer) return;
+            if (target_gr < 0 || target_gr >= N || target_gc < 0 || target_gc >= N) return;
 
             const opponent = getOpponentInfo(currentGameState.current_player_id);
-            if (!opponent) return; // Sollte im 2-Spieler-Modus nicht passieren
+            if (!opponent) return;
 
-            // Finde das DOM-Element des Ziel-Global-Boards
-            const targetBoardElement = globalGridDisplay.querySelector(
-                `.local-board-container[data-gr="${target_gr}"][data-gc="${target_gc}"]`
-            );
-
+            const targetBoardElement = globalGridDisplay.querySelector(`.local-board-container[data-gr="${target_gr}"][data-gc="${target_gc}"]`);
             if (targetBoardElement) {
-                // Ist das Ziel-Board bereits gewonnen oder voll?
                 const isTargetBoardWon = currentGameState.global_board_winners[target_gr][target_gc] !== 'NONE';
-
                 let isTargetBoardFull = false;
-                if (!isTargetBoardWon) {
-                    const targetLocalCells = currentGameState.local_boards_state[target_gr][target_gc];
-                    isTargetBoardFull = targetLocalCells.every(row => row.every(cellState => cellState !== '.'));
-                }
+                if (!isTargetBoardWon) isTargetBoardFull = currentGameState.local_boards_state[target_gr][target_gc].every(r => r.every(cs => cs !== '.'));
 
-                if (isTargetBoardWon || isTargetBoardFull) {
-                    // "Play Anywhere"-Szenario: Alle *noch nicht gewonnenen und nicht vollen* Boards hervorheben
-                    // oder keine spezifische Vorschau anzeigen. Fürs Erste keine spezifische Vorschau,
-                    // da die "playable-anywhere"-Klasse bereits alle gültigen Boards markiert.
-                    // Man könnte hier eine subtile generische Vorschau für alle "playable-anywhere" Boards hinzufügen.
-                    // console.log("Preview: Target board won/full, would be 'play anywhere'");
-                } else {
-                    // Das spezifische Board wird das Ziel sein
-                    const previewClass = opponent.symbol === 'X' ? 'preview-forced-for-x' : 'preview-forced-for-o';
-                    targetBoardElement.classList.add(previewClass);
+                if (!isTargetBoardWon && !isTargetBoardFull) {
+                    targetBoardElement.classList.add(opponent.symbol === 'X' ? 'preview-forced-for-x' : 'preview-forced-for-o');
                 }
             }
         }
-
-        function handleCellMouseOut(event) {
-            if (!currentGameState) return; // Sicherstellen, dass ein Spielstatus existiert
-
-            const cell = event.target.closest('.cell');
-            // Auch wenn wir von einer Zelle zu einer anderen im selben Board wechseln,
-            // ist es am einfachsten, alle Vorschauen zu entfernen und sie bei Bedarf neu zu erstellen.
-            if (cell) { // Nur wenn der Mauszeiger eine Zelle verlässt
-                const allBoardContainers = globalGridDisplay.querySelectorAll('.local-board-container');
-                allBoardContainers.forEach(board => {
-                    board.classList.remove('preview-forced-for-x', 'preview-forced-for-o');
-                });
-            }
+        function handleCellMouseOut(event) { /* No change from original, keep as is */
+             if (!currentGameState) return;
+             const cell = event.target.closest('.cell');
+             if (cell) {
+                 const allBoardContainers = globalGridDisplay.querySelectorAll('.local-board-container');
+                 allBoardContainers.forEach(board => board.classList.remove('preview-forced-for-x', 'preview-forced-for-o'));
+             }
         }
 
         function checkUrlForJoin() {
             const urlParams = new URLSearchParams(window.location.search);
-            const gameIdToJoin = urlParams.get('join_game_id');
-            if (gameIdToJoin) {
-                joinGameIdInput.value = gameIdToJoin;
-                if (window.TB?.ui?.Toast) TB.ui.Toast.showInfo(`Attempting to join game ${gameIdToJoin}...`, { duration: 2000 });
-                joinOnlineGame();
-                window.history.replaceState({}, document.title, window.location.pathname);
+            const gameIdToJoinFromLink = urlParams.get('join'); // Changed from 'join_game_id'
+
+            if (gameIdToJoinFromLink) {
+                joinGameIdInput.value = gameIdToJoinFromLink; // Put ID in input for transparency
+                if (window.TB?.ui?.Toast) TB.ui.Toast.showInfo(`Attempting to join game ${gameIdToJoinFromLink} from link...`, { duration: 2500 });
+                joinOnlineGame(); // This function will use joinGameIdInput.value
+                // Clean the URL query parameters
+                window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
             }
         }
+
 
         function showScreen(screenName) {
             console.log("Showing screen:", screenName);
@@ -3140,17 +3105,16 @@ html[data-theme="dark"] .current-player-indicator {
                 document.getElementById(name + 'Section')?.classList.add('hidden');
             });
             const targetScreen = document.getElementById(screenName + 'Section');
-            if (targetScreen) {
-                targetScreen.classList.remove('hidden');
-            }
+            if (targetScreen) targetScreen.classList.remove('hidden');
 
             if(saveAndLeaveBtn) saveAndLeaveBtn.classList.add('hidden');
+            // Show/hide P2 local options div based on screen
+            if(player2LocalOptionsDiv) player2LocalOptionsDiv.classList.toggle('hidden', screenName !== 'gameSetup');
+
 
             if (screenName === 'gameSetup') {
                 if(statsSection) statsSection.classList.remove('hidden');
-                // Call togglePlayer2Setup to ensure correct P2 input fields are shown based on select value
-                if(player2TypeSelect) togglePlayer2Setup(); // Important for resetting view
-
+                togglePlayer2Setup(); // Ensure P2 local options are correctly shown/hidden based on select
                 disconnectFromGameStream();
                 currentGameId = null; currentGameState = null; clientPlayerInfo = null;
                 if(currentPlayerIndicatorContainer) currentPlayerIndicatorContainer.classList.add('hidden');
@@ -3165,63 +3129,51 @@ html[data-theme="dark"] .current-player-indicator {
                 } else if (screenName === 'onlineWait') {
                     if(currentPlayerIndicatorContainer) currentPlayerIndicatorContainer.classList.remove('hidden');
                 }
-                if (screenName === 'onlineWait' && localP2NameGroup) {
-                    localP2NameGroup.classList.add('hidden');
-                }
             }
         }
 
-        function initializeTheme() { /* Same as previous */
+
+        function initializeTheme() {
             const savedTheme = localStorage.getItem('uttt_theme') ||
                                (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
             document.documentElement.setAttribute('data-theme', savedTheme);
             updateThemeButtonText(savedTheme);
         }
-        function toggleTheme() { /* Same as previous */
+        function toggleTheme() {
             const currentTheme = document.documentElement.getAttribute('data-theme');
             const newTheme = currentTheme === 'light' ? 'dark' : 'light';
             document.documentElement.setAttribute('data-theme', newTheme);
             localStorage.setItem('uttt_theme', newTheme);
             updateThemeButtonText(newTheme);
         }
-        function updateThemeButtonText(theme) { /* Same as previous */
+        function updateThemeButtonText(theme) {
              themeToggleBtn.textContent = theme === 'light' ? '🌙 Dark Mode' : '☀️ Light Mode';
         }
 
         async function apiRequest(endpoint, payload = null, method = 'GET', queryParams = {}) {
-            let url = `/api/${API_MODULE_NAME}/${endpoint}`; // Ensure module name is correct
-            if (method === 'GET' && payload) { // For GET, payload becomes queryParams
-                 queryParams = {...queryParams, ...payload};
-                 payload = null;
-            }
-
+            let url = `/api/${API_MODULE_NAME}/${endpoint}`;
+            if (method === 'GET' && payload) { queryParams = {...queryParams, ...payload}; payload = null; }
             if ((endpoint.startsWith('get_game_state') || endpoint.startsWith('make_move')) && queryParams.game_id) {
-                 url = `/api/${API_MODULE_NAME}/${endpoint.split('/')[0]}?game_id=${queryParams.game_id}`; // Construct path
-                 delete queryParams.game_id; // Remove from general query if used in path
+                 url = `/api/${API_MODULE_NAME}/${endpoint.split('/')[0]}?game_id=${queryParams.game_id}`;
+                 delete queryParams.game_id;
             }
-
 
             if (!window.TB?.api?.request) {
-                console.error("TB.api.request not available.");
                 showModal("API Error", "Framework error: Cannot communicate with server.", null, "OK", "");
                 return { error: true, message: "API_UNAVAILABLE" };
             }
             if(window.TB?.ui?.Loader) TB.ui.Loader.show({text: "Processing...", hideMainContent:false, playAnimation: "Y2+41:R2+61", fullscreen:false});
             try {
-                // Toolbox `request` function: moduleName, toolName, data, method, options ({queryParams})
                 const response = await window.TB.api.request(API_MODULE_NAME, endpoint, payload, method, {queryParams});
                 if(window.TB?.ui?.Loader) TB.ui.Loader.hide();
-
                 if (response.error !== window.TB.ToolBoxError.none) {
                     const errorMsg = response.info?.help_text || response.data?.message || `API Error (${response.error})`;
-                    console.error(`API Error [${endpoint}]:`, errorMsg, response);
                     if(window.TB?.ui?.Toast) TB.ui.Toast.showError(errorMsg.substring(0,150), {duration: 4000});
-                    return { error: true, message: errorMsg, data: response.get() }; // response.get() might be null or error object
+                    return { error: true, message: errorMsg, data: response.get() };
                 }
                 return { error: false, data: response.get() };
             } catch (err) {
                 if(window.TB?.ui?.Loader) TB.ui.Loader.hide();
-                console.error(`Network/JS Error [${endpoint}]:`, err);
                 if(window.TB?.ui?.Toast) TB.ui.Toast.showError("Network or application error.", {duration: 4000});
                 return { error: true, message: "NETWORK_ERROR" };
             }
@@ -3233,14 +3185,11 @@ html[data-theme="dark"] .current-player-indicator {
             if (mode === 'local' && resumeIfAvailable) {
                 const existingGame = loadLocalGame(size);
                 if (existingGame && existingGame.status === 'in_progress') {
-                    console.log("Resuming local game:", existingGame);
                     clientPlayerInfo = null;
                     processGameStateUpdate(existingGame);
                     showScreen('game');
                     if(saveAndLeaveBtn) saveAndLeaveBtn.classList.remove('hidden');
                     return;
-                } else {
-                    console.log("No local game to resume for size", size, "or game was finished. Starting new one.");
                 }
             }
 
@@ -3249,335 +3198,257 @@ html[data-theme="dark"] .current-player-indicator {
             const payload = { config, mode, player1_name: p1Name };
 
             if (mode === 'local') {
-                deleteLocalGame(size); // Clear any old saved game of this size before starting new
-                payload.player2_type = player2TypeSelect.value;
+                deleteLocalGame(size);
+                payload.player2_type = player2TypeSelect.value; // Default is 'npc' in HTML and API if not sent
                 if (payload.player2_type === 'npc') {
                     payload.npc_difficulty = npcDifficultySelect.value;
-                    // Player 2 name for NPC is set server-side
-                } else { // Human P2
+                } else {
                     payload.player2_name = player2NameInput.value.trim() || "Player O";
                 }
             }
-
-            // For local games, ensure player2 specific inputs are correctly shown/hidden before showing screen
-            if(mode === 'local') togglePlayer2Setup();
-
+            // P2 local options div (player2LocalOptionsDiv) will be shown/hidden by showScreen('gameSetup')
 
             const response = await apiRequest('create_game', payload, 'POST', {hideMainContentWhileLoading: true});
-
             if (!response.error && response.data?.game_id) {
                 if (mode === 'local') {
-                    clientPlayerInfo = null; // No specific client info for local, turns are just X/O
+                    clientPlayerInfo = null;
                     processGameStateUpdate(response.data);
                     showScreen('game');
                     if(saveAndLeaveBtn) saveAndLeaveBtn.classList.remove('hidden');
                     updateResumeButtonVisibility();
                 } else if (mode === 'online') {
                     clientPlayerInfo = response.data.players.find(p => p.id === currentSessionId);
-                    if (!clientPlayerInfo && response.data.players.length > 0) {
-                        clientPlayerInfo = response.data.players[0];
-                        console.warn("Online game created: Forcing clientPlayerInfo to P1.", currentSessionId, clientPlayerInfo.id);
+                    if (!clientPlayerInfo && response.data.players.length > 0) clientPlayerInfo = response.data.players[0];
+                    console.log(response.data.join_url)
+                    if (response.data.join_url) {
+                    navigator.clipboard.writeText(response.data.join_url).then(() => {
+                           TB.ui.Toast.showInfo('link copied to clipboard');
+                          }).catch(err => {
+                            console.error('Error copying text: ', err);
+                          });
+                        gameIdShareEl.textContent = response.data.join_url;
+                        gameIdShareEl.title = "Click to copy Join Link";
+                        //clientPlayerInfo = response.data.join_url;
+                    } else {
+                        gameIdShareEl.textContent = response.data.game_id;
+                        gameIdShareEl.title = "Click to copy Game ID";
+                        //clientPlayerInfo = response.data.game_id;
                     }
-                    gameIdShareEl.textContent = response.data.game_id;
-                    waitingStatusEl.textContent = `Waiting for opponent... Game ID: ${response.data.game_id}`;
+                    waitingStatusEl.textContent = `Waiting for opponent...`;
                     showScreen('onlineWait');
-                    processGameStateUpdate(response.data); // This will call connectToGameStream for P1
+                    processGameStateUpdate(response.data);
                 }
             }
         }
 
 
-
         async function joinOnlineGame() {
-            const gameIdToJoin = joinGameIdInput.value.trim();
+            let gameIdToJoin = joinGameIdInput.value.trim();
             const playerName = player1NameInput.value.trim() || "Challenger";
+
+            // Check if full URL is pasted, extract game ID if so
+            try {
+                const url = new URL(gameIdToJoin);
+                if (url.searchParams.has('join')) {
+                    gameIdToJoin = url.searchParams.get('join');
+                    joinGameIdInput.value = gameIdToJoin; // Update input to show just the ID
+                }
+            } catch (e) { /* Not a valid URL, assume it's an ID */ }
+
+
             if (!gameIdToJoin) {
-                if(window.TB?.ui?.Toast) TB.ui.Toast.showError("Please enter a Game ID."); return;
+                if(window.TB?.ui?.Toast) TB.ui.Toast.showError("Please enter a Game ID or Link."); return;
             }
 
             const response = await apiRequest('join_game', { game_id: gameIdToJoin, player_name: playerName }, 'POST', {hideMainContentWhileLoading: true});
 
             if (!response.error && response.data?.game_id) {
-             // CRITICAL: Set clientPlayerInfo based on the response from the server and current session ID.
-             // currentSessionId should be established by determineSessionId() and be consistent.
-             clientPlayerInfo = response.data.players.find(p => p.id === currentSessionId);
-
-             if (!clientPlayerInfo) {
-                 // This is a fallback - ideally currentSessionId matches an ID in the game.
-                 // This could happen if the server assigned a guest_id and the client's currentSessionId is
-                 // a newly generated one that doesn't match.
-                 // For a join, the player joining should be the last one added or the one whose symbol is 'O' if P1 is 'X'.
-                 if (response.data.players.length === 2) {
-                      const playerX = response.data.players.find(p => p.symbol === 'X');
-                      const playerO = response.data.players.find(p => p.symbol === 'O');
-                      // If I am joining, I am likely player O if player X exists and is not me.
-                      if (playerO && playerO.id.startsWith("guest_") && currentSessionId.startsWith("guest_")) {
-                         clientPlayerInfo = playerO; // Tentatively assume this guest is me
-                      } else if (playerX && playerX.id !== currentSessionId && playerO) {
-                         clientPlayerInfo = playerO;
-                      }
-                      // If currentSessionId IS one of the players, the initial find should work.
+                 clientPlayerInfo = response.data.players.find(p => p.id === currentSessionId);
+                 if (!clientPlayerInfo) {
+                     if (response.data.players.length === 2) {
+                          const playerO = response.data.players.find(p => p.symbol === 'O');
+                          if (playerO) clientPlayerInfo = playerO; // Best guess for P2 joining
+                     }
+                     console.warn("Online game joined: ClientPlayerInfo might not be perfectly matched.", clientPlayerInfo);
                  }
-                 console.warn("Online game joined: ClientPlayerInfo might not be perfectly matched. My session ID:", currentSessionId, "Inferred ClientInfo:", clientPlayerInfo, "Players in game:", response.data.players);
-             } else {
-                 console.log("Online game joined/rejoined: ClientPlayerInfo set to:", clientPlayerInfo);
-             }
+                 processGameStateUpdate(response.data);
 
-             processGameStateUpdate(response.data); // Handles UI, SSE connection logic, rendering
-
-             // Screen transition logic
-             if (response.data.status === 'in_progress' || (response.data.status === 'ABORTED' && response.data.player_who_paused)) {
-                  showScreen('game');
-             } else if (response.data.status === 'waiting_for_opponent'){
-                 gameIdShareEl.textContent = response.data.game_id; // For P1 rejoining their own waiting game
-                 waitingStatusEl.textContent = `Waiting for opponent... Game ID: ${response.data.game_id}`;
-                 showScreen('onlineWait');
-             } else { // Finished, or hard aborted
-                  if(window.TB?.ui?.Toast) TB.ui.Toast.showError(response.data.last_error_message || "Could not join game (unexpected status).");
-                  showScreen('gameSetup');
+                 if (response.data.status === 'in_progress' || (response.data.status === 'ABORTED' && response.data.player_who_paused)) {
+                      showScreen('game');
+                 } else if (response.data.status === 'waiting_for_opponent'){
+                     if (response.data.join_url) {
+                        gameIdShareEl.textContent = response.data.join_url;
+                        gameIdShareEl.title = "Click to copy Join Link";
+                    } else {
+                        gameIdShareEl.textContent = response.data.game_id;
+                        gameIdShareEl.title = "Click to copy Game ID";
+                    }
+                     waitingStatusEl.textContent = `Waiting for opponent...`;
+                     showScreen('onlineWait');
+                 } else {
+                      if(window.TB?.ui?.Toast) TB.ui.Toast.showError(response.data.last_error_message || "Could not join game.");
+                      showScreen('gameSetup');
+                 }
+             } else if (response.data?.message && window.TB?.ui?.Toast) { // API returned an error with a message
+                TB.ui.Toast.showError(response.data.message);
              }
-         }
         }
 
+
          function processGameStateUpdate(newGameState) {
-         console.log("PROCESS_GAME_STATE_UPDATE - Received:", newGameState);
+             console.log("PROCESS_GAME_STATE_UPDATE - Received:", newGameState);
+             let previousPlayerConnectedStates = {};
+             let oldGameStatus = null, oldCurrentPlayerId = null;
 
-         let previousPlayerConnectedStates = {};
-         let oldGameStatus = null;
-         let oldCurrentPlayerId = null;
+             if (currentGameState) {
+                 oldGameStatus = currentGameState.status;
+                 oldCurrentPlayerId = currentGameState.current_player_id;
+                 if (currentGameState.players && clientPlayerInfo) {
+                     currentGameState.players.forEach(p => {
+                         if (p.id !== clientPlayerInfo.id) previousPlayerConnectedStates[p.id] = p.is_connected;
+                     });
+                 }
+             }
+             currentGameState = newGameState;
+             if (!currentGameState || !currentGameState.game_id) {
+                 if(window.TB?.ui?.Toast) TB.ui.Toast.showError("Error: Corrupted game update.");
+                 disconnectFromGameStream(); showScreen('gameSetup'); return;
+             }
+             currentGameId = newGameState.game_id;
 
-         if (currentGameState) { // Capture state *before* overwriting
-             oldGameStatus = currentGameState.status;
-             oldCurrentPlayerId = currentGameState.current_player_id;
-             if (currentGameState.players && clientPlayerInfo) {
-                 currentGameState.players.forEach(p => {
-                     if (p.id !== clientPlayerInfo.id) { // Opponent
-                         previousPlayerConnectedStates[p.id] = p.is_connected;
+             if (currentGameState.mode === 'online' && (!clientPlayerInfo || !currentGameState.players.find(p => p.id === clientPlayerInfo.id))) {
+                  clientPlayerInfo = currentGameState.players.find(p => p.id === currentSessionId);
+             }
+
+             if (currentGameState.mode === 'online' && clientPlayerInfo && currentGameState.players) {
+                 currentGameState.players.forEach(opponent => {
+                     if (opponent.id !== clientPlayerInfo.id) {
+                         const wasConnected = previousPlayerConnectedStates[opponent.id];
+                         const isConnected = opponent.is_connected;
+                         if (wasConnected === true && isConnected === false && window.TB?.ui?.Toast) {
+                             TB.ui.Toast.showWarning(`${opponent.name} disconnected. Waiting...`, {duration: 3500});
+                         } else if (wasConnected === false && isConnected === true && previousPlayerConnectedStates.hasOwnProperty(opponent.id) && window.TB?.ui?.Toast) {
+                             TB.ui.Toast.showSuccess(`${opponent.name} reconnected! Game resumes.`, {duration: 3000});
+                         }
                      }
                  });
              }
-         }
 
-         currentGameState = newGameState; // Main state update
+            // Update gameIdShareEl in onlineWaitSection if it's active
+            const onlineWaitScreenActive = !document.getElementById('onlineWaitSection').classList.contains('hidden');
+            if (onlineWaitScreenActive && currentGameState.mode === 'online') {
+                if (newGameState.join_url) {
+                    gameIdShareEl.textContent = newGameState.join_url;
+                    gameIdShareEl.title = "Click to copy Join Link";
+                } else {
+                    gameIdShareEl.textContent = newGameState.game_id;
+                    gameIdShareEl.title = "Click to copy Game ID";
+                }
+            }
 
-         if (!currentGameState || !currentGameState.game_id) {
-             console.error("Invalid newGameState received!");
-             if(window.TB?.ui?.Toast) TB.ui.Toast.showError("Error: Corrupted game update.");
-             disconnectFromGameStream();
-             showScreen('gameSetup');
-             return;
-         }
-         currentGameId = newGameState.game_id; // Ensure currentGameId is also updated
 
-         // Re-confirm clientPlayerInfo, especially if game was joined and this is the first update
-         if (currentGameState.mode === 'online' && (!clientPlayerInfo || !currentGameState.players.find(p => p.id === clientPlayerInfo.id))) {
-              clientPlayerInfo = currentGameState.players.find(p => p.id === currentSessionId);
-              console.log("PROCESS_GAME_STATE_UPDATE (Online) - ClientPlayerInfo (re)validated:", clientPlayerInfo);
-         }
-
-         // --- Handle Toasts for Opponent Connect/Disconnect ---
-         if (currentGameState.mode === 'online' && clientPlayerInfo && currentGameState.players) {
-             currentGameState.players.forEach(opponent => {
-                 if (opponent.id !== clientPlayerInfo.id) {
-                     const wasConnected = previousPlayerConnectedStates[opponent.id]; // Could be undefined if first update
-                     const isConnected = opponent.is_connected;
-
-                     if (wasConnected === true && isConnected === false) {
-                         // Opponent just disconnected
-                         if (window.TB?.ui?.Toast) TB.ui.Toast.showWarning(`${opponent.name} disconnected. Waiting for reconnect...`, {duration: 3500});
-                     } else if (wasConnected === false && isConnected === true && previousPlayerConnectedStates.hasOwnProperty(opponent.id)) {
-                         // Opponent just reconnected
-                         if (window.TB?.ui?.Toast) TB.ui.Toast.showSuccess(`${opponent.name} reconnected! Game resumes.`, {duration: 3000});
-                     }
+             if (currentGameState.mode === 'local') {
+                 const currentPlayer = currentGameState.players.find(p => p.id === currentGameState.current_player_id);
+                 localPlayerActiveSymbol = currentPlayer ? currentPlayer.symbol : '?';
+                 disconnectFromGameStream();
+                 if (saveAndLeaveBtn) saveAndLeaveBtn.classList.toggle('hidden', currentGameState.status !== 'in_progress');
+             } else if (currentGameState.mode === 'online') {
+                 if (onlineWaitScreenActive && currentGameState.status === 'in_progress') {
+                     if(window.TB?.ui?.Toast) TB.ui.Toast.showSuccess("Opponent connected! Game starting.", {duration: 2000});
+                     showScreen('game');
                  }
-             });
-         }
-         // --- End Toasts ---
-
-         if (currentGameState.mode === 'local') {
-             const currentPlayer = currentGameState.players.find(p => p.id === currentGameState.current_player_id);
-             localPlayerActiveSymbol = currentPlayer ? currentPlayer.symbol : '?';
-             disconnectFromGameStream();
-             if (saveAndLeaveBtn) {
-                 saveAndLeaveBtn.classList.toggle('hidden', currentGameState.status !== 'in_progress');
-             }
-         } else if (currentGameState.mode === 'online') {
-             const onlineWaitScreenActive = !document.getElementById('onlineWaitSection').classList.contains('hidden');
-             if (onlineWaitScreenActive && currentGameState.status === 'in_progress') {
-                 if(window.TB?.ui?.Toast) TB.ui.Toast.showSuccess("Opponent connected! Game starting.", {duration: 2000});
-                 showScreen('game');
-             }
-
-             // Manage SSE connection
-             const isMyTurnOnline = clientPlayerInfo && currentGameState.current_player_id === clientPlayerInfo.id;
-
-             if (currentGameState.status === 'in_progress') {
-                 if (isMyTurnOnline) {
+                 const isMyTurnOnline = clientPlayerInfo && currentGameState.current_player_id === clientPlayerInfo.id;
+                 if (currentGameState.status === 'in_progress') {
+                     if (isMyTurnOnline) {
+                         disconnectFromGameStream();
+                         if (oldGameStatus === 'in_progress' && oldCurrentPlayerId !== currentGameState.current_player_id && window.TB?.ui?.Toast) TB.ui.Toast.showInfo("It's your turn!", {duration: 2000});
+                         else if (oldGameStatus === 'ABORTED' && currentGameState.status === 'in_progress' && window.TB?.ui?.Toast) TB.ui.Toast.showInfo("Game resumed. It's your turn!", {duration: 2000});
+                     } else connectToGameStream(currentGameState.game_id);
+                 } else if (currentGameState.status === 'waiting_for_opponent') {
+                     if (clientPlayerInfo && currentGameState.players.length > 0 && currentGameState.players[0].id === clientPlayerInfo.id) connectToGameStream(currentGameState.game_id);
+                     else disconnectFromGameStream();
+                 } else if (currentGameState.status === 'ABORTED' && currentGameState.player_who_paused) {
+                     if (clientPlayerInfo && clientPlayerInfo.id !== currentGameState.player_who_paused) connectToGameStream(currentGameState.game_id);
+                     else disconnectFromGameStream();
+                 } else if (currentGameState.status === 'finished' || (currentGameState.status === 'ABORTED' && !currentGameState.player_who_paused)) {
                      disconnectFromGameStream();
-                     if (oldGameStatus === 'in_progress' && oldCurrentPlayerId !== currentGameState.current_player_id) { // Check if turn just changed to me
-                        if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("It's your turn!", {duration: 2000});
-                     } else if (oldGameStatus === 'ABORTED' && currentGameState.status === 'in_progress') { // Game just resumed to my turn
-                        if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("Game resumed. It's your turn!", {duration: 2000});
-                     }
-                 } else { // Opponent's turn or game not ready for my move
-                     connectToGameStream(currentGameState.game_id);
                  }
-             } else if (currentGameState.status === 'waiting_for_opponent') {
-                 // If I am P1 and waiting, I should listen.
-                 if (clientPlayerInfo && currentGameState.players.length > 0 && currentGameState.players[0].id === clientPlayerInfo.id) {
-                     connectToGameStream(currentGameState.game_id);
+                 if (saveAndLeaveBtn) saveAndLeaveBtn.classList.add('hidden');
+             }
+
+             renderBoard();
+             updateStatusBar();
+
+             if (currentGameState.status === 'finished' || (currentGameState.status === 'ABORTED' && !currentGameState.player_who_paused)) {
+                 if (saveAndLeaveBtn) saveAndLeaveBtn.classList.add('hidden');
+                 if (currentGameState.mode === 'local' && currentGameState.status === 'finished') deleteLocalGame(currentGameState.config.grid_size);
+                 disconnectFromGameStream();
+                 if (currentGameState.status === 'finished') { showGameOverModal(); loadSessionStats(); }
+                 else showModal("Game Aborted", currentGameState.last_error_message || "The game was aborted.", () => showScreen('gameSetup'));
+             }
+             if (resetGameBtn) {
+                 if (currentGameState.mode === 'online' && (currentGameState.status === 'in_progress' || (currentGameState.status === 'ABORTED' && currentGameState.player_who_paused))) {
+                     resetGameBtn.textContent = 'Leave Game'; resetGameBtn.classList.add('danger'); resetGameBtn.classList.remove('secondary');
+                 } else if (currentGameState.mode === 'local') {
+                     resetGameBtn.textContent = 'Reset Game'; resetGameBtn.classList.add('danger'); resetGameBtn.classList.remove('secondary');
                  } else {
-                     disconnectFromGameStream(); // P2 doesn't need to listen if P1 is creating/waiting.
+                     resetGameBtn.textContent = 'Back to Menu'; resetGameBtn.classList.remove('danger'); resetGameBtn.classList.add('secondary');
                  }
-             } else if (currentGameState.status === 'ABORTED' && currentGameState.player_who_paused) {
-                 // Game is paused. If I am NOT the one who paused, I should listen for their reconnect or timeout.
-                 if (clientPlayerInfo && clientPlayerInfo.id !== currentGameState.player_who_paused) {
-                     connectToGameStream(currentGameState.game_id);
-                 } else { // I am the one who paused, I don't need to listen to my own pause.
-                     disconnectFromGameStream();
-                 }
-             } else if (currentGameState.status === 'finished' || (currentGameState.status === 'ABORTED' && !currentGameState.player_who_paused)) {
-                 disconnectFromGameStream(); // Game truly over.
-             }
-             if (saveAndLeaveBtn) saveAndLeaveBtn.classList.add('hidden'); // No save & leave for online
-         }
-
-         renderBoard(); // This is crucial for playability after reconnect
-         updateStatusBar();
-
-         if (currentGameState.status === 'finished' || (currentGameState.status === 'ABORTED' && !currentGameState.player_who_paused)) {
-             if (saveAndLeaveBtn) saveAndLeaveBtn.classList.add('hidden');
-             if (currentGameState.mode === 'local' && currentGameState.status === 'finished') {
-                 deleteLocalGame(currentGameState.config.grid_size);
-             }
-             disconnectFromGameStream();
-             if (currentGameState.status === 'finished') {
-                 showGameOverModal();
-                 loadSessionStats();
-             } else { // Hard ABORTED
-                  showModal("Game Aborted", currentGameState.last_error_message || "The game was aborted.", () => showScreen('gameSetup'));
              }
          }
-
-         // Update Reset/Leave button text and style (from previous correct block)
-         if (resetGameBtn) {
-             if (currentGameState.mode === 'online' &&
-                 (currentGameState.status === 'in_progress' || (currentGameState.status === 'ABORTED' && currentGameState.player_who_paused))) {
-                 resetGameBtn.textContent = 'Leave Game';
-                 resetGameBtn.classList.add('danger');
-                 resetGameBtn.classList.remove('secondary');
-             } else if (currentGameState.mode === 'local') {
-                 resetGameBtn.textContent = 'Reset Game';
-                 resetGameBtn.classList.add('danger');
-                 resetGameBtn.classList.remove('secondary');
-             } else {
-                 resetGameBtn.textContent = 'Back to Menu';
-                 resetGameBtn.classList.remove('danger');
-                 resetGameBtn.classList.add('secondary');
-             }
-         }
-     }
 
 
         async function makePlayerMove(globalR, globalC, localR, localC) {
-            if (!currentGameState || !currentGameId || currentGameState.status !== 'in_progress') {
-                console.warn("Make move called but game not in a playable state.");
-                return;
-            }
-
+            if (!currentGameState || !currentGameId || currentGameState.status !== 'in_progress') return;
             let playerIdForMove;
             const currentPlayerOnClient = currentGameState.players.find(p => p.id === currentGameState.current_player_id);
 
             if (currentGameState.mode === 'local') {
-                // In local mode, the current_player_id from game state IS the one making the move.
-                // This could be LOCAL_P1_ID, LOCAL_P2_ID, or an NPC_ID.
-                // The UI click should only be enabled for the human player if it's their turn.
-                // If an NPC is current_player_id, this function shouldn't be directly triggerable by UI click for that NPC.
-                // Server will handle NPC moves.
                 playerIdForMove = currentGameState.current_player_id;
-                if (currentPlayerOnClient && currentPlayerOnClient.is_npc) {
-                    console.warn("UI tried to make a move for an NPC. This should be handled server-side. Ignoring.");
-                    return;
-                }
-            } else { // Online mode
+                if (currentPlayerOnClient && currentPlayerOnClient.is_npc) return; // Should be server-handled
+            } else {
                 if (!clientPlayerInfo || currentGameState.current_player_id !== clientPlayerInfo.id) {
-                    if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("Not your turn.");
-                    return;
+                    if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("Not your turn."); return;
                 }
                 playerIdForMove = clientPlayerInfo.id;
             }
-
-            const movePayload = {
-                player_id: playerIdForMove, global_row: globalR, global_col: globalC,
-                local_row: localR, local_col: localC, game_id: currentGameId
-            };
-
-            if (globalGridDisplay) globalGridDisplay.style.pointerEvents = 'none'; // Prevent double-clicks
+            const movePayload = { player_id: playerIdForMove, global_row: globalR, global_col: globalC, local_row: localR, local_col: localC, game_id: currentGameId };
+            if (globalGridDisplay) globalGridDisplay.style.pointerEvents = 'none';
             const response = await apiRequest(`make_move`, movePayload, 'POST');
             if (globalGridDisplay) globalGridDisplay.style.pointerEvents = 'auto';
-
-            if (!response.error && response.data) {
-                // Server response includes state after human move AND any subsequent NPC move.
-                processGameStateUpdate(response.data);
-            } else if (response.data?.game_id) { // Error response but contains game state
-                processGameStateUpdate(response.data);
-            }
-            // processGameStateUpdate manages SSE connection (e.g., connect if now opponent's turn in online)
+            if (!response.error && response.data) processGameStateUpdate(response.data);
+            else if (response.data?.game_id) processGameStateUpdate(response.data);
         }
-
 
         function confirmResetGame() {
-         if (!currentGameState) return;
-
-         if (currentGameState.mode === 'online' &&
-             (currentGameState.status === 'in_progress' || (currentGameState.status === 'ABORTED' && currentGameState.player_who_paused))) {
-             showModal('Leave Game?', 'Are you sure you want to leave this online game? Your opponent will be notified.',
-                 async () => {
-                     // Client simply disconnects its SSE and goes to menu.
-                     // The server-side SSE CancelledError will handle marking the player as disconnected.
-                     disconnectFromGameStream();
-                     showScreen('gameSetup');
-                     // No explicit API call to "leave", relying on SSE stream cancellation to trigger backend logic.
-                 }
-             );
-         } else if (currentGameState.mode === 'local' && (currentGameState.status === 'in_progress' || currentGameState.status === 'finished' || currentGameState.status === 'ABORTED')) {
-             showModal('Reset Game?', 'Start a new local game with current settings?',
-                 async () => {
-                     deleteLocalGame(currentGameState.config.grid_size); // Clear any saved state for this size
-                     await createNewGame('local'); // Uses current form values
-                 }
-             );
-         } else if (currentGameState.status === 'finished' || (currentGameState.status === 'ABORTED' && !currentGameState.player_who_paused) ) {
-             // For finished/hard-aborted online games, "Reset" means go to menu essentially.
-             showModal('New Game?', 'Return to the menu to start a new game?', () => showScreen('gameSetup'));
-         } else {
-              if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("Cannot reset/leave from current game state like this.");
+             if (!currentGameState) return;
+             if (currentGameState.mode === 'online' && (currentGameState.status === 'in_progress' || (currentGameState.status === 'ABORTED' && currentGameState.player_who_paused))) {
+                 showModal('Leave Game?', 'Are you sure you want to leave this online game?', () => {
+                     disconnectFromGameStream(); showScreen('gameSetup');
+                 });
+             } else if (currentGameState.mode === 'local' && (currentGameState.status === 'in_progress' || currentGameState.status === 'finished' || currentGameState.status === 'ABORTED')) {
+                 showModal('Reset Game?', 'Start a new local game with current settings?', async () => {
+                     deleteLocalGame(currentGameState.config.grid_size);
+                     await createNewGame('local');
+                 });
+             } else if (currentGameState.status === 'finished' || (currentGameState.status === 'ABORTED' && !currentGameState.player_who_paused) ) {
+                 showModal('New Game?', 'Return to the menu to start a new game?', () => showScreen('gameSetup'));
+             } else if(window.TB?.ui?.Toast) TB.ui.Toast.showInfo("Cannot reset/leave from current game state.");
          }
-     }
         function confirmBackToMenu() {
             if (currentGameState && currentGameState.status !== 'finished' && currentGameState.status !== 'aborted') {
-                let message = 'Current game progress will be lost. Are you sure?';
-                if (currentGameState.mode === 'local' && currentGameState.status === 'in_progress') {
-                    message = 'Game is not saved. Progress will be lost. Use "Save & Leave" to save. Continue to menu?';
-                }
-                showModal('Back to Menu?', message, () => {
-                    // Wenn ein lokales Spiel nicht gespeichert und verlassen wurde, könnte es hier explizit gelöscht werden,
-                    // oder man verlässt sich darauf, dass beim Start eines neuen Spiels der alte Speicher gelöscht wird.
-                    // deleteLocalGame(currentGameState.config.grid_size); // Optional: Sofort löschen
-                    showScreen('gameSetup');
-                });
-            } else {
-                showScreen('gameSetup');
-            }
+                let message = 'Progress will be lost. Are you sure?';
+                if (currentGameState.mode === 'local' && currentGameState.status === 'in_progress') message = 'Game not saved. Use "Save & Leave" or progress will be lost. Continue to menu?';
+                showModal('Back to Menu?', message, () => showScreen('gameSetup'));
+            } else showScreen('gameSetup');
         }
 
-
-        async function loadSessionStats() { /* Same as before */
+        async function loadSessionStats() {
             const response = await apiRequest('get_session_stats', {session_id: currentSessionId}, 'GET');
             if (!response.error && response.data) updateStatsDisplay(response.data);
             else updateStatsDisplay({ games_played:0, wins:0, losses:0, draws:0 });
         }
-        function updateStatsDisplay(stats) { /* Same as before */
+        function updateStatsDisplay(stats) {
             statsGamesPlayedEl.textContent = stats.games_played ?? 0;
             statsWinsEl.textContent = stats.wins ?? 0;
             statsLossesEl.textContent = stats.losses ?? 0;
@@ -3587,16 +3458,9 @@ html[data-theme="dark"] .current-player-indicator {
         function renderBoard() {
             if (!currentGameState || !globalGridDisplay) return;
             const N = currentGameState.config?.grid_size;
-            dynamicallySetGridStyles(N); // Ensure styles are set for current N
+            dynamicallySetGridStyles(N);
             globalGridDisplay.innerHTML = '';
-
-            const tempAllBoardContainers = globalGridDisplay.querySelectorAll('.local-board-container');
-             tempAllBoardContainers.forEach(board => {
-                 board.classList.remove('preview-forced-for-x', 'preview-forced-for-o');
-             });
-
-            console.log("RENDER_BOARD - Forced target from state:", currentGameState.next_forced_global_board);
-
+            globalGridDisplay.querySelectorAll('.local-board-container').forEach(b => b.classList.remove('preview-forced-for-x', 'preview-forced-for-o'));
             const lastMoveCoords = currentGameState.last_made_move_coords;
 
             for (let gr = 0; gr < N; gr++) {
@@ -3604,84 +3468,40 @@ html[data-theme="dark"] .current-player-indicator {
                     const localBoardContainer = document.createElement('div');
                     localBoardContainer.className = 'local-board-container';
                     localBoardContainer.dataset.gr = gr; localBoardContainer.dataset.gc = gc;
-
                     const localWinner = currentGameState.global_board_winners[gr][gc];
                     if (localWinner !== 'NONE') {
-                        localBoardContainer.classList.add('won-' + localWinner);
                         localBoardContainer.classList.add('won-' + localWinner);
                         const overlay = document.createElement('div');
                         overlay.className = 'winner-overlay player-' + (localWinner === 'DRAW' ? 'draw' : localWinner);
                         overlay.textContent = localWinner === 'DRAW' ? 'D' : localWinner;
                         localBoardContainer.appendChild(overlay);
                     }
-
                     let isThisBoardTheActiveTarget = false;
                     if (currentGameState.status === 'in_progress' && localWinner === 'NONE') {
                         const forcedTarget = currentGameState.next_forced_global_board;
-                        if (forcedTarget) { // A specific board is forced
-                            if (forcedTarget[0] === gr && forcedTarget[1] === gc) {
-                                localBoardContainer.classList.add('forced-target');
-                                isThisBoardTheActiveTarget = true;
-                                console.log(`RENDER_BOARD - Board (${gr},${gc}) is FORCED target.`);
-                            } else {
-                                // Not the forced target, so visually dim or mark as inactive
-                                localBoardContainer.classList.add('inactive-target'); // Add a new CSS class for this
-                            }
-                        } else { // No specific board forced - play anywhere valid
-                            localBoardContainer.classList.add('playable-anywhere');
-                            // isThisBoardTheActiveTarget remains true for all non-won boards if no forced target
-                            isThisBoardTheActiveTarget = true;
-                            console.log(`RENDER_BOARD - Board (${gr},${gc}) is playable (anywhere rule).`);
-                        }
-                    } else {
-                         localBoardContainer.classList.add('inactive-target'); // Board is won or game over
-                    }
-                    // --- END: UI Helper for Guided Placement ---
+                        if (forcedTarget) {
+                            if (forcedTarget[0] === gr && forcedTarget[1] === gc) { localBoardContainer.classList.add('forced-target'); isThisBoardTheActiveTarget = true; }
+                            else localBoardContainer.classList.add('inactive-target');
+                        } else { localBoardContainer.classList.add('playable-anywhere'); isThisBoardTheActiveTarget = true; }
+                    } else localBoardContainer.classList.add('inactive-target');
 
                     const localGrid = document.createElement('div');
                     localGrid.className = 'local-grid';
                     const localCells = currentGameState.local_boards_state[gr][gc];
-
                     for (let lr = 0; lr < N; lr++) {
                         for (let lc = 0; lc < N; lc++) {
                             const cell = document.createElement('div');
                             cell.className = 'cell';
-                            cell.dataset.gr = gr; cell.dataset.gc = gc;
-                            cell.dataset.lr = lr; cell.dataset.lc = lc;
-
+                            cell.dataset.gr = gr; cell.dataset.gc = gc; cell.dataset.lr = lr; cell.dataset.lc = lc;
                             const cellState = localCells[lr][lc];
-                            if (cellState !== '.') { // '.' is CellState.EMPTY
-                                cell.textContent = cellState;
-                                cell.classList.add('player-' + cellState);
-                            }
-
-                            if (lastMoveCoords) {
-                                const [last_gr, last_gc, last_lr, last_lc] = lastMoveCoords;
-                                if (gr === last_gr && gc === last_gc && lr === last_lr && lc === last_lc) {
-                                    cell.classList.add('last-move');
-                                }
-                            }
-
-                            // --- Determine if this specific cell is playable ---
+                            if (cellState !== '.') { cell.textContent = cellState; cell.classList.add('player-' + cellState); }
+                            if (lastMoveCoords && gr === lastMoveCoords[0] && gc === lastMoveCoords[1] && lr === lastMoveCoords[2] && lc === lastMoveCoords[3]) cell.classList.add('last-move');
                             let isCellCurrentlyPlayable = false;
                             if (currentGameState.status === 'in_progress' && localWinner === 'NONE' && cellState === '.') {
-                                // Check if it's this client's turn to act
-                                let isThisClientsTurnToAct = (currentGameState.mode === 'local') ||
-                                                             (clientPlayerInfo && currentGameState.current_player_id === clientPlayerInfo.id);
-
-                                if (isThisClientsTurnToAct) {
-                                    if (isThisBoardTheActiveTarget) { // If this board is highlighted as active/forced
-                                        isCellCurrentlyPlayable = true;
-                                    }
-                                }
+                                let isThisClientsTurnToAct = (currentGameState.mode === 'local') || (clientPlayerInfo && currentGameState.current_player_id === clientPlayerInfo.id);
+                                if (isThisClientsTurnToAct && isThisBoardTheActiveTarget) isCellCurrentlyPlayable = true;
                             }
-
-                            if (isCellCurrentlyPlayable) {
-                                cell.classList.add('playable');
-                            } else {
-                                // Could add a generic .disabled-cell class if not already implied by lack of .playable
-                                // and the .inactive-target on the parent board.
-                            }
+                            if (isCellCurrentlyPlayable) cell.classList.add('playable');
                             localGrid.appendChild(cell);
                         }
                     }
@@ -3689,15 +3509,12 @@ html[data-theme="dark"] .current-player-indicator {
                     globalGridDisplay.appendChild(localBoardContainer);
                 }
             }
-            // No separate highlightGuidance() function is needed if renderBoard fully handles it.
         }
 
-        // --- START OF BLOCK 7 (JS updateStatusBar) ---
      function updateStatusBar() {
              if (!statusBar || !currentGameState || !currentPlayerIndicator) return;
              let message = ""; let msgType = "info";
-
-             currentPlayerIndicator.className = 'current-player-indicator'; // Reset classes
+             currentPlayerIndicator.className = 'current-player-indicator';
 
              if (currentGameState.status === 'waiting_for_opponent') {
                  message = "Waiting for opponent to join...";
@@ -3706,103 +3523,58 @@ html[data-theme="dark"] .current-player-indicator {
                  }
              } else if (currentGameState.status === 'in_progress') {
                  const currentPlayer = currentGameState.players.find(p => p.id === currentGameState.current_player_id);
-                 const pName = currentPlayer ? currentPlayer.name : "Player";
-                 const pSymbol = currentPlayer ? currentPlayer.symbol : "?";
+                 const pName = currentPlayer ? currentPlayer.name : "Player", pSymbol = currentPlayer ? currentPlayer.symbol : "?";
+                 if (currentPlayer) currentPlayerIndicator.classList.add(`player-${pSymbol}`);
 
-                 if (currentPlayer) {
-                     currentPlayerIndicator.classList.add(`player-${pSymbol}`);
-                 }
-
-                 if (currentGameState.mode === 'local') {
-                     message = `${pName} (${pSymbol})'s Turn.`;
-                 } else { // Online
+                 if (currentGameState.mode === 'local') message = `${pName} (${pSymbol})'s Turn.`;
+                 else {
                      const amICurrentPlayer = clientPlayerInfo && clientPlayerInfo.id === currentGameState.current_player_id;
-                     message = amICurrentPlayer ?
-                               `Your Turn (${clientPlayerInfo.symbol})` :
-                               `Waiting for ${pName} (${pSymbol})...`;
-
-                     // Check for opponent disconnect if game is IN_PROGRESS but an opponent is not connected
+                     message = amICurrentPlayer ? `Your Turn (${clientPlayerInfo.symbol})` : `Waiting for ${pName} (${pSymbol})...`;
                      const opponent = currentGameState.players.find(p => p.id !== currentGameState.current_player_id);
                      if (opponent && !opponent.is_connected) {
-                         message = `Waiting for ${opponent.name} (${opponent.symbol}) to reconnect...`;
-                         msgType = "warning"; // Indicate a problem
-                         // Current player indicator should be for the one still connected and whose turn it effectively is to wait
-                         if (currentPlayer && currentPlayer.is_connected) {
-                              currentPlayerIndicator.className = `current-player-indicator player-${currentPlayer.symbol}`;
-                         } else if (clientPlayerInfo && clientPlayerInfo.is_connected) {
-                             currentPlayerIndicator.className = `current-player-indicator player-${clientPlayerInfo.symbol}`;
-                         }
+                         message = `Waiting for ${opponent.name} (${opponent.symbol}) to reconnect...`; msgType = "warning";
+                         if (currentPlayer && currentPlayer.is_connected) currentPlayerIndicator.className = `current-player-indicator player-${currentPlayer.symbol}`;
+                         else if (clientPlayerInfo && clientPlayerInfo.is_connected) currentPlayerIndicator.className = `current-player-indicator player-${clientPlayerInfo.symbol}`;
                      }
                  }
-
                  if (currentGameState.next_forced_global_board) {
                      const [gr, gc] = currentGameState.next_forced_global_board;
-                     message += (currentGameState.mode === 'local' || (clientPlayerInfo && clientPlayerInfo.id === currentGameState.current_player_id)) ?
-                                ` Play in board (${gr+1},${gc+1}).` : "";
-                 } else if (currentGameState.status === 'in_progress') {
-                      message += (currentGameState.mode === 'local' || (clientPlayerInfo && clientPlayerInfo.id === currentGameState.current_player_id)) ?
-                                 " Play in any valid highlighted board." : "";
+                     if (currentGameState.mode === 'local' || (clientPlayerInfo && clientPlayerInfo.id === currentGameState.current_player_id)) message += ` Play in board (${gr+1},${gc+1}).`;
+                 } else if (currentGameState.status === 'in_progress' && (currentGameState.mode === 'local' || (clientPlayerInfo && clientPlayerInfo.id === currentGameState.current_player_id))) {
+                     message += " Play in any valid highlighted board.";
                  }
-
              } else if (currentGameState.status === 'ABORTED' && currentGameState.player_who_paused) {
-                 // This is the "paused" state, waiting for a specific player.
                  msgType = "warning";
                  const disconnectedPlayerInfo = currentGameState.players.find(p => p.id === currentGameState.player_who_paused);
-                 const disconnectedPlayerName = disconnectedPlayerInfo ? disconnectedPlayerInfo.name : "Opponent";
-                 message = `Player ${disconnectedPlayerName} disconnected. Waiting for them to rejoin...`;
-
-                 // Set indicator for the player who is still connected (if any)
+                 message = `Player ${disconnectedPlayerInfo ? disconnectedPlayerInfo.name : "Opponent"} disconnected. Waiting...`;
                  const waitingPlayer = currentGameState.players.find(p => p.id !== currentGameState.player_who_paused && p.is_connected);
-                 if (waitingPlayer) {
-                     currentPlayerIndicator.classList.add(`player-${waitingPlayer.symbol}`);
-                 } else if (clientPlayerInfo && clientPlayerInfo.id !== currentGameState.player_who_paused) {
-                     // If this client is the one waiting
-                     currentPlayerIndicator.classList.add(`player-${clientPlayerInfo.symbol}`);
-                 }
+                 if (waitingPlayer) currentPlayerIndicator.classList.add(`player-${waitingPlayer.symbol}`);
+                 else if (clientPlayerInfo && clientPlayerInfo.id !== currentGameState.player_who_paused) currentPlayerIndicator.classList.add(`player-${clientPlayerInfo.symbol}`);
              } else if (currentGameState.status === 'finished') {
                  msgType = "success";
-                 if (currentGameState.is_draw) {
-                     message = "Game Over: It's a DRAW!";
-                 } else {
+                 if (currentGameState.is_draw) message = "Game Over: It's a DRAW!";
+                 else {
                      const winner = currentGameState.players.find(p => p.symbol === currentGameState.overall_winner_symbol);
                      message = `Game Over: ${winner ? winner.name : 'Player'} (${currentGameState.overall_winner_symbol}) WINS!`;
-                     if (winner) {
-                         currentPlayerIndicator.classList.add(`player-${winner.symbol}`);
-                     }
+                     if (winner) currentPlayerIndicator.classList.add(`player-${winner.symbol}`);
                  }
-             } else if (currentGameState.status === 'ABORTED') { // Hard abort (no player_who_paused)
-                  message = currentGameState.last_error_message || "Game Aborted.";
-                  msgType = "error";
+             } else if (currentGameState.status === 'ABORTED') {
+                  message = currentGameState.last_error_message || "Game Aborted."; msgType = "error";
              }
-
-             // Override message if there's a specific last_error_message not covered by status logic
-             // (but prioritize status-specific messages for clarity)
-             if (currentGameState.last_error_message &&
-                 (msgType === "info" || (currentGameState.status === 'in_progress' && !message.includes("Error")))) { // Only show if not already an error/warning from status
-                 // Don't show "Game resumed" as an error.
+             if (currentGameState.last_error_message && (msgType === "info" || (currentGameState.status === 'in_progress' && !message.includes("Error")))) {
                  if (!currentGameState.last_error_message.toLowerCase().includes("resumed") && !currentGameState.last_error_message.toLowerCase().includes("reconnected")) {
-                     // If the current message isn't already a waiting/disconnect message
                      if(!(currentGameState.status === 'ABORTED' && currentGameState.player_who_paused) && !(currentGameState.status === 'IN_PROGRESS' && message.includes("reconnect"))){
                          message = `Note: ${currentGameState.last_error_message}`;
-                         // Determine if it's an error or info based on content
-                         if (currentGameState.last_error_message.toLowerCase().includes("must play") ||
-                             currentGameState.last_error_message.toLowerCase().includes("not your turn") ||
-                             currentGameState.last_error_message.toLowerCase().includes("invalid") ||
-                             currentGameState.last_error_message.toLowerCase().includes("occupied") ) {
-                             msgType = "error";
-                         } else {
-                             msgType = "info"; // Or "warning" if appropriate
-                         }
+                         if (currentGameState.last_error_message.toLowerCase().match(/must play|not your turn|invalid|occupied/)) msgType = "error"; else msgType = "info";
                      }
                  }
              }
-
              statusBar.textContent = message;
-             statusBar.className = `status-bar ${msgType}`; // msgType will be info, error, success, or warning
+             statusBar.className = `status-bar ${msgType}`;
          }
 
-        function showGameOverModal() { /* Same as before, ensure names used */
-            let title = "Game Over!"; let content = "";
+        function showGameOverModal() {
+            let title = "Game Over!", content = "";
             if (currentGameState.is_draw) content = "The game ended in a DRAW!";
             else {
                 const winner = currentGameState.players.find(p => p.symbol === currentGameState.overall_winner_symbol);
@@ -3810,57 +3582,41 @@ html[data-theme="dark"] .current-player-indicator {
             }
             showModal(title, content, () => createNewGame(currentGameState.mode), "Play Again", "Menu");
         }
-
-        function copyGameIdToClipboard() { /* Same as before */
-            const gameId = gameIdShareEl.textContent;
-            if (navigator.clipboard && gameId) {
-                navigator.clipboard.writeText(gameId)
-                    .then(() => { if(window.TB?.ui?.Toast) TB.ui.Toast.showSuccess("ID copied!", {duration:1500}); })
+        function copyGameIdToClipboard() {
+            const textToCopy = gameIdShareEl.textContent;
+            if (navigator.clipboard && textToCopy) {
+                navigator.clipboard.writeText(textToCopy)
+                    .then(() => { if(window.TB?.ui?.Toast) TB.ui.Toast.showSuccess("Copied!", {duration:1500}); })
                     .catch(err => { if(window.TB?.ui?.Toast) TB.ui.Toast.showError("Copy failed."); });
-            } else if(window.TB?.ui?.Toast) TB.ui.Toast.showWarning("No ID to copy.");
+            } else if(window.TB?.ui?.Toast) TB.ui.Toast.showWarning("Nothing to copy.");
         }
-
-        function showModal(title, message, onConfirm = null, confirmText = "OK", cancelText = "Cancel") { /* Same */
+        function showModal(title, message, onConfirm = null, confirmText = "OK", cancelText = "Cancel") {
             modalTitle.textContent = title; modalMessage.textContent = message;
             modalConfirmBtn.textContent = confirmText; modalCancelBtn.textContent = cancelText;
             modalConfirmCallback = onConfirm; modalOverlay.classList.remove('hidden');
-            if (!onConfirm) modalConfirmBtn.classList.add('hidden');
-            else modalConfirmBtn.classList.remove('hidden');
+            modalConfirmBtn.classList.toggle('hidden', !onConfirm);
         }
-        function hideModal() { /* Same */ modalOverlay.classList.add('hidden'); modalConfirmCallback = null; }
+        function hideModal() { modalOverlay.classList.add('hidden'); modalConfirmCallback = null; }
 
-        function dynamicallySetGridStyles(N) { /* Same as before, check calculations carefully */
+        function dynamicallySetGridStyles(N) {
             if (!globalGridDisplay) return;
             const mainWrap = document.querySelector('.main-content-wrapper');
             const availableWidth = mainWrap ? mainWrap.offsetWidth - 20 : window.innerWidth - 40;
-
             let boardPixelSize = Math.min(availableWidth, window.innerHeight * 0.65, N * 100 + (N-1)*5);
-            boardPixelSize = Math.max(N * 45 + (N-1)*2, boardPixelSize); // Min
-            boardPixelSize = Math.min(boardPixelSize, 650); // Max
-
-            globalGridDisplay.style.width = `${boardPixelSize}px`;
-            globalGridDisplay.style.height = `${boardPixelSize}px`;
-
+            boardPixelSize = Math.max(N * 45 + (N-1)*2, boardPixelSize);
+            boardPixelSize = Math.min(boardPixelSize, 650);
+            globalGridDisplay.style.width = `${boardPixelSize}px`; globalGridDisplay.style.height = `${boardPixelSize}px`;
             const globalGap = Math.max(2, Math.floor(boardPixelSize / (N * 30)));
-            globalGridDisplay.style.gap = `${globalGap}px`;
-            globalGridDisplay.style.padding = `${globalGap}px`;
-
+            globalGridDisplay.style.gap = `${globalGap}px`; globalGridDisplay.style.padding = `${globalGap}px`;
             const localBoardOuterSize = (boardPixelSize - (N - 1) * globalGap - 2 * globalGap) / N;
-            const localBoardInnerSize = Math.max(10, localBoardOuterSize - (2*2)); // 2px border * 2
-
+            const localBoardInnerSize = Math.max(10, localBoardOuterSize - 4);
             const localCellGap = Math.max(1, Math.floor(localBoardInnerSize / (N * 40)));
             const estimatedCellSize = (localBoardInnerSize - (N - 1) * localCellGap) / N;
-
             const cellFontSize = Math.max(8, estimatedCellSize * 0.42 / Math.sqrt(N/2.5) );
             const winnerOverlayFontSize = Math.max(15, localBoardInnerSize * 0.55 / Math.sqrt(N/2.5) );
             const winnerOverlayDrawFontSize = Math.max(12, localBoardInnerSize * 0.35 / Math.sqrt(N/2.5) );
-
             let dynamicStyleSheet = document.getElementById('dynamicGameStylesUTTT');
-            if (!dynamicStyleSheet) {
-                dynamicStyleSheet = document.createElement('style');
-                dynamicStyleSheet.id = 'dynamicGameStylesUTTT';
-                document.head.appendChild(dynamicStyleSheet);
-            }
+            if (!dynamicStyleSheet) { dynamicStyleSheet = document.createElement('style'); dynamicStyleSheet.id = 'dynamicGameStylesUTTT'; document.head.appendChild(dynamicStyleSheet); }
             dynamicStyleSheet.innerHTML = `
                 .global-grid-display { grid-template-columns: repeat(${N}, 1fr); grid-template-rows: repeat(${N}, 1fr); }
                 .local-grid { grid-template-columns: repeat(${N}, 1fr); grid-template-rows: repeat(${N}, 1fr); gap: ${localCellGap}px; }
@@ -3874,7 +3630,6 @@ html[data-theme="dark"] .current-player-indicator {
             if (window.TB.config?.get('appRootId') || window.TB._isInitialized === true) initApp();
             else window.TB.events.on('tbjs:initialized', initApp, { once: true });
         } else {
-             console.warn("Toolbox not fully loaded, attempting init on DOMContentLoaded.");
              document.addEventListener('DOMContentLoaded', () => {
                 if (window.TB?.events?.on) window.TB.events.on('tbjs:initialized', initApp, { once: true });
                 else if (window.TB?._isInitialized) initApp();
@@ -3888,4 +3643,4 @@ html[data-theme="dark"] .current-player-indicator {
 </html>"""
     return Result.html(app_instance.web_context() + html_and_js_content)
 
-# --- END OF FILE ultimate_ttt_api.py ---
+# --- END OF MODIFIED FUNCTION: ultimate_ttt_ui_page ---
