@@ -2602,7 +2602,6 @@ body {
 <body>
     <header class="app-header">
         <h1 class="app-title">Ultimate TTT</h1>
-        <button id="themeToggleBtn" class="theme-switcher none">Dark Mode</button>
     </header>
 
     <div id="currentPlayerIndicatorContainer" class="current-player-indicator-container hidden">
@@ -2760,7 +2759,7 @@ body {
         let gameSetupSection, statsSection, onlineWaitSection, gameArea, statusBar, globalGridDisplay;
         let gridSizeSelect, player1NameInput, player2NameInput, localP2NameGroup;
         let startLocalGameBtn, startOnlineGameBtn, joinGameIdInput, joinOnlineGameBtn, gameIdShareEl, waitingStatusEl, cancelOnlineWaitBtn;
-        let resetGameBtn, backToMenuBtn, themeToggleBtn;
+        let resetGameBtn, backToMenuBtn;
         let statsGamesPlayedEl, statsWinsEl, statsLossesEl, statsDrawsEl, statsSessionIdEl;
         let modalOverlay, modalTitle, modalMessage, modalCancelBtn, modalConfirmBtn;
         let currentPlayerIndicatorContainer, currentPlayerIndicator
@@ -2816,7 +2815,6 @@ body {
 
             resetGameBtn = document.getElementById('resetGameBtn');
             backToMenuBtn = document.getElementById('backToMenuBtn');
-            themeToggleBtn = document.getElementById('themeToggleBtn');
 
             statsGamesPlayedEl = document.getElementById('statsGamesPlayed');
             statsWinsEl = document.getElementById('statsWins');
@@ -2838,7 +2836,6 @@ body {
             saveAndLeaveBtn = document.getElementById('saveAndLeaveBtn');
 
             setupEventListeners();
-            initializeTheme();
             determineSessionId();
             loadSessionStats();
             checkUrlForJoin(); // Detects ?join=GAMEID
@@ -2940,7 +2937,6 @@ body {
 
             resetGameBtn.addEventListener('click', confirmResetGame);
             backToMenuBtn.addEventListener('click', confirmBackToMenu);
-            themeToggleBtn.addEventListener('click', toggleTheme);
             globalGridDisplay.addEventListener('click', onBoardClickDelegation);
 
             globalGridDisplay.addEventListener('mouseover', handleCellMouseOver);
@@ -3132,23 +3128,6 @@ body {
             }
         }
 
-
-        function initializeTheme() {
-            const savedTheme = localStorage.getItem('uttt_theme') ||
-                               (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-            document.documentElement.setAttribute('data-theme', savedTheme);
-            updateThemeButtonText(savedTheme);
-        }
-        function toggleTheme() {
-            const currentTheme = document.documentElement.getAttribute('data-theme');
-            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-            document.documentElement.setAttribute('data-theme', newTheme);
-            localStorage.setItem('uttt_theme', newTheme);
-            updateThemeButtonText(newTheme);
-        }
-        function updateThemeButtonText(theme) {
-             themeToggleBtn.textContent = theme === 'light' ? '🌙 Dark Mode' : '☀️ Light Mode';
-        }
 
         async function apiRequest(endpoint, payload = null, method = 'GET', queryParams = {}) {
             let url = `/api/${API_MODULE_NAME}/${endpoint}`;
