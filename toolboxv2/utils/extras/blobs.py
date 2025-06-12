@@ -77,8 +77,8 @@ class BlobStorage:
     """
 
     def __init__(self, servers: list[str], storage_directory: str = './.data/blob_cache'):
-        if not servers:
-            raise ValueError("At least one server URL must be provided.")
+
+
         self.servers = servers
         self.session = requests.Session()
         self.storage_directory = storage_directory
@@ -98,6 +98,12 @@ class BlobStorage:
         - If no blob_id is given (e.g., for broadcast actions), it tries servers randomly.
         - Implements exponential backoff on server errors.
         """
+        if not self.servers:
+            res = requests.Response()
+            res.status_code = 503
+            res.reason = "No servers available"
+            return res
+
         if blob_id:
             # Get the ordered list of servers for this specific blob
             preferred_servers = self.hash_ring.get_nodes_for_key(blob_id)

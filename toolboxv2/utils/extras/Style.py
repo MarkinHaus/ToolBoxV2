@@ -47,6 +47,13 @@ def cls():
         os.system("clear")
 
 
+def text_save(function):
+    def deco(text):
+        text = str(text).encode('utf-8', 'replace').decode('utf-8')
+        return function(text)
+    return deco
+
+
 class Style:
     _END = '\33[0m'
     _BLACK = '\33[30m'
@@ -137,166 +144,207 @@ class Style:
     }
 
     @staticmethod
+    @text_save
     def END_():
         print(Style._END)
 
     @staticmethod
+    @text_save
     def GREEN_():
         print(Style._GREEN)
 
     @staticmethod
+    @text_save
     def BLUE(text: str):
         return Style._BLUE + text + Style._END
 
     @staticmethod
+    @text_save
     def BLACK(text: str):
         return Style._BLACK + text + Style._END
 
     @staticmethod
+    @text_save
     def RED(text: str):
         return Style._RED + text + Style._END
 
     @staticmethod
+    @text_save
     def GREEN(text: str):
         return Style._GREEN + text + Style._END
 
     @staticmethod
+    @text_save
     def YELLOW(text: str):
         return Style._YELLOW + text + Style._END
 
     @staticmethod
+    @text_save
     def MAGENTA(text: str):
         return Style._MAGENTA + text + Style._END
 
     @staticmethod
+    @text_save
     def CYAN(text: str):
         return Style._CYAN + text + Style._END
 
     @staticmethod
+    @text_save
     def WHITE(text: str):
         return Style._WHITE + text + Style._END
 
     @staticmethod
+    @text_save
     def Bold(text: str):
         return Style._Bold + text + Style._END
 
     @staticmethod
+    @text_save
     def Underline(text: str):
         return Style._Underline + text + Style._END
 
     @staticmethod
+    @text_save
     def Reversed(text: str):
         return Style._Reversed + text + Style._END
 
     @staticmethod
+    @text_save
     def ITALIC(text: str):
         return Style._ITALIC + text + Style._END
 
     @staticmethod
+    @text_save
     def BLINK(text: str):
         return Style._BLINK + text + Style._END
 
     @staticmethod
+    @text_save
     def BLINK2(text: str):
         return Style._BLINK2 + text + Style._END
 
     @staticmethod
+    @text_save
     def BLACKBG(text: str):
         return Style._BLACKBG + text + Style._END
 
     @staticmethod
+    @text_save
     def REDBG(text: str):
         return Style._REDBG + text + Style._END
 
     @staticmethod
+    @text_save
     def GREENBG(text: str):
         return Style._GREENBG + text + Style._END
 
     @staticmethod
+    @text_save
     def YELLOWBG(text: str):
         return Style._YELLOWBG + text + Style._END
 
     @staticmethod
+    @text_save
     def BLUEBG(text: str):
         return Style._BLUEBG + text + Style._END
 
     @staticmethod
+    @text_save
     def VIOLETBG(text: str):
         return Style._VIOLETBG + text + Style._END
 
     @staticmethod
+    @text_save
     def BEIGEBG(text: str):
         return Style._BEIGEBG + text + Style._END
 
     @staticmethod
+    @text_save
     def WHITEBG(text: str):
         return Style._WHITEBG + text + Style._END
 
     @staticmethod
+    @text_save
     def GREY(text: str):
         return Style._GREY + str(text) + Style._END
 
     @staticmethod
+    @text_save
     def RED2(text: str):
         return Style._RED2 + text + Style._END
 
     @staticmethod
+    @text_save
     def GREEN2(text: str):
         return Style._GREEN2 + text + Style._END
 
     @staticmethod
+    @text_save
     def YELLOW2(text: str):
         return Style._YELLOW2 + text + Style._END
 
     @staticmethod
+    @text_save
     def BLUE2(text: str):
         return Style._BLUE2 + text + Style._END
 
     @staticmethod
+    @text_save
     def VIOLET2(text: str):
         return Style._VIOLET2 + text + Style._END
 
     @staticmethod
+    @text_save
     def BEIGE2(text: str):
         return Style._BEIGE2 + text + Style._END
 
     @staticmethod
+    @text_save
     def WHITE2(text: str):
         return Style._WHITE2 + text + Style._END
 
     @staticmethod
+    @text_save
     def GREYBG(text: str):
         return Style._GREYBG + text + Style._END
 
     @staticmethod
+    @text_save
     def REDBG2(text: str):
         return Style._REDBG2 + text + Style._END
 
     @staticmethod
+    @text_save
     def GREENBG2(text: str):
         return Style._GREENBG2 + text + Style._END
 
     @staticmethod
+    @text_save
     def YELLOWBG2(text: str):
         return Style._YELLOWBG2 + text + Style._END
 
     @staticmethod
+    @text_save
     def BLUEBG2(text: str):
         return Style._BLUEBG2 + text + Style._END
 
     @staticmethod
+    @text_save
     def VIOLETBG2(text: str):
         return Style._VIOLETBG2 + text + Style._END
 
     @staticmethod
+    @text_save
     def BEIGEBG2(text: str):
         return Style._BEIGEBG2 + text + Style._END
 
     @staticmethod
+    @text_save
     def WHITEBG2(text: str):
         return Style._WHITEBG2 + text + Style._END
 
     @staticmethod
+    @text_save
     def loading_al(text: str):
         b = f"{text} /"
         print(b)

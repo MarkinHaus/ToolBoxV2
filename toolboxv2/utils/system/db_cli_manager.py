@@ -107,9 +107,11 @@ class DBInstanceManager:
         env["R_BLOB_DB_CLEAN"] = os.getenv("R_BLOB_DB_CLEAN", "false")
         env["R_BLOB_DB_PORT"] = str(self.port)
         env["R_BLOB_DB_DATA_DIR"] = str(self.data_dir.resolve())
-        env["RUST_LOG"] = "info,tower_http=debug"
+        env["RUST_LOG"] = "info,tower_http=debug" # "error"
 
         try:
+            if executable_path is None:
+                raise ValueError(f"\n{Style.RED2('❌ ERROR:')} Executable not found. Build it first.")
             with Spinner(f"Launching process for '{self.id}'", symbols="d"):
                 process = subprocess.Popen(
                     [str(executable_path.resolve())],
