@@ -15,6 +15,8 @@ from typing import Any, Union
 
 from pydantic import BaseModel
 
+from ..system.db_cli_manager import ClusterManager
+from ..extras.blobs import BlobStorage
 from ..extras import generate_test_cases
 from ..extras.Style import Spinner
 from .all_functions_enums import *
@@ -1245,6 +1247,8 @@ class AppType:
         "develop-mode": bool,
     }
 
+    cluster_manager: ClusterManager
+    root_blob_storage: BlobStorage
     config_fh: FileHandler
     _debug: bool
     flows: dict[str, Callable]

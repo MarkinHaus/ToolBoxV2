@@ -5,7 +5,10 @@ from yaml import safe_load
 
 try:
     from .utils.toolbox import App
-except ImportError:
+except ImportError as e:
+    print(e)
+    import traceback
+    print(traceback.format_exc())
     App = None
     print("⚠️ Missing: utils.toolbox.App")
 

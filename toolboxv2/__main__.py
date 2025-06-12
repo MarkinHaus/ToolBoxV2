@@ -2,6 +2,7 @@
 import argparse
 import asyncio
 import pprint
+import shutil
 
 # Import default Pages
 import sys
@@ -10,6 +11,7 @@ import time
 from functools import wraps
 from platform import node, system
 
+from toolboxv2 import tb_root_dir
 # from sqlalchemy.testing.suite.test_reflection import metadata
 from toolboxv2.flows import flows_dict as flows_dict_func
 from toolboxv2.setup_helper import run_command
@@ -20,9 +22,12 @@ from toolboxv2.utils.extras.Style import Spinner, Style
 from toolboxv2.utils.proxy import ProxyApp
 from toolboxv2.utils.system import CallingObject, get_state_from_app
 from toolboxv2.utils.system.api import cli_api_runner
+from toolboxv2.utils.system.db_cli_manager import cli_db_runner
 from toolboxv2.utils.system.conda_runner import conda_runner_main
+from toolboxv2.utils.system.exe_bg import run_executable_in_background
 from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
 from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyproject
+from toolboxv2.utils.system.tcm_p2p_cli import cli_tcm_runner
 from toolboxv2.utils.toolbox import App
 
 DEFAULT_MODI = "cli"
@@ -299,16 +304,19 @@ def parse_args():
         +----------------------------------------------------------------------------+
 
         Usage:
-          tb [command] [options]
+          tb [Optional-Extensions] [options]
 
-        Positional Commands (choose one):
+        Extensions Commands:
 
           gui             ▶ Launch graphical interface
+          p2p             ▶ Launch p2p client
 
           api             ▶ Run Rust API manager
                           (for details: tb api -h)
           conda           ▶ Run conda commands
                           (for details: tb conda -h)
+          db              ▶ Run r_blob_db commands
+                          (for details: tb db -h)
 
         Core Options:
           -h, --help      ▶ Show this help message and exit
@@ -374,6 +382,7 @@ def parse_args():
           $ tb --docker -m dev -p 8000 -w 0.0.0.0
           $ tb api start
           $ tb gui
+          $ tb status -> get db api and p2p status
           $ tb --ipy
           $ tb -c CloudM Version -c CloudM get_mod_snapshot CloudM
           $ tb -c CloudM get_mod_snapshot --kwargs mod_name:CloudM
@@ -386,10 +395,16 @@ def parse_args():
     parser.add_argument("gui", help="start gui no args", default=False,
                         action='store_true')
 
+    parser.add_argument("p2p", help="run rust p2p for mor infos run tb p2p -h", default=False,
+                        action='store_true')
+
     parser.add_argument("api", help="run rust api for mor infos run tb api -h", default=False,
                         action='store_true')
 
     parser.add_argument("conda", help="run conda commands for mor infos run tb conda -h", default=False,
+                        action='store_true')
+
+    parser.add_argument("db", help="run r_blob_db commands for mor infos run tb db -h", default=False,
                         action='store_true')
 
     parser.add_argument("-init",
@@ -865,6 +880,24 @@ async def main():
         if not os.path.exists(pid_file):
             print("You must first run the mode")
         else:
+
+            try:
+                tb_app.cluster_manager.stop_all()
+            except Exception as e:
+                print(Style.YELLOW(f"Error stopping cluster manager: {e}"))
+            try:
+                from toolboxv2.utils.system.api import api_manager
+                api_manager("stop", tb_app.debug)
+            except Exception as e:
+                print(Style.YELLOWBG(f"Error stopping api manager: {e}"))
+            try:
+                from toolboxv2.utils.system.tcm_p2p_cli import handle_stop
+                _ = lambda :None
+                _.names = None
+                handle_stop(_)
+            except Exception as e:
+                print(Style.YELLOWBG(f"Error stopping api manager: {e}"))
+
             with open(pid_file, encoding="utf8") as f:
                 app_pid = f.read()
             print(f"Exit app {app_pid}")
@@ -872,6 +905,7 @@ async def main():
                 os.system(f"taskkill /pid {app_pid} /F")
             else:
                 os.system(f"kill -9 {app_pid}")
+
 
     if args.command and not args.background_application:
         for command in args.command:
@@ -1090,27 +1124,65 @@ def create_subproject_pyprojects():
 def main_runner():
     # The fuck is uv not PyO3 compatible
     sys.excepthook = sys.__excepthook__
-    if len(sys.argv) >= 2 and sys.argv[1] == "conda":
+
+    def helper_gui():
+        name_with_ext = f"simple-core.exe" if system() == "Windows" else "simple-core"
+        # Look in a dedicated 'bin' folder first, then cargo's default
+        from pathlib import Path
+        search_paths = [
+            tb_root_dir / "bin" / name_with_ext,
+            tb_root_dir / "simple-core" / "src-tauri" / "bin" / name_with_ext,
+            tb_root_dir / "simple-core" / "src-tauri" / "target" / "release" / name_with_ext,
+            tb_root_dir / "simple-core" / "src-tauri" / name_with_ext,
+
+        ]
+        gui_exe = ""
+        for path in search_paths:
+            if path.is_file():
+                gui_exe = path.resolve()
+                break
+        if not gui_exe:
+            print(f"Executable '{name_with_ext}' not found in standard locations. Build or download")
+            return
+        if not 'bin' in str(gui_exe):
+            if gui_exe:
+                bin_dir = tb_root_dir / "bin"
+                bin_dir.mkdir(exist_ok=True)
+                shutil.copy(gui_exe, bin_dir / Path(gui_exe).name)
+                print(f"Copied executable to '{bin_dir.resolve()}'")
+        run_executable_in_background(gui_exe)
+    def py_gui_helper():
+        run_executable_in_background(sys.executable, ["-m", "toolboxv2.__gui__.start"])
+    def status_helper():
+        os.system(f"{sys.executable} -m toolboxv2 db status")
+        os.system(f"{sys.executable} -m toolboxv2 api status")
+        os.system(f"{sys.executable} -m toolboxv2 p2p status")
+
+    runner = {
+        "conda": conda_runner_main,
+        "api": cli_api_runner,
+        "ipy": start_ipython_session,
+        "db": cli_db_runner,
+        "gui": helper_gui,
+        "p2p": cli_tcm_runner,
+        "status": status_helper,
+    }
+    if len(sys.argv) >= 2 and sys.argv[1] in runner.keys():
+        if len(sys.argv) >= 3 and sys.argv[-1] == "status":
+            pass
+        else:
+            get_app()
+        command = sys.argv[1]
         sys.argv[1:] = sys.argv[2:]
-        sys.exit(conda_runner_main())
-    elif len(sys.argv) >= 6 and sys.argv[5] == "conda":
+        sys.exit(runner[command]())
+    elif len(sys.argv) >= 6 and sys.argv[5] in runner.keys():
+        command = sys.argv[5]
         sys.argv[4:] = sys.argv[5:]
-        sys.exit(conda_runner_main())
-    if len(sys.argv) >= 2 and sys.argv[1] == "api":
-        sys.argv[1:] = sys.argv[2:]
-        get_app()
-        sys.exit(cli_api_runner())
-    elif len(sys.argv) >= 6 and sys.argv[5] == "api":
-        sys.argv[4:] = sys.argv[5:]
-        get_app()
-        sys.exit(cli_api_runner())
+        sys.exit(runner[command]())
     elif '--ipy' in sys.argv:
         argv = sys.argv[1:]
         sys.argv = sys.argv[:1]
         start_ipython_session(argv)
-    elif 'gui' in sys.argv:
-        from toolboxv2.__gui__ import start as start_gui
-        start_gui()
     else:
         loop = asyncio.new_event_loop()
         loop.run_until_complete(main())
@@ -1147,5 +1219,5 @@ def server_helper(instance_id:str="main", db_mode="RR"):
     return app
 
 if __name__ == "__main__":
-    print("STARTED START FROM CLI")
+    # print("STARTED START FROM __main__")
     sys.exit(main_runner())

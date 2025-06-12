@@ -153,7 +153,7 @@ class Tools(MainTool, EventManagerClass if EVENT_MANAGER_AVAILABLE else object):
         self.previews_lock = asyncio.Lock()
 
 
-        MainTool.__ainit__(self, load=on_start, v=self.version, tool=self.tools_dict, name=self.name,
+        MainTool.__init__(self, load=on_start, v=self.version, tool=self.tools_dict, name=self.name,
                           color=self.color, app=app)
     @property
     def db_mod(self):

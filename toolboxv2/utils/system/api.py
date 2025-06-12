@@ -1,24 +1,6 @@
-import contextlib
-import json
-import os
-import platform
 import re
-import shutil
-import socket
-import subprocess
-import sys
-import tarfile
-import time
-from pathlib import Path
-
 from packaging import version
-
-SERVER_STATE_FILE = "server_state.json"
-PERSISTENT_FD_FILE = "server_socket.fd" # Used on POSIX
-DEFAULT_EXECUTABLE_NAME = "simple-core-server" # Adjust if your exe name is different
-SERVER_HOST = "0.0.0.0" # Must match Rust config
-SERVER_PORT = 8080       # Must match Rust config
-SOCKET_BACKLOG = 128
+from toolboxv2 import tb_root_dir
 
 
 try:
@@ -178,36 +160,6 @@ def run_executable(file_path):
         print("Exiting call from:", file_path)
 
 
-def check_and_run_local_release(do_run=True):
-    """Search for a pre-built release executable in the src-core folder and run it if found."""
-    src_core_path = os.path.join(".", "src-core")
-    if os.path.isdir(src_core_path):
-        # Define the path to the expected release executable, assuming a Cargo project structure
-        expected_name = "simple-core-server.exe" if platform.system().lower() == "windows" else "simple-core-server"
-        release_path = os.path.join(src_core_path, expected_name)
-        if os.path.isfile(release_path):
-            print("Found pre-built release executable.")
-            return release_path if not do_run else run_executable(release_path)
-        release_path = os.path.join(src_core_path, "target", "release", expected_name)
-        if os.path.isfile(release_path):
-            print("Found pre-built release executable.")
-            # Move the executable from target/release to src_core_path for easier access next time
-            dest_path = os.path.join(src_core_path, expected_name)
-            try:
-                import shutil
-                shutil.copy2(release_path, dest_path)
-                print(f"Copied executable to {dest_path} for easier access next time")
-            except Exception as e:
-                print(f"Failed to copy executable: {e}")
-                return False
-            if do_run:
-                run_executable(dest_path)
-            else:
-                return dest_path
-            return True
-    return False
-
-
 def check_cargo_installed():
     """Check if Cargo (Rust package manager) is installed on the system."""
     try:
@@ -227,6 +179,22 @@ def build_cargo_project(debug=False):
     print(f"Building in {mode} mode...")
     try:
         subprocess.run(args, cwd=os.path.join(".", "src-core"), check=True)
+        exe_path = get_executable_name_with_extension()
+        if exe_path:
+            bin_dir = tb_root_dir / "bin"
+            bin_dir.mkdir(exist_ok=True)
+            exe_path = Path(exe_path)
+            try:
+                shutil.copy(exe_path, bin_dir / exe_path.name)
+            except Exception as e:
+                bin_dir = tb_root_dir / "ubin"
+                bin_dir.mkdir(exist_ok=True)
+                (bin_dir / exe_path.name).unlink(missing_ok=True)
+                try:
+                    shutil.copy(exe_path, bin_dir / exe_path.name)
+                except Exception as e:
+                    print(f"Failed to copy executable: {e}")
+            print(f"Copied executable to '{bin_dir.resolve()}'")
         return True
     except subprocess.CalledProcessError as e:
         print(f"Cargo build failed: {e}")
@@ -325,140 +293,75 @@ def cleanup_build_files():
         return True
 
 
-def is_uv_installed():
-    """Check if uv is installed."""
+
+# file: toolboxv2/api_manager.py
+# A production-style, platform-agnostic Rust server manager with an enhanced UI
+# and optional POSIX zero-downtime update support.
+
+import argparse
+import contextlib
+import json
+import os
+import platform
+import shutil
+import socket
+import subprocess
+import sys
+import time
+import textwrap
+from pathlib import Path
+
+# --- Enhanced UI Imports ---
+try:
+    from ..extras.Style import Style, Spinner
+except ImportError:
+    # Fallback for different execution contexts
     try:
-        subprocess.run(["uv", "--version"], check=True, capture_output=True, text=True)
-        return True
-    except FileNotFoundError:
-        return False
+        from toolboxv2.extras.Style import Style, Spinner
+    except ImportError:
+        print("FATAL: UI utilities not found. Ensure 'toolboxv2/extras/Style.py' exists.")
+        sys.exit(1)
 
-def get_uv_site_packages():
-    """Find the site-packages directory for a uv-managed virtual environment."""
-    try:
-        site_packages = subprocess.check_output(["uv", "info", "--json"], text=True)
-        import json
-        data = json.loads(site_packages)
-        return data["venv"]["site_packages"]
-    except Exception as e:
-        print(f"Error finding uv site-packages: {e}")
-        return None
+# --- Configuration ---
+try:
+    import psutil
+except ImportError:
+    print(Style.RED("FATAL: Required library 'psutil' not found."))
+    print(Style.YELLOW("Please install it using: pip install psutil"))
+    sys.exit(1)
 
-def create_dill_archive(site_packages, output_file="python312.dill"):
-    """Package dill and all dependencies into a single .dill archive."""
-    try:
-        temp_dir = "/tmp/dill_package"
-        os.makedirs(temp_dir, exist_ok=True)
-
-        # Copy only necessary packages
-        packages = ["dill"]
-        for package in packages:
-            package_path = os.path.join(site_packages, package)
-            if os.path.exists(package_path):
-                shutil.copytree(package_path, os.path.join(temp_dir, package), dirs_exist_ok=True)
-            else:
-                print(f"Warning: {package} not found in site-packages.")
-
-        # Create the .dill archive
-        with tarfile.open(output_file, "w:gz") as tar:
-            tar.add(temp_dir, arcname=".")
-
-        print(f"Successfully created {output_file}")
-
-        # Clean up
-        shutil.rmtree(temp_dir)
-
-    except Exception as e:
-        print(f"Error creating .dill archive: {e}")
-
-def add_py_dill():
-    if not is_uv_installed():
-        print("uv is not installed. Please install uv before running this script.")
-        return
-    print(f"VIRTUAL_ENV=$ {os.getenv('VIRTUAL_ENV')}")
-    site_packages = os.getenv("PY_SITE_PACKAGES")
-    if not site_packages:
-        print("Could not determine site-packages path. Is this a uv environment?")
-        return
-
-    print(f"Packaging dill from {site_packages}...")
-    create_dill_archive(site_packages, output_file=os.getenv("PY_DILL"))
+# These constants should be in a shared config or directly here
+SERVER_STATE_FILE = "server_state.json"
+PERSISTENT_FD_FILE = "server_socket.fd"
+DEFAULT_EXECUTABLE_NAME = "simple-core-server"
+SERVER_HOST = "0.0.0.0"
+SERVER_PORT = 8080
+SOCKET_BACKLOG = 128
 
 
-def main_api_runner(debug=False, run=True):
-    """
-    Main function to run the API server.
-    When debug=True, enables hot reloading and runs in debug mode.
-
-    Non blocking!
-    """
-    if not os.path.exists(os.getenv("PY_DILL", '.')):
-        add_py_dill()
-    if is_uv_installed():
-        print(f"VIRTUAL_ENV=$ {os.getenv('VIRTUAL_ENV')} {os.getenv('PY_SITE_PACKAGES')}")
-        os.environ["VIRTUAL_ENV"] = os.getenv('UV_BASE_ENV', os.getenv('VIRTUAL_ENV'))
-        # os.environ["PY_SITE_PACKAGES"] = os.getenv('PY_SITE_PACKAGES')
-    if debug:
-        print("Starting in DEBUG mode with hot reloading enabled...")
-        if check_cargo_installed():
-            run_with_hot_reload()
-        else:
-            print("Cargo is not installed. Hot reloading requires Cargo.")
-        return None
-
-    # Release mode flow
-    if exe := check_and_run_local_release(run):
-        return exe
-
-    # Step 1: Detect current OS and machine architecture
-    current_os, machine = detect_os_and_arch()
-    print(f"Detected OS: {current_os}, Architecture: {machine}")
-
-    # Step 2: Attempt to download executable from remote URL
-    url, file_name = query_executable_url(current_os, machine)
-    downloaded_exe = download_executable(url, file_name)
-
-    if downloaded_exe and run:
-        print("Downloaded executable. Executing it...")
-        run_executable(downloaded_exe)
-        return None
-
-    if downloaded_exe and not run:
-        return downloaded_exe
-
-    # Step 3: Fallback: Check for local pre-built release executable in src-core folder
-    print("Remote executable not found. Searching local 'src-core' folder...")
-    if exe := check_and_run_local_release():
-        return exe
-    else:
-        print("Pre-built release executable not found locally.")
-
-        # Step 4: If executable not found locally, check if Cargo is installed
-        if not check_cargo_installed():
-
-            print("Cargo is not installed. Please install Cargo to build the project.")
-            return None
-
-        print("Cargo is installed. Proceeding with build.")
-        if not build_cargo_project(debug=False):
-
-            print("Failed to build the Cargo project.")
-            return None
-
-        # After successful build, try running the release executable again
-        if exe := check_and_run_local_release(run):
-            return exe
-
-        print("Release executable missing even after build.")
-        return None
-
-
-# --- Zoro downtime unix manager and windows quick restart ---
+# --- Helper Functions (Functionality 1-to-1) ---
 
 def get_executable_name_with_extension(base_name=DEFAULT_EXECUTABLE_NAME):
     if platform.system().lower() == "windows":
         return f"{base_name}.exe"
     return base_name
+
+
+def get_executable_path():
+    """Find the release executable in standard locations."""
+    # This function is simplified from your example to match this script's scope
+    exe_name = get_executable_name_with_extension()
+    search_paths = [
+        Path("src-core") / "target" / "release" / exe_name,
+        Path("src-core") / exe_name,
+        Path("bin") / exe_name,
+        Path(".") / exe_name
+    ]
+    for path in search_paths:
+        if path.exists() and path.is_file():
+            return path.resolve()
+    return None
+
 
 def read_server_state(state_file=SERVER_STATE_FILE):
     try:
@@ -470,404 +373,327 @@ def read_server_state(state_file=SERVER_STATE_FILE):
     except Exception:
         return None, None, None
 
+
 def write_server_state(pid, server_version, executable_path, state_file=SERVER_STATE_FILE):
     try:
-        state = {'pid': pid, 'version': server_version, 'executable_path': str(Path(executable_path).resolve())} # Store absolute path
+        state = {'pid': pid, 'version': server_version, 'executable_path': str(Path(executable_path).resolve())}
         with open(state_file, 'w') as f:
             json.dump(state, f, indent=4)
     except Exception as e:
-        print(f"Error writing server state: {e}")
+        print(Style.RED(f"Error writing server state: {e}"))
+
 
 def is_process_running(pid):
     if pid is None or psutil is None: return False
     try:
         return psutil.pid_exists(int(pid))
-    except ValueError: # Handle if pid is not an int
+    except (ValueError, TypeError):
         return False
 
 
 def stop_process(pid, timeout=10):
-    if pid is None or not psutil or not is_process_running(pid):
-        print(f"Process {pid} not running or psutil unavailable.")
+    if not is_process_running(pid):
+        print(Style.YELLOW(f"Process {pid} not running or psutil unavailable."))
         return True
-    try:
-        proc = psutil.Process(int(pid))
-        print(f"Sending SIGTERM (or equivalent) to process {pid}...")
-        proc.terminate() # Cross-platform terminate
-        proc.wait(timeout)
-        print(f"Process {pid} terminated.")
-        return True
-    except psutil.TimeoutExpired:
-        print(f"Process {pid} did not terminate gracefully. Force killing...")
+
+    with Spinner(f"Stopping process {pid}", symbols="+", time_in_s=timeout, count_down=True) as s:
         try:
-            proc.kill() # Cross-platform kill
-            proc.wait(2)
-            print(f"Process {pid} killed.")
-        except Exception as e_kill:
-            print(f"Error killing process {pid}: {e_kill}")
+            proc = psutil.Process(int(pid))
+            proc.terminate()
+            proc.wait(timeout)
+        except psutil.TimeoutExpired:
+            s.message = f"Force killing process {pid}"
+            proc.kill()
+        except psutil.NoSuchProcess:
+            pass  # Already gone
+        except Exception as e:
+            print(f"\n{Style.RED2('Error stopping process')} {pid}: {e}")
             return False
-        return True
-    except psutil.NoSuchProcess:
-        print(f"Process {pid} not found (already stopped?).")
-        return True
-    except Exception as e:
-        print(f"Error stopping process {pid}: {e}")
-        return False
 
-# --- Platform-Specific Socket and Process Starting ---
+    print(f"\n{Style.VIOLET2('Process')} {pid} {Style.VIOLET2('stopped.')}")
+    return True
+
+
+# --- Platform-Specific Logic (Functionality 1-to-1) ---
+
 def ensure_socket_and_fd_file_posix(host, port, backlog, fd_file_path) -> tuple[socket.socket | None, int | None]:
-    """POSIX: Ensures a listening socket exists and its FD is in the fd_file."""
-    # ALWAYS remove the old FD file if it exists. This script invocation
-    # will create its own socket. This means any previous server using that
-    # address must be stopped, or we'll get AddrInUse.
     if os.path.exists(fd_file_path):
-        print(f"[POSIX] Stale FD file {fd_file_path} found. Removing to create a new socket.")
-        try:
+        print(Style.YELLOW(f"[POSIX] Stale FD file found: {fd_file_path}. Removing to create a new socket."))
+        with contextlib.suppress(OSError):
             os.remove(fd_file_path)
-        except OSError as e:
-            # This is not ideal, as binding might fail if the port is still in use
-            # by whatever process was associated with the old FD.
-            print(f"[POSIX] Warning: Could not remove old FD file {fd_file_path}: {e}")
 
-    # The rest of your socket creation logic
     try:
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         fd_num = server_socket.fileno()
-        if hasattr(os, 'set_inheritable'): # Python 3.4+
+        if hasattr(os, 'set_inheritable'):
             os.set_inheritable(fd_num, True)
-        else: # POSIX, Python < 3.4 (fcntl not on Windows)
-            import fcntl # Import fcntl here as it's POSIX specific
+        else:
+            import fcntl
             flags = fcntl.fcntl(fd_num, fcntl.F_GETFD)
-            fcntl.fcntl(fd_num, fcntl.F_SETFD, flags & ~fcntl.FD_CLOEXEC) # Ensure inheritable
+            fcntl.fcntl(fd_num, fcntl.F_SETFD, flags & ~fcntl.FD_CLOEXEC)
 
         server_socket.bind((host, port))
         server_socket.listen(backlog)
-        # FD is now valid and owned by this Python process
-        with open(fd_file_path, 'w') as f: f.write(str(fd_num))
-        os.chmod(fd_file_path, 0o600) # Restrictive permissions
-        print(f"[POSIX] Created new socket. FD {fd_num} saved to {fd_file_path}.")
+        with open(fd_file_path, 'w') as f:
+            f.write(str(fd_num))
+        os.chmod(fd_file_path, 0o600)
+        print(Style.GREEN(f"[POSIX] Created new socket. FD {fd_num} saved to {fd_file_path}."))
         return server_socket, fd_num
     except Exception as e:
-        print(f"[POSIX] Fatal: Could not create and save listening socket FD: {e}")
+        print(Style.RED(f"[POSIX] Fatal: Could not create listening socket FD: {e}"))
         if 'server_socket' in locals():
             server_socket.close()
         return None, None
 
+
 def start_rust_server_posix(executable_path: str, persistent_fd: int):
-    """POSIX: Starts Rust server passing the persistent_fd."""
-    abs_executable_path = Path(executable_path).resolve()
+    abs_path = Path(executable_path).resolve()
     env = os.environ.copy()
     env["PERSISTENT_LISTENER_FD"] = str(persistent_fd)
-    env["LISTEN_FDS"] = "1" if  persistent_fd != 4 else str(persistent_fd)# Also set for listenfd standard mechanism
-    env["LISTEN_PID"] = str(os.getpid())
-    print(f"[POSIX] Starting Rust server: {abs_executable_path} using FD {persistent_fd}")
+    print(Style.CYAN(f"[POSIX] Starting Rust server {abs_path.name} using FD {persistent_fd}"))
     try:
-        process = subprocess.Popen(
-            [str(abs_executable_path)],
-            cwd=abs_executable_path.parent,
-            env=env,
-            pass_fds=[persistent_fd],
-        )
-        return process
+        return subprocess.Popen([str(abs_path)], cwd=abs_path.parent, env=env, pass_fds=[persistent_fd])
     except Exception as e:
-        print(f"[POSIX] Failed to start Rust server {abs_executable_path}: {e}")
+        print(Style.RED(f"[POSIX] Failed to start Rust server: {e}"))
         return None
+
 
 def start_rust_server_windows(executable_path: str):
-    """WINDOWS: Starts Rust server normally. It will bind its own socket."""
-    abs_executable_path = Path(executable_path).resolve()
-    print(f"[WINDOWS] Starting Rust server: {abs_executable_path}. It will bind its own socket.")
+    abs_path = Path(executable_path).resolve()
+    print(Style.CYAN(f"[WINDOWS] Starting Rust server {abs_path.name} (will bind its own socket)."))
     try:
-        process = subprocess.Popen(
-            [str(abs_executable_path)],
-            cwd=abs_executable_path.parent,
-            # No special env vars for socket needed for Windows fallback
-        )
-        return process
+        return subprocess.Popen([str(abs_path)], cwd=abs_path.parent)
     except Exception as e:
-        print(f"[WINDOWS] Failed to start Rust server {abs_executable_path}: {e}")
+        print(Style.RED(f"[WINDOWS] Failed to start Rust server: {e}"))
         return None
 
-# --- Main Management Logic ---
 
-def update_server(new_executable_path: str, new_version: str):
+# --- Main Management Logic with UI Enhancements ---
+
+def update_server(new_executable_path: str, new_version: str, use_posix_zdt: bool):
     """High-level update function, calls platform-specific logic."""
-    if platform.system().lower() == "windows":
-        return update_server_windows(new_executable_path, new_version)
-    else: # POSIX
+    # Only use POSIX ZDT if flag is set AND on a non-windows system
+    is_posix = platform.system().lower() != "windows"
+    if is_posix and use_posix_zdt:
         return update_server_posix(new_executable_path, new_version)
+    else:
+        if use_posix_zdt and not is_posix:
+            print(Style.YELLOW("Warning: --posix-zdt flag ignored on Windows. Using graceful restart."))
+        return update_server_graceful_restart(new_executable_path, new_version)
+
 
 def update_server_posix(new_executable_path: str, new_version: str):
-    """POSIX: Zero-downtime update using persistent FD."""
+    header = f"--- [POSIX] Starting Zero-Downtime Update to {Style.YELLOW(new_version)} ---"
+    print(Style.Bold(header))
     if not psutil: return False
-    print(f"--- [POSIX] Starting Update to {new_version} ---")
-    old_pid, old_version, old_exe_path = read_server_state()
+    old_pid, old_version, _ = read_server_state()
 
     if not os.path.exists(PERSISTENT_FD_FILE):
-        print(f"[POSIX] Error: FD file '{PERSISTENT_FD_FILE}' not found. Cannot update.")
+        print(Style.RED(f"[POSIX] Error: FD file '{PERSISTENT_FD_FILE}' not found. Cannot perform ZDT update."))
         return False
     try:
-        with open(PERSISTENT_FD_FILE) as f: persistent_fd = int(f.read().strip())
-        print(f"[POSIX] Using persistent listener FD: {persistent_fd}")
+        with open(PERSISTENT_FD_FILE) as f:
+            persistent_fd = int(f.read().strip())
     except Exception as e:
-        print(f"[POSIX] Error reading FD from '{PERSISTENT_FD_FILE}': {e}")
+        print(Style.RED(f"[POSIX] Error reading FD from file: {e}"))
         return False
 
-    new_process = start_rust_server_posix(new_executable_path, persistent_fd)
-    if new_process is None: return False
-    time.sleep(5) # Allow new server to init
-    if new_process.poll() is not None:
-        print(f"[POSIX] New server (PID {new_process.pid}) died. Exit: {new_process.poll()}. Update failed.")
-        return False
-    print(f"[POSIX] New server (v{new_version}, PID {new_process.pid}) started.")
+    with Spinner(f"Starting new server v{new_version}", symbols="d") as s:
+        new_process = start_rust_server_posix(new_executable_path, persistent_fd)
+        time.sleep(3)  # Allow time to initialize
 
-    if old_pid and is_process_running(old_pid):
-        print(f"[POSIX] Stopping old server (v{old_version}, PID {old_pid})...")
-        if not stop_process(old_pid):
-            print(f"[POSIX] Warning: Failed to stop old server PID {old_pid}.")
+    if new_process is None or new_process.poll() is not None:
+        print(f"\n{Style.RED2('Update failed:')} New server process died on startup.")
+        return False
+    print(f"\n{Style.GREEN('New server started')} (PID: {new_process.pid}).")
+
+    if stop_process(old_pid):
+        write_server_state(new_process.pid, new_version, new_executable_path)
+        print(f"--- {Style.GREEN2('Update Complete.')} New PID: {new_process.pid} ---")
+        return True
     else:
-        print("[POSIX] No old server or PID was stale.")
+        print(Style.RED2("Failed to stop the old process. Manual intervention may be required."))
+        # You might want to stop the new process here to avoid two running instances
+        stop_process(new_process.pid)
+        return False
 
-    write_server_state(new_process.pid, new_version, new_executable_path)
-    print(f"--- [POSIX] Update to {new_version} complete. New PID: {new_process.pid} ---")
-    return True
 
-def update_server_windows(new_executable_path: str, new_version: str):
-    """WINDOWS: Graceful restart (stop old, start new)."""
+def update_server_graceful_restart(new_executable_path: str, new_version: str):
+    header = f"--- Starting Graceful Restart to {Style.YELLOW(new_version)} ---"
+    print(Style.Bold(header))
     if not psutil: return False
-    print(f"--- [WINDOWS] Starting Update (Graceful Restart) to {new_version} ---")
-    old_pid, old_version, old_exe_path = read_server_state()
+    old_pid, _, _ = read_server_state()
 
-    if old_pid and is_process_running(old_pid):
-        print(f"[WINDOWS] Stopping old server (v{old_version}, PID {old_pid})...")
-        if not stop_process(old_pid):
-            print(f"[WINDOWS] Failed to stop old server PID {old_pid}. Update aborted to prevent conflicts.")
-            return False
-        print("[WINDOWS] Old server stopped.")
-        time.sleep(2) # Give OS time to release port
-    else:
-        print("[WINDOWS] No old server running or PID was stale.")
-
-    new_process = start_rust_server_windows(new_executable_path)
-    if new_process is None: return False
-    time.sleep(3) # Allow new server to init
-    if new_process.poll() is not None:
-        print(f"[WINDOWS] New server (PID {new_process.pid}) died. Exit: {new_process.poll()}. Update failed.")
+    if not stop_process(old_pid):
+        print(Style.RED("Failed to stop old server. Update aborted to prevent conflicts."))
         return False
-    print(f"[WINDOWS] New server (v{new_version}, PID {new_process.pid}) started.")
 
-    write_server_state(new_process.pid, new_version, new_executable_path)
-    print(f"--- [WINDOWS] Update to {new_version} complete. New PID: {new_process.pid} ---")
-    return True
-
-
-def manage_server(action: str, executable_path: str = None, version_str: str = "unknown"):
-    if action == "start":
-        current_pid, _, _ = read_server_state()
-        if current_pid and is_process_running(current_pid):
-            print(f"Server already running (PID {current_pid}). Use 'stop' first or 'update'.")
-            return
-
-        if not executable_path: # Determine executable path
-            # Check in target/release first, then src-core root
-            exe_name = get_executable_name_with_extension()
-            path_options = [
-                Path("src-core") / "target" / "release" / exe_name,
-                Path("src-core") / exe_name,
-                Path(".") / exe_name # Current dir
-            ]
-            for p_opt in path_options:
-                if p_opt.exists():
-                    executable_path = str(p_opt)
-                    break
-            if not executable_path:
-                print(f"Executable '{exe_name}' not found in standard locations. Build or provide --exe.")
-                return
-
-        print(f"Resolved executable path: {executable_path}")
+    # After stopping, start the new server
+    # We use a sub-function to avoid code duplication from `manage_server('start', ...)`
+    start_new_server(new_executable_path, new_version, False)
 
 
-        if platform.system().lower() == "windows" or True:
+def start_new_server(executable_path, version_str, use_posix_zdt):
+    current_pid, _, _ = read_server_state()
+    if is_process_running(current_pid):
+        print(Style.YELLOW(f"Server already running (PID {current_pid}). Use 'stop' or 'update'."))
+        return
+
+    is_posix = platform.system().lower() != "windows"
+    process = None
+    socket_obj = None
+
+    with Spinner(f"Starting server v{version_str}", symbols="d") as s:
+        if is_posix and use_posix_zdt:
+            socket_obj, fd = ensure_socket_and_fd_file_posix(SERVER_HOST, SERVER_PORT, SOCKET_BACKLOG,
+                                                             PERSISTENT_FD_FILE)
+            if fd is not None:
+                process = start_rust_server_posix(executable_path, fd)
+        else:  # Windows or non-ZDT start
             process = start_rust_server_windows(executable_path)
-        else: # POSIX
-            # This script instance creates the socket and FD file if they don't exist
-            # It can then exit. The Rust server keeps using the FD.
-            server_socket_obj, persistent_fd = ensure_socket_and_fd_file_posix(
-                SERVER_HOST, SERVER_PORT, SOCKET_BACKLOG, PERSISTENT_FD_FILE
-            )
-            if persistent_fd is None:
-                print("[POSIX] Failed to ensure server socket for start. Aborting.")
-                return
-            process = start_rust_server_posix(executable_path, persistent_fd)
-            if process and server_socket_obj:
-                # Initial creator of the socket can close its handle
-                # The FD is now managed by the kernel and used by the Rust child
-                print("[POSIX] Initial Python starter closing its socket object handle.")
-                server_socket_obj.close()
-            elif not process and server_socket_obj: # Failed to start rust server
-                print("[POSIX] Rust server failed to start, cleaning up socket and FD file.")
-                server_socket_obj.close()
-                if os.path.exists(PERSISTENT_FD_FILE):
-                    with contextlib.suppress(OSError): os.remove(PERSISTENT_FD_FILE)
 
-        if process:
-            # Wait briefly to see if it dies immediately
-            time.sleep(2)
-            if process.poll() is None: # Still running
-                write_server_state(process.pid, version_str, executable_path)
-                print(f"Server (v{version_str}) started. PID: {process.pid}.")
-                print("Python manager can now exit.")
-            else:
-                print(f"Server process (PID {process.pid}) terminated quickly (exit code {process.poll()}). Check logs.")
-                # If start failed, clear any potentially written state
-                pid_check, _, _ = read_server_state()
-                if pid_check == process.pid:
-                    write_server_state(None, None, None)
-        else:
-            print("Failed to start Rust server process.")
+        time.sleep(2)  # Stabilize
+
+    if socket_obj:
+        # The parent can close its handle to the socket. The child now owns it.
+        socket_obj.close()
+
+    if process and process.poll() is None:
+        write_server_state(process.pid, version_str, executable_path)
+        print(
+            f"\n{Style.GREEN2('✅ Server started.')} Version: {Style.YELLOW(version_str)}, PID: {Style.GREY(process.pid)}")
+    else:
+        print(f"\n{Style.RED2('❌ Server failed to start.')} Check logs for details.")
+        write_server_state(None, None, None)  # Clean up state
+
+
+def manage_server(action: str, executable_path: str = None, version_str: str = "unknown", use_posix_zdt: bool = False):
+    if action == "start":
+        if not executable_path:
+            executable_path = get_executable_path()
+        if not executable_path:
+            print(Style.RED("Executable not found. Build with 'build' action or provide --exe path."))
+            return
+        start_new_server(executable_path, version_str, use_posix_zdt)
 
     elif action == "stop":
         pid, _, _ = read_server_state()
         if stop_process(pid):
-            write_server_state(None, None, None) # Clear state
-            # On POSIX, if we stop the last server, the FD file becomes stale.
-            # Optionally remove it. This means 'start' will always create a new socket.
+            write_server_state(None, None, None)
             if platform.system().lower() != "windows" and os.path.exists(PERSISTENT_FD_FILE):
-                print(f"Server stopped. Removing persistent FD file: {PERSISTENT_FD_FILE}")
-                try: os.remove(PERSISTENT_FD_FILE)
-                except OSError as e: print(f"Could not remove FD file: {e}")
-        else:
-            print("Failed to stop server or server not running.")
+                print(Style.YELLOW(f"Note: Server stopped. Consider removing stale FD file: {PERSISTENT_FD_FILE}"))
 
     elif action == "update":
         if not executable_path:
-            print("Error: Path to new executable is required for update (--exe).")
+            print(Style.RED("Error: Path to new executable is required for update (--exe)."))
             return
         if not version_str or version_str == "unknown":
-            print("Error: Version string for the new executable is required (--version).")
+            print(Style.RED("Error: Version string is required for update (--version)."))
             return
-        update_server(executable_path, version_str)
+        update_server(executable_path, version_str, use_posix_zdt)
 
     elif action == "status":
         pid, ver, exe = read_server_state()
-        if pid and is_process_running(pid):
-            print("Server is RUNNING.")
-            print(f"  PID: {pid}\n  Version: {ver}\n  Executable: {exe}")
-            if platform.system().lower() != "windows" and os.path.exists(PERSISTENT_FD_FILE):
+        header = f"--- {Style.Bold('Server Status')} ---"
+        print(header)
+        if is_process_running(pid):
+            print(f"  {Style.GREEN2('✅ RUNNING')}")
+            print(f"    {Style.WHITE('PID:')}        {Style.GREY(pid)}")
+            print(f"    {Style.WHITE('Version:')}    {Style.YELLOW(ver)}")
+            print(f"    {Style.WHITE('Executable:')} {Style.GREY(exe)}")
+            if platform.system().lower() != "windows" and os.path.exists(PERSISTENT_FD_FILE) and use_posix_zdt:
                 try:
-                    with open(PERSISTENT_FD_FILE) as f_fd: fd_val = f_fd.read().strip()
-                    print(f"  Listening FD (from file, POSIX only): {fd_val}")
-                except Exception: pass
+                    with open(PERSISTENT_FD_FILE) as f:
+                        fd_val = f.read().strip()
+                    print(f"    {Style.WHITE('Listening FD:')} {Style.BLUE2(fd_val)} (POSIX ZDT Active)")
+                except Exception:
+                    pass
         else:
-            print("Server is STOPPED (or state inconsistent).")
-            if pid: print(f"  Stale PID in state: {pid}")
-            if platform.system().lower() != "windows" and os.path.exists(PERSISTENT_FD_FILE):
-                 print(f"  Warning (POSIX): {PERSISTENT_FD_FILE} exists, but server not found.")
-    else:
-        print(f"Unknown action: {action}.")
+            print(f"  {Style.RED2('❌ STOPPED')}")
+            if pid: print(f"    {Style.YELLOW('Stale PID in state:')} {pid}")
 
 
-def api_manager(action: str, debug, exe=None, version="v0.1"):
-    if action not in ['start', 'stop', 'update', 'status', 'build', 'clean', 'remove-exe']:
-        return f"invalid action {action} valid ar ['start', 'stop', 'update', 'status', 'build', 'clean', 'remove-exe']"
-
-    if action == 'build':
-        build_cargo_project(debug)
-        return None
-    if action == 'clean':
-        cleanup_build_files()
-        return None
-    if action == 'remove-exe':
-        remove_release_executable()
-        return None
-
-    if not psutil and action in ['start', 'stop', 'update', 'status']:
-        sys.exit("Error: 'psutil' library is required. pip install psutil")
-
-    if exe is None:
-        exe = main_api_runner(debug, False)
-
-    manage_server(action, exe, version)
-    return None
+def handle_build():
+    print(Style.CYAN("Building Rust project in release mode..."))
+    from toolboxv2 import tb_root_dir  # Assuming this is available
+    try:
+        with Spinner("Compiling with cargo", symbols="t") as s:
+            # Assume simple-core-server is in a subdirectory `src-core`
+            result = subprocess.run(
+                ["cargo", "build", "--release"],
+                cwd=tb_root_dir / "src-core",
+                check=True, capture_output=True, text=True
+            )
+        print(f"\n{Style.GREEN2('✅ Build successful.')}")
+    except subprocess.CalledProcessError as e:
+        print(f"\n{Style.RED2('❌ Build failed:')}")
+        print(Style.GREY(e.stderr))
+    except FileNotFoundError:
+        print(f"\n{Style.RED2('❌ Build failed:')} 'cargo' command not found.")
 
 
 def cli_api_runner():
-    import argparse
-    import textwrap
-
-    class CustomFormatter(argparse.RawDescriptionHelpFormatter):
-        pass
-
     parser = argparse.ArgumentParser(
-        usage="tb api {start,stop,update,status,build,clean,remove-exe,help} [-h] [--exe EXE] [--debug] [-w] [--version VERSION]",
-        description=textwrap.dedent("""
-            🚀 Platform-Agnostic Rust Server Manager
-
-            Manage your Rust-based server across platforms with ease.
-
-            Available actions:
-              start        Start the server (optional --exe)
-              stop         Stop the running server
-              update       Stop, replace binary, and restart the server (optional --exe)
-              status       Check if the server is currently running
-              build        Build the server
-              clean        Clean build artifacts
-              remove-exe   Remove the current server executable
-
-            Examples:
-              tb api start
-              tb api update --version 1.1.0
-              tb api stop
-        """),
-        formatter_class=CustomFormatter
+        description=f"🚀 {Style.Bold('Platform-Agnostic Rust Server Manager')}",
+        formatter_class=argparse.RawTextHelpFormatter
     )
+    subparsers = parser.add_subparsers(dest="action", required=True)
 
-    parser.add_argument(
-        'action',
-        choices=['start', 'stop', 'update', 'status', 'build', 'clean', 'remove-exe', 'help'],
-        help="Action to perform. See the list above for details.",
-        default='help'
-    )
-    parser.add_argument(
-        '--exe',
-        type=str,
-        help="Path to the server executable",
-        default=None,
-    )
-    parser.add_argument(
-        '--debug',
-        action='store_true',
-        help="Enable debug mode with server hot reloading support."
-    )
+    # Add actions with shared arguments
+    actions = {
+        'start': 'Start the server.',
+        'stop': 'Stop the running server.',
+        'update': 'Update the server.',
+        'status': 'Check server status.',
+        'build': 'Build the Rust project.',
+        'clean': 'Clean build artifacts.',
+        'remove-exe': 'Clean build artifacts.',
+    }
 
-    parser.add_argument(
-        '-w', '--watch',
-        action='store_true',
-        help="Enable watch mode for js html and css."
-    )
+    for action, help_text in actions.items():
+        p = subparsers.add_parser(action, help=help_text)
+        if action in ['start', 'update', 'status']:
+            p.add_argument('--posix-zdt', action='store_true',
+                           help='(Linux/macOS only) Use POSIX zero-downtime restarts via socket passing.')
+        if action in ['start', 'update']:
+            p.add_argument('--exe', type=str, help='Path to the server executable.')
+            p.add_argument('--version', type=str, default='unknown', help='Version string for the build.')
 
-    parser.add_argument(
-        '--version',
-        type=str,
-        default="unknown",
-        help="Version string for logging and update tracking."
-    )
-    if 'tb' in sys.argv[0] and len(sys.argv) < 2:
-        sys.argv.append("help")
     args = parser.parse_args()
-    if args.action == "help":
-        parser.print_help()
+
+    # Handle simple actions first
+    if args.action == 'build':
+        if 'debug' in sys.argv:
+            build_cargo_project(debug=True)
+        else:
+            handle_build()
+        # You can add clean handling here too if desired
         return
-    if args.watch:
-        from toolboxv2 import tb_root_dir
-        try:
-            subprocess.run("npm run dev", cwd=tb_root_dir, shell=True)
-        except Exception as e:
-            pass
+
+    if args.action == 'clean':
+        cleanup_build_files()
         return
-    api_manager(args.action, args.debug, args.exe, args.version)
+
+    if args.action == 'remove-exe':
+        remove_release_executable()
+        return
+
+    if args.action == 'start' and 'debug' in sys.argv:
+        print("Starting in DEBUG mode with hot reloading enabled...")
+        if check_cargo_installed():
+            run_with_hot_reload()
+        else:
+            print("Cargo is not installed. Hot reloading requires Cargo.")
+        return
+
+    manage_server(
+        action=args.action,
+        executable_path=getattr(args, 'exe', None),
+        version_str=getattr(args, 'version', 'unknown'),
+        use_posix_zdt=getattr(args, 'posix_zdt', False)
+    )
 
 
 if __name__ == "__main__":

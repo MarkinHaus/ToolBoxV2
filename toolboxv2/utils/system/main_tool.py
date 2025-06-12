@@ -1,6 +1,8 @@
 import asyncio
 import inspect
 import os
+from typing import Callable
+
 from toolboxv2.utils.extras import Style
 
 from .getting_and_closing_app import get_app
@@ -55,6 +57,12 @@ class MainTool:
         """
         self.__storedargs = args, kwargs
         self.todo = kwargs.get("load", kwargs.get("on_start", lambda: None))
+        if "on_exit" in kwargs and isinstance(kwargs.get("on_exit"), Callable):
+            self.on_exit =self.app.tb(
+                mod_name=self.name,
+                name=kwargs.get("on_exit").__name__,
+                version=self.version,
+            )(kwargs.get("on_exit"))
         self.async_initialized = False
         if self.todo:
             try:

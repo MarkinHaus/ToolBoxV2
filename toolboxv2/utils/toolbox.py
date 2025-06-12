@@ -20,6 +20,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+
 from ..utils.system.main_tool import get_version_from_pyproject
 from .extras.Style import Spinner, Style, stram_print
 from .singelton_class import Singleton
@@ -194,6 +195,16 @@ class App(AppType, metaclass=Singleton):
 
         from .system.session import Session
         self.session: Session = Session(self.get_username())
+        if len(sys.argv) > 2 and "db" == sys.argv[1]:
+            return
+        from .system.db_cli_manager import ClusterManager, get_executable_path
+        self.cluster_manager = ClusterManager()
+        online_list, server_list = self.cluster_manager.status_all(silent=True)
+        if not server_list:
+            self.cluster_manager.start_all(get_executable_path(), self.version)
+            _, server_list = self.cluster_manager.status_all()
+        from .extras.blobs import BlobStorage
+        self.root_blob_storage = BlobStorage(servers=server_list, storage_directory=self.data_dir+ '\\blob_cache\\')
 
     def get_username(self, get_input=False, default="loot") -> str:
         user_name = self.config_fh.get_file_handler("ac_user:::")
@@ -447,6 +458,11 @@ class App(AppType, metaclass=Singleton):
                     if t_function_name != "all" and t_function_name != "name":
                         self.tb(function_name, mod_name=modular_id)(tools_class.tools.get(function_name))
                 self.functions[modular_id][f"{spec}_instance_type"] += "/BC"
+                if hasattr(tools_class, 'on_exit'):
+                    if "on_exit" in self.functions[modular_id]:
+                        self.functions[modular_id]["on_exit"].append(tools_class.on_exit.__name__)
+                    else:
+                        self.functions[modular_id]["on_exit"] = [tools_class.on_exit.__name__]
             except Exception as e:
                 self.logger.error(f"Starting Module {modular_id} compatibility failed with : {e}")
                 pass
@@ -467,6 +483,7 @@ class App(AppType, metaclass=Singleton):
                         self.logger.info(Style.GREY(f"Running On start {f} {i}/{len(on_start)}"))
                         if asyncio.iscoroutinefunction(f_):
                             self.print(f"Async on start is only in Tool claas supported for {modular_id}.{f}" if tools_class is None else f"initialization starting soon for {modular_id}.{f}")
+                            self.run_bg_task_advanced(f_)
                         else:
                             o = f_()
                             if o is not None:
@@ -968,8 +985,10 @@ class App(AppType, metaclass=Singleton):
         if mod_name not in self.functions:
             self.logger.info(f"mod not active {mod_name}")
             return
-        on_exit = self.functions[mod_name].get("on_exit")
 
+        on_exit = self.functions[mod_name].get("on_exit")
+        self.logger.info(f"closing: {on_exit}")
+        print("on_exit:::::", on_exit)
         def helper():
             if f"{spec}_instance" in self.functions[mod_name]:
                 del self.functions[mod_name][f"{spec}_instance"]
@@ -993,6 +1012,7 @@ class App(AppType, metaclass=Singleton):
             return
 
         i = 1
+
         for f in on_exit:
             try:
                 f_, e = self.get_function((mod_name, f), state=True, specification=spec)
@@ -1029,7 +1049,7 @@ class App(AppType, metaclass=Singleton):
             self.logger.info(f"mod not active {mod_name}")
             return
         on_exit = self.functions[mod_name].get("on_exit")
-
+        self.logger.info(f"closing: {on_exit}")
         def helper():
             if f"{spec}_instance" in self.functions[mod_name]:
                 del self.functions[mod_name][f"{spec}_instance"]
@@ -1055,7 +1075,10 @@ class App(AppType, metaclass=Singleton):
         i = 1
         for f in on_exit:
             try:
-                f_, e = self.get_function((mod_name, f), state=True, specification=spec)
+                if isinstance(f, str):
+                    f_, e = self.get_function((mod_name, f), state=True, specification=spec)
+                elif isinstance(f, callable):
+                    f_, e, f  = f, 0, f.__name__
                 if e == 0:
                     self.logger.info(Style.GREY(f"Running On exit {f} {i}/{len(on_exit)}"))
                     if asyncio.iscoroutinefunction(f_):
@@ -1090,6 +1113,8 @@ class App(AppType, metaclass=Singleton):
         self.alive = False
         self.called_exit = True, time.time()
         self.save_exit()
+        if hasattr(self, 'root_blob_storage') and self.root_blob_storage:
+            self.root_blob_storage.exit()
         try:
             self.config_fh.save_file_handler()
         except SystemExit:
@@ -1116,7 +1141,7 @@ class App(AppType, metaclass=Singleton):
                 self.loop.stop()
 
     async def a_exit(self):
-        await self.a_remove_all_modules()
+        await self.a_remove_all_modules(delete=True)
         results = await asyncio.gather(
             *[asyncio.create_task(f()) for f in self.exit_tasks if asyncio.iscoroutinefunction(f)])
         for result in results:

@@ -41,6 +41,7 @@ nav:
     -   Contributing: contributing.md
     -   FAQ: faq.md
     -   TBjs: tbjs.md
+    -   CLIS: clis.md
     -   Report Issues: https://github.com/MarkinHaus/ToolBoxV2/issues
     -   API Reference:
             -   toolboxv2: toolboxv2.md

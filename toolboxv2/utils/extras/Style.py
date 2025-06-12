@@ -234,7 +234,7 @@ class Style:
 
     @staticmethod
     def GREY(text: str):
-        return Style._GREY + text + Style._END
+        return Style._GREY + str(text) + Style._END
 
     @staticmethod
     def RED2(text: str):

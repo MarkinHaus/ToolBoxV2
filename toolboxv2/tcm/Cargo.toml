@@ -1,0 +1,19 @@
+[package]
+name = "tcm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+anyhow = "1"
+thiserror = "1"
+log = "0.4"
+env_logger = "0.11"
+rand = "0.8"
+chacha20poly1305 = "0.10"
+sha2 = "0.10"
+hkdf = "0.12"
+base64 = "0.22"
