@@ -1,5 +1,6 @@
 # toolboxv2/mods/Canvas.py
 import asyncio
+import base64
 import json
 import uuid
 from collections import defaultdict
@@ -11,6 +12,8 @@ from pydantic import BaseModel, Field as PydanticField
 from toolboxv2 import App, Result, RequestData, get_app, MainTool
 from toolboxv2.utils.extras.base_widget import get_user_from_request
 
+import markdown2
+from xml.etree.ElementTree import Element, tostring
 # --- Module Definition ---
 MOD_NAME = Name = "Canvas"  # Renamed slightly for clarity if this is a new version
 VERSION = "0.1.0"
@@ -189,6 +192,84 @@ async def on_start(self):  # Renamed from on_start to avoid conflict if MainTool
 
     self.app.logger.info(f"{self.name} (v{VERSION}) initialized successfully.")
 
+
+# In FileWidget.py
+
+@export(mod_name=MOD_NAME, api=True, version=VERSION, name="markdown_to_svg", api_methods=['POST'],
+        request_as_kwarg=True)
+async def markdown_to_svg(self, request: RequestData, markdown_text: str = "", width: int = 400,
+                          font_family: str = "sans-serif", font_size: int = 14,
+                          bg_color: str = "#ffffff", text_color: str = "#000000") -> Result:
+    """
+    Converts a string of Markdown text into an SVG image.
+    The SVG is returned as a base64 encoded data URL.
+    This version uses a viewBox for better scalability and multi-line handling.
+    """
+    if not markdown_text:
+        markdown_text = request.data.get("markdown_text", "")
+
+    if not markdown_text:
+        return Result.default_user_error("markdown_text cannot be empty.")
+
+    try:
+        # Convert Markdown to HTML
+        html_content = markdown2.markdown(markdown_text, extras=["fenced-code-blocks", "tables", "strike"])
+
+        # --- FIX for Multi-line text ---
+        # The key is to NOT set a fixed height on the SVG itself, but to use a viewBox.
+        # The client will determine the final rendered size.
+        # The width of the div inside the foreignObject controls the line wrapping.
+
+        # We still need a rough height for the viewBox.
+        # Estimate height: (number of lines * line-height) + padding
+        # A simple line-height estimate is font_size * 1.6
+        line_height_estimate = font_size * 1.6
+        num_lines_estimate = len(html_content.split('\n')) + html_content.count('<br') + html_content.count(
+            '<p>') + html_content.count('<li>')
+        estimated_height = (num_lines_estimate * line_height_estimate) + 40  # 20px top/bottom padding
+
+        svg_template = f"""
+        <svg viewBox="0 0 {width} {int(estimated_height)}" xmlns="http://www.w3.org/2000/svg">
+            <foreignObject x="0" y="0" width="{width}" height="{int(estimated_height)}">
+                <div xmlns="http://www.w3.org/1999/xhtml">
+                    <style>
+                        div {{
+                            font-family: {font_family};
+                            font-size: {font_size}px;
+                            color: {text_color};
+                            background-color: {bg_color};
+                            padding: 10px;
+                            border-radius: 5px;
+                            line-height: 1.6;
+                            width: {width - 20}px; /* Width minus padding */
+                            word-wrap: break-word;
+                            height: 100%;
+                            overflow-y: auto; /* Allow scrolling if content overflows estimate */
+                        }}
+                        h1, h2, h3 {{ border-bottom: 1px solid #ccc; padding-bottom: 5px; margin-top: 1em; }}
+                        pre {{ background-color: #f0f0f0; padding: 10px; border-radius: 4px; overflow-x: auto; }}
+                        code {{ font-family: monospace; }}
+                        table {{ border-collapse: collapse; width: 100%; }}
+                        th, td {{ border: 1px solid #ddd; padding: 8px; }}
+                        th {{ background-color: #f2f2f2; }}
+                        blockquote {{ border-left: 4px solid #ccc; padding-left: 10px; color: #555; margin-left: 0; }}
+                    </style>
+                    {html_content}
+                </div>
+            </foreignObject>
+        </svg>
+        """
+
+        svg_base64 = base64.b64encode(svg_template.encode('utf-8')).decode('utf-8')
+        data_url = f"data:image/svg+xml;base64,{svg_base64}"
+
+        # --- FIX for Editability ---
+        # Return the original markdown text along with the SVG
+        return Result.ok(data={"svg_data_url": data_url, "original_markdown": markdown_text})
+
+    except Exception as e:
+        self.app.logger.error(f"Error converting Markdown to SVG: {e}", exc_info=True)
+        return Result.default_internal_error("Failed to convert Markdown to SVG.")
 
 @export(mod_name=MOD_NAME, api=True, version=VERSION, name="ui", api_methods=['GET'])
 async def get_main_ui(self, **kwargs) -> Result:
@@ -682,7 +763,11 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             <button id="toolEllipseBtn" title="Ellipse (O)" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">circle</span></button>
             <button id="toolTextBtn" title="Text (T)" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">title</span></button>
             <button id="toolImageBtn" title="Image" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">image</span></button>
-
+            <label for="fileWidgetUploadInput" title="Upload File (Image, PDF)" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon">
+                <span class="material-symbols-outlined">upload_file</span>
+            </label>
+            <input type="file" id="fileWidgetUploadInput" accept="image/*,application/pdf" style="display: none;">
+            <button id="toolMarkdownBtn" title="Add Markdown Text (M)" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">markdown</span></button>
         </div>
         <div id="commonToolsGroup" class="toolbar-group"> <!-- Common properties -->
             <label for="strokeColorPicker" title="Stroke Color">S:</label><input type="color" id="strokeColorPicker" value="#000000">
@@ -716,7 +801,20 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         </div>
     </div>
 </div>
-
+<div id="selectionContextToolbar" class="toolbar-group" style="position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--tb-bg-secondary, #fff); padding: 5px 10px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); z-index: 100; display: none;">
+    <!-- PDF Controls -->
+    <div id="pdfControls" style="display: none; align-items: center; gap: 5px;">
+        <button id="pdfPrevPageBtn" class="tb-btn tb-btn-sm tb-btn-icon" title="Previous Page"><span class="material-symbols-outlined">arrow_back_ios</span></button>
+        <span id="pdfPageInfo">Page 1 / 1</span>
+        <button id="pdfNextPageBtn" class="tb-btn tb-btn-sm tb-btn-icon" title="Next Page"><span class="material-symbols-outlined">arrow_forward_ios</span></button>
+    </div>
+    <!-- Scaling Controls -->
+    <div id="scaleControls" style="display: flex; align-items: center; gap: 8px; margin-left: 15px;">
+        <label for="scaleSlider" class="tb-text-xs">Scale:</label>
+        <input type="range" id="scaleSlider" min="0.1" max="3" step="0.05" value="1" style="width: 120px;">
+        <span id="scaleValue" class="tb-text-xs">100%</span>
+    </div>
+</div>
 <!-- Settings Modal HTML (initially hidden) -->
 <div id="settingsModal" class="tb-modal" style="display:none; width: 100%;">
     <div class="tb-modal-dialog tb-modal-lg">
@@ -790,9 +888,10 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
     </div>
 </div>
 
-
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/roughjs@4.6.6/bundled/rough.min.js"></script>
 <script type="module" defer>
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
   import { getStroke } from 'https://cdn.jsdelivr.net/npm/perfect-freehand@1.2.2/dist/esm/index.mjs';
 
   window.getStroke = getStroke; // Make globally reachable
@@ -922,6 +1021,20 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
              // image tool is handled separately now
         };
 
+        const fileWidgetUploadInputEl = document.getElementById('fileWidgetUploadInput');
+        fileWidgetUploadInputEl.addEventListener('change', (e) => handleFileUpload(e.target.files));
+
+         const markdownBtnEl = document.getElementById('toolMarkdownBtn');
+        markdownBtnEl.addEventListener('click', handleAddMarkdown);
+
+        // NEW: Add event listeners for the new contextual controls
+        const pdfPrevPageBtn = document.getElementById('pdfPrevPageBtn');
+        const pdfNextPageBtn = document.getElementById('pdfNextPageBtn');
+        const scaleSlider = document.getElementById('scaleSlider');
+        pdfPrevPageBtn.addEventListener('click', () => changeSelectedPdfPage(-1));
+        pdfNextPageBtn.addEventListener('click', () => changeSelectedPdfPage(1));
+        scaleSlider.addEventListener('input', (e) => scaleSelectedElements(parseFloat(e.target.value)));
+
         const strokeColorPickerEl = document.getElementById('strokeColorPicker');
         const fillColorPickerEl = document.getElementById('fillColorPicker');
         const bgColorPickerEl = document.getElementById('bgColorPicker');
@@ -1043,6 +1156,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         shareBtnEl.innerHTML = '<span class="material-symbols-outlined">share</span>';
         shareBtnEl.addEventListener('click', handleShareCanvas);
 
+        canvas.addEventListener('dblclick', handleCanvasDoubleClick);
         canvas.addEventListener('mousedown', handleCanvasMouseDown);
         canvas.addEventListener('mousemove', handleCanvasMouseMove);
         canvas.addEventListener('mouseup', handleCanvasMouseUp);
@@ -1105,6 +1219,22 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             }
         }
     }
+
+    function handleCanvasDoubleClick(e) {
+    const coords = getCanvasCoordinates(e);
+    if (coords.error) return;
+    const { x: worldX, y: worldY } = coords;
+
+    const clickedElement = getElementAtPosition(worldX, worldY);
+
+    if (clickedElement && clickedElement.isMarkdown) {
+        // If we double-clicked a Markdown element, open the editor
+        // We need to select it first so the editor knows which element to update
+        selectedElements = [clickedElement];
+        renderCanvas(); // Show selection highlight
+        handleAddMarkdown(); // This will now pre-fill the modal
+    }
+}
 
     // --- History Management (Undo/Redo) ---
     function pushToHistory(actionName = "unknown") {
@@ -1632,6 +1762,29 @@ function handleCanvasMouseUp(e) {
         }
         e.preventDefault();
         const touch = e.touches[0];
+
+        const currentTime = new Date().getTime();
+        const tapLength = currentTime - lastTap.time;
+
+        const coords = getCanvasCoordinates(touch);
+        if (coords.error) return;
+
+        // Check if this tap is close in time and space to the last one
+        if (tapLength < 300 && tapLength > 0 && Math.abs(coords.viewX - lastTap.x) < 30 && Math.abs(coords.viewY - lastTap.y) < 30) {
+
+            // It's a double tap, trigger the edit logic
+            handleCanvasDoubleClick({
+                clientX: touch.clientX,
+                clientY: touch.clientY,
+                preventDefault: () => {} // Mock event object
+            });
+
+            // Reset lastTap to prevent a third tap from also triggering
+            lastTap = { time: 0, x: 0, y: 0 };
+            e.stopPropagation(); // Stop the event from proceeding to single-tap logic
+        return; // Exit here to not process as a single tap
+        }
+
         lastTouch = { clientX: touch.clientX, clientY: touch.clientY };
         handleCanvasMouseDown({ button: 0, clientX: touch.clientX, clientY: touch.clientY, preventDefault: () => {}, target: e.target });
     }
@@ -2184,6 +2337,10 @@ function handleCanvasMouseUp(e) {
 
     if (canvasAppState.currentMode === 'select' && selectedElements.length > 0) {
         selectedElements.forEach(selEl => drawSelectionHighlight(selEl));
+        updateContextualToolbar(selectedElements);
+    }else {
+        // NEW: Hide toolbar if no selection
+        updateContextualToolbar([]);
     }
 
     if (isMarqueeSelecting) {
@@ -2296,14 +2453,25 @@ function handleCanvasMouseUp(e) {
                         ctx.fillText("Image Error", el.x + 5, el.y + 15);
                     }
                 } else if (el.src && !el.imgObject) {
-                    loadImageAsync(el.src).then(img => {
-                        el.imgObject = img;
-                        renderCanvas();
-                    }).catch(err => {
-                        TB.logger.error("Failed to lazy-load image for drawing:", el.src, err);
-                        el.imgObject = null;
+                    if (el.isPdf) {
+                    // For incoming PDF elements from other clients
+                    pdfjsLib.getDocument(el.src).promise.then(async (pdfDoc) => {
+                        el.pdfDoc = pdfDoc;
+                        const page = await pdfDoc.getPage(el.pdfPageNum || 1);
+                        const viewport = page.getViewport({ scale: 1.5 });
+                        el.imgObject = await renderPdfPageToImage(page, viewport);
                         renderCanvas();
                     });
+                    } else {
+                        loadImageAsync(el.src).then(img => {
+                            el.imgObject = img;
+                            renderCanvas();
+                        }).catch(err => {
+                            TB.logger.error("Failed to lazy-load image for drawing:", el.src, err);
+                            el.imgObject = null;
+                            renderCanvas();
+                        });
+                    }
                     ctx.strokeStyle = 'gray'; ctx.lineWidth = 1;
                     ctx.strokeRect(el.x, el.y, el.width, el.height);
                     ctx.fillText("Loading...", el.x + 5, el.y + 15);
@@ -2432,6 +2600,102 @@ function handleCanvasMouseUp(e) {
             setActiveTool(canvasAppState.currentTool);
         }
     }
+
+    function updateContextualToolbar(selected) {
+    const toolbar = document.getElementById('selectionContextToolbar');
+    const pdfControls = document.getElementById('pdfControls');
+    const scaleControls = document.getElementById('scaleControls');
+
+    if (selected.length !== 1) { // Only show for single selection
+        toolbar.style.display = 'none';
+        return;
+    }
+
+    const el = selected[0];
+    toolbar.style.display = 'flex';
+
+    // PDF controls visibility
+    if (el.isPdf) {
+        pdfControls.style.display = 'flex';
+        document.getElementById('pdfPageInfo').textContent = `Page ${el.pdfPageNum} / ${el.pdfTotalPages}`;
+        document.getElementById('pdfPrevPageBtn').disabled = el.pdfPageNum <= 1;
+        document.getElementById('pdfNextPageBtn').disabled = el.pdfPageNum >= el.pdfTotalPages;
+    } else {
+        pdfControls.style.display = 'none';
+    }
+
+    // Scale controls
+    const currentScale = el.width / el.originalWidth;
+    document.getElementById('scaleSlider').value = currentScale;
+    document.getElementById('scaleValue').textContent = `${Math.round(currentScale * 100)}%`;
+}
+
+async function changeSelectedPdfPage(direction) {
+    if (selectedElements.length !== 1 || !selectedElements[0].isPdf) return;
+
+    const pdfElement = selectedElements[0];
+    const newPageNum = pdfElement.pdfPageNum + direction;
+
+    if (newPageNum < 1 || newPageNum > pdfElement.pdfTotalPages) return;
+
+    const loaderId = TB.ui.Loader.show("Loading PDF page...");
+    try {
+        if (!pdfElement.pdfDoc) { // Lazy load the PDF document proxy if not present
+             pdfElement.pdfDoc = await pdfjsLib.getDocument(pdfElement.src).promise;
+        }
+        const page = await pdfElement.pdfDoc.getPage(newPageNum);
+        const viewport = page.getViewport({ scale: 1.5 }); // Use same scale for consistency
+
+        pdfElement.pdfPageNum = newPageNum;
+        pdfElement.imgObject = await renderPdfPageToImage(page, viewport);
+
+        // Adjust size while maintaining aspect ratio
+        const currentScale = pdfElement.width / pdfElement.originalWidth;
+        pdfElement.width = viewport.width * currentScale;
+        pdfElement.height = viewport.height * currentScale;
+        pdfElement.originalWidth = viewport.width;
+        pdfElement.originalHeight = viewport.height;
+
+        pushToHistory("Change PDF Page");
+        renderCanvas();
+        const { imgObject, pdfDoc, ...elementToSend } = pdfElement;
+        sendActionToServer("element_update", elementToSend);
+
+    } catch (error) {
+        TB.ui.Toast.showError("Failed to change PDF page: " + error.message);
+    } finally {
+        TB.ui.Loader.hide(loaderId);
+    }
+}
+
+function scaleSelectedElements(newScale) {
+    if (selectedElements.length === 0) return;
+
+    selectedElements.forEach(el => {
+        if (el.originalWidth && el.originalHeight) {
+            const centerX = el.x + el.width / 2;
+            const centerY = el.y + el.height / 2;
+
+            el.width = el.originalWidth * newScale;
+            el.height = el.originalHeight * newScale;
+
+            // Keep center point fixed
+            el.x = centerX - el.width / 2;
+            el.y = centerY - el.height / 2;
+        }
+    });
+
+    // Use a throttled update to avoid spamming history/network
+    TB.utils.throttle(() => {
+        pushToHistory("Scale Elements");
+        selectedElements.forEach(el => {
+             const { imgObject, pdfDoc, ...elementToSend } = el;
+             sendActionToServer("element_update", elementToSend);
+        });
+    }, 250)(); // Throttle to 4 times a second max
+
+    renderCanvas();
+}
 
     function startNewSession(showToast = true) {
         currentSessionId = null;
@@ -2908,6 +3172,284 @@ function handleCanvasMouseUp(e) {
             presetManagementModalInstance.close();
         }
     }
+
+    async function handleFileUpload(files) {
+    if (!files || files.length === 0) return;
+    const file = files[0]; // Handle one file at a time for simplicity
+
+    // Use the existing uploader from FileWidget's UI logic
+    const loaderId = TB.ui.Loader.show(`Uploading ${file.name}...`);
+
+    const chunkSize = 1 * 1024 * 1024; // 1MB, must match FileWidget
+    const totalChunks = Math.ceil(file.size / chunkSize);
+
+    for (let i = 0; i < totalChunks; i++) {
+        const chunk = file.slice(i * chunkSize, (i + 1) * chunkSize);
+        const formData = new FormData();
+        formData.append('file', chunk, file.name);
+        formData.append('fileName', file.name);
+        formData.append('chunkIndex', i.toString());
+        formData.append('totalChunks', totalChunks.toString());
+
+        try {
+            // Call the FileWidget upload endpoint
+            const response = await TB.api.request('FileWidget', 'upload', formData, 'POST');
+            if (response && response.error && response.error !== "none") {
+                throw new Error(response.info?.help_text || 'Chunk upload failed.');
+            }
+        } catch (error) {
+            TB.ui.Loader.hide(loaderId);
+            TB.ui.Toast.showError(`Upload failed: ${error.message}`);
+            return;
+        }
+    }
+
+    TB.ui.Loader.hide(loaderId);
+    TB.ui.Toast.showSuccess(`'${file.name}' uploaded. Adding to canvas...`);
+
+    // Now that the file is in BlobStorage, create a share link to get a stable URL for it
+    try {
+        const shareResponse = await TB.api.request('FileWidget', 'create_share_link', { file_path: file.name });
+        if (shareResponse && shareResponse.result?.data?.share_link) {
+            const fileUrl = shareResponse.result.data.share_link;
+            await addImageToCanvas(fileUrl, file.type.startsWith('application/pdf'));
+        } else {
+            throw new Error('Could not create a shareable link for the uploaded file.');
+        }
+    } catch (error) {
+         TB.ui.Toast.showError(`Failed to place file on canvas: ${error.message}`);
+    }
+}
+
+async function addImageToCanvas(sourceUrl, options = {}) {
+const { isPdf = false, ...extraProps } = options;
+    finalizeTextInput();
+    const loaderId = TB.ui.Loader.show("Loading asset...");
+
+    try {
+        // Calculate center of the current view in world coordinates
+        const viewCenterX = (canvas.width / (window.devicePixelRatio || 1)) / 2;
+        const viewCenterY = (canvas.height / (window.devicePixelRatio || 1)) / 2;
+        const worldCenterX = (viewCenterX - canvasAppState.offsetX) / canvasAppState.zoom;
+        const worldCenterY = (viewCenterY - canvasAppState.offsetY) / canvasAppState.zoom;
+
+        let imageElement;
+
+        if (isPdf) {
+            const pdfDoc = await pdfjsLib.getDocument(sourceUrl).promise;
+            const page = await pdfDoc.getPage(1);
+            const viewport = page.getViewport({ scale: 1.5 }); // Higher scale for better quality
+
+            imageElement = {
+                id: TB.utils.uniqueId('pdf_'), type: 'image', src: sourceUrl,
+                x: worldCenterX - viewport.width / 2, y: worldCenterY - viewport.height / 2,
+                width: viewport.width, height: viewport.height,
+                originalWidth: viewport.width, originalHeight: viewport.height,
+                opacity: 1.0, angle: 0,
+                isPdf: true, pdfPageNum: 1, pdfTotalPages: pdfDoc.numPages,
+                pdfDoc: pdfDoc // Store live PDF document object (not serialized)
+            };
+            // Render the first page onto a temporary canvas to get an image object
+            imageElement.imgObject = await renderPdfPageToImage(page, viewport);
+
+        } else { // It's a regular image
+            const imgObject = await loadImageAsync(sourceUrl);
+            const aspectRatio = imgObject.width / imgObject.height;
+            const defaultWidth = 300 / canvasAppState.zoom;
+            const defaultHeight = defaultWidth / aspectRatio;
+
+            imageElement = {
+                id: TB.utils.uniqueId('image_'), type: 'image', src: sourceUrl,
+                x: worldCenterX - defaultWidth / 2, y: worldCenterY - defaultHeight / 2,
+                width: defaultWidth, height: defaultHeight,
+                originalWidth: imgObject.width, originalHeight: imgObject.heigh,
+                imgObject: imgObject, opacity: 1.0, angle: 0, isPdf: false,
+                ...extraProps
+            };
+        }
+
+        canvasElements.push(imageElement);
+        pushToHistory("Add Asset");
+        renderCanvas();
+
+        // Exclude non-serializable properties before sending to server
+        const { imgObject, pdfDoc, ...elementToSend } = imageElement;
+        sendActionToServer("element_add", elementToSend);
+        clearOwnPreviewOnServer();
+        TB.ui.Toast.showSuccess("Asset added to canvas.");
+
+    } catch (err) {
+        TB.logger.error("Failed to load asset from URL:", sourceUrl, err);
+        TB.ui.Toast.showError(`Could not load asset: ${err.message}`);
+    } finally {
+        TB.ui.Loader.hide(loaderId);
+    }
+}
+
+// NEW Helper function to render a PDF page
+async function renderPdfPageToImage(page, viewport) {
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
+    tempCanvas.width = viewport.width;
+    tempCanvas.height = viewport.height;
+    await page.render({ canvasContext: tempCtx, viewport: viewport }).promise;
+
+    const img = new Image();
+    img.src = tempCanvas.toDataURL();
+    await new Promise(resolve => { img.onload = resolve; });
+    return img;
+}
+async function updateCanvasElementWithNewAsset(elementId, newSourceUrl, extraProps = {}) {
+    const elementIndex = canvasElements.findIndex(el => el.id === elementId);
+    if (elementIndex === -1) {
+        TB.logger.error("Could not find element to update:", elementId);
+        return;
+    }
+
+    const loaderId = TB.ui.Loader.show("Updating element...");
+    try {
+        const element = canvasElements[elementIndex];
+        const newImgObject = await loadImageAsync(newSourceUrl);
+
+        // Update properties
+        element.src = newSourceUrl;
+        element.imgObject = newImgObject;
+
+        // Retain current scale
+        const oldOriginalWidth = element.originalWidth || element.width;
+        const currentScale = element.width / oldOriginalWidth;
+
+        element.originalWidth = newImgObject.width;
+        element.originalHeight = newImgObject.height;
+
+        // Recalculate width/height based on new aspect ratio but same scale
+        element.width = element.originalWidth * currentScale;
+        element.height = element.originalHeight * currentScale;
+
+        // Apply any other property updates
+        Object.assign(element, extraProps);
+
+        pushToHistory("Update Element Asset");
+        renderCanvas();
+
+        const { imgObject, pdfDoc, ...elementToSend } = element;
+        sendActionToServer("element_update", elementToSend);
+
+    } catch (err) {
+        TB.logger.error("Failed to update canvas element asset:", err);
+        TB.ui.Toast.showError("Failed to update element.");
+    } finally {
+        TB.ui.Loader.hide(loaderId);
+    }
+}
+async function handleAddMarkdown() {
+    let existingMarkdown = '';
+    let existingOptions = {
+        fontSize: 14,
+        bgColor: '#ffffff',
+        textColor: '#000000',
+        width: 400
+    };
+
+    const selected = selectedElements.length === 1 ? selectedElements[0] : null;
+    if (selected && selected.isMarkdown) {
+        existingMarkdown = selected.originalMarkdown || '';
+        // Load existing styles if they are stored on the element, otherwise use defaults
+        existingOptions.fontSize = selected.mdFontSize || 14;
+        existingOptions.bgColor = selected.mdBgColor || '#ffffff';
+        existingOptions.textColor = selected.mdTextColor || '#000000';
+        existingOptions.width = selected.mdWidth || 400;
+    }
+
+    // Use TB.ui.Modal.show for a custom form
+    const modalId = TB.utils.uniqueId('mdModal_');
+    TB.ui.Modal.show({
+        id: modalId,
+        title: selected ? "Edit Markdown Text" : "Add Markdown Text",
+        content: `
+            <div class="tb-form-group tb-mb-3">
+                <textarea id="markdownInput_${modalId}" class="tb-input" style="width: 100%; height: 200px; min-height: 150px; font-family: monospace;" placeholder="Enter your Markdown here...">${TB.utils.escapeHtml(existingMarkdown)}</textarea>
+            </div>
+            <div class="tb-d-flex tb-justify-between tb-gap-3">
+                <div class="tb-form-group">
+                    <label for="mdFontSize_${modalId}" class="tb-form-label tb-form-label-sm">Font Size</label>
+                    <input type="number" id="mdFontSize_${modalId}" class="tb-input tb-input-sm" value="${existingOptions.fontSize}" min="8" max="72">
+                </div>
+                <div class="tb-form-group">
+                    <label for="mdWidth_${modalId}" class="tb-form-label tb-form-label-sm">Width</label>
+                    <input type="number" id="mdWidth_${modalId}" class="tb-input tb-input-sm" value="${existingOptions.width}" min="100" max="2000">
+                </div>
+                <div class="tb-form-group">
+                    <label for="mdTextColor_${modalId}" class="tb-form-label tb-form-label-sm">Text Color</label>
+                    <input type="color" id="mdTextColor_${modalId}" class="tb-input tb-input-sm" value="${existingOptions.textColor}">
+                </div>
+                <div class="tb-form-group">
+                    <label for="mdBgColor_${modalId}" class="tb-form-label tb-form-label-sm">BG Color</label>
+                    <input type="color" id="mdBgColor_${modalId}" class="tb-input tb-input-sm" value="${existingOptions.bgColor}">
+                </div>
+            </div>
+        `,
+        buttons: [
+            { text: "Cancel", variant: 'secondary', action: modal => modal.hide() },
+            {
+                text: selected ? "Update on Canvas" : "Add to Canvas",
+                variant: 'primary',
+                action: async (modal) => {
+                    const markdownText = document.getElementById(`markdownInput_${modalId}`).value;
+                    const fontSize = document.getElementById(`mdFontSize_${modalId}`).value;
+                    const width = document.getElementById(`mdWidth_${modalId}`).value;
+                    const textColor = document.getElementById(`mdTextColor_${modalId}`).value;
+                    const bgColor = document.getElementById(`mdBgColor_${modalId}`).value;
+
+                    modal.hide(); // Hide modal immediately for better UX
+
+                    if (selected && !markdownText.trim()) {
+                        deleteSelectedElements();
+                        return;
+                    }
+                    if (!markdownText.trim()) return;
+
+                    const loaderId = TB.ui.Loader.show("Converting Markdown...");
+                    try {
+                        const payload = {
+                            markdown_text: markdownText,
+                            width: parseInt(width),
+                            font_size: parseInt(fontSize),
+                            text_color: textColor,
+                            bg_color: bgColor
+                        };
+
+                        const response = await TB.api.request('Canvas', 'markdown_to_svg', payload);
+
+                        if (response && response.result?.data?.svg_data_url) {
+                            const data = response.result.data;
+                            const newAssetProps = {
+                                isMarkdown: true,
+                                originalMarkdown: data.original_markdown,
+                                mdFontSize: parseInt(fontSize),
+                                mdWidth: parseInt(width),
+                                mdTextColor: textColor,
+                                mdBgColor: bgColor
+                            };
+
+                            if (selected) {
+                                await updateCanvasElementWithNewAsset(selected.id, data.svg_data_url, newAssetProps);
+                            } else {
+                                await addImageToCanvas(data.svg_data_url, newAssetProps);
+                            }
+                        } else {
+                            throw new Error(response.info?.help_text || "Server failed to convert Markdown.");
+                        }
+                    } catch (error) {
+                        TB.ui.Toast.showError(`Markdown conversion failed: ${error.message}`);
+                    } finally {
+                        TB.ui.Loader.hide(loaderId);
+                    }
+                }
+            }
+        ]
+    });
+}
 
     const init = () => {
         initializeCanvasStudio();
