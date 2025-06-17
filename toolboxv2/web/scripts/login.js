@@ -232,15 +232,5 @@ async function setupLogin_() {
         }
     }
 }
+TB.once(setupLogin);
 
-// Wait for tbjs to be initialized
-if (window.TB?.events) {
-    if (window.TB.config?.get('appRootId')) { // A sign that TB.init might have run
-         setupLogin();
-    } else {
-        window.TB.events.on('tbjs:initialized', setupLogin, { once: true });
-    }
-} else {
-    // Fallback if TB is not even an object yet, very early load
-    document.addEventListener('tbjs:initialized', setupLogin, { once: true }); // Custom event dispatch from TB.init
-}

@@ -603,7 +603,11 @@ _managers: Dict[str, CounterManager] = {}
 
 async def get_manager(app: App, request: RequestData) -> CounterManager:
     user = await get_user_from_request(app, request)
-    user_id = user.uid if user and user.uid else f"guest_ct_{request.session_id[:8]}"  # Guest ID specific to CounterTracker
+    if request is None:
+        app.logger.warning("No request provided to get CounterManager. Using default user ID.")
+        user_id = "default_public_user"
+    else:
+        user_id = user.uid if user and user.uid else f"guest_ct_{request.session_id[:8]}"  # Guest ID specific to CounterTracker
     if user_id not in _managers:
         _managers[user_id] = CounterManager(app, user_id)
     return _managers[user_id]

@@ -49,7 +49,7 @@ def cls():
 
 def text_save(function):
     def deco(text):
-        text = str(text).encode('utf-8', 'replace').decode('utf-8').replace("\x00", "").strip()
+        text = str(text).encode('utf-8', 'replace').decode('utf-8').replace("\x00", "")
         return function(text)
     return deco
 

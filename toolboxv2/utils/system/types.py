@@ -1435,6 +1435,20 @@ class AppType:
         run a async fuction
         """
 
+    def run_bg_task_advanced(self, task, *args, **kwargs):
+        """
+        proxi attr
+        """
+
+    def wait_for_bg_tasks(self, timeout=None):
+        """
+        proxi attr
+        """
+
+    def run_bg_task(self, task):
+        """
+                run a async fuction
+                """
     def run_function(self, mod_function_name: Enum or tuple,
                      tb_run_function_with_state=True,
                      tb_run_with_specification='app',

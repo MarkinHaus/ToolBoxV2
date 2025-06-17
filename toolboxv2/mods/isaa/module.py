@@ -228,9 +228,9 @@ class Tools(MainTool, FileHandler):
             Path(f"{get_app('isaa-initIsaa').data_dir}/Agents/").mkdir(parents=True, exist_ok=True)
             Path(f"{get_app('isaa-initIsaa').data_dir}/Memory/").mkdir(parents=True, exist_ok=True)
 
-        initialize_isaa_chains(self.app)
-        initialize_isaa_webui_module(self.app, self)
-        self.print("ISAA module started. fallback")
+        #initialize_isaa_chains(self.app)
+        #initialize_isaa_webui_module(self.app, self)
+        #self.print("ISAA module started. fallback")
 
 
     async def _async_function_runner(self, name, **kwargs):
@@ -754,7 +754,7 @@ class Tools(MainTool, FileHandler):
             agent_instance = agent_name_or_instance
             agent_name_str = agent_instance.amd.name  # amd is AgentModelData
         else:
-            raise TypeError("agent_name_or_instance must be str or EnhancedAgent")
+            return self.return_result().default_internal_error(f"agent_name_or_instance must be str or EnhancedAgent is {type(agent_name_or_instance)}")
 
         if agent_name_str in self.pipes:
             # Optionally reconfigure if args/kwargs are different
@@ -766,7 +766,7 @@ class Tools(MainTool, FileHandler):
             return self.pipes[agent_name_str]
 
     async def run_pipe(self, agent_name_or_instance: str | EnhancedAgent, task: str, do_continue=False):
-        pipe = await self.get_pipe(agent_name_or_instance)  # get_pipe is now async
+        pipe = await self.get_pipe(agent_name_or_instance)
         return await pipe.run(task, do_continue=do_continue)  # pipeline.run is async
 
     async def run_agent(self, name: str | EnhancedAgent,
@@ -785,7 +785,8 @@ class Tools(MainTool, FileHandler):
         elif isinstance(name, EnhancedAgent):
             agent_instance = name
         else:
-            raise TypeError(f"Invalid agent identifier type: {type(name)}")
+            return self.return_result().default_internal_error(
+                f"Invalid agent identifier type: {type(name)}")
 
         self.print(f"Running agent {agent_instance.amd.name} for task: {text[:100]}...")
 

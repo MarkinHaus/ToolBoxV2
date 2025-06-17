@@ -8,11 +8,45 @@ import './styles/tbjs-main.css';
 import * as coreModules from './core/index.js';
 import * as uiModules from './ui/index.js';
 
+// Queue for functions to be run once initialization is complete.
+const onceAfterInitQueue = [];
+// A Set to track all functions ever passed to `TB.once` to ensure they truly only run once.
+const onceRunFunctions = new Set();
+
 const TB = {
     ...coreModules, // Includes config, state, router, api, env, events, logger, crypto, utils, sse, sw
     ui: uiModules,  // Includes theme, htmxIntegration, and all components
-
     VERSION: '0.1.0-alpha', // Framework version
+    isInit: false,
+
+     /**
+     * Queues a function to run exactly once, after TB.init() is complete.
+     * If the same function reference is passed multiple times, it will still only execute once.
+     * If initialization is already done, it runs the function immediately (if it hasn't run before).
+     * @param {Function} fn The function to run.
+     */
+    once: function(fn) {
+        // If this function has already been queued or run, do nothing.
+        if (onceRunFunctions.has(fn)) {
+            return;
+        }
+
+        // Add the function to the tracking set to prevent future executions.
+        onceRunFunctions.add(fn);
+
+        if (this.isInit) {
+            try {
+                // If already initialized, run the function immediately.
+                fn();
+            } catch (e) {
+                // The logger should be available at this point.
+                this.logger.error('[TB.once] Error running function immediately:', e);
+            }
+        } else {
+            // Not initialized yet, so add the function to the queue.
+            onceAfterInitQueue.push(fn);
+        }
+    },
 
     /**
      * Initializes the tbjs framework.
@@ -108,6 +142,22 @@ const TB = {
         this.logger.log('[Running] in Tauri environment.');
     }
 
+    // This test call will now be correctly queued by the new TB.once() method.
+    this.once(() => { console.log("Once Online"); });
+
+    // Set the initialization flag to true.
+    this.isInit = true;
+
+    // Run all functions that were queued by TB.once() before init was complete.
+    for (const queuedFn of onceAfterInitQueue) {
+        try {
+            queuedFn();
+        } catch (e) {
+            this.logger.error('[TB.init] Error running queued function from once():', e);
+        }
+    }
+    // Clear the queue now that it has been processed.
+    onceAfterInitQueue.length = 0;
     this.events.emit('tbjs:initialized', this);
     this.logger.log('tbjs initialization complete.');
     return this;

@@ -241,8 +241,10 @@ class BlobFile(io.IOBase):
             # In a real app, dependency injection or a global factory would be better
             # but this provides a fallback for simple scripts.
             if not servers:
-                raise ValueError("A list of servers must be provided to create a default BlobStorage instance.")
-            storage = BlobStorage(servers=servers)
+                from toolboxv2 import get_app
+                storage = get_app(from_="BlobStorage").root_blob_storage
+            else:
+                storage = BlobStorage(servers=servers)
 
         self.storage = storage
         self.data_buffer = b""
@@ -347,6 +349,9 @@ class BlobFile(io.IOBase):
             current_level = current_level[self.folder]
 
         return self.datei in current_level
+
+    def clear(self):
+        self.data_buffer = b''
 
     def write(self, data):
         if 'w' not in self.mode: raise IOError("File not opened in write mode.")

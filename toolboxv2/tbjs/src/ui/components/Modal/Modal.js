@@ -197,6 +197,10 @@ class Modal {
         if (firstFocusable) firstFocusable.focus();
     }
 
+    hide(triggerEvent = true){
+        return this.close(triggerEvent)
+    }
+
     close(triggerEvent = true) {
         if (!this.isOpen || !this._overlayElement) return;
 

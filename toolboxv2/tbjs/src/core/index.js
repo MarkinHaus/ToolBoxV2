@@ -36,7 +36,6 @@ export {
     sw,
     user,
     notification,
-
     ToolBoxError,
     ToolBoxInterfaces,
     ToolBoxResult,

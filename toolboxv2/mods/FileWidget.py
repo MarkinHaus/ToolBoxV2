@@ -212,7 +212,7 @@ class Tools(MainTool):
         # Ensure storage_path is not trying to escape (e.g. if user_uid had '..')
         # Path resolution should handle this, but being explicit is safer if user_uid is not strictly controlled.
         # For now, assume user_uid is a safe directory name.
-        return BlobStorage(storage_path)
+        return BlobStorage(self.app.root_blob_storage.servers, storage_directory=str(storage_path))
 
 
 def get_template_content() -> str:
@@ -495,7 +495,7 @@ def get_template_content() -> str:
                     const contentDisposition = response.headers.get('Content-Disposition');
                     if (contentDisposition) {
                         // RFC 6266 konforme Extraktion des Dateinamens
-                        const filenameMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^"]+)"?/);
+                        const filenameMatch = contentDisposition.match(/filename*=UTF-8''([^;]+)|filename="?([^"]+)"?/);
 
                         if (filenameMatch) {
                             filename = decodeURIComponent(filenameMatch[1] || filenameMatch[2] || filename).replace(/[/\\?%*:|"<>]/g, '-');

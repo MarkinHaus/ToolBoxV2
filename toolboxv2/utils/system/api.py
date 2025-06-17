@@ -351,13 +351,15 @@ def get_executable_path():
     """Find the release executable in standard locations."""
     # This function is simplified from your example to match this script's scope
     exe_name = get_executable_name_with_extension()
+    from toolboxv2 import tb_root_dir
     search_paths = [
-        Path("src-core") / "target" / "release" / exe_name,
-        Path("src-core") / exe_name,
-        Path("bin") / exe_name,
-        Path(".") / exe_name
+        tb_root_dir / Path("bin") / exe_name,
+        tb_root_dir / Path("src-core") / exe_name,
+        tb_root_dir / exe_name,
+        tb_root_dir / Path("src-core") / "target" / "release" / exe_name,
     ]
     for path in search_paths:
+        print(path)
         if path.exists() and path.is_file():
             return path.resolve()
     return None
@@ -462,7 +464,7 @@ def start_rust_server_posix(executable_path: str, persistent_fd: int):
 
 def start_rust_server_windows(executable_path: str):
     abs_path = Path(executable_path).resolve()
-    print(Style.CYAN(f"[WINDOWS] Starting Rust server {abs_path.name} (will bind its own socket)."))
+    print(Style.CYAN(f"[WINDOWS] Starting Rust server {abs_path.name} (will bind its own socket). in {abs_path.parent}"))
     try:
         return subprocess.Popen([str(abs_path)], cwd=abs_path.parent)
     except Exception as e:
@@ -640,10 +642,10 @@ def cli_api_runner():
         formatter_class=argparse.RawTextHelpFormatter
     )
     subparsers = parser.add_subparsers(dest="action", required=True)
-
     # Add actions with shared arguments
     actions = {
         'start': 'Start the server.',
+        'debug': 'debug the server.',
         'stop': 'Stop the running server.',
         'update': 'Update the server.',
         'status': 'Check server status.',
@@ -665,10 +667,7 @@ def cli_api_runner():
 
     # Handle simple actions first
     if args.action == 'build':
-        if 'debug' in sys.argv:
-            build_cargo_project(debug=True)
-        else:
-            handle_build()
+        handle_build()
         # You can add clean handling here too if desired
         return
 
@@ -680,7 +679,7 @@ def cli_api_runner():
         remove_release_executable()
         return
 
-    if args.action == 'start' and 'debug' in sys.argv:
+    if args.action == 'debug':
         print("Starting in DEBUG mode with hot reloading enabled...")
         if check_cargo_installed():
             run_with_hot_reload()

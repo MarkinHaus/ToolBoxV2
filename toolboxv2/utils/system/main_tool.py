@@ -56,12 +56,15 @@ class MainTool:
         Do not override. Use __ainit__ instead
         """
         self.__storedargs = args, kwargs
+        self.tools = kwargs.get("tool", {})
+        self.logger = kwargs.get("logs", get_logger())
+        self.color = kwargs.get("color", "WHITE")
         self.todo = kwargs.get("load", kwargs.get("on_start", lambda: None))
         if "on_exit" in kwargs and isinstance(kwargs.get("on_exit"), Callable):
             self.on_exit =self.app.tb(
                 mod_name=self.name,
                 name=kwargs.get("on_exit").__name__,
-                version=self.version,
+                version=self.version if hasattr(self, 'version') else "0.0.0",
             )(kwargs.get("on_exit"))
         self.async_initialized = False
         if self.todo:

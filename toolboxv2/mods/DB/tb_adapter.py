@@ -314,3 +314,7 @@ class Tools(MainTool, FileHandler):
         return self.close_db().lazy_return("intern",
                                            data=self.initialize_database()
                                            ).lazy_return(data=f"mode change to {mode}")
+
+
+
+

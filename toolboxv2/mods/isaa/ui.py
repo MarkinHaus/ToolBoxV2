@@ -136,7 +136,8 @@ async def run_agent_once(app: App, request: RequestData, data: RunAgentRequest):
     # if hasattr(isaa, 'initialized') and not isaa.initialized:
     #     if hasattr(isaa, 'init_isaa'):
     #         await isaa.init_isaa(build=True) # Or however ISAA is initialized
-
+    if request is None:
+        return Result.default_user_error(info=f"Failed to run agent: No request provided.")
     if isinstance(data, dict):  # Should be automatically handled by Pydantic if type hint is RunAgentRequest
         data = RunAgentRequest(**data)
 

@@ -1129,8 +1129,12 @@ _managers: Dict[str, ActionManagerEnhanced] = {}
 
 
 async def get_manager(app: App, request: RequestData) -> ActionManagerEnhanced:
-    user = await get_user_from_request(app, request)
-    user_id = user.uid if user and user.uid else "default_public_user"
+    if request is None:
+        app.logger.warning("No request provided to get POA manager. Using default user ID.")
+        user_id = "default_public_user"
+    else:
+        user = await get_user_from_request(app, request)
+        user_id = user.uid if user and user.uid else "default_public_user"
     if user_id not in _managers:
         _managers[user_id] = ActionManagerEnhanced(app, user_id)
     return _managers[user_id]

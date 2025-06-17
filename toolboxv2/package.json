@@ -20,7 +20,7 @@
 
     "build:web":   "webpack --mode production",
     "build:tbjs":  "npm run build --prefix ./tbjs",
-    "build":       "npm run build:web && npm run build:tbjs && npm run tauriB",
+    "build":       "npm run build:web && npm run build:tbjs",
 
     "dev":   "concurrently -k -r \"tb api start --debug\" \"npm run watch\"",
     "test":  "npm run test --prefix ./tbjs"

@@ -217,7 +217,6 @@ export function getCssVarHex(varName) {
 }
 
 
-
 /**
  * Initiates a browser download for the given data.
  *

@@ -2,6 +2,8 @@ import random
 from typing import Any
 
 
+
+
 def generate_test_cases(sig) -> list[dict]:
     params = list(sig.parameters.values())
 
@@ -48,10 +50,13 @@ def generate_normal_value(param_type: Any) -> Any:
     """
     Generiert normale Werte basierend auf dem Parametertyp.
     """
+    from toolboxv2 import RequestData
     if param_type in [int, float]:
         return random.randint(0, 100)  # Zufällige normale Zahlen
     elif param_type == str:
         return "test" # Zufälliges Wort
+    elif param_type == RequestData:
+        return RequestData.moc()
     # Fügen Sie hier weitere Bedingungen für andere Datentypen hinzu
     return None
 

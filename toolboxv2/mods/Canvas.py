@@ -11,31 +11,6 @@ from pydantic import BaseModel, Field as PydanticField
 from toolboxv2 import App, Result, RequestData, get_app, MainTool
 from toolboxv2.utils.extras.base_widget import get_user_from_request
 
-# Attempt to import EventManager related classes
-# This assumes EventManager.py is accessible in the Python path
-try:
-    from EventManager import EventManagerClass, Event, EventID, SourceTypes, Scope, ExecIn
-    EVENT_MANAGER_AVAILABLE = True
-except ImportError as e:
-    # Fallback or error if EventManager is critical
-    print(f"WARNING: EventManager module not found. Canvas collaboration might be limited. Error: {e}")
-    EVENT_MANAGER_AVAILABLE = False
-    # Define dummy classes if you want the code to run without EventManager for non-collaborative features
-    class EventManagerClass: # type: ignore
-        def __init__(self, source_id, _identification): pass
-        async def register_event(self, event): pass
-        async def trigger_event(self, event_id): pass
-        # Add other methods if absolutely necessary for code structure, but they'll be no-ops
-    class Event: # type: ignore
-        def __init__(self, name, source, source_types, scope, exec_in, event_id, threaded=False, args=None, kwargs_=None): pass
-    class EventID: # type: ignore
-        @classmethod
-        def crate(cls, source, ID, path, payload): return cls()
-        def __init__(self, *args, **kwargs): self.payload = None # Dummy payload
-    class SourceTypes: F = "F"; AP = "AP" # type: ignore
-    class Scope: instance = "instance"; local_network = "local_network" # type: ignore
-    class ExecIn: local = "local" # type: ignore
-
 # --- Module Definition ---
 MOD_NAME = Name = "Canvas"  # Renamed slightly for clarity if this is a new version
 VERSION = "0.1.0"
@@ -113,214 +88,91 @@ class IdeaSessionData(BaseModel):
     last_modified: float = PydanticField(default_factory=lambda: float(uuid.uuid4().int & (1 << 32) - 1))
 
 
-class Tools(MainTool, EventManagerClass if EVENT_MANAGER_AVAILABLE else object):  # Inherit EventManagerClass
+class Tools(MainTool):  # Removed EventManager for simplicity, as it was causing the issue. Direct SSE is better here.
     def __init__(self, app: App):
         self.name = MOD_NAME
         self.version = VERSION
         self.color = "GREEN"
-        self.tools_dict = {"name": MOD_NAME, "Version": self.show_version}  # Renamed to avoid conflict
-
-        # Call MainTool's __init__ first
-        self.app.logger.info(f"Canvas MainTool part initialized for app {self.app.id if self.app else 'None'}")
-
-        if EVENT_MANAGER_AVAILABLE:
-            # EventManagerClass initialization
-            # Determine identification: 'CanvasP0' if central, 'CanvasPN' (Peer Node) otherwise.
-            # This logic might need to be more sophisticated based on your deployment.
-            canvas_identification = "CanvasPN"
-            if hasattr(self.app, 'args_sto') and self.app.args_sto.background_application_runner:
-                # Assuming background_application_runner implies it's a central/P0-like instance for Canvas
-                canvas_identification = "CanvasP0"
-
-            canvas_source_id = f"CanvasInstance.{self.app.id}"  # Unique source ID for this Canvas instance
-
-            EventManagerClass.__init__(self, source_id=canvas_source_id, _identification=canvas_identification)
-            self.app.logger.info(
-                f"Canvas EventManager part initialized (SID: {self.source_id}, Ident: {self.identification})")
-
-            # Name for the locally registered event handler, specific to this EventManager source_id
-            self.canvas_internal_handler_event_name = f"{CANVAS_INTERNAL_BROADCAST_HANDLER_EVENT_PREFIX}{self.source_id}"
-        else:
-            self.app.logger.warning(
-                "Canvas EventManager part NOT initialized (module unavailable). Collaboration will be local only.")
-            self.source_id = f"CanvasInstance.{self.app.id}_LOCAL_ONLY"  # Dummy for logging
-            self.identification = "LOCAL_ONLY"
-            self.canvas_internal_handler_event_name = f"{CANVAS_INTERNAL_BROADCAST_HANDLER_EVENT_PREFIX}{self.source_id}"
+        self.tools_dict = {"name": MOD_NAME, "Version": self.show_version}
 
         # Canvas specific state
         self.live_canvas_sessions: Dict[str, List[asyncio.Queue]] = defaultdict(list)
-        self.active_user_previews: Dict[str, Dict[str, Any]] = defaultdict(lambda: defaultdict(dict))
+        self.active_user_previews: Dict[str, Dict[str, Any]] = defaultdict(dict)
         self.previews_lock = asyncio.Lock()
-
 
         MainTool.__init__(self, load=on_start, v=self.version, tool=self.tools_dict, name=self.name,
                           color=self.color, app=app)
+        self.app.logger.info(f"Canvas Tools (v{self.version}) initialized for app {self.app.id}.")
+
     @property
     def db_mod(self):
-        return self.app.get_mod("DB")
+        db = self.app.get_mod("DB", spec=Name)
+        if db.mode.value != "CLUSTER_BLOB":
+            db.edit_cli("CB")
+        return db
 
-    @db_mod.setter
-    def _set_db_mod(self, val):
-        pass
-
-    async def _handle_canvas_action_for_sse_broadcast(self, event_manager_event_id: EventID):
+    def _broadcast_to_canvas_listeners(self, canvas_id: str, event_type: str, data: Dict[str, Any],
+                                       originator_user_id: Optional[str] = None):
         """
-        This method is called by this instance's EventManager when the
-        `self.canvas_internal_handler_event_name` is triggered.
-        Its job is to take the payload and use the original SSE broadcasting logic.
+        Creates a broadcast coroutine and submits it to the app's dedicated
+        async manager to be run in the background.
+        This is now a non-blocking fire-and-forget operation.
         """
-        if not EVENT_MANAGER_AVAILABLE: return Result.default_internal_error("EventManager not available")
 
-        try:
-            broadcast_details = event_manager_event_id.payload
-            if not isinstance(broadcast_details, dict):
-                self.app.logger.error(
-                    f"CanvasSSEBroadcast: Invalid payload type from EM: {type(broadcast_details)}. Expected dict. Payload: {broadcast_details}")
-                return Result.default_internal_error("Invalid payload for SSE broadcast from EM")
+        async def broadcast_coro():
+            if canvas_id not in self.live_canvas_sessions:
+                return
 
-            canvas_id = broadcast_details.get("canvas_id")
-            sse_event_type = broadcast_details.get("sse_event_type")
-            sse_data = broadcast_details.get("sse_data")
-            originator_user_id = broadcast_details.get("originator_user_id")
+            message_obj = {
+                "event": event_type,
+                "data": json.dumps({
+                    "canvas_id": canvas_id,
+                    "originator_user_id": originator_user_id,
+                    **data
+                })
+            }
 
-            if not all([canvas_id, sse_event_type, sse_data is not None]):
-                self.app.logger.error(
-                    f"CanvasSSEBroadcast: Missing details in EM payload: C:{canvas_id}, E:{sse_event_type}, D_is_None:{sse_data is None}, O:{originator_user_id}")
-                return Result.default_internal_error("Missing data for SSE broadcast from EM")
+            listeners = list(self.live_canvas_sessions.get(canvas_id, []))
 
-            self.app.logger.debug(
-                f"Canvas: EM triggered internal SSE broadcast for C:{canvas_id}, Event:'{sse_event_type}', Originator:{originator_user_id}")
+            for q in listeners:
+                try:
+                    # Non-blocking put. If the queue is full, the client is lagging,
+                    # and it's better to drop a message than to block the server.
+                    q.put_nowait(message_obj)
+                except asyncio.QueueFull:
+                    self.app.logger.warning(
+                        f"SSE queue full for canvas {canvas_id}. Message '{event_type}' dropped for one client.")
+                except Exception as e:
+                    self.app.logger.error(f"Error putting message on SSE queue: {e}")
 
-            await self._broadcast_to_canvas_listeners(
-                canvas_id=canvas_id,
-                event_type=sse_event_type,
-                data=sse_data,
-                originator_user_id=originator_user_id
-            )
-            return Result.ok(info="Broadcast dispatched to local SSE listeners via EM.")
-        except Exception as e:
-            self.app.logger.error(f"Canvas: Error in _handle_canvas_action_for_sse_broadcast: {e}", exc_info=True)
-            return Result.default_internal_error(f"Error handling SSE broadcast via EM: {e}")
-
-    async def _broadcast_to_canvas_listeners(self, canvas_id: str, event_type: str, data: Dict[str, Any],
-                                             originator_user_id: Optional[str] = None):
-        # This method remains the same as your previous version that puts messages on asyncio.Queues
-        # It's now called by _handle_canvas_action_for_sse_broadcast
-        message_obj = {
-            "event": event_type,
-            "data": json.dumps({
-                "canvas_id": canvas_id,
-                "originator_user_id": originator_user_id,
-                **data
-            })
-        }
-        queues_to_remove = []
-        # Ensure thread-safe iteration if live_canvas_sessions could be modified elsewhere.
-        # defaultdict list append is thread-safe, but iteration during modification is not.
-        # Creating a copy of the list of queues for iteration is safer.
-        current_queues_for_canvas = list(self.live_canvas_sessions.get(canvas_id, []))
-
-        if not current_queues_for_canvas:
-            # self.app.logger.debug(f"No SSE listeners for canvas {canvas_id} to broadcast '{event_type}'.")
-            return
-
-        # self.app.logger.debug(f"Canvas: Broadcasting '{event_type}' to {len(current_queues_for_canvas)} SSE listeners for C:{canvas_id}")
-        for q in current_queues_for_canvas:
-            try:
-                q.put_nowait(message_obj)
-            except asyncio.QueueFull:
-                self.app.logger.warning(
-                    f"SSE queue full for canvas {canvas_id} ({event_type}). Message dropped for one client.")
-                queues_to_remove.append(q)
-            except Exception as e:
-                self.app.logger.error(f"Error putting message on SSE queue for canvas {canvas_id} ({event_type}): {e}")
-                queues_to_remove.append(q)
-
-        if queues_to_remove:
-            # This modification needs to be careful.
-            if canvas_id in self.live_canvas_sessions:
-                self.live_canvas_sessions[canvas_id] = [
-                    q for q in self.live_canvas_sessions[canvas_id] if q not in queues_to_remove
-                ]
-                if not self.live_canvas_sessions[canvas_id]:
-                    async with self.previews_lock:  # Protect active_user_previews
-                        if canvas_id in self.live_canvas_sessions:  # Check again before del
-                            del self.live_canvas_sessions[canvas_id]
-                        if canvas_id in self.active_user_previews:
-                            del self.active_user_previews[canvas_id]
-                    self.app.logger.info(f"SSE: All listeners removed for canvas {canvas_id} due to queue issues.")
-
+        # Use the app's robust background runner to execute immediately and not block the caller.
+        self.app.run_bg_task(broadcast_coro)
 
     def show_version(self):
-        self.app.logger.info(f"{self.name} Version: {self.version} (EventManager SID: {self.source_id})")
+        self.app.logger.info(f"{self.name} Version: {self.version}")
         return self.version
 
-
     async def _get_user_specific_db_key(self, request: RequestData, base_key: str) -> Optional[str]:
-        return f"{base_key}_public"  # Simplified from original
-    # Save, List, Load, Export session methods remain largely the same.
-    # Ensure IdeaSessionData is correctly (de)serialized.
-    # For brevity, I'm not re-listing them fully, but they would use the updated
-    # MOD_NAME, VERSION, SESSION_DATA_PREFIX, and IdeaSessionData.
-    # Make sure that when saving, the full canvas_app_state (including new fields) is saved.
-    # When loading, ensure these new fields are properly restored or defaulted.
+        # This logic is correct and can remain as is.
+
+        user = await get_user_from_request(self.app, request)
+        if user and user.uid:
+            return f"{base_key}_{user.uid}"
+        self.print("ok")
+        # Fallback for public/guest access if you want to support it
+        return f"{base_key}_public"
 
 
 @export(mod_name=MOD_NAME, api=False, version=VERSION, name="on_start", initial=True)
 async def on_start(self):  # Renamed from on_start to avoid conflict if MainTool calls it `load`
     self.app.logger.info(
-        f"Initializing {self.name} v{self.version} (EventManager SID: {self.source_id}, Ident: {self.identification})...")
+        f"Initializing {self.name} v{self.version}")
     try:
         self.db_mod = self.app.get_mod("DB")
         if not self.db_mod:
             self.app.logger.error(f"{self.name}: DB module not found. Session persistence will not work.")
     except Exception as e:
         self.app.logger.error(f"Error during {self.name} on_start (DB init): {e}", exc_info=True)
-
-    if EVENT_MANAGER_AVAILABLE:
-        # Register the local handler event with the EventManager instance
-        # This event's source is a method within this Canvas.Tools instance.
-        # Its scope is 'instance' because it's handled by this specific instance.
-        local_broadcast_handler_event = Event(
-            name=self.canvas_internal_handler_event_name,  # Unique name for the handler event
-            source=self._handle_canvas_action_for_sse_broadcast,  # Method to call
-            source_types=SourceTypes.AP,  # Async function with payload (EventID)
-            scope=Scope.instance,  # Handled by this specific instance
-            exec_in=ExecIn.local,
-            event_id=EventID.crate(source=self.source_id, ID=self.canvas_internal_handler_event_name,
-                                   path="CanvasLocalSSEHandler")
-        )
-        try:
-            await self.register_event(local_broadcast_handler_event)
-            self.app.logger.info(
-                f"Canvas: Registered internal SSE broadcast handler event: {self.canvas_internal_handler_event_name}")
-        except Exception as e:
-            self.app.logger.error(f"Canvas: FAILED to register internal SSE broadcast handler event: {e}",
-                                  exc_info=True)
-
-        # If this Canvas instance is meant to be a "server" in EventManager terms (e.g. P0 for canvas events)
-        # it might need to call add_server_route here.
-        # Example: if self.identification == "CanvasP0":
-        #    await self.add_server_route(self.source_id, ('0.0.0.0', YOUR_CANVAS_EVENT_PORT))
-        # This part depends heavily on your EventManager's intended architecture.
-        # The provided EventManager.Tools calls startEventManager which sets identification and might start server routes.
-        # Let's assume EventManagerClass.start() is called by the EventManager framework if this instance is a server.
-        if hasattr(EventManagerClass, 'start') and callable(getattr(EventManagerClass, 'start')):
-            if not getattr(self, 'running', False):  # Check if EventManager's loop is running
-                self.app.logger.info(
-                    f"Canvas: Attempting to start EventManager's receiver loop for SID {self.source_id}")
-                try:
-                    # EventManager's start might be synchronous or async, adapt as needed
-                    # If EventManagerClass.start() is synchronous and blocking, it needs its own thread.
-                    # The example EventManagerClass.start() starts a thread for self.receiver()
-                    if hasattr(self, 'start'):  # Check if start method exists from EventManagerClass
-                        self.start()  # This should start the EventManager's internal receiver loop.
-                        self.app.logger.info(f"Canvas: EventManager for SID {self.source_id} started/verified.")
-                except Exception as e_em_start:
-                    self.app.logger.error(
-                        f"Canvas: Error starting EventManager for SID {self.source_id}: {e_em_start}",
-                        exc_info=True)
-
     # UI Registration
     try:
         self.app.run_any(
@@ -344,66 +196,73 @@ async def get_main_ui(self, **kwargs) -> Result:
     html_content = ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0
     return Result.html(data=self.app.web_context() + html_content)
 
-@export(mod_name=MOD_NAME, api=True, version=VERSION, name="save_session", api_methods=['POST'],
-        request_as_kwarg=True)
-async def save_session(self, request: RequestData, data: Union[Dict[str, Any], IdeaSessionData]) -> Result:
-    if not self.db_mod:
-        return Result.custom_error(info="Database module not available for saving.", exec_code=503)
 
-    user_db_key_base = await self._get_user_specific_db_key(request, SESSION_DATA_PREFIX)
+@export(mod_name=MOD_NAME, api=True, version=VERSION, name="save_session", api_methods=['POST'], request_as_kwarg=True)
+async def save_session(app: App, request: RequestData, data: Union[Dict[str, Any], IdeaSessionData]) -> Result:
+    """
+    Saves the entire state of a canvas session to the database.
+    This is typically triggered by a user's explicit "Save" action.
+    """
+    canvas_tool = app.get_mod(MOD_NAME)
+    if not canvas_tool or not canvas_tool.db_mod:
+        app.logger.error("Save failed: Canvas module or DB not available.")
+        return Result.custom_error(info="Database module not available.", exec_code=503)
+
+    user_db_key_base = await canvas_tool._get_user_specific_db_key(request, SESSION_DATA_PREFIX)
     if not user_db_key_base:
-        return Result.default_user_error(info="User authentication required to save session.", exec_code=401)
+        return Result.default_user_error(info="User authentication required to save.", exec_code=401)
 
     try:
-        # Allow partial updates to canvas_app_state if only that is sent for some reason
-        # or ensure the client always sends the full structure.
-        # For simplicity, assume client sends full structure or IdeaSessionData correctly populates defaults.
+        # Validate the incoming data against the Pydantic model
         session_data_obj = IdeaSessionData(**data) if isinstance(data, dict) else data
     except Exception as e:
-        self.app.logger.error(f"Invalid session data for save: {e}. Data: {data}", exc_info=True)
-        return Result.default_user_error(info=f"Invalid session data: {e}", exec_code=400)
+        app.logger.error(f"Invalid session data for save: {e}. Data: {str(data)[:500]}", exc_info=True)
+        return Result.default_user_error(info=f"Invalid session data format: {e}", exec_code=400)
 
-    session_data_obj.last_modified = float(uuid.uuid4().int & (1 << 32) - 1)  # Or time.time()
+    # Update timestamp and construct the main session key
+    session_data_obj.last_modified = datetime.now(timezone.utc).timestamp()
     session_db_key = f"{user_db_key_base}_{session_data_obj.id}"
 
-    db_op_result = self.db_mod.set(session_db_key, session_data_obj.model_dump_json())
-    if asyncio.iscoroutine(db_op_result): await db_op_result
+    # Save the full session object to the database
+    canvas_tool.db_mod.set(session_db_key, session_data_obj.model_dump_json(exclude_none=True))
+    app.logger.info(f"Saved session data for C:{session_data_obj.id}")
 
+    # --- Update the session list metadata ---
     session_list_key = f"{user_db_key_base}{SESSION_LIST_KEY_SUFFIX}"
-    list_res_obj = self.db_mod.get(session_list_key)
-    if asyncio.iscoroutine(list_res_obj): list_res_obj = await list_res_obj
+    try:
+        list_res_obj = canvas_tool.db_mod.get(session_list_key)
+        user_sessions = []
+        if list_res_obj and not list_res_obj.is_error() and list_res_obj.get():
+            list_content = list_res_obj.get()[0] if isinstance(list_res_obj.get(), list) else list_res_obj.get()
+            user_sessions = json.loads(list_content)
 
-    user_sessions = []
-    if list_res_obj and not list_res_obj.is_error() and list_res_obj.is_data():
-        try:
-            list_content = list_res_obj.get()
-            json_str_to_load = ""
-            if isinstance(list_content, list) and len(list_content) > 0:
-                json_str_to_load = list_content[0]
-            elif isinstance(list_content, str):
-                json_str_to_load = list_content
+        # Find and update the existing entry, or add a new one
+        session_metadata = {
+            "id": session_data_obj.id,
+            "name": session_data_obj.name,
+            "last_modified": session_data_obj.last_modified
+        }
+        found_in_list = False
+        for i, sess_meta in enumerate(user_sessions):
+            if sess_meta.get("id") == session_data_obj.id:
+                user_sessions[i] = session_metadata
+                found_in_list = True
+                break
+        if not found_in_list:
+            user_sessions.append(session_metadata)
 
-            if json_str_to_load: user_sessions = json.loads(json_str_to_load)
-            if not isinstance(user_sessions, list): user_sessions = []
-        except (json.JSONDecodeError, TypeError):
-            user_sessions = []
+        canvas_tool.db_mod.set(session_list_key, json.dumps(user_sessions))
+        app.logger.info(f"Updated session list for user key ending in ...{user_db_key_base[-12:]}")
 
-    found_in_list = False
-    for i, sess_meta in enumerate(user_sessions):
-        if sess_meta.get("id") == session_data_obj.id:
-            user_sessions[i] = {"id": session_data_obj.id, "name": session_data_obj.name,
-                                "last_modified": session_data_obj.last_modified}
-            found_in_list = True
-            break
-    if not found_in_list:
-        user_sessions.append({"id": session_data_obj.id, "name": session_data_obj.name,
-                              "last_modified": session_data_obj.last_modified})
+    except Exception as e:
+        app.logger.error(f"Failed to update session list for C:{session_data_obj.id}. Error: {e}", exc_info=True)
+        # Non-fatal error; the main data was saved. We can continue.
 
-    list_set_res = self.db_mod.set(session_list_key, json.dumps(user_sessions))
-    if asyncio.iscoroutine(list_set_res): await list_set_res
+    return Result.ok(
+        info="Session saved successfully.",
+        data={"id": session_data_obj.id, "last_modified": session_data_obj.last_modified}
+    )
 
-    return Result.ok(info="Session saved successfully.",
-                     data={"id": session_data_obj.id, "last_modified": session_data_obj.last_modified})
 
 @export(mod_name=MOD_NAME, api=True, version=VERSION, name="list_sessions", api_methods=['GET'],
         request_as_kwarg=True)
@@ -433,6 +292,7 @@ async def list_sessions(self, request: RequestData) -> Result:
 
     user_sessions.sort(key=lambda x: x.get("last_modified", 0), reverse=True)
     return Result.json(data=user_sessions)
+
 
 @export(mod_name=MOD_NAME, api=True, version=VERSION, name="load_session", api_methods=['GET'],
         request_as_kwarg=True)
@@ -472,6 +332,7 @@ async def load_session(self, request: RequestData, session_id: str) -> Result:
         self.app.logger.error(f"Error loading or parsing session {session_id}: {e}", exc_info=True)
         return Result.custom_error(info=f"Failed to load session data: {e}", exec_code=500)
 
+
 @export(mod_name=MOD_NAME, api=True, version=VERSION, name="export_canvas_json", api_methods=['POST'],
         request_as_kwarg=True)
 async def export_canvas_json(self, request: RequestData, data: Dict[str, Any]) -> Result:
@@ -484,259 +345,191 @@ async def export_canvas_json(self, request: RequestData, data: Dict[str, Any]) -
         self.app.logger.error(f"Error preparing canvas JSON export: {e}", exc_info=True)
         return Result.default_user_error(info=f"Invalid data for JSON export: {e}", exec_code=400)
 
+
 @export(mod_name=MOD_NAME, api=True, version=VERSION, name="open_canvas_stream", api_methods=['GET'],
         request_as_kwarg=True)
-async def stream_canvas_updates_sse(self, request: RequestData, canvas_id: str,
+async def stream_canvas_updates_sse(app: App, request: RequestData, canvas_id: str,
                                     client_id: Optional[str] = None) -> Result:
+    canvas_tool = app.get_mod(MOD_NAME)
     if not canvas_id:
         async def _error_gen(): yield {'event': 'error', 'data': json.dumps({'message': 'canvas_id is required'})}
 
         return Result.sse(stream_generator=_error_gen())
 
     session_client_id = client_id or str(uuid.uuid4().hex[:12])
-    # This queue is for this specific SSE connection's outgoing messages
-    sse_client_queue = asyncio.Queue()
-    self.live_canvas_sessions[canvas_id].append(sse_client_queue)
-    self.app.logger.info(
-        f"SSE: Client {session_client_id} connected to stream for C:{canvas_id}. Total listeners: {len(self.live_canvas_sessions[canvas_id])}")
+    sse_client_queue = asyncio.Queue(maxsize=100)
 
-    try:
-        # Send connection acknowledgment to the newly connected client
-        await sse_client_queue.put({
-            "event": "stream_connected",
-            "data": json.dumps(
-                {"message": "Connected to canvas stream.", "canvasId": canvas_id, "clientId": session_client_id})
-        })
-        # Send existing previews from other users to this new client
-        async with self.previews_lock:
-            if canvas_id in self.active_user_previews:
-                for uid, pdata in self.active_user_previews[canvas_id].items():
-                    if uid != session_client_id:  # Don't send own stale preview if any
-                        await sse_client_queue.put({
-                            "event": "user_preview_update",
-                            "data": json.dumps({"canvas_id": canvas_id, "user_id": uid, "preview_data": pdata})
-                        })
-    except Exception as e:
-        self.app.logger.error(
-            f"SSE: Error sending initial message/previews to client {session_client_id} for C:{canvas_id}: {e}")
+    # Register the queue with the canvas session
+    canvas_tool.live_canvas_sessions[canvas_id].append(sse_client_queue)
+    app.logger.info(
+        f"SSE: Client {session_client_id} connected to C:{canvas_id}. Listeners: {len(canvas_tool.live_canvas_sessions[canvas_id])}")
 
     async def event_generator() -> AsyncGenerator[Dict[str, Any], None]:
-        nonlocal sse_client_queue  # Explicitly capture the correct queue
-        should_continue = True
+        # Send initial data right away
         try:
-            while should_continue:
+            # Send a connection confirmation event
+            await sse_client_queue.put({"event": "stream_connected", "data": json.dumps(
+                {"message": "Connected", "canvasId": canvas_id, "clientId": session_client_id})})
+
+            # Send the current state of other users' previews to the new client
+            async with canvas_tool.previews_lock:
+                if canvas_id in canvas_tool.active_user_previews:
+                    for uid, pdata in canvas_tool.active_user_previews[canvas_id].items():
+                        if uid != session_client_id:
+                            await sse_client_queue.put({"event": "user_preview_update", "data": json.dumps(
+                                {"canvas_id": canvas_id, "user_id": uid, "preview_data": pdata})})
+        except Exception as e:
+            app.logger.error(f"SSE: Error sending initial data: {e}")
+
+        # Main event consumption loop
+        try:
+            p = .25
+            while True:
+                if p > 90: p = 30
                 try:
-                    message = await asyncio.wait_for(sse_client_queue.get(), timeout=300)
-                    if message is None:  # Sentinel for explicit close from server side
-                        should_continue = False
-                        break
+                    # MODIFICATION: Wait for a message, but with a timeout shorter than the server's.
+                    # This prevents the server from closing the connection due to inactivity.
+                    await asyncio.sleep(0.1)
+                    message = await asyncio.wait_for(sse_client_queue.get(), timeout=p)  # 60s is safer than 90s
+                    p = .25
                     yield message
                     sse_client_queue.task_done()
+                    print(p, session_client_id)
                 except asyncio.TimeoutError:
-                    # Send a keep-alive ping if no actual data
-                    yield {"event": "ping",
-                           "data": json.dumps({"timestamp": datetime.now(timezone.utc).isoformat()})}
+                    p += 0.01
+                    # MODIFICATION: If no message arrives, send a ping to keep the connection alive.
+                    yield {"event": "ping", "data": json.dumps({"timestamp": datetime.now(timezone.utc).isoformat()})}
+                    await asyncio.sleep(0.75)
         except asyncio.CancelledError:
-            self.app.logger.info(
-                f"SSE: Client {session_client_id} (C:{canvas_id}) disconnected (stream cancelled).")
-            should_continue = False
-        except Exception as e:
-            self.app.logger.error(
-                f"SSE: Error in event_generator for client {session_client_id}, C:{canvas_id}: {e}",
-                exc_info=True)
-            should_continue = False
+            app.logger.info(f"SSE: Client {session_client_id} disconnected (stream cancelled).")
         finally:
-            self.app.logger.info(f"SSE: Cleaning up for client {session_client_id}, C:{canvas_id}.")
-            # Remove this client's queue from live sessions
-            if canvas_id in self.live_canvas_sessions:
-                try:
-                    self.live_canvas_sessions[canvas_id].remove(sse_client_queue)
-                    if not self.live_canvas_sessions[canvas_id]:
-                        del self.live_canvas_sessions[canvas_id]
-                        self.app.logger.info(
-                            f"SSE: All listeners disconnected for C:{canvas_id}, removing from live_canvas_sessions.")
-                except ValueError:
-                    # This can happen if cleanup is somehow called twice or queue was already removed
-                    self.app.logger.warning(
-                        f"SSE: Queue for client {session_client_id} (C:{canvas_id}) not found for removal during cleanup.")
+            # The cleanup logic itself is fine. It will run when the generator exits.
+            # Define the cleanup as a coroutine
+            async def cleanup_coro():
+                app.logger.info(f"SSE: Cleaning up for client {session_client_id}, C:{canvas_id}.")
+                if canvas_id in canvas_tool.live_canvas_sessions:
+                    try:
+                        canvas_tool.live_canvas_sessions[canvas_id].remove(sse_client_queue)
+                    except ValueError:
+                        pass
+                    if not canvas_tool.live_canvas_sessions[canvas_id]:
+                        del canvas_tool.live_canvas_sessions[canvas_id]
 
-            # Clear this user's preview from the server cache
-            preview_cleared_for_disconnecting_user = False
-            async with self.previews_lock:
-                if canvas_id in self.active_user_previews and session_client_id in self.active_user_previews[
-                    canvas_id]:
-                    del self.active_user_previews[canvas_id][session_client_id]
-                    preview_cleared_for_disconnecting_user = True
-                    if not self.active_user_previews[canvas_id]:  # Clean up if no previews left for canvas
-                        del self.active_user_previews[canvas_id]
-                        self.app.logger.info(
-                            f"SSE: All previews cleared for C:{canvas_id}, removing from active_user_previews.")
+                preview_cleared = False
+                async with canvas_tool.previews_lock:
+                    if canvas_id in canvas_tool.active_user_previews and session_client_id in \
+                        canvas_tool.active_user_previews[canvas_id]:
+                        del canvas_tool.active_user_previews[canvas_id][session_client_id]
+                        preview_cleared = True
 
-            # If preview was cleared and EventManager is available, broadcast this fact
-            if preview_cleared_for_disconnecting_user and EVENT_MANAGER_AVAILABLE:
-                # Prepare payload for the internal SSE dispatcher event
-                em_payload_for_preview_clear = {
-                    "canvas_id": canvas_id,
-                    "sse_event_type": "clear_user_preview",
-                    "sse_data": {"user_id": session_client_id},  # Data for the SSE event itself
-                    "originator_user_id": session_client_id  # This client "originated" its disconnect
-                }
+                if preview_cleared:
+                    # This broadcast needs to happen in the background without blocking cleanup
+                    canvas_tool._broadcast_to_canvas_listeners(  # MODIFICATION: Calling the non-blocking version
+                        canvas_id=canvas_id, event_type="clear_user_preview",
+                        data={"user_id": session_client_id}, originator_user_id=session_client_id
+                    )
 
-                # Create EventID to trigger the local SSE dispatcher
-                event_id_for_dispatch = EventID.crate(
-                    source=self.source_id,  # Originates from this EventManager instance
-                    ID=self.canvas_internal_handler_event_name,  # Target the locally registered handler
-                    path="CanvasSSE:ClientDisconnectClearPreview",  # For debugging/logging
-                    payload=em_payload_for_preview_clear
-                )
-
-                self.app.logger.debug(
-                    f"SSE Cleanup: Triggering EM event '{self.canvas_internal_handler_event_name}' for disconnect preview clear (User: {session_client_id})")
-                try:
-                    # Use asyncio.create_task because we are in a 'finally' block
-                    # and cannot reliably 'await' if the generator was cancelled.
-                    asyncio.create_task(self.trigger_event(event_id_for_dispatch))
-                except Exception as e_trigger:
-                    self.app.logger.error(
-                        f"SSE Cleanup: Error creating task to trigger EM event for disconnect preview clear: {e_trigger}",
-                        exc_info=True)
-
-            self.app.logger.info(
-                f"SSE: Client {session_client_id} (C:{canvas_id}) cleanup complete. Listeners left: {len(self.live_canvas_sessions.get(canvas_id, []))}")
+            # Submit the cleanup coro to the non-blocking background runner
+            app.run_bg_task(cleanup_coro)
 
     return Result.sse(stream_generator=event_generator())
 
+
 @export(mod_name=MOD_NAME, api=True, version=VERSION, name="send_canvas_action", api_methods=['POST'],
         request_as_kwarg=True)
-async def handle_send_canvas_action(self, request: RequestData, data: Dict[str, Any]):
+async def handle_send_canvas_action(app: App, request: RequestData, data: Dict[str, Any]):
+    """
+    Handles incremental, real-time actions from clients (e.g., adding an element).
+    It persists the change to the database and then broadcasts it to all live listeners.
+    """
+    canvas_tool = app.get_mod(MOD_NAME)
+    if not canvas_tool or not canvas_tool.db_mod:
+        return Result.default_internal_error("Canvas module or DB not loaded.")
+
     canvas_id = data.get("canvas_id")
     action_type = data.get("action_type")
-    element_payload = data.get("payload")  # This is the payload for the canvas action (e.g., element data)
+    action_payload = data.get("payload")
     user_id = data.get("user_id")
 
-    if not all([canvas_id, action_type, user_id]) or element_payload is None:
-        return Result.default_user_error(
-            "Missing required fields (canvas_id, action_type, payload, user_id). Payload can be {} but not null.",
-            400)
-    if not isinstance(element_payload, dict):
-        return Result.default_user_error("Payload must be a dictionary.", 400)
+    if not all([canvas_id, action_type, user_id]) or action_payload is None:
+        return Result.default_user_error("Request missing required fields.", 400)
 
-    self.app.logger.debug(
-        f"Canvas Action Rcvd: C:{canvas_id}, A:{action_type}, U:{user_id}, P:{str(element_payload)[:100]}")
+    # --- Flow 1: Ephemeral 'preview' actions that DO NOT get persisted ---
+    if action_type in ["preview_update", "preview_clear"]:
+        sse_event_type = "user_preview_update" if action_type == "preview_update" else "clear_user_preview"
+        sse_data = {"user_id": user_id}
 
-    if not EVENT_MANAGER_AVAILABLE:
-        self.app.logger.error(
-            "Canvas: EventManager not available. Cannot process send_canvas_action for broadcast.")
-        return Result.custom_error("Collaboration backend (EventManager) not available.", exec_code=503)
+        async with canvas_tool.previews_lock:
+            if action_type == "preview_update":
+                canvas_tool.active_user_previews[canvas_id][user_id] = action_payload
+                sse_data["preview_data"] = action_payload
+            elif user_id in canvas_tool.active_user_previews.get(canvas_id, {}):
+                del canvas_tool.active_user_previews[canvas_id][user_id]
 
-    sse_event_type_for_broadcast = ""
-    # This is the data that will go *inside* the SSE event's 'data' field,
-    # after being wrapped with canvas_id and originator_user_id.
-    sse_data_for_broadcast_payload = {}
-    clear_originator_preview_after_crud = False
+        # MODIFICATION: Call the non-blocking broadcast method. This returns immediately.
+        canvas_tool._broadcast_to_canvas_listeners(
+            canvas_id=canvas_id, event_type=sse_event_type,
+            data=sse_data, originator_user_id=user_id
+        )
+        return Result.ok(info=f"'{action_type}' broadcasted.")
 
-    # 1. Determine the SSE event type and its specific data based on action_type
-    #    Also, manage local preview state (self.active_user_previews)
-    if action_type == "preview_update":
-        sse_event_type_for_broadcast = "user_preview_update"
-        async with self.previews_lock:
-            self.active_user_previews[canvas_id][user_id] = element_payload  # element_payload is the preview_data
-        sse_data_for_broadcast_payload = {"user_id": user_id, "preview_data": element_payload}
+    # --- Flow 2: Persistent actions that modify the canvas state ---
+    if action_type not in ["element_add", "element_update", "element_remove"]:
+        return Result.default_user_error(f"Unknown persistent action_type: {action_type}", 400)
 
-    elif action_type == "preview_clear":
-        sse_event_type_for_broadcast = "clear_user_preview"
-        async with self.previews_lock:
-            if user_id in self.active_user_previews.get(canvas_id, {}):
-                del self.active_user_previews[canvas_id][user_id]
-                if not self.active_user_previews[canvas_id]:
-                    del self.active_user_previews[canvas_id]
-        sse_data_for_broadcast_payload = {"user_id": user_id}  # element_payload is {} here
+    # Load the full, current session state from the database
+    user_db_key_base = await canvas_tool._get_user_specific_db_key(request, SESSION_DATA_PREFIX)
+    session_db_key = f"{user_db_key_base}_{canvas_id}"
+    try:
+        db_result = canvas_tool.db_mod.get(session_db_key)
+        if not db_result or db_result.is_error() or not db_result.get():
+            return Result.default_user_error("Canvas session not found in database.", 404)
 
-    elif action_type in ["element_add", "element_update", "element_remove"]:
-        if action_type == "element_remove" and not element_payload.get("id"):
-            return Result.default_user_error("Payload for element_remove must contain an 'id'.", 400)
+        session_data_str = db_result.get()[0] if isinstance(db_result.get(), list) else db_result.get()
+        session_data = IdeaSessionData.model_validate_json(session_data_str)
+    except Exception as e:
+        app.logger.error(f"DB Load/Parse failed for C:{canvas_id}. Error: {e}", exc_info=True)
+        return Result.default_internal_error("Could not load canvas data to apply changes.")
 
-        sse_event_type_for_broadcast = "canvas_elements_changed"
-        sse_data_for_broadcast_payload = {"action": action_type, "element": element_payload}
-        clear_originator_preview_after_crud = True  # Flag to clear this user's preview afterwards
+    # Apply the action to the in-memory Pydantic object
+    if action_type == "element_add":
+        session_data.canvas_elements.append(CanvasElement(**action_payload))
+    elif action_type == "element_update":
+        element_id = action_payload.get("id")
+        for i, el in enumerate(session_data.canvas_elements):
+            if el.id == element_id:
+                session_data.canvas_elements[i] = el.model_copy(update=action_payload)
+                break
+    elif action_type == "element_remove":
+        ids_to_remove = set(action_payload.get("ids", [action_payload.get("id")]))
+        session_data.canvas_elements = [el for el in session_data.canvas_elements if el.id not in ids_to_remove]
 
-    else:
-        return Result.default_user_error(f"Unknown action_type: {action_type}", 400)
+    # Save the modified object back to the database
+    session_data.last_modified = datetime.now(timezone.utc).timestamp()
+    canvas_tool.db_mod.set(session_db_key, session_data.model_dump_json(exclude_none=True))
 
-    # 2. Prepare the payload for the EventManager's internal SSE dispatcher event
-    # This payload is what _handle_canvas_action_for_sse_broadcast will receive.
-    em_payload_for_dispatcher = {
-        "canvas_id": canvas_id,
-        "sse_event_type": sse_event_type_for_broadcast,
-        "sse_data": sse_data_for_broadcast_payload,  # The specific data for this SSE event
-        "originator_user_id": user_id
-    }
-
-    # 3. Create EventID to trigger the local SSE dispatcher via EventManager
-    event_id_for_dispatch = EventID.crate(
-        source=self.source_id,  # Originates from this EventManager instance
-        ID=self.canvas_internal_handler_event_name,  # Target the locally registered handler
-        path=f"CanvasActionDispatch:{action_type}",  # For debugging/logging
-        payload=em_payload_for_dispatcher
+    # Broadcast the successful, persisted action to all connected clients
+    # MODIFICATION: Call the non-blocking broadcast method.
+    canvas_tool._broadcast_to_canvas_listeners(
+        canvas_id=canvas_id,
+        event_type="canvas_elements_changed",
+        data={"action": action_type, "element": action_payload},
+        originator_user_id=user_id
     )
 
-    self.app.logger.debug(
-        f"Canvas: Triggering EM event '{self.canvas_internal_handler_event_name}' for local SSE dispatch (Action: {action_type})")
-    try:
-        # This call should invoke self._handle_canvas_action_for_sse_broadcast
-        trigger_result = await self.trigger_event(event_id_for_dispatch)
-        if isinstance(trigger_result, Result) and trigger_result.is_error():
-            self.app.logger.error(
-                f"Canvas: Error response from triggering EM for local dispatch: {trigger_result.info}")
-            # Potentially return this error to the client if it's critical
-    except Exception as e_trigger:
-        self.app.logger.error(f"Canvas: Exception during self.trigger_event for local dispatch: {e_trigger}",
-                              exc_info=True)
-        return Result.default_internal_error("Error processing action via EventManager for broadcast.")
+    # Clear the temporary preview of the user who made the change
+    async with canvas_tool.previews_lock:
+        if user_id in canvas_tool.active_user_previews.get(canvas_id, {}):
+            del canvas_tool.active_user_previews[canvas_id][user_id]
 
-    # 4. If a CRUD action was performed, also clear the originator's preview
-    #    by triggering another event for the local SSE dispatcher.
-    if clear_originator_preview_after_crud:
-        originator_preview_cleared_locally = False
-        async with self.previews_lock:  # First, update local preview state
-            if user_id in self.active_user_previews.get(canvas_id, {}):
-                del self.active_user_previews[canvas_id][user_id]
-                originator_preview_cleared_locally = True
-                if not self.active_user_previews[canvas_id]:
-                    del self.active_user_previews[canvas_id]
+    # MODIFICATION: Call the non-blocking broadcast method.
+    canvas_tool._broadcast_to_canvas_listeners(
+        canvas_id=canvas_id, event_type="clear_user_preview",
+        data={"user_id": user_id}, originator_user_id=user_id
+    )
 
-        if originator_preview_cleared_locally:  # If a preview was actually there and cleared
-            em_payload_for_crud_preview_clear = {
-                "canvas_id": canvas_id,
-                "sse_event_type": "clear_user_preview",
-                "sse_data": {"user_id": user_id},  # Data for the SSE "clear_user_preview" event
-                "originator_user_id": user_id  # Originator is self for this system message
-            }
-            event_id_for_crud_preview_clear = EventID.crate(
-                source=self.source_id,
-                ID=self.canvas_internal_handler_event_name,  # Target local SSE dispatcher
-                path="CanvasActionDispatch:ClearPreviewCRUD",
-                payload=em_payload_for_crud_preview_clear
-            )
-            self.app.logger.debug(f"Canvas: Triggering EM event for CRUD action's preview clear (User: {user_id})")
-            try:
-                await self.trigger_event(event_id_for_crud_preview_clear)
-            except Exception as e_crud_clear:
-                self.app.logger.error(f"Canvas: Exception triggering EM for CRUD preview clear: {e_crud_clear}",
-                                      exc_info=True)
+    return Result.ok(info=f"Action '{action_type}' persisted and broadcast.")
 
-    # Note on cross-process/network broadcast:
-    # If this Canvas instance also needs to notify *other* Canvas instances (via EventManager routing),
-    # it would trigger a *different* EventID here, one that's globally recognized (e.g., ID="GLOBAL_CANVAS_UPDATE")
-    # and has a broader scope (e.g., Scope.local_network or Scope.global_network).
-    # That global event would then be handled by a P0/router which in turn would trigger the
-    # `self.canvas_internal_handler_event_name` on each relevant remote Canvas instance.
-    # This current implementation focuses on using EventManager to robustly trigger the *local* SSE dispatch.
-
-    return Result.ok(info=f"Action '{action_type}' (from user {user_id}) submitted for broadcast processing.")
-
-# --- HTML Template for v0.1.0 ---
-# (This will be a new variable name and contain the updated HTML)
 ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
 <title>Enhanced Canvas Studio v0.1.0</title>
 <!-- Rough.js and Perfect Freehand will be loaded via CDN in the script module -->
@@ -884,6 +677,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
         </div>
         <div id="drawToolsGroup" class="toolbar-group"> <!-- Drawing Tools (shown in Draw mode) -->
             <button id="toolPenBtn" title="Pen (P)" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">edit</span></button>
+            <button id="toolEraserBtn" title="Eraser (E)" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">ink_eraser</span></button>
             <button id="toolRectBtn" title="Rectangle (R)" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">rectangle</span></button>
             <button id="toolEllipseBtn" title="Ellipse (O)" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">circle</span></button>
             <button id="toolTextBtn" title="Text (T)" class="tb-btn tb-btn-secondary tb-btn-sm tb-btn-icon"><span class="material-symbols-outlined">title</span></button>
@@ -1062,6 +856,10 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
     let isPanning = false;
     let panStartViewX, panStartViewY;
 
+    let erasedThisStroke = new Set(); // For eraser tool
+    let isMarqueeSelecting = false;   // For multi-select tool
+    let marqueeRect = { x: 0, y: 0, width: 0, height: 0 };
+
     // Selection and Moving state
     let selectedElements = [];
     let isDraggingSelection = false;
@@ -1120,6 +918,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
             rectangle: document.getElementById('toolRectBtn'),
             ellipse: document.getElementById('toolEllipseBtn'),
             text: document.getElementById('toolTextBtn'),
+            eraser: document.getElementById('toolEraserBtn'),
              // image tool is handled separately now
         };
 
@@ -1276,7 +1075,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
     function handleGlobalKeyDown(e) {
         if (document.activeElement === textInputOverlayEl ||
             // document.activeElement === textNotesAreaEl ||
-            document.activeElement === canvasNameInputEl ||
+            document.activeElement === document.getElementById('canvasNameInput') ||
             (presetManagementModalInstance && presetManagementModalInstance.isOpen && presetManagementModalInstance.isVisible) ||
             (settingsModalInstance && settingsModalInstance.isOpen && settingsModalInstance.isVisible)) {
             if (e.key === 'Escape' && document.activeElement === textInputOverlayEl) textInputOverlayEl.blur();
@@ -1492,280 +1291,221 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
 
     // --- Mouse Event Handlers ---
     function handleCanvasMouseDown(e) {
-if (e.button !== 0) return;
-        e.preventDefault();
-        finalizeTextInput();
+    if (e.button !== 0) return;
+    e.preventDefault();
+    finalizeTextInput();
 
-        const coords = getCanvasCoordinates(e);
-        if (coords.error) return;
-        const { x: worldX, y: worldY, viewX, viewY } = coords;
+    const coords = getCanvasCoordinates(e);
+    if (coords.error) return;
+    const { x: worldX, y: worldY, viewX, viewY } = coords;
 
-        if ((e.ctrlKey || e.metaKey || e.button === 1 ) && canvasAppState.currentMode !== 'draw') {
-            isPanning = true; panStartViewX = viewX; panStartViewY = viewY;
-            canvas.style.cursor = 'grabbing'; return;
+    if ((e.ctrlKey || e.metaKey || e.button === 1) && canvasAppState.currentMode !== 'draw') {
+        isPanning = true; panStartViewX = viewX; panStartViewY = viewY;
+        canvas.style.cursor = 'grabbing'; return;
+    }
+
+    if (canvasAppState.currentMode === 'select') {
+        const clickedElement = getElementAtPosition(worldX, worldY);
+        if (clickedElement) {
+            const isAlreadySelected = selectedElements.find(el => el.id === clickedElement.id);
+            if (e.shiftKey) {
+                if (isAlreadySelected) selectedElements = selectedElements.filter(el => el.id !== clickedElement.id);
+                else selectedElements.push(clickedElement);
+            } else {
+                 if (!isAlreadySelected) selectedElements = [clickedElement];
+            }
+            isDraggingSelection = true;
+            selectionDragStartWorldX = worldX;
+            selectionDragStartWorldY = worldY;
+            selectedElements.forEach(selEl => {
+                selEl.originalDragX = selEl.x;
+                selEl.originalDragY = selEl.y;
+                if (selEl.type === 'pen') selEl.originalPoints = JSON.parse(JSON.stringify(selEl.points));
+            });
+        } else {
+            if (!e.shiftKey) selectedElements = [];
+            isMarqueeSelecting = true;
+            marqueeRect = { startX: worldX, startY: worldY, endX: worldX, endY: worldY };
         }
+        renderCanvas();
+    } else { // Draw mode
+        isDrawing = true;
+        startDragX = worldX;
+        startDragY = worldY;
+        if (canvasAppState.currentTool === 'pen') {
+            currentPenStroke = {
+                id: TB.utils.uniqueId('pen_'), type: 'pen',
+                points: [[worldX, worldY, e.pressure || 0.5]],
+                strokeColor: canvasAppState.strokeColor, strokeWidth: canvasAppState.strokeWidth,
+                opacity: canvasAppState.toolDefaults.pen.opacity || 1.0, angle: 0
+            };
+            if (currentPenStroke) sendPreviewDataThrottled(currentPenStroke);
+        } else if (canvasAppState.currentTool === 'eraser') {
+            erasedThisStroke.clear();
+            const elementsUnderCursor = getElementAtPosition(worldX, worldY, true);
+            if (elementsUnderCursor.length > 0) {
+                elementsUnderCursor.forEach(el => erasedThisStroke.add(el.id));
+                renderCanvas();
+            }
+        } else if (canvasAppState.currentTool === 'text') {
+            isDrawing = false;
+            showTextInputOverlay(worldX, worldY);
+        }
+    }
+}
 
-        if (canvasAppState.currentMode === 'select') {
-            const clickedElement = getElementAtPosition(worldX, worldY);
-            if (clickedElement) {
-                const isAlreadySelected = selectedElements.find(el => el.id === clickedElement.id);
-                if (e.shiftKey) {
-                    if (isAlreadySelected) {
-                        selectedElements = selectedElements.filter(el => el.id !== clickedElement.id);
-                    } else {
-                        selectedElements.push(clickedElement);
-                    }
+function handleCanvasMouseMove(e) {
+    e.preventDefault();
+    const coords = getCanvasCoordinates(e);
+    if (coords.error) return;
+    const { x: worldX, y: worldY, viewX, viewY } = coords;
+
+    if (isPanning) {
+        canvasAppState.offsetX += viewX - panStartViewX;
+        canvasAppState.offsetY += viewY - panStartViewY;
+        panStartViewX = viewX; panStartViewY = viewY;
+        renderCanvas(); return;
+    }
+
+    if (canvasAppState.currentMode === 'select') {
+        if (isDraggingSelection) {
+            const deltaX = worldX - selectionDragStartWorldX;
+            const deltaY = worldY - selectionDragStartWorldY;
+            selectedElements.forEach(selEl => {
+                if (selEl.type === 'pen') {
+                   if (selEl.originalPoints) selEl.points = selEl.originalPoints.map(p => [ p[0] + deltaX, p[1] + deltaY, p[2] ]);
                 } else {
-                     if (!isAlreadySelected || selectedElements.length > 1 || (selectedElements.length === 1 && selectedElements[0].id !== clickedElement.id) ) {
-                         selectedElements = [clickedElement];
-                     }
-            }
-
-                isDraggingSelection = true;
-                selectionDragStartWorldX = worldX;
-                selectionDragStartWorldY = worldY;
-
-                selectedElements.forEach(selEl => {
-                    selEl.originalDragX = selEl.x;
-                    selEl.originalDragY = selEl.y;
-                    if (selEl.type === 'pen') {
-                        selEl.originalPoints = JSON.parse(JSON.stringify(selEl.points));
-                    }
-                });
-
-                // Update UI based on selection
-                const fillColorPickerParent = document.getElementById('fillColorPicker').parentElement;
-                if (selectedElements.length === 1) {
-                    const primarySelected = selectedElements[0];
-                    document.getElementById('strokeColorPicker').value = primarySelected.strokeColor || canvasAppState.strokeColor;
-                    if(primarySelected.type === 'rectangle' || primarySelected.type === 'ellipse'){
-                        document.getElementById('fillColorPicker').value = primarySelected.fill || canvasAppState.fillColor;
-                        if (fillColorPickerParent) fillColorPickerParent.style.display = '';
-                    } else {
-                        if (fillColorPickerParent) fillColorPickerParent.style.display = 'none';
-                    }
-                    document.getElementById('strokeWidthInput').value = primarySelected.strokeWidth || canvasAppState.strokeWidth;
-                } else if (selectedElements.length > 1) {
-                    const canAnySelectedHaveFill = selectedElements.some(el => el.type === 'rectangle' || el.type === 'ellipse');
-                    if (fillColorPickerParent) {
-                         fillColorPickerParent.style.display = canAnySelectedHaveFill ? '' : 'none';
-                    }
-                    // For multiple, maybe set pickers to a "mixed" state or app defaults
-                    document.getElementById('strokeColorPicker').value = canvasAppState.strokeColor; // Default
-                    document.getElementById('fillColorPicker').value = canvasAppState.fillColor; // Default
-                    document.getElementById('strokeWidthInput').value = canvasAppState.strokeWidth; // Default
-                } else { // No elements selected
-                     if (fillColorPickerParent) fillColorPickerParent.style.display = 'none';
+                   if (selEl.originalDragX !== undefined) selEl.x = selEl.originalDragX + deltaX;
+                   if (selEl.originalDragY !== undefined) selEl.y = selEl.originalDragY + deltaY;
                 }
-            } else { // Clicked on empty space in select mode
-                if (!e.shiftKey) {
-                    selectedElements = [];
-                }
-                // Allow pan by dragging empty space in select mode
-                isPanning = true;
-                panStartViewX = viewX;
-                panStartViewY = viewY;
-                canvas.style.cursor = 'grabbing';
-            }
+            });
+            const previewDragData = selectedElements.map(el => ({...el, originalDragX: undefined, originalDragY: undefined, originalPoints: undefined}));
+            sendPreviewDataThrottled({ type: "group_drag", elements: previewDragData });
             renderCanvas();
-        } else { // Draw mode
-            isDrawing = true;
-            startDragX = worldX;
-            startDragY = worldY;
-
-            if (canvasAppState.currentTool === 'pen') {
-                currentPenStroke = {
-                    id: TB.utils.uniqueId('pen_'), type: 'pen',
-                    points: [[worldX, worldY, e.pressure || 0.5]],
-                    strokeColor: canvasAppState.strokeColor,
-                    strokeWidth: canvasAppState.strokeWidth,
-                    opacity: canvasAppState.toolDefaults.pen.opacity || 1.0,
-                    angle: 0
-                };
-                if (currentPenStroke) sendPreviewDataThrottled(currentPenStroke);
-            } else if (canvasAppState.currentTool === 'text') {
-                isDrawing = false;
-                showTextInputOverlay(worldX, worldY);
-            }
-            // For rectangle/ellipse, isDrawing is set, actual preview happens in mousemove
+        } else if (isMarqueeSelecting) {
+            marqueeRect.endX = worldX; marqueeRect.endY = worldY;
+            renderCanvas();
+        } else {
+            canvas.style.cursor = getElementAtPosition(worldX, worldY) ? 'move' : 'default';
+        }
+    } else { // Draw mode
+        if (!isDrawing) return;
+        if (canvasAppState.currentTool === 'pen' && currentPenStroke) {
+            currentPenStroke.points.push([worldX, worldY, e.pressure || 0.5]);
+            renderCanvas(); // Redraws everything
+            ctx.save();
+            ctx.translate(canvasAppState.offsetX, canvasAppState.offsetY);
+            ctx.scale(canvasAppState.zoom, canvasAppState.zoom);
+            drawTemporaryPenStroke(currentPenStroke); // Draw preview on top
+            ctx.restore();
+            sendPreviewDataThrottled(currentPenStroke);
+        } else if (canvasAppState.currentTool === 'eraser') {
+            const elementsUnderCursor = getElementAtPosition(worldX, worldY, true);
+            let needsRender = false;
+            elementsUnderCursor.forEach(el => {
+                if (!erasedThisStroke.has(el.id)) { erasedThisStroke.add(el.id); needsRender = true; }
+            });
+            renderCanvas(); // Redraws ghosted elements
+            ctx.save();
+            ctx.translate(canvasAppState.offsetX, canvasAppState.offsetY);
+            ctx.scale(canvasAppState.zoom, canvasAppState.zoom);
+            ctx.beginPath();
+            ctx.arc(worldX, worldY, (canvasAppState.strokeWidth / 2) + 2, 0, Math.PI * 2);
+            ctx.strokeStyle = '#888'; ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.lineWidth = 1.5 / canvasAppState.zoom;
+            ctx.fill(); ctx.stroke();
+            ctx.restore();
+        } else if (['rectangle', 'ellipse'].includes(canvasAppState.currentTool)) {
+            renderCanvas();
+            ctx.save();
+            ctx.translate(canvasAppState.offsetX, canvasAppState.offsetY);
+            ctx.scale(canvasAppState.zoom, canvasAppState.zoom);
+            const tempShape = {
+                type: canvasAppState.currentTool,
+                x: Math.min(startDragX, worldX), y: Math.min(startDragY, worldY),
+                width: Math.abs(worldX - startDragX), height: Math.abs(worldY - startDragY),
+                strokeColor: canvasAppState.strokeColor, fill: canvasAppState.fillColor, strokeWidth: canvasAppState.strokeWidth,
+                opacity: canvasAppState.toolDefaults[canvasAppState.currentTool]?.previewOpacity || 0.6,
+                fillStyle: canvasAppState.toolDefaults[canvasAppState.currentTool]?.fillStyle,
+                roughness: canvasAppState.toolDefaults[canvasAppState.currentTool]?.roughness,
+                seed: Math.floor(Math.random() * 2**31)
+            };
+            drawElementOnCanvas(tempShape);
+            ctx.restore();
+            sendPreviewDataThrottled(tempShape);
         }
     }
+}
 
-    function handleCanvasMouseMove(e) {
-        e.preventDefault();
-        const coords = getCanvasCoordinates(e);
-         if (coords.error) {
-            console.error("Mousemove: Failed to get coordinates.");
-            return;
-        }
-        const { x: worldX, y: worldY, viewX, viewY } = coords;
-
-        if (isPanning) {
-            const dxView = viewX - panStartViewX;
-            const dyView = viewY - panStartViewY;
-            canvasAppState.offsetX += dxView;
-            canvasAppState.offsetY += dyView;
-            panStartViewX = viewX;
-            panStartViewY = viewY;
-            renderCanvas();
-            return;
-        }
-
-        if (canvasAppState.currentMode === 'select') {
-            if (isDraggingSelection && selectedElements.length > 0) {
-                const deltaX = worldX - selectionDragStartWorldX;
-                const deltaY = worldY - selectionDragStartWorldY;
-                selectedElements.forEach(selEl => {
-                    if (selEl.type === 'pen') {
-                        if (selEl.originalPoints) { // Check if originalPoints exists
-                           selEl.points = selEl.originalPoints.map(p => [ p[0] + deltaX, p[1] + deltaY, p[2] ]);
-                        }
-                    } else {
-                        if (selEl.originalDragX !== undefined && selEl.originalDragY !== undefined) { // Check if originalDrag properties exist
-                           selEl.x = selEl.originalDragX + deltaX;
-                           selEl.y = selEl.originalDragY + deltaY;
-                        }
-                    }
-                });
-                renderCanvas();
-                // Send preview of multiple elements being dragged
-                if (selectedElements.length > 0) {
-                    // For simplicity, send all selected elements as a "preview group"
-                    // Or send individual updates if preferred by backend
-                    const previewDragData = selectedElements.map(el => ({...el})); // Send copies
-                    sendPreviewDataThrottled({ type: "group_drag", elements: previewDragData });
-                }
-            } else {
-                const hoveredElement = getElementAtPosition(worldX, worldY);
-                canvas.style.cursor = hoveredElement ? 'move' : 'default';
-            }
-        } else { // Draw mode
-            if (!isDrawing) return;
-
-            if (canvasAppState.currentTool === 'pen' && currentPenStroke) {
-                currentPenStroke.points.push([worldX, worldY, e.pressure || 0.5]);
-                renderCanvas();
-                ctx.save();
-                ctx.translate(canvasAppState.offsetX, canvasAppState.offsetY);
-                ctx.scale(canvasAppState.zoom, canvasAppState.zoom);
-                drawTemporaryPenStroke(currentPenStroke);
-                ctx.restore();
-                sendPreviewDataThrottled(currentPenStroke);
-            } else if (['rectangle', 'ellipse'].includes(canvasAppState.currentTool)) {
-                renderCanvas();
-                ctx.save();
-                ctx.translate(canvasAppState.offsetX, canvasAppState.offsetY);
-                ctx.scale(canvasAppState.zoom, canvasAppState.zoom);
-                const tempShape = {
-                    type: canvasAppState.currentTool,
-                    x: Math.min(startDragX, worldX),
-                    y: Math.min(startDragY, worldY),
-                    width: Math.abs(worldX - startDragX),
-                    height: Math.abs(worldY - startDragY),
-                    strokeColor: canvasAppState.strokeColor,
-                    fill: canvasAppState.fillColor,
-                    strokeWidth: canvasAppState.strokeWidth,
-                    opacity: canvasAppState.toolDefaults[canvasAppState.currentTool]?.previewOpacity || 0.6,
-                    fillStyle: canvasAppState.toolDefaults[canvasAppState.currentTool]?.fillStyle || (canvasAppState.currentTool === 'rectangle' ? 'solid' : 'hachure'),
-                    roughness: canvasAppState.toolDefaults[canvasAppState.currentTool]?.roughness === undefined ? 1 : canvasAppState.toolDefaults[canvasAppState.currentTool]?.roughness,
-                    angle: 0,
-                    seed: Math.floor(Math.random() * Math.pow(2, 31)) // Generate a new seed for preview on each move
-                };
-                drawElementOnCanvas(tempShape);
-                ctx.restore();
-                sendPreviewDataThrottled(tempShape);
-            }
+function handleCanvasMouseUp(e) {
+    const coords = getCanvasCoordinates(e);
+    if (isPanning) {
+        isPanning = false;
+        setActiveTool(canvasAppState.currentTool); // Resets cursor
+        return;
+    }
+    if (isMarqueeSelecting) {
+        const finalRect = {
+            x: Math.min(marqueeRect.startX, marqueeRect.endX), y: Math.min(marqueeRect.startY, marqueeRect.endY),
+            width: Math.abs(marqueeRect.endX - marqueeRect.startX), height: Math.abs(marqueeRect.endY - marqueeRect.startY)
+        };
+        const elementsInRect = getElementsInRect(finalRect);
+        if (e.shiftKey) {
+            elementsInRect.forEach(el => {
+                const index = selectedElements.findIndex(sel => sel.id === el.id);
+                if (index > -1) selectedElements.splice(index, 1);
+                else selectedElements.push(el);
+            });
+        } else {
+            selectedElements = elementsInRect;
         }
     }
-
-    function handleCanvasMouseUp(e) {
-        const coords = getCanvasCoordinates(e); // Get coords even if not strictly needed for all paths
-         if (coords.error && (isDrawing || isDraggingSelection)) { // Only critical if an action was in progress
-            console.error("Mouseup: Failed to get coordinates during an active operation.");
-            // Reset states to avoid being stuck
-            isDrawing = false; isPanning = false; isDraggingSelection = false;
-            currentPenStroke = null;
-            renderCanvas(); // Try to refresh UI
-            return;
-        }
-        const { x: worldX, y: worldY } = coords;
-
-
-        if (isPanning) {
-            isPanning = false;
-            if (canvasAppState.currentMode === 'select') {
-                 canvas.style.cursor = selectedElements.length > 0 ? 'move' : 'default'; // Based on if something is selected
-            } else {
-                 setActiveTool(canvasAppState.currentTool);
-            }
-            // No renderCanvas() here, assume mousemove handled it or it's not needed if just a pan stop.
-            return;
-        }
-        let actionSent = false;
-        if (canvasAppState.currentMode === 'select') {
-            if (isDraggingSelection && selectedElements.length > 0) {
-                selectedElements.forEach(selEl => {
-                    delete selEl.originalDragX;
-                    delete selEl.originalDragY;
-                    if (selEl.type === 'pen') {
-                        delete selEl.originalPoints;
-                    }
-                });
-                selectedElements.forEach(selEl => {
-                    const { originalDragX, originalDragY, originalPoints, ...elementToSend } = selEl; // Strip temp drag props
-                    sendActionToServer("element_update", elementToSend);
-                });
-                pushToHistory("Move Elements");
-                actionSent = true;
-            }
-            isDraggingSelection = false;
-            // renderCanvas(); // Render to finalize positions, though mousemove might have done it. Good for consistency.
-        } else {  // Draw mode
-            if (!isDrawing) return; // Should not happen if logic is correct, but good guard
-
-            isDrawing = false; // Crucial: stop drawing state
-            let newElement = null;
-            if (canvasAppState.currentTool === 'pen' && currentPenStroke) {
-                if (currentPenStroke.points.length > 1) {
-                    canvasElements.push(currentPenStroke);
-                    pushToHistory("Draw Pen");
-                    newElement = {...currentPenStroke};
-                }
-                currentPenStroke = null;
-            } else if (['rectangle', 'ellipse'].includes(canvasAppState.currentTool)) {
-                const width = Math.abs(worldX - startDragX);
-                const height = Math.abs(worldY - startDragY);
-
-                // Check for minimum size to avoid creating tiny/zero-size elements
-                if (width > 2 && height > 2) {
-                    const toolDefaults = canvasAppState.toolDefaults[canvasAppState.currentTool] || {};
-                    newElement = {
-                        id: TB.utils.uniqueId(`${canvasAppState.currentTool}_`), type: canvasAppState.currentTool,
-                        x: Math.min(startDragX, worldX), y: Math.min(startDragY, worldY),
-                        width: width, height: height,
-                        strokeColor: canvasAppState.strokeColor,
-                        fill: canvasAppState.fillColor, // Use the one from appState (tool might have set it)
-                        strokeWidth: canvasAppState.strokeWidth,
-                        opacity: toolDefaults.opacity || 1.0,
-                        fillStyle: toolDefaults.fillStyle || (canvasAppState.currentTool === 'rectangle' ? 'solid' : 'hachure'),
-                        roughness: toolDefaults.roughness === undefined ? 1 : toolDefaults.roughness,
-                        angle: 0,
-                        seed: Math.floor(Math.random() * Math.pow(2, 31)) // Final seed for the element
-                    };
-                    canvasElements.push(newElement);
-                    pushToHistory(`Draw ${canvasAppState.currentTool}`);
-                }
-            }
-            if (newElement) {
-                sendActionToServer("element_add", newElement);
-                actionSent = true;
-            }
-        }
-        if (actionSent) { // If an action was finalized and sent
+    if (isDraggingSelection) {
+        pushToHistory("Move Elements");
+        selectedElements.forEach(selEl => {
+            const { originalDragX, originalDragY, originalPoints, ...elementToSend } = selEl;
+            sendActionToServer("element_update", elementToSend);
+        });
+        clearOwnPreviewOnServer();
+    }
+    if (isDrawing) {
+        if (canvasAppState.currentTool === 'eraser' && erasedThisStroke.size > 0) {
+            const idsToErase = Array.from(erasedThisStroke);
+            canvasElements = canvasElements.filter(el => !idsToErase.includes(el.id));
+            pushToHistory("Erase Elements");
+            sendActionToServer("element_remove", { ids: idsToErase });
             clearOwnPreviewOnServer();
+        } else if (canvasAppState.currentTool === 'pen' && currentPenStroke && currentPenStroke.points.length > 2) {
+            canvasElements.push(currentPenStroke);
+            pushToHistory("Draw Pen");
+            sendActionToServer("element_add", currentPenStroke);
+            clearOwnPreviewOnServer();
+        } else if (['rectangle', 'ellipse'].includes(canvasAppState.currentTool)) {
+            const width = Math.abs(coords.x - startDragX);
+            const height = Math.abs(coords.y - startDragY);
+            if (width > 2 && height > 2) {
+                const defaults = canvasAppState.toolDefaults[canvasAppState.currentTool];
+                const newElement = {
+                    id: TB.utils.uniqueId(`${canvasAppState.currentTool}_`), type: canvasAppState.currentTool,
+                    x: Math.min(startDragX, coords.x), y: Math.min(startDragY, coords.y),
+                    width, height, strokeColor: canvasAppState.strokeColor, fill: canvasAppState.fillColor,
+                    strokeWidth: canvasAppState.strokeWidth, opacity: defaults.opacity, fillStyle: defaults.fillStyle,
+                    roughness: defaults.roughness, seed: Math.floor(Math.random() * 2**31)
+                };
+                canvasElements.push(newElement);
+                pushToHistory(`Draw ${canvasAppState.currentTool}`);
+                sendActionToServer("element_add", newElement);
+                clearOwnPreviewOnServer();
+            }
         }
-        renderCanvas(); // Final render after any operation
     }
+
+    // Reset all action states
+    isDrawing = isPanning = isDraggingSelection = isMarqueeSelecting = false;
+    currentPenStroke = null;
+    erasedThisStroke.clear();
+    renderCanvas();
+}
 
      function checkAndJoinCollabSessionFromUrl() {
         const urlParams = new URLSearchParams(window.location.search);
@@ -1791,9 +1531,17 @@ if (e.button !== 0) return;
         }
     }
 
-    // --- The rest of your JavaScript functions (drawTemporaryPenStroke, handleCanvasMouseLeave, etc.) ---
-    // --- Make sure they are also reviewed for correctness, especially those interacting with drawing or selection state ---
-
+    function getElementsInRect(selectionRect) {
+    return canvasElements.filter(el => {
+        const bbox = getElementBoundingBox(el);
+        // Standard Axis-Aligned Bounding Box (AABB) intersection test
+        return bbox &&
+            bbox.x < selectionRect.x + selectionRect.width &&
+            bbox.x + bbox.width > selectionRect.x &&
+            bbox.y < selectionRect.y + selectionRect.height &&
+            bbox.y + bbox.height > selectionRect.y;
+    });
+}
     function drawTemporaryPenStroke(strokeData) {
         if (!strokeData || strokeData.points.length < 1) return;
         // ctx is already transformed by the caller (handleCanvasMouseMove)
@@ -1909,15 +1657,18 @@ if (e.button !== 0) return;
         lastTouch = null;
     }
 
-    function getElementAtPosition(worldX, worldY) {
-        for (let i = canvasElements.length - 1; i >= 0; i--) {
-            const el = canvasElements[i];
-            if (isPointInsideElement(el, worldX, worldY)) {
-                return el;
-            }
+    function getElementAtPosition(worldX, worldY, getAll = false) {
+    const foundElements = [];
+    // Iterate from top-most to bottom-most
+    for (let i = canvasElements.length - 1; i >= 0; i--) {
+        const el = canvasElements[i];
+        if (isPointInsideElement(el, worldX, worldY)) {
+            if (!getAll) return el; // Return the first one found (top-most)
+            foundElements.push(el);
         }
-        return null;
     }
+    return getAll ? foundElements : null;
+}
 
     function isPointInsideElement(element, worldX, worldY) {
         const tolerance = Math.max(2, 5 / canvasAppState.zoom); // Ensure minimum tolerance
@@ -2003,17 +1754,16 @@ if (e.button !== 0) return;
     if (selectedElements.length === 0) return;
 
     // Capture payload for each element to be deleted *before* modifying selections or canvasElements
-    const elementsToBroadcastDelete = selectedElements.map(el => ({ id: el.id }));
 
-    const idsToDelete = new Set(selectedElements.map(el => el.id));
+    let idsToDelete = new Set(selectedElements.map(el => el.id));
     canvasElements = canvasElements.filter(el => !idsToDelete.has(el.id));
     selectedElements = []; // Now it's safe to clear selection
 
     pushToHistory("Delete Elements");
     renderCanvas();
-
+    idsToDelete = selectedElements.map(el => el.id);
     // Send action for each deleted element
-    elementsToBroadcastDelete.forEach(payload => sendActionToServer("element_remove", payload));
+    sendActionToServer("element_remove", { ids: idsToDelete });
     clearOwnPreviewOnServer(); // Clear any lingering preview for this client
 }
 
@@ -2389,8 +2139,16 @@ if (e.button !== 0) return;
                 }
                 break;
             case 'element_remove':
-                if (elementExists && element && element.id) {
-                    canvasElements.splice(existingElementIndex, 1);
+                // Handles both single element deletion (payload has .id)
+                // and multi-element eraser (payload has .ids array)
+                const idsToRemove = new Set(element.ids || (element.id ? [element.id] : []));
+
+                if (idsToRemove.size > 0) {
+                    canvasElements = canvasElements.filter(el => !idsToRemove.has(el.id));
+                    // Also ensure these elements are removed from the local selection if they happen to be selected
+                    selectedElements = selectedElements.filter(el => !idsToRemove.has(el.id));
+                } else {
+                    TB.logger.warn("Incoming 'element_remove' with no valid 'id' or 'ids' property.", element);
                 }
                 break;
             default:
@@ -2401,65 +2159,70 @@ if (e.button !== 0) return;
     }
 
     function renderCanvas() {
-            const dpr = window.devicePixelRatio || 1;
-            ctx.save();
-            ctx.fillStyle = canvasAppState.viewBackgroundColor;
-            ctx.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
-            ctx.translate(canvasAppState.offsetX, canvasAppState.offsetY);
-            ctx.scale(canvasAppState.zoom, canvasAppState.zoom);
+    const dpr = window.devicePixelRatio || 1;
+    ctx.save();
+    ctx.fillStyle = canvasAppState.viewBackgroundColor;
+    ctx.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
+    ctx.translate(canvasAppState.offsetX, canvasAppState.offsetY);
+    ctx.scale(canvasAppState.zoom, canvasAppState.zoom);
 
-            // Render all committed local elements
-            canvasElements.forEach(el => drawElementOnCanvas(el));
+    canvasElements.forEach(el => drawElementOnCanvas(el));
 
-            // Render remote user previews (after main elements, before local selection/previews)
-            if (sseConnection && Object.keys(remoteUserPreviews).length > 0) {
-                ctx.save();
-                // ctx.globalAlpha = 0.7; // Example: make remote previews slightly transparent
-                for (const userId in remoteUserPreviews) {
-                    const previewEl = remoteUserPreviews[userId];
-                    if (previewEl && previewEl.type) { // Basic check for valid preview data
-                        // Add a temporary ID for drawing if needed, or adapt drawElementOnCanvas
-                        // For RoughJS, seed might be important. If not provided, it will be random.
-                        // Ensure preview_data has all necessary fields for drawElementOnCanvas
-                        const tempDrawEl = {...previewEl};
-                        if(!tempDrawEl.opacity) tempDrawEl.opacity = 0.5; // Default preview opacity
-                         // Give remote previews a distinct visual style if desired, e.g., different stroke
-                        // const originalStroke = tempDrawEl.strokeColor;
-                        // tempDrawEl.strokeColor = TB.ui.theme.isDark() ? "#7777ff" : "#aaaaff"; // Example: light blue preview stroke
-                        drawElementOnCanvas(tempDrawEl);
-                        // tempDrawEl.strokeColor = originalStroke; // Restore if changed
-                    }
+    if (sseConnection) {
+        for (const userId in remoteUserPreviews) {
+            const previewData = remoteUserPreviews[userId];
+            if (previewData && previewData.type) {
+                // Handle a group of dragged elements
+                if (previewData.type === 'group_drag' && Array.isArray(previewData.elements)) {
+                     previewData.elements.forEach(pEl => drawElementOnCanvas({...pEl, opacity: 0.5}));
+                } else { // Handle single element preview
+                     drawElementOnCanvas({...previewData, opacity: 0.5});
                 }
-                ctx.restore();
             }
-
-            // Draw local selection highlight
-            if (canvasAppState.currentMode === 'select' && selectedElements.length > 0) {
-                selectedElements.forEach(selEl => drawSelectionHighlight(selEl));
-            }
-
-            // Local drawing previews (pen, shapes) are handled in handleCanvasMouseMove after this full render.
-            // handleCanvasMouseMove will save/transform/draw-preview/restore.
-
-            ctx.restore(); // Restore from main pan/zoom transform
-            updateUndoRedoButtons();
+        }
     }
 
+    if (canvasAppState.currentMode === 'select' && selectedElements.length > 0) {
+        selectedElements.forEach(selEl => drawSelectionHighlight(selEl));
+    }
+
+    if (isMarqueeSelecting) {
+        const x = Math.min(marqueeRect.startX, marqueeRect.endX);
+        const y = Math.min(marqueeRect.startY, marqueeRect.endY);
+        const width = Math.abs(marqueeRect.endX - marqueeRect.startX);
+        const height = Math.abs(marqueeRect.endY - marqueeRect.startY);
+        ctx.fillStyle = 'rgba(0, 123, 255, 0.1)';
+        ctx.strokeStyle = 'rgba(0, 123, 255, 0.6)';
+        ctx.lineWidth = 1 / canvasAppState.zoom;
+        ctx.fillRect(x, y, width, height);
+        ctx.strokeRect(x, y, width, height);
+    }
+
+    ctx.restore();
+    updateUndoRedoButtons();
+}
+
     function drawElementOnCanvas(el) {
-        ctx.save();
-        ctx.globalAlpha = el.opacity === undefined ? 1.0 : el.opacity;
+    const isGhosted = erasedThisStroke.has(el.id);
+    ctx.save();
+    // Use the element's own opacity, but reduce it if ghosted
+    let effectiveOpacity = el.opacity === undefined ? 1.0 : el.opacity;
+    if (isGhosted) {
+        effectiveOpacity *= 0.2;
+    }
+    ctx.globalAlpha = effectiveOpacity;
 
-        if (el.angle) {
-            const centerX = el.x + (el.width || 0) / 2;
-            const centerY = el.y + (el.height || 0) / 2;
-            ctx.translate(centerX, centerY);
-            ctx.rotate(el.angle * Math.PI / 180);
-            ctx.translate(-centerX, -centerY);
-        }
+    if (el.angle) {
+        const centerX = el.x + (el.width || 0) / 2;
+        const centerY = el.y + (el.height || 0) / 2;
+        ctx.translate(centerX, centerY);
+        ctx.rotate(el.angle * Math.PI / 180);
+        ctx.translate(-centerX, -centerY);
+    }
 
-        const stroke = el.strokeColor || canvasAppState.strokeColor;
-        const fill = el.fill;
-        const strokeWidth = el.strokeWidth || canvasAppState.strokeWidth;
+    const stroke = el.strokeColor || canvasAppState.strokeColor;
+    const fill = el.fill;
+    const strokeWidth = el.strokeWidth || canvasAppState.strokeWidth;
 
         switch (el.type) {
             case 'pen':
@@ -3150,16 +2913,6 @@ if (e.button !== 0) return;
         initializeCanvasStudio();
         checkAndJoinCollabSessionFromUrl();
     }
-    if (window.TB?.ready) {
-        window.TB.ready.then(init);
-    } else if (window.TB?.events?.on) {
-         if (window.TB.config?.get('appRootId') || document.readyState === 'complete' || document.readyState === 'interactive') {
-            init();
-        } else {
-            window.TB.events.on('tbjs:initialized', init, { once: true });
-        }
-    } else {
-        document.addEventListener('DOMContentLoaded', init, { once: true });
-    }
+    window.TB.once(init);
 </script>
 """

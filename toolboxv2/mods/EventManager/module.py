@@ -568,7 +568,12 @@ class EventManagerClass:
 
         return await self.runner(event, event_id)
 
-    async def runner(self, event, event_id):
+    async def runner(self, event, event_id: EventID):
+
+        if event.kwargs_ is None:
+            event.kwargs_ = {}
+        if event.args is None:
+            event.args = []
 
         if event.source_types.name is SourceTypes.P.name:
             return event.source(*event.args, payload=event_id, **event.kwargs_)
@@ -581,6 +586,11 @@ class EventManagerClass:
                                                   kwargs_=event.kwargs_)
 
         if event.source_types.name is SourceTypes.AP.name:
+            if 'payload' in event.kwargs_:
+                if event_id.payload != event.kwargs_['payload']:
+                    event_id.payload = event.kwargs_['payload']
+                del event.kwargs_['payload']
+            print(event.args, event.kwargs_, "TODO: remove")
             return await event.source(*event.args, payload=event_id, **event.kwargs_)
 
         if event.source_types.name is SourceTypes.AF.name:
