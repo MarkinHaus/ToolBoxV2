@@ -377,6 +377,8 @@ def read_server_state(state_file=SERVER_STATE_FILE):
 
 
 def write_server_state(pid, server_version, executable_path, state_file=SERVER_STATE_FILE):
+    if executable_path is None:
+        executable_path = ''
     try:
         state = {'pid': pid, 'version': server_version, 'executable_path': str(Path(executable_path).resolve())}
         with open(state_file, 'w') as f:

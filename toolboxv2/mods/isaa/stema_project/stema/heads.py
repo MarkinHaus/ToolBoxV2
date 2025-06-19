@@ -2,13 +2,11 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 from typing import Dict, Any
-from .data import MultimodalPatchifier  # To get vocab_size dynamically
+
 class TextHead(nn.Module):
-    # --- FIX: Takes config directly, not patchifier ---
     def __init__(self, config: Dict[str, Any]):
         super().__init__()
         dim = config['model']['embedding_dim']
-        # Get vocab_size from the main config file
         self.vocab_size = config['data']['vocab_size']
         self.decoder = nn.Linear(dim, self.vocab_size)
 
@@ -39,7 +37,7 @@ class ImageHead(nn.Module):
             nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(32), nn.GELU(),
             nn.ConvTranspose2d(32, 3, kernel_size=4, stride=2, padding=1),
-            nn.Tanh() # Output range [-1, 1]
+            nn.Tanh()
         )
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         mean_embedding = x.mean(dim=1) if x.dim() > 2 else x
@@ -47,21 +45,18 @@ class ImageHead(nn.Module):
         initial_feature_map = self.initial_proj(latent_vector)
         img_latent = rearrange(initial_feature_map, 'b (c h w) -> b c h w', h=self.initial_spatial_dims, w=self.initial_spatial_dims)
         generated_image = self.decoder(img_latent)
-        return (generated_image + 1) / 2 # Scale to [0, 1] for loss functions
+        return (generated_image + 1) / 2
+
 
 class AudioHead(nn.Module):
     def __init__(self, config: Dict[str, Any]):
         super().__init__()
         dim = config['model']['embedding_dim']
         self.n_mels = config['data']['audio_n_mels']
-        # This head needs to predict a spectrogram of shape (B, S, Mels), but core gives (B,S,D)
-        # We need to project from Dim to Mels for each time step.
         self.decoder = nn.Linear(dim, self.n_mels)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Input x is (B, S, D). Output should be (B, Mels, S_new)
-        # For simplicity, we assume one-to-one mapping from input sequence to output sequence.
-        mel_output = self.decoder(x) # (B, S, Mels)
+        mel_output = self.decoder(x)
         return rearrange(mel_output, 'b s m -> b m s')
 
 
@@ -77,36 +72,38 @@ class VideoHead(nn.Module):
         return rearrange(generated_frames, '(b s) c h w -> b s c h w', s=seq_len)
 
 
-# --- NEW HEAD FOR MPP ---
 class EmbeddingPredictionHead(nn.Module):
-    """
-    A generic head to predict embeddings, typically for Masked Patch Prediction (MPP).
-    Input: (Batch, Seq, Dim_in) -> Output: (Batch, Seq, Dim_out)
-    Usually Dim_in == Dim_out == model_embedding_dim.
-    """
-
     def __init__(self, config: Dict[str, Any]):
         super().__init__()
         dim = config['model']['embedding_dim']
-        # Simple linear projection. Could be more complex (e.g., a small MLP).
         self.predictor = nn.Linear(dim, dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (batch, seq_len, dim)
-        return self.predictor(x)  # (batch, seq_len, dim)
+        return self.predictor(x)
 
 
-def get_all_heads(config: Dict[str, Any], *a) -> nn.ModuleDict:
+class ClassificationHead(nn.Module):
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__()
+        dim = config['model']['embedding_dim']
+        num_classes = config['training']['num_classes']
+        self.classifier = nn.Linear(dim, num_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        pooled_features = x.mean(dim=1)
+        return self.classifier(pooled_features)
+
+
+def get_all_heads(config: Dict[str, Any]) -> nn.ModuleDict:
+    """Factory function to create all available heads based on the config."""
     heads = {
         "text": TextHead(config),
         "image": ImageHead(config),
         "audio": AudioHead(config),
         "video": VideoHead(config),
-        # --- ADDED MPP HEAD ---
         "embedding_prediction": EmbeddingPredictionHead(config),
+        # The classification head is now used for the linear classifier
+        # in the fast FF inference path.
+        "classification": ClassificationHead(config),
     }
-    # Conditionally add heads if specific config options are present, e.g.
-    # if config['model'].get('use_mpp_heads', False):
-    # heads["video_mpp"] = EmbeddingPredictionHead(config)
-    # heads["audio_mpp"] = EmbeddingPredictionHead(config)
     return nn.ModuleDict(heads)

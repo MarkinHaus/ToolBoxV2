@@ -10,8 +10,8 @@ model:
   lif_delta_threshold: 0.02
   lif_initial_threshold: 1.0
   reasoning_steps: 2
-  use_spikes: true
-  use_ternary: true
+  use_spikes: false
+  use_ternary: false
   lsm_e_i_ratio: 0.8
   recurrent_weight_clamp: 1.5
   lif_beta_mean: 0.95
@@ -20,6 +20,8 @@ model:
   sfa_increment: 0.05
   lif_tau_sfa_mean: 150.0
   lif_tau_sfa_std: 25.0
+  dropout_rate: 0.1
+  ff_loss_weight: 0.5
 training:
   device: cpu
   batch_size: 8
@@ -31,6 +33,7 @@ training:
   lambda_perceptual_loss: 0.05
   steps_per_epoch: 5000
   tts_batch_size: 4
+  num_classes: 10
 pretraining:
   epochs: 20
   batch_size: 4
@@ -39,7 +42,7 @@ pretraining:
   learning_rate: 0.0001
   weight_decay: 1.0e-05
   use_amp: true
-  use_torch_compile: true
+  use_torch_compile: false
   torch_compile_mode: default
   clip_grad_norm: 1.0
   log_interval: 50
@@ -55,7 +58,8 @@ pretraining:
   lambda_pixel_loss: 1.0
   lambda_perceptual_loss: 0.1
 data:
-  image_patch_size: 16
+  image_in_channels: 1
+  image_patch_size: 28
   audio_n_mels: 80
   max_text_len: 256
   vocab_size: 30522

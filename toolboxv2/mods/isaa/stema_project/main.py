@@ -2,7 +2,6 @@ import argparse
 import os
 import sys
 from stema.config import load_config, get_default_config  # For ensuring default config exists
-from train import train_reasoning_engine, train_with_reinforcement_learning
 from inference import run_inference
 import yaml  # For writing default config
 
@@ -66,4 +65,5 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    from toolboxv2.mods.isaa.stema_project.pretrain_decoder import main as d_main
+    d_main()

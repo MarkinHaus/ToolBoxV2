@@ -18,6 +18,8 @@ def get_default_config() -> Dict[str, Any]:
             "max_seq_len": 128,
             "embedding_dim": 256,
             "num_layers": 4,
+            'dropout_rate': 0.1,
+            'ff_loss_weight': 0.5,
             "num_attn_heads": 8,  # Köpfe für die Spiking Attention
             "lsm_reservoir_size": 512,  # Größe des LSM Reservoirs
             "lsm_sparsity": 0.9,  # Sparsity der rekurrenten LSM-Verbindungen
@@ -53,7 +55,8 @@ def get_default_config() -> Dict[str, Any]:
             "lambda_pixel_loss": 1.0,
             "lambda_perceptual_loss": 0.05,
             "steps_per_epoch": 5000,
-            "tts_batch_size": 4
+            "tts_batch_size": 4,
+            "num_classes": 10,  # <-- NEW: Default number of classes for classification tasks
         },
         "pretraining": {
             "epochs": 20,
@@ -63,7 +66,7 @@ def get_default_config() -> Dict[str, Any]:
             "learning_rate": 1e-4,
             "weight_decay": 1e-5,
             "use_amp": True,
-            "use_torch_compile": True, # For PyTorch 2.x
+            "use_torch_compile": False, # For PyTorch 2.x
             "torch_compile_mode": "default", # Or "reduce-overhead"
             "clip_grad_norm": 1.0,
             "log_interval": 50,
@@ -81,6 +84,7 @@ def get_default_config() -> Dict[str, Any]:
             "lambda_perceptual_loss": 0.1,
         },
         "data": {
+            "image_in_channels": 3, # <-- NEW: Number of input channels for images (e.g., 1 for BW, 3 for RGB)
             "image_patch_size": 16,
             "audio_n_mels": 80, # Reduced from 128 for better compatibility with smaller n_fft
             "max_text_len": 256,
