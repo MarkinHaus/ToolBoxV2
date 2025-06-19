@@ -1,0 +1,124 @@
+
+#tbjs-cookie-banner {
+    /* Core Positioning & Sizing (from Tailwind: fixed bottom-0 inset-x-0 z-[1000]) */
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+
+    /* Background & Border (from Tailwind: bg-gray-100 p-4 border-t border-gray-300 shadow-lg) */
+    background-color:var(--theme-bg); /* Equivalent to bg-gray-100 */
+    padding: 1rem; /* Equivalent to p-4 */
+    border-top: 1px solid var(--secondary-color); /* Equivalent to border-t border-gray-300 */
+    box-shadow: 0 -10px 15px -3px rgba(var(--text-color), 0.1), 0 -4px 6px -2px rgba(var(--text-color), 0.05); /* Equivalent to shadow-lg (applied from bottom) */
+
+    /* Text (from Tailwind: text-sm text-text-color) */
+    font-size: 0.875rem; /* Equivalent to text-sm */
+    line-height: 1.25rem;
+    color: var(--text-color); /* Example: text-gray-700. Replace with your actual 'text-text-color' */
+
+    /* Animation - Initial State (from Tailwind: transition-all duration-300 ease-in-out transform translate-y-full opacity-0) */
+    opacity: 0;
+    transform: translateY(100%);
+    transition-property: opacity, transform;
+    transition-timing-function: ease-in-out;
+    transition-duration: 300ms;
+
+    /* --- FOR DEBUGGING: Uncomment this to make it VERY obvious if CSS is applying at all --- */
+    /* border: 5px solid red !important;
+    background-color: yellow !important; */
+}
+
+/* Styles for when the banner is active/visible (JS will set opacity to 1 and transform to translateY(0)) */
+/* (No specific CSS needed here if JS directly manipulates these styles for the 'shown' state) */
+
+
+/* Dark Mode Styles (mimicking Tailwind dark: variants) */
+/* Add a class like "dark" to your <html> or <body> tag to enable these */
+.dark #tbjs-cookie-banner {
+    background-color: var(--theme-bg); /* Equivalent to dark:bg-gray-800 or dark:bg-gray-900 */
+    border-top-color:var(--secondary-color); /* Equivalent to dark:border-gray-700 */
+    color: var(--text-color); /* Example: dark:text-gray-200. Replace with your dark 'text-text-color' */
+}
+
+/* --- CSS for the inner container of #tbjs-cookie-banner --- */
+/* This is the div that gets 'max-w-screen-lg mx-auto ...' */
+#tbjs-cookie-banner > div:first-child {
+    max-width: 1024px; /* Equivalent to max-w-screen-lg */
+    margin-left: auto;
+    margin-right: auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1rem; /* Approximates gap-y-2 gap-x-4 */
+}
+
+/* Optional: Specific styles for elements inside the banner if needed */
+#tbjs-cookie-banner #tb-cookie-banner-close {
+    position: absolute; /* Tailwind: absolute */
+    top: 0.5rem;      /* Tailwind: top-2 */
+    right: 0.5rem;     /* Tailwind: right-2 */
+    color: #6b7280;   /* Tailwind: text-gray-500 */
+    font-size: 1.25rem;/* Tailwind: text-xl (adjust if material icon needs different sizing) */
+    padding: 0.25rem;  /* Tailwind: p-1 */
+    margin: -0.25rem;  /* Tailwind: -m-1 */
+    cursor: pointer;
+    line-height: 1; /* Ensure icon aligns well */
+}
+.dark #tbjs-cookie-banner #tb-cookie-banner-close {
+    color: var(--theme-accent);   /* Tailwind: dark:text-gray-300 */
+}
+#tbjs-cookie-banner #tb-cookie-banner-close:hover {
+    color: var(--secondary-color);   /* Tailwind: hover:text-gray-700 */
+}
+.dark #tbjs-cookie-banner #tb-cookie-banner-close:hover {
+    color: var(--theme-accent);   /* Tailwind: dark:hover:text-gray-400 */
+}
+
+
+#tbjs-cookie-banner h3 {
+    font-weight: 600; /* Tailwind: font-semibold */
+    font-size: 1rem;   /* Tailwind: text-base */
+    line-height: 1.5rem;
+}
+
+#tbjs-cookie-banner p {
+    margin-top: 0.25rem; /* Tailwind: mt-1 */
+    font-size: 0.75rem; /* Tailwind: text-xs */
+    /* sm:text-sm equivalent would require a media query */
+}
+
+@media (min-width: 640px) { /* sm breakpoint */
+    #tbjs-cookie-banner p {
+        font-size: 0.875rem; /* Tailwind: sm:text-sm */
+    }
+    #tbjs-cookie-banner #tb-cookie-banner-accept-minimal {
+        padding-left: 1rem;    /* Tailwind: sm:px-4 */
+        padding-right: 1rem;   /* Tailwind: sm:px-4 */
+        padding-top: 0.5rem;   /* Tailwind: sm:py-2 */
+        padding-bottom: 0.5rem;/* Tailwind: sm:py-2 */
+    }
+}
+
+
+#tbjs-cookie-banner #tb-cookie-banner-show-settings {
+    font-size: 0.75rem; /* Tailwind: text-xs */
+    text-decoration: underline;
+}
+#tbjs-cookie-banner #tb-cookie-banner-show-settings:hover {
+    color: var(--secondary-color); /* Example: hover:text-primary-500, replace with your primary color */
+}
+
+#tbjs-cookie-banner #tb-cookie-banner-accept-minimal {
+    padding: 0.375rem 0.75rem; /* Tailwind: px-3 py-1.5 */
+    border-radius: 0.375rem; /* Tailwind: rounded-md */
+    background-color:  var(--theme-bg); /* Example: bg-primary-600, replace with your primary color */
+    color: var(--text-color);
+    font-size: 0.75rem; /* Tailwind: text-xs */
+    font-weight: 500; /* Tailwind: font-medium */
+}
+#tbjs-cookie-banner #tb-cookie-banner-accept-minimal:hover {
+    background-color:var(--theme-bg); /* Example: hover:bg-primary-700 */
+}

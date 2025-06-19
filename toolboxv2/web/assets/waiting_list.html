@@ -1,17 +1,184 @@
-<script src="/index.js" type="module"></script>
-<script type="module" src="/web/scripts/emailWlist.js"></script>
-<div>
-    <div class="main-content frosted-glass">
-        <h1>Email Waiting List For Sing up</h1>
+<!-- --- START OF FILE waiting_list.html --- -->
+ <style>
+        .waiting-list-page-content > h1 {
+            text-align: center;
+            margin-bottom: calc(var(--spacing) * 0.75); /* Closer to subtitle */
+            font-size: var(--font-size-2xl); /* Slightly smaller for minimalism */
+            color: var(--theme-text); /* Standard text color for minimalist title */
+            font-weight: var(--font-weight-semibold);
+            display: flex; /* For aligning icon with text */
+            align-items: center;
+            justify-content: center;
+            gap: calc(var(--spacing) * 0.5);
+        }
 
-        <div id="infoPopup" class="form-container" style="display: none; z-index: 1000;">
-            <p id="infoText"></p>
+        .waiting-list-page-content > h1 .material-symbols-outlined {
+            font-size: var(--font-size-3xl); /* Icon slightly larger than text */
+            color: var(--theme-primary); /* Icon can carry the theme color */
+            line-height: 1; /* Ensure proper vertical alignment */
+        }
+
+        .waiting-list-subtitle {
+            text-align: center;
+            font-size: var(--font-size-base); /* Standard base size */
+            color: var(--theme-text-muted);
+            margin-bottom: calc(var(--spacing) * 2); /* More space before form */
+            max-width: 50ch;
+            margin-left: auto;
+            margin-right: auto;
+            line-height: var(--line-height-normal);
+        }
+
+        #email-subscription-form {
+            margin-top: 0; /* Remove top margin as subtitle handles spacing */
+            margin-bottom: calc(var(--spacing) * 2);
+            width: 100%;
+            max-width: 420px; /* Slightly narrower */
+            margin-left: auto;
+            margin-right: auto;
+            display: flex;
+            flex-direction: column; /* Ensure it's a column for input and button */
+        }
+
+        .input-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+            width: 100%;
+            margin-bottom: var(--spacing);
+        }
+
+        .input-wrapper .material-symbols-outlined {
+            position: absolute;
+            left: calc(var(--spacing) * 0.75);
+            top: 40%;
+            transform: translateY(-50%);
+            color: var(--theme-text-muted);
+            pointer-events: none;
+            font-size: var(--font-size-xl);
+            transition: color var(--transition-fast);
+        }
+
+        #email-subscription-form input[type="email"] {
+            width: 100%;
+            padding-left: calc(var(--spacing) * 2.6); /* Adjusted for icon */
+            padding-top: calc(var(--spacing) * 0.65);
+            padding-bottom: calc(var(--spacing) * 0.65);
+            font-size: var(--font-size-base); /* Standard input font size */
+            border-width: 1px; /* Standard border for minimalism */
+            border-color: var(--input-border);
+        }
+        #email-subscription-form input[type="email"]:focus {
+            border-color: var(--input-focus-border);
+            box-shadow: 0 0 0 2px color-mix(in srgb, var(--input-focus-border) 20%, transparent); /* Subtle focus shadow */
+        }
+        #email-subscription-form input[type="email"]:focus + .material-symbols-outlined {
+            color: var(--theme-primary);
+        }
+
+        #email-subscription-form button[type="submit"] {
+            width: 100%;
+            padding: calc(var(--spacing) * 0.75) calc(var(--spacing) * 1.25);
+            font-size: var(--font-size-base);
+            font-weight: var(--font-weight-medium);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: calc(var(--spacing) * 0.4);
+            transition: background-color var(--transition-fast), transform var(--transition-fast);
+            /* Removed box-shadow for more minimalism on button default state */
+        }
+        #email-subscription-form button[type="submit"]:hover:not(:disabled) {
+            background-color: var(--link-hover-color);
+            transform: translateY(-1px); /* Very subtle lift */
+        }
+        #email-subscription-form button[type="submit"]:active:not(:disabled) {
+            transform: translateY(0px);
+        }
+
+        #email-subscription-form button[type="submit"].is-submitting {
+            background-color: color-mix(in srgb, var(--button-bg) 85%, black);
+            cursor: wait;
+        }
+        #email-subscription-form button[type="submit"].is-submitting .button-label-text {
+            margin-left: calc(var(--spacing) * 0.5);
+        }
+        #email-subscription-form button[type="submit"].is-submitting .button-submit-icon {
+            display: none;
+        }
+        #email-subscription-form button[type="submit"] .spinner {
+            display: none;
+        }
+        #email-subscription-form button[type="submit"].is-submitting .spinner {
+            display: inline-block;
+        }
+
+        .spinner {
+            width: 1.2em;
+            height: 1.2em;
+            border: 2px solid color-mix(in srgb, var(--button-text) 30%, transparent); /* Thinner spinner border */
+            border-radius: 50%;
+            border-top-color: var(--button-text);
+            animation: tbjs_spin 0.8s linear infinite;
+        }
+        /* @keyframes tbjs_spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } } */
+
+        .button-submit-icon {
+            font-size: var(--font-size-lg);
+            margin-left: calc(var(--spacing) * 0.2);
+            transition: transform 0.2s ease-out;
+        }
+        #email-subscription-form button[type="submit"]:hover:not(:disabled) .button-submit-icon {
+            transform: translateX(3px);
+        }
+
+        .privacy-note {
+            text-align:center;
+            font-size: var(--font-size-xs);
+            color: var(--theme-text-muted);
+            margin-top: calc(var(--spacing) * 0.75);
+        }
+
+        .hidden-visually {
+            border: 0;
+            clip: rect(0 0 0 0);
+            height: 1px;
+            margin: -1px;
+            overflow: hidden;
+            padding: 0;
+            position: absolute;
+            width: 1px;
+            white-space: nowrap;
+        }
+    </style>
+
+ <div class="main-content waiting-list-page-content">
+    <h1>
+        <span class="material-symbols-outlined">mark_email_unread</span> <!-- Or forward_to_inbox, hourglass_empty -->
+        Join the Waiting List
+    </h1>
+    <p class="waiting-list-subtitle">
+        Get early access to new features and updates.
+    </p>
+
+    <form id="email-subscription-form" class="form" novalidate>
+        <label for="email" class="hidden-visually">Email Address:</label>
+        <div class="input-wrapper">
+            <input type="email" id="email" name="email" placeholder="your.email@example.com" required>
+            <span class="material-symbols-outlined">alternate_email</span> <!-- Icon for email input -->
         </div>
+        <button type="submit">
+            <span class="spinner"></span>
+            <span class="button-label-text">Subscribe</span> <!-- Shorter button text -->
+            <span class="material-symbols-outlined button-submit-icon">send</span> <!-- 'send' icon for subscribe -->
+        </button>
+    </form>
 
-        <form id="email-subscription-form" class="form-container">
-            <input type="email" id="email" placeholder="test@test.com" required>
-            <button type="submit">Subscribe</button>
-        </form>
-        <p id="success-message" hidden>Thank you for subscribing!</p>
-    </div>
+    <p class="privacy-note">
+        Your email is safe. No spam.
+    </p>
 </div>
+
+<!-- Ensure this script is loaded AFTER tbjs.js (your framework) -->
+<script type="module" src="/web/scripts/emailWlist.js" defer></script>
+<!-- --- END OF FILE waiting_list.html --- -->

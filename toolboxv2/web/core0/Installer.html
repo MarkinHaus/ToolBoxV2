@@ -1,83 +1,94 @@
+<script src="/web/scripts/infos.js" defer></script>
 
-    <script src="/web/scripts/infos.js" defer></script>
-    <script src="/index.js" defer type="module"></script>
+<link rel="stylesheet" type="text/css" href="/web/core0/styles.css?v=1.0">
+<title>Installer - ToolBoxV2</title>
+<link rel="stylesheet" type="text/css" href="style.css">
+<!-- Ensure installer.js is loaded AFTER the DOM elements it targets -->
+<style>
+    #installer-container,
+    #manual-install-link {
+        margin-top: 5px;
+        border-radius: 5px;
+        box-shadow: var(--secondary-color) 5px 2px 15px;
+        padding: 5%;
+        background-color: var(--theme-bg);
+    }
 
-    <link rel="stylesheet" type="text/css" href="/web/core0/styles.css?v=1.0">
-    <title>Installer</title>
-    <link rel="stylesheet" type="text/css" href="style.css">
-    <script src="/web/core0/installer.js" defer></script>
-    <style>
+    #os-info {
+        font-style: italic;
+        margin-bottom: 10px;
+    }
 
-        #installer-container, #manual-install-link {
-            margin-top: 5px;
-            border-radius: 5px;
-            box-shadow: var(--secondary-color) 5px 2px 15px;
-            padding: 5%;
-        }
+    #os-selection {
+        text-align: center;
+        padding: 8px; /* Increased padding */
+        border-radius: 5px;
+        border: 1px solid #ddd;
+        margin-bottom: 15px; /* Increased margin */
+        font-size: 1em; /* Slightly larger font */
+    }
 
-        #os-info {
-            font-style: italic;
-        }
+    a {
+        /* font-size: xx-large; remove this to inherit or set moderately */
+        text-decoration: none;
+        color: var(--theme-accent); /* Use theme color */
+    }
 
-        #os-selection {
-            width: 50%;
-            text-align: center;
-            padding: 5px;
-            border-radius: 5px;
-            border: 1px solid #ddd;
-            margin-bottom: 10px;
-        }
+    a:hover {
+        text-decoration: underline;
+    }
 
-        a {
-            font-size: xx-large;
-            text-decoration: none;
-        }
+    p {
+        margin-bottom: 15px;
+    }
 
-        a:hover {
-            text-decoration: underline;
-        }
+    #auto-download-options ul {
+        list-style-type: none;
+        padding-left: 0;
+    }
+    #auto-download-options li {
+        margin-bottom: 8px;
+    }
+    #auto-download-options a {
+        display: inline-block;
+        background-color: var(--primary-color); /* Use theme color */
+        color: var(--text-color); /* Ensure contrast */
+        padding: 8px 12px;
+        margin: 5px 0;
+        border-radius: 5px;
+        transition: background-color 0.3s;
+        font-size: 1em;
+    }
 
-        p {
-            margin-bottom: 15px;
-        }
-
-        /* Spezifische Stile für Download-Optionen */
-        #download-options a {
-            display: inline-block;
-            background-color: #4CAF50;
-            color: white;
-            padding: 3px 5px;
-            margin: 5px 0;
-            border-radius: 5px;
-            transition: background-color 0.3s;
-        }
-
-        #download-options a:hover {
-            background-color: #45a049;
-        }
-    </style>
+    #auto-download-options a:hover {
+        background-color: var(--theme-accent); /* Use theme color for hover */
+    }
+    small {
+        font-size: 0.85em;
+        color: #777;
+    }
+</style>
 <div class="wrapper fade-class">
-<div id="installer-container" style="min-height: fit-content">
-    <h3>ToolBoxV2 Installer</h3>
-<select id="os-selection">
-    <option value="">Automatic</option>
-    <option value="Python Runtime">Engine (Python)</option>
-    <option value="exe">Desktop (Windows-App)</option>
-    <option value="dmg">Desktop (Mac-App)</option>
-    <option value="apk">Mobile (Android-App)</option>
-    <option value="iOS-IPA">Mobile (iOS-App)</option>
-    <option value="Web">Native (Web-App)</option>
-</select>
+    <div id="installer-container" style="min-height: fit-content">
+        <h3>ToolBoxV2 Installer</h3>
+        <select id="os-selection">
+            <option value="Automatic">Automatic Detection</option>
+            <option value="CLI (Python)">Core Engine (Python CLI via Script)</option>
+            <option value="Windows">Desktop GUI (Windows .exe)</option>
+            <option value="MacOS-ARM">Desktop GUI (macOS - Apple Silicon .dmg)</option>
+            <option value="MacOS-Intel">Desktop GUI (macOS - Intel .dmg)</option>
+            <option value="Linux">Desktop GUI (Linux .AppImage/.deb)</option>
+            <option value="Android">Mobile GUI (Android .apk)</option>
+            <option value="Web-App">Web Application (PWA)</option>
+            <option value="Server (Rust)">Server Only (Rust - Build from Source)</option>
+        </select>
 
-    <p id="os-info">Erkennung Ihres Betriebssystems...</p>
-    <div id="auto-download-options"></div>
+        <p id="os-info">Erkennung Ihres Betriebssystems...</p>
+        <div id="auto-download-options">
+            <p>Loading installer options...</p>
+        </div>
+        <a href="https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/LICENSE" target="_blank">LICENSE</a>.
+    </div>
 </div>
-</div>
-<footer style="position: relative;padding-top: 35%;">
-    <h3><a href="/web/core0/index.html">Home</a></h3>
-    <h4>Weitere Informationen</h4>
-    <h5>
-        <p>Entdecken Sie, wo wir momentan stehen und was unsere nächsten Ziele sind auf unserer <a href="/web/core0/roadmap.html">Routenplanung</a>.</p>
-        <p>Unterstützen Sie uns auf <a href="https://www.buymeacoffee.com/markinhaus" target="_blank">BuyMeACoffee</a> oder <a href="https://www.patreon.com/de-DE" target="_blank">Patreon</a>.</p>
-    </h5>
-</footer>
+
+<script src="/web/core0/installer.js" defer></script>

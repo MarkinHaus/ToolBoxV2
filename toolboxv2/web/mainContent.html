@@ -1,17 +1,26 @@
-
     <style>
         .endpoint-card {
             background: rgba(255, 255, 255, 0.2);
             margin: 10px 0;
             padding: 15px;
             border-radius: 8px;
-            transition: transform 0.2s;
+            transition: transform 0.2s, background 0.2s, opacity 0.3s; /* Added opacity transition */
             cursor: pointer;
         }
 
         .endpoint-card:hover {
             transform: translateY(-2px);
             background: rgba(255, 255, 255, 0.3);
+        }
+
+        /* Style for hidden cards during search */
+        .endpoint-card.hidden {
+            opacity: 0;
+            height: 0;
+            padding: 0;
+            margin: 0;
+            overflow: hidden;
+            pointer-events: none; /* Prevent interaction with hidden cards */
         }
 
         .endpoint-title {
@@ -21,7 +30,7 @@
         }
 
         .endpoint-description {
-            color: #34495e;
+            color: #34495e; /* Consider var(--text-secondary-color) or similar */
             font-size: 0.9rem;
         }
 
@@ -33,30 +42,69 @@
         .loading {
             text-align: center;
             padding: 20px;
-            color: #666;
+            color: var(--theme-accent, #666); /* Use theme variable if available */
+        }
+        .error {
+            text-align: center;
+            padding: 20px;
+            color: var(--error-color, red);
+        }
+
+        /* Search input styling */
+        #app-search-input {
+            width: calc(100% - 22px); /* Full width minus padding */
+            padding: 10px;
+            margin-bottom: 20px;
+            border: 1px solid var(--theme-accent, #ccc);
+            border-radius: 4px;
+            font-size: 1rem;
+            background-color: rgba(255, 255, 255, 0.3);
+            color: var(--text-color);
+        }
+        #app-search-input::placeholder {
+            color: var(--text-secondary-color, #777);
         }
     </style>
 
     <div class="main-content frosted-glass">
         <h2 class="section-title">Available Apps</h2>
+
+        <!-- Search Input Field -->
+        <input type="text" id="app-search-input" placeholder="Search apps by title or description..." aria-label="Search apps">
+
         <div id="endpoints-container">
             <div class="loading">Loading Apps...</div>
         </div>
 
-        <hr/>
-        <a href="/web/assets/waiting_list.html">Email waiting list</a><br/>
-        <a href="/">Landing page</a>
+        <hr style="margin: 20px 0; border-color: var(--border-color, #ccc);"/>
+        <a href="/web/core0/Installer.html" style="color: var(--link-color, blue);">Installer</a><br/>
     </div>
 
-    <script unSave="true">
+    <script unsave="true">
+      // This script will be processed by the router's script handling logic.
+      // It will execute in the global scope.
+      (function() { // IIFE to keep scope clean
+        const TB_INSTANCE = window.TB;
+
+        if (!TB_INSTANCE) {
+            console.error("[mainContent.html] TB instance not found. App functionality may be limited.");
+            return;
+        }
+
+        let allFetchedEndpoints = []; // Store all fetched endpoints for filtering
+
         async function fetchUIEndpoints() {
             try {
-                const response = await fetch('/api/CloudM/openui');
-                const data_res = await response.json()
-                const endpoints = data_res['result']['data'];
-                return endpoints;
+                const responseData = await TB_INSTANCE.api.httpPostUrl('CloudM', 'openui');
+                const data = (typeof responseData.json === 'function') ? await responseData.json() : responseData;
+
+                if (data && data.result && data.result.data) {
+                    return data.result.data;
+                }
+                TB_INSTANCE.logger.warn('[mainContent.html] Unexpected API response structure:', data);
+                return null;
             } catch (error) {
-                console.error('Error fetching UI endpoints:', error);
+                TB_INSTANCE.logger.error('[mainContent.html] Error fetching UI endpoints:', error);
                 return null;
             }
         }
@@ -64,45 +112,139 @@
         function createEndpointCard(endpoint) {
             const card = document.createElement('div');
             card.className = 'endpoint-card';
-            card.onclick = () => window.TBf.router(endpoint.path);
+            card.setAttribute('role', 'button');
+            card.setAttribute('tabindex', '0');
+            card.onclick = () => TB_INSTANCE.router.navigateTo(endpoint.path);
+            card.onkeypress = (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    TB_INSTANCE.router.navigateTo(endpoint.path);
+                }
+            };
 
-            const title = document.createElement('div');
+            const titleText = endpoint.title || 'Untitled Page';
+            const descriptionText = endpoint.description || 'No description available.';
+
+            const title = document.createElement('h3');
             title.className = 'endpoint-title';
-            title.textContent = endpoint.title;
+            title.textContent = titleText;
 
-            const description = document.createElement('div');
+            const description = document.createElement('p');
             description.className = 'endpoint-description';
-            description.textContent = endpoint.description;
+            description.textContent = descriptionText;
 
             card.appendChild(title);
             card.appendChild(description);
+
+            // Store searchable text directly on the element for easier filtering
+            card.dataset.searchableText = `${titleText} ${descriptionText}`.toLowerCase();
+
             return card;
         }
 
-        async function initializeEndpoints() {
+        function renderEndpoints(endpointsToRender) {
             const container = document.getElementById('endpoints-container');
-            const endpoints = await fetchUIEndpoints();
+            if (!container) {
+                TB_INSTANCE.logger.error("[mainContent.html] 'endpoints-container' not found for rendering.");
+                return;
+            }
+            container.innerHTML = ''; // Clear previous content (or loading/error)
 
-            if (!endpoints) {
-                container.innerHTML = '<div class="error">Failed to load pages</div>';
+            if (!endpointsToRender || endpointsToRender.length === 0) {
+                const currentSearchTerm = document.getElementById('app-search-input')?.value || "";
+                if (currentSearchTerm) {
+                    container.innerHTML = '<div>No apps match your search criteria.</div>';
+                } else {
+                    container.innerHTML = '<div>No UI pages currently available.</div>';
+                }
                 return;
             }
 
-            container.innerHTML = '';
-
-            if (endpoints.length === 0) {
-                container.innerHTML = '<div>No UI pages available</div>';
-                return;
-            }
-
-            endpoints.forEach(endpoint => {
+            endpointsToRender.forEach(endpoint => {
                 container.appendChild(createEndpointCard(endpoint));
             });
-            if (window.TBf) {
-                window.TBf.processRow(container)
+        }
+
+        function filterAndRenderEndpoints() {
+            const searchInput = document.getElementById('app-search-input');
+            if (!searchInput) return; // Should not happen if initialized correctly
+
+            const searchTerm = searchInput.value.toLowerCase().trim();
+            const container = document.getElementById('endpoints-container');
+
+            // More efficient filtering directly on DOM elements
+            const cards = container.getElementsByClassName('endpoint-card');
+            let hasVisibleCard = false;
+
+            for (let card of cards) {
+                const searchableText = card.dataset.searchableText || "";
+                if (searchableText.includes(searchTerm)) {
+                    card.classList.remove('hidden');
+                    card.style.display = ''; // Reset to default display
+                    hasVisibleCard = true;
+                } else {
+                    card.classList.add('hidden');
+                    card.style.display = 'none'; // Ensure it's hidden
+                }
+            }
+             // If no cards are visible after filtering, show a message
+            const noResultsMessageDiv = container.querySelector('.no-results-message');
+            if (!hasVisibleCard && searchTerm) {
+                if (!noResultsMessageDiv) {
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'no-results-message';
+                    messageDiv.textContent = 'No apps match your search criteria.';
+                    container.appendChild(messageDiv); // Append if not exists
+                }
+            } else if (noResultsMessageDiv) {
+                noResultsMessageDiv.remove(); // Remove if search term is empty or results found
             }
         }
 
-        // Initialize when the page loads
-        initializeEndpoints()
+
+        async function initializeEndpoints() {
+            const container = document.getElementById('endpoints-container');
+            const searchInput = document.getElementById('app-search-input');
+
+            if (!container || !searchInput) {
+                TB_INSTANCE.logger.error("[mainContent.html] 'endpoints-container' or 'app-search-input' not found.");
+                return;
+            }
+
+            // Set initial loading message
+            container.innerHTML = '<div class="loading">Loading Apps...</div>';
+
+            const fetchedData = await fetchUIEndpoints();
+
+            if (fetchedData === null) {
+                container.innerHTML = '<div class="error">Failed to load app pages. Please try again later.</div>';
+                return;
+            }
+
+            allFetchedEndpoints = fetchedData;
+
+            // 1. Sort the endpoints by title (case-insensitive)
+            allFetchedEndpoints.sort((a, b) => {
+                const titleA = (a.title || 'Untitled Page').toLowerCase();
+                const titleB = (b.title || 'Untitled Page').toLowerCase();
+                if (titleA < titleB) return -1;
+                if (titleA > titleB) return 1;
+                return 0;
+            });
+
+            // 2. Initial render of all (sorted) endpoints
+            renderEndpoints(allFetchedEndpoints);
+
+            // 3. Add event listener for the search input
+            searchInput.addEventListener('input', filterAndRenderEndpoints);
+        }
+
+        Promise.resolve().then(initializeEndpoints).catch(err => {
+             TB_INSTANCE.logger.error("[mainContent.html] Error in initializeEndpoints promise:", err);
+             const container = document.getElementById('endpoints-container');
+             if (container) {
+                container.innerHTML = '<div class="error">An unexpected error occurred while initializing apps.</div>';
+             }
+        });
+
+      })(); // End IIFE
     </script>

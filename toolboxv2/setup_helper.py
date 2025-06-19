@@ -146,7 +146,7 @@ def get_managers_for_tool(tool):
 # === Command runner ===
 def run_command(command, cwd=None, silent=False):
     if cwd is None:
-        from toolboxv2 import cwd as _cwd
+        from toolboxv2 import tb_root_dir as _cwd
         cwd = _cwd
     try:
         subprocess.run(command, cwd=cwd, shell=True, check=True,
@@ -179,28 +179,25 @@ def install_tools_parallel(tools, max_threads=3):
     return results
 
 
-def install_all_npm_deps():
+def install_all_npm_deps(dev):
     print("📦 Installiere npm-Abhängigkeiten...")
-    from toolboxv2 import cwd as _cwd
+    from toolboxv2 import tb_root_dir as _cwd
     print("Location : ", _cwd) # TODO: Loaction error
     tb_root = _cwd
-    web_dir = os.path.join(tb_root, "web")
+    success = run_command("npm run init" +( '' if dev else ':prod'), cwd=tb_root)
 
-    success = run_command("npm install", cwd=tb_root)
-    success_web = run_command("npm install", cwd=web_dir)
-
-    return success and success_web
+    return success
 
 def build_web_dist():
     print("🛠 Baue Web-Distribution...")
-    from toolboxv2 import cwd as _cwd
+    from toolboxv2 import tb_root_dir as _cwd
     tb_root = _cwd
-    return run_command("npm run build", cwd=tb_root)
+    return run_command("npm run build:web", cwd=tb_root)
 
 def build_tauri():
     print("🖥 Baue Tauri-App...")
 
-    from toolboxv2 import cwd as _cwd
+    from toolboxv2 import tb_root_dir as _cwd
     tb_root = _cwd
     tauri_prefix = os.path.join(tb_root, "simple-core")
     build_cmd = "npm run tauriB"
@@ -245,7 +242,7 @@ def build_tauri():
     return True
 
 def full_build_pipeline(dev_mode=False):
-    if not install_all_npm_deps():
+    if not install_all_npm_deps(dev_mode):
         print("❌ Fehler bei der Installation der npm-Pakete.")
         return
 

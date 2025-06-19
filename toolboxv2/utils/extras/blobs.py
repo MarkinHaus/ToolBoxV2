@@ -1,285 +1,395 @@
+# file: blobs.py
 import io
 import json
 import os
 import pickle
+import random
+import time
 from pathlib import Path
 
-import reedsolo
+import requests
 import yaml
 
-from ... import Singleton, get_app
+# These are assumed to exist from your project structure
 from ..security.cryp import Code
+from ..system.getting_and_closing_app import get_logger
+
+import hashlib
+import bisect
+
+class ConsistentHashRing:
+    """
+    A consistent hash ring implementation to map keys (blob_ids) to nodes (servers).
+    It uses virtual nodes (replicas) to ensure a more uniform distribution of keys.
+    """
+    def __init__(self, replicas=100):
+        """
+        :param replicas: The number of virtual nodes for each physical node.
+                         Higher values lead to more balanced distribution.
+        """
+        self.replicas = replicas
+        self._keys = []  # Sorted list of hash values (the ring)
+        self._nodes = {} # Maps hash values to physical node URLs
+
+    def _hash(self, key: str) -> int:
+        """Hashes a key to an integer using md5 for speed and distribution."""
+        return int(hashlib.md5(key.encode('utf-8')).hexdigest(), 16)
+
+    def add_node(self, node: str):
+        """Adds a physical node to the hash ring."""
+        for i in range(self.replicas):
+            vnode_key = f"{node}:{i}"
+            h = self._hash(vnode_key)
+            bisect.insort(self._keys, h)
+            self._nodes[h] = node
+
+    def get_nodes_for_key(self, key: str) -> list[str]:
+        """
+        Returns an ordered list of nodes responsible for the given key.
+        The first node in the list is the primary, the rest are failover candidates
+        in preferential order.
+        """
+        if not self._nodes:
+            return []
+
+        h = self._hash(key)
+        start_idx = bisect.bisect_left(self._keys, h)
+
+        # Collect unique physical nodes by iterating around the ring
+        found_nodes = []
+        for i in range(len(self._keys)):
+            idx = (start_idx + i) % len(self._keys)
+            node_hash = self._keys[idx]
+            physical_node = self._nodes[node_hash]
+            if physical_node not in found_nodes:
+                found_nodes.append(physical_node)
+            # Stop when we have found all unique physical nodes
+            if len(found_nodes) == len(set(self._nodes.values())):
+                break
+        return found_nodes
 
 
-class BlobStorage(metaclass=Singleton):
+class BlobStorage:
+    """
+    A production-ready client for the distributed blob storage server.
+    It handles communication with a list of server instances, manages a local cache,
+    and implements backoff/retry logic for resilience.
+    """
 
-    def __init__(self, storage_directory=None, Fehlerkorrekturbytes=10):
-        self.blob_ids_file_map = {}
-        if storage_directory is None:
-            storage_directory = get_app(from_="BlobStorage").data_dir
+    def __init__(self, servers: list[str], storage_directory: str = './.data/blob_cache'):
+
+
+        self.servers = servers
+        self.session = requests.Session()
         self.storage_directory = storage_directory
+        self.blob_ids = []
         os.makedirs(storage_directory, exist_ok=True)
-        self.rs = reedsolo.RSCodec(Fehlerkorrekturbytes)  # Reed-Solomon-Code mit 10 Fehlerkorrekturbytes
 
-    def update_self_link(self, blob_id):
-        blob_data = self._load_blob(blob_id)
-        blob_data["links"]["self"] = self._generate_recovery_bytes(blob_id)
-        self._save_blob(blob_id, blob_data)
-        return blob_data["links"]["self"]
+        # Initialize the consistent hash ring
+        self.hash_ring = ConsistentHashRing()
+        for server in self.servers:
+            self.hash_ring.add_node(server)
 
-    def add_link(self, blob_id, link_id, link_data):
-        blob_data = self._load_blob(blob_id)
-        blob_data["links"][link_id] = link_data
-        self._save_blob(blob_id, blob_data)
+    def _make_request(self, method, endpoint, blob_id: str = None, max_retries=2, **kwargs):
+        """
+        Makes a resilient HTTP request to the server cluster.
+        - If a blob_id is provided, it uses the consistent hash ring to find the
+          primary server and subsequent backup servers in a predictable order.
+        - If no blob_id is given (e.g., for broadcast actions), it tries servers randomly.
+        - Implements exponential backoff on server errors.
+        """
+        if not self.servers:
+            res = requests.Response()
+            res.status_code = 503
+            res.reason = "No servers available"
+            return res
 
-    def chair_link(self, blob_ids: list[str]):
-
-        all_links = [link for link in [self.update_self_link(_id) for _id in blob_ids]]
-        all_links_len = len(all_links)
-        current_blob_id = 0
-        for all_link in all_links:
-            link_len = len(all_link)
-            splitter = link_len // all_links_len - 1
-            index_ = 0
-            for i in range(0, link_len, splitter):
-                if index_ == current_blob_id:
-                    index_ += 1
-                link_port = all_link[i:i + splitter]
-                self.add_link(blob_ids[index_], blob_ids[current_blob_id], {
-                    "row": link_port,
-                    "index": index_,
-                    "max": all_links_len})
-                index_ += 1
-                if index_ + 1 > len(blob_ids) and len(all_link[i + splitter:]) > 1:
-                    self.add_link(blob_ids[current_blob_id], blob_ids[current_blob_id], link_port)
-            current_blob_id += 1
-
-    def recover_blob(self, blob_ids, check_blobs_ids):
-        s = self.get_recover_blob_sorted(blob_ids, check_blobs_ids)
-        r = self.sorted_to_keys(s)
-        blob_data_v = self.get_data_versions(r)
-        lengths = [len(b) for b in blob_data_v]
-        return blob_data_v[lengths.index(max(lengths))]
-
-    def get_recover_blob_sorted(self, blob_id, check_blobs_ids=None):
-
-        if check_blobs_ids is None:
-            check_blobs_ids = self._get_all_blob_ids()
-
-        all_links = [self._load_blob(_id).get("links", {}).get.get(blob_id, None) for _id in check_blobs_ids]
-        all_links = [_ for _ in all_links if _ is not None]
-        links = sorted(all_links, key=lambda x: x.get("max", -1))
-        sorted_link = {
-
-        }
-        for link in links:
-            if link.get("max", -1) == -1:
-                continue
-            max_ = link.get("max")
-            key = str(max_)
-            if key not in sorted_link:
-                sorted_link[key] = ["#404#"] * max_
-            sorted_link[key][link.get("index")] = link.get("row")
-
-        return sorted_link
-
-    @staticmethod
-    def sorted_to_keys(sorted_link):
-
-        recovery_keys = []
-
-        for _key, value in sorted_link.items():
-            if "#404#" in value:
-                continue
-            recovery_keys.append(''.join(value))
-
-        return recovery_keys
-
-    def get_data_versions(self, recovery_keys):
-
-        version_data = []
-        for r_keys in recovery_keys:
-            try:
-                version_data.append(self.rs.decode(r_keys))
-            except:
-                print(f"Could not decode with key {recovery_keys.index(r_keys)}:{len(recovery_keys)}")
-
-        return version_data
-
-    def create_blob(self, data: bytes, blob_id=None):
-        blob_data = {"data": data, "links": {"self": b""}}
-        if blob_id is None:
-            blob_id = self._generate_blob_id()
-            self._save_blob(blob_id, blob_data)
-            return blob_id
+        if blob_id:
+            # Get the ordered list of servers for this specific blob
+            preferred_servers = self.hash_ring.get_nodes_for_key(blob_id)
         else:
-            return blob_data
+            # For non-specific requests, shuffle all servers
+            preferred_servers = random.sample(self.servers, len(self.servers))
 
-    def read_blob(self, blob_id):
-        blob_data = self._load_blob(blob_id)
-        return blob_data["data"]
+        last_error = None
+        for attempt in range(max_retries):
+            for server in preferred_servers:
+                url = f"{server.rstrip('/')}{endpoint}"
+                try:
+                    # In a targeted request, print which server we are trying
+                    response = self.session.request(method, url, timeout=10, **kwargs)
 
-    def update_blob(self, blob_id, data):
-        blob_data = self._load_blob(blob_id)
-        blob_data["data"] = data
-        self._save_blob(blob_id, blob_data)
+                    if 500 <= response.status_code < 600:
+                        get_logger().warning(f"Warning: Server {server} returned status {response.status_code}. Retrying...")
+                        continue
+                    response.raise_for_status()
+                    return response
+                except requests.exceptions.RequestException as e:
+                    last_error = e
+                    get_logger().warning(f"Warning: Could not connect to server {server}: {e}. Trying next server.")
 
-    def delete_blob(self, blob_id):
-        blob_file = self._get_blob_filename(blob_id)
-        if os.path.exists(blob_file):
-            os.remove(blob_file)
+            if attempt < max_retries - 1:
+                wait_time = 2 ** (attempt*0.1)
+                get_logger().warning(f"Warning: All preferred servers failed. Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+                if len(preferred_servers) == 1 and len(self.servers) > 1:
+                    preferred_servers = random.sample(self.servers, len(self.servers))
 
-    @staticmethod
-    def _generate_blob_id():
-        return str(hash(os.urandom(32)))
-
-    def _get_blob_filename(self, blob_id):
-        return os.path.join(self.storage_directory, blob_id+'.blob')
-
-    def _get_all_blob_ids(self):
-        filenames = []
-        for _root, _dirs, files in os.walk(self.storage_directory):
-            for file in files:
-                if file.endswith('.blob'):
-                    filenames.append(file.replace('.blob', ''))
-        return filenames
-
-    def _save_blob(self, blob_id, blob_data):
-        blob_file = self._get_blob_filename(blob_id)
-        with open(blob_file, 'wb') as f:
-            pickle.dump(blob_data, f)
-
-    def _load_blob(self, blob_id):
-        blob_file = self._get_blob_filename(blob_id)
-        self.blob_ids_file_map[blob_id] = blob_file
-        if not os.path.exists(blob_file):
-            return self.create_blob(pickle.dumps({}), blob_id)
-        with open(blob_file, 'rb') as f:
-            return pickle.load(f)
-
-    def _generate_recovery_bytes(self, blob_id):
-        blob_data = self._load_blob(blob_id).get("data", b"")
-        return self.rs.encode(blob_data)
+        raise ConnectionError(f"Failed to execute request after {max_retries} attempts. Last error: {last_error}")
 
 
+    def create_blob(self, data: bytes, blob_id=None) -> str:
+        """
+        Creates a new blob. The blob_id is calculated client-side by hashing
+        the content, and the data is sent to the correct server determined
+        by the consistent hash ring. This uses a PUT request, making creation
+        idempotent.
+        """
+        # The blob ID is the hash of its content, ensuring content-addressable storage.
+        if not blob_id:
+            blob_id = hashlib.sha256(data).hexdigest()
+
+        # Use PUT, as we now know the blob's final ID/URL.
+        # Pass blob_id to _make_request so it uses the hash ring.
+        print(f"Creating blob {blob_id} on {self._make_request('PUT', f'/blob/{blob_id}',blob_id=blob_id, data=data).status_code}")
+        # blob_id = response.text
+        self._save_blob_to_cache(blob_id, data)
+        return blob_id
+
+    def read_blob(self, blob_id: str) -> bytes:
+        cached_data = self._load_blob_from_cache(blob_id)
+        if cached_data is not None:
+            return cached_data
+
+        get_logger().info(f"Info: Blob '{blob_id}' not in cache, fetching from network.")
+        # Pass blob_id to _make_request to target the correct server(s).
+        response = self._make_request('GET', f'/blob/{blob_id}', blob_id=blob_id)
+
+        blob_data = response.content
+        self._save_blob_to_cache(blob_id, blob_data)
+        return blob_data
+
+    def update_blob(self, blob_id: str, data: bytes):
+        # Pass blob_id to _make_request to target the correct server(s).
+        response = self._make_request('PUT', f'/blob/{blob_id}', blob_id=blob_id, data=data)
+        self._save_blob_to_cache(blob_id, data)
+        return response
+
+    def delete_blob(self, blob_id: str):
+        # Pass blob_id to _make_request to target the correct server(s).
+        self._make_request('DELETE', f'/blob/{blob_id}', blob_id=blob_id)
+        cache_file = self._get_blob_cache_filename(blob_id)
+        if os.path.exists(cache_file):
+            os.remove(cache_file)
+
+    # NOTE: share_blobs and recover_blob are coordination endpoints. They do not
+    # act on a single blob, so they will continue to use the non-targeted (random)
+    # request mode to contact any available server to act as a coordinator.
+    def share_blobs(self, blob_ids: list[str]):
+        get_logger().info(f"Info: Instructing a server to share blobs for recovery: {blob_ids}")
+        payload = {"blob_ids": blob_ids}
+        # No blob_id passed, will try any server as a coordinator.
+        self._make_request('POST', '/share', json=payload)
+        get_logger().info("Info: Sharing command sent successfully.")
+
+    def recover_blob(self, lost_blob_id: str) -> bytes:
+        get_logger().info(f"Info: Attempting to recover '{lost_blob_id}' from the cluster.")
+        payload = {"blob_id": lost_blob_id}
+        # No blob_id passed, recovery can be initiated by any server.
+        response = self._make_request('POST', '/recover', json=payload)
+
+        recovered_data = response.content
+        get_logger().info(f"Info: Successfully recovered blob '{lost_blob_id}'.")
+        self._save_blob_to_cache(lost_blob_id, recovered_data)
+        return recovered_data
+
+    def _get_blob_cache_filename(self, blob_id: str) -> str:
+        return os.path.join(self.storage_directory, blob_id + '.blobcache')
+
+    def _save_blob_to_cache(self, blob_id: str, data: bytes):
+        if blob_id not in self.blob_ids:
+            self.blob_ids.append(blob_id)
+        with open(self._get_blob_cache_filename(blob_id), 'wb') as f:
+            f.write(data)
+
+    def _load_blob_from_cache(self, blob_id: str) -> bytes | None:
+        cache_file = self._get_blob_cache_filename(blob_id)
+        if not os.path.exists(cache_file):
+            return None
+        with open(cache_file, 'rb') as f:
+            return f.read()
+
+    def exit(self):
+        if len(self.blob_ids) < 5:
+            return
+        for i in range(len(self.servers)//2+1):
+            self.share_blobs(self.blob_ids)
+
+
+# The BlobFile interface remains unchanged as it's a high-level abstraction
 class BlobFile(io.IOBase):
-    def __init__(self, filename: str, mode='r', storage=None, key=None):
-        if not isinstance(filename, str):
-            filename = str(filename)
-        if filename.startswith('/') or filename.startswith('\\'):
-            filename = filename[1:]
-        self.filename = filename
-        self.blob_id, self.folder, self.datei = self.path_splitter(filename)
+    def __init__(self, filename: str, mode: str = 'r', storage: BlobStorage = None, key: str = None,
+                 servers: list[str] = None):
+        if not isinstance(filename, str) or not filename:
+            raise ValueError("Filename must be a non-empty string.")
+        if not filename.startswith('/'): filename = '/' + filename
+        self.filename = filename.lstrip('/\\')
+        self.blob_id, self.folder, self.datei = self._path_splitter(self.filename)
         self.mode = mode
+
         if storage is None:
-            if get_app('storage').sto is None:
-                get_app('storage').sto = BlobStorage()
-            storage = get_app('storage').sto
+            # In a real app, dependency injection or a global factory would be better
+            # but this provides a fallback for simple scripts.
+            if not servers:
+                from toolboxv2 import get_app
+                storage = get_app(from_="BlobStorage").root_blob_storage
+            else:
+                storage = BlobStorage(servers=servers)
+
         self.storage = storage
-        self.data = b""
-        if key is not None:
-            if Code.decrypt_symmetric(Code.encrypt_symmetric("test", key), key) != "test":
-                raise ValueError("Invalid Key")
+        self.data_buffer = b""
         self.key = key
+        if key:
+            try:
+                assert Code.decrypt_symmetric(Code.encrypt_symmetric(b"test", key), key, to_str=False) == b"test"
+            except Exception:
+                raise ValueError("Invalid symmetric key provided.")
 
     @staticmethod
-    def path_splitter(filename):
-        pfad_obj = Path(filename)
-        # Extrahieren der Bestandteile
-        pfad_teile = pfad_obj.parts
-        # Das erste Element
-        erstes_element = pfad_teile[0]
-        # Die Datei (oder das letzte Element)
-        datei = pfad_teile[-1]
-        # Alle Elemente in der Mitte
-        mittel_teile = pfad_teile[1:-1] if len(pfad_teile) > 2 else []
-        blob_id = erstes_element
-        folder = '|'.join(mittel_teile)
+    def _path_splitter(filename):
+        parts = Path(filename).parts
+        if not parts: raise ValueError("Filename cannot be empty.")
+        blob_id = parts[0]
+        if len(parts) == 1: raise ValueError("Filename must include a path within the blob, e.g., 'blob_id/file.txt'")
+        datei = parts[-1]
+        folder = '|'.join(parts[1:-1])
         return blob_id, folder, datei
 
+    def create(self):
+        self.storage.create_blob(pickle.dumps({}), self.blob_id)
+        return self
+
     def __enter__(self):
+        try:
+            raw_blob_data = self.storage.read_blob(self.blob_id)
+            blob_content = pickle.loads(raw_blob_data)
+        except (requests.exceptions.HTTPError, EOFError, pickle.UnpicklingError, ConnectionError) as e:
+            if isinstance(e, requests.exceptions.HTTPError) and e.response.status_code == 404:
+                blob_content = {}  # Blob doesn't exist yet, treat as empty
+            elif isinstance(e, (EOFError, pickle.UnpicklingError)):
+                blob_content = {}  # Blob is empty or corrupt, treat as empty for writing
+            else:
+                self.storage.create_blob(blob_id=self.blob_id, data=pickle.dumps({}))
+                blob_content = {}
+
         if 'r' in self.mode:
-            blob_data = pickle.loads(self.storage.read_blob(self.blob_id))
-            if self.folder in blob_data:
-                blob_folder = blob_data[self.folder]
-                if self.datei in blob_folder:
-                    self.data = blob_folder[self.datei]
-                if self.key is not None:
-                    self.data = Code.decrypt_symmetric(self.data, self.key, to_str=False)
-        elif 'w' in self.mode:
-            self.data = b""
-        else:
-            raise ValueError("Invalid mode. Only 'r' and 'w' modes are supported.")
+            path_key = self.folder if self.folder else self.datei
+            if self.folder:
+                file_data = blob_content.get(self.folder, {}).get(self.datei)
+            else:
+                file_data = blob_content.get(self.datei)
+
+            if file_data:
+                self.data_buffer = file_data
+                if self.key:
+                    self.data_buffer = Code.decrypt_symmetric(self.data_buffer, self.key, to_str=False)
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         if 'w' in self.mode:
-            data = self.data
-            if self.key is not None:
-                data = Code.encrypt_symmetric(data, self.key)
-            blob_data = pickle.loads(self.storage.read_blob(self.blob_id))
-            if self.folder not in blob_data:
-                blob_data[self.folder] = {self.datei: data}
+            final_data = self.data_buffer
+            if self.key:
+                final_data = Code.encrypt_symmetric(final_data, self.key)
+
+            try:
+                raw_blob_data = self.storage.read_blob(self.blob_id)
+                blob_content = pickle.loads(raw_blob_data)
+            except Exception:
+                blob_content = {}
+
+            # Safely navigate and create path
+            current_level = blob_content
+            if self.folder:
+                if self.folder not in current_level:
+                    current_level[self.folder] = {}
+                current_level = current_level[self.folder]
+
+            current_level[self.datei] = final_data
+            self.storage.update_blob(self.blob_id, pickle.dumps(blob_content))
+
+
+
+
+    def exists(self) -> bool:
+        """
+        Checks if the specific file path exists within the blob without reading its content.
+        This is an efficient, read-only operation.
+
+        Returns:
+            bool: True if the file exists within the blob, False otherwise.
+        """
+        try:
+            # Fetch the raw blob data. This leverages the local cache if available.
+            raw_blob_data = self.storage.read_blob(self.blob_id)
+            # Unpickle the directory structure.
+            if raw_blob_data:
+                blob_content = pickle.loads(raw_blob_data)
             else:
-                blob_data[self.folder][self.datei] = data
+                return False
+        except (requests.exceptions.HTTPError, EOFError, pickle.UnpicklingError, ConnectionError):
+            # If the blob itself doesn't exist, is empty, or can't be reached,
+            # then the file within it cannot exist.
+            return False
 
-            self.storage.update_blob(self.blob_id, pickle.dumps(blob_data))
+        # Navigate the dictionary to check for the file's existence.
+        current_level = blob_content
+        if self.folder:
+            if self.folder not in current_level:
+                return False
+            current_level = current_level[self.folder]
 
-    def write(self, data: str or bytes or dict):
-        if 'w' not in self.mode:
-            raise ValueError("File not opened in write mode.")
-        if isinstance(data, str):
-            self.data += data.encode()
-        elif isinstance(data, bytes):
-            self.data += data
-        elif isinstance(data, dict):
-            self.write_yaml(data)
-        else:
-            raise ValueError("Invalid Data type not supported")
-
-    # def add_save_on_disk(self, storage_id, one_time_token):
-    #     self.storage.save(self.filename, storage_id, one_time_token)
+        return self.datei in current_level
 
     def clear(self):
-        self.data = b""
+        self.data_buffer = b''
+
+    def write(self, data):
+        if 'w' not in self.mode: raise IOError("File not opened in write mode.")
+        if isinstance(data, str):
+            self.data_buffer += data.encode()
+        elif isinstance(data, bytes):
+            self.data_buffer += data
+        else:
+            raise TypeError("write() argument must be str or bytes")
 
     def read(self):
-        if 'r' not in self.mode:
-            raise ValueError("File not opened in read mode.")
-        return self.data
+        if 'r' not in self.mode: raise IOError("File not opened in read mode.")
+        return self.data_buffer
 
     def read_json(self):
-        if 'r' not in self.mode:
-            raise ValueError("File not opened in read mode.")
-        if self.data == b"":
-            return {}
-        return json.loads(self.data.decode())
+        if 'r' not in self.mode: raise ValueError("File not opened in read mode.")
+        if self.data_buffer == b"": return {}
+        return json.loads(self.data_buffer.decode())
 
     def write_json(self, data):
-        if 'w' not in self.mode:
-            raise ValueError("File not opened in write mode.")
-        self.data += json.dumps(data).encode()
+        if 'w' not in self.mode: raise ValueError("File not opened in write mode.")
+        self.data_buffer += json.dumps(data).encode()
 
     def read_pickle(self):
-        if 'r' not in self.mode:
-            raise ValueError("File not opened in read mode.")
-        if self.data == b"":
-            return {}
-        return pickle.loads(self.data)
+        if 'r' not in self.mode: raise ValueError("File not opened in read mode.")
+        if self.data_buffer == b"": return {}
+        return pickle.loads(self.data_buffer)
 
     def write_pickle(self, data):
-        if 'w' not in self.mode:
-            raise ValueError("File not opened in write mode.")
-        self.data += pickle.dumps(data)
+        if 'w' not in self.mode: raise ValueError("File not opened in write mode.")
+        self.data_buffer += pickle.dumps(data)
 
     def read_yaml(self):
-        if 'r' not in self.mode:
-            raise ValueError("File not opened in read mode.")
-        if self.data == b"":
-            return {}
-        return yaml.safe_load(self.data)
+        if 'r' not in self.mode: raise ValueError("File not opened in read mode.")
+        if self.data_buffer == b"": return {}
+        return yaml.safe_load(self.data_buffer)
 
     def write_yaml(self, data):
-        if 'w' not in self.mode:
-            raise ValueError("File not opened in write mode.")
+        if 'w' not in self.mode: raise ValueError("File not opened in write mode.")
         yaml.dump(data, self)
+

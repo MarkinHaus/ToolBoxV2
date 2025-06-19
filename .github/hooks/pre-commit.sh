@@ -108,8 +108,8 @@ AUTO_TAGGING_ENABLED=true # Flag to control if tagging proceeds
 
 # 1. Nur auf 'main' Branch taggen
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-if [ "$CURRENT_BRANCH" != "main" ]; then
-  echo "[auto-tagging] Not on 'main' branch (current: '$CURRENT_BRANCH'). Skipping auto-tagging."
+if [ "$CURRENT_BRANCH" != "master" ]; then
+  echo "[auto-tagging] Not on 'master' branch (current: '$CURRENT_BRANCH'). Skipping auto-tagging."
   AUTO_TAGGING_ENABLED=false
 fi
 

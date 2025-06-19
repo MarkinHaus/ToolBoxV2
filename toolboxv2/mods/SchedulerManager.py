@@ -324,6 +324,8 @@ class Tools(MainTool, SchedulerManagerClass):
         self.keys = {"mode": "db~mode~~:"}
         self.encoding = 'utf-8'
         self.tools = {'name': Name}
+
+        SchedulerManagerClass.__init__(self)
         MainTool.__init__(self,
                           load=self.init_sm,
                           v=self.version,
@@ -331,7 +333,6 @@ class Tools(MainTool, SchedulerManagerClass):
                           color=self.color,
                           on_exit=self.on_exit)
 
-        SchedulerManagerClass.__init__(self)
 
     @export(
         mod_name=Name,

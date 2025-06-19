@@ -1,0 +1,286 @@
+/* --- START OF FILE Modal.css --- */
+
+/*
+    CSS for TB.ui.Modal Component
+    This CSS aims to replicate the Tailwind CSS classes defined in Modal.js.
+    If Tailwind CSS is properly configured and working, these explicit CSS rules
+    might not be necessary, or can serve as a fallback/reference.
+*/
+
+/* --- General Modal Variables (Optional - for easier theming) --- */
+:root {
+    --tb-modal-overlay-bg-light: rgba(0, 0, 0, 0.3);          /* bg-black/30 */
+    --tb-modal-overlay-bg-dark: rgba(0, 0, 0, 0.6);           /* dark:bg-black/60 */
+    --tb-modal-backdrop-blur: blur(2px);                      /* backdrop-blur-sm on overlay */
+
+    --tb-modal-bg-light: rgba(255, 255, 255, 0.6);            /* bg-white/60 */
+    --tb-modal-bg-dark: rgba(38, 38, 38, 0.7);              /* dark:bg-neutral-800/70 (approx) */
+    --tb-modal-text-light: #171717;                         /* text-neutral-900 (approx) */
+    --tb-modal-text-dark: #f5f5f5;                          /* text-neutral-100 (approx) */
+    --tb-modal-border-light: rgba(255, 255, 255, 0.4);        /* border-white/40 */
+    --tb-modal-border-dark: rgba(64, 64, 64, 0.5);           /* dark:border-neutral-600/50 (approx) */
+    --tb-modal-container-blur: blur(8px);                    /* backdrop-blur-lg */
+    --tb-modal-container-blur-dark: blur(12px);              /* dark:backdrop-blur-xl */
+
+    --tb-modal-header-border-light: rgba(229, 229, 229, 0.5); /* border-neutral-300/50 (approx) */
+    --tb-modal-header-border-dark: rgba(64, 64, 64, 0.5);    /* dark:border-neutral-700/50 (approx) */
+
+    --tb-modal-close-btn-text-light: #525252;               /* text-neutral-600 */
+    --tb-modal-close-btn-text-dark: #a3a3a3;                /* dark:text-neutral-400 */
+    --tb-modal-close-btn-hover-bg-light: rgba(82, 82, 82, 0.2); /* hover:bg-neutral-500/20 */
+    --tb-modal-close-btn-hover-bg-dark: rgba(212, 212, 212, 0.2);/* dark:hover:bg-neutral-300/20 */
+
+    --tb-modal-transition-duration: 300ms;
+    --tb-modal-transition-timing: ease-in-out;
+    --tb-modal-z-index-overlay: 1050;
+}
+
+/* --- Modal Overlay --- */
+/* Targets elements with IDs like "tb-modal-xxxx-overlay" */
+[id^="tb-modal-"][id$="-overlay"] {
+    /* Core Positioning & Sizing (fixed inset-0 z-[1050]) */
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: var(--tb-modal-z-index-overlay);
+
+    /* Background & Blur (bg-black/30 dark:bg-black/60 backdrop-blur-sm) */
+    background-color: var(--tb-modal-overlay-bg-light);
+    backdrop-filter: var(--tb-modal-backdrop-blur);
+    -webkit-backdrop-filter: var(--tb-modal-backdrop-blur); /* Safari */
+
+    /* Centering Content (flex items-center justify-center) */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    /* Padding (p-4) */
+    padding: 1rem;
+
+    /* Animation - Initial State (opacity-0 transition-opacity duration-300 ease-in-out) */
+    opacity: 0;
+    transition-property: opacity;
+    transition-duration: var(--tb-modal-transition-duration);
+    transition-timing-function: var(--tb-modal-transition-timing);
+}
+
+.dark [id^="tb-modal-"][id$="-overlay"] {
+    background-color: var(--tb-modal-overlay-bg-dark);
+}
+
+/* --- Modal Container --- */
+/* Targets elements with IDs like "tb-modal-xxxx" BUT NOT "tb-modal-xxxx-overlay" */
+[id^="tb-modal-"]:not([id$="-overlay"]) {
+    /* Background & Glass Effect (bg-white/60 dark:bg-neutral-800/70 backdrop-blur-lg dark:backdrop-blur-xl) */
+    background-color: var(--tb-modal-bg-light);
+    backdrop-filter: var(--tb-modal-container-blur);
+    -webkit-backdrop-filter: var(--tb-modal-container-blur); /* Safari */
+
+    /* Border (border border-white/40 dark:border-neutral-600/50) */
+    border: 1px solid var(--text-color);
+
+    /* Text Color (text-neutral-900 dark:text-neutral-100) */
+    color: var(--tb-modal-text-light);
+
+    /* Shape & Shadow (rounded-2xl shadow-xl) */
+    border-radius: 1rem; /* rounded-2xl */
+    box-shadow: 0 20px 25px -5px rgba(var(--text-color),0.1), 0 10px 10px -5px rgba(var(--text-color),0.04); /* shadow-xl */
+
+    /* Sizing & Layout (w-full ${this.options.maxWidth} p-0 max-h-[90vh] overflow-y-auto flex flex-col) */
+    width: 100%; /* w-full */
+    /* max-width is applied by Tailwind class from options.maxWidth in JS */
+    padding: 0; /* p-0 */
+    max-height: 90vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+
+    /* Animation - Initial State (transform transition-all duration-300 ease-in-out scale-95 opacity-0) */
+    opacity: 0;
+    transform: scale(0.95);
+    transition-property: opacity, transform;
+    transition-duration: var(--tb-modal-transition-duration);
+    transition-timing-function: var(--tb-modal-transition-timing);
+}
+
+.dark [id^="tb-modal-"]:not([id$="-overlay"]) {
+    background-color: var(--tb-modal-bg-dark);
+    backdrop-filter: var(--tb-modal-container-blur-dark);
+    -webkit-backdrop-filter: var(--tb-modal-container-blur-dark); /* Safari */
+    border-color: var(--tb-modal-border-dark);
+    color: var(--tb-modal-text-dark);
+}
+
+/* --- Modal Header --- */
+/* Targets the first div child of the modal container IF it's used for the header */
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child { /* This selector assumes header is the first div */
+    /* Layout (flex justify-between items-center flex-shrink-0) */
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+
+    /* Padding (p-4 md:p-6) */
+    padding: 1rem; /* p-4 */
+
+    /* Border (border-b border-neutral-300/50 dark:border-neutral-700/50) */
+    border-bottom: 1px solid var(--tb-modal-header-border-light);
+}
+
+.dark [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child {
+    border-bottom-color: var(--tb-modal-header-border-dark);
+}
+
+@media (min-width: 768px) { /* md breakpoint */
+    [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child {
+        padding: 1.5rem; /* md:p-6 */
+    }
+}
+
+/* --- Modal Title (within header) --- */
+/* Targets h3 with id like "tb-modal-xxxx-title" */
+[id^="tb-modal-"][id$="-title"] {
+    /* Typography (text-lg font-semibold) */
+    font-size: 1.125rem; /* text-lg */
+    line-height: 1.75rem;
+    font-weight: 600; /* font-semibold */
+}
+
+/* --- Modal Close Button (within header) --- */
+/* Targets button.material-symbols-outlined within the header-like div */
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child button.material-symbols-outlined {
+    /* Icon specific styles are assumed to be handled by .material-symbols-outlined global class */
+    padding: 0.25rem; /* p-1 */
+    border-radius: 0.25rem; /* rounded */
+    color: var(--tb-modal-close-btn-text-light);
+    transition-property: background-color, color;
+    transition-duration: 150ms; /* Common transition duration for interactive elements */
+    background-color: transparent;
+    border: none;
+    cursor: pointer;
+}
+
+.dark [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child button.material-symbols-outlined {
+    color: var(--tb-modal-close-btn-text-dark);
+}
+
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child button.material-symbols-outlined:hover {
+    background-color: var(--tb-modal-close-btn-hover-bg-light);
+}
+
+.dark [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child button.material-symbols-outlined:hover {
+    background-color: var(--tb-modal-close-btn-hover-bg-dark);
+}
+
+
+/* --- Modal Body --- */
+/* This styling relies on the body being the second div if a header exists,
+   or the first if no header. A more specific class from JS would be better.
+   For now, targeting a div that is a direct child and likely the body:
+*/
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:not(:first-child):not(:last-child), /* If header and footer exist */
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:last-child, /* If only body */
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:not(:last-child):nth-child(1) ~ div:nth-child(2), /* If header exists, body is 2nd */
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:only-child /* If body is the only child, no header/footer via JS options */
+{
+    /* Layout (flex-grow overflow-y-auto) */
+    flex-grow: 1;
+    /* overflow-y: auto; /* Already on modal container, maybe not needed here unless specific */
+
+    /* Padding (p-4 md:p-6) */
+    padding: 1rem; /* p-4 */
+}
+/* More robust if body gets a specific class via `customClasses.body` option */
+[id^="tb-modal-"]:not([id$="-overlay"]) .tb-modal-body-js-applied-class { /* Example if you add a class in JS */
+    flex-grow: 1;
+    padding: 1rem;
+}
+
+
+@media (min-width: 768px) { /* md breakpoint */
+    [id^="tb-modal-"]:not([id$="-overlay"]) > div:not(:first-child):not(:last-child),
+    [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:last-child,
+    [id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child:not(:last-child):nth-child(1) ~ div:nth-child(2),
+    [id^="tb-modal-"]:not([id$="-overlay"]) > div:only-child,
+    [id^="tb-modal-"]:not([id$="-overlay"]) .tb-modal-body-js-applied-class {
+        padding: 1.5rem; /* md:p-6 */
+    }
+}
+
+/* --- Modal Footer --- */
+/* Targets the last div child of the modal container IF it's used for the footer */
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:last-child { /* This selector assumes footer is the last div */
+    /* Layout (mt-auto flex flex-wrap justify-end gap-3 flex-shrink-0) */
+    margin-top: auto; /* Pushes footer to bottom if modal body doesn't fill height */
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.75rem; /* gap-3 */
+    flex-shrink: 0;
+
+    /* Padding (p-4 md:p-6) */
+    padding: 1rem; /* p-4 */
+
+    /* Border (border-t border-neutral-300/50 dark:border-neutral-700/50) */
+    border-top: 1px solid var(--tb-modal-header-border-light); /* Reusing header border color var */
+}
+
+.dark [id^="tb-modal-"]:not([id$="-overlay"]) > div:last-child {
+    border-top-color: var(--tb-modal-header-border-dark);
+}
+
+@media (min-width: 768px) { /* md breakpoint */
+    [id^="tb-modal-"]:not([id$="-overlay"]) > div:last-child {
+        padding: 1.5rem; /* md:p-6 */
+    }
+}
+
+
+/* --- Material Symbols Outlined (Ensure this is globally available or defined here) --- */
+.material-symbols-outlined {
+  font-variation-settings:
+  'FILL' 0,
+  'wght' 400,
+  'GRAD' 0,
+  'opsz' 24; /* Default size, can be overridden */
+  font-family: 'Material Symbols Outlined'; /* Ensure this font is loaded in your project */
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;  /* Default icon size */
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+  NOTE:
+  - Max width for the modal container ([id^="tb-modal-"]:not([id$="-overlay"]))
+    is intended to be applied via a Tailwind class (e.g., 'max-w-lg')
+    passed in `this.options.maxWidth` and added directly to the element's class list in JS.
+    If you remove that from JS, you'd need to add max-width here or via specific classes.
+  - Button styling for buttons within the footer is assumed to be handled by TB.ui.Button.create()
+    and its own styling (variants, custom classes).
+  - The actual animation (changing opacity and transform values) is handled by JavaScript in the
+    show() and close() methods. This CSS sets up the initial state and transition properties.
+  - For more robust styling of header, body, and footer, consider adding specific classes to them
+    via the `customClasses` option in `Modal.js` (e.g., `this.options.customClasses.header`, etc.)
+    and targeting those classes here. The current selectors are based on DOM structure which can be fragile.
+*/
+
+/* --- FOR DEBUGGING: Uncomment this to make elements very obvious if CSS is applying --- */
+/*
+[id^="tb-modal-"][id$="-overlay"] { border: 3px solid blue !important; }
+[id^="tb-modal-"]:not([id$="-overlay"]) { border: 3px solid red !important; }
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:first-child { border: 2px dashed green !important; } // Header
+[id^="tb-modal-"]:not([id$="-overlay"]) > div:last-child { border: 2px dashed purple !important; } // Footer
+*/
+
+/* --- END OF FILE Modal.css --- */

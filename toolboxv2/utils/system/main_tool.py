@@ -1,6 +1,8 @@
 import asyncio
 import inspect
 import os
+from typing import Callable
+
 from toolboxv2.utils.extras import Style
 
 from .getting_and_closing_app import get_app
@@ -54,7 +56,31 @@ class MainTool:
         Do not override. Use __ainit__ instead
         """
         self.__storedargs = args, kwargs
+        self.tools = kwargs.get("tool", {})
+        self.logger = kwargs.get("logs", get_logger())
+        self.color = kwargs.get("color", "WHITE")
+        self.todo = kwargs.get("load", kwargs.get("on_start", lambda: None))
+        if "on_exit" in kwargs and isinstance(kwargs.get("on_exit"), Callable):
+            self.on_exit =self.app.tb(
+                mod_name=self.name,
+                name=kwargs.get("on_exit").__name__,
+                version=self.version if hasattr(self, 'version') else "0.0.0",
+            )(kwargs.get("on_exit"))
         self.async_initialized = False
+        if self.todo:
+            try:
+                if inspect.iscoroutinefunction(self.todo):
+                    pass
+                else:
+                    self.todo()
+                get_logger().info(f"{self.name} on load suspended")
+            except Exception as e:
+                get_logger().error(f"Error loading mod {self.name} {e}")
+                if self.app.debug:
+                    import traceback
+                    traceback.print_exc()
+        else:
+            get_logger().info(f"{self.name} no load require")
 
     async def __ainit__(self, *args, **kwargs):
         self.version = kwargs["v"]
@@ -62,7 +88,7 @@ class MainTool:
         self.name = kwargs["name"]
         self.logger = kwargs.get("logs", get_logger())
         self.color = kwargs.get("color", "WHITE")
-        self.todo = kwargs.get("load", kwargs.get("on_start", lambda: None))
+        self.todo = kwargs.get("load", kwargs.get("on_start", None))
         if not hasattr(self, 'config'):
             self.config = {}
         self.user = None
@@ -70,20 +96,25 @@ class MainTool:
         if MainTool.interface is None:
             MainTool.interface = self.app.interface_type
         # Result.default(self.app.interface)
+
         if self.todo:
             try:
                 if inspect.iscoroutinefunction(self.todo):
                     await self.todo()
                 else:
-                    self.todo()
+                    pass
                 await asyncio.sleep(0.1)
                 get_logger().info(f"{self.name} on load suspended")
             except Exception as e:
-                get_logger().error(f" Error loading mod {self.name} {e}")
+                get_logger().error(f"Error loading mod {self.name} {e}")
+                if self.app.debug:
+                    import traceback
+                    traceback.print_exc()
         else:
             get_logger().info(f"{self.name} no load require")
-
         self.app.print(f"TOOL : {self.spec}.{self.name} online")
+
+
 
     @property
     def app(self):

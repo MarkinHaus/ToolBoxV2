@@ -10,9 +10,11 @@ from toolboxv2 import FileHandler, MainTool, Style, get_app
 
 from ...utils.system.api import find_highest_zip_version
 from .UserInstances import UserInstances
+from .UI.widget import get_widget
+from .UserDashboard import Name as UserDashboardName
 
 Name = 'CloudM'
-version = "0.0.3"
+version = "0.0.4"
 export = get_app(f"{Name}.EXPORT").tb
 no_test = export(mod_name=Name, test=False, version=version)
 to_api = export(mod_name=Name, api=True, version=version)

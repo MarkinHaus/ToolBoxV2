@@ -4,7 +4,7 @@ use actix_web::http::Method;
 use actix_web::dev::Service;
 use actix_files as fs;
 use actix_session::{Session, SessionMiddleware, storage::CookieSessionStore, SessionExt};
-
+use actix_web::dev::Server;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_json;
@@ -50,7 +50,7 @@ use std::path::Path;
 use std::net::TcpListener;
 
 #[cfg(unix)]
-use std::os::unix::io::{FromRawFd, IntoRawFd};
+use std::os::unix::io::{FromRawFd, RawFd};
 
 // Define a helper struct for file data representation
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -2298,7 +2298,8 @@ async fn main() -> std::io::Result<()> {
     let dist_path = config.server.dist_path.clone(); // Clone the dist_path here
     let open_modules = Arc::new(config.server.open_modules.clone());
 
-    let mut server = HttpServer::new(move || {
+    let server_handle: Server = {
+        let mut http_server  = HttpServer::new(move || {
         let dist_path = dist_path.clone(); // Move the cloned dist_path into the closure
         let open_modules = Arc::clone(&open_modules);
         App::new()
@@ -2390,7 +2391,7 @@ async fn main() -> std::io::Result<()> {
             .service(web::resource("/validateSession")
                 .route(web::post().to(validate_session_handler))
                 )
-            .service(web::resource("/IsValiSession")
+            .service(web::resource("/IsValidSession")
                 .route(web::get().to(is_valid_session_handler))
                 )
             .service(web::resource("/web/logoutS")
@@ -2414,54 +2415,17 @@ async fn main() -> std::io::Result<()> {
             )
     });
 
-    // ---> MODIFIED: Platform-dependent Socket Activation Logic
-    let mut inherited_listener: Option<TcpListener> = None;
-
-    #[cfg(unix)] // Logic for Linux/macOS using FD passing
-    {
-        // 1. Try PERSISTENT_LISTENER_FD (set by Python orchestrator after reading from file)
-        if let Ok(fd_str) = env::var("PERSISTENT_LISTENER_FD") {
-            if let Ok(fd) = fd_str.parse::<i32>() {
-                info!("[UNIX] Found PERSISTENT_LISTENER_FD={}, attempting to use it.", fd);
-                unsafe {
-                    // Safety: Python script MUST pass a valid listening socket FD.
-                    inherited_listener = Some(TcpListener::from_raw_fd(fd));
-                }
-            } else {
-                warn!("[UNIX] PERSISTENT_LISTENER_FD is set but not a valid integer: {}", fd_str);
-            }
-        }
-
-        // 2. If no persistent FD, try standard listenfd (for first launch via Python)
-        if inherited_listener.is_none() {
-            let mut listenfd = ListenFd::from_env(); // Looks for LISTEN_FDS, LISTEN_PID
-            if let Some(l) = listenfd.take_tcp_listener(0)? {
-                info!("[UNIX] Binding to inherited TCP listener (from LISTEN_FDS).");
-                inherited_listener = Some(l);
-            }
-        }
-    }
-
-    #[cfg(not(unix))] // Fallback logic for Windows (and other non-Unix)
-    {
-        // On Windows, listenfd::from_env() might not behave as expected for FD passing from Python.
-        // True socket duplication is via WSADuplicateSocket.
-        // For a simpler fallback, we'll just let Actix bind directly.
-        // The Python script on Windows will stop the old server THEN start the new one.
-        info!("[Windows/Non-Unix] Not attempting FD handover. Will bind directly.");
-        // No inherited listener is expected or easily usable here without FFI.
-    }
-
-    // 3. Bind or Listen
-    server = if let Some(listener) = inherited_listener {
-        info!("Using an inherited listener (POSIX only).");
-        server.listen(listener)?
-    } else {
         let bind_addr = format!("{}:{}", config.server.ip, config.server.port);
-        info!("Binding to new TCP listener on {}", bind_addr);
-        server.bind(bind_addr)?
-    };
+        info!("[Manual Bind] No inherited listener was successfully acquired. Binding to new TCP listener on {}.", bind_addr);
+        // .bind() consumes http_server and returns a Result<HttpServer, std::io::Error>
+        // The ? operator will get the HttpServer if Ok, or return Err early.
+        // Then .run() is called on the HttpServer, which returns the Server handle.
+        http_server.bind(bind_addr)?.run()
 
-    info!("Server running!");
-    server.run().await
+    }; // The semicolon here is important; server_handle is now the dev::Server
+
+    info!("Server setup complete. Starting server (dev::Server handle obtained).");
+    // server_handle is the `actix_web::dev::Server`
+    // .await on it will run the server and return std::io::Result<()> upon completion/error
+    server_handle.await
 }

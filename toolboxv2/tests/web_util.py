@@ -19,19 +19,12 @@ try:
         sync_playwright,
     )
 except ImportError:
-    os.system("pip install playwright")
-    from playwright.async_api import Browser as ABrowser
-    from playwright.async_api import BrowserContext as ABrowserContext
-    from playwright.async_api import Page as APage
-    from playwright.async_api import Playwright as APlaywright
-    from playwright.async_api import async_playwright
-    from playwright.sync_api import (
-        Browser,
-        BrowserContext,
-        Page,
-        Playwright,
-        sync_playwright,
-    )
+    os.system(f"pip install playwright")
+
+    (ABrowser, ABrowserContext, APage, APlaywright,
+     async_playwright, Browser, BrowserContext, Page,
+     Playwright, sync_playwright) = None, None, None, None, None, None, None, None, None, None
+
 
 
 class AsyncWebTestFramework:

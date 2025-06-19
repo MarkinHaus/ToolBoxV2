@@ -1,0 +1,27 @@
+# Core AI/ML
+torch>=2.0.0
+torchaudio>=2.0.0
+torchvision>=0.15.0
+transformers>=4.20.0 # For AutoTokenizer
+einops>=0.6.0
+
+# Data Handling & I/O
+numpy>=1.20.0
+PyYAML>=6.0
+Pillow>=9.0.0 # PIL
+moviepy>=1.0.3 # For video/audio processing
+# librosa # Can be an alternative/supplement to torchaudio for some audio features
+
+# YouTube Data
+pytubefix>=5.0.0 # Fork of pytube with fixes
+youtube-transcript-api>=0.6.0
+
+# Utilities
+tqdm>=4.60.0 # Progress bars
+sounddevice>=0.4.0 # For playing audio (cross-platform alternative to simpleaudio/playsound)
+# gTTS # For text-to-speech feedback (optional, consider if needed)
+# simpleaudio # Alternative for audio playback (sounddevice is often more robust)
+
+# Optional, for RL or advanced evaluation
+# scikit-learn # For metrics if doing formal evaluation
+# gymnasium # For RL environments (if building custom envs)

@@ -328,6 +328,8 @@ class TestToolboxv2Mods(unittest.TestCase):
 
     async def test_all_functions(self):
         print("STARTING test")
+        if "test" not in self.app.id:
+            self.app.id += "test"
         res = await self.app.execute_all_functions_()
         print("RES: ", res.result.data_info)
         # data = res.get()

@@ -104,7 +104,7 @@ print(f"Debug Mode: {app_instance.debug}")
 
 *   **`load_all_mods_in_file(working_dir="mods")` / `a_load_all_mods_in_file(...)` (async):**
     *   Scans the specified directory (default `./mods/`) and loads all valid Python modules found.
-
+# To [isaa](./isaa.md)
 ### Function Registration and Execution
 
 *   **`@app.tb(...)` Decorator (via `_create_decorator`):**
@@ -562,3 +562,5 @@ async def custom_tool_exit_function(app_instance: App):
     *   Ensure clear signatures and document parameters/return types (Python type hints are highly recommended).
 4.  **Documentation and Versioning:** Document your module and its functions. Use semantic versioning.
 5.  **Testing:** Test your module thoroughly, including how it integrates with the ToolBoxV2 app (`app.run_any`, `app.get_mod`, etc.). Use the `test=True` and `samples` parameters in `@export` to facilitate automated testing via `app.execute_all_functions()`.
+
+# To [isaa](./isaa.md)

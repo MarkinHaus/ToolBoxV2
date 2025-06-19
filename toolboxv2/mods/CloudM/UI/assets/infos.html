@@ -1,10 +1,15 @@
+<!-- toolboxv2/mods/CloudM/UI/assets/infos.html -->
 <div>
-    <h2>User</h2>
+    <h2>User Information</h2>
     <p><strong>Name:</strong> $userName</p>
-    <p><strong>Email:</strong> $userEmail</p>
-    <p><strong>Level:</strong> $userLevel</p>
-    $addUserPersona
-    <div id="Devices-$WidgetID">
+    <!-- Email and Level are now part of the Account Management Section,
+         but can be kept here for a quick overview if desired. -->
+    <!-- <p><strong>Email:</strong> $userEmail</p> -->
+    <!-- <p><strong>Level:</strong> $userLevel</p> -->
+
+    $accountManagementSection <!-- Replaces $addUserPersona -->
+
+    <div id="Devices-$WidgetID" class="mt-6">
         <h3>All Devices</h3>
         $devices
     </div>

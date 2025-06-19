@@ -2,13 +2,13 @@
 ip = "0.0.0.0"
 port = 8080
 dist_path = "./dist"
-open_modules = ["CloudM.AuthManager", "CloudM", "TruthSeeker", "DoNext"]
+open_modules = ["CloudM.AuthManager", "CloudM",  "CloudM.email_services"]
 init_modules = ["CloudM"]
 watch_modules = ["CloudM", "TruthSeeker", "DoNext"]
 
 
 [toolbox]
-client_prifix="api-debug"
+client_prifix="collective-debugApi-"
 timeout_seconds = 60
 max_instances = 2
 

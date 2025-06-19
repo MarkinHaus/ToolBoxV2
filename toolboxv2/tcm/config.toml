@@ -1,0 +1,34 @@
+# config.toml - Beispielkonfiguration
+
+# Betriebsmodus: "relay" oder "peer"
+mode = "peer" # oder "relay"
+
+[relay]
+# Nur relevant, wenn mode = "relay"
+bind_address = "0.0.0.0:9000"       # Adresse, auf der der Relay-Server lauscht
+password = "a-very-strong-relay-password" # Passwort zum Schutz des Relays
+
+[peer]
+# Nur relevant, wenn mode = "peer"
+relay_address = "127.0.0.1:9000"    # Öffentliche Adresse des Relay-Servers
+relay_password = "a-very-strong-relay-password"
+
+# Eindeutige ID für diesen Peer (z.B. "mein-laptop-api")
+peer_id = "peer-A"
+
+# Szenario 1: Ich möchte eine lokale API bereitstellen
+# Der Peer lauscht auf `listen_address` und leitet Anfragen an `forward_to_address` weiter.
+# Ein anderer Peer verbindet sich dann zu "peer-A".
+listen_address = "127.0.0.1:8000"   # Lokaler Proxy-Port, den die App des anderen Peers anspricht
+forward_to_address = "127.0.0.1:3000" # Die tatsächlich lokal laufende App/API
+
+# Szenario 2: Ich möchte auf die API eines anderen Peers zugreifen
+# Setze `target_peer_id` auf die ID des Peers, den du erreichen willst.
+# Starte die Engine. Verbinde dann deine lokale Anwendung mit `listen_address`.
+# Die Engine leitet die Verbindung zu `target_peer_id` weiter.
+target_peer_id = "peer-B" # Optional: Wenn leer, wartet der Peer auf eingehende Verbindungen.
+
+# Szenario 3: N-zu-M Kommunikation (wird durch das obige Modell abgedeckt)
+# Jeder Peer, der einen Dienst anbietet, konfiguriert sich wie in Szenario 1.
+# Jeder Peer, der einen Dienst nutzen will, konfiguriert sich wie in Szenario 2.
+# Es können mehrere Instanzen der Engine mit unterschiedlichen Konfigurationen laufen.

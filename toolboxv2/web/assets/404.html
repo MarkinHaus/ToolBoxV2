@@ -7,10 +7,9 @@
       padding: 0;
       width: 100%;
       height: 100%;
-      background: #000;
+      background: var(--theme-bg);
       overflow: hidden;
       font-family: 'Arial', sans-serif;
-      color: #fff;
       cursor: default;
     }
 
@@ -32,8 +31,8 @@
 
     .digit {
       font-size: 150px;
-      color: #0ff;
-      text-shadow: 0 0 20px #0ff;
+      color: var(--theme-accent);
+      text-shadow: 0 0 20px var(--theme-accent);
       margin: 10px;
       opacity: 0;
       transform: rotateX(90deg);
@@ -46,7 +45,7 @@
 
     .story-line {
       font-size: 20px;
-      color: #8ff;
+      color: var(--theme-accent);
       text-align: center;
       line-height: 1.8;
       margin: 8px;
@@ -59,7 +58,7 @@
       position: absolute;
       width: 60px;
       height: 100px;
-      border: 2px solid #0ff;
+      border: 2px solid var(--secondary-color);
       opacity: 0;
       transform: scale(0);
       cursor: pointer;
@@ -67,8 +66,8 @@
     }
 
     .cosmic-door:hover {
-      border-color: #fff;
-      box-shadow: 0 0 30px #fff;
+      border-color: var(--theme-accent);
+      box-shadow: 0 0 30px var(--secondary-color);
       transform: scale(1.1) !important;
     }
 
@@ -76,13 +75,13 @@
       content: '';
       position: absolute;
       inset: 0;
-      background: radial-gradient(circle, #0ff1 0%, transparent 70%);
+      background: radial-gradient(circle, var(--theme-accent) 0%, transparent 70%);
       animation: portalPulse 3s infinite;
     }
 
     .particle {
       position: absolute;
-      background: #0ff;
+      background: var(--theme-accent);
       border-radius: 50%;
       pointer-events: none;
     }
@@ -130,10 +129,17 @@
       <div class="digit">4</div>
     </div>
     <div id="storyContainer"></div>
-    <div class="cosmic-door" onclick="window.TBf.router('/web')"></div>
+    <div class="cosmic-door" onclick="window.location.href = '/'"></div>
   </div>
 
   <script unSave="true">
+      (function() { // IIFE to keep scope clean
+        const TB_INSTANCE = window.TB;
+
+        if (!TB_INSTANCE || !document.querySelector('.container')) {
+            console.error("[mainContent.html] TB instance not found. App functionality may be limited.");
+            return;
+        }
     const story = [
       "In the infinite expanse of digital",
       "SPACE,",
@@ -163,6 +169,10 @@
       particle.style.setProperty('--ty', `${ty}px`);
       particle.style.animation = `particleFloat ${1 + Math.random()}s forwards`;
 
+      if (!document.querySelector('.container')) {
+          particle.remove();
+          return;
+      }
       document.querySelector('.container').appendChild(particle);
       setTimeout(() => particle.remove(), 2500);
     }
@@ -208,6 +218,7 @@
 
     // Start the animation sequence
     revealStory();
+      })(); // End IIFE
   </script>
 </body>
 </html>

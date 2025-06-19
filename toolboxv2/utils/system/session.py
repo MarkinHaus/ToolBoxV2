@@ -107,10 +107,9 @@ class Session(metaclass=Singleton):
         prv_key = self.get_prv_key()
         challenge = await get_app("Session.InitLogin").run_http('CloudM.AuthManager', 'get_to_sing_data', method="POST",
                                                                 args_='username=' + self.username + '&personal_key=False')
-
         challenge = Result.result_from_dict(**challenge)
         if challenge.is_error():
-            return challenge.lazy_return(-1, "Server returned invalid data")
+            return challenge.lazy_return(-1, data=challenge.error)
 
         await asyncio.sleep(0.1)
         claim_data = await get_app("Session.InitLogin").run_http('CloudM.AuthManager', 'validate_device',
@@ -121,7 +120,7 @@ class Session(metaclass=Singleton):
                                                                  method="POST")
         claim_data = Result.result_from_dict(**claim_data)
         if claim_data.is_error():
-            return claim_data.lazy_return(-1, "Server returned invalid data")
+            return claim_data.lazy_return(-1, data=claim_data.error)
 
         claim = claim_data.get("key")
 

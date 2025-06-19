@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -11,22 +12,28 @@ from .AuthManager import get_invitation
 from .types import User
 
 Name = 'CloudM'
-version = '0.0.3'
+version = '0.0.4'
 export = get_app(f"{Name}.EXPORT").tb
 no_test = export(mod_name=Name, test=False, version=version)
 test_only = export(mod_name=Name, test=True, version=version, test_only=True)
 to_api = export(mod_name=Name, api=True, version=version)
 
-uis = {}
-@no_test
-def add_ui(name:str, title:str, path:str, description:str, auth=False):
-    global uis
+@no_test # TODO make user spesifc and public apps
+def add_ui(app: App, name:str, title:str, path:str, description:str, auth=False):
+    if app is None:
+        app = get_app("add_ui")
+    uis = json.loads(app.config_fh.get_file_handler("CloudM::UI", "{}"))
     print("ADDING", name)
     uis[name] = {"auth":auth,"path": path, "title": title, "description": description}
+    app.config_fh.add_to_save_file_handler("CloudM::UI", json.dumps(uis))
 
 @export(mod_name=Name, api=True, version=version)
-def openui():
-    global uis
+def openui(app:App):
+    if app is None:
+        app = get_app("openui")
+    x = app.config_fh.get_file_handler("CloudM::UI", "{}")
+    print(x)
+    uis = json.loads(x)
     return [uis[name] for name in uis]
 
 @export(mod_name=Name, api=True, version=version, row=True)
@@ -123,7 +130,7 @@ def show_version(_, app: App):
 
 @no_test
 def create_account(self):
-    version_command = self.st_router.config_fh.get_file_handler("provider::")
+    version_command = self.app.config_fh.get_file_handler("provider::")
     url = "https://simeplecore.app/web/signup"
     if version_command is not None:
         url = version_command + "/web/signup"
@@ -204,11 +211,11 @@ def update_core_git(self, backup=False, name="base"):
     self.print("Init Update..")
     if backup:
         os.system("git fetch --all")
-        d = f"git branch backup-master-{self.st_router.id}-{self.version}-{name}"
+        d = f"git branch backup-master-{self.app.id}-{self.version}-{name}"
         os.system(d)
         os.system("git reset --hard origin/master")
     out = os.system("git pull")
-    self.st_router.remove_all_modules()
+    self.app.remove_all_modules()
     try:
         com = " ".join(sys.orig_argv)
     except AttributeError:
@@ -216,14 +223,14 @@ def update_core_git(self, backup=False, name="base"):
         com += " ".join(sys.argv)
 
     if out == 0:
-        self.st_router.print_ok()
+        self.app.print_ok()
     else:
         print("their was an error updating...\n\n")
         print(Style.RED(f"Error-code: os.system -> {out}"))
         print(
             f"if you changes local files type $ cloudM update_core save {name}")
         print(
-            f"your changes will be saved to a branch named : backup-master-{self.st_router.id}-{self.version}-{name}"
+            f"your changes will be saved to a branch named : backup-master-{self.app.id}-{self.version}-{name}"
         )
         print(
             "you can apply yur changes after the update with:\ngit stash\ngit stash pop"
@@ -250,9 +257,7 @@ def create_magic_log_in(app: App, username: str):
     if not isinstance(user, User):
         return Result.default_internal_error("Invalid user or db connection", data="Add -c DB edit_cli [RR, LR, LD, RD]")
     key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
-    base_url = app.config_fh.get_file_handler("provider::") + (
-        ':5000' if app.args_sto.host == 'localhost' else "")
-    url = f"{base_url}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
+    url = f"{os.getenv('APP_BASE_URL', 'http://localhost:8080')}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
     print_qrcode_to_console(url)
     return url
 
@@ -262,29 +267,25 @@ async def register_initial_loot_user(app: App, email=None, user_name="loot"):
     root_key = app.config_fh.get_file_handler("Pk" + Code.one_way_hash(user_name, "dvp-k")[:8])
 
     if root_key is not None:
-        return Result.default_user_error(info="loot user already Registered")
+        return Result.default_user_error(info=user_name+" user already Registered")
 
     if email is None:
         email = input("enter ure Email:")
-    invitation = get_invitation(app=app).get()
-    ret = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
+    invitation = get_invitation(app=app, username=user_name).get()
+    rport = app.run_any(TBEF.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
                       username=user_name,
                       email=email,
                       invitation=invitation, get_results=True)
     # awaiating user cration
-    rport = await ret.aget()
-    print(f"[{rport=}]")
-    if rport.is_error():
+    if rport.as_result().is_error():
         return rport
     await asyncio.sleep(1)
-    user = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user_name)
+    user = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=user_name, get_results=True)
     print("User:")
     print(user)
     user = user.get()
     key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
-    base_url = app.config_fh.get_file_handler("provider::") + (
-        f':{app.args_sto.port}' if app.args_sto.host == 'localhost' else "5000")
-    url = f"{base_url}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
+    url = f"{os.getenv('APP_BASE_URL', 'http://localhost:8080')}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
 
     print_qrcode_to_console(url)
 
@@ -293,7 +294,7 @@ async def register_initial_loot_user(app: App, email=None, user_name="loot"):
 
 @no_test
 def clear_db(self, do_root=False):
-    db = self.st_router.get_mod('DB', spec=self.spec)
+    db = self.app.get_mod('DB', spec=self.spec)
 
     if db.data_base is None or not db:
         self.print(
@@ -340,7 +341,22 @@ async def login(m_link: str, app: App | None = None):
         return False
     return await app.session.init_log_in_mk_link(m_link)
 
+@export(mod_name=Name, version=version, initial=True)
+def initialize_admin_panel(app: App):
+    print(f"Admin Panel ({Name} v{version}) initialisiert.")
+    # Hier könnten Standard-DB-Strukturen geprüft oder erstellt werden, falls nötig.
+    # Beispiel: Sicherstellen, dass der DB-Client korrekt konfiguriert ist.
+    # db = app.get_mod("DB")
 
+    if app is None:
+        app = get_app()
+    app.run_any(("CloudM","add_ui"),
+                name="UserDashboard",
+                title=Name,
+                path=f"/api/CloudM.UI.widget/get_widget",
+                description="main",auth=True
+                )
+    return Result.ok(info="Admin Panel Online").set_origin("CloudM.initialize_admin_panel")
 
 #@test_only
 #async def tb_test_register_initial_root_user(app: App):

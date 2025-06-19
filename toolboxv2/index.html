@@ -22,12 +22,6 @@
             padding: 0;
             box-sizing: border-box;
         }
-
-        html, body {
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-        }
     </style>
 
     <link rel="icon" sizes="192X192" href="/web/webapp/icon-192.png">
@@ -40,10 +34,19 @@
     <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Symbols+Outlined">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
 
-    <meta property="og:title" content="RESimpleCore">
+    <link rel="stylesheet" type="text/css" href="/web/core0/styles.css?v=1.1">
+    <link href="https://fonts.googleapis.com/css?family=Roboto:300,400,500" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css?family=Material+Icons&display=block" rel="stylesheet">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Josefin+Slab:ital,wght@1,700&display=swap" rel="stylesheet">
+
+    <meta property="og:title" content="SimpleCore">
     <meta property="og:description" content="Officell ToolBoxV2 Interface">
-    <meta property="og:image" content="/favicon.ico">
-    <meta property="og:url" content="/web/core0/index.html">
+    <meta property="og:image" content="https://simplecore.app/web/webapp/ogimg.png">
+    <meta property="og:url" content="https://simplecore.app/web/core0/index.html">
+    <meta property="og:type" content="website"/>
 
     <script src="https://unpkg.com/htmx.org@2.0.2"></script>
 </head>
@@ -53,8 +56,13 @@
         <div class="circle" id="links">
             <span id="linkIcon" class="plus material-symbols-outlined">menu</span>
         </div>
-        <input type="checkbox" id="darkModeToggle">
-        <label for="darkModeToggle" id="toggleLabel">MT</label>
+    </div>
+     <div id="darkModeToggleContainer" class="tb-dark-mode-toggle">
+        <label for="darkModeSwitch" class="tb-toggle-label">
+            <span style="scale: 1.4;" class="tb-toggle-icon material-symbols-outlined">light_mode</span> <!-- Initial Icon -->
+
+        </label>
+        <input type="checkbox" id="darkModeSwitch" class="tb-visually-hidden none">
     </div>
 </div>
 
@@ -64,48 +72,45 @@
 
 <div id="threeDScene">
 
-    <link rel="stylesheet" href="/web/assets/loder/styles.css?v=1.0">
-    <div class="loaderCenter">
-        <div class="loader">
-            <div class="box box0">
-                <div></div>
-            </div>
-            <div class="box box1">
-                <div></div>
-            </div>
-            <div class="box box2">
-                <div></div>
-            </div>
-            <div class="box box3">
-                <div></div>
-            </div>
-            <div class="box box4">
-                <div></div>
-            </div>
-            <div class="box box5">
-                <div></div>
-            </div>
-            <div class="box box6">
-                <div></div>
-            </div>
-            <div class="box box7">
-                <div></div>
-            </div>
-            <div class="ground">
-                <div></div>
-            </div>
-        </div>
-    </div>
-
 </div>
 <main id="MainContent" class="hide-scrollbar" style="padding-top: 5vh">
+<link rel="stylesheet" type="text/css" href="/web/core0/styles.css?v=1.1">
 
+    <div class="main-page hide-scrollbar" style="padding-top: 25vh;padding-bottom: 15vh;
+    background-color: transparent; /* Hintergrund transparent machen */
+    background: rgba(var(--text-color), 0.8); /* Hintergrundfarbe auf Weiß setzen */
+    background-image: radial-gradient(var(--text-color) 2px, transparent 0); /* Hintergrundbild mit größeren schwarzen Punkten erstellen */
+    background-size: 40px 40px; /* Größe des Hintergrundbilds anpassen */
+    background-position: -20px -20px; /* Position des Hintergrundbilds anpassen */
+    width: 100vw;
+    /* height: 100vh;*/
+">
+        <div class="wrapper fade-class">
+            <div class="welcome-message">
+                <h1 style="font-size: 460%; color:var(--text-color)">Welcome to</h1>
+                <div class="words">
+                    <span>      </span>
+                    <span>Simple</span>
+                    <span>invent</span>
+                    <span>create</span>
+                    <span>ToolBox<h2>V2</h2></span>
+                </div>
+            </div>
+        </div>
+        <footer style="position: relative;padding-top: 35%;">
+            <h3>Get Stared <a href="/web/mainContent.html">Apps</a></h3>
+            <h3>Explore the <a href="/web/core0/MainIdea.html">Main Idea</a></h3>
+            <h3># <a href="/web/core0/Installer.html">Installation</a></h3>
+            <h4>Powered by ToolBoxV2 <a href="https://github.com/MarkinHaus/ToolBoxV2">Git</a> || <a
+                href="https://markinhaus.github.io/ToolBoxV2/">Docs</a></h4>
+            <p>
+            <h5><a href="/web/core0/kontakt.html">Contact</a> || <a href="/web/assets/terms.html">Impressum</a>
+            </h5>
+            </p>
+        </footer>
+    </div>
 
 </main>
-
-<script>
-    window.location.href = "/web/core0/index.html";
-</script>
 
 </body>
 </html>

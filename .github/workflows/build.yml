@@ -57,6 +57,55 @@ jobs:
             run: |
                 python -m unittest discover -s toolboxv2/tests/
 
+    build-root:
+        name: Build Root (toolboxv2)
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                working-directory: toolboxv2
+        steps:
+            -   name: Checkout code
+                uses: actions/checkout@v4
+
+            -   name: Setup Node.js
+                uses: actions/setup-node@v4
+                with:
+                    node-version: 'lts/*'
+
+            -   name: Install all packages
+                run: |
+                    npm install
+                    npm install --prefix ./tbjs
+                    npm install --prefix ./web
+
+            -   name: Build all
+                run: npm run build:tbjs && npm run build:web
+
+            -   name: Upload dist folder
+                uses: actions/upload-artifact@v4
+                with:
+                    name: root-dist
+                    path: toolboxv2/dist
+
+    test-root:
+        name: Test Root (tbjs only for now)
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                node-version: 'lts/*'
+
+            - name: Install tbjs dependencies
+              working-directory: ./toolboxv2/tbjs
+              run: npm install
+            - name: Run tbjs tests
+              working-directory: ./toolboxv2/tbjs
+              run: npm run test
+
     publish-tauri:
        permissions:
          contents: write

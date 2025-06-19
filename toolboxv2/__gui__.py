@@ -7,6 +7,7 @@ from toolboxv2 import Style, show_console
 try:
     import customtkinter as ctk
 except ImportError:
+    print("Installing customtkinter...")
     os.system("pip install customtkinter")
     import customtkinter as ctk
 

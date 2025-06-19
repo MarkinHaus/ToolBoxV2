@@ -2,14 +2,12 @@
 <div>
     <div class="main-content">
         <!-- Your main content -->
-        <h1>401 Pleas Log in or Sign up</h1>
+        <h1>401 Pleas Log in</h1>
         <div id="qli_div"><p>Quick Log in.</p>
         <input type="text" id="textBox" placeholder="Enter User name" onkeypress="handleEnterLogin(event)" style="text-align:center">
         <hr/></div><div id="rest_div">
         <p>Not register on this device</p>
-        <a href="/web/login">Register Device</a>
-        <hr/>
-        <a href="/web/signup">Sign up</a>
+        <a href="/web/assets/login.html">Register Device</a>
         <hr/>
         <a href="/web/mainTemplate.html">Back To Start</a>
         <hr/></div>
@@ -17,15 +15,27 @@
     </div>
 
     <script unSave="true">
-        if (window.history.state) {
-         if (!window.history.state.url.endsWith("401.html")) {
+        if (window.location.href) {
+         if (window.location.href.endsWith("401.html")) {
             document.getElementById('rest_div').classList.add('none');
-            function errorLogin(e) { console.log(e);alert("Error while Quick Log in no claim found for : '"+ document.getElementById('textBox').value +"'")}
-            function susLogin(s) {console.log(s);window.TBf.router(window.location.href)}
             function handleEnterLogin(event) {
                 if (event.key === 'Enter') {
                     const username = document.getElementById('textBox').value;
-                    window.TBf.AuthHttpPostData(username,errorLogin,susLogin)
+                    setTimeout(async () => {
+                    let {success, message} = await window.TB.user.loginWithDeviceKey(username)
+                    if (success) {
+                        const currentState = window.history.state;
+
+                        if (currentState && currentState.preUrl) {
+                          window.TB.router.navigateTo(currentState.preUrl);
+                        }else{
+                            window.TB.router.navigateTo('/web/core0/index.html')
+                        }
+                    } else {
+                        window.TB.logger.error('[Login Page] Login submission error:', message);
+                        window.TB.ui.Toast.showError(message || "Login failed. Please check your details and try again.");
+                    }
+                });
                 }
             }
         }else{

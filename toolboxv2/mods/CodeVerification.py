@@ -4,8 +4,6 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from starlette.responses import HTMLResponse
-
 from toolboxv2 import Result, get_app
 
 Name = 'CodeVerification'
@@ -388,14 +386,14 @@ scoped_withe_list = {}
         name="pannel", row=True, request_as_kwarg=True)
 async def pannel(app=None, request=None, scope="Main"):
     if request is None:
-        return HTMLResponse(content="<h1>No access</h1><a href='/'>home</a>")
+        return Result.html("<h1>No access</h1><a href='/'>home</a>")
     if app is None:
         app = get_app(Name)
 
     user = await get_user_from_request(app, request)
     if user.name not in withe_list:
-        return HTMLResponse(content="<h1>No access not on with list </h1><a href='/'>home</a>")
-    return HTMLResponse(content=html_template)
+        return Result.html("<h1>No access not on with list </h1><a href='/'>home</a>")
+    return Result.html(html_template)
 
 
 """if __name__ == "__main__":

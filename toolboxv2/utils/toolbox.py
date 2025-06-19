@@ -16,9 +16,10 @@ from importlib import import_module, reload
 from inspect import signature
 from platform import node, system
 from types import ModuleType
-from typing import Any
+from typing import Any, Optional
 
 from dotenv import load_dotenv
+
 
 from ..utils.system.main_tool import get_version_from_pyproject
 from .extras.Style import Spinner, Style, stram_print
@@ -102,6 +103,11 @@ class App(AppType, metaclass=Singleton):
             self.data_dir = start_dir + '\\.data\\' + "test"
             self.config_dir = start_dir + '\\.config\\' + "test"
             self.info_dir = start_dir + '\\.info\\' + "test"
+        elif identification.startswith('collective-'):
+            collective_identification = identification.split('-')[1]
+            self.data_dir = self.start_dir + '\\.data\\' + collective_identification
+            self.config_dir = self.start_dir + '\\.config\\' + collective_identification
+            self.info_dir = self.start_dir + '\\.info\\' + collective_identification
         else:
             self.data_dir = self.start_dir + '\\.data\\' + identification
             self.config_dir = self.start_dir + '\\.config\\' + identification
@@ -189,11 +195,21 @@ class App(AppType, metaclass=Singleton):
 
         from .system.session import Session
         self.session: Session = Session(self.get_username())
+        if len(sys.argv) > 2 and "db" == sys.argv[1]:
+            return
+        from .system.db_cli_manager import ClusterManager, get_executable_path
+        self.cluster_manager = ClusterManager()
+        online_list, server_list = self.cluster_manager.status_all(silent=True)
+        if not server_list:
+            self.cluster_manager.start_all(get_executable_path(), self.version)
+            _, server_list = self.cluster_manager.status_all()
+        from .extras.blobs import BlobStorage
+        self.root_blob_storage = BlobStorage(servers=server_list, storage_directory=self.data_dir+ '\\blob_cache\\')
 
     def get_username(self, get_input=False, default="loot") -> str:
         user_name = self.config_fh.get_file_handler("ac_user:::")
         if get_input and user_name is None:
-            user_name = input("Input your username\nbe sure to make no typos: ")
+            user_name = input("Input your username: ")
             self.config_fh.add_to_save_file_handler("ac_user:::", user_name)
         if user_name is None:
             user_name = default
@@ -263,8 +279,22 @@ class App(AppType, metaclass=Singleton):
     def debug_rains(self, e):
         if self.debug:
             import traceback
-            print(traceback.format_exc())
+            x = "="*5
+            x += " DEBUG "
+            x += "="*5
+            self.print(x)
+            self.print(traceback.format_exc())
+            self.print(x)
             raise e
+        else:
+            self.logger.error(f"Error: {e}")
+            import traceback
+            x = "="*5
+            x += " DEBUG "
+            x += "="*5
+            self.print(x)
+            self.print(traceback.format_exc())
+            self.print(x)
 
     def set_flows(self, r):
         self.flows = r
@@ -345,7 +375,7 @@ class App(AppType, metaclass=Singleton):
     def inplace_load_instance(self, mod_name, loc="toolboxv2.mods.", spec='app', save=True, mfo=None):
         if self.dev_modi and loc == "toolboxv2.mods.":
             loc = "toolboxv2.mods_dev."
-        if self.mod_online(mod_name):
+        if spec=='app' and self.mod_online(mod_name):
             self.logger.info(f"Reloading mod from : {loc + mod_name}")
             self.remove_mod(mod_name, spec=spec, delete=False)
 
@@ -428,6 +458,11 @@ class App(AppType, metaclass=Singleton):
                     if t_function_name != "all" and t_function_name != "name":
                         self.tb(function_name, mod_name=modular_id)(tools_class.tools.get(function_name))
                 self.functions[modular_id][f"{spec}_instance_type"] += "/BC"
+                if hasattr(tools_class, 'on_exit'):
+                    if "on_exit" in self.functions[modular_id]:
+                        self.functions[modular_id]["on_exit"].append(tools_class.on_exit)
+                    else:
+                        self.functions[modular_id]["on_exit"] = [tools_class.on_exit]
             except Exception as e:
                 self.logger.error(f"Starting Module {modular_id} compatibility failed with : {e}")
                 pass
@@ -448,6 +483,7 @@ class App(AppType, metaclass=Singleton):
                         self.logger.info(Style.GREY(f"Running On start {f} {i}/{len(on_start)}"))
                         if asyncio.iscoroutinefunction(f_):
                             self.print(f"Async on start is only in Tool claas supported for {modular_id}.{f}" if tools_class is None else f"initialization starting soon for {modular_id}.{f}")
+                            self.run_bg_task_advanced(f_)
                         else:
                             o = f_()
                             if o is not None:
@@ -476,7 +512,7 @@ class App(AppType, metaclass=Singleton):
                       name: Enum or None,
                       state: bool = True,
                       specification: str = "app",
-                      metadata=False, as_str: tuple or None = None, r=0):
+                      metadata=False, as_str: tuple or None = None, r=0, **kwargs):
 
         if as_str is None and isinstance(name, Enum):
             modular_id = str(name.NAME.value)
@@ -497,7 +533,7 @@ class App(AppType, metaclass=Singleton):
                                          metadata=metadata,
                                          r=1)
             self.logger.warning(f"function modular not found {modular_id} 404")
-            return "404", 100
+            return "404", 404
 
         if function_id not in self.functions[modular_id]:
             self.logger.warning(f"function data not found {modular_id}.{function_id} 404")
@@ -507,8 +543,8 @@ class App(AppType, metaclass=Singleton):
 
         if isinstance(function_data, list):
             print(f"functions {function_id} : {function_data}")
-            function_data = self.functions[modular_id][function_data[-1]]
-
+            function_data = self.functions[modular_id][function_data[kwargs.get('i', -1)]]
+            print(f"functions {modular_id} : {function_data}")
         function = function_data.get("func")
         params = function_data.get("params")
 
@@ -518,7 +554,7 @@ class App(AppType, metaclass=Singleton):
 
         if function is None:
             self.logger.warning("No function found")
-            return "404", 300
+            return "404", 404
 
         if params is None:
             self.logger.warning("No function (params) found")
@@ -578,122 +614,123 @@ class App(AppType, metaclass=Singleton):
             mod_name = mod_name.split('.')[0]
         return self.loop_gard().run_until_complete(self.a_init_mod(mod_name, spec))
 
-    def run_bg_task(self, task):
+    def run_bg_task(self, task: Callable, *args, **kwargs) -> Optional[asyncio.Task]:
         """
-        Run a task in the background that will properly handle nested asyncio operations.
-        This implementation ensures that asyncio.create_task() and asyncio.gather() work
-        correctly within the background task.
+        Runs a coroutine in the background without blocking the caller.
+
+        This is the primary method for "fire-and-forget" async tasks. It schedules
+        the coroutine to run on the application's main event loop.
 
         Args:
-            task: A callable function that can be synchronous or asynchronous
+            task: The coroutine function to run.
+            *args: Arguments to pass to the coroutine function.
+            **kwargs: Keyword arguments to pass to the coroutine function.
+
+        Returns:
+            An asyncio.Task object representing the scheduled task, or None if
+            the task could not be scheduled.
         """
         if not callable(task):
-            self.logger.warning("Task is not callable!")
+            self.logger.warning("Task passed to run_bg_task is not callable!")
             return None
 
-        # Function that will run in a separate thread with its own event loop
-        def thread_target(task_):
-            # Create a new event loop for this thread
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        if not asyncio.iscoroutinefunction(task) and not asyncio.iscoroutine(task):
+            self.logger.warning(f"Task '{getattr(task, '__name__', 'unknown')}' is not a coroutine. "
+                                f"Use run_bg_task_advanced for synchronous functions.")
+            # Fallback to advanced runner for convenience
+            self.run_bg_task_advanced(task, *args, **kwargs)
+            return None
 
-            try:
-                # Determine how to run the task based on its type
-                if asyncio.iscoroutinefunction(task_):
-                    # If it's an async function, run it directly
-                    loop.run_until_complete(task_())
-                elif asyncio.iscoroutine(task_):
-                    # If it's already a coroutine object
-                    loop.run_until_complete(task_)
-                else:
-                    # If it's a synchronous function that might create async tasks internally
-                    async def wrapper():
-                        # Run potentially blocking synchronous code in an executor
-                        return await loop.run_in_executor(None, task_)
+        try:
+            loop = self.loop_gard()
+            if not loop.is_running():
+                # If the main loop isn't running, we can't create a task on it.
+                # This scenario is handled by run_bg_task_advanced.
+                self.logger.info("Main event loop not running. Delegating to advanced background runner.")
+                return self.run_bg_task_advanced(task, *args, **kwargs)
 
-                    loop.run_until_complete(wrapper())
+            # Create the coroutine if it's a function
+            coro = task(*args, **kwargs) if asyncio.iscoroutinefunction(task) else task
 
-                self.logger.debug("Background task completed successfully")
-            except Exception as e:
-                self.logger.error(f"Background task failed with error: {str(e)}")
-            finally:
-                # Clean up any pending tasks
-                pending = asyncio.all_tasks(loop)
-                if pending:
-                    # Cancel any remaining tasks
-                    for task_ in pending:
-                        task_.cancel()
+            # Create a task on the running event loop
+            bg_task = loop.create_task(coro)
 
-                    # Allow tasks to finish cancellation
-                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            # Add a callback to log exceptions from the background task
+            def _log_exception(the_task: asyncio.Task):
+                if not the_task.cancelled() and the_task.exception():
+                    self.logger.error(f"Exception in background task '{the_task.get_name()}':",
+                                      exc_info=the_task.exception())
 
-                loop.close()
+            bg_task.add_done_callback(_log_exception)
+            self.bg_tasks.append(bg_task)
+            return bg_task
 
-        # Create and start a non-daemon thread that will run to completion
-        # Using non-daemon thread ensures the task completes even if main thread exits
-        t = threading.Thread(target=thread_target, args=(task,))
-        t.daemon = False  # Non-daemon thread will keep program alive until it completes
-        self.bg_tasks.append(t)
-        t.start()
-        return t
+        except Exception as e:
+            self.logger.error(f"Failed to schedule background task: {e}", exc_info=True)
+            return None
 
-    # Alternative implementation that may be needed if your function creates many nested tasks
-    def run_bg_task_advanced(self, task, *args, **kwargs):
+    def run_bg_task_advanced(self, task: Callable, *args, **kwargs) -> threading.Thread:
         """
-        Alternative implementation for complex async scenarios where the task creates
-        nested asyncio tasks using create_task() and gather().
+        Runs a task in a separate, dedicated background thread with its own event loop.
 
-        This version ensures proper execution of nested tasks by maintaining the thread
-        and its event loop throughout the lifetime of all child tasks.
+        This is ideal for:
+        1. Running an async task from a synchronous context.
+        2. Launching a long-running, independent operation that should not
+           interfere with the main application's event loop.
 
         Args:
-            task: A callable function that can be synchronous or asynchronous
-            *args, **kwargs: Arguments to pass to the task
+            task: The function to run (can be sync or async).
+            *args: Arguments for the task.
+            **kwargs: Keyword arguments for the task.
+
+        Returns:
+            The threading.Thread object managing the background execution.
         """
         if not callable(task):
-            self.logger.warning("Task is not callable!")
+            self.logger.warning("Task for run_bg_task_advanced is not callable!")
             return None
-
-        # Create a dedicated thread with its own event loop
-        async def async_wrapper():
-            try:
-                if asyncio.iscoroutinefunction(task):
-                    return await task(*args, **kwargs)
-                elif asyncio.iscoroutine(task):
-                    return await task
-                else:
-                    # Run in executor to avoid blocking
-                    loop = asyncio.get_event_loop()
-                    return await loop.run_in_executor(None, lambda: task(*args, **kwargs))
-            except Exception as e:
-                self.logger.error(f"Background task error: {str(e)}")
-                raise
 
         def thread_target():
-            # Create new event loop for this thread
+            # Each thread gets its own event loop.
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
             try:
-                # Run the task to completion with all its nested tasks
-                loop.run_until_complete(async_wrapper())
+                # Prepare the coroutine we need to run
+                if asyncio.iscoroutinefunction(task):
+                    coro = task(*args, **kwargs)
+                elif asyncio.iscoroutine(task):
+                    # It's already a coroutine object
+                    coro = task
+                else:
+                    # It's a synchronous function, run it in an executor
+                    # to avoid blocking the new event loop.
+                    coro = loop.run_in_executor(None, lambda: task(*args, **kwargs))
+
+                # Run the coroutine to completion
+                result = loop.run_until_complete(coro)
+                self.logger.debug(f"Advanced background task '{getattr(task, '__name__', 'unknown')}' completed.")
+                if result is not None:
+                    self.logger.debug(f"Task result: {str(result)[:100]}")
+
             except Exception as e:
-                self.logger.error(f"Background task thread failed: {str(e)}")
+                self.logger.error(f"Error in advanced background task '{getattr(task, '__name__', 'unknown')}':",
+                                  exc_info=e)
             finally:
-                # Clean up any pending tasks that might still be running
+                # Cleanly shut down the event loop in this thread.
                 try:
-                    pending = asyncio.all_tasks(loop)
-                    if pending:
-                        # Allow tasks time to clean up
-                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-                except Exception:
-                    pass
+                    all_tasks = asyncio.all_tasks(loop=loop)
+                    if all_tasks:
+                        for t in all_tasks:
+                            t.cancel()
+                        loop.run_until_complete(asyncio.gather(*all_tasks, return_exceptions=True))
+                finally:
+                    loop.close()
+                    asyncio.set_event_loop(None)
 
-                loop.close()
-
-        # Use a non-daemon thread so it will run to completion
-        t = threading.Thread(target=thread_target, daemon=True)
-        t.daemon = False
+        # Create, start, and return the thread.
+        # It's a daemon thread so it won't prevent the main app from exiting.
+        t = threading.Thread(target=thread_target, daemon=True, name=f"BGTask-{getattr(task, '__name__', 'unknown')}")
         self.bg_tasks.append(t)
         t.start()
         return t
@@ -719,6 +756,9 @@ class App(AppType, metaclass=Singleton):
 
         return True
 
+    def __call__(self, *args, **kwargs):
+        return self.run(*args, **kwargs)
+
     def run(self, *args, request=None, running_function_coro=None, **kwargs):
         """
         Run a function with support for SSE streaming in both
@@ -727,15 +767,14 @@ class App(AppType, metaclass=Singleton):
         if running_function_coro is None:
             mn, fn = args[0]
             if self.functions.get(mn, {}).get(fn, {}).get('request_as_kwarg', False):
-                kwargs["request"] = request
+                kwargs["request"] = RequestData.from_dict(request)
                 if 'data' in kwargs and 'data' not in self.functions.get(mn, {}).get(fn, {}).get('params', []):
-                    kwargs["request"]['data'] = kwargs['data']
+                    kwargs["request"].data = kwargs["request"].body = kwargs['data']
                     del kwargs['data']
                 if 'form_data' in kwargs and 'form_data' not in self.functions.get(mn, {}).get(fn, {}).get('params',
                                                                                                            []):
-                    kwargs["request"]['form_data'] = kwargs['form_data']
+                    kwargs["request"].form_data = kwargs["request"].body = kwargs['form_data']
                     del kwargs['form_data']
-                kwargs["request"] = RequestData.from_dict(request)
 
         # Create the coroutine
         coro = running_function_coro or self.a_run_any(*args, **kwargs)
@@ -797,7 +836,8 @@ class App(AppType, metaclass=Singleton):
 
         # Process the final result
         if isinstance(result, Result):
-            result.print()
+            if 'debug' in self.id:
+                result.print()
             if getattr(result.result, 'data_type', None) == "stream":
                 return result
             return result.to_api_result().model_dump(mode='json')
@@ -946,8 +986,9 @@ class App(AppType, metaclass=Singleton):
         if mod_name not in self.functions:
             self.logger.info(f"mod not active {mod_name}")
             return
-        on_exit = self.functions[mod_name].get("on_exit")
 
+        on_exit = self.functions[mod_name].get("on_exit")
+        self.logger.info(f"closing: {on_exit}")
         def helper():
             if f"{spec}_instance" in self.functions[mod_name]:
                 del self.functions[mod_name][f"{spec}_instance"]
@@ -971,9 +1012,10 @@ class App(AppType, metaclass=Singleton):
             return
 
         i = 1
-        for f in on_exit:
+
+        for j, f in enumerate(on_exit):
             try:
-                f_, e = self.get_function((mod_name, f), state=True, specification=spec)
+                f_, e = self.get_function((mod_name, f), state=True, specification=spec, i=j)
                 if e == 0:
                     self.logger.info(Style.GREY(f"Running On exit {f} {i}/{len(on_exit)}"))
                     if asyncio.iscoroutinefunction(f_):
@@ -988,6 +1030,8 @@ class App(AppType, metaclass=Singleton):
             except Exception as e:
                 self.logger.debug(
                     Style.YELLOW(Style.Bold(f"modular:{mod_name}.{f} on_exit error {i}/{len(on_exit)} -> {e}")))
+
+                self.debug_rains(e)
             finally:
                 i += 1
 
@@ -1007,7 +1051,7 @@ class App(AppType, metaclass=Singleton):
             self.logger.info(f"mod not active {mod_name}")
             return
         on_exit = self.functions[mod_name].get("on_exit")
-
+        self.logger.info(f"closing: {on_exit}")
         def helper():
             if f"{spec}_instance" in self.functions[mod_name]:
                 del self.functions[mod_name][f"{spec}_instance"]
@@ -1033,7 +1077,11 @@ class App(AppType, metaclass=Singleton):
         i = 1
         for f in on_exit:
             try:
-                f_, e = self.get_function((mod_name, f), state=True, specification=spec)
+                e = 1
+                if isinstance(f, str):
+                    f_, e = self.get_function((mod_name, f), state=True, specification=spec)
+                elif isinstance(f, Callable):
+                    f_, e, f  = f, 0, f.__name__
                 if e == 0:
                     self.logger.info(Style.GREY(f"Running On exit {f} {i}/{len(on_exit)}"))
                     if asyncio.iscoroutinefunction(f_):
@@ -1047,6 +1095,7 @@ class App(AppType, metaclass=Singleton):
             except Exception as e:
                 self.logger.debug(
                     Style.YELLOW(Style.Bold(f"modular:{mod_name}.{f} on_exit error {i}/{len(on_exit)} -> {e}")))
+                self.debug_rains(e)
             finally:
                 i += 1
 
@@ -1068,6 +1117,8 @@ class App(AppType, metaclass=Singleton):
         self.alive = False
         self.called_exit = True, time.time()
         self.save_exit()
+        if hasattr(self, 'root_blob_storage') and self.root_blob_storage:
+            self.root_blob_storage.exit()
         try:
             self.config_fh.save_file_handler()
         except SystemExit:
@@ -1094,7 +1145,7 @@ class App(AppType, metaclass=Singleton):
                 self.loop.stop()
 
     async def a_exit(self):
-        await self.a_remove_all_modules()
+        await self.a_remove_all_modules(delete=True)
         results = await asyncio.gather(
             *[asyncio.create_task(f()) for f in self.exit_tasks if asyncio.iscoroutinefunction(f)])
         for result in results:
@@ -1358,6 +1409,9 @@ class App(AppType, metaclass=Singleton):
                 f" executed wit an error {str(e)}, {type(e)}")
             self.debug_rains(e)
             self.print(f"! Function ERROR: in {modular_name}.{function_name} ")
+
+
+
         else:
             self.print_ok()
 
@@ -1459,7 +1513,7 @@ class App(AppType, metaclass=Singleton):
         try:
             if not r:
                 print("§ Session server Offline!", self.session.base)
-                return Result.default_internal_error(msg="Session fetch failed").as_dict()
+                return Result.default_internal_error(info="Session fetch failed").as_dict()
 
             content_type = r.headers.get('Content-Type', '').lower()
             raw = await r.read()
@@ -1515,6 +1569,10 @@ class App(AppType, metaclass=Singleton):
         if args_ is not None and not args:
             args = args_
 
+        if isinstance(mod_function_name, str) and backwords_compability_variabel_string_holder is None:
+            backwords_compability_variabel_string_holder = mod_function_name.split('.')[-1]
+            mod_function_name = mod_function_name.replace(f".{backwords_compability_variabel_string_holder}", "")
+
         if isinstance(mod_function_name, str) and isinstance(backwords_compability_variabel_string_holder, str):
             mod_function_name = (mod_function_name, backwords_compability_variabel_string_holder)
 
@@ -1530,8 +1588,12 @@ class App(AppType, metaclass=Singleton):
 
         if self.debug:
             res.log(show_data=False)
+
         if not get_results and isinstance(res, Result):
             return res.get()
+
+        if get_results and not isinstance(res, Result):
+            return Result.ok(data=res)
 
         return res
 
@@ -1549,6 +1611,10 @@ class App(AppType, metaclass=Singleton):
         if args_ is not None and not args:
             args = args_
 
+        if isinstance(mod_function_name, str) and backwords_compability_variabel_string_holder is None:
+            backwords_compability_variabel_string_holder = mod_function_name.split('.')[-1]
+            mod_function_name = mod_function_name.replace(f".{backwords_compability_variabel_string_holder}", "")
+
         if isinstance(mod_function_name, str) and isinstance(backwords_compability_variabel_string_holder, str):
             mod_function_name = (mod_function_name, backwords_compability_variabel_string_holder)
 
@@ -1563,16 +1629,24 @@ class App(AppType, metaclass=Singleton):
             self.run_bg_task(res.bg_task)
 
         if self.debug:
-            res.log(show_data=False)
+            res.print()
+            res.log(show_data=False) if isinstance(res, Result) else self.logger.debug(res)
         if not get_results and isinstance(res, Result):
             return res.get()
+
+        if get_results and not isinstance(res, Result):
+            return Result.ok(data=res)
 
         return res
 
 
     def web_context(self):
         if self._web_context is None:
-            self._web_context = open("./dist/helper.html", encoding="utf-8").read()
+            try:
+                self._web_context = open("./dist/helper.html", encoding="utf-8").read()
+            except Exception as e:
+                self.logger.error(f"Could not load web context: {e}")
+                self._web_context = "<div><h1>Web Context not found</h1></div>"
         return self._web_context
 
     def get_mod(self, name, spec='app') -> ModuleType or MainToolType:
@@ -1597,6 +1671,8 @@ class App(AppType, metaclass=Singleton):
 
     def print(self, text, *args, **kwargs):
         # self.logger.info(f"Output : {text}")
+        if 'live' in self.id:
+            return
         if self.sprint(None):
             print(Style.CYAN(f"System${self.id}:"), end=" ")
         print(text, *args, **kwargs)
@@ -1604,6 +1680,8 @@ class App(AppType, metaclass=Singleton):
     def sprint(self, text, *args, **kwargs):
         if text is None:
             return True
+        if 'live' in self.id:
+            return
         # self.logger.info(f"Output : {text}")
         print(Style.CYAN(f"System${self.id}:"), end=" ")
         if isinstance(text, str) and kwargs == {} and text:
@@ -1617,6 +1695,9 @@ class App(AppType, metaclass=Singleton):
 
     def reload_mod(self, mod_name, spec='app', is_file=True, loc="toolboxv2.mods."):
         self.remove_mod(mod_name, delete=True)
+        if mod_name not in self.modules:
+            self.logger.warning(f"Module '{mod_name}' is not found")
+            return
         if hasattr(self.modules[mod_name], 'reload_save') and self.modules[mod_name].reload_save:
             def reexecute_module_code(x):
                 return x
@@ -1896,7 +1977,7 @@ class App(AppType, metaclass=Singleton):
             if exit_f:
                 if "on_exit" not in self.functions[module_name]:
                     self.functions[module_name]["on_exit"] = []
-                self.functions[module_name]["on_exit"].append(func_name)
+                self.functions[module_name]["on_exit"].append(data)
             if initial:
                 if "on_start" not in self.functions[module_name]:
                     self.functions[module_name]["on_start"] = []

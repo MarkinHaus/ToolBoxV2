@@ -16,7 +16,7 @@ from importlib.metadata import version
 from inspect import iscoroutinefunction
 from typing import (
     Any,
-    Literal,
+    Literal, Optional,
 )
 
 from pydantic import (
@@ -28,6 +28,8 @@ from pydantic import (
     ValidationError,
     model_validator,
 )
+
+from toolboxv2 import get_logger
 
 # --- Framework Imports with Availability Checks ---
 
@@ -58,11 +60,18 @@ try:
         LongRunningFunctionTool,
         ToolContext,
     )
-    from google.adk.tools import VertexAiSearchTool as AdkVertexAiSearchTool
-    from google.adk.tools import (
-        built_in_code_execution as adk_built_in_code_execution,  # Secure option
-    )
-    from google.adk.tools import google_search as adk_google_search
+    try:
+        from google.adk.tools import VertexAiSearchTool as AdkVertexAiSearchTool
+        from google.adk.tools import (
+            built_in_code_execution as adk_built_in_code_execution,  # Secure option
+        )
+        from google.adk.tools import google_search as adk_google_search
+    except ImportError:
+        print("WARN: google.adk.tools.google_search not found. Google Search tool not available.")
+        def adk_built_in_code_execution():
+            return None  # Dummy
+        def adk_google_search():
+            return None  # Dummy
     from google.adk.tools.agent_tool import AgentTool
     from google.adk.tools.mcp_tool.mcp_toolset import (
         MCPToolset,
@@ -259,12 +268,13 @@ except ImportError:
 
 # --- Logging Setup ---
 # Configure root logger level for libraries
-logging.basicConfig(level=logging.WARNING)
+
+logging.basicConfig(level=get_logger().level)
 # Configure LiteLLM logging level specifically if needed
-logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("LiteLLM").setLevel(get_logger().level)
 # Agent-specific logger
 logger = logging.getLogger("EnhancedAgent")
-logger.setLevel(logging.INFO) # Default level, builder can override via 'verbose'
+logger.setLevel(get_logger().level) # Default level, builder can override via 'verbose'
 
 
 # --- Helper Classes ---
@@ -367,8 +377,8 @@ class LLMMessage:
     """Represents a message in a conversation, compatible with LiteLLM."""
     role: Literal["user", "assistant", "system", "tool"]
     content: str | list[dict[str, Any]] # String or multimodal content (LiteLLM format)
-    tool_call_id: str | None = None # For tool responses
-    name: str | None = None # For tool calls/responses (function name)
+    tool_call_id: Optional[str] = None # For tool responses
+    name: Optional[str] = None # For tool calls/responses (function name)
 
     # Add tool_calls for assistant messages requesting tool use (LiteLLM format)
     tool_calls: list[dict[str, Any]] | None = None # e.g., [{"id": "call_123", "function": {"name": "...", "arguments": "{...}"}}]
@@ -936,11 +946,11 @@ class EnhancedAgent(*_AgentBaseClass):
 
     async def a_run(self,
                     user_input: str,
-                    session_id: str | None = None,
+                    session_id: Optional[str] = None,
                     persist_history: bool = True,
                     strategy_override: ProcessingStrategy | None = None,
                     kwargs_override: dict[str, Any] | None = None, # For fine-grained control
-                    a2a_task_id: str | None = None # Context if called from A2A task
+                    a2a_task_id: Optional[str] = None # Context if called from A2A task
                     ) -> str:
         """
         Main asynchronous execution logic for the agent turn.
@@ -1103,7 +1113,7 @@ class EnhancedAgent(*_AgentBaseClass):
 
         return str(response) # Ensure string output
 
-    def run(self, user_input: str, session_id: str | None = None, **kwargs) -> str:
+    def run(self, user_input: str, session_id: Optional[str] = None, **kwargs) -> str:
         """Synchronous wrapper for a_run."""
         try:
             # get_event_loop() is deprecated in 3.10+, use get_running_loop() or new_event_loop()
@@ -1615,11 +1625,16 @@ class EnhancedAgent(*_AgentBaseClass):
             return messages
 
 
-    async def a_run_llm_completion(self, llm_messages: list[dict], **kwargs) -> str:
+    async def a_run_llm_completion(self, llm_messages: list[dict]=None, **kwargs) -> str:
         """Core wrapper around LiteLLM acompletion with error handling, streaming, and cost tracking."""
         if not llm_messages:
-            logger.warning("a_run_llm_completion called with empty message list.")
-            return "Error: No message provided to the model."
+            if "messages" in kwargs:
+                llm_messages = kwargs.pop("messages")
+            if "llm_messages" in kwargs:
+                llm_messages = kwargs.pop("llm_messages")
+            if not llm_messages:
+                logger.warning("a_run_llm_completion called with empty message list.")
+                return "Error: No message provided to the model."
 
         self.print_verbose(f"Running model '{self.amd.model}' with {len(llm_messages)} messages.")
         # self.print_verbose("Messages:", json.dumps(llm_messages, indent=2)) # Very verbose
@@ -1901,7 +1916,7 @@ class EnhancedAgent(*_AgentBaseClass):
                                          tool_context: ToolContext | None,
                                          target_agent_url: str,
                                          task_prompt: str,
-                                         session_id: str | None = None
+                                         session_id: Optional[str] = None
                                          ) -> str:
         """ADK Tool: Sends a task to another agent via A2A and waits for the final text result."""
         # ... (implementation remains the same, calls _execute_a2a_call) ...
@@ -1925,7 +1940,7 @@ class EnhancedAgent(*_AgentBaseClass):
                                         tool_context: ToolContext | None,
                                         target_agent_url: str,
                                         task_prompt: str,
-                                        session_id: str | None = None
+                                        session_id: Optional[str] = None
                                         ) -> str:
         """ADK Tool: Sends a task to another agent via A2A and returns the task ID immediately.
 

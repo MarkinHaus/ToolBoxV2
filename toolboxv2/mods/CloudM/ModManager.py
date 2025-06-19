@@ -23,7 +23,7 @@ from toolboxv2.utils.system.types import Result, ToolBoxInterfaces
 
 Name = 'CloudM'
 export = get_app(f"{Name}.Export").tb
-version = "0.0.3"
+version = "0.0.4"
 default_export = export(mod_name=Name, version=version, interface=ToolBoxInterfaces.native, test=False)
 mv = None
 

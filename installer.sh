@@ -11,7 +11,7 @@ echo "**************************************************************************
 echo "Zero the Hero - ToolBoxV2 Core Installer"
 
 # Strict mode
-set -eo pipefail
+# set -eo pipefail
 
 # -----------------------------------------------------------------------------
 # METADATA & DEFAULTS
@@ -67,6 +67,8 @@ VENV_SCRIPTS_DIR_NAME="Scripts" # For Windows (unused if Python helper handles i
 USER_BIN_DIR=""
 SYSTEM_PKG_INSTALLER_CMD="" # For auto-installing Python/Git
 SUDO_CMD="sudo" # Assume sudo, can be empty if root or not needed
+
+command_exists() { command -v "$1" &>/dev/null; }
 
 # Detect if running as root
 if [[ "$(id -u)" -eq 0 ]]; then
@@ -360,8 +362,27 @@ parse_arguments() {
 }
 
 show_help() {
-    # ... (show_help function as before, add --auto-install-deps) ...
+
+    echo -e "${C_BOLD}ToolBoxV2 Zero Installer${C_RESET}"
+    echo -e "Version: $SCRIPT_VERSION"
+    echo -e "Author: $AUTHOR"
+    echo -e "Web: $WEBPAGE"
+    echo -e "\nInstalls ToolBoxV2 Core and initializes it."
+    echo -e "\n${C_YELLOW}USAGE:${C_RESET}"
+    echo -e "  ./install_toolbox.sh [OPTIONS]"
+    echo -e "\n${C_YELLOW}OPTIONS:${C_RESET}"
+    echo -e "  ${C_CYAN}--version=<version>${C_RESET}   Specify ToolBoxV2 version (default: ${DEFAULT_TB_VERSION})."
+    echo -e "  ${C_CYAN}--source=<src>${C_RESET}        Installation source: 'pip' or 'git' (default: ${DEFAULT_INSTALL_SOURCE})."
+    echo -e "  ${C_CYAN}--manager=<mgr>${C_RESET}       Package manager: 'pip', 'uv', 'poetry' (default: ${DEFAULT_PKG_MANAGER})."
+    echo -e "  ${C_CYAN}--python=<py_ver>${C_RESET}    Target Python version (e.g., 3.9, 3.10, 3.11) (default: ${DEFAULT_PYTHON_VERSION_TARGET})."
+    echo -e "  ${C_CYAN}--isaa${C_RESET}                Install with 'isaa' extra (default: ${DEFAULT_ISAA_EXTRA})."
+    echo -e "  ${C_CYAN}--dev${C_RESET}                 Install with 'dev' extra (default: ${DEFAULT_DEV_EXTRA})."
+    echo -e "  ${C_CYAN}--dir=<type>${C_RESET}          Installation directory type: 'apps_folder' (e.g. ~/.local/share/ToolBoxV2) or 'pip_default' (uses pip's default behavior, may require sudo for global, not recommended for venv) (default: ${DEFAULT_INSTALL_LOCATION_TYPE})."
     echo -e "  ${C_CYAN}--auto-install-deps${C_RESET} Attempt to automatically install missing system dependencies (Python, Git) using system package manager (e.g. winget, apt, brew). Default: ${DEFAULT_AUTO_INSTALL_DEPS}."
+    echo -e "  ${C_CYAN}--help, -h${C_RESET}            Show this help message."
+    echo -e "\nIf no arguments are provided, the script looks for an ${C_CYAN}init.config${C_RESET} file."
+    echo -e "If the file doesn't exist, it uses hardcoded default values."
+
 }
 
 finalize_config() {
@@ -378,7 +399,19 @@ finalize_config() {
     [[ "$INSTALL_SOURCE" == "git" ]] && TOOLBOX_SRC_DIR="$INSTALL_DIR/src/$TOOLBOX_REPO_NAME"
 
     log_title "${E_GEAR} Final Configuration"
-    # ... (log configuration details as before, add AUTO_INSTALL_DEPS) ...
+     log_info "${C_CYAN}ToolBoxV2 Version:${C_RESET} $TB_VERSION"
+    log_info "${C_CYAN}Install Source:${C_RESET}    $INSTALL_SOURCE"
+    log_info "${C_CYAN}Package Manager:${C_RESET}   $PKG_MANAGER"
+    log_info "${C_CYAN}Environment Manager:${C_RESET} $ENV_MANAGER"
+    log_info "${C_CYAN}Target Python:${C_RESET}     $PYTHON_VERSION_TARGET"
+    log_info "${C_CYAN}Install ISAA Extra:${C_RESET} $ISAA_EXTRA"
+    log_info "${C_CYAN}Install DEV Extra:${C_RESET}  $DEV_EXTRA"
+    if [[ -n "$INSTALL_DIR" ]]; then
+        log_info "${C_CYAN}Install Directory:${C_RESET} $INSTALL_DIR"
+    else
+        log_info "${C_CYAN}Install Directory:${C_RESET} Pip default (system/user site-packages)"
+    fi
+    log_info "${C_CYAN}Operating System:${C_RESET}   $OS_TYPE"
     log_info "${C_CYAN}Auto Install Deps:${C_RESET}  $AUTO_INSTALL_DEPS"
 }
 
@@ -494,7 +527,6 @@ step_01_check_python() {
             # PYTHON_EXEC_PATH should be updated by attempt_install_python if successful
         else
             log_error "Python ${PYTHON_VERSION_TARGET} not found. Auto-install is disabled or no system installer known. Please install Python and re-run."
-            # ... (print manual install instructions as before) ...
         fi
     fi
     # One final check even after potential auto-install
@@ -517,7 +549,6 @@ step_02_check_git() {
                 fi
             else
                 log_error "Git not found. Auto-install is disabled or no system installer known. Please install Git and re-run."
-                 # ... (print manual install instructions as before) ...
             fi
         fi
         # Final check for Git
@@ -705,9 +736,9 @@ step_07_finalize_installation() {
     # ... (same as v2.0.0) ...
     log_title "${E_PARTY} Step 7: Finalizing Installation"
     if [[ -z "$TB_CMD_FOR_INIT" ]]; then log_error "Path to 'tb' command for initialization is not set."; fi
-    log_info "Running ToolBoxV2 initialization: ${C_CYAN}$TB_CMD_FOR_INIT -init${C_RESET}"
-    if "$TB_CMD_FOR_INIT" -init; then log_success "ToolBoxV2 initialized successfully!"; else
-        log_error "ToolBoxV2 initialization failed. Please try running '${C_CYAN}$TB_CMD_FOR_INIT -init${C_RESET}' manually."; fi
+    log_info "Running ToolBoxV2 initialization: ${C_CYAN}$TB_CMD_FOR_INIT -init main${C_RESET}"
+    if "$TB_CMD_FOR_INIT" -init main; then log_success "ToolBoxV2 initialized successfully!"; else
+        log_error "ToolBoxV2 initialization failed. Please try running '${C_CYAN}$TB_CMD_FOR_INIT -init main${C_RESET}' manually."; fi
 }
 
 

@@ -4,7 +4,7 @@ import subprocess
 import time
 
 # Define the directory where PID files are stored
-PID_DIRECTORY = "./pids"
+PID_DIRECTORY = "./.info"
 
 GREEN_CIRCLE = "🟢"
 YELLOW_CIRCLE = "🟡"

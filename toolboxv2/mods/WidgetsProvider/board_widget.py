@@ -133,6 +133,8 @@ class BoardWidget(MainTool, BaseWidget):
         self.color = "WITHE"
         self.tools = {'name': Name}
         self.version = version
+
+        BaseWidget.__init__(self, name=self.name)
         MainTool.__init__(self,
                           load=self.on_start,
                           v=self.version,
@@ -140,7 +142,6 @@ class BoardWidget(MainTool, BaseWidget):
                           color=self.color,
                           on_exit=self.on_exit)
 
-        BaseWidget.__init__(self, name=self.name)
         self.register(self.app, self.get_widget, self.version)
 
     def main(self, request):

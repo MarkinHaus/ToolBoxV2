@@ -139,6 +139,14 @@ For more specific build and run commands, please consult the `scripts` section i
     bash .github/hooks/setup_hooks.sh
 ```
 
+### auto version commit hook add <#> to the commit msg and <sum> for auto summary
+### auto tagging of version dev, alpha or release tagging syntax in commit msg
+ - [t:d] for dev
+ - [t:a] for alpha and
+ - [t:r] for release
+
+ all with auto versioning
+
 #### pre-commit hook
 
 runs Ruff Bandit Safety versions and on <sum> in the commit msg auto summary of the changes

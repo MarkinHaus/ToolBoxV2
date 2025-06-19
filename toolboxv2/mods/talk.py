@@ -1,720 +1,462 @@
+# talk.py
 import asyncio
-import json
-import threading
-from functools import partial
+import base64
+import uuid
+from typing import Dict, Optional, Any, AsyncGenerator
 
-from fastapi import Request, WebSocket
-from starlette.responses import HTMLResponse
+from pydantic import BaseModel, Field
 
-from toolboxv2 import TBEF, App, Spinner, get_app
-from toolboxv2.tests.a_util import async_test
-from toolboxv2.utils.extras.base_widget import get_spec, get_user_from_request
-
-Name = 'talk'
-export = get_app("cli_functions.Export").tb
-default_export = export(mod_name=Name)
-version = '0.0.1'
-talk_generate, talk_tts = None, None
+from toolboxv2 import App, Result, RequestData, TBEF, get_app, MainTool
+from toolboxv2.mods.isaa.extras.session import ChatSession
+from toolboxv2.utils.extras.base_widget import get_current_user_from_request
+# The ChatSession is central to maintaining conversation context with the agent.
 
 
-@export(mod_name=Name, version=version, initial=True)
-def start(app=None):
-    global talk_generate, talk_tts
-    if app is None:
-        app = get_app("Starting Talk interface")
-    if not hasattr(TBEF, "AUDIO"):
-        return
-    talk_generate = app.run_any(TBEF.AUDIO.STT_GENERATE,
-                                model="openai/whisper-small",
-                                row=True, device=1)
-    func = app.get_function(TBEF.AUDIO.SPEECH, state=False)[0]
-
-    if func is None or func == "404":
-        return "Talke Offline"
-    talk_tts = partial(func, voice_index=0,
-                       use_cache=False,
-                       provider='piper',
-                       config={'play_local': False},
-                       save=False)
-
-    if talk_generate is not None:
-        app.print('talk_generate Online')
-    else:
-        app.print("ERROR talk_generate")
-    if talk_tts is not None:
-        app.print('talk_tts Online')
-    else:
-        app.print("ERROR talk_tts")
+# --- Constants ---
+MOD_NAME = "talk"
+VERSION = "1.0.0"
+export = get_app(f"widgets.{MOD_NAME}").tb
 
 
-# WebSocket-Endpunkt zum Senden der Audio-Chunks
-@export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True,
-        name="talk_websocket_echo", row=True)
-async def upload_audio(websocket: WebSocket):
-    if websocket is None:
-        return
-    await websocket.accept()
+# --- Session State Model ---
+class TalkSession(BaseModel):
+    """Represents the state of a single voice conversation session."""
+    session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    chat_session: ChatSession
+    event_queue: asyncio.Queue = Field(default_factory=asyncio.Queue, exclude=True)
+    # Task to track the running agent process, preventing concurrent requests
+    agent_task: Optional[asyncio.Task] = Field(default=None, exclude=True)
 
-    try:
-        while True:
-            # Empfangen des Audio-Blobs vom Client
-            audio_data = await websocket.receive_bytes()
-            await asyncio.sleep(0.6)
-            await websocket.send_bytes(audio_data)
-
-    except Exception as e:
-        print(f"Fehler beim Empfangen der Audiodaten: {e}")
+    class Config:
+        arbitrary_types_allowed = True
 
 
-async def stream_response(app, input_text, websocket: WebSocket,
-                          provider='piper', voice_index=0, fetch_memory=False, all_meme=False, model_name='ryan',
-                          f=False, chat_session=None):
-    llm_text = [""]
-    llm_text_ = [""]
+# --- Main Module Class ---
+class Tools(MainTool):
+    """
+    The main class for the Talk module, handling initialization,
+    session management, and dependency loading.
+    """
 
-    async def stream_text(text):
-        llm_text[0] += text
-        if text.endswith('\n\n') or text.endswith('\n') or text.endswith('.') or text.endswith('?'):
-            if llm_text[0] == "":
-                return
-            await websocket.send_json({"type": "response", "text": llm_text[0]})
-            await asyncio.sleep(0.25)
-            audio_data: bytes = app.run_any(TBEF.AUDIO.SPEECH, text=llm_text[0], voice_index=voice_index,
-                                            use_cache=False,
-                                            provider=provider,
-                                            config={'play_local': False, 'model_name': model_name},
-                                            local=False,
-                                            save=False)
-            llm_text_[0] += llm_text[0]
-            chat_session.add_message({'content': llm_text[0], 'role': 'assistant'})
-            llm_text[0] = ""
-            if not audio_data:
-                return
-            # await websocket.send_json(audio_data)
-            await websocket.send_bytes(audio_data)
-            await asyncio.sleep(0.25)
+    def __init__(self, app: App):
+        # Initialize the MainTool with module-specific information
+        self.version = VERSION
+        self.name = MOD_NAME
+        self.color = "CYAN"
+        self.sessions: Dict[str, TalkSession] = {}
+        self.stt_func = None
+        self.tts_func = None
+        self.isaa_mod = None
+        super().__init__(load=self.on_start, v=VERSION, name=MOD_NAME, tool={}, on_exit=self.on_exit)
 
-    async def stream_text_t(text):
-        llm_text[0] += text
-        if text:
-            if llm_text[0] == "":
-                return
+    def on_start(self):
+        """Initializes the Talk module, its dependencies (ISAA, AUDIO), and UI registration."""
+        self.app.logger.info(f"Starting {self.name} v{self.version}...")
 
-            llm_text[0] = app.get_mod('isaa').mini_task_completion(f"Summarys thes System Processing step for the "
-                                                                   f"user in one sentence : {llm_text[0]}",
-                                                                   max_tokens=85) + '... continues.'
+        # Get the ISAA module instance, which is a critical dependency
+        self.isaa_mod = self.app.get_mod("isaa")
+        if not self.isaa_mod:
+            self.app.logger.error(
+                f"{self.name}: ISAA module not found or failed to load. Voice assistant will not be functional.")
+            return
 
-            await websocket.send_json({"type": "response", "text": llm_text[0]})
-            await asyncio.sleep(0.25)
-            audio_data: bytes = app.run_any(TBEF.AUDIO.SPEECH, text=llm_text[0], voice_index=voice_index,
-                                            use_cache=False,
-                                            provider=provider,
-                                            config={'play_local': False, 'model_name': 'kathleen'},
-                                            local=False,
-                                            save=False)
-            llm_text_[0] += llm_text[0]
-            chat_session.add_message({'content': llm_text[0], 'role': 'system'})
-            llm_text[0] = ""
-            if not audio_data:
-                return
-            # await websocket.send_json(audio_data)
-            await websocket.send_bytes(audio_data)
-            await asyncio.sleep(0.25)
+        # Initialize STT and TTS services from the AUDIO module
+        if hasattr(TBEF, "AUDIO") and self.app.get_mod("AUDIO"):
+            self.stt_func = self.app.run_any(TBEF.AUDIO.STT_GENERATE, model="openai/whisper-small", row=True, device=0)
+            self.tts_func = self.app.get_function(TBEF.AUDIO.SPEECH, state=False)[0]
 
-    agent = app.run_any(TBEF.ISAA.GET_AGENT_CLASS, agent_name='self')
-    agent.stream = True
-    agent_t = app.run_any(TBEF.ISAA.GET_AGENT_CLASS, agent_name='TaskCompletion')
-
-    agent_t.post_callback = stream_text_t
-    from toolboxv2.mods.isaa.extras.modes import ConversationMode
-    from toolboxv2.mods.isaa.extras.session import ChatSession
-
-    if chat_session is None:
-        chat_session = ChatSession(app.get_mod('isaa').get_memory())
-
-    agent.mode = app.get_mod('isaa').controller.rget(ConversationMode)
-    agent.stream_function = stream_text
-
-    await chat_session.add_message({'content': input_text, 'role': 'user'})
-
-    with Spinner(message="Fetching llm_message...", symbols='+'):
-        llm_message = agent.get_llm_message(input_text, persist=True, fetch_memory=fetch_memory,
-                                            isaa=app.get_mod("isaa"),
-                                            task_from="user", all_meme=all_meme)
-
-    out = await agent.a_run_model(llm_message=llm_message, persist_local=True,
-                                  persist_mem=fetch_memory)
-    f_out = ''
-    if f and agent.if_for_fuction_use(out):
-        f_out = agent.execute_fuction(persist=True, persist_mem=fetch_memory)
-        await stream_text(f_out)
-    return out, f_out
-
-
-# WebSocket-Endpunkt zum Senden der Audio-Chunks
-@export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True,
-        name="talk_websocket_context", row=True)
-async def upload_audio_isaa_context(websocket: WebSocket):
-    if websocket is None:
-        return
-    await websocket.accept()
-    app = get_app("Talk Transcribe Audio")
-    try:
-        while True:
-            # Empfangen des Audio-Blobs vom Client
-            audio_data: bytes = await websocket.receive_bytes()
-            text = talk_generate(audio_data)['text']
-            print(text)
-            text = get_app('talk.upload_audio_isaa_context').run_any(TBEF.ISAA.MINI_TASK, mini_task=f"{text}",
-                                     mode=None, fetch_memory=True, all_mem=True)
-            print(text)
-            audio_data: bytes = app.run_any(TBEF.AUDIO.SPEECH, voice_index=0,
-                                            use_cache=False,
-                                            provider='piper',
-                                            config={'play_local': False},
-                                            save=False, text=text)
-            print(f"AUDIO Data : {len(audio_data)}")
-            await websocket.send_bytes(audio_data)
-    except Exception as e:
-        print(f"Fehler beim Empfangen der Audiodaten: {e}")
-    await websocket.close()
-
-
-@export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True,
-        name="talk_websocket", row=True)
-async def upload_audio_isaa(websocket: WebSocket, context="F", all_c="F", v_name="ryan", v_index="0", provider='piper',
-                            f="F"):
-    if websocket is None:
-        return
-    await websocket.accept()
-    app = get_app("Talk Transcribe Audio")
-    stt = app.run_any(TBEF.AUDIO.STT_GENERATE,
-                      model="openai/whisper-small",
-                      row=True, device=1)
-
-    if v_index not in [str(x) for x in range(len(v_index) - 1, 10 * len(v_index))]:
-        await websocket.close()
-        return
-
-    chat_session = [None]
-    accumulated_text = [""]
-    workers = [0]
-    format_bytes = [b""]
-    lock = threading.Lock()
-    WEBM_START_BYTES_FORMAT = [162]
-
-    async def worker_transcribe(audio_data):
-        WEBM_START_BYTES_FORMAT_ = WEBM_START_BYTES_FORMAT[0]
-        try:
-            text = ""
-            if accumulated_text[0] != "":
-                try:
-                    text = stt(format_bytes[0][:WEBM_START_BYTES_FORMAT_] + audio_data)['text']
-                except Exception:
-                    print(f"MAGIC-Number {WEBM_START_BYTES_FORMAT_} is not valid")
-
-                    for i in range(WEBM_START_BYTES_FORMAT_ - 130, WEBM_START_BYTES_FORMAT_ + 130):
-                        print(f"Try new M-Number {i}")
-                        try:
-                            text = stt(format_bytes[0][:i] + audio_data)['text']
-                            WEBM_START_BYTES_FORMAT[0] = i
-                            print("NEW Magic-Number:", i)
-                            break
-                        except Exception:
-                            pass
+            if self.stt_func and self.stt_func != "404":
+                self.app.logger.info("Talk STT (whisper-small) is Online.")
             else:
-                text = stt(audio_data)['text']
-            if text:
-                lock.acquire(True)
-                accumulated_text[0] += text + " "
-                # Send transcription update to client
-                await websocket.send_json({"type": "transcription", "text": text})
-                workers[0] -= 1
-                lock.release()
-            print("Done transcribe", workers[0])
-        except Exception as e:
-            workers[0] -= 1
-            app.debug_rains(e)
+                self.app.logger.warning("Talk STT function not available.")
+                self.stt_func = None
 
-    # try:
-    while True:
-        data = await websocket.receive()
-        if 'bytes' in data:
-            print("received audio data ", workers[0])
-            # Perform real-time transcription
-            if format_bytes[0] == b'':
-                if lock.locked():
-                    lock.release()
-                format_bytes[0] = data['bytes']
-            workers[0] += 1
-            threading.Thread(target=async_test(worker_transcribe), args=(data['bytes'],), daemon=True).start()
+            if self.tts_func and self.tts_func != "404":
+                self.app.logger.info("Talk TTS function is Online.")
+            else:
+                self.app.logger.warning("Talk TTS function not available.")
+                self.tts_func = None
+        else:
+            self.app.logger.warning("Talk module: AUDIO module features are not available or the module is not loaded.")
 
-        elif 'text' in data:
-            print("s", workers[0])
-            message = json.loads(data.get('text'))
-            if message.get("action") == "process":
-                # Process accumulated text
-                max_itter = 0
-                while workers[0] > 1 and max_itter < 500000:
-                    await asyncio.sleep(0.2)
-                    max_itter += 1
-                print(accumulated_text[0])
-                response, f_r = await stream_response(app, accumulated_text[0], websocket, provider=provider,
-                                                      voice_index=[str(x) for x in
-                                                                   range(len(v_index) - 1,
-                                                                         10 * len(v_index))].index(
-                                                          v_index),
-                                                      fetch_memory=context == "T",
-                                                      all_meme=all_c == "T", model_name=v_name, f=f == "T",
-                                                      chat_session=chat_session[0])
-                # Send processed response to client
-                accumulated_text = [""]  # Reset accumulated text
-                workers[0] = 0
-                format_bytes[0] = b''
+        if not all([self.stt_func, self.tts_func]):
+            self.app.logger.error("Talk module cannot function without both STT and TTS services.")
 
-@export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True,
-        name="main_web_talk_entry", row=True)
-async def main_web_talk_entry(app: App = None, request: Request or None = None, modi=None):
-    if request is None:
-        return
-    get_spec(request).get()
-    user = await get_user_from_request(app, request)
-    if user.name == "":
-        return HTMLResponse(content="<p>Invalid User Pleas Log In <a href='/'>Home</a></p>")
+        # Register the UI component with CloudM
+        self.app.run_any(("CloudM", "add_ui"),
+                         name=MOD_NAME, title="Voice Assistant", path=f"/api/{MOD_NAME}/ui",
+                         description="Natural conversation with an AI assistant.", auth=True)
+        self.app.logger.info(f"{self.name} UI registered with CloudM.")
 
-    return HTMLResponse(content='''<div>
+    def on_exit(self):
+        """Clean up resources, especially cancelling any active agent tasks."""
+        for session in self.sessions.values():
+            if session.agent_task and not session.agent_task.done():
+                session.agent_task.cancel()
+        self.app.logger.info(f"Closing {self.name} and cleaning up sessions.")
+
+
+# --- Helper Function ---
+async def _get_user_uid(app: App, request: RequestData) -> Optional[str]:
+    """Securely retrieves the user ID from the request context."""
+    user = await get_current_user_from_request(app, request)
+    return user.uid if user and hasattr(user, 'uid') and user.uid else None
+
+
+# --- Core Agent Logic (Background Task) ---
+async def _run_agent_and_respond(self: Tools, session: TalkSession, text: str, voice_params: Dict):
+    """
+    The core logic for running the agent, handling callbacks, and generating responses.
+    This function is designed to run as a background asyncio.Task.
+    """
+    queue = session.event_queue
+    try:
+        # Get the main agent from ISAA
+        agent = await self.isaa_mod.get_agent("self")
+        if not agent:
+            raise RuntimeError("Could not retrieve 'self' agent from ISAA.")
+
+        # Define callbacks to push live feedback to the client via the event queue
+        async def tool_start_callback(tool_name: str, tool_input: Any):
+            await queue.put({"event": "agent_thought", "data": f"Executing tool: {tool_name}..."})
+
+        async def tool_end_callback(tool_output: Any):
+            await queue.put({"event": "agent_thought", "data": "Tool execution finished."})
+
+        # Set callbacks on the agent's tool executor if it exists
+        if hasattr(agent, 'tool_executor') and agent.tool_executor:
+            agent.tool_executor.start_callback = tool_start_callback
+            agent.tool_executor.end_callback = tool_end_callback
+
+        # Stream the LLM's text response chunk by chunk
+        full_response = ""
+        async for chunk in agent.a_stream(text, session_id=session.session_id):
+            await queue.put({"event": "agent_response_chunk", "data": chunk})
+            full_response += chunk
+
+        # Generate audio from the complete response text
+        if self.tts_func and full_response.strip():
+            await queue.put({"event": "agent_thought", "data": "Generating audio..."})
+            audio_data: bytes = self.tts_func(
+                text=full_response,
+                voice_index=voice_params.get('voice_index', 0),
+                provider=voice_params.get('provider', 'piper'),
+                config={'play_local': False, 'model_name': voice_params.get('model_name', 'ryan')},
+                local=False, save=False
+            )
+            if audio_data:
+                # Send audio as a base64 encoded string within a JSON payload
+                audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+                await queue.put({"event": "audio_playback", "data": {"format": "audio/mpeg", "content": audio_base64}})
+            else:
+                await queue.put({"event": "error", "data": "Failed to generate audio for the response."})
+
+    except Exception as e:
+        self.app.logger.error(f"Error in agent task for session {session.session_id}: {e}", exc_info=True)
+        await queue.put({"event": "error", "data": f"An internal error occurred: {str(e)}"})
+    finally:
+        # Signal to the client that processing is complete
+        await queue.put({"event": "processing_complete", "data": "Ready for next input."})
+        session.agent_task = None  # Clear the task reference to allow new requests
+
+
+# --- API Endpoints ---
+
+@export(mod_name=MOD_NAME, api=True, name="start_session", api_methods=['POST'], request_as_kwarg=True)
+async def api_start_session(self: Tools, request: RequestData) -> Result:
+    """Creates a new talk session for an authenticated user."""
+    user_id = await _get_user_uid(self.app, request)
+    if not user_id:
+        return Result.default_user_error(info="User authentication required.", exec_code=401)
+
+    if not self.isaa_mod:
+        return Result.default_internal_error(info="ISAA module is not available.")
+
+    # Create a new ISAA ChatSession for conversation history
+    chat_session = ChatSession(mem=self.isaa_mod.get_memory())
+    session = TalkSession(user_id=user_id, chat_session=chat_session)
+    self.sessions[session.session_id] = session
+
+    self.app.logger.info(f"Started new talk session {session.session_id} for user {user_id}")
+    return Result.json(data={"session_id": session.session_id})
+
+
+@export(mod_name=MOD_NAME, api=True, name="stream", api_methods=['GET'], request_as_kwarg=True)
+async def api_open_stream(self: Tools, request: RequestData, session_id: str) -> Result:
+    """Opens a Server-Sent Events (SSE) stream for a given session ID."""
+    if not session_id or session_id not in self.sessions:
+        return Result.default_user_error(info="Invalid or expired session ID.", exec_code=404)
+
+    session = self.sessions[session_id]
+    queue = session.event_queue
+
+    async def event_generator() -> AsyncGenerator[Dict[str, Any], None]:
+        self.app.logger.info(f"SSE stream opened for session {session_id}")
+        await queue.put({"event": "connection_ready", "data": "Stream connected successfully."})
+        try:
+            while True:
+                event_data = await queue.get()
+                yield event_data
+                queue.task_done()
+        except asyncio.CancelledError:
+            self.app.logger.info(f"SSE stream for session {session_id} cancelled by client.")
+        finally:
+            if session_id in self.sessions:
+                if self.sessions[session_id].agent_task and not self.sessions[session_id].agent_task.done():
+                    self.sessions[session_id].agent_task.cancel()
+                del self.sessions[session_id]
+                self.app.logger.info(f"Cleaned up and closed session {session_id}.")
+
+    return Result.sse(stream_generator=event_generator())
+
+
+@export(mod_name=MOD_NAME, api=True, name="process_audio", api_methods=['POST'], request_as_kwarg=True)
+async def api_process_audio(self: Tools, request: RequestData, form_data: Dict) -> Result:
+    """Receives audio, transcribes it, and starts the agent processing task."""
+    if not self.stt_func:
+        return Result.default_internal_error(info="Speech-to-text service is not available.")
+
+    session_id = form_data.get('session_id')
+    audio_file_data = form_data.get('audio_blob')
+
+    if not session_id or session_id not in self.sessions:
+        return Result.default_user_error(info="Invalid or missing session_id.", exec_code=400)
+
+    session = self.sessions[session_id]
+
+    if session.agent_task and not session.agent_task.done():
+        return Result.default_user_error(info="Already processing a previous request.", exec_code=429)
+
+    if not audio_file_data or 'content_base64' not in audio_file_data:
+        return Result.default_user_error(info="Audio data is missing or in the wrong format.", exec_code=400)
+
+    try:
+        audio_bytes = base64.b64decode(audio_file_data['content_base64'])
+        transcription_result = self.stt_func(audio_bytes)
+        transcribed_text = transcription_result.get('text', '').strip()
+
+        if not transcribed_text:
+            await session.event_queue.put({"event": "error", "data": "Could not understand audio. Please try again."})
+            return Result.ok(data={"message": "Transcription was empty."})
+
+        await session.event_queue.put({"event": "transcription_update", "data": transcribed_text})
+
+        voice_params = {
+            "voice_index": int(form_data.get('voice_index', '0')),
+            "provider": form_data.get('provider', 'piper'),
+            "model_name": form_data.get('model_name', 'ryan')
+        }
+
+        # Start the background task; the request returns immediately.
+        session.agent_task = asyncio.create_task(
+            _run_agent_and_respond(self, session, transcribed_text, voice_params)
+        )
+        return Result.ok(data={"message": "Audio received and processing started."})
+
+    except Exception as e:
+        self.app.logger.error(f"Error processing audio for session {session_id}: {e}", exc_info=True)
+        return Result.default_internal_error(info=f"Failed to process audio: {str(e)}")
+
+
+@export(mod_name=MOD_NAME, name="ui", api=True, api_methods=['GET'], request_as_kwarg=True)
+def get_main_ui(self: Tools, request: RequestData) -> Result:
+    """Serves the main HTML and JavaScript UI for the Talk widget."""
+    html_content = """
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ToolBoxV2 - Voice Assistant</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
     <style>
-        #container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-        }
-
-        #audioVisualizer {
-            width: 300px;
-            height: 300px;
-            background-color: rgba(var(--background-color), 0.8);
-            border-radius: 50%;
-            position: relative;
-            overflow: hidden;
-            border: 2.5px dashed rgba(255, 255, 255, 0.4);
-            box-shadow: inset -9px -11px 10px 0px var(--background-color);
-        }
-
-        .particle {
-            position: absolute;
-            width: 10px;
-            height: 10px;
-            background-color: rgba(var(--text-color), 0.8);
-            border-radius: 50%;
-            pointer-events: none;
-        }
-
-        #microphoneButton {
-            margin-top: 20px;
-            font-size: 30px;
-            padding: 10px 20px;
-        }
+        body { font-family: sans-serif; background-color: var(--theme-bg); color: var(--theme-text); display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+        .container { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; max-width: 600px; padding: 20px; text-align: center; }
+        .visualizer { width: 250px; height: 250px; background-color: var(--glass-bg); border-radius: 50%; position: relative; overflow: hidden; border: 3px solid var(--theme-border); box-shadow: inset 0 0 15px rgba(0,0,0,0.2); transition: border-color 0.3s, box-shadow 0.3s; }
+        .visualizer.recording { border-color: #ef4444; }
+        .visualizer.thinking { border-color: #3b82f6; animation: pulse 2s infinite; }
+        .visualizer.speaking { border-color: #22c55e; }
+        .particle { position: absolute; width: 8px; height: 8px; background-color: var(--theme-primary); border-radius: 50%; pointer-events: none; transition: all 0.1s; }
+        #micButton { margin-top: 30px; width: 80px; height: 80px; border-radius: 50%; border: none; background-color: var(--theme-primary); color: white; cursor: pointer; display: flex; justify-content: center; align-items: center; box-shadow: 0 4px 10px rgba(0,0,0,0.2); transition: background-color 0.2s, transform 0.1s; }
+        #micButton:active { transform: scale(0.95); }
+        #micButton:disabled { background-color: #9ca3af; cursor: not-allowed; }
+        #micButton .material-symbols-outlined { font-size: 40px; }
+        #statusText { margin-top: 20px; min-height: 50px; font-size: 1.2em; color: var(--theme-text-muted); line-height: 1.5; }
+        @keyframes pulse { 0% { box-shadow: inset 0 0 15px rgba(0,0,0,0.2), 0 0 0 0 rgba(59, 130, 246, 0.7); } 70% { box-shadow: inset 0 0 15px rgba(0,0,0,0.2), 0 0 0 15px rgba(59, 130, 246, 0); } 100% { box-shadow: inset 0 0 15px rgba(0,0,0,0.2), 0 0 0 0 rgba(59, 130, 246, 0); } }
     </style>
-    <div id="container">
-        <div id="audioVisualizer"></div>
-        <p id="infos"> Infos </p>
-        <button id="microphoneButton">
-            <span class="material-symbols-outlined">mic</span>
-        </button>
+</head>
+<body>
+    <div class="container">
+        <div class="visualizer" id="visualizer"></div>
+        <p id="statusText">Press the microphone to start</p>
+        <button id="micButton"><span class="material-symbols-outlined">hourglass_empty</span></button>
+        <div class="options" style="margin-top: 20px;">
+            <label for="voiceSelect">Voice:</label>
+            <select id="voiceSelect">
+                <option value='{"provider": "piper", "model_name": "ryan", "voice_index": 0}'>Ryan (EN)</option>
+                <option value='{"provider": "piper", "model_name": "kathleen", "voice_index": 0}'>Kathleen (EN)</option>
+                <option value='{"provider": "piper", "model_name": "karlsson", "voice_index": 0}'>Karlsson (DE)</option>
+            </select>
+        </div>
     </div>
-
     <script unSave="true">
-        const audioVisualizer = document.getElementById('audioVisualizer');
-        const microphoneButton = document.getElementById('microphoneButton');
-        const infoPtag = document.getElementById('infos');
+    function initTalk() {
+        const visualizer = document.getElementById('visualizer');
+        const micButton = document.getElementById('micButton');
+        const statusText = document.getElementById('statusText');
+        const voiceSelect = document.getElementById('voiceSelect');
 
-        let audioContext, analyser, audioSource, mediaRecorder, webSocket, currentAudio;
-        let particles = [];
-        let isRecording = false;
-        let isPlaying = false;
-        let isError = false;
-        let audioChunks = [];
-        let audioQue = [];
+        const state = { sessionId: null, sseConnection: null, mediaRecorder: null, audioChunks: [], isRecording: false, isProcessing: false, currentAudio: null };
+        let audioContext, analyser, particles = [];
 
-        audioVisualizer.style.borderColor = 'black';
-
-        if (window.history.state && !window.history.state.url.includes('?')) {
-        const modi = window.history.state.url + '?modi=echo | context| translate?lang=en | ..';
-        const rest_def = window.history.state.url + '?v_name=ryan&context=F&all_c=F';
-        infoPtag.innerText = modi+" OR "+rest_def+" Options in url : context={F,T},all_c={F,T}, v_name={karlsson[DE],pavoque[DE],hfc_female[EN],kathleen[EN],lessac[EN],ryan[EN]}, v_index=0, provider={piper,eleven_labs}";
+        function setStatus(text, mode = 'idle') {
+            statusText.textContent = text;
+            visualizer.className = 'visualizer ' + mode;
         }
 
-        // Initialisiere den AudioContext und AnalyserNode
-        async function initAudioAnalysis() {
-            try {
-                audioContext = new AudioContext();
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: {
-                    channelCount: 1,
-                    sampleRate: 16000
-                } });
-                audioSource = audioContext.createMediaStreamSource(stream);
-                analyser = audioContext.createAnalyser();
-                analyser.fftSize = 64;
-                audioSource.connect(analyser);
-
-                // MediaRecorder initialisieren (new Blob([event.data], { type: 'audio/webm;codecs=opus' }));
-                mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus', });
-
-                 let isFirstChunk = true;
-
-
-                mediaRecorder.ondataavailable = async (event) => {
-                    if (event.data.size > 0 && webSocket && webSocket.readyState === WebSocket.OPEN) {
-                        // Erstelle eine neue Blob für jeden Chunk
-                        const chunk = new Blob([event.data], { type: 'audio/webm;codecs=opus' });
-                        webSocket.send(chunk);
-                    }
-                };
-
-
-                mediaRecorder.onstart = () => {
-            console.log("MediaRecorder gestartet");
-            audioChunks = [];
-            isFirstChunk = true;
-            infoPtag.innerText = "Recording...";
-        };
-
-        mediaRecorder.onstop = async () => {
-            console.log("MediaRecorder gestoppt");
-            infoPtag.innerText = "Processing...";
-
-            // Sende verbleibende Audiodaten
-            if (audioChunks.length > 0 && webSocket && webSocket.readyState === WebSocket.OPEN) {
-                const blob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
-                webSocket.send(blob);
-            }
-
-            // Sende ein Signal an den Server, dass die Aufnahme beendet wurde
-            if (webSocket && webSocket.readyState === WebSocket.OPEN) {
-                webSocket.send(JSON.stringify({ action: 'process' }));
-            }
-
-            audioChunks = [];
-        };
-
-                createParticles(100);
-                visualizeAudio();
-            } catch (error) {
-                console.error('Error initializing audio analysis:', error);
-                errorRedParticles();
-            }
-        }
-
-        // Erstelle die Partikel für den Visualizer
-        function createParticles(num) {
+        function createParticles(num = 50) {
+            visualizer.innerHTML = ''; particles = [];
             for (let i = 0; i < num; i++) {
-                const particle = document.createElement('div');
-                particle.classList.add('particle');
-
-                // Positioniere die Partikel entlang eines Kreises
-                const angle = Math.random() * Math.PI * 2;  // Zufälliger Winkel im Kreis
-                const radius = Math.random() * 50 + 100;    // Zufälliger Radius im Kreis
-                particle.x = 150 + Math.cos(angle) * radius;
-                particle.y = 150 + Math.sin(angle) * radius;
-
-                particle.style.transform = `translate(${particle.x}px, ${particle.y}px)`;
-                particle.speedX = (Math.random() - 0.5) * 2;  // zufällige Bewegungsrichtung X
-                particle.speedY = (Math.random() - 0.5) * 2;  // zufällige Bewegungsrichtung Y
-                audioVisualizer.appendChild(particle);
-                particles.push(particle);
+                const p = document.createElement('div'); p.classList.add('particle');
+                visualizer.appendChild(p);
+                particles.push({ element: p, angle: Math.random() * Math.PI * 2, radius: 50 + Math.random() * 50, speed: 0.01 + Math.random() * 0.02 });
             }
         }
 
-        // Visualisiere die Audiodaten mit Partikeln
-        function visualizeAudio() {
-            const frequencyData = new Uint8Array(analyser.frequencyBinCount);
-
-            function renderFrame() {
-                requestAnimationFrame(renderFrame);
-                analyser.getByteFrequencyData(frequencyData);
-                if (isRecording || isPlaying) {
-                    particles.forEach((particle, index) => {
-                        let intensity = frequencyData[index % frequencyData.length] / 255;
-
-                        const size = Math.max(5, intensity * 30); // Partikelgröße basierend auf der Intensität
-                        particle.style.width = `${size}px`;
-                        particle.style.height = `${size}px`;
-
-                        // Partikelbewegung basierend auf Lautstärke (wenn aufgenommen wird)
-
-                        const speedMultiplier = intensity * 10;
-                        particle.x += particle.speedX * speedMultiplier;
-                        particle.y += particle.speedY * speedMultiplier;
-
-                        // Begrenzung der Partikel innerhalb des Containers (Kreis)
-                        const distanceFromCenter = Math.sqrt(
-                            Math.pow(particle.x - 150, 2) + Math.pow(particle.y - 150, 2)
-                        );
-                        if (distanceFromCenter > 150) {
-                            particle.speedX *= -1;
-                            particle.speedY *= -1;
-                        }
-
-                        particle.style.transform = `translate(${particle.x}px, ${particle.y}px)`;
-                        particle.style.backgroundColor = `rgba(0, 0, 255, ${intensity})`;
-
-                    });
-                }else if (audioChunks.length > 0) {
-                    particles.forEach((particle, index) => {
-                        particle.x += particle.speedX;
-                        particle.y += particle.speedY;
-
-                        // Begrenzung der Partikel innerhalb des Containers (Kreis)
-                        const distanceFromCenter = Math.sqrt(
-                            Math.pow(particle.x - 150, 2) + Math.pow(particle.y - 150, 2)
-                        );
-                        if (distanceFromCenter > 150) {
-                            particle.speedX *= -1;
-                            particle.speedY *= -1;
-                        }
-
-                        particle.style.transform = `translate(${particle.x}px, ${particle.y}px)`;
-
-                    });
-                }else if (!isRecording && !isError){
-                    particles.forEach((particle, index) => {
-                        particle.x += particle.speedX / 2;
-                        particle.y += particle.speedY / 2;
-
-                        // Begrenzung der Partikel innerhalb des Containers (Kreis)
-                        const distanceFromCenter = Math.sqrt(
-                            Math.pow(particle.x - 150, 2) + Math.pow(particle.y - 150, 2)
-                        );
-                        if (distanceFromCenter > 150) {
-                            particle.speedX *= -1;
-                            particle.speedY *= -1;
-                        }
-
-                        particle.style.transform = `translate(${particle.x}px, ${particle.y}px)`;
-
-                    });
-                }
-            }
-
-            renderFrame();
-        }
-
-        // Initialisiere die WebSocket-Verbindung
-        function playNextAudio() {
-            if (audioQue.length) {
-                isPlaying = false;
-                playAudio(audioQue.shift());
-            }
-        }
-        function playAudio(audioUrl) {
-            if (isPlaying) {
-                    audioQue.push(audioUrl);
-                    return
-                }
-            if (currentAudio) {
-                    currentAudio.pause();
-                    currentAudio.currentTime = 0; // Setze den Audiowiederholungszeitpunkt auf den Anfang
-                }
-
-                currentAudio = new Audio(audioUrl);
-                currentAudio.volume = 0.6;
-
-                const audioContext2 = new AudioContext();
-                const audioSource2 = audioContext2.createMediaElementSource(currentAudio);
-                analyser = audioContext2.createAnalyser();
-                audioSource2.connect(analyser);
-                analyser.connect(audioContext2.destination);
-
-                currentAudio.play();
-                isPlaying = true;
-
-                currentAudio.onended = () => {
-                    isPlaying = false;
-                    if (audioQue.length) {
-                        playNextAudio();
-                        infoPtag.innerText = "Playing next audio "+audioQue.length+" in list";
-                    }else {
-                        microphoneButton.innerHTML = `<span class="material-symbols-outlined">mic</span>`;
-                        resetParticles();
-                        infoPtag.innerText = "Press enter to continue...";
-                    }
-                };
-
-        }
-        function initWebSocket() {
-            if (!window.history.state.TB){
-                audioVisualizer.style.borderColor = 'red';
-                audioVisualizer.innerHtml = `<h2>Refresh the page (F5)</h2>`;
-                // microphoneButton.innerHTML = `<span class="material-symbols-outlined">stop_circle</span>`;
-                return
-            }
-            const url = window.history.state.TB.base.replace(/http/s, 'ws')+'/api/talk/talk_websocket''' + (
-        '_' + modi if modi else '') + ''''
-            webSocket = new WebSocket(url);
-            audioVisualizer.style.borderColor = 'violet';
-            webSocket.onopen = () => {
-                console.log('WebSocket connection opened');
-                resetParticles();
-                audioVisualizer.style.borderColor = 'white';
-            };
-
-            webSocket.onmessage = (event) => {
-                if (event.data instanceof Blob) {
-            // Handle audio data
-            microphoneButton.innerHTML = `<span class="material-symbols-outlined">stop_circle</span>`;
-            lilaParticles();
-
-                    const audioBlob = new Blob([event.data], { type: 'audio/mpeg' });
-                    const audioUrl = URL.createObjectURL(audioBlob);
-
-                    playAudio(audioUrl);
-                } else {
-                console.log(event.data)
-                    const message = JSON.parse(event.data);
-                    if (message.type === 'transcription') {
-                        updateSubtitles(message.text);
-                    } else if (message.type === 'response') {
-                        displayResponse(message.text);
-                    } else if (message.type === 'error') {
-                        handleError(message.message);
-                    }
-                }
-            };
-
-            webSocket.onclose = () => {
-                console.log('WebSocket connection closed');
-                audioVisualizer.style.borderColor = 'red';
-                infoPtag.innerText = "Connection closed";
-                errorRedParticles();
-            };
-        }
-
-        // Ereignishandler für Mikrofonaufnahme
-        microphoneButton.addEventListener('click', async () => {
-            infoPtag.innerText = "";
-            if (isPlaying) {
-                stopPlayback();
-                return;
-            }
-            if (!isRecording) {
-                await startRecording();
-            } else {
-                stopRecording();
-            }
-        });
-
-        async function startRecording() {
-            if (!audioContext) {
-                await initAudioAnalysis();
-            }else {
-                analyser = audioContext.createAnalyser();
-                analyser.fftSize = 64;
-                audioSource.connect(analyser);
-            }
-            // microphoneButton.innerHTML = `<span class="material-symbols-outlined">send</span>`;
-            audioChunks = [];  // Reset audioChunks before starting recording
-
-            mediaRecorder.start(1200);  // Sicherstellen, dass mediaRecorder initialisiert ist
-            isRecording = true;
-            updateUI();
-            // infoPtag.innerText = "Listening";
-        }
-
-        function stopRecording() {
-            stopPlayback();
-            if (mediaRecorder && isRecording) {
-                mediaRecorder.stop();
-                isRecording = false;
-                updateUI();
-                // Partikel in Neon-Grün und konstante Bewegung
-                particles.forEach(particle => {
-                    particle.style.backgroundColor = 'rgba(0, 255, 0, 0.5)';
+        function animateVisualizer() {
+            if (analyser) {
+                const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                analyser.getByteFrequencyData(dataArray);
+                let average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+                particles.forEach(p => {
+                    p.angle += p.speed;
+                    const scale = 1 + (average / 128);
+                    p.element.style.transform = `translate(${Math.cos(p.angle) * p.radius * scale}px, ${Math.sin(p.angle) * p.radius * scale}px)`;
                 });
             }
-            // microphoneButton.innerHTML = `<span class="material-symbols-outlined">mic</span>`;
-
+            requestAnimationFrame(animateVisualizer);
         }
 
-        function updateSubtitles(text) {
-            infoPtag.innerHTML = text;
-        }
-
-        function displayResponse(text) {
-            infoPtag.innerHTML = text;
-        }
-
-        function handleError(message) {
-            console.error('Error:', message);
-            errorRedParticles();
-        }
-
-        function updateUI() {
-            const micButton = document.getElementById('microphoneButton');
-            micButton.innerHTML = isRecording ?
-                '<span class="material-symbols-outlined">stop_circle</span>' :
-                '<span class="material-symbols-outlined">mic</span>';
-        }
-
-        // Audio-Daten über WebSocket senden
-        function sendAudioData() {
-            microphoneButton.innerHTML = `<span class="material-symbols-outlined">cancel</span>`;
-            const audioBlob = new Blob(audioChunks, { type: 'audio/mpeg' });
-            if (webSocket && webSocket.readyState === WebSocket.OPEN) {
-                webSocket.send(audioBlob);  // Sicherstellen, dass die WebSocket-Verbindung geöffnet ist
-                console.log("Audio data sent to the server");
-            } else {
-                console.error("WebSocket is not open. Cannot send data.");
-                errorRedParticles();
-            }
-            audioChunks = [];
-        }
-
-        // Stoppe das Abspielen und setze den Zustand zurück
-        function stopPlayback() {
-             if (isPlaying) {
-                isPlaying = false;
-                if (currentAudio) {
-                    currentAudio.pause();
-                    currentAudio.currentTime = 0; // Setze den Audiowiederholungszeitpunkt auf den Anfang
+        async function startSession() {
+            if (state.sessionId) return;
+            setStatus("Connecting...", 'thinking');
+            micButton.disabled = true;
+            try {
+                const response = await TB.api.request('talk', 'start_session', {}, 'POST');
+                if (response.error === 'none' && response.get()?.session_id) {
+                    state.sessionId = response.get().session_id;
+                    connectSse();
+                } else {
+                    setStatus(response.info?.help_text || "Failed to start session.", 'error');
                 }
-                resetParticles();
-                microphoneButton.innerHTML = `<span class="material-symbols-outlined">mic</span>`;
-                audioQue = [];
+            } catch (e) {
+                setStatus("Connection error.", 'error');
             }
         }
 
-        function resetParticles() {
-            particles.forEach(particle => {
-                particle.style.backgroundColor = 'rgba(255,255,255, 0.3)';
-            });
-        }
-        function blueParticles() {
-            particles.forEach(particle => {
-                particle.style.backgroundColor = 'rgba(0, 0, 255, 0.6)';
-            });
-        }
-        function lilaParticles() {
-            particles.forEach(particle => {
-                particle.style.backgroundColor = 'rgba(0, 255, 0, 0.6)';
-            });
-        }
-        function errorRedParticles() {
-            isError = true;
-            particles.forEach(particle => {
-                particle.style.backgroundColor = 'rgba(255, 0, 0, 0.8)';
+        function connectSse() {
+            if (!state.sessionId) return;
+            state.sseConnection = TB.sse.connect(`/sse/talk/stream?session_id=${state.sessionId}`, {
+                onOpen: () => console.log("SSE Stream Open"),
+                onError: () => setStatus("Connection lost.", 'error'),
+                listeners: {
+                    'connection_ready': (data) => { setStatus("Press the microphone to start"); micButton.disabled = false; micButton.innerHTML = '<span class="material-symbols-outlined">mic</span>'; },
+                    'transcription_update': (data) => { setStatus(`“${data}”`, 'thinking'); state.isProcessing = true; },
+                    'agent_thought': (data) => setStatus(data, 'thinking'),
+                    'agent_response_chunk': (data) => { if (statusText.textContent.startsWith('“')) statusText.textContent = ""; statusText.textContent += data; },
+                    'audio_playback': (data) => playAudio(data.content, data.format),
+                    'processing_complete': (data) => { state.isProcessing = false; setStatus(data); micButton.disabled = false; micButton.innerHTML = '<span class="material-symbols-outlined">mic</span>'; },
+                    'error': (data) => { state.isProcessing = false; setStatus(data, 'error'); micButton.disabled = false; micButton.innerHTML = '<span class="material-symbols-outlined">mic</span>'; }
+                }
             });
         }
 
-        document.addEventListener('keydown', (event) => {
-            if (event.key === 'Enter') {
-                microphoneButton.click(); // Simuliere einen Klick auf den Button
+        async function playAudio(base64, format) {
+            setStatus("...", 'speaking');
+            const blob = await (await fetch(`data:${format};base64,${base64}`)).blob();
+            const url = URL.createObjectURL(blob);
+            if (state.currentAudio) state.currentAudio.pause();
+            state.currentAudio = new Audio(url);
+
+            if (!audioContext) audioContext = new AudioContext();
+            const source = audioContext.createMediaElementSource(state.currentAudio);
+            if (!analyser) { analyser = audioContext.createAnalyser(); analyser.fftSize = 64; }
+            source.connect(analyser);
+            analyser.connect(audioContext.destination);
+
+            state.currentAudio.play();
+            state.currentAudio.onended = () => { setStatus("Finished speaking."); URL.revokeObjectURL(url); };
+        }
+
+        async function toggleRecording() {
+            if (state.isProcessing) return;
+            if (!state.sessionId) { await startSession(); return; }
+
+            if (state.isRecording) {
+                state.mediaRecorder.stop();
+                micButton.disabled = true;
+                micButton.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span>';
+                setStatus("Processing...", 'thinking');
+            } else {
+                if (!state.mediaRecorder) {
+                    try {
+                        const stream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1 } });
+                        if (!audioContext) audioContext = new AudioContext();
+                        const source = audioContext.createMediaStreamSource(stream);
+                        if (!analyser) { analyser = audioContext.createAnalyser(); analyser.fftSize = 64; }
+                        source.connect(analyser);
+
+                        state.mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+                        state.mediaRecorder.ondataavailable = e => state.audioChunks.push(e.data);
+                        state.mediaRecorder.onstop = uploadAudio;
+                    } catch (e) { setStatus("Could not access microphone.", 'error'); return; }
+                }
+                state.audioChunks = []; state.mediaRecorder.start(); state.isRecording = true;
+                setStatus("Listening...", 'recording');
+                micButton.innerHTML = '<span class="material-symbols-outlined">stop_circle</span>';
             }
-        });
+        }
 
-        // WebSocket beim Start initialisieren
-        initWebSocket();
+        async function uploadAudio() {
+            state.isRecording = false; state.isProcessing = true;
+            if (state.audioChunks.length === 0) { setStatus("No audio recorded."); state.isProcessing = false; micButton.disabled = false; micButton.innerHTML = '<span class="material-symbols-outlined">mic</span>'; return; }
+            const audioBlob = new Blob(state.audioChunks, { type: 'audio/webm;codecs=opus' });
+
+            const formData = new FormData();
+            formData.append('session_id', state.sessionId);
+            formData.append('audio_blob', audioBlob, 'recording.webm');
+
+            const voiceParams = JSON.parse(voiceSelect.value);
+            for (const key in voiceParams) formData.append(key, voiceParams[key]);
+
+            try {
+                const response = await TB.api.request('talk', 'process_audio', formData, 'POST');
+                if (response.error !== 'none') {
+                    setStatus(response.info?.help_text || "Failed to process audio.", 'error');
+                    state.isProcessing = false; micButton.disabled = false; micButton.innerHTML = '<span class="material-symbols-outlined">mic</span>';
+                }
+            } catch(e) {
+                 setStatus("Error sending audio.", 'error'); state.isProcessing = false; micButton.disabled = false; micButton.innerHTML = '<span class="material-symbols-outlined">mic</span>';
+            }
+        }
+
+        micButton.addEventListener('click', toggleRecording);
+        createParticles(); animateVisualizer();
+        if (window.TB.isInitialized) startSession(); else window.TB.events.on('tbjs:initialized', startSession, { once: true });
+    }
+if (window.TB?.events) {
+    if (window.TB.config?.get('appRootId')) { // A sign that TB.init might have run
+         initTalk();
+    } else {
+        window.TB.events.on('tbjs:initialized', initTalk, { once: true });
+    }
+} else {
+    // Fallback if TB is not even an object yet, very early load
+    document.addEventListener('tbjs:initialized', initTalk, { once: true }); // Custom event dispatch from TB.init
+}
+
     </script>
-</div>''')
+</body>
+</html>"""
+    return Result.html(data=html_content)

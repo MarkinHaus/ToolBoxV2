@@ -134,10 +134,16 @@ class MiniRedis:
             value: list[Any] = [value]
 
         db_val: str | None = self.rcon.get(key)
-        save_val: str = db_val or '{"set": {}}'
+
         if db_val:
-            set_val: list = json.loads(db_val).get('set', {})
-            if not isinstance(db_val, list):
+            if isinstance(db_val, bytes):
+                db_val = db_val.decode('utf-8')
+            if db_val.startswith('[') and db_val.endswith(']'):
+                set_val: list = [s.strip() for s in db_val[1:-1].split(',')]
+                set_val = [s[1:-1] for s in set_val]
+            else:
+                set_val: list = json.loads(db_val.replace("'", '"')).get('set', [])
+            if not isinstance(set_val, list):
                 return Result.default_user_error(info="Error key: " + str(key) + " is not a set",
                                                  exec_code=-4).set_origin("Reddis DB")
             for new_val in value:
@@ -145,9 +151,11 @@ class MiniRedis:
                     return Result.default_user_error(info="Error value: " + str(new_val) + " already in list",
                                                      exec_code=-5).set_origin("Reddis DB")
                 set_val.append(new_val)
-            save_val = json.dumps({'set':save_val})
-        else:
+            save_val = json.dumps({'set':set_val})
+        elif value:
             save_val = json.dumps({'set': value})
+        else:
+            save_val: str = '{"set": []}'
 
         self.rcon.set(key, save_val)
 

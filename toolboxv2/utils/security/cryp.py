@@ -92,14 +92,17 @@ class Code:
         return hashlib.sha256((salt + text + pepper).encode()).hexdigest()
 
     @staticmethod
-    def generate_symmetric_key() -> str:
+    def generate_symmetric_key(as_str=True) -> str or bytes:
         """
         Generiert einen Schlüssel für die symmetrische Verschlüsselung.
 
         Returns:
             str: Der generierte Schlüssel.
         """
-        return Fernet.generate_key().decode()
+        key = Fernet.generate_key()
+        if as_str:
+            key = key.decode()
+        return key
 
     @staticmethod
     def encrypt_symmetric(text: str or bytes, key: str) -> str:

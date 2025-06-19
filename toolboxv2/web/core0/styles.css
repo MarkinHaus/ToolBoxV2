@@ -202,7 +202,6 @@ footer {
      color: var(--theme-text-muted); /* Gedämpfte Farbe */
 }
 footer h3, footer h4, footer h5 { /* Footer Überschriften anpassen */
-    font-size: var(--font-size-base);
     margin-bottom: calc(var(--spacing) * 0.5);
     font-weight: var(--font-weight-medium);
     color: var(--theme-text); /* Normale Textfarbe für Lesbarkeit */
@@ -239,6 +238,7 @@ footer a:hover {
     border-left: 2px solid var(--theme-border); /* NEU */
     padding-left: calc(var(--spacing) * 2); /* Mehr Platz links */
     list-style: none; /* Sicherstellen, dass keine Listenpunkte da sind */
+    color: var(--text-color)
 }
 
 .roadmap-item {

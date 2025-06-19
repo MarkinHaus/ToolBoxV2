@@ -85,11 +85,12 @@ This is the recommended method for most users on **Linux, macOS, and Windows (vi
     *   ✅ Create an isolated environment for ToolBoxV2 (usually in `~/.local/share/ToolBoxV2` or `~/Applications/ToolBoxV2`).
     *   ✅ Install ToolBoxV2 Core using `pip` by default.
     *   ✅ Expose the `tb` command (usually via a symlink in `~/.local/bin/`).
-    *   🎉 Run `tb -init` to finalize setup.
+    *   🎉 Run `tb -init main` to finalize setup.
 
     **Customization:**
     The script accepts optional arguments (e.g., `--version=0.5.0`, `--source=git`, `--manager=uv`, `--isaa`, `--dev`). If no arguments are given, it looks for an `init.config` file in the same directory. For details, run:
     ```bash
+
     ./install_toolbox.sh --help
     ```
 
@@ -122,7 +123,7 @@ For users who prefer to manage their Python environments manually.
 
 After installation with pip or uv, you may need to initialize ToolBoxV2 manually:
 ```bash
-    tb -init
+    tb -init main
 ```
 Ensure the directory containing the `tb` script (e.g., `~/.local/bin` for user installs, or your venv's `bin` directory) is in your system's `PATH`.
 
@@ -163,24 +164,49 @@ If you want to contribute or use the very latest (potentially unstable) code:
     bash .github/hooks/setup_hooks.sh
 
     # Initialize ToolBoxV2
-    tb -init
+    tb -init main
 ```
 
 ---
 
-### 📦 Platform-Specific Installers (Desktop Application)
+#### 📦 Installers via GitHub Releases (Recommended for GUI App)
 
-If ToolBoxV2 includes a bundled desktop application, look for platform-specific installers (e.g., `.dmg`, `.exe`, `.deb`, `.rpm`) on our [**GitHub Releases Page**](https://github.com/MarkinHaus/ToolBoxV2/releases).
+Find platform-specific installers (e.g., `.dmg`, `.exe`, `.deb`, `.AppImage`, `.apk`) on our [**GitHub Releases Page**](https://github.com/MarkinHaus/ToolBoxV2/releases).
+Look for releases tagged with "-App" (e.g., `simple-vX.Y.Z-App`).
 
-These installers typically bundle everything needed and provide a native installation experience.
-
-1.  Go to the [Releases Page](https://github.com/MarkinHaus/ToolBoxV2/releases).
-2.  Download the appropriate installer for your operating system (e.g., `simple-core_0.1.0_aarch64.dmg` for macOS, `simple-core_0.1.0_x64-setup.exe
-` for Windows).
+1.  Go to the [**Latest App Release on GitHub**](https://github.com/MarkinHaus/ToolBoxV2/releases/latest). (Note: Manually filter/find the latest release with "App" in its name if the "latest" tag doesn't point to an App release).
+2.  Download the appropriate installer for your operating system from the "Assets" section (e.g., `simple-core_X.Y.Z_aarch64.dmg` for macOS ARM, `simple-core_X.Y.Z_x64-setup.exe` for Windows).
 3.  Run the installer and follow the on-screen instructions.
+
+You can also use our [**Interactive Web Installer Page**](https://simplecore.app/web/core0/Installer.html) which attempts to auto-detect your OS and provide the correct download link from the latest GitHub App release.
 
 ---
 
+### 3. Server-Only Deployment (Rust Actix Server)
+
+If you wish to deploy only the Rust Actix backend server:
+
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/MarkinHaus/ToolBoxV2.git
+    cd ToolBoxV2
+    ```
+2.  **Install Rust:** If you haven't already, install Rust and Cargo from [rust-lang.org](https://www.rust-lang.org/tools/install).
+3.  **Build the server:**
+    ```bash
+    cd toolboxv2/src-core
+    cargo build --release
+    ```
+4. or auto build and run using
+5. ```bash
+    tb api start
+    ```
+for details run
+```bash
+    tb api -h
+```
+
+---
 
 ### 🖥️ Full Stack Desktop/Web Application (Tauri + Web)
 
@@ -196,7 +222,6 @@ for execution details use [package.json](toolboxv2/package.json)
 or run tb --help
 
 ---
-
 
 ## 🧪 CI/CD & Deployment
 
@@ -234,4 +259,3 @@ This project is distributed under a custom license. Please refer to the [LICENSE
 ---
 
 © 2022–2025 Markin Hausmanns – All rights reserved.
-

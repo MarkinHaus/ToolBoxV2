@@ -7,7 +7,7 @@ from toolboxv2 import Style, get_app
 
 export = get_app(from_="welcome.EXPORT").tb
 Name = 'welcome'
-version = '0.0.1'
+version = get_app(from_="welcome.EXPORT").version
 
 
 def webInstall(self, user_instance, construct_render) -> str:
@@ -600,7 +600,7 @@ def printc(str_):
         print("unsupported chars unittest")
         return
     try:
-        print(colorize_ascii_art(Style.GREEN(str(str_, 'Utf-8'))))
+        print(colorize_ascii_art(str_))
     except TypeError:
         try:
             print(Style.GREEN(str(str_, 'ISO-88591')))
@@ -609,13 +609,15 @@ def printc(str_):
 
 
 def colorize_ascii_art(ascii_art):
+    full_str = ""
     for line in ascii_art:
         colored_line = ""
         for char in line:
             if char != "*":
                 # Wechseln Sie zwischen verschiedenen Grüntönen und anderen Farben
-                colored_line += Style.GREEN2(char) if char in "█╗╝" else Style.GREEN(char)
+                colored_line += Style.BLUE(char) if char in "█" else Style.BLUE2(Style.BLINK(char))
             else:
                 colored_line += char
-        print(colored_line)
+        full_str+=colored_line
+    return full_str
 

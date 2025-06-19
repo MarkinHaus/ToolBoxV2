@@ -9,6 +9,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from toolboxv2 import get_logger
+
 # --- Observability Setup (Placeholder) ---
 # In a real application, initialize OpenTelemetry here
 # from opentelemetry import trace, metrics
@@ -81,7 +83,7 @@ except ImportError:
 
 # --- World Model (Moved from agent.py for potential reuse) ---
 logger_wm = logging.getLogger("WorldModel")
-
+logger_wm.setLevel(get_logger().level)
 
 @dataclass
 class WorldModel:

@@ -11,15 +11,26 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from inspect import signature
 from types import ModuleType
-from typing import Any
+from typing import Any, Union
 
 from pydantic import BaseModel
 
+from ..system.db_cli_manager import ClusterManager
+from ..extras.blobs import BlobStorage
 from ..extras import generate_test_cases
 from ..extras.Style import Spinner
 from .all_functions_enums import *
 from .file_handler import FileHandler
 
+import asyncio
+import base64
+import inspect
+import json
+import traceback
+from collections.abc import AsyncGenerator, Callable
+from typing import Any, TypeVar
+
+T = TypeVar('T')
 
 @dataclass
 class Headers:
@@ -261,13 +272,15 @@ class Session:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> 'Session':
-        """Create a Session instance from a dictionary."""
-        # Extract known fields
-        known_fields = {k: data.get(k) for k in ['SiID', 'level', 'spec', 'user_name'] if k in data}
+        """Create a Session instance from a dictionary with default values."""
+        known_fields = {
+            'SiID': data.get('SiID', '#0'),
+            'level': data.get('level', -1),
+            'spec': data.get('spec', 'app'),
+            'user_name': data.get('user_name', 'anonymous'),
+        }
 
-        # Extract extra fields
         extra_data = {k: v for k, v in data.items() if k not in known_fields}
-
         return cls(**known_fields, extra_data=extra_data)
 
     def to_dict(self) -> dict[str, Any]:
@@ -312,6 +325,60 @@ class RequestData:
             'session': self.session.to_dict(),
             'session_id': self.session_id
         }
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate unknown attributes to the `request` object."""
+        # Nur wenn das Attribut nicht direkt in RequestData existiert
+        # und auch nicht `session` oder `session_id` ist
+        if hasattr(self.request, name):
+            return getattr(self.request, name)
+        raise AttributeError(f"'RequestData' object has no attribute '{name}'")
+
+    @classmethod
+    def moc(cls):
+        return cls(
+            request=Request.from_dict({
+                'content_type': 'application/x-www-form-urlencoded',
+                'headers': {
+                    'accept': '*/*',
+                    'accept-encoding': 'gzip, deflate, br, zstd',
+                    'accept-language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'connection': 'keep-alive',
+                    'content-length': '107',
+                    'content-type': 'application/x-www-form-urlencoded',
+                    'cookie': 'session=abc123',
+                    'host': 'localhost:8080',
+                    'hx-current-url': 'http://localhost:8080/api/TruthSeeker/get_main_ui',
+                    'hx-request': 'true',
+                    'hx-target': 'estimates-guest_1fc2c9',
+                    'hx-trigger': 'config-form-guest_1fc2c9',
+                    'origin': 'http://localhost:8080',
+                    'referer': 'http://localhost:8080/api/TruthSeeker/get_main_ui',
+                    'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Windows"',
+                    'sec-fetch-dest': 'empty',
+                    'sec-fetch-mode': 'cors',
+                    'sec-fetch-site': 'same-origin',
+                    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                },
+                'method': 'POST',
+                'path': '/api/TruthSeeker/update_estimates',
+                'query_params': {},
+                'form_data': {
+                    'param1': 'value1',
+                    'param2': 'value2'
+                }
+            }),
+            session=Session.from_dict({
+                'SiID': '29a2e258e18252e2afd5ff943523f09c82f1bb9adfe382a6f33fc6a8381de898',
+                'level': '1',
+                'spec': '74eed1c8de06886842e235486c3c2fd6bcd60586998ac5beb87f13c0d1750e1d',
+                'user_name': 'root',
+                'custom_field': 'custom_value'
+            }),
+            session_id='0x29dd1ac0d1e30d3f'
+        )
 
 
 # Example usage:
@@ -600,7 +667,13 @@ class Result:
     def is_error(self):
         if _test_is_result(self.result.data):
             return self.result.data.is_error()
-        return self.info.exec_code != 0
+        if self.error == ToolBoxError.none:
+            return False
+        if self.info.exec_code == 0:
+            return False
+        if self.info.exec_code == 200:
+            return False
+        return True
 
     def is_data(self):
         return self.result.data is not None
@@ -636,88 +709,135 @@ class Result:
                 data_info=result.get('data_info', '404'),
                 data=result.get('data'),
                 data_type=result.get('data_type', '404'),
-            ) if result else None,
+            ) if result else ToolBoxResultBM(
+                data_to=ToolBoxInterfaces.cli.value,
+                data_info='',
+                data='404',
+                data_type='404',
+            ),
             info=ToolBoxInfoBM(
                 exec_code=info.get('exec_code', 404),
                 help_text=info.get('help_text', '404')
-            ) if info else None,
+            ) if info else ToolBoxInfoBM(
+                exec_code=404,
+                help_text='404'
+            ),
             origin=origin
         ).as_result()
 
     @classmethod
     def stream(cls,
-               stream_generator,
-               content_type="text/event-stream",
-               headers=None,
-               info="OK",
-               interface=ToolBoxInterfaces.remote,
-               cleanup_func=None):
+               stream_generator: Any,  # Renamed from source for clarity
+               content_type: str = "text/event-stream",  # Default to SSE
+               headers: Union[dict, None] = None,
+               info: str = "OK",
+               interface: ToolBoxInterfaces = ToolBoxInterfaces.remote,
+               cleanup_func: Union[
+                   Callable[[], None], Callable[[], T], Callable[[], AsyncGenerator[T, None]], None] = None):
         """
-        Create a streaming response Result that properly handles all types of stream sources.
+        Create a streaming response Result. Handles SSE and other stream types.
 
         Args:
-            stream_generator: Any stream source (async generator, sync generator, iterable, or even string)
-            content_type: Content-Type header (default: text/event-stream for SSE)
-            headers: Additional HTTP headers
-            info: Help text for the result
-            interface: Interface to send data to
+            stream_generator: Any stream source (async generator, sync generator, iterable, or single item).
+            content_type: Content-Type header (default: text/event-stream for SSE).
+            headers: Additional HTTP headers for the response.
+            info: Help text for the result.
+            interface: Interface to send data to.
+            cleanup_func: Optional function for cleanup.
 
         Returns:
-            A Result object configured for streaming
+            A Result object configured for streaming.
         """
         error = ToolBoxError.none
         info_obj = ToolBoxInfo(exec_code=0, help_text=info)
 
-        # Standard SSE headers
-        standard_headers = {
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
+        final_generator: AsyncGenerator[str, None]
 
-        # Apply custom headers
-        all_headers = standard_headers.copy()
-        if headers:
-            all_headers.update(headers)
-
-        # Handle different types of stream sources
         if content_type == "text/event-stream":
-            wrapped_generator = stream_generator
-            if inspect.isgenerator(stream_generator) or hasattr(stream_generator, '__iter__'):
-                # Sync generator or iterable
-                wrapped_generator = SSEGenerator.create_sse_stream(stream_generator, cleanup_func)
+            # For SSE, always use SSEGenerator.create_sse_stream to wrap the source.
+            # SSEGenerator.create_sse_stream handles various types of stream_generator internally.
+            final_generator = SSEGenerator.create_sse_stream(source=stream_generator, cleanup_func=cleanup_func)
 
-            elif isinstance(stream_generator, str):
-                # String (could be a memory address or other reference)
-                # Convert to a generator that yields a single string
-                async def string_to_stream():
+            # Standard SSE headers for the HTTP response itself
+            # These will be stored in the Result object. Rust side decides how to use them.
+            standard_sse_headers = {
+                "Cache-Control": "no-cache",  # SSE specific
+                "Connection": "keep-alive",  # SSE specific
+                "X-Accel-Buffering": "no",  # Useful for proxies with SSE
+                # Content-Type is implicitly text/event-stream, will be in streaming_data below
+            }
+            all_response_headers = standard_sse_headers.copy()
+            if headers:
+                all_response_headers.update(headers)
+        else:
+            # For non-SSE streams.
+            # If stream_generator is sync, wrap it to be async.
+            # If already async or single item, it will be handled.
+            # Rust's stream_generator in ToolboxClient seems to handle both sync/async Python generators.
+            # For consistency with how SSEGenerator does it, we can wrap sync ones.
+            if inspect.isgenerator(stream_generator) or \
+                (not isinstance(stream_generator, str) and hasattr(stream_generator, '__iter__')):
+                final_generator = SSEGenerator.wrap_sync_generator(stream_generator)  # Simple async wrapper
+            elif inspect.isasyncgen(stream_generator):
+                final_generator = stream_generator
+            else:  # Single item or string
+                async def _single_item_gen():
                     yield stream_generator
 
-                wrapped_generator = SSEGenerator.create_sse_stream(string_to_stream(), cleanup_func)
+                final_generator = _single_item_gen()
+            all_response_headers = headers if headers else {}
 
-            # The final generator to use
-            final_generator = wrapped_generator
-
-        else:
-            # For non-SSE streams, use the original generator
-            final_generator = stream_generator
-
-        # Prepare streaming data
+        # Prepare streaming data to be stored in the Result object
         streaming_data = {
-            "type": "stream",
+            "type": "stream",  # Indicator for Rust side
             "generator": final_generator,
-            "content_type": content_type,
-            "headers": all_headers
+            "content_type": content_type,  # Let Rust know the intended content type
+            "headers": all_response_headers  # Intended HTTP headers for the overall response
         }
 
-        result = ToolBoxResult(
+        result_payload = ToolBoxResult(
             data_to=interface,
             data=streaming_data,
-            data_info="Streaming response",
-            data_type="stream"
+            data_info="Streaming response" if content_type != "text/event-stream" else "SSE Event Stream",
+            data_type="stream"  # Generic type for Rust to identify it needs to stream from 'generator'
         )
 
-        return cls(error=error, info=info_obj, result=result)
+        return cls(error=error, info=info_obj, result=result_payload)
+
+    @classmethod
+    def sse(cls,
+            stream_generator: Any,
+            info: str = "OK",
+            interface: ToolBoxInterfaces = ToolBoxInterfaces.remote,
+            cleanup_func: Union[
+                Callable[[], None], Callable[[], T], Callable[[], AsyncGenerator[T, None]], None] = None,
+            # http_headers: Optional[dict] = None # If we want to allow overriding default SSE HTTP headers
+            ):
+        """
+        Create an Server-Sent Events (SSE) streaming response Result.
+
+        Args:
+            stream_generator: A source yielding individual data items. This can be an
+                              async generator, sync generator, iterable, or a single item.
+                              Each item will be formatted as an SSE event.
+            info: Optional help text for the Result.
+            interface: Optional ToolBoxInterface to target.
+            cleanup_func: Optional cleanup function to run when the stream ends or is cancelled.
+            #http_headers: Optional dictionary of custom HTTP headers for the SSE response.
+
+        Returns:
+            A Result object configured for SSE streaming.
+        """
+        # Result.stream will handle calling SSEGenerator.create_sse_stream
+        # and setting appropriate default headers for SSE when content_type is "text/event-stream".
+        return cls.stream(
+            stream_generator=stream_generator,
+            content_type="text/event-stream",
+            # headers=http_headers, # Pass if we add http_headers param
+            info=info,
+            interface=interface,
+            cleanup_func=cleanup_func
+        )
 
     @classmethod
     def default(cls, interface=ToolBoxInterfaces.native):
@@ -727,10 +847,10 @@ class Result:
         return cls(error=error, info=info, result=result)
 
     @classmethod
-    def json(cls, data, info="OK", interface=ToolBoxInterfaces.remote):
+    def json(cls, data, info="OK", interface=ToolBoxInterfaces.remote, exec_code=0, status_code=None):
         """Create a JSON response Result."""
         error = ToolBoxError.none
-        info_obj = ToolBoxInfo(exec_code=0, help_text=info)
+        info_obj = ToolBoxInfo(exec_code=status_code or exec_code, help_text=info)
 
         result = ToolBoxResult(
             data_to=interface,
@@ -782,6 +902,50 @@ class Result:
         return cls(error=error, info=info_obj, result=result)
 
     @classmethod
+    def file(cls, data, filename, content_type=None, info="OK", interface=ToolBoxInterfaces.remote):
+        """Create a file download response Result.
+
+        Args:
+            data: File data as bytes or base64 string
+            filename: Name of the file for download
+            content_type: MIME type of the file (auto-detected if None)
+            info: Response info text
+            interface: Target interface
+
+        Returns:
+            Result object configured for file download
+        """
+        import base64
+        import mimetypes
+
+        error = ToolBoxError.none
+        info_obj = ToolBoxInfo(exec_code=200, help_text=info)
+
+        # Auto-detect content type if not provided
+        if content_type is None:
+            content_type, _ = mimetypes.guess_type(filename)
+            if content_type is None:
+                content_type = "application/octet-stream"
+
+        # Ensure data is base64 encoded string (as expected by Rust server)
+        if isinstance(data, bytes):
+            base64_data = base64.b64encode(data).decode('utf-8')
+        elif isinstance(data, str):
+            # Assume it's already base64 encoded
+            base64_data = data
+        else:
+            raise ValueError("File data must be bytes or base64 string")
+
+        result = ToolBoxResult(
+            data_to=interface,
+            data=base64_data,  # Rust expects base64 string for "file" type
+            data_info=f"File download: {filename}",
+            data_type="file"
+        )
+
+        return cls(error=error, info=info_obj, result=result)
+
+    @classmethod
     def redirect(cls, url, status_code=302, info="Redirect", interface=ToolBoxInterfaces.remote):
         """Create a redirect response."""
         error = ToolBoxError.none
@@ -804,9 +968,15 @@ class Result:
         return cls(error=error, info=info, result=result)
 
     @classmethod
-    def html(cls, data=None, data_info="", info="OK", interface=ToolBoxInterfaces.remote, data_type="html",status=200, headers=None):
+    def html(cls, data=None, data_info="", info="OK", interface=ToolBoxInterfaces.remote, data_type="html",status=200, headers=None, row=False):
         error = ToolBoxError.none
         info = ToolBoxInfo(exec_code=status, help_text=info)
+        from ...utils.system.getting_and_closing_app import get_app
+
+        if not row and not '"<div class="main-content""' in data:
+            data = f'<div class="main-content frosted-glass">{data}<div>'
+        if not row and not get_app().web_context() in data:
+            data = get_app().web_context() + data
 
         if isinstance(headers, dict):
             result = ToolBoxResult(data_to=interface, data={'html':data,'headers':headers}, data_info=data_info,
@@ -1077,6 +1247,8 @@ class AppType:
         "develop-mode": bool,
     }
 
+    cluster_manager: ClusterManager
+    root_blob_storage: BlobStorage
     config_fh: FileHandler
     _debug: bool
     flows: dict[str, Callable]
@@ -1263,6 +1435,20 @@ class AppType:
         run a async fuction
         """
 
+    def run_bg_task_advanced(self, task, *args, **kwargs):
+        """
+        proxi attr
+        """
+
+    def wait_for_bg_tasks(self, timeout=None):
+        """
+        proxi attr
+        """
+
+    def run_bg_task(self, task):
+        """
+                run a async fuction
+                """
     def run_function(self, mod_function_name: Enum or tuple,
                      tb_run_function_with_state=True,
                      tb_run_with_specification='app',
@@ -1832,15 +2018,6 @@ class AppType:
             return Result.ok(data=stats.__dict__, data_info=analyzed_data)
 
 
-import asyncio
-import base64
-import inspect
-import json
-import traceback
-from collections.abc import AsyncGenerator, Callable
-from typing import Any, TypeVar
-
-T = TypeVar('T')
 
 
 class SSEGenerator:
@@ -1860,41 +2037,84 @@ class SSEGenerator:
         if isinstance(data, bytes):
             try:
                 # Try to decode as UTF-8 first
-                data = data.decode('utf-8')
+                decoded_data_str = data.decode('utf-8')
+                # If decoding works, treat it as a string for further processing
+                # This allows binary data that is valid UTF-8 JSON to be processed as JSON.
+                data = decoded_data_str
             except UnicodeDecodeError:
-                # Binary data, encode as base64
+                # Binary data that is not UTF-8, encode as base64
                 b64_data = base64.b64encode(data).decode('utf-8')
                 return f"event: binary\ndata: {b64_data}\n\n"
 
-        # Convert objects to JSON
+        # Convert non-string objects (that are not already bytes) to JSON string
+        # If data was bytes and successfully decoded to UTF-8 string, it will be processed here.
+        original_data_type_was_complex = False
         if not isinstance(data, str):
+            original_data_type_was_complex = True
             try:
-                data = json.dumps(data)
+                data_str = json.dumps(data)
             except Exception:
-                data = str(data)
+                data_str = str(data)  # Fallback to string representation
+        else:
+            data_str = data  # data is already a string
 
         # Handle JSON data with special event formatting
-        if data.strip().startswith('{'):
+        # data_str now holds the string representation (either original string or JSON string)
+        if data_str.strip().startswith('{'):
             try:
-                json_data = json.loads(data)
+                json_data = json.loads(data_str)
                 if isinstance(json_data, dict) and 'event' in json_data:
                     event_type = json_data['event']
-                    event_id = json_data.get('id', '')
+                    event_id = json_data.get('id', None)  # Use None to distinguish from empty string
 
-                    sse = f"event: {event_type}\n"
-                    if event_id:
-                        sse += f"id: {event_id}\n"
-                    sse += f"data: {data}\n\n"
-                    return sse
+                    # Determine the actual data payload for the SSE 'data:' field
+                    # If 'data' key exists in json_data, use its content.
+                    # Otherwise, use the original data_str (which is the JSON of json_data).
+                    if 'data' in json_data:
+                        payload_content = json_data['data']
+                        # If payload_content is complex, re-serialize it to JSON string
+                        if isinstance(payload_content, (dict, list)):
+                            sse_data_field = json.dumps(payload_content)
+                        else:  # Simple type (string, number, bool)
+                            sse_data_field = str(payload_content)
+                    else:
+                        # If original data was complex (e.g. dict) and became json_data,
+                        # and no 'data' key in it, then use the full json_data as payload.
+                        # If original data was a simple string that happened to be JSON parsable
+                        # but without 'event' key, it would have been handled by "Regular JSON without event"
+                        # or "Plain text" later.
+                        # This path implies original data was a dict with 'event' key.
+                        sse_data_field = data_str
+
+                    sse_lines = []
+                    if event_type:  # Should always be true here
+                        sse_lines.append(f"event: {event_type}")
+                    if event_id is not None:  # Check for None, allow empty string id
+                        sse_lines.append(f"id: {event_id}")
+
+                    # Handle multi-line data for the data field
+                    for line in sse_data_field.splitlines():
+                        sse_lines.append(f"data: {line}")
+
+                    return "\n".join(sse_lines) + "\n\n"
                 else:
-                    # Regular JSON without event
-                    return f"data: {data}\n\n"
+                    # Regular JSON without special 'event' key
+                    sse_lines = []
+                    for line in data_str.splitlines():
+                        sse_lines.append(f"data: {line}")
+                    return "\n".join(sse_lines) + "\n\n"
             except json.JSONDecodeError:
-                # Not valid JSON, treat as text
-                return f"data: {data}\n\n"
+                # Not valid JSON, treat as plain text
+                sse_lines = []
+                for line in data_str.splitlines():
+                    sse_lines.append(f"data: {line}")
+                return "\n".join(sse_lines) + "\n\n"
         else:
             # Plain text
-            return f"data: {data}\n\n"
+            sse_lines = []
+            for line in data_str.splitlines():
+                sse_lines.append(f"data: {line}")
+            return "\n".join(sse_lines) + "\n\n"
 
     @classmethod
     async def wrap_sync_generator(cls, generator):
@@ -1907,22 +2127,23 @@ class SSEGenerator:
     @classmethod
     async def create_sse_stream(
         cls,
-        source,
-        cleanup_func: Callable[[], None] | Callable[[], T] | Callable[[], AsyncGenerator[T, None]] | None = None
+        source: Any,  # Changed from positional arg to keyword for clarity in Result.stream
+        cleanup_func: Union[Callable[[], None], Callable[[], T], Callable[[], AsyncGenerator[T, None]], None] = None
     ) -> AsyncGenerator[str, None]:
         """
         Convert any source to a properly formatted SSE stream.
 
         Args:
-            source: Can be async generator, sync generator, or iterable
+            source: Can be async generator, sync generator, iterable, or a single item.
             cleanup_func: Optional function to call when the stream ends or is cancelled.
                           Can be a synchronous function, async function, or async generator.
 
         Yields:
-            Properly formatted SSE messages
+            Properly formatted SSE messages (strings).
         """
         # Send stream start event
-        yield cls.format_sse_event({"event": "stream_start", "id": "0"})
+        # This structure ensures data field contains {"id":"0"}
+        yield cls.format_sse_event({"event": "stream_start", "data": {"id": "0"}})
 
         try:
             # Handle different types of sources
@@ -1930,50 +2151,57 @@ class SSEGenerator:
                 # Source is already an async generator
                 async for item in source:
                     yield cls.format_sse_event(item)
-            elif inspect.isgenerator(source) or hasattr(source, '__iter__'):
-                # Source is a sync generator or iterable
+            elif inspect.isgenerator(source) or (not isinstance(source, str) and hasattr(source, '__iter__')):
+                # Source is a sync generator or iterable (but not a string)
+                # Strings are iterable but should be treated as single items unless explicitly made a generator
                 async for item in cls.wrap_sync_generator(source):
                     yield cls.format_sse_event(item)
             else:
-                # Single item
+                # Single item (including strings)
                 yield cls.format_sse_event(source)
         except asyncio.CancelledError:
             # Client disconnected
-            yield cls.format_sse_event({"event": "cancelled", "id": "cancelled"})
+            yield cls.format_sse_event({"event": "cancelled", "data": {"id": "cancelled"}})
             raise
         except Exception as e:
             # Error in stream
             error_info = {
                 "event": "error",
-                "message": str(e),
-                "traceback": traceback.format_exc()
+                "data": {  # Ensure payload is under 'data' key for the new format_sse_event logic
+                    "message": str(e),
+                    "traceback": traceback.format_exc()
+                }
             }
             yield cls.format_sse_event(error_info)
         finally:
             # Always send end event
-            yield cls.format_sse_event({"event": "stream_end", "id": "final"})
+            yield cls.format_sse_event({"event": "stream_end", "data": {"id": "final"}})
 
             # Execute cleanup function if provided
             if cleanup_func:
                 try:
-                    if asyncio.iscoroutinefunction(cleanup_func):
-                        # Async function
+                    if inspect.iscoroutinefunction(cleanup_func):  # Check if it's an async def function
                         await cleanup_func()
-                    elif inspect.isasyncgen(cleanup_func):
-                        # Async generator
-                        async for _ in cleanup_func():
+                    elif inspect.isasyncgenfunction(cleanup_func) or inspect.isasyncgen(
+                        cleanup_func):  # Check if it's an async def generator function or already an async generator
+                        # If it's a function, call it to get the generator
+                        gen_to_exhaust = cleanup_func() if inspect.isasyncgenfunction(cleanup_func) else cleanup_func
+                        async for _ in gen_to_exhaust:
                             pass  # Exhaust the generator to ensure cleanup completes
                     else:
                         # Synchronous function
                         cleanup_func()
                 except Exception as e:
                     # Log cleanup errors but don't propagate them to client
-                    error_info = {
+                    error_info_cleanup = {
                         "event": "cleanup_error",
-                        "message": str(e),
-                        "traceback": traceback.format_exc()
+                        "data": {  # Ensure payload is under 'data' key
+                            "message": str(e),
+                            "traceback": traceback.format_exc()
+                        }
                     }
-                    # We can't yield here as the stream is already closing
-                    # Instead, log the error
-                    print(f"SSE cleanup error: {error_info}", flush=True)
+                    # We can't yield here as the stream is already closing/closed.
+                    # Instead, log the error.
+                    # In a real app, use a proper logger.
+                    print(f"SSE cleanup error: {cls.format_sse_event(error_info_cleanup)}", flush=True)
 

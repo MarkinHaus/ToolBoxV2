@@ -30,7 +30,7 @@ export default {
     open: true,
     proxy: [
       {
-        context: ['/web/', '/index.js', '/api', '/validateSession', '/IsValiSession'],
+        context: ['/web/', '/index.js', '/api', '/validateSession', '/IsValidSession'],
         target:  'http://0.0.0.0:5000', // isProduction ?  process.env.TOOLBOXV2_REMOTE_BASE : 'http://0.0.0.0:5000',
       },{
         context: ['/talk'], // Proxy für index.js
@@ -69,7 +69,6 @@ export default {
     ],
   },
   plugins: [
-    new BomPlugin(false),
     new CleanWebpackPlugin(),
     new HtmlWebpackPlugin({
       template: './index.html',
@@ -93,6 +92,12 @@ export default {
     new HtmlWebpackPlugin({
       template: './web/core0/MainIdea.html',
       filename: './web/core0/MainIdea.html',
+      chunks: ['main']
+    }),
+    // For kontakt.html
+    new HtmlWebpackPlugin({
+      template: './web/core0/kontakt.html',
+      filename: './web/core0/kontakt.html',
       chunks: ['main']
     }),
     // For roadmap.html
@@ -123,6 +128,12 @@ export default {
     new HtmlWebpackPlugin({
       template: './web/assets/logout.html',
       filename: './web/assets/logout.html',
+      chunks: ['main']
+    }),
+    // For /web/assets/waiting_list.html
+    new HtmlWebpackPlugin({
+      template: './web/assets/waiting_list.html',
+      filename: './web/assets/waiting_list.html',
       chunks: ['main']
     }),
     // For /web/assets/login.html
@@ -181,10 +192,12 @@ export default {
              '**/web/core0/Installer.html',
              '**/web/core0/MainIdea.html',
              '**/web/core0/roadmap.html',
+                '**/web/core0/kontakt.html',
              '**/web/assets/404.html',
              '**/web/assets/401.html',
              '**/web/assets/m_log_in.html',
              '**/web/assets/logout.html',
+             '**/web/assets/waiting_list.html',
              '**/web/mainContent.html',
              '**/web/dashboards/dashboard.html',
              '**/web/dashboards/user_dashboard.html',
@@ -211,6 +224,7 @@ export default {
     new webpack.ProgressPlugin({
       percentBy: 'entries',
     }),
+    // new BomPlugin(true),
   ],
   optimization: {
     splitChunks: {
