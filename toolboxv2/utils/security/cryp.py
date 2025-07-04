@@ -15,24 +15,53 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
 from ..system.tb_logger import get_logger
 
+
+import os
+import hashlib
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import secrets
+import base64
+
 DEVICE_KEY_DIR = "./.info"
-DEVICE_KEY_PATH = os.path.join(DEVICE_KEY_DIR, "device.key")
+DEVICE_KEY_PATH = os.path.join(DEVICE_KEY_DIR, "device.enc")
 
 
 def ensure_device_key_dir_exists():
     if not os.path.exists(DEVICE_KEY_DIR):
         os.makedirs(DEVICE_KEY_DIR)
 
+TB_R_KEY = os.getenv("TB_R_KEY", "randomstring")
+
+def derive_aes_key(tb_r_key: str) -> bytes:
+    return hashlib.sha256(tb_r_key.encode()).digest()  # 32 Byte AES-Schlüssel
+
+def encrypt_with_key(data: bytes, key: bytes) -> bytes:
+    nonce = secrets.token_bytes(12)  # AES-GCM benötigt 12-Byte Nonce
+    aesgcm = AESGCM(key)
+    encrypted = aesgcm.encrypt(nonce, data, None)
+    return nonce + encrypted  # nonce vorne anhängen
+
+def decrypt_with_key(encrypted_data: bytes, key: bytes) -> bytes:
+    nonce = encrypted_data[:12]
+    ciphertext = encrypted_data[12:]
+    aesgcm = AESGCM(key)
+    return aesgcm.decrypt(nonce, ciphertext, None)
 
 def get_or_create_device_key():
     ensure_device_key_dir_exists()
+    aes_key = derive_aes_key(TB_R_KEY)
+
     if os.path.exists(DEVICE_KEY_PATH):
-        with open(DEVICE_KEY_PATH) as key_file:
-            return key_file.read()
+        with open(DEVICE_KEY_PATH, "rb") as key_file:
+            encrypted_data = key_file.read()
+        decrypted_key = decrypt_with_key(encrypted_data, aes_key)
+        return decrypted_key.decode()
     else:
-        key = Fernet.generate_key()
+        key = Fernet.generate_key()  # 32 Byte Base64
+        encrypted = encrypt_with_key(key, aes_key)
         with open(DEVICE_KEY_PATH, "wb") as key_file:
-            key_file.write(key)
+            key_file.write(encrypted)
         return key.decode()
 
 

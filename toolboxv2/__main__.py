@@ -1204,7 +1204,7 @@ def get_real_python_executable():
     return sys.executable
 
 
-def server_helper(instance_id:str="main", db_mode="RR"):
+def server_helper(instance_id:str="main", db_mode=None):
     # real_exe = get_real_python_executable()
     from pathlib import Path
     sys.executable = str(Path(os.getenv("PYTHON_EXECUTABLE")))
@@ -1213,6 +1213,8 @@ def server_helper(instance_id:str="main", db_mode="RR"):
     sys.argv.append('-l')
     app, _ = loop.run_until_complete(setup_app(instance_id))
     app.loop = loop
+    if db_mode is None:
+        db_mode = os.getenv("DB_MODE_KEY", "LC")
     db = get_app().get_mod("DB")
     db.edit_cli(db_mode)
     db.initialize_database()

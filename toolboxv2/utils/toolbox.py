@@ -94,7 +94,7 @@ class App(AppType, metaclass=Singleton):
         }
 
         identification = self.id
-
+        collective_identification = self.id
         if "test" in prefix:
             if self.system_flag == "Darwin" or self.system_flag == "Linux":
                 start_dir = self.start_dir.replace("ToolBoxV2/toolboxv2", "toolboxv2")
@@ -108,6 +108,7 @@ class App(AppType, metaclass=Singleton):
             self.data_dir = self.start_dir + '\\.data\\' + collective_identification
             self.config_dir = self.start_dir + '\\.config\\' + collective_identification
             self.info_dir = self.start_dir + '\\.info\\' + collective_identification
+            self.id = collective_identification
         else:
             self.data_dir = self.start_dir + '\\.data\\' + identification
             self.config_dir = self.start_dir + '\\.config\\' + identification
@@ -165,15 +166,14 @@ class App(AppType, metaclass=Singleton):
             "comm-his": [[]],
             "develop-mode": False,
         }
-        self.config_fh = FileHandler(self.id + ".config", keys=self.keys, defaults=defaults)
+        self.config_fh = FileHandler(collective_identification + ".config", keys=self.keys, defaults=defaults)
         self.config_fh.load_file_handler()
         self._debug = args.debug
         self.flows = {}
         self.dev_modi = self.config_fh.get_file_handler(self.keys["develop-mode"])
         if self.config_fh.get_file_handler("provider::") is None:
             self.config_fh.add_to_save_file_handler("provider::", "http://localhost:" + str(
-                self.args_sto.port) if os.environ.get("HOSTNAME",
-                                                                     "localhost") == "localhost" else "https://simplecore.app")
+                self.args_sto.port) if os.environ.get("HOSTNAME","localhost") == "localhost" else "https://simplecore.app")
         self.functions = {}
         self.modules = {}
 

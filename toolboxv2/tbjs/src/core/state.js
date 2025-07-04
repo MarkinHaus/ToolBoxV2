@@ -35,7 +35,7 @@ const AppState = {
         return value;
     },
 
-    set: (key, value, options = { persist: false }) => {
+    set: (key, value, options = { persist: true }) => {
         const keys = key.split('.');
         let current = AppState._currentState;
         keys.forEach((k, index) => {
@@ -58,7 +58,7 @@ const AppState = {
         events.emit(`state:changed:${key.replace(/\./g, ':')}`, value); // More specific event
     },
 
-    delete: (key, options = { persist: false }) => {
+    delete: (key, options = { persist: true }) => {
         const keys = key.split('.');
         let current = AppState._currentState;
         let deleted = false;
