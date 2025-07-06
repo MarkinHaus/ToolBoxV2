@@ -22,6 +22,11 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import secrets
 import base64
+from dotenv import load_dotenv
+
+
+load_dotenv()
+
 
 DEVICE_KEY_DIR = "./.info"
 DEVICE_KEY_PATH = os.path.join(DEVICE_KEY_DIR, "device.enc")
@@ -49,20 +54,26 @@ def decrypt_with_key(encrypted_data: bytes, key: bytes) -> bytes:
     return aesgcm.decrypt(nonce, ciphertext, None)
 
 def get_or_create_device_key():
-    ensure_device_key_dir_exists()
-    aes_key = derive_aes_key(TB_R_KEY)
+    try:
+        ensure_device_key_dir_exists()
+        aes_key = derive_aes_key(TB_R_KEY)
 
-    if os.path.exists(DEVICE_KEY_PATH):
-        with open(DEVICE_KEY_PATH, "rb") as key_file:
-            encrypted_data = key_file.read()
-        decrypted_key = decrypt_with_key(encrypted_data, aes_key)
-        return decrypted_key.decode()
-    else:
-        key = Fernet.generate_key()  # 32 Byte Base64
-        encrypted = encrypt_with_key(key, aes_key)
-        with open(DEVICE_KEY_PATH, "wb") as key_file:
-            key_file.write(encrypted)
-        return key.decode()
+        if os.path.exists(DEVICE_KEY_PATH):
+            with open(DEVICE_KEY_PATH, "rb") as key_file:
+                encrypted_data = key_file.read()
+            decrypted_key = decrypt_with_key(encrypted_data, aes_key)
+            return decrypted_key.decode()
+        else:
+            key = Fernet.generate_key()  # 32 Byte Base64
+            encrypted = encrypt_with_key(key, aes_key)
+            with open(DEVICE_KEY_PATH, "wb") as key_file:
+                key_file.write(encrypted)
+            return key.decode()
+    except Exception as e:
+        get_logger().error(f"Error get_or_create_device_key {e}")
+        import traceback
+        traceback.print_exc()
+        raise e
 
 
 DEVICE_KEY = get_or_create_device_key

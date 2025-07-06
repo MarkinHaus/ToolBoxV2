@@ -139,9 +139,7 @@ class App(AppType, metaclass=Singleton):
         if args.init and args.init is not None and self.start_dir not in sys.path:
             sys.path.append(self.start_dir)
 
-
         __version__ = get_version_from_pyproject()
-
         self.version = __version__
 
         self.keys = {
