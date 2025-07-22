@@ -29,6 +29,9 @@ from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
 from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyproject
 from toolboxv2.utils.system.tcm_p2p_cli import cli_tcm_runner
 from toolboxv2.utils.toolbox import App
+from dotenv import load_dotenv
+
+load_dotenv()
 
 DEFAULT_MODI = "cli"
 
@@ -1204,7 +1207,7 @@ def get_real_python_executable():
     return sys.executable
 
 
-def server_helper(instance_id:str="main", db_mode="RR"):
+def server_helper(instance_id:str="main", db_mode=None):
     # real_exe = get_real_python_executable()
     from pathlib import Path
     sys.executable = str(Path(os.getenv("PYTHON_EXECUTABLE")))
@@ -1213,7 +1216,9 @@ def server_helper(instance_id:str="main", db_mode="RR"):
     sys.argv.append('-l')
     app, _ = loop.run_until_complete(setup_app(instance_id))
     app.loop = loop
-    db = get_app().get_mod("DB")
+    if db_mode is None:
+        db_mode = os.getenv("DB_MODE_KEY", "LC")
+    db = app.get_mod("DB")
     db.edit_cli(db_mode)
     db.initialize_database()
     return app

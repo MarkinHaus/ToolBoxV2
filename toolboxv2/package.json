@@ -3,27 +3,22 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-    "scripts": {
-
-    "init":       "npm install --save-dev concurrently && npm run init:dev",
-    "init:dev":   "npm install && concurrently -k \"npm install --prefix ./web\" \"npm install --prefix ./tbjs\" \"npm install --prefix ./simple-core\"",
-    "init:prod":  "npm install --save-dev concurrently && npm ci --omit=dev && concurrently -k \"npm ci --omit=dev --prefix ./web\" \"npm ci --omit=dev --prefix ./tbjs\" \"npm ci --omit=dev --prefix ./simple-core\"",
-
-    "tauri":          "npm run tauri dev   --prefix ./simple-core",
-    "tauriB":         "npm run tauri build --prefix ./simple-core",
-    "tauri-mobile":   "npm run tauri android dev   --prefix ./simple-core",
-    "tauri-mobileB":  "npm run tauri android build --prefix ./simple-core",
-
-    "watch:web":   "webpack --mode development --watch",
-    "watch:tbjs":  "npm run watch --prefix ./tbjs",
-    "watch":       "concurrently -k -r \"npm run watch:web\" \"npm run watch:tbjs\" \"npm run tauri\"",
-
-    "build:web":   "webpack --mode production",
-    "build:tbjs":  "npm run build --prefix ./tbjs",
-    "build":       "npm run build:web && npm run build:tbjs",
-
-    "dev":   "concurrently -k -r \"tb api start --debug\" \"npm run watch\"",
-    "test":  "npm run test --prefix ./tbjs"
+  "scripts": {
+    "init": "npm install --save-dev concurrently && npm run init:dev",
+    "init:dev": "npm install && concurrently -k \"npm install --prefix ./web\" \"npm install --prefix ./tbjs\" \"npm install --prefix ./simple-core\"",
+    "init:prod": "npm install --save-dev concurrently && npm ci --omit=dev && concurrently -k \"npm ci --omit=dev --prefix ./web\" \"npm ci --omit=dev --prefix ./tbjs\" \"npm ci --omit=dev --prefix ./simple-core\"",
+    "tauri": "npm run tauri dev   --prefix ./simple-core",
+    "tauriB": "npm run tauri build --prefix ./simple-core",
+    "tauri-mobile": "npm run tauri android dev   --prefix ./simple-core",
+    "tauri-mobileB": "npm run tauri android build --prefix ./simple-core",
+    "watch:web": "webpack --mode development --watch",
+    "watch:tbjs": "npm run watch --prefix ./tbjs",
+    "watch": "concurrently -k -r \"npm run watch:web\" \"npm run watch:tbjs\" \"npm run tauri\"",
+    "build:web": "webpack --mode production",
+    "build:tbjs": "npm run build --prefix ./tbjs",
+    "build": "npm run build:web && npm run build:tbjs",
+    "dev": "concurrently -k -r \"tb api start --debug\" \"npm run watch\"",
+    "test": "npm run test --prefix ./tbjs"
   },
   "dependencies": {
     "@babel/core": "^7.25.7",
@@ -45,7 +40,7 @@
   },
   "devDependencies": {
     "compression-webpack-plugin": "^11.1.0",
-    "concurrently": "^9.1.2",
+    "concurrently": "^9.2.0",
     "html-loader": "^5.1.0",
     "string-replace-loader": "^3.1.0",
     "webpack-utf8-bom": "^1.4.0"
