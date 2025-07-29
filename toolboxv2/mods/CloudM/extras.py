@@ -343,13 +343,14 @@ async def login(m_link: str, app: App | None = None):
 
 @export(mod_name=Name, version=version, initial=True)
 def initialize_admin_panel(app: App):
-    print(f"Admin Panel ({Name} v{version}) initialisiert.")
     # Hier könnten Standard-DB-Strukturen geprüft oder erstellt werden, falls nötig.
     # Beispiel: Sicherstellen, dass der DB-Client korrekt konfiguriert ist.
     # db = app.get_mod("DB")
 
     if app is None:
         app = get_app()
+
+    app.logger.info(f"Admin Panel ({Name} v{version}) initialisiert.")
     app.run_any(("CloudM","add_ui"),
                 name="UserDashboard",
                 title=Name,
