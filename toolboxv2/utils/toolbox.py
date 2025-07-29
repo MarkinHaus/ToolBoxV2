@@ -1514,16 +1514,17 @@ class App(AppType, metaclass=Singleton):
                 return Result.default_internal_error(info="Session fetch failed").as_dict()
 
             content_type = r.headers.get('Content-Type', '').lower()
-            raw = await r.read()
-            encoding = r.get_encoding() or 'utf-8'
-            text = raw.decode(encoding, errors='ignore')
 
-            # Attempt JSON
             if 'application/json' in content_type:
                 try:
-                    return await r.json()
+                    return r.json()
                 except Exception as e:
-                    print("⚠ JSON decode error:", e)
+                    print(f"⚠ JSON decode error: {e}")
+                    # Fallback to text if JSON decoding fails
+                    text = r.text
+            else:
+                text = r.text
+
 
             # Attempt YAML
             if 'yaml' in content_type or text.strip().startswith('---'):
@@ -1531,7 +1532,7 @@ class App(AppType, metaclass=Singleton):
                     import yaml
                     return yaml.safe_load(text)
                 except Exception as e:
-                    print("⚠ YAML decode error:", e)
+                    print(f"⚠ YAML decode error: {e}")
 
             # Attempt XML
             if 'xml' in content_type or text.strip().startswith('<?xml'):
@@ -1539,13 +1540,14 @@ class App(AppType, metaclass=Singleton):
                     import xmltodict
                     return xmltodict.parse(text)
                 except Exception as e:
-                    print("⚠ XML decode error:", e)
+                    print(f"⚠ XML decode error: {e}")
 
             # Fallback: return plain text
             return Result.default_internal_error(data={'raw_text': text, 'content_type': content_type}).as_dict()
 
         except Exception as e:
             print("❌ Fatal error during API call:", e)
+            self.debug_rains(e)
             return Result.default_internal_error(str(e)).as_dict()
 
     def run_local(self, *args, **kwargs):
@@ -1764,13 +1766,16 @@ class App(AppType, metaclass=Singleton):
         import watchfiles
         def helper():
             paths = f'mods/{path_name}' + ('.py' if is_file else '')
-            self.print(f'Watching Path: {paths}')
-            for changes in watchfiles.watch(paths):
-                if not changes:
-                    continue
-                self.reload_mod(mod_name, spec, is_file, loc)
-                if on_reload:
-                    on_reload()
+            self.logger.info(f'Watching Path: {paths}')
+            try:
+                for changes in watchfiles.watch(paths):
+                    if not changes:
+                        continue
+                    self.reload_mod(mod_name, spec, is_file, loc)
+                    if on_reload:
+                        on_reload()
+            except FileNotFoundError:
+                self.logger.warning(f"Path {paths} not found")
 
         if not use_thread:
             helper()

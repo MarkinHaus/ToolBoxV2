@@ -170,12 +170,6 @@ class Tools(MainTool):  # Removed EventManager for simplicity, as it was causing
 async def on_start(self):  # Renamed from on_start to avoid conflict if MainTool calls it `load`
     self.app.logger.info(
         f"Initializing {self.name} v{self.version}")
-    try:
-        self.db_mod = self.app.get_mod("DB")
-        if not self.db_mod:
-            self.app.logger.error(f"{self.name}: DB module not found. Session persistence will not work.")
-    except Exception as e:
-        self.app.logger.error(f"Error during {self.name} on_start (DB init): {e}", exc_info=True)
     # UI Registration
     try:
         self.app.run_any(

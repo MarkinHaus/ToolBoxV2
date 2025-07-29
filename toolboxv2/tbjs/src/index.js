@@ -62,7 +62,7 @@ const TB = {
      * @param {string} [userAppConfig.serviceWorker.url='/sw.js'] - Path to the service worker script.
      * @param {string} [userAppConfig.serviceWorker.scope='/'] - Scope for the service worker.
      */
-    init: function(userAppConfig = {}) { // Renamed from config to avoid clash
+    init: async function(userAppConfig = {}) { // Renamed from config to avoid clash
     const intendedPathKey = 'tbjs_intended_path';
 
     // Pass userAppConfig directly. config.js now handles defaults and merging.
@@ -84,9 +84,7 @@ const TB = {
     this.state.init(this.config.get('initialState')); // Get from config
     this.ui.theme.init(this.config.get('themeSettings')); // Get from config
 
-    setTimeout(async () => {
-        await this.user.init();
-    }, 1);
+    await this.user.init();
 
     // Router.init will navigate to the current window.location.pathname + search + hash
     this.router.init(
