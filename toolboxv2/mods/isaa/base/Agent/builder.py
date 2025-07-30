@@ -542,10 +542,38 @@ class EnhancedAgentBuilder:
             return self
         if not callable(func):
             raise TypeError(f"Expected callable function for ADK tool, got {type(func)}")
-        if name:
-            func.__name__ = name
-        if description:
-            func.__doc__ = description
+
+        def set_func_metadata(func, name=None, description=None):
+            # Try to set __name__ if possible
+            if name:
+                if hasattr(func, '__name__'):
+                    try:
+                        func.__name__ = name
+                    except (AttributeError, TypeError):
+                        pass  # Might be a method or built-in
+
+                elif hasattr(func, '__class__'):
+                    try:
+                        func.__class__.__name__ = name
+                    except (AttributeError, TypeError):
+                        pass  # Immutable class or built-in
+
+            # Try to set __doc__ directly if possible
+            if description:
+                if hasattr(func, '__doc__'):
+                    try:
+                        func.__doc__ = description
+                    except (AttributeError, TypeError):
+                        pass
+
+                # Handle callable objects by updating the __call__ docstring
+                if hasattr(func, '__call__') and hasattr(func.__call__, '__doc__'):
+                    try:
+                        func.__call__.__doc__ = description
+                    except (AttributeError, TypeError):
+                        pass
+
+        set_func_metadata(func, name, description)
         tool = FunctionTool(func)
         self._adk_tools_transient.append(tool)
         return self

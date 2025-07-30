@@ -1669,7 +1669,7 @@ class App(AppType, metaclass=Singleton):
             return self.load_mod(name, spec=spec)
         return self.functions[name].get(f"{spec}_instance")
 
-    def print(self, text, *args, **kwargs):
+    def print(self, text="", *args, **kwargs):
         # self.logger.info(f"Output : {text}")
         if 'live' in self.id:
             return
@@ -1677,7 +1677,7 @@ class App(AppType, metaclass=Singleton):
             print(Style.CYAN(f"System${self.id}:"), end=" ")
         print(text, *args, **kwargs)
 
-    def sprint(self, text, *args, **kwargs):
+    def sprint(self, text="", *args, **kwargs):
         if text is None:
             return True
         if 'live' in self.id:

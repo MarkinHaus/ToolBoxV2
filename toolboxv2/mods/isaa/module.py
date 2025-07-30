@@ -94,6 +94,7 @@ pipeline_arr = [  # This seems to be for HuggingFace pipeline, keep as is for no
     'text-to-speech',
 ]
 
+row_agent_builder_sto = {}
 
 def get_ip():
     response = requests.get('https://api64.ipify.org?format=json').json()
@@ -635,6 +636,7 @@ class Tools(MainTool, FileHandler):
             self.config["agents-name-list"].append(agent_name)
 
         self.print(f"EnhancedAgent '{agent_name}' configuration registered. Will be built on first use.")
+        row_agent_builder_sto[agent_name] = agent_builder
         # Agent is built on demand by get_agent to handle async build
 
     async def get_agent(self, agent_name="Normal", model_override: str | None = None) -> EnhancedAgent:
@@ -654,10 +656,8 @@ class Tools(MainTool, FileHandler):
         builder_to_use = None
         if agent_name in self.agent_data:
             self.print(f"Loading configuration for EnhancedAgent: {agent_name}")
-            builder_config_dict = self.agent_data[agent_name]
             try:
-                builder_config = BuilderConfig(**builder_config_dict)
-                builder_to_use = EnhancedAgentBuilder(config=builder_config)
+                builder_to_use = row_agent_builder_sto.get(agent_name, EnhancedAgentBuilder(config=BuilderConfig(**self.agent_data[agent_name])))
             except Exception as e:
                 self.print(f"Error loading BuilderConfig for {agent_name}: {e}. Falling back to default.")
 
