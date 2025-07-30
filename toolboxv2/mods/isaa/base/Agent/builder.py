@@ -4,6 +4,9 @@ import json
 import logging
 import os
 import threading
+from functools import wraps
+from inspect import iscoroutinefunction
+
 import google.adk.models.lite_llm
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -537,44 +540,60 @@ class EnhancedAgentBuilder:
 
     def with_adk_tool_function(self, func: Callable, name: Optional[str] = None,
                                description: Optional[str] = None) -> 'EnhancedAgentBuilder':
-        """Adds a callable function as an ADK tool (transient)."""
+        """
+        Fügt eine aufrufbare Funktion als ADK-Tool hinzu.
+        Umschließt synchrone Funktionen automatisch in einem nicht-blockierenden
+        asynchronen Wrapper, um Parallelität zu gewährleisten.
+        """
         if not self._ensure_adk("Tool Function"):
             return self
         if not callable(func):
             raise TypeError(f"Expected callable function for ADK tool, got {type(func)}")
 
-        def set_func_metadata(func, name=None, description=None):
-            # Try to set __name__ if possible
-            if name:
-                if hasattr(func, '__name__'):
-                    try:
-                        func.__name__ = name
-                    except (AttributeError, TypeError):
-                        pass  # Might be a method or built-in
+        effective_func = func
 
-                elif hasattr(func, '__class__'):
-                    try:
-                        func.__class__.__name__ = name
-                    except (AttributeError, TypeError):
-                        pass  # Immutable class or built-in
+        if not iscoroutinefunction(func):
+            # Dies ist eine synchrone Funktion. Wir müssen sie verpacken.
+            get_logger().warning(
+                f"Werkzeug '{func.__name__}' ist eine synchrone Funktion. "
+                f"Sie wird automatisch in einem nicht-blockierenden Thread ausgeführt, um Parallelität zu ermöglichen."
+            )
 
-            # Try to set __doc__ directly if possible
-            if description:
-                if hasattr(func, '__doc__'):
+            @wraps(func)  # WICHTIG: Kopiert Name, Docstring und Signatur von der Originalfunktion.
+            async def async_wrapper(*args, **kwargs):
+                """Dieser Wrapper führt die synchrone Funktion in einem Thread aus."""
+                # asyncio.to_thread führt die blockierende Funktion in einem separaten Thread aus
+                # und gibt das Ergebnis zurück, sobald es fertig ist, ohne den Event-Loop zu blockieren.
+                return await asyncio.to_thread(func, *args, **kwargs)
+
+            effective_func = async_wrapper
+
+        ### ENDE: Safeguard Wrapper Logik ###
+
+        # Ihre bestehende Logik zum Setzen von Metadaten.
+        # Sie fungiert nun als explizite Überschreibung, selbst nach @wraps.
+        def set_func_metadata(f, n=None, d=None):
+            if n:
+                try:
+                    f.__name__ = n
+                except (AttributeError, TypeError):
+                    pass
+            if d:
+                try:
+                    f.__doc__ = d
+                except (AttributeError, TypeError):
+                    pass
+                if hasattr(f, '__call__') and hasattr(f.__call__, '__doc__'):
                     try:
-                        func.__doc__ = description
+                        f.__call__.__doc__ = d
                     except (AttributeError, TypeError):
                         pass
 
-                # Handle callable objects by updating the __call__ docstring
-                if hasattr(func, '__call__') and hasattr(func.__call__, '__doc__'):
-                    try:
-                        func.__call__.__doc__ = description
-                    except (AttributeError, TypeError):
-                        pass
+        ### GEÄNDERT: Wenden Sie die Metadaten auf die `effective_func` an ###
+        set_func_metadata(effective_func, name, description)
 
-        set_func_metadata(func, name, description)
-        tool = FunctionTool(func)
+        # Erstellen Sie das ADK-Tool mit der Funktion, die garantiert asynchron ist.
+        tool = FunctionTool(effective_func)
         self._adk_tools_transient.append(tool)
         return self
 

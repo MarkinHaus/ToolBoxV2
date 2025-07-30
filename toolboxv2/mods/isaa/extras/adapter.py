@@ -107,7 +107,7 @@ async def litellm_complete_if_cache(
                 **kwargs
             )
     except Exception as e:
-        print(e)
+        print(f"\n{model=}\n{prompt=}\n{system_prompt=}\n{history_messages=}\n{base_url=}\n{api_key=}\n{kwargs=}")
         get_logger().error(f"Failed to litellm memory work {e}")
         return ""
 
@@ -131,6 +131,14 @@ async def litellm_complete_if_cache(
             content = response.choices[0].message.tool_calls[0].function.arguments
         return content
 
+def enforce_no_additional_properties(schema: dict) -> dict:
+    if schema.get("type") == "object":
+        schema.setdefault("additionalProperties", False)
+        for prop in schema.get("properties", {}).values():
+            enforce_no_additional_properties(prop)
+    elif schema.get("type") == "array":
+        enforce_no_additional_properties(schema.get("items", {}))
+    return schema
 
 async def litellm_complete(
     prompt, system_prompt=None, history_messages=None, keyword_extraction=False, model_name = "groq/gemma2-9b-it", **kwargs
@@ -145,6 +153,14 @@ async def litellm_complete(
     keyword_extraction_flag = kwargs.pop("keyword_extraction", None)
     if keyword_extraction_flag:
         kwargs["response_format"] = "json"
+
+    if "response_format" in kwargs:
+        if isinstance(kwargs["response_format"], dict):
+            kwargs["response_format"] = enforce_no_additional_properties(kwargs["response_format"])
+        elif isinstance(kwargs["response_format"], str):
+            pass
+        else:
+            kwargs["response_format"] =enforce_no_additional_properties(kwargs["response_format"].model_json_schema())  # oder .schema() in v1
      # kwargs["hashing_kv"].global_config["llm_model_name"]
 
     return await litellm_complete_if_cache(

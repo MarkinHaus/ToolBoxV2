@@ -606,7 +606,7 @@ class KnowledgeBase:
     def __init__(self, embedding_dim: int = 768, similarity_threshold: float = 0.61, batch_size: int = 64,
                  n_clusters: int = 4, deduplication_threshold: float = 0.85, model_name=os.getenv("DEFAULTMODELSUMMERY"),
                  embedding_model=os.getenv("DEFAULTMODELEMBEDDING"),
-                 vis_class:str | None = "FaissVectorStore",
+                 vis_class:str | None = "NumpyVectorStore",
                  vis_kwargs:dict[str, Any] | None=None,
                  requests_per_second=85.,
                  chunk_size: int = 3600,
@@ -836,7 +836,7 @@ class KnowledgeBase:
     async def add_data(
         self,
         texts: list[str],
-        metadata: list[dict[str, Any]] | None = None,
+        metadata: list[dict[str, Any]] | None = None, direct:bool = False
     ) -> tuple[int, int]:
         """Enhanced version with smart splitting and clustering"""
         if isinstance(texts, str):
@@ -847,13 +847,15 @@ class KnowledgeBase:
             metadata = [metadata]
         if len(texts) != len(metadata):
             raise ValueError("Length of texts and metadata must match")
-        if len(texts) == 1 and len(texts[0]) < 10_000:
-            if len(self.sto) < self.batch_size and len(texts) == 1:
-                self.sto.append((texts[0], metadata[0]))
-                return -1, -1
-            if len(self.sto) >= self.batch_size:
-                _ = [texts.append(t) or metadata.append([m]) for (t, m) in self.sto]
-                self.sto = []
+
+        if not direct:
+            if len(texts) == 1 and len(texts[0]) < 10_000:
+                if len(self.sto) < self.batch_size and len(texts) == 1:
+                    self.sto.append((texts[0], metadata[0]))
+                    return -1, -1
+                if len(self.sto) >= self.batch_size:
+                    _ = [texts.append(t) or metadata.append([m]) for (t, m) in self.sto]
+                    self.sto = []
 
         # Split large texts
         split_texts = []
@@ -1681,7 +1683,7 @@ class KnowledgeBase:
             # Save to disk using pickle
             with open(path, 'wb') as f:
                 pickle.dump(data, f)
-            print(f"Knowledge base successfully saved to {path} with {len(self.concept_extractor.concept_graph.concepts.items())} concepts")
+            # print(f"Knowledge base successfully saved to {path} with {len(self.concept_extractor.concept_graph.concepts.items())} concepts")
 
         except Exception as e:
             print(f"Error saving knowledge base: {str(e)}")
@@ -1749,7 +1751,7 @@ class KnowledgeBase:
                 )
                 kb.concept_extractor.concept_graph.add_concept(concept)
 
-            print(f"Knowledge base successfully loaded from {path} with {len(concept_data)} concepts")
+            # print(f"Knowledge base successfully loaded from {path} with {len(concept_data)} concepts")
             return kb
 
         except Exception as e:
@@ -1902,5 +1904,5 @@ async def math():
 if __name__ == "__main__":
     get_app(name="main2")
 
-    asyncio.run(math())
+    asyncio.run(main())
 

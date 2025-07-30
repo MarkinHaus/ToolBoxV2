@@ -330,7 +330,7 @@ class WorldModel:
             return
         with self._lock:
             # Simple overwrite strategy, could be more sophisticated (merge, etc.)
-            self.data = adk_state.to_dict() # ADK State is dict-like
+            self.data.update(adk_state.to_dict()) # ADK State is dict-like
             logger.debug(f"WorldModel synced FROM ADK state. Keys: {list(self.data.keys())}")
 
     def sync_to_adk_state(self, adk_state: State):
@@ -934,7 +934,7 @@ class EnhancedAgent(*_AgentBaseClass):
 
         try:
              # Pass the agent instance and other options to the runner constructor
-            self.adk_runner = runner_class(agent=self, app_name=app_name, **runner_opts)
+            self.adk_runner = runner_class(agent=self, app_name=app_name, **runner_opts) # tools=self._adk_tools_transient
             self.adk_session_service = self.adk_runner.session_service # Store session service
             logger.info(f"ADK {runner_class.__name__} setup complete for agent '{self.amd.name}'.")
             return self.adk_runner
@@ -1279,7 +1279,8 @@ class EnhancedAgent(*_AgentBaseClass):
                 # Call progress callback
                 if self.progress_callback:
                      try:
-                         self.progress_callback(event_dict or event)
+                         if iscoroutinefunction(self.progress_callback): await self.progress_callback(event_dict or event)
+                         else:self.progress_callback(event_dict or event)
                      except Exception as cb_e: logger.warning(f"Progress callback failed for ADK event: {cb_e}")
 
                 # Check for Human-in-Loop triggers (example)

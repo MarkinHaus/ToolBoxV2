@@ -432,6 +432,7 @@ class Tools(MainTool, FileHandler):
             self.controller.init(self.config['controller_file'])
         self.config["controller-init"] = True
 
+
         return self.get_agent_builder(name) if build else await self.get_agent(name)
 
     def show_version(self):
@@ -442,6 +443,8 @@ class Tools(MainTool, FileHandler):
 
         initialize_isaa_chains(self.app)
         initialize_isaa_webui_module(self.app, self)
+
+        threading.Thread(target=self.load_to_mem_sync, daemon=True).start()
         self.print("ISAA module started.")
 
     def load_secrit_keys_from_env(self):
@@ -491,6 +494,14 @@ class Tools(MainTool, FileHandler):
         if hasattr(memory_instance, 'save_all_memories'):  # Hypothetical method
             memory_instance.save_all_memories(f"{get_app().data_dir}/Memory/")
         self.print("Memory saving process initiated")
+    def load_to_mem_sync(self):
+        # This used to call agent.save_memory(). EnhancedAgent does not have this.
+        # If AISemanticMemory needs global saving, it should be handled by AISemanticMemory itself.
+        # For now, this can be a no-op or save AISemanticMemory instances if managed by Tools.
+        memory_instance = self.get_memory()  # Assuming this returns AISemanticMemory
+        if hasattr(memory_instance, 'load_all_memories'):  # Hypothetical method
+            memory_instance.load_all_memories(f"{get_app().data_dir}/Memory/")
+        self.print("Memory saving process initiated")
 
     def get_agent_builder(self, name="self") -> EnhancedAgentBuilder:
         if name == 'None': name = "self"  # Default name
@@ -533,7 +544,7 @@ class Tools(MainTool, FileHandler):
             query: str,
             search_mode: Optional[str] = "wide",
             context_name: Optional[str] = None
-        ):
+        ) -> str:
             """
             Führt eine flexible Suche im Speicher durch, deren Genauigkeit über einen Parameter gesteuert werden kann.
 
@@ -587,8 +598,10 @@ class Tools(MainTool, FileHandler):
 
         async def save_to_memory_tool(data_to_save: str, context_name: str = name):
             mem_instance = self.get_memory()
-            await mem_instance.add_data(context_name, str(data_to_save))
-            return 'Data added to memory.'
+            ist = await mem_instance.add_data(context_name, str(data_to_save), direct=True)
+            if ist:
+                return 'Data added to memory.'
+            raise ValueError('Error adding data to memory.')
 
         agent_builder.with_adk_tool_function(run_isaa_agent_tool, name="runAgent",
                                              description=f"Run another ISAA agent. Available: {self.config.get('agents-name-list', [])}")
@@ -596,8 +609,8 @@ class Tools(MainTool, FileHandler):
                                              description="Search ISAA's semantic memory.")
         agent_builder.with_adk_tool_function(save_to_memory_tool, name="saveDataToMemory",
                                              description="Save data to ISAA's semantic memory for the current agent's context.")
-        agent_builder.with_adk_tool_function(self.web_search, name="searchWeb",
-                                             description="Search the web for information.")
+        #agent_builder.with_adk_tool_function(self.web_search, name="searchWeb",
+        #                                     description="Search the web for information.")
         agent_builder.with_adk_tool_function(self.shell_tool_function, name="shell", description=f"Run a shell command. in {detect_shell()}")
 
         # Add more tools based on agent 'name' or type

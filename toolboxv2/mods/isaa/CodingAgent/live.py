@@ -147,7 +147,7 @@ class DynamicVerboseFormatter:
             self.print(self.style.CYAN(self.style.Bold(text)))
             self.print(self.style.CYAN("=" * self._terminal_width))
         else:  # Regular/large screen
-            border_width = min(len(text) + 6, self._terminal_width - 2)
+            border_width = min(len(text) + 2, self._terminal_width - 2)
             border = "─" * border_width
 
             self.print()
@@ -555,7 +555,7 @@ class EnhancedVerboseOutput:
                     self.print_tool_call(
                         part["function_response"]["name"],
                         {},
-                        result
+                        str(result)
                     )
 
         if event.get("usage_metadata"):
@@ -2540,7 +2540,7 @@ class Pipeline:
         self.task = None
         self.web_js = web_js
         self.print_f = print_f
-        self.verbose_output = EnhancedVerboseOutput(verbose=verbose, print_f=self.print_f)
+        self.verbose_output = EnhancedVerboseOutput(verbose=verbose, print_func=self.print_f)
         self.variables = self._process_variables(variables or {})
         self.variables['auto_install'] = auto_install
         self.execution_history = []

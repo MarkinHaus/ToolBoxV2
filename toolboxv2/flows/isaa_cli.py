@@ -1,14 +1,17 @@
 import asyncio
 import json
 import os
+import platform
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Optional, Dict, List
 import glob
 
+import psutil
 from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import NestedCompleter, WordCompleter
+from prompt_toolkit.completion import NestedCompleter, WordCompleter, PathCompleter, FuzzyCompleter
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.shortcuts import prompt
 from prompt_toolkit.formatted_text import HTML
@@ -17,7 +20,7 @@ from prompt_toolkit.application import get_app as get_pt_app
 
 from toolboxv2 import get_app
 from toolboxv2.mods.isaa.CodingAgent.live import EnhancedVerboseOutput
-from toolboxv2.mods.isaa.module import Tools as Isaatools
+from toolboxv2.mods.isaa.module import Tools as Isaatools, detect_shell
 from toolboxv2.utils.extras.Style import Style, Spinner
 
 NAME = "isaa_cli"
@@ -29,24 +32,145 @@ class WorkspaceIsaasCli:
     def __init__(self, app_instance: Any):
         self.app = app_instance
         self.isaa_tools: Isaatools = app_instance.get_mod("isaa")
+        self.isaa_tools.stuf = True #
         self.formatter = EnhancedVerboseOutput(verbose=True, print_func=app_instance.print)
         self.style = Style()
         self.active_agent_name = "workspace_supervisor"
         self.session_id = "workspace_session"
         self.history = FileHistory(Path(self.app.data_dir) / "isaa_cli_history.txt")
-        self.completer = self.build_workspace_completer()
+
+        # Dedizierte Completer für Pfade
+        self.dir_completer = PathCompleter(only_directories=True, expanduser=True)
+        self.path_completer = PathCompleter(expanduser=True)
+
+        self.completion_dict = self.build_workspace_completer()
         self.key_bindings = self.create_key_bindings()
+
+        self.dynamic_completions_file = Path(self.app.data_dir) / "isaa_cli_completions.json"
+        self.dynamic_completions = {"world_tags": [], "context_tags": []}
+        self._load_dynamic_completions()  # Methode zum Laden der Tags beim Start)
+
+        self.session_stats = self._init_session_stats()
+        self.prompt_start_time = None
+
         self.prompt_session = PromptSession(
             history=self.history,
-            completer=self.completer,
+            completer= FuzzyCompleter(NestedCompleter.from_nested_dict(self.completion_dict)),#self.completer_dict_to_world_completer(),
             complete_while_typing=True,
             key_bindings=self.key_bindings,
             multiline=True,
             wrap_lines=True,
         )
+
+
         self.background_tasks = {}
         self.interrupt_count = 0
-        self.workspace_path = Path.cwd()
+        from toolboxv2 import __init_cwd__
+        self.workspace_path = __init_cwd__
+        self.default_exclude_dirs = [
+            "node_modules",
+            "__pycache__",
+            ".git",
+            ".svn",
+            "CVS",
+            ".bzr",
+            ".hg",
+            "build",
+            "dist",
+            "target",
+            "out",
+            "bin",
+            "obj",
+            ".idea",
+            ".vscode",
+            ".project",
+            ".settings",
+            "*.pyc",
+            "*.pyo",
+            "*.pyd",
+            ".DS_Store"
+        ]
+
+    def _init_session_stats(self) -> Dict:
+        """Initialisiert die Struktur für die Sitzungsstatistiken."""
+        return {
+            "session_start_time": asyncio.get_event_loop().time(),
+            "interaction_time": 0.0,
+            "agent_running_time": 0.0,
+            "total_cost": 0.0,
+            "total_tokens": {"prompt": 0, "completion": 0},
+            "agents": {},  # Statistiken pro Agent
+            "tools": {
+                "total_calls": 0,
+                "failed_calls": 0,
+                "calls_by_name": {}
+            }
+        }
+
+    def _load_dynamic_completions(self):
+        """Lädt dynamische Vervollständigungs-Tags aus einer JSON-Datei."""
+        try:
+            if self.dynamic_completions_file.exists():
+                with open(self.dynamic_completions_file, 'r') as f:
+                    data = json.load(f)
+                    self.dynamic_completions["world_tags"] = data.get("world_tags", [])
+                    self.dynamic_completions["context_tags"] = data.get("context_tags", [])
+        except (IOError, json.JSONDecodeError):
+            self.dynamic_completions = {"world_tags": [], "context_tags": []}
+
+    async def _save_dynamic_completions(self):
+        """Speichert die aktuellen dynamischen Vervollständigungs-Tags in einer JSON-Datei."""
+        self.dynamic_completions["world_tags"] = sorted(list(set(self.dynamic_completions["world_tags"])))
+        self.dynamic_completions["context_tags"] = sorted(list(set(self.dynamic_completions["context_tags"])))
+        try:
+            with open(self.dynamic_completions_file, 'w') as f:
+                json.dump(self.dynamic_completions, f, indent=2)
+        except IOError as e:
+            self.formatter.print_error(f"Konnte Vervollständigungen nicht speichern: {e}")
+
+        # In der `WorkspaceIsaasCli`-Klasse
+
+    async def _update_completer(self):
+        """Aktualisiert den prompt_toolkit-Completer mit den neuesten dynamischen Daten."""
+        # Agentennamen live aus der Konfiguration laden (bestehender Code)
+        try:
+            agent_names = self.isaa_tools.config.get("agents-name-list", [])
+            self.completion_dict["/agent"]["switch"] = WordCompleter(agent_names, ignore_case=True)
+        except Exception:
+            self.completion_dict["/agent"]["switch"] = None
+
+        # World-Tags aus der geladenen/gespeicherten Liste (bestehender Code)
+        world_tags = self.dynamic_completions.get("world_tags", [])
+        if world_tags:
+            self.completion_dict["/world"]["load"] = WordCompleter(world_tags, ignore_case=True)
+
+        # Context-Tags aus der geladenen/gespeicherten Liste (bestehender Code)
+        context_tags = self.dynamic_completions.get("context_tags", [])
+        if context_tags:
+            completer = WordCompleter(context_tags, ignore_case=True)
+            self.completion_dict["/context"]["load"] = completer
+            self.completion_dict["/context"]["delete"] = completer
+
+        # NEU: Task-IDs aus den laufenden Hintergrund-Tasks holen
+        try:
+            running_task_ids = [
+                str(tid) for tid, tinfo in self.background_tasks.items()
+                if not tinfo['task'].done()
+            ]
+            if running_task_ids:
+                task_id_completer = WordCompleter(running_task_ids, ignore_case=True)
+                self.completion_dict["/tasks"]["attach"] = task_id_completer
+                self.completion_dict["/tasks"]["kill"] = task_id_completer
+            else:
+                # Wenn keine Tasks laufen, leere Completer setzen
+                self.completion_dict["/tasks"]["attach"] = WordCompleter([])
+                self.completion_dict["/tasks"]["kill"] = WordCompleter([])
+        except Exception:
+            self.completion_dict["/tasks"]["attach"] = WordCompleter([])
+            self.completion_dict["/tasks"]["kill"] = WordCompleter([])
+
+
+        self.prompt_session.completer = FuzzyCompleter(NestedCompleter.from_nested_dict(self.completion_dict)) #self.completer_dict_to_world_completer()
 
     def create_key_bindings(self):
         """Create custom key bindings for enhanced UX"""
@@ -70,48 +194,35 @@ class WorkspaceIsaasCli:
         commands_dict = {
             "/workspace": {
                 "status": None,
-                "cd": WordCompleter([]),  # Placeholder for directory completion later
-                "ls": WordCompleter([]),  # Placeholder for directory completion later
+                "cd": self.dir_completer,
+                "ls": self.path_completer,
                 "info": None,
             },
+            "/world": {
+                "show": None, "add": None,
+                "remove": None,
+                "clear": None, "save": None,
+                "load": WordCompleter([]),  # Wird dynamisch gefüllt
+            },
             "/agent": {
-                "list": None,
-                "switch": None,
-                "status": None,
+                "list": None, "status": None,
+                "switch": WordCompleter([]),  # Wird dynamisch gefüllt
             },
             "/tasks": {
-                "list": None,
-                "attach": None,
-                "kill": None,
-                "status": None,
-                "monitor": None,
+                "list": None, "attach": WordCompleter([]), "kill": WordCompleter([]), "status": None, "monitor": None,
             },
             "/context": {
-                "save": None,
-                "load": None,
-                "list": None,
-                "clear": None,
-                "delete": None,
+                "list": None, "clear": None, "save": None,
+                "load": WordCompleter([]),  # Wird dynamisch gefüllt
+                "delete": WordCompleter([]), # Wird dynamisch gefüllt
             },
-            "/monitor": {
-                "start": None,
-                "stop": None,
-                "status": None,
-                "logs": None,
-            },
-            "/system": {
-                "status": None,
-                "config": None,
-                "backup": None,
-                "restore": None,
-                "performance": None,
-            },
-            "/help": None,
-            "/exit": None,
-            "/quit": None,
-            "/clear": None,
-        }
+            "/monitor": None,
+            "/system": {"status": None, "config": None, "backup": None, "restore": None, "performance": None},
+            "/help": None, "/exit": None, "/quit": None, "/clear": None}
+        return commands_dict
 
+    def completer_dict_to_world_completer(self) -> WordCompleter:
+        commands_dict = self.completion_dict
         # Helper function to flatten the nested dict into a list of full commands
         def flatten_commands(d, prefix=''):
             flat_list = []
@@ -273,7 +384,7 @@ class WorkspaceIsaasCli:
     async def read_file_tool(self, file_path: str, encoding: str = "utf-8", lines_range: Optional[str] = None):
         """Read file content with optional line range (e.g., '1-10' or '5-')"""
         try:
-            path = Path(file_path)
+            path = Path(self.workspace_path / file_path)
             if not path.exists():
                 return f"❌ File {file_path} does not exist"
             with open(path, 'r', encoding=encoding) as f:
@@ -297,7 +408,7 @@ class WorkspaceIsaasCli:
                               backup: bool = False):
         """Write content to file with optional backup"""
         try:
-            path = Path(file_path)
+            path = Path(self.workspace_path / file_path)
             if backup and path.exists():
                 backup_path = path.with_suffix(path.suffix + '.backup')
                 path.rename(backup_path)
@@ -315,7 +426,7 @@ class WorkspaceIsaasCli:
                                    recursive: bool = True, context_lines: int = 0):
         """Search for text in files with context"""
         results = []
-        base_path = Path(directory).resolve()
+        base_path = Path(self.workspace_path / directory).resolve()
         patterns = [p.strip() for p in file_patterns.split(",")]
         files_to_search = []
         for pattern in patterns:
@@ -348,27 +459,40 @@ class WorkspaceIsaasCli:
                 continue
         return json.dumps(results, indent=2)
 
+
     async def list_directory_tool(self, directory: str = ".", recursive: bool = False, file_types: Optional[str] = None,
-                                  show_hidden: bool = False):
-        """List directory contents with advanced filtering"""
+                                  show_hidden: bool = False, exclude_dirs: Optional[List[str]] = None):
+        """List directory contents with advanced filtering and exclusion."""
+        if exclude_dirs is None:
+            exclude_dirs = self.default_exclude_dirs
+        else:
+            exclude_dirs.extend(self.default_exclude_dirs)
+            # Remove duplicates
+            exclude_dirs = list(set(exclude_dirs))
+
         try:
-            path = Path(directory)
+            path = self.workspace_path / directory
             if not path.exists():
                 return f"❌ Directory {directory} does not exist"
             files, dirs = [], []
-            if recursive:
-                for item in path.rglob("*"):
-                    if not show_hidden and item.name.startswith('.'): continue
-                    if item.is_file(): files.append(item)
-                    elif item.is_dir(): dirs.append(item)
-            else:
-                for item in path.iterdir():
-                    if not show_hidden and item.name.startswith('.'): continue
-                    if item.is_file(): files.append(item)
-                    elif item.is_dir(): dirs.append(item)
+
+            items = path.rglob("*") if recursive else path.iterdir()
+
+            for item in items:
+                if not show_hidden and item.name.startswith('.'):
+                    continue
+
+                if item.is_dir():
+                    if item.name in exclude_dirs:
+                        continue
+                    dirs.append(item)
+                elif item.is_file():
+                    files.append(item)
+
             if file_types:
                 type_filters = [t.strip() for t in file_types.split(",")]
                 files = [f for f in files if any(t in f.suffix.lower() for t in type_filters)]
+
             result = f"📁 Contents of {directory}:\n\n"
             result += f"Directories ({len(dirs)}):\n"
             for d in sorted(dirs):
@@ -455,12 +579,16 @@ class WorkspaceIsaasCli:
         try:
             if not session_id:
                 session_id = f"bg_{len(self.background_tasks)}_{agent_name}"
+            now = asyncio.get_event_loop().time()
             task = asyncio.create_task(
                 self.isaa_tools.run_agent(agent_name, task_prompt, session_id=session_id, progress_callback=self.progress_callback))
             task_id = len(self.background_tasks)
-            self.background_tasks[task_id] = {'task': task, 'agent': agent_name, 'prompt': task_prompt[:100],
-                                              'started': asyncio.get_event_loop().time(), 'session_id': session_id,
-                                              'priority': priority, 'status': 'running'}
+            self.background_tasks[task_id] = {
+                'task': task, 'agent': agent_name, 'prompt': task_prompt[:100],
+                'started': now, 'session_id': session_id,
+                'priority': priority, 'status': 'running',
+                'last_activity': now, 'last_event': 'created'  # NEU
+            }
             return f"⧖ Background task {task_id} started with agent '{agent_name}' (priority: {priority})"
         except Exception as e:
             return f"❌ Error starting background task: {str(e)}"
@@ -504,7 +632,7 @@ class WorkspaceIsaasCli:
     async def change_workspace_tool(self, directory: str, create_if_missing: bool = False):
         """Change workspace directory with optional creation"""
         try:
-            new_path = Path(directory).resolve()
+            new_path = Path(self.workspace_path / directory).resolve()
             if not new_path.exists():
                 if create_if_missing:
                     new_path.mkdir(parents=True, exist_ok=True)
@@ -517,33 +645,97 @@ class WorkspaceIsaasCli:
         except Exception as e:
             return f"❌ Error changing workspace: {str(e)}"
 
-    async def workspace_status_tool(self, include_git: bool = True, include_files: bool = True):
-        """Get comprehensive workspace status"""
+    async def workspace_status_tool(self, include_git: bool = True, max_items_per_type: int = 15):
+        """
+        Displays a comprehensive and visually clean workspace status directly to the console.
+        Features a color-coded overview and an elegant file tree.
+
+        Args:
+            include_git (bool): Whether to include the Git status section.
+            max_items_per_type (int): The maximum number of files and directories to list.
+        """
         try:
-            parts = [f"📁 Workspace: {self.workspace_path}", f"🤖 Active Agent: {self.active_agent_name}"]
+            # --- Haupt-Header ---
+            self.formatter.log_header("Workspace Status")
+
+            # --- Allgemeine Übersicht ---
             bg_running = len([t for t in self.background_tasks.values() if not t['task'].done()])
-            parts.append(f"🔄 Background Tasks: {bg_running} running / {len(self.background_tasks)} total")
+            bg_total = len(self.background_tasks)
+
+            overview_text = (
+                f"  Path:         {self.style.CYAN(str(self.workspace_path))}\n"
+                f"  Active Agent: {self.style.YELLOW(self.active_agent_name)}\n"
+                f"  Background:   {self.style.BLUE(f'{bg_running} running')} / {bg_total} total"
+            )
+            self.formatter.print_section("Overview 📝", overview_text)
+
+            # --- Git-Status ---
             if include_git:
+                git_info_lines = []
                 try:
-                    git_res = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True, cwd=self.workspace_path)
-                    if git_res.returncode == 0:
-                        status_res = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, cwd=self.workspace_path)
-                        changes = "clean" if not status_res.stdout.strip() else "modified"
-                        parts.append(f"🔀 Git: {git_res.stdout.strip()} ({changes})")
+                    git_res = subprocess.run(
+                        ["git", "branch", "--show-current"], capture_output=True, text=True,
+                        cwd=self.workspace_path, check=False, timeout=2
+                    )
+                    if git_res.returncode == 0 and git_res.stdout.strip():
+                        branch = git_res.stdout.strip()
+                        status_res = subprocess.run(
+                            ["git", "status", "--porcelain"], capture_output=True, text=True,
+                            cwd=self.workspace_path, check=False, timeout=2
+                        )
+                        has_changes = status_res.stdout.strip()
+                        changes_text = "modified" if has_changes else "clean"
+                        status_style = self.style.RED if has_changes else self.style.GREEN
+
+                        git_info_lines.append(f"  Branch: {self.style.MAGENTA(branch)} ({status_style(changes_text)})")
                     else:
-                        parts.append("🔀 Git: Not a git repository")
-                except:
-                    parts.append("🔀 Git: Not available")
-            if include_files:
-                try:
-                    files = len([f for f in self.workspace_path.rglob("*") if f.is_file()])
-                    dirs = len([d for d in self.workspace_path.rglob("*") if d.is_dir()])
-                    parts.append(f"📊 Files: {files} files, {dirs} directories")
-                except:
-                    parts.append("📊 Files: Count unavailable")
-            return "\n".join(parts)
+                        git_info_lines.append(self.style.GREY("  (Not a git repository or no active branch)"))
+                except FileNotFoundError:
+                    git_info_lines.append(self.style.YELLOW("  ('git' command not found, status unavailable)"))
+                except Exception as e:
+                    git_info_lines.append(self.style.RED(f"  (Error getting Git status: {e})"))
+
+                self.formatter.print_section("Git Status 🔀", "\n".join(git_info_lines))
+
+            # --- Verzeichnisübersicht mit Baumstruktur ---
+            dir_listing_lines = []
+            try:
+                items = [item for item in self.workspace_path.iterdir() if not item.name.startswith('.')]
+                # Sortiere Ordner zuerst, dann Dateien, beides alphabetisch
+                dirs = sorted([d for d in items if d.is_dir()], key=lambda p: p.name.lower())
+                files = sorted([f for f in items if f.is_file()], key=lambda p: p.name.lower())
+
+                all_items = dirs + files
+
+                if not all_items:
+                    dir_listing_lines.append(self.style.GREY("  (Directory is empty)"))
+                else:
+                    display_items = all_items[:max_items_per_type]
+
+                    for i, item in enumerate(display_items):
+                        # Bestimme den Baum-Präfix
+                        is_last = (i == len(display_items) - 1)
+                        prefix = "└──" if is_last else "├──"
+
+                        if item.is_dir():
+                            item_text = f"📁 {self.style.BLUE(item.name)}/"
+                        else:
+                            item_text = f"📄 {item.name}"
+
+                        dir_listing_lines.append(f"  {self.style.GREY(prefix)} {item_text}")
+
+                    if len(all_items) > max_items_per_type:
+                        remaining = len(all_items) - max_items_per_type
+                        dir_listing_lines.append(self.style.GREY(f"  ... and {remaining} more items"))
+
+            except Exception as e:
+                dir_listing_lines.append(self.style.RED(f"  Error listing directory contents: {e}"))
+
+            self.formatter.print_section("Directory Contents 📁", "\n".join(dir_listing_lines))
+            print()  # Add a final newline for spacing
+            return "\n".join([overview_text] + git_info_lines+ dir_listing_lines)
         except Exception as e:
-            return f"❌ Error getting workspace status: {str(e)}"
+            self.formatter.print_error(f"Error generating workspace status: {str(e)}")
 
     async def show_welcome(self):
         """Display enhanced welcome with status overview"""
@@ -621,8 +813,8 @@ class WorkspaceIsaasCli:
 
     async def setup_workspace_agent(self):
         """Setup the main workspace supervisor agent"""
-        if self.active_agent_name != "workspace_agent":
-            self.active_agent_name = "workspace_agent"
+        if self.active_agent_name != "workspace_supervisor":
+            self.active_agent_name = "workspace_supervisor"
         builder = self.isaa_tools.get_agent_builder(self.active_agent_name)
         builder.with_system_message(
             "You are a Workspace Supervisor Agent with comprehensive capabilities.\n\n"
@@ -694,11 +886,11 @@ class WorkspaceIsaasCli:
         #     name="search_in_files",
         #     description="🔍 Search for a term in files, with optional surrounding context lines."
         # )
-        # builder.with_adk_tool_function(
-        #     self.list_directory_tool,
-        #     name="list_directory",
-        #     description="📂 List contents of a directory with filtering, recursion, and hidden file support."
-        # )
+        builder.with_adk_tool_function(
+            self.list_directory_tool,
+            name="list_directory",
+            description="📂 List contents of a directory with filtering, recursion, and hidden file support."
+        )
         builder.with_adk_tool_function(
             self.create_specialized_agent_tool,
             name="create_specialized_agent",
@@ -747,11 +939,21 @@ class WorkspaceIsaasCli:
         await self.init()
         while True:
             try:
+                await self._update_completer()
                 self.interrupt_count = 0
+                self.prompt_start_time = asyncio.get_event_loop().time()
                 user_input = await self.prompt_session.prompt_async(self.get_prompt_text(), multiline=False)
+                # Calculate interaction duration and update session stats
+                if self.prompt_start_time:
+                    interaction_duration = asyncio.get_event_loop().time() - self.prompt_start_time
+                    self.session_stats["interaction_time"] += interaction_duration
+                    self.prompt_start_time = None
+
                 if not user_input.strip():
                     continue
-                if user_input.strip().startswith("/"):
+                if user_input.strip().startswith("!"):
+                    await self._handle_shell_command(user_input.strip()[1:])
+                elif user_input.strip().startswith("/"):
                     await self.handle_workspace_command(user_input.strip())
                 else:
                     try:
@@ -785,11 +987,60 @@ class WorkspaceIsaasCli:
                 task_info['task'].cancel()
         await asyncio.sleep(0.5)
 
+    def _display_session_summary(self):
+        """Displays a summary of the session stats upon exit."""
+        self.formatter.log_header("Session Summary")
+
+        now = asyncio.get_event_loop().time()
+        total_duration = now - self.session_stats['session_start_time']
+
+        # Zeit-Statistiken
+        self.formatter.print_section("Time Usage", (
+            f"Total Session: {total_duration:.2f}s\n"
+            f"User Interaction: {self.session_stats['interaction_time']:.2f}s\n"
+            f"Agent Processing: {self.session_stats['agent_running_time']:.2f}s"
+        ))
+
+        # Kosten und Token
+        self.formatter.print_section("Resource Usage", (
+            f"Total Estimated Cost: ${self.session_stats['total_cost']:.4f}\n"
+            f"Total Prompt Tokens: {self.session_stats['total_tokens']['prompt']}\n"
+            f"Total Completion Tokens: {self.session_stats['total_tokens']['completion']}"
+        ))
+
+        # Tool-Nutzung
+        tool_stats = self.session_stats["tools"]
+        tool_summary = (
+            f"Total Calls: {tool_stats['total_calls']}\n"
+            f"Failed Calls: {tool_stats['failed_calls']}"
+        )
+        self.formatter.print_section("Tool Calls", tool_summary)
+        if tool_stats['calls_by_name']:
+            headers = ["Tool Name", "Success", "Fail"]
+            rows = [[name, counts['success'], counts['fail']] for name, counts in tool_stats['calls_by_name'].items()]
+            self.formatter.print_table(headers, rows)
+
+        # Agenten-spezifische Statistiken
+        if self.session_stats['agents']:
+            self.formatter.print_section("Agent Specifics", "")
+            headers = ["Agent Name", "Cost ($)", "Tokens (P/C)", "Tool Calls"]
+            rows = []
+            for name, data in self.session_stats['agents'].items():
+                rows.append([
+                    name,
+                    f"{data['cost']:.4f}",
+                    f"{data['tokens']['prompt']}/{data['tokens']['completion']}",
+                    data['tool_calls']
+                ])
+            self.formatter.print_table(headers, rows)
+
     async def handle_agent_request(self, request: str):
         """Handle requests to the workspace supervisor agent with progress"""
+        start_time = asyncio.get_event_loop().time()
         try:
-            agent = await self.isaa_tools.get_agent(self.active_agent_name)
-            agent.progress_callback = self.formatter.print_event
+
+            agent = await self.formatter.process("Getting Agent", self.isaa_tools.get_agent(self.active_agent_name))
+            agent.progress_callback = self.progress_callback
             response = await self.isaa_tools.run_agent(
                 name=self.active_agent_name,
                 text=request,
@@ -799,26 +1050,167 @@ class WorkspaceIsaasCli:
             await self.formatter.print_agent_response(response)
         except Exception as e:
             self.formatter.print_error(f"Error processing agent request: {e}")
+        finally:
+            # NEU: Laufzeit zur Statistik hinzufügen
+            duration = asyncio.get_event_loop().time() - start_time
+            self.session_stats["agent_running_time"] += duration
 
-    async def progress_callback(self, data: dict):
-        """Enhanced progress callback with better formatting"""
-        event_type = data.get("type", "unknown")
-        if event_type == "tool_call":
-            tool_name = data.get("tool_name", "Unknown")
-            self.formatter.print_info(f"🔧 Using tool: {tool_name}")
-        elif event_type == "thinking":
-            content = data.get('content', 'Processing...')
-            self.formatter.log_state("THINKING", {"process": content})
-        else:
-            self.formatter.print_event(data)
+    async def progress_callback(self, event: Dict[str, Any]):
+        """
+        Verarbeitet ADK-Events, um Statistiken zu sammeln und den Fortschritt zu protokollieren.
+        Diese Funktion ist an die reale Datenstruktur der ADK 1.8.0 Events angepasst.
+        """
+        # Holen des Agentennamens aus dem 'author'-Feld des Events
+        agent_name = event.get("author", getattr(self, 'active_agent_name', 'unknown_agent'))
+
+        # Initialisiere Agenten-Statistiken, falls diese zum ersten Mal auftreten
+        if agent_name not in self.session_stats["agents"]:
+            self.session_stats["agents"][agent_name] = {
+                "cost": 0.0,
+                "tokens": {"prompt": 0, "completion": 0},
+                "tool_calls": 0
+            }
+
+        # Letzte Aktivität für den Monitor-Modus verfolgen (falls implementiert)
+        session_id = event.get("invocation_id")  # invocation_id ist eine gute Annäherung für eine Session
+        if session_id and hasattr(self, 'background_tasks'):
+            for task_id, task_info in self.background_tasks.items():
+                if task_info.get('session_id') == session_id:
+                    task_info['last_activity'] = asyncio.get_event_loop().time()
+                    task_info['last_event'] = event.get("id", "unknown")
+                    break
+
+        # --- Kernlogik: Parsen der Event-Inhalte ---
+
+        # 1. Verarbeite "Gedanken" und Werkzeugaufrufe vom Modell
+        if event.get("content") and event["content"].get("parts"):
+            for part in event["content"]["parts"]:
+                # Ein "Gedanke" oder eine textuelle Antwort des Modells
+                if "text" in part:
+                    self.formatter.log_state("THINKING", {"process": Style.GREY(part.get("text", "...")[:255]+'...')})
+
+                # Ein Werkzeugaufruf wird vom Modell angefordert
+                if "function_call" in part:
+                    call_data = part["function_call"]
+                    tool_name = call_data.get("name", "UnknownTool")
+                    tool_args = call_data.get("args", "UnknownInput")
+                    self.formatter.print_info(f"🔧 Using tool: {tool_name}")
+                    self.formatter.print_info(f"args: {tool_args}")
+                    # Aktualisiere die Statistiken für Werkzeugaufrufe
+                    stats = self.session_stats["tools"]
+                    stats["total_calls"] += 1
+                    # Initialisiere Zähler für dieses spezielle Werkzeug, falls nicht vorhanden
+                    stats["calls_by_name"].setdefault(tool_name, {"success": 0, "fail": 0})
+                    self.session_stats["agents"][agent_name]["tool_calls"] += 1
+
+                # Ein Werkzeugergebnis wird verarbeitet
+                if "function_response" in part:
+                    response_data = part["function_response"]
+                    tool_name = response_data.get("name", "UnknownTool")
+                    stats = self.session_stats["tools"]
+
+                    # Prüfe, ob das Ergebnis ein Fehler war.
+                    # ANNAHME: Ein Fehler wird durch einen 'error'-Schlüssel in der Antwort signalisiert.
+                    # Dies muss ggf. an Ihre tatsächliche Fehlerstruktur angepasst werden.
+                    is_error = "error" in response_data.get("response", {})
+
+                    if is_error:
+                        stats["failed_calls"] += 1
+                        stats["calls_by_name"].setdefault(tool_name, {"success": 0, "fail": 0})["fail"] += 1
+                        self.formatter.print_error(f"❌ Tool '{tool_name}' failed.")
+                    else:
+                        stats["calls_by_name"].setdefault(tool_name, {"success": 0, "fail": 0})["success"] += 1
+                        self.formatter.print_success(f"✅ Tool '{tool_name}' succeeded.")
+                        result = part["function_response"]["response"].get("result", "")
+                        self.formatter.print_section("Result", Style.GREY(str(result))[:255]+'...')
+
+        # 2. Verarbeite Token-Nutzung und Kosten aus den Metadaten des Events
+        # Dies geschieht typischerweise bei Events, die eine LLM-Antwort enthalten.
+        if "usage_metadata" in event:
+            usage = event["usage_metadata"]
+            prompt_tokens = usage.get("prompt_token_count", 0)
+            # Im ADK wird der Output oft als 'candidates_token_count' bezeichnet
+            completion_tokens = usage.get("candidates_token_count", 0)
+
+            if prompt_tokens > 0 or completion_tokens > 0:
+                self.formatter.print_info(f"Token usage: {usage}")
+
+                # Aktualisiere die globalen Token-Statistiken
+                self.session_stats["total_tokens"]["prompt"] += prompt_tokens
+                self.session_stats["total_tokens"]["completion"] += completion_tokens
+
+                # Aktualisiere die agentenspezifischen Token-Statistiken
+                self.session_stats["agents"][agent_name]["tokens"]["prompt"] += prompt_tokens
+                self.session_stats["agents"][agent_name]["tokens"]["completion"] += completion_tokens
+
+            # ANNAHME: Die Kostenberechnung muss separat erfolgen, da sie nicht direkt im Event enthalten ist.
+            # Hier könnte Ihre Kostenberechnungslogik aufgerufen werden.
+            # Beispiel: cost = calculate_cost(prompt_tokens, completion_tokens, model_name)
+            cost = 0.0  # Platzhalter
+            if cost > 0:
+                self.session_stats["total_cost"] += cost
+                self.session_stats["agents"][agent_name]["cost"] += cost
+
+    async def _handle_shell_command(self, command: str):
+        """
+        Executes a shell command directly using asyncio's subprocess tools,
+        streaming stdout and stderr in real-time.
+        """
+        if not command.strip():
+            self.formatter.print_error("Shell command cannot be empty.")
+            return
+
+        self.formatter.print_info(f"🚀 Executing shell command: `{command}`")
+        try:
+            # Create a subprocess from the shell command.
+            # We pipe stdout and stderr to capture them.
+            shell_exe, cmd_flag = detect_shell()
+            full_command = '"'+shell_exe + '" ' + cmd_flag + " " + command
+            process = await asyncio.create_subprocess_shell(
+                full_command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                # On Windows, you might need shell=True explicitly, but
+                # create_subprocess_shell handles this.
+            )
+
+            # Helper function to read from a stream and print lines.
+            async def stream_reader(stream, style_func):
+                while not stream.at_eof():
+                    line = await stream.readline()
+                    if line:
+                        # Decode bytes to string and print using the specified formatter style.
+                        style_func(line.decode().strip())
+                    await asyncio.sleep(0.01)  # Yield control briefly
+
+            # Create concurrent tasks to read stdout and stderr.
+            # This ensures we see output as it happens, regardless of which stream it's on.
+            stdout_task = asyncio.create_task(stream_reader(process.stdout, self.formatter.print))
+            stderr_task = asyncio.create_task(stream_reader(process.stderr,  lambda x: self.formatter.print_section("Shell Error", Style.RED(x))))
+
+            # Wait for both stream readers to finish.
+            await asyncio.gather(stdout_task, stderr_task)
+
+            # Wait for the process to terminate and get its return code.
+            return_code = await process.wait()
+
+            if return_code == 0:
+                self.formatter.print(f"✅ Command finished successfully (Exit Code: {return_code}).")
+            else:
+                self.formatter.print(f"⚠️ Command finished with an error (Exit Code: {return_code}).")
+
+        except FileNotFoundError:
+            self.formatter.print(f"Error: Command not found. Make sure it's installed and in your system's PATH.")
+        except Exception as e:
+            self.formatter.print(f"An unexpected error occurred while running the shell command: {e}")
 
     async def handle_workspace_command(self, user_input: str):
         """Handle workspace management commands with enhanced formatting"""
-        print(user_input)
         parts = user_input.split()
         command, args = parts[0].lower(), parts[1:]
         command_map = {
             "/workspace": self.handle_workspace_cmd,
+            "/world": self.handle_world_model_cmd,
             "/agent": self.handle_agent_cmd,
             "/tasks": self.handle_tasks_cmd,
             "/context": self.handle_context_cmd,
@@ -845,6 +1237,83 @@ class WorkspaceIsaasCli:
             import traceback
             self.formatter.print_error(f"Command failed: {e}\n{traceback.format_exc()}")
 
+    async def handle_world_model_cmd(self, args: list[str]):
+        """Handle world model commands with enhanced formatting and direct calls."""
+        if not args:
+            self.formatter.print_error("Usage: /world <show|add|remove|clear|save|load>")
+            return
+        agent = await self.isaa_tools.get_agent(self.active_agent_name)
+        sub_command = args[0]
+        if sub_command == "show":
+            try:
+                world_model = agent.world_model.show()
+                if world_model:
+                    print(world_model)
+                else:
+                    self.formatter.print_info("World model is empty")
+            except Exception as e:
+                self.formatter.print_error(f"Error showing world model: {e}")
+        elif sub_command == "add":
+            if len(args) < 2:
+                self.formatter.print_error("Usage: /world add <key> <value>")
+                return
+            try:
+                key, value = args[1], " ".join(args[2:])
+                await agent.world_model.set(key, value)
+                self.formatter.print_success(f"World model updated with {key}: {value}")
+            except Exception as e:
+                self.formatter.print_error(f"Error adding to world model: {e}")
+        elif sub_command == "remove":
+            if len(args) < 2:
+                self.formatter.print_error("Usage: /world remove <key>")
+                return
+            try:
+                key = args[1]
+                await agent.world_model.remove(key)
+                self.formatter.print_success(f"World model key '{key}' removed")
+            except Exception as e:
+                self.formatter.print_error(f"Error removing from world model: {e}")
+        elif sub_command == "clear":
+            try:
+                agent.world_model.data = {}
+                self.formatter.print_success("World model cleared")
+            except Exception as e:
+                self.formatter.print_error(f"Error clearing world model: {e}")
+        elif sub_command == "save":
+            # save to fil
+            if len(args) < 2:
+                self.formatter.print_error("Usage: /world save <tag>")
+                return
+            tag = args[1]
+            world_model_file = Path(self.app.data_dir) / f"world_model_{self.active_agent_name}_{tag}.json"
+            try:
+                data = agent.world_model.data
+                with open(world_model_file, "w") as f:
+                    json.dump(data, f, indent=2)
+                self.formatter.print_success("World model saved")
+
+                if tag not in self.dynamic_completions["world_tags"]:
+                    self.dynamic_completions["world_tags"].append(tag)
+                    await self._save_dynamic_completions()
+
+            except Exception as e:
+                self.formatter.print_error(f"Error saving world model: {e}")
+        elif sub_command == "load":
+            if len(args) < 2:
+                self.formatter.print_error("Usage: /world load <tag>")
+                return
+            tag = args[1]
+            world_model_file = Path(self.app.data_dir) / f"world_model_{self.active_agent_name}_{tag}.json"
+            try:
+                with open(world_model_file, "r") as f:
+                    data = json.load(f)
+                agent.world_model.data = data
+                self.formatter.print_success("World model loaded")
+            except Exception as e:
+                self.formatter.print_error(f"Error loading world model: {e}")
+        else:
+            self.formatter.print_error(f"Unknown world model command: {sub_command}")
+
     async def handle_workspace_cmd(self, args: list[str]):
         """Handle workspace commands with enhanced formatting and direct calls."""
         if not args:
@@ -853,11 +1322,7 @@ class WorkspaceIsaasCli:
         sub_command = args[0]
         if sub_command == "status":
             try:
-                status_output = await self.formatter.process(
-                    "Getting workspace status",
-                    self.workspace_status_tool(include_git=True, include_files=True)
-                )
-                print(status_output)
+                await self.workspace_status_tool(include_git=True)
             except Exception as e:
                 self.formatter.print_error(f"Error getting workspace status: {e}")
         elif sub_command == "cd":
@@ -1017,7 +1482,9 @@ class WorkspaceIsaasCli:
             context_file = Path(self.app.data_dir) / f"context_{session_name}.json"
             await self.formatter.process(f"Saving context '{session_name}'", self.save_context(context_file, history))
             self.formatter.print_success(f"Context saved as '{session_name}' ({len(history)} messages)")
-
+            if session_name not in self.dynamic_completions["context_tags"]:
+                self.dynamic_completions["context_tags"].append(session_name)
+                await self._save_dynamic_completions()
         elif sub_command == "load":
             if len(args) < 2:
                 self.formatter.print_error("Usage: /context load <session_name>")
@@ -1050,9 +1517,49 @@ class WorkspaceIsaasCli:
             else:
                 self.formatter.print_info("No saved contexts found")
         elif sub_command == "clear":
-            message_count = len(agent.message_history.get(self.session_id, []))
+            # Get the active agent instance
+            if not agent:
+                self.formatter.print_error("No active agent to clear context for.")
+                return
+
+            # --- Step 1: Clear the local LiteLLM message history ---
+            local_message_count = len(agent.message_history.get(self.session_id, []))
             agent.message_history[self.session_id] = []
-            self.formatter.print_success(f"Context cleared ({message_count} messages removed)")
+
+            # --- Step 2: Reset the ADK session if configured ---
+            if not agent.adk_runner or not agent.adk_session_service:
+                self.formatter.print_warning("ADK not configured. Only local message history was cleared.")
+                self.formatter.print_success(f"Local context cleared ({local_message_count} messages removed).")
+                return
+
+            self.formatter.print_info(f"Resetting ADK session '{self.session_id}'...")
+
+            try:
+                app_name = agent.adk_runner.app_name
+                user_id = agent.amd.user_id or "adk_user"
+
+                # To "reset" an ADK session, we effectively re-create it.
+                # This overwrites the existing session on the service with a new, empty one.
+                # We initialize its state from the agent's current World Model.
+                initial_state = agent.world_model.to_dict() if agent.sync_adk_state else {}
+
+                # This is the same logic used to create a session for the first time.
+                # By calling it on an existing session_id, we achieve a reset.
+                await agent.adk_session_service.create_session(
+                    app_name=app_name,
+                    user_id=user_id,
+                    session_id=self.session_id,
+                    state=initial_state
+                )
+
+                self.formatter.print_success(
+                    f"Full context cleared. Local history ({local_message_count} messages) "
+                    f"and ADK session '{self.session_id}' have been reset."
+                )
+
+            except Exception as e:
+                self.formatter.print_error(f"Failed to reset the ADK session: {e}")
+                self.formatter.print_warning("Only the local message history was cleared.")
         elif sub_command == "delete":
             if len(args) < 2:
                 self.formatter.print_error("Usage: /context delete <session_name>")
@@ -1061,6 +1568,9 @@ class WorkspaceIsaasCli:
             context_file = Path(self.app.data_dir) / f"context_{session_name}.json"
             try:
                 context_file.unlink()
+                if session_name in self.dynamic_completions["context_tags"]:
+                    self.dynamic_completions["context_tags"].remove(session_name)
+                    await self._save_dynamic_completions()
                 self.formatter.print_success(f"Context '{session_name}' deleted")
             except FileNotFoundError:
                 self.formatter.print_error(f"Context '{session_name}' not found")
@@ -1083,57 +1593,248 @@ class WorkspaceIsaasCli:
         return history
 
     async def handle_monitor_cmd(self, args: list[str]):
-        """Handle monitoring commands"""
-        self.formatter.print_warning("Advanced monitoring features coming soon")
-        self.formatter.print_info("Use /tasks monitor for basic task monitoring")
+        """Enter a real-time monitoring mode for background agent tasks."""
+
+        now = asyncio.get_event_loop().time()
+
+        self.formatter.log_header(f"Agent Monitor - {time.strftime('%H:%M:%S')}")
+
+        running_tasks = [
+            (tid, info) for tid, info in self.background_tasks.items() if not info['task'].done()
+        ]
+        self._display_session_summary()
+        if not running_tasks:
+            print("No running agent tasks to monitor.")
+        else:
+            headers = ["ID", "Agent", "Status", "Runtime (s)", "Last Event", "Idle (s)"]
+            rows = []
+            for tid, tinfo in running_tasks:
+                runtime = now - tinfo['started']
+                idle_time = now - tinfo.get('last_activity', tinfo['started'])
+                status = "Running"
+
+                # Einfache Logik zur Problemerkennung
+                if idle_time > 60:  # Mehr als 60 Sekunden keine Aktivität
+                    status = self.style.YELLOW("Stalled?")
+
+                rows.append([
+                    str(tid),
+                    tinfo['agent'],
+                    status,
+                    f"{runtime:.1f}",
+                    tinfo.get('last_event', 'n/a'),
+                    f"{idle_time:.1f}"
+                ])
+            self.formatter.print_table(headers, rows)
 
     async def handle_system_cmd(self, args: list[str]):
-        """Handle system commands with enhanced formatting"""
+        """Verarbeitet Systembefehle, einschließlich Status, Konfiguration, Performance und Git-Backup/Restore."""
         if not args:
-            self.formatter.print_error("Usage: /system <status|config|performance>")
+            self.formatter.print_error("Nutzung: /system <status|config|performance|backup|restore|log>")
             return
-        sub_command = args[0]
+
+        sub_command = args[0].lower()
+
         if sub_command == "status":
             agents_count = len(self.isaa_tools.config.get("agents-name-list", []))
             bg_running = len([t for t in self.background_tasks.values() if not t['task'].done()])
             bg_total = len(self.background_tasks)
             status_data = [
-                ["Workspace", str(self.workspace_path)], ["Active Agent", self.active_agent_name],
-                ["Total Agents", str(agents_count)], [ "Running Tasks", f"{bg_running}/{bg_total}"],
-                ["Session ID", self.session_id], ["Data Directory", str(self.app.data_dir)]
+                ["Workspace", str(self.workspace_path)],
+                ["Active Agent", self.active_agent_name],
+                ["Total Agents", str(agents_count)],
+                ["Running Tasks", f"{bg_running}/{bg_total}"],
+                ["Session ID", self.session_id],
+                ["Data Directory", str(self.app.data_dir)]
             ]
-            self.formatter.print_table(["Property", "Value"], status_data)
+            self.formatter.print_table(["Eigenschaft", "Wert"], status_data)
+
         elif sub_command == "config":
-            config_preview = {k: v for k, v in self.isaa_tools.config.items() if "api_key" not in k}
-            config_json = json.dumps(config_preview, indent=2)
-            self.formatter.print_code_block(config_json)
+            config_preview = {k: v for k, v in self.isaa_tools.config.items() if "api_key" not in k.lower() and type(v) in (str, int, float, bool, list, dict)}
+            config_json = json.dumps(config_preview, indent=2, ensure_ascii=False)
+            self.formatter.print_code_block(config_json, "json")
+
         elif sub_command == "performance":
-            import psutil, platform
             perf_data = [
-                ["System", platform.system()], ["CPU Usage", f"{psutil.cpu_percent()}%"],
-                ["Memory Usage", f"{psutil.virtual_memory().percent}%"],
-                ["Python Version", platform.python_version()], ["Process PID", str(os.getpid())],
+                ["System", f"{platform.system()} {platform.release()}"],
+                ["CPU Auslastung", f"{psutil.cpu_percent()}%"],
+                ["RAM Auslastung", f"{psutil.virtual_memory().percent}%"],
+                ["Python Version", platform.python_version()],
+                ["Prozess PID", str(os.getpid())],
             ]
-            self.formatter.print_table(["Metric", "Value"], perf_data)
+            self.formatter.print_table(["Metrik", "Wert"], perf_data)
+
+        elif sub_command == "backup":
+            if not await self._ensure_git_repo():
+                return  # Fehler wurde in der Helfermethode bereits ausgegeben
+
+            self.formatter.print_info("Erstelle Backup des Workspaces...")
+            # Alle Änderungen hinzufügen (neue, geänderte, gelöschte Dateien)
+            await self._run_git_command(['add', '.'])
+
+            # Commit erstellen
+            commit_message = " ".join(args[1:]) if len(
+                args) > 1 else f"System-Backup erstellt am {time.strftime('%Y-%m-%d %H:%M:%S')}"
+            result = await self._run_git_command(['commit', '-m', commit_message])
+
+            if result.returncode == 0:
+                self.formatter.print_success("Backup erfolgreich erstellt.")
+                self.formatter.print_code_block(result.stdout)
+            elif "nothing to commit" in result.stdout:
+                self.formatter.print_info("Keine Änderungen im Workspace seit dem letzten Backup.")
+            else:
+                self.formatter.print_error("Fehler beim Erstellen des Backups:")
+                self.formatter.print_code_block(result.stderr)
+
+        elif sub_command == "restore":
+            if not await self._ensure_git_repo():
+                return
+
+            target = " ".join(args[1:]) if len(args) > 1 else "list"
+
+            if target == "list":
+                self.formatter.print_info("Letzte 10 Backups (Commits):")
+                log_result = await self._run_git_command(
+                    ['log', '--oneline', '--pretty=format:%h - %s (%cr)', '-n', '10'])
+                if log_result.returncode == 0:
+                    self.formatter.print_code_block(log_result.stdout)
+                    self.formatter.print_info(
+                        "\nUm einen Zustand wiederherzustellen, nutzen Sie: /system restore <commit_id>")
+                else:
+                    self.formatter.print_error("Konnte die Backup-Historie nicht abrufen.")
+                    self.formatter.print_code_block(log_result.stderr)
+            else:
+                self.formatter.print_warning(
+                    f"WARNUNG: Der Workspace wird unwiderruflich auf den Stand von '{target}' zurückgesetzt.")
+                self.formatter.print_warning("Alle nicht gespeicherten Änderungen gehen verloren.")
+
+                # Hier könnte man eine zusätzliche Bestätigung einbauen
+                # z.B. /system restore <commit_id> --force
+
+                result = await self._run_git_command(['reset', '--hard', target])
+                if result.returncode == 0:
+                    self.formatter.print_success(f"Workspace erfolgreich auf '{target}' zurückgesetzt.")
+                else:
+                    self.formatter.print_error(f"Fehler bei der Wiederherstellung zu '{target}':")
+                    self.formatter.print_code_block(result.stderr)
+
+        elif sub_command == "log":
+            # Alias für /system restore list
+            await self.handle_system_cmd(["restore", "list"])
+
         else:
-            self.formatter.print_error(f"Unknown system command: {sub_command}")
+            self.formatter.print_error(f"Unbekannter Systembefehl: {sub_command}")
+
+        # --- Private Git Helper Methods ---
+
+    async def _ensure_git_repo(self) -> bool:
+        """Stellt sicher, dass der Workspace ein Git-Repository ist, und initialisiert es bei Bedarf."""
+        git_dir = os.path.join(self.workspace_path, '.git')
+        if os.path.isdir(git_dir):
+            return True
+
+        self.formatter.print_warning("Kein Git-Repository im Workspace gefunden. Initialisiere ein Neues...")
+        result = await self._run_git_command(['init'])
+        if result.returncode == 0:
+            self.formatter.print_success("Git-Repository erfolgreich initialisiert.")
+            return True
+        else:
+            self.formatter.print_error("Fehler bei der Initialisierung des Git-Repositorys:")
+            self.formatter.print_code_block(result.stderr)
+            return False
+
+    async def _run_git_command(self, command_args: list[str]) -> subprocess.CompletedProcess:
+        """Führt einen Git-Befehl sicher im Workspace-Verzeichnis aus."""
+        # '-C' weist Git an, im angegebenen Verzeichnis zu laufen, ohne das CWD zu ändern
+        base_command = ['git', '-C', str(self.workspace_path)]
+        full_command = base_command + command_args
+
+        try:
+            # Führe den Prozess in einem Thread aus, um den Haupt-Event-Loop nicht zu blockieren
+            return await asyncio.to_thread(
+                subprocess.run,
+                full_command,
+                capture_output=True,
+                text=True,
+                check=False  # Wir prüfen den returncode manuell
+            )
+        except FileNotFoundError:
+            # Dies passiert, wenn 'git' nicht im System-PATH ist
+            self.formatter.print_error(
+                "Fehler: Der 'git'-Befehl wurde nicht gefunden. Bitte stellen Sie sicher, dass Git installiert und im PATH ist.")
+            # Gebe ein "leeres" Fehlerergebnis zurück
+            return subprocess.CompletedProcess(args=full_command, returncode=1, stderr="Git-Befehl nicht gefunden.")
+        except Exception as e:
+            self.formatter.print_error(f"Ein unerwarteter Fehler ist bei der Ausführung von Git aufgetreten: {e}")
+            return subprocess.CompletedProcess(args=full_command, returncode=1, stderr=str(e))
 
     async def handle_help_cmd(self, args: list[str]):
-        """Display comprehensive help with enhanced formatting"""
-        self.formatter.log_header("ISAA Workspace Manager - Help & Reference")
-        self.formatter.print_section("🗣️  Natural Language Usage", "...")
+        """Displays a comprehensive help guide with enhanced formatting and all current commands."""
+        self.formatter.log_header("ISAAC Workspace Manager - Help & Reference")
+
+        # --- Natural Language ---
+        self.formatter.print_section(
+            "🗣️  Natural Language Usage",
+            "Simply type your request or question and press Enter. The active agent will process it.\n"
+            "You can write multi-line prompts by pressing Shift+Enter."
+        )
+
+        # --- Command Reference ---
+        self.formatter.print_section(
+            "⌨️  Command Reference",
+            "Commands start with a forward slash (/). Use them for direct control over the workspace."
+        )
         command_data = [
-            ["/workspace status", "Show workspace information"], ["/workspace cd <dir>", "Change workspace directory"],
-            ["/workspace ls [dir]", "List directory contents"], ["/agent list", "Show all agents"],
-            ["/agent switch <name>", "Switch active agent"], ["/tasks list", "Show background tasks"],
-            ["/tasks attach <id>", "Attach to task output"], ["/tasks kill <id>", "Cancel background task"],
-            ["/context save [name]", "Save conversation"], ["/context load <name>", "Load conversation"],
-            ["/context list", "Show saved contexts"], ["/system status", "Show system status"],
-            ["/clear", "Clear screen"], ["/exit", "Exit workspace manager"]
+            # Workspace & File System
+            ["/workspace status", "Show current workspace path and information."],
+            ["/workspace cd <dir>", "Change the current workspace directory."],
+            ["/workspace ls [path]", "List contents of the specified directory (or current)."],
+
+            # Agent Management
+            ["/agent list", "Show all available agents in the configuration."],
+            ["/agent switch <name>", "Switch the currently active agent."],
+
+            # Task & Process Management
+            ["/monitor", "monitor for background agent tasks."],
+            ["/tasks attach <id>", "Attach to a specific task's live output."],
+            ["/tasks kill <id>", "Forcefully cancel (kill) a background task."],
+
+            # Context & Session
+            ["/context save [name]", "Save the current conversation history."],
+            ["/context load <name>", "Load a previously saved conversation."],
+            ["/context list", "Show all saved conversation contexts."],
+
+            # System & Performance (Updated)
+            ["/system status", "Show a high-level status of the application."],
+            ["/system config", "Display the current (non-sensitive) agent configuration."],
+            ["/system performance", "Show system CPU, memory, and process information."],
+            ["/system backup [msg]", "Create a versioned backup of the workspace using Git."],
+            ["/system restore [id]", "Restore workspace to a backup. Use with no ID to list backups."],
+            ["/system log", "Show the backup (git commit) history for the workspace."],
+
+            # General
+            ["/clear", "Clear the terminal screen."],
+            ["/help", "Display this help message."],
+            ["/exit", "Exit the workspace manager session."],
         ]
         self.formatter.print_table(["Command", "Description"], command_data)
-        self.formatter.print_section("🤖 Agent Capabilities", "...")
-        self.formatter.print_section("💡 Tips & Tricks", "...")
+
+        # --- Agent Capabilities ---
+        self.formatter.print_section(
+            "🤖  Agent Capabilities",
+            "The active agent can do more than just chat. It can:\n"
+            "  - Use Tools: Execute functions like reading/writing files, searching the web, etc.\n"
+            "  - Access Memory: Utilize a 'World Model' to remember facts and context across turns.\n"
+            "  - Delegate Tasks: Communicate with other agents (A2A) to solve complex problems."
+        )
+
+        # --- Tips & Tricks ---
+        self.formatter.print_section(
+            "💡  Tips & Tricks",
+            "  - Shell Commands: Start a line with '!' to execute a shell command (e.g., !pip list).\n"
+            "  - Command History: Use the Up/Down arrow keys to cycle through your previous commands.\n"
+            "  - Autocompletion: Press Tab to autocomplete commands and file paths\n"
+        )
 
     async def handle_clear_cmd(self, args: list[str]):
         """Clear screen and show welcome"""
@@ -1153,6 +1854,7 @@ class WorkspaceIsaasCli:
             except (KeyboardInterrupt, EOFError):
                 self.formatter.print_info("Exit cancelled")
                 return
+        self._display_session_summary()
         self.formatter.print_info("Shutting down ISAA Workspace Manager...")
         exit(0)
 

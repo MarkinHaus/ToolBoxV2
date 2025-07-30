@@ -712,7 +712,7 @@ class AISemanticMemory(metaclass=Singleton):
     async def add_data(self,
                        memory_name: str,
                        data: str | list[str] | bytes | dict,
-                       metadata: dict | None = None) -> bool:
+                       metadata: dict | None = None, direct=False) -> bool:
         """
         Add data to memory store
 
@@ -747,7 +747,7 @@ class AISemanticMemory(metaclass=Singleton):
 
         # Add data to KnowledgeBase
         try:
-            added, duplicates = await kb.add_data(texts, metadata)
+            added, duplicates = await kb.add_data(texts, metadata, direct=direct)
             return added > 0
         except Exception as e:
             import traceback
