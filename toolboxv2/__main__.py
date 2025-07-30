@@ -864,8 +864,8 @@ async def main():
             flows_dict = {**flows_dict, **flows_dict_func(s=args.modi, remote=True)}
         tb_app.set_flows(flows_dict)
         if args.modi not in flows_dict:
-            raise ValueError(
-                f"Modi : [{args.modi}] not found on device installed modi : {list(flows_dict.keys())}")
+            print(f"Modi : [{args.modi}] not found on device installed modi : {list(flows_dict.keys())}")
+            exit(1)
         # open(f"./config/{args.modi}.pid", "w").write(app_pid)
         await tb_app.run_flows(args.modi, **args.kwargs[0])
 

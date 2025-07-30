@@ -75,8 +75,6 @@ try:
     from google.adk.tools.agent_tool import AgentTool
     from google.adk.tools.mcp_tool.mcp_toolset import (
         MCPToolset,
-        SseServerParams,
-        StdioServerParameters,
     )
 
     # ADK Artifacts (Optional, for advanced use cases)
@@ -115,8 +113,7 @@ except ImportError as e:
     class Part: pass
     class Example: pass
     class MCPToolset: pass # Dummy
-    class StdioServerParameters: pass # Dummy
-    class SseServerParams: pass # Dummy
+
     def adk_built_in_code_execution(): return None # Dummy
     def adk_google_search(): return None # Dummy
     class AdkVertexAiSearchTool: pass # Dummy
@@ -127,6 +124,7 @@ except ImportError as e:
 # ... (Imports remain the same, including A2A imports) ...
 # Make sure the dummy types for A2A are updated if needed
 # Specifically, ensure dummy Task includes 'id' field for cancellation example.
+
 try:
     from python_a2a import (
         A2AClient,
@@ -268,12 +266,17 @@ except ImportError:
 
 # --- Logging Setup ---
 # Configure root logger level for libraries
-
 logging.basicConfig(level=get_logger().level)
 # Configure LiteLLM logging level specifically if needed
 logging.getLogger("LiteLLM").setLevel(get_logger().level)
 # Agent-specific logger
+
 logger = logging.getLogger("EnhancedAgent")
+logger.propagate = False
+
+# Silence root logger output
+logging.getLogger().handlers.clear()
+
 logger.setLevel(get_logger().level) # Default level, builder can override via 'verbose'
 
 
@@ -986,8 +989,7 @@ class EnhancedAgent(*_AgentBaseClass):
                     try:
                         # ADK SessionService methods are typically synchronous
                         # Run in threadpool to avoid blocking
-                        adk_session = await asyncio.to_thread(
-                             self.adk_session_service.get_session,
+                        adk_session = await self.adk_session_service.get_session(
                              app_name=self.adk_runner.app_name, # Assuming runner is set if syncing
                              user_id=self.amd.user_id or "adk_user", # Needs consistent user ID
                              session_id=session_id
@@ -1234,21 +1236,22 @@ class EnhancedAgent(*_AgentBaseClass):
             # 1. Ensure ADK session exists
             try:
                 # Check and potentially create session (synchronous, run in thread)
-                session_exists = await asyncio.to_thread(
-                    self.adk_session_service.get_session, app_name=app_name, user_id=user_id, session_id=session_id
+                session_exists = await self.adk_session_service.get_session(
+                    app_name=app_name,
+                    user_id=user_id,
+                    session_id=session_id
                 )
                 if not session_exists:
                      logger.info(f"Creating ADK session {session_id} for user {user_id} in app {app_name}")
                      # Pass initial state from World Model if syncing
                      initial_state = self.world_model.to_dict() if self.sync_adk_state else {}
-                     await asyncio.to_thread(
-                         self.adk_session_service.create_session,
+                     await self.adk_session_service.create_session(
                          app_name=app_name, user_id=user_id, session_id=session_id,
                          state=initial_state
                      )
                 elif adk_session_state is None and self.sync_adk_state:
                     # If session existed but we couldn't get state earlier, try again
-                     session = await asyncio.to_thread(self.adk_session_service.get_session, app_name=app_name, user_id=user_id, session_id=session_id)
+                     session = await self.adk_session_service.get_session(app_name=app_name, user_id=user_id, session_id=session_id)
                      if session: adk_session_state = session.state
 
             except Exception as session_e:
@@ -1265,6 +1268,7 @@ class EnhancedAgent(*_AgentBaseClass):
                 user_id=user_id, session_id=session_id, new_message=adk_input_content):
 
                 # Log event details (optional, can be verbose)
+                event_dict = None
                 try:
                     event_dict = event.model_dump(exclude_none=True)
                     all_events_str.append(json.dumps(event_dict, default=str)) # Serialize complex types
@@ -1275,9 +1279,7 @@ class EnhancedAgent(*_AgentBaseClass):
                 # Call progress callback
                 if self.progress_callback:
                      try:
-                         progress_data = {"type": "adk_event", "event": event.model_dump(exclude_none=True)}
-                         if iscoroutinefunction(self.progress_callback): await self.progress_callback(progress_data)
-                         else: self.progress_callback(progress_data)
+                         self.progress_callback(event_dict or event)
                      except Exception as cb_e: logger.warning(f"Progress callback failed for ADK event: {cb_e}")
 
                 # Check for Human-in-Loop triggers (example)
@@ -1332,7 +1334,7 @@ class EnhancedAgent(*_AgentBaseClass):
         except Exception as e:
             logger.error(f"ADK execution failed: {e}", exc_info=True)
             # Return partial events log on error for debugging
-            events_preview = "\n".join(all_events_str[:5])
+            events_preview = "\n".join(all_events_str[-5:])
             return f"Error during ADK processing: {e}\nFirst Events:\n{events_preview}"
 
     async def _execute_a2a_call(self, user_input: str, session_id: str, **kwargs) -> str:

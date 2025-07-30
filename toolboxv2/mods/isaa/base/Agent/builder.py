@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import threading
+import google.adk.models.lite_llm
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import (
@@ -25,82 +26,45 @@ from pydantic import (
 from toolboxv2 import get_logger
 
 # Framework Imports & Availability Checks (mirrored from agent.py)
-try: from google.adk.agents import LlmAgent; ADK_AVAILABLE_BLD = True
-except ImportError: LlmAgent = object; ADK_AVAILABLE_BLD = False # Need LlmAgent for isinstance check
-try: from google.adk.tools import BaseTool, FunctionTool, AgentTool; from google.adk.tools.mcp_tool import MCPToolset, StdioServerParameters, SseServerParams; from google.adk.runners import Runner, InMemoryRunner, AsyncWebRunner; from google.adk.sessions import SessionService, InMemorySessionService; from google.adk.code_executors import BaseCodeExecutor as ADKBaseCodeExecutor; from google.adk.planners import BasePlanner; from google.adk.examples import Example
-except ImportError: BaseTool = object; FunctionTool = object; AgentTool = object; MCPToolset = object; Runner = object; InMemoryRunner = object; AsyncWebRunner = object; SessionService = object; InMemorySessionService = object; ADKBaseCodeExecutor = object; BasePlanner = object; Example = object; StdioServerParameters = object; SseServerParams = object
-try: from python_a2a.server import A2AServer; from python_a2a.models import AgentCard; A2A_AVAILABLE_BLD = True
-except ImportError: A2AServer = object; AgentCard = object; A2A_AVAILABLE_BLD = False
-try: from mcp.server.fastmcp import FastMCP; MCP_AVAILABLE_BLD = True
-except ImportError: FastMCP = object; MCP_AVAILABLE_BLD = False
-try: from litellm import BudgetManager; LITELLM_AVAILABLE_BLD = True
-except ImportError: BudgetManager = object; LITELLM_AVAILABLE_BLD = False
+from importlib.metadata import version
 
-# --- Framework Imports & Availability Checks (Copied from EnhancedAgent) ---
-# Google ADK
 try:
-    from google.adk.agents import BaseAgent, LlmAgent
-    from google.adk.agents.callback_context import CallbackContext
-    from google.adk.agents.invocation_context import InvocationContext
-    from google.adk.code_executors import BaseCodeExecutor
-    from google.adk.code_executors.code_execution_utils import (
-        CodeExecutionInput,
-        CodeExecutionResult,
-    )
-    from google.adk.events import Event
-    from google.adk.examples import Example  # For few-shot
-    from google.adk.models import BaseLlm, Gemini
-    from google.adk.models.lite_llm import LiteLlm  # ADK Wrapper for LiteLLM
+    from google.adk.agents import LlmAgent
+    from google.adk.tools import BaseTool, FunctionTool, AgentTool
+    from google.adk.tools.mcp_tool import MCPToolset
+    from google.adk.runners import Runner, InMemoryRunner
+    from google.adk.sessions import BaseSessionService as SessionService, InMemorySessionService
+    from google.adk.code_executors import BaseCodeExecutor as ADKBaseCodeExecutor
     from google.adk.planners import BasePlanner
-    from google.adk.runners import (  # Base SessionService
-        BaseSessionService,
-        InMemoryRunner,
-        Runner,
-    )
-    from google.adk.sessions import Session, State
-    from google.adk.tools import (
-        BaseTool,
-        FunctionTool,
-        LongRunningFunctionTool,
-        ToolContext,
-    )
-    from google.adk.tools import VertexAiSearchTool as AdkVertexAiSearchTool
-    from google.adk.tools import (
-        built_in_code_execution as adk_built_in_code_execution,  # Secure option
-    )
-    from google.adk.tools import google_search as adk_google_search
-    from google.adk.tools.agent_tool import AgentTool
-    from google.adk.tools.mcp_tool.mcp_toolset import (
-        MCPToolset,
-        SseServerParams,
-        StdioServerParameters,
-    )
-    from google.genai.types import Content, FunctionCall, FunctionResponse, Part
+    from google.adk.examples import Example
+    from mcp import StdioServerParameters
 
     ADK_AVAILABLE = True
-    ADKBaseCodeExecutor = BaseCodeExecutor # Alias for clarity in builder
     ADKRunner = Runner
-    ADKSessionService = BaseSessionService
     ADKBaseTool = BaseTool
-    ADKFunctionTool = FunctionTool
-    ADKExample = Example
-    ADKPlanner = BasePlanner
-    ADKLlmAgent = LlmAgent
-except ImportError:
+    print("INFO: Google ADK components found. ADK features enabled. version", version("google.adk"))
+except ImportError as e:
+    print(f"WARN: Google ADK components not found or import error ({e}). ADK features disabled.")
     ADK_AVAILABLE = False
-    # Define dummy types for type hinting if ADK is not installed
-    class ADKBaseCodeExecutor: pass
-    class ADKRunner: pass
-    class ADKSessionService: pass
+    class LlmAgent: pass
+    class BaseTool: pass
     class ADKBaseTool: pass
-    class ADKFunctionTool: pass
-    class ADKExample: pass
-    class ADKPlanner: pass
-    class ADKLlmAgent: pass # Use basic object if LlmAgent isn't available for inheritance checks
-    StdioServerParameters = object
-    SseServerParams = object
-    MCPToolset = object # Dummy
-    LlmAgent = object # Dummy for isinstance checks if EnhancedAgent itself needs it
+    class FunctionTool: pass
+    class AgentTool: pass
+    class MCPToolset: pass
+    class Runner: pass
+    class ADKRunner: pass
+    class InMemoryRunner: pass
+    class AsyncWebRunner: pass
+    class SessionService: pass
+    class InMemorySessionService: pass
+    class ADKBaseCodeExecutor: pass
+    class BasePlanner: pass
+    class Example: pass
+    class BaseLlm: pass
+    class LiteLlm(BaseLlm): pass
+    class BaseLlm: pass
+    class LiteLlm(BaseLlm): pass
 
 
 # python-a2a
@@ -152,7 +116,7 @@ except ImportError:
 # Assume EnhancedAgent and supporting classes (WorldModel, AgentModelData, etc.)
 # are in the same directory or properly importable
 from toolboxv2.mods.isaa.base.Agent.agent import (
-    A2A_AVAILABLE as AGENT_A2A_AVAILABLE,  # Check agent's view
+    A2A_AVAILABLE as AGENT_A2A_AVAILABLE, adk_built_in_code_execution,  # Check agent's view
 )
 from toolboxv2.mods.isaa.base.Agent.agent import (
     MCP_AVAILABLE as AGENT_MCP_AVAILABLE,  # Check agent's view
@@ -167,6 +131,10 @@ from toolboxv2.mods.isaa.base.Agent.agent import (  # Relative import assuming b
 # Local Imports
 
 logger = logging.getLogger("EnhancedAgentBuilder")
+logger.propagate = False
+
+# Silence root logger output
+logging.getLogger().handlers.clear()
 logger.setLevel(get_logger().level)
 
 T = TypeVar('T', bound='EnhancedAgent') # Type variable for the agent being built
@@ -370,8 +338,8 @@ class EnhancedAgentBuilder:
         self._adk_tools_transient: list[ADKBaseTool | Callable] = []
         self._adk_code_executor_instance: ADKBaseCodeExecutor | None = None
         self._adk_runner_instance: ADKRunner | None = None
-        self._adk_session_service_instance: ADKSessionService | None = None
-        self._adk_planner_instance: ADKPlanner | None = None
+        self._adk_session_service_instance: SessionService | None = None
+        self._adk_planner_instance: BasePlanner | None = None
         self._litellm_budget_manager_instance: BudgetManager | None = None
         self._user_cost_tracker_instance: UserCostTracker | None = None
         self._otel_trace_provider_instance: TracerProvider | None = None
@@ -893,7 +861,7 @@ class EnhancedAgentBuilder:
                     #     tool_func.__name__ = "code_execution"
                     # processed_adk_tools.append(tool_func)
                     #     logger.info("Added ADK built-in code execution tool.")
-                    adk_code_executor = None # Ensure no executor instance is passed for this case
+                    # adk_code_executor = None # Ensure no executor instance is passed for this case
                 elif executor_config == "none":
                     adk_code_executor = None
                 elif executor_config == "custom_instance":
@@ -909,7 +877,7 @@ class EnhancedAgentBuilder:
                      temp_tools.append(tool_input)
                  elif callable(tool_input):
                      try:
-                         wrapped = ADKFunctionTool(func=tool_input)
+                         wrapped = FunctionTool(func=tool_input)
                          temp_tools.append(wrapped)
                      except Exception as e: logger.warning(f"Could not wrap callable '{getattr(tool_input, '__name__', 'unknown')}' as ADK tool: {e}")
                  else: logger.warning(f"Skipping invalid ADK tool input: {type(tool_input)}")
@@ -923,7 +891,10 @@ class EnhancedAgentBuilder:
                       if mcp_conf.get("type") == "stdio":
                           params = StdioServerParameters(command=mcp_conf["command"], args=mcp_conf.get("args", []))
                       elif mcp_conf.get("type") == "sse":
-                           params = SseServerParams(url=mcp_conf["url"])
+
+                          print("TODO: Add SSE support to ADK MCPToolset.")
+                          pass
+                          # params = SseServerParams(url=mcp_conf["url"])
 
                       if params:
                           mcp_tools, _ = await MCPToolset.from_server(
@@ -967,18 +938,18 @@ class EnhancedAgentBuilder:
 
             # Add ADK-specific arguments if inheriting from LlmAgent
             agent_class = EnhancedAgent
-            if ADK_AVAILABLE and issubclass(EnhancedAgent, ADKLlmAgent):
+            if ADK_AVAILABLE and issubclass(EnhancedAgent, LlmAgent):
                  logger.debug("Adding ADK LlmAgent specific arguments to init.")
                  adk_specific_kwargs = {
                      'name': self._config.agent_name, # Required by LlmAgent
-                     'model': LiteLlm(model=self._config.model_identifier), # LlmAgent needs BaseLlm instance
+                     'model': google.adk.models.lite_llm.LiteLlm(model=self._config.model_identifier), # LlmAgent needs BaseLlm instance
                      'description': self._config.adk.description or self._config.system_message,
                      'instruction': self._config.system_message, # Or dedicated instruction field?
                      'tools': processed_adk_tools,
                      'code_executor': adk_code_executor, # Pass the *instance*
                      'planner': adk_planner_instance,
                      # Process examples/schema if needed
-                     'examples': [ADKExample(**ex) for ex in self._config.adk.examples] if self._config.adk.examples else None,
+                     'examples': [Example(**ex) for ex in self._config.adk.examples] if self._config.adk.examples else None,
                      'output_schema': self._config.adk.output_schema,
                      # Pass runner/session service if NOT using InMemoryRunner deferred creation
                      # If runner is created later, it's assigned post-init

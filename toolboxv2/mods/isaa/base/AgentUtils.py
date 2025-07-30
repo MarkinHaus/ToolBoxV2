@@ -522,16 +522,6 @@ class AgentChain:
                     "running_mode": "lineIs"
                 }
             ])
-        if "liveRunner" not in self.chains:
-            print("loading default chain liveRunner")
-            self.add("liveRunner", [
-                {
-                    "use": "agent",
-                    "name": "liveInterpretation",
-                    "args": "$user-input",
-                    "return": "$return"
-                }
-            ])
         if "SelfRunner" not in self.chains:
             print("loading default chain SelfRunner")
             self.add("SelfRunner", [
@@ -540,20 +530,6 @@ class AgentChain:
                     "name": "self",
                     "mode": "conversation",
                     "args": "$user-input",
-                    "return": "$return"
-                }
-            ])
-        if "liveRunnerMission" not in self.chains:
-            print("loading default chain liveRunnerMission")
-            self.add("liveRunnerMission", [
-                {
-                    "use": "agent",
-                    "name": "liveInterpretation",
-                    "args": "As a highly skilled and autonomous agent, your task is to achieve a complex mission. "
-                            "However, you will not directly execute the tasks yourself. Your role is to act as a "
-                            "supervisor and create chains of agents to successfully accomplish the mission. Your "
-                            "main responsibility is to ensure that the mission's objectives are achieved. your "
-                            "mission : $user-input",
                     "return": "$return"
                 }
             ])

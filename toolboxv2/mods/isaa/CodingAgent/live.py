@@ -30,7 +30,7 @@ from inspect import (
     signature,
 )
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import nest_asyncio
 from bs4 import BeautifulSoup
@@ -146,6 +146,8 @@ class EnhancedVerboseOutput:
         self.print = print_f or print
         self.formatter = VerboseFormatter(self.print)
 
+    def __getattr__(self, name):
+        return getattr(self.formatter, name)
 
     async def log_message(self, role: str, content: str):
         """Log chat messages with role-based formatting"""
@@ -209,6 +211,35 @@ class EnhancedVerboseOutput:
         if message == "code":
             return await coroutine
         return await self.formatter.process_with_spinner(message, coroutine)
+
+
+    def print_error(self, message: str):
+        self.print(self.formatter.style.RED(message))
+
+    def print_success(self, message: str):
+        self.print(self.formatter.style.GREEN(message))
+
+    def print_info(self, message: str):
+        self.print(self.formatter.style.CYAN(message))
+
+    def print_tool_call(self, tool_name: str, tool_args: dict, result: Optional[str] = None):
+        self.formatter.print_section(
+            f"Tool Call: {tool_name}",
+            f"Arguments: {json.dumps(tool_args, indent=2)}\nResult: {result or 'In progress...'}"
+        )
+
+    def print_event(self, event: dict):
+        if event.get("content") and event["content"].get("parts"):
+            for part in event["content"]["parts"]:
+                if part.get("text"):
+                    self.print_info(f"Thought: {part['text']}")
+                if part.get("function_call"):
+                    self.print_tool_call(part["function_call"]["name"], part["function_call"]["args"])
+                if part.get("function_response"):
+                    result = part["function_response"]["response"].get("result", "")
+                    self.print_tool_call(part["function_response"]["name"], {}, result)
+        if event.get("usage_metadata"):
+            self.print_info(f"Token usage: {event["usage_metadata"]}")
 
 ### -- TYPESs --- ###
 
@@ -1686,7 +1717,7 @@ class BrowserWrapper:
             self.context = await self.browser.new_context(config=context_config)
 
             # Create an initial page
-            browser_state = await self.context.get_state()
+            browser_state = self.context
             if not browser_state or not browser_state.tabs:
                 # If no tabs exist, create a new page
                 await self.browser.get_playwright_browser()

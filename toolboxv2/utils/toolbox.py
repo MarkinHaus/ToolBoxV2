@@ -1980,7 +1980,7 @@ class App(AppType, metaclass=Singleton):
             if exit_f:
                 if "on_exit" not in self.functions[module_name]:
                     self.functions[module_name]["on_exit"] = []
-                self.functions[module_name]["on_exit"].append(data)
+                self.functions[module_name]["on_exit"].append(func_name)
             if initial:
                 if "on_start" not in self.functions[module_name]:
                     self.functions[module_name]["on_start"] = []

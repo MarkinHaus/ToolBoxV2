@@ -42,6 +42,7 @@ import json
 import locale
 import platform
 import shlex
+import shutil
 import subprocess
 import sys
 from typing import Any, Optional
@@ -200,6 +201,7 @@ class Tools(MainTool, FileHandler):
         MainTool.toolID = ""  # Static attribute?
         self.web_search = web_search
         self.shell_tool_function = shell_tool_function
+        self.tools["shell"] = shell_tool_function
 
         self.print(f"Start {self.spec}.isaa")
         with Spinner(message="Starting module", symbols='c'):
@@ -231,7 +233,6 @@ class Tools(MainTool, FileHandler):
         #initialize_isaa_chains(self.app)
         #initialize_isaa_webui_module(self.app, self)
         #self.print("ISAA module started. fallback")
-
 
     async def _async_function_runner(self, name, **kwargs):
         agent = await self.get_agent("self")  # Get self agent for its tools
@@ -525,12 +526,63 @@ class Tools(MainTool, FileHandler):
             # Ensure this function is awaitable as ADK tools might be async
             return await self.run_agent(target_agent_name, instructions, **kwargs_)
 
-        async def memory_search_tool(query: str):
-            # This needs to use the agent's *own* memory or a shared ISAA memory
-            # For now, assuming a global ISAA memory
+        from typing import Optional, Dict
+
+        async def memory_search_tool(
+            query: str,
+            search_mode: Optional[str] = "wide",
+            context_name: Optional[str] = None
+        ):
+            """
+            Führt eine flexible Suche im Speicher durch, deren Genauigkeit über einen Parameter gesteuert werden kann.
+
+            Args:
+                query: Der Suchbegriff, nach dem im Speicher gesucht werden soll.
+                search_mode: Optional. Bestimmt die Art der Suche. Muss einer der folgenden Werte sein:
+                             - "wide": Für eine breite, umfassende Suche mit vielen Ergebnissen.
+                             - "balanced": (Standard) Für eine ausgewogene Suche mit einem guten Kompromiss
+                                           zwischen Relevanz und Anzahl der Ergebnisse.
+                             - "narrow": Für eine sehr präzise und enge Suche, die nur die relevantesten
+                                         Ergebnisse liefert.
+                context_name: Optional. Gibt an, welcher Speicher durchsucht werden soll.
+                              Für mehrere Speicher, übergeben Sie die Namen als einen einzigen,
+                              komma-separierten String (z.B. "projekt_alpha,allgemeine_notizen").
+                              Wird nichts angegeben, werden alle Speicher durchsucht.
+            """
+            # Dies muss den *eigenen* Speicher des Agenten oder einen gemeinsamen ISAA-Speicher verwenden
+            # Vorerst wird ein globaler ISAA-Speicher angenommen
             mem_instance = self.get_memory()
-            # AISemanticMemory.query is async
-            return await mem_instance.query(query, to_str=True)
+
+            # Verarbeite den optionalen, komma-separierten context_name String in eine Liste
+            memory_names_list = [name.strip() for name in context_name.split(',')] if context_name else None
+
+            # Setze die Suchparameter basierend auf dem gewählten Modus
+            if search_mode == "wide":
+                # Parameter für eine breite Suche: mehr Ergebnisse, geringere Ähnlichkeitsschwelle
+                search_params = {
+                    "k": 7, "min_similarity": 0.1, "cross_ref_depth": 3,
+                    "max_cross_refs": 4, "max_sentences": 8
+                }
+            elif search_mode == "narrow":
+                # Parameter für eine enge, präzise Suche: wenige Ergebnisse, hohe Ähnlichkeitsschwelle
+                search_params = {
+                    "k": 2, "min_similarity": 0.75, "cross_ref_depth": 1,
+                    "max_cross_refs": 1, "max_sentences": 3
+                }
+            else:  # "balanced" ist der Standard
+                # Standardparameter für eine ausgewogene Suche
+                search_params = {
+                    "k": 3, "min_similarity": 0.2, "cross_ref_depth": 2,
+                    "max_cross_refs": 2, "max_sentences": 5
+                }
+
+            # Führe die eigentliche Abfrage mit den festgelegten Parametern durch
+            return await mem_instance.query(
+                query=query,
+                memory_names=memory_names_list,
+                query_params=search_params,
+                to_str=True
+            )
 
         async def save_to_memory_tool(data_to_save: str, context_name: str = name):
             mem_instance = self.get_memory()
@@ -545,7 +597,7 @@ class Tools(MainTool, FileHandler):
                                              description="Save data to ISAA's semantic memory for the current agent's context.")
         agent_builder.with_adk_tool_function(self.web_search, name="searchWeb",
                                              description="Search the web for information.")
-        agent_builder.with_adk_tool_function(self.shell_tool_function, name="shell", description="Run a shell command.")
+        agent_builder.with_adk_tool_function(self.shell_tool_function, name="shell", description=f"Run a shell command. in {detect_shell()}")
 
         # Add more tools based on agent 'name' or type
         if name == "self" or "code" in name.lower() or "pipe" in name.lower():  # Example condition
@@ -853,9 +905,29 @@ class Tools(MainTool, FileHandler):
         return f"Local file tools (old system) set to: {self.local_files_tools}"
 
 
-def detect_shell() -> str:
-    if platform.system() == "Windows": return "cmd.exe"
-    return os.environ.get("SHELL", "/bin/sh")
+def detect_shell() -> tuple[str, str]:
+    """
+    Detects the best available shell and the argument to execute a command.
+    Returns:
+        A tuple of (shell_executable, command_argument).
+        e.g., ('/bin/bash', '-c') or ('powershell.exe', '-Command')
+    """
+    if platform.system() == "Windows":
+        if shell_path := shutil.which("pwsh"):
+            return shell_path, "-Command"
+        if shell_path := shutil.which("powershell"):
+            return shell_path, "-Command"
+        return "cmd.exe", "/c"
+
+    shell_env = os.environ.get("SHELL")
+    if shell_env and shutil.which(shell_env):
+        return shell_env, "-c"
+
+    for shell in ["bash", "zsh", "sh"]:
+        if shell_path := shutil.which(shell):
+            return shell_path, "-c"
+
+    return "/bin/sh", "-c"
 
 
 def safe_decode(data: bytes) -> str:
@@ -870,14 +942,16 @@ def safe_decode(data: bytes) -> str:
 
 def shell_tool_function(command: str) -> str:
     result: dict[str, Any] = {"success": False, "output": "", "error": ""}
-    shell_cmd = detect_shell()
     try:
-        if platform.system() == "Windows":
-            full_cmd = f'{shell_cmd} /c "{command}"' if "powershell" not in shell_cmd.lower() else f"{shell_cmd} -Command {shlex.quote(command)}"
-        else:
-            full_cmd = f"{shell_cmd} -c {shlex.quote(command)}"
+        shell_exe, cmd_flag = detect_shell()
 
-        process = subprocess.run(full_cmd, shell=True, check=False, capture_output=True, timeout=120, text=False)
+        process = subprocess.run(
+            [shell_exe, cmd_flag, command],
+            capture_output=True,
+            text=False,
+            timeout=120,
+            check=False
+        )
 
         stdout = safe_decode(process.stdout)
         stderr = safe_decode(process.stderr)
@@ -885,13 +959,18 @@ def shell_tool_function(command: str) -> str:
         if process.returncode == 0:
             result.update({"success": True, "output": stdout, "error": stderr if stderr else ""})
         else:
-            result.update({"success": False, "output": stdout if stdout else "",
-                           "error": stderr if stderr else f"Command failed with exit code {process.returncode}"})
+            error_output = (f"Stdout:\n{stdout}\nStderr:\n{stderr}" if stdout else stderr).strip()
+            result.update({
+                "success": False,
+                "output": stdout,
+                "error": error_output if error_output else f"Command failed with exit code {process.returncode}"
+            })
 
     except subprocess.TimeoutExpired:
-        result.update({"error": "Timeout", "output": f"Command timed out: {command}"})
+        result.update({"error": "Timeout", "output": f"Command '{command}' timed out after 120 seconds."})
     except Exception as e:
         result.update({"error": f"Unexpected error: {type(e).__name__}", "output": str(e)})
+
     return json.dumps(result, ensure_ascii=False)
 
 
