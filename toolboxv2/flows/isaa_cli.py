@@ -1,30 +1,55 @@
 import asyncio
+import collections
 import json
 import os
 import platform
 import re
 import subprocess
 import time
+import uuid
 from pathlib import Path
-from typing import Any, Optional, Dict, List
-import glob
+from typing import Any, Dict, List, Optional
 
+import glob
 import psutil
 from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import NestedCompleter, WordCompleter, PathCompleter, FuzzyCompleter
-from prompt_toolkit.history import FileHistory
-from prompt_toolkit.shortcuts import prompt
+from prompt_toolkit.application import Application,in_terminal, get_app_or_none as get_pt_app
+from prompt_toolkit.completion import (FuzzyCompleter, NestedCompleter,
+                                       PathCompleter, WordCompleter)
 from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.application import get_app as get_pt_app
+from prompt_toolkit.layout.containers import HSplit, VSplit, Window
+from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.layout.layout import Layout
+from prompt_toolkit.shortcuts import prompt
 
 from toolboxv2 import get_app
 from toolboxv2.mods.isaa.CodingAgent.live import EnhancedVerboseOutput
-from toolboxv2.mods.isaa.module import Tools as Isaatools, detect_shell
-from toolboxv2.utils.extras.Style import Style, Spinner
+from toolboxv2.mods.isaa.module import detect_shell, Tools as Isaatools
+from toolboxv2.utils.extras.Style import Spinner, Style
+
+from prompt_toolkit.formatted_text import ANSI
+
+
 
 NAME = "isaa_cli"
 
+def human_readable_time(seconds: float) -> str:
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {seconds}s"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours}h {minutes}m"
+    days, hours = divmod(hours, 24)
+    if days < 7:
+        return f"{days}d {hours}h"
+    weeks, days = divmod(days, 7)
+    return f"{weeks}w {days}d"
 
 class WorkspaceIsaasCli:
     """Advanced ISAA CLI with comprehensive agent tools and enhanced formatting"""
@@ -34,7 +59,6 @@ class WorkspaceIsaasCli:
         self.isaa_tools: Isaatools = app_instance.get_mod("isaa")
         self.isaa_tools.stuf = True #
         self.formatter = EnhancedVerboseOutput(verbose=True, print_func=app_instance.print)
-        self.style = Style()
         self.active_agent_name = "workspace_supervisor"
         self.session_id = "workspace_session"
         self.history = FileHistory(Path(self.app.data_dir) / "isaa_cli_history.txt")
@@ -57,9 +81,7 @@ class WorkspaceIsaasCli:
             history=self.history,
             completer= FuzzyCompleter(NestedCompleter.from_nested_dict(self.completion_dict)),#self.completer_dict_to_world_completer(),
             complete_while_typing=True,
-            key_bindings=self.key_bindings,
-            multiline=True,
-            wrap_lines=True,
+            # Key bindings are now managed by the main Application object
         )
 
 
@@ -169,6 +191,22 @@ class WorkspaceIsaasCli:
             self.completion_dict["/tasks"]["attach"] = WordCompleter([])
             self.completion_dict["/tasks"]["kill"] = WordCompleter([])
 
+        try:
+            import git
+            repo = git.Repo(search_parent_directories=False)
+            branch_names = [branch.name for branch in repo.branches]
+            if branch_names:
+                branch_completer = WordCompleter(branch_names, ignore_case=True)
+                self.completion_dict["/system"]["branch"] = branch_completer
+            else:
+                if "/system" in self.completion_dict:
+                    self.completion_dict["/system"]["branch"] = WordCompleter([])
+        except ImportError:
+            self.completion_dict["/system"]["branch"] = None
+        except Exception as e:
+
+            self.completion_dict["/system"]["branch"] = None
+
 
         self.prompt_session.completer = FuzzyCompleter(NestedCompleter.from_nested_dict(self.completion_dict)) #self.completer_dict_to_world_completer()
 
@@ -201,7 +239,7 @@ class WorkspaceIsaasCli:
             "/world": {
                 "show": None, "add": None,
                 "remove": None,
-                "clear": None, "save": None,
+                "clear": None, "save": None, "list": None,
                 "load": WordCompleter([]),  # Wird dynamisch gefüllt
             },
             "/agent": {
@@ -209,7 +247,7 @@ class WorkspaceIsaasCli:
                 "switch": WordCompleter([]),  # Wird dynamisch gefüllt
             },
             "/tasks": {
-                "list": None, "attach": WordCompleter([]), "kill": WordCompleter([]), "status": None, "monitor": None,
+                "list": None, "attach": WordCompleter([]), "kill": WordCompleter([]), "status": None,
             },
             "/context": {
                 "list": None, "clear": None, "save": None,
@@ -217,8 +255,8 @@ class WorkspaceIsaasCli:
                 "delete": WordCompleter([]), # Wird dynamisch gefüllt
             },
             "/monitor": None,
-            "/system": {"status": None, "config": None, "backup": None, "restore": None, "performance": None},
-            "/help": None, "/exit": None, "/quit": None, "/clear": None}
+            "/system": {"branch": WordCompleter([]), "config": None, "backup": None, "restore": None, "performance": None},
+            "/help": None, "/quit": None, "/clear": None}
         return commands_dict
 
     def completer_dict_to_world_completer(self) -> WordCompleter:
@@ -579,15 +617,41 @@ class WorkspaceIsaasCli:
         try:
             if not session_id:
                 session_id = f"bg_{len(self.background_tasks)}_{agent_name}"
+
             now = asyncio.get_event_loop().time()
+
+            # Der Callback muss direkt an den Runner übergeben werden.
+
+            async def comp_helper():
+                res = await self.isaa_tools.run_agent(
+                    agent_name,
+                    task_prompt,
+                    session_id=session_id,
+                    progress_callback=self.monitoring_progress_callback
+                )
+                self.background_tasks[task_id]['end_time'] = asyncio.get_event_loop().time()
+                return res
+
             task = asyncio.create_task(
-                self.isaa_tools.run_agent(agent_name, task_prompt, session_id=session_id, progress_callback=self.progress_callback))
+                comp_helper(), name=f"BGTask-{agent_name}-{session_id}-{str(uuid.uuid4())[:8]}"
+            )
             task_id = len(self.background_tasks)
+
             self.background_tasks[task_id] = {
-                'task': task, 'agent': agent_name, 'prompt': task_prompt[:100],
-                'started': now, 'session_id': session_id,
-                'priority': priority, 'status': 'running',
-                'last_activity': now, 'last_event': 'created'  # NEU
+                'task': task,
+                'agent': agent_name,
+                'prompt': task_prompt[:100],
+                'started': now,
+                'end_time': None,
+                'session_id': session_id,
+                'priority': priority,
+                'status': 'running',
+                'last_activity': now,
+                'last_event': 'created',
+                'agent_state': 'Starting',
+                'current_tool_name': None,
+                'current_tool_input': None,
+                'history': []
             }
             return f"⧖ Background task {task_id} started with agent '{agent_name}' (priority: {priority})"
         except Exception as e:
@@ -663,15 +727,17 @@ class WorkspaceIsaasCli:
             bg_total = len(self.background_tasks)
 
             overview_text = (
-                f"  Path:         {self.style.CYAN(str(self.workspace_path))}\n"
-                f"  Active Agent: {self.style.YELLOW(self.active_agent_name)}\n"
-                f"  Background:   {self.style.BLUE(f'{bg_running} running')} / {bg_total} total"
+                f"  Path:         {Style.CYAN(str(self.workspace_path))}\n"
+                f"  Active Agent: {Style.YELLOW(self.active_agent_name)}\n"
+                f"  Background:   {Style.BLUE(f'{bg_running} running')} / {bg_total} total"
+                f"  Session ID: {self.session_id}\n"
             )
             self.formatter.print_section("Overview 📝", overview_text)
 
             # --- Git-Status ---
+
+            git_info_lines = []
             if include_git:
-                git_info_lines = []
                 try:
                     git_res = subprocess.run(
                         ["git", "branch", "--show-current"], capture_output=True, text=True,
@@ -685,15 +751,15 @@ class WorkspaceIsaasCli:
                         )
                         has_changes = status_res.stdout.strip()
                         changes_text = "modified" if has_changes else "clean"
-                        status_style = self.style.RED if has_changes else self.style.GREEN
+                        status_style = Style.RED if has_changes else Style.GREEN
 
-                        git_info_lines.append(f"  Branch: {self.style.MAGENTA(branch)} ({status_style(changes_text)})")
+                        git_info_lines.append(f"  Branch: {Style.MAGENTA(branch)} ({status_style(changes_text)})")
                     else:
-                        git_info_lines.append(self.style.GREY("  (Not a git repository or no active branch)"))
+                        git_info_lines.append(Style.GREY("  (Not a git repository or no active branch)"))
                 except FileNotFoundError:
-                    git_info_lines.append(self.style.YELLOW("  ('git' command not found, status unavailable)"))
+                    git_info_lines.append(Style.YELLOW("  ('git' command not found, status unavailable)"))
                 except Exception as e:
-                    git_info_lines.append(self.style.RED(f"  (Error getting Git status: {e})"))
+                    git_info_lines.append(Style.RED(f"  (Error getting Git status: {e})"))
 
                 self.formatter.print_section("Git Status 🔀", "\n".join(git_info_lines))
 
@@ -708,7 +774,7 @@ class WorkspaceIsaasCli:
                 all_items = dirs + files
 
                 if not all_items:
-                    dir_listing_lines.append(self.style.GREY("  (Directory is empty)"))
+                    dir_listing_lines.append(Style.GREY("  (Directory is empty)"))
                 else:
                     display_items = all_items[:max_items_per_type]
 
@@ -718,29 +784,43 @@ class WorkspaceIsaasCli:
                         prefix = "└──" if is_last else "├──"
 
                         if item.is_dir():
-                            item_text = f"📁 {self.style.BLUE(item.name)}/"
+                            item_text = f"📁 {Style.BLUE(item.name)}/"
                         else:
                             item_text = f"📄 {item.name}"
 
-                        dir_listing_lines.append(f"  {self.style.GREY(prefix)} {item_text}")
+                        dir_listing_lines.append(f"  {Style.GREY(prefix)} {item_text}")
 
                     if len(all_items) > max_items_per_type:
                         remaining = len(all_items) - max_items_per_type
-                        dir_listing_lines.append(self.style.GREY(f"  ... and {remaining} more items"))
+                        dir_listing_lines.append(Style.GREY(f"  ... and {remaining} more items"))
 
             except Exception as e:
-                dir_listing_lines.append(self.style.RED(f"  Error listing directory contents: {e}"))
+                dir_listing_lines.append(Style.RED(f"  Error listing directory contents: {e}"))
 
             self.formatter.print_section("Directory Contents 📁", "\n".join(dir_listing_lines))
+
+            agents_count = len(self.isaa_tools.config.get("agents-name-list", []))
+            bg_running = len([t for t in self.background_tasks.values() if not t['task'].done()])
+            bg_total = len(self.background_tasks)
+            status_data = [
+                ["Workspace", str(self.workspace_path)],
+                ["Active Agent", self.active_agent_name],
+                ["Total Agents", str(agents_count)],
+                ["Running Tasks", f"{bg_running}/{bg_total}"],
+                ["Session ID", self.session_id],
+                ["Data Directory", str(self.app.data_dir)]
+            ]
+            self.formatter.print_table(["Eigenschaft", "Wert"], status_data)
+
             print()  # Add a final newline for spacing
-            return "\n".join([overview_text] + git_info_lines+ dir_listing_lines)
+            return "\n".join([overview_text] + git_info_lines+ dir_listing_lines + [f"{e}-{w}" for e,w in status_data])
         except Exception as e:
             self.formatter.print_error(f"Error generating workspace status: {str(e)}")
 
     async def show_welcome(self):
         """Display enhanced welcome with status overview"""
         welcome_text = "ISAA CLI Assistant"
-        subtitle = "Intelligent System Automation & Analysis"
+        subtitle = "Intelligent System Agents & Automation"
 
         # Calculate padding for centering
         terminal_width = os.get_terminal_size().columns
@@ -751,12 +831,12 @@ class WorkspaceIsaasCli:
         subtitle_padding = (terminal_width - subtitle_len) // 2
 
         print()
-        print(self.style.CYAN("═" * terminal_width))
+        print(Style.CYAN("═" * terminal_width))
         print()
-        print(" " * welcome_padding + self.style.Bold(self.style.BLUE(welcome_text)))
-        print(" " * subtitle_padding + self.style.GREY(subtitle))
+        print(" " * welcome_padding + Style.Bold(Style.BLUE(welcome_text)))
+        print(" " * subtitle_padding + Style.GREY(subtitle))
         print()
-        print(self.style.CYAN("═" * terminal_width))
+        print(Style.CYAN("═" * terminal_width))
         print()
 
         # System status
@@ -774,10 +854,10 @@ class WorkspaceIsaasCli:
 
         # Quick start tips
         tips = [
-            f"{self.style.YELLOW('●')} Type naturally - the agent will use tools to help you",
-            f"{self.style.YELLOW('●')} Type {self.style.CYAN('/help')} for available commands",
-            f"{self.style.YELLOW('●')} Use {self.style.CYAN('Tab')} for autocompletion",
-            f"{self.style.YELLOW('●')} {self.style.CYAN('Ctrl+C')} to interrupt, {self.style.CYAN('Ctrl+D')} to exit",
+            f"{Style.YELLOW('●')} Type naturally - the agent will use tools to help you",
+            f"{Style.YELLOW('●')} Type {Style.CYAN('/help')} for available commands",
+            f"{Style.YELLOW('●')} Use {Style.CYAN('Tab')} for autocompletion",
+            f"{Style.YELLOW('●')} {Style.CYAN('Ctrl+C')} to interrupt, {Style.CYAN('Ctrl+D')} to exit",
         ]
 
         for tip in tips:
@@ -817,23 +897,28 @@ class WorkspaceIsaasCli:
             self.active_agent_name = "workspace_supervisor"
         builder = self.isaa_tools.get_agent_builder(self.active_agent_name)
         builder.with_system_message(
-            "You are a Workspace Supervisor Agent with comprehensive capabilities.\n\n"
-            "YOUR ROLE:\n"
-            "• Manage files and directories with precision\n"
-            "• Create and coordinate specialized agents\n"
-            "• Execute complex multi-step workflows\n"
-            "• Handle background task orchestration\n\n"
-            "YOUR TOOLS:\n"
-            "• File operations: read, write, search, replace strings in any files\n"
-            "• Agent management: create, configure, remove specialized agents\n"
-            "• Task execution: background processing and coordination\n"
-            "• Workspace management: directory operations, status monitoring\n\n"
-            "GUIDELINES:\n"
-            "• Always report actions clearly and completely\n"
-            "• Use appropriate tools for each task\n"
-            "• Maintain workspace organization\n"
-            "• Provide detailed feedback on operations\n"
-            "• When replacing strings, be thorough and report all changes"
+            """You are the Workspace Supervisor, a sophisticated AI agent designed to manage a development environment with precision and efficiency.
+
+**Your Core Directives:**
+
+*   **Orchestrate Tasks:** Your primary role is to manage files, directories, and complex workflows. You are the central coordinator for all activities within the workspace.
+*   **Delegate and Conquer:** You are not meant to perform every task yourself. You have a team of specialized agents at your disposal. Delegate tasks like coding, writing, or analysis to the appropriate agent. For any long-running process, you MUST execute it as a background task to keep the main interface responsive.
+*   **Maintain Clarity:** Report your actions clearly and concisely. Provide detailed feedback on the success or failure of operations. Keep the workspace organized and clean.
+*   **Master Your Tools:** You have a comprehensive set of tools for file manipulation, agent management, and task execution. Use them wisely and efficiently.
+
+**Your Workflow:**
+
+1.  **Analyze the Request:** Understand the user's goal.
+2.  **Formulate a Plan:** Decide which tools and agents are needed.
+3.  **Execute and Delegate:** Run commands and delegate to other agents, preferably in the background.
+4.  **Report Results:** Inform the user of the outcome.
+
+**Key Principles:**
+
+*   **Efficiency:** Always choose the most direct path to accomplish a goal.
+*   **Robustness:** Anticipate and handle potential errors.
+*   **Clarity:** Communicate with the user in a clear and professional manner.
+*   **Proactiveness:** When appropriate, suggest next steps or improvements."""
         )
         builder = await self.add_comprehensive_tools_to_agent(builder)
         print("Registering workspace agent...")
@@ -942,7 +1027,10 @@ class WorkspaceIsaasCli:
                 await self._update_completer()
                 self.interrupt_count = 0
                 self.prompt_start_time = asyncio.get_event_loop().time()
-                user_input = await self.prompt_session.prompt_async(self.get_prompt_text(), multiline=False)
+
+                # This is the correct way to call the prompt.
+                user_input = await self.prompt_session.prompt_async(self.get_prompt_text())
+
                 # Calculate interaction duration and update session stats
                 if self.prompt_start_time:
                     interaction_duration = asyncio.get_event_loop().time() - self.prompt_start_time
@@ -956,19 +1044,17 @@ class WorkspaceIsaasCli:
                 elif user_input.strip().startswith("/"):
                     await self.handle_workspace_command(user_input.strip())
                 else:
-                    try:
-                        await self.handle_agent_request(user_input.strip())
-                    except KeyboardInterrupt:
-                        self.formatter.print_warning("Operation interrupted by user")
-                        continue
+                    await self.handle_agent_request(user_input.strip())
             except (EOFError, KeyboardInterrupt) as e:
                 if self.interrupt_count == 0 and not isinstance(e, EOFError):
                     self.interrupt_count += 1
-                    self.formatter.print_info("Press Ctrl+D or type /exit to quit")
+                    self.formatter.print_info("Press Ctrl+D or type /quit to quit")
                     continue
                 break
             except Exception as e:
-                self.formatter.print_error(f"Unexpected error: {e}")
+                self.formatter.print_error(f"Unexpected error in main loop: {e}")
+                import traceback
+                print(traceback.format_exc())
                 continue
         await self.cleanup()
 
@@ -997,8 +1083,8 @@ class WorkspaceIsaasCli:
         # Zeit-Statistiken
         self.formatter.print_section("Time Usage", (
             f"Total Session: {total_duration:.2f}s\n"
-            f"User Interaction: {self.session_stats['interaction_time']:.2f}s\n"
-            f"Agent Processing: {self.session_stats['agent_running_time']:.2f}s"
+            f"User Interaction: {human_readable_time(self.session_stats['interaction_time'])}\n"
+            f"Agent Processing: {human_readable_time(self.session_stats['agent_running_time'])}"
         ))
 
         # Kosten und Token
@@ -1035,121 +1121,255 @@ class WorkspaceIsaasCli:
             self.formatter.print_table(headers, rows)
 
     async def handle_agent_request(self, request: str):
-        """Handle requests to the workspace supervisor agent with progress"""
+        """
+        Handles requests to the workspace agent, allowing interruption with Ctrl+C.
+        This version uses get_app() to reliably access the application instance for UI suspension.
+        """
+        agent_task = None
         start_time = asyncio.get_event_loop().time()
-        try:
 
-            agent = await self.formatter.process("Getting Agent", self.isaa_tools.get_agent(self.active_agent_name))
-            agent.progress_callback = self.progress_callback
-            response = await self.isaa_tools.run_agent(
+        # Use the official prompt_toolkit function to get the active application instance.
+        # This is the correct way to access it after a prompt has finished.
+        from prompt_toolkit.widgets import TextArea
+        kb = KeyBindings()
+        agent_task = None  # Will hold the asyncio.Task
+
+        # Handler for Ctrl+C
+        @kb.add('c-c')
+        def _(event):
+            nonlocal agent_task
+            if agent_task and not agent_task.done():
+                agent_task.cancel()
+            event.app.exit()
+
+        # Handler for Esc
+        @kb.add('escape')
+        def _(event):
+            nonlocal agent_task
+            if agent_task and not agent_task.done():
+                agent_task.cancel()
+            event.app.exit()
+
+        # Statuszeile ganz unten mit invertierter Farbe
+        from prompt_toolkit.layout.dimension import D
+        content_area = TextArea(
+            text="",
+            read_only=True
+        )
+
+        # Status bar at the bottom with inverted colors
+
+        main_app = Application(full_screen=False, key_bindings=kb,  layout=Layout(HSplit([
+            content_area,
+        ])))
+
+        self.formatter.print_info(Style.GREY("Agent is running... Cancel with Ctrl+C or ESC"))
+
+        if not main_app:
+            self.formatter.print_error(
+                "Could not get application instance. Agent will run without clean UI suspension."
+            )
+            # As a fallback, we could run the agent directly, but the output would
+            # conflict with the prompt. For now, we abort the request.
+            return
+        try:
+            # Prepare the agent task before suspending the UI
+            agent_task = asyncio.create_task(self.isaa_tools.run_agent(
                 name=self.active_agent_name,
                 text=request,
                 session_id=self.session_id,
                 progress_callback=self.progress_callback
-            )
-            await self.formatter.print_agent_response(response)
+            ))
+
+
+            async def run_task():
+                nonlocal agent_task
+                try:
+                    response = await agent_task
+                    main_app.print_text("\n" + response)
+                except asyncio.CancelledError:
+                    main_app.print_text("\nOperation interrupted by user.")
+                finally:
+                    main_app.exit()
+
+            main_app.create_background_task(run_task())
+
+            # Run the application in asyncio event loop
+            return await main_app.run_async()
+
+
+        except KeyboardInterrupt:
+            if agent_task and not agent_task.done():
+                agent_task.cancel()
+            print()
+            self.formatter.print_warning("Operation interrupted by user.")
+
+        except asyncio.CancelledError:
+            # This is expected after a KeyboardInterrupt, so we can pass silently.
+            pass
+
         except Exception as e:
-            self.formatter.print_error(f"Error processing agent request: {e}")
+            self.formatter.print_error(f"An unexpected error occurred during agent execution: {e}")
+            import traceback
+            print(traceback.format_exc())
+
         finally:
-            # NEU: Laufzeit zur Statistik hinzufügen
             duration = asyncio.get_event_loop().time() - start_time
             self.session_stats["agent_running_time"] += duration
+            # Force a redraw of the prompt to clean up any visual artifacts
+            if main_app:
+                main_app.invalidate()
 
-    async def progress_callback(self, event: Dict[str, Any]):
-        """
-        Verarbeitet ADK-Events, um Statistiken zu sammeln und den Fortschritt zu protokollieren.
-        Diese Funktion ist an die reale Datenstruktur der ADK 1.8.0 Events angepasst.
-        """
-        # Holen des Agentennamens aus dem 'author'-Feld des Events
+    async def _update_stats_from_event(self, event: Dict[str, Any]):
+        """Handles all session statistics updates based on an ADK event."""
         agent_name = event.get("author", getattr(self, 'active_agent_name', 'unknown_agent'))
 
-        # Initialisiere Agenten-Statistiken, falls diese zum ersten Mal auftreten
         if agent_name not in self.session_stats["agents"]:
             self.session_stats["agents"][agent_name] = {
-                "cost": 0.0,
-                "tokens": {"prompt": 0, "completion": 0},
-                "tool_calls": 0
+                "cost": 0.0, "tokens": {"prompt": 0, "completion": 0}, "tool_calls": 0
             }
 
-        # Letzte Aktivität für den Monitor-Modus verfolgen (falls implementiert)
-        session_id = event.get("invocation_id")  # invocation_id ist eine gute Annäherung für eine Session
-        if session_id and hasattr(self, 'background_tasks'):
-            for task_id, task_info in self.background_tasks.items():
-                if task_info.get('session_id') == session_id:
-                    task_info['last_activity'] = asyncio.get_event_loop().time()
-                    task_info['last_event'] = event.get("id", "unknown")
-                    break
-
-        # --- Kernlogik: Parsen der Event-Inhalte ---
-
-        # 1. Verarbeite "Gedanken" und Werkzeugaufrufe vom Modell
         if event.get("content") and event["content"].get("parts"):
             for part in event["content"]["parts"]:
-                # Ein "Gedanke" oder eine textuelle Antwort des Modells
-                if "text" in part:
-                    self.formatter.log_state("THINKING", {"process": Style.GREY(part.get("text", "...")[:255]+'...')})
-
-                # Ein Werkzeugaufruf wird vom Modell angefordert
                 if "function_call" in part:
                     call_data = part["function_call"]
                     tool_name = call_data.get("name", "UnknownTool")
-                    tool_args = call_data.get("args", "UnknownInput")
-                    self.formatter.print_info(f"🔧 Using tool: {tool_name}")
-                    self.formatter.print_info(f"args: {tool_args}")
-                    # Aktualisiere die Statistiken für Werkzeugaufrufe
                     stats = self.session_stats["tools"]
                     stats["total_calls"] += 1
-                    # Initialisiere Zähler für dieses spezielle Werkzeug, falls nicht vorhanden
                     stats["calls_by_name"].setdefault(tool_name, {"success": 0, "fail": 0})
                     self.session_stats["agents"][agent_name]["tool_calls"] += 1
 
-                # Ein Werkzeugergebnis wird verarbeitet
                 if "function_response" in part:
                     response_data = part["function_response"]
                     tool_name = response_data.get("name", "UnknownTool")
+                    response_content = response_data.get("response", {})
                     stats = self.session_stats["tools"]
 
-                    # Prüfe, ob das Ergebnis ein Fehler war.
-                    # ANNAHME: Ein Fehler wird durch einen 'error'-Schlüssel in der Antwort signalisiert.
-                    # Dies muss ggf. an Ihre tatsächliche Fehlerstruktur angepasst werden.
-                    is_error = "error" in response_data.get("response", {})
+                    is_error = "error" in response_content
+                    if not is_error and isinstance(response_content.get("result"), str):
+                        try:
+                            result_json = json.loads(response_content["result"])
+                            if isinstance(result_json, dict) and result_json.get("success") is False:
+                                is_error = True
+                        except json.JSONDecodeError:
+                            pass
 
                     if is_error:
                         stats["failed_calls"] += 1
-                        stats["calls_by_name"].setdefault(tool_name, {"success": 0, "fail": 0})["fail"] += 1
-                        self.formatter.print_error(f"❌ Tool '{tool_name}' failed.")
+                        stats["calls_by_name"][tool_name]["fail"] += 1
                     else:
-                        stats["calls_by_name"].setdefault(tool_name, {"success": 0, "fail": 0})["success"] += 1
-                        self.formatter.print_success(f"✅ Tool '{tool_name}' succeeded.")
-                        result = part["function_response"]["response"].get("result", "")
-                        self.formatter.print_section("Result", Style.GREY(str(result))[:255]+'...')
+                        stats["calls_by_name"][tool_name]["success"] += 1
 
-        # 2. Verarbeite Token-Nutzung und Kosten aus den Metadaten des Events
-        # Dies geschieht typischerweise bei Events, die eine LLM-Antwort enthalten.
         if "usage_metadata" in event:
             usage = event["usage_metadata"]
             prompt_tokens = usage.get("prompt_token_count", 0)
-            # Im ADK wird der Output oft als 'candidates_token_count' bezeichnet
             completion_tokens = usage.get("candidates_token_count", 0)
 
             if prompt_tokens > 0 or completion_tokens > 0:
-                self.formatter.print_info(f"Token usage: {usage}")
-
-                # Aktualisiere die globalen Token-Statistiken
                 self.session_stats["total_tokens"]["prompt"] += prompt_tokens
                 self.session_stats["total_tokens"]["completion"] += completion_tokens
-
-                # Aktualisiere die agentenspezifischen Token-Statistiken
                 self.session_stats["agents"][agent_name]["tokens"]["prompt"] += prompt_tokens
                 self.session_stats["agents"][agent_name]["tokens"]["completion"] += completion_tokens
 
-            # ANNAHME: Die Kostenberechnung muss separat erfolgen, da sie nicht direkt im Event enthalten ist.
-            # Hier könnte Ihre Kostenberechnungslogik aufgerufen werden.
-            # Beispiel: cost = calculate_cost(prompt_tokens, completion_tokens, model_name)
-            cost = 0.0  # Platzhalter
-            if cost > 0:
-                self.session_stats["total_cost"] += cost
-                self.session_stats["agents"][agent_name]["cost"] += cost
+            try:
+                agent = await self.isaa_tools.get_agent(agent_name)
+                if hasattr(agent, 'total_cost'):
+                    new_cost = agent.total_cost or 0.0
+                    previous_cost = self.session_stats["agents"][agent_name].get("cost", 0.0)
+                    cost_delta = new_cost - previous_cost
+                    if cost_delta > 0:
+                        self.session_stats["agents"][agent_name]["cost"] = new_cost
+                        self.session_stats["total_cost"] += cost_delta
+            except Exception:
+                pass # Ignore if agent not found or other issues
+
+    async def progress_callback(self, event: Dict[str, Any]):
+        """The main progress callback for the interactive CLI, handles printing."""
+        await self._update_stats_from_event(event)
+
+        agent_name = event.get("author", getattr(self, 'active_agent_name', 'unknown_agent'))
+
+        if event.get("content") and event["content"].get("parts"):
+            for part in event["content"]["parts"]:
+                if "text" in part:
+                    self.formatter.log_state("THINKING", {"process": Style.GREY(part.get("text", "...")[:255] + '...')})
+
+                if "function_call" in part:
+                    call_data = part["function_call"]
+                    tool_name = call_data.get("name", "UnknownTool")
+                    tool_args = call_data.get("args", {})
+                    self.formatter.print_info(f"🔧 Using tool: {tool_name}")
+                    self.formatter.print_info(f"   Args: {json.dumps(tool_args, indent=2, ensure_ascii=False)}")
+
+                if "function_response" in part:
+                    response_data = part["function_response"]
+                    tool_name = response_data.get("name", "UnknownTool")
+                    response_content = response_data.get("response", {})
+
+                    is_error = "error" in response_content
+
+                    if is_error:
+                        self.formatter.print_error(f"❌ Tool '{tool_name}' failed.")
+                    else:
+                        self.formatter.print_success(f"✅ Tool '{tool_name}' succeeded.")
+
+                    result = response_content.get("result", "")
+                    self.formatter.print_section("Result", Style.GREY(str(result))[:255] + '...')
+
+        if "usage_metadata" in event:
+            try:
+                agent = await self.isaa_tools.get_agent(agent_name)
+                if hasattr(agent, 'total_cost'):
+                    new_cost = agent.total_cost or 0.0
+                    previous_cost = self.session_stats["agents"][agent_name].get("cost", 0.0)
+                    cost_delta = new_cost - previous_cost
+                    if cost_delta > 0:
+                        self.formatter.print_info(f"Cost update for {agent_name}: +${cost_delta:.6f} (Total: ${new_cost:.6f})")
+            except Exception:
+                pass
+
+    async def monitoring_progress_callback(self, event: Dict[str, Any]):
+        """A dedicated callback for background tasks to update monitor state."""
+        await self._update_stats_from_event(event)
+
+        session_id = event.get("invocation_id")
+        task_info = None
+        for tid, tinfo in self.background_tasks.items():
+            if tinfo.get('session_id') == session_id:
+                task_info = tinfo
+                break
+
+        if task_info:
+            now = asyncio.get_event_loop().time()
+            task_info['last_activity'] = now
+            event_log = {"time": now, "type": "unknown", "content": ""}
+
+            if event.get("content") and event["content"].get("parts"):
+                for part in event["content"]["parts"]:
+                    if "text" in part and part["text"]:
+                        task_info['agent_state'] = 'Thinking'
+                        task_info['current_tool_name'] = None
+                        task_info['current_tool_input'] = None
+                        event_log = {"time": now, "type": "Thinking", "content": part["text"][:200]}
+
+                    if "function_call" in part:
+                        call = part["function_call"]
+                        tool_name = call.get('name')
+                        tool_args = call.get('args', {})
+                        task_info['agent_state'] = 'Using Tool'
+                        task_info['current_tool_name'] = tool_name
+                        task_info['current_tool_input'] = json.dumps(tool_args, ensure_ascii=False)
+                        event_log = {"time": now, "type": "Tool Call", "content": f"{tool_name}({tool_args})"}
+
+                    if "function_response" in part:
+                        task_info['agent_state'] = 'Processing'
+                        # Werkzeugname bleibt für Kontext sichtbar
+                        response = part["function_response"]
+                        event_log = {"time": now, "type": "Tool Response",
+                                     "content": f"Result for {response.get('name')}"}
+
+            if event_log["type"] != "unknown":
+                task_info['history'].append(event_log)
 
     async def _handle_shell_command(self, command: str):
         """
@@ -1253,6 +1473,12 @@ class WorkspaceIsaasCli:
                     self.formatter.print_info("World model is empty")
             except Exception as e:
                 self.formatter.print_error(f"Error showing world model: {e}")
+        elif sub_command == "list":
+            world_models_list = self.dynamic_completions.get("world_tags", [])
+            if world_models_list:
+                print(world_models_list)
+            else:
+                self.formatter.print_info("World models list is empty")
         elif sub_command == "add":
             if len(args) < 2:
                 self.formatter.print_error("Usage: /world add <key> <value>")
@@ -1346,14 +1572,6 @@ class WorkspaceIsaasCli:
                 print(listing)
             except Exception as e:
                 self.formatter.print_error(f"Error listing directory: {e}")
-        elif sub_command == "info":
-            self.formatter.print_section(
-                "Workspace Information",
-                f"📁 Current Path: {self.workspace_path}\n"
-                f"🤖 Active Agent: {self.active_agent_name}\n"
-                f"📝 Session ID: {self.session_id}\n"
-                f"💾 Data Directory: {self.app.data_dir}"
-            )
         else:
             self.formatter.print_error(f"Unknown workspace command: {sub_command}")
 
@@ -1396,7 +1614,7 @@ class WorkspaceIsaasCli:
     async def handle_tasks_cmd(self, args: list[str]):
         """Handle background task management with direct calls."""
         if not args:
-            self.formatter.print_error("Usage: /tasks <list|attach|kill|monitor|status>")
+            self.formatter.print_error("Usage: /tasks <list|attach|kill|status>")
             return
         sub_command = args[0]
         if sub_command in ["list", "status"]:
@@ -1445,22 +1663,6 @@ class WorkspaceIsaasCli:
                 self.formatter.print_error("Invalid task ID")
             except Exception as e:
                 self.formatter.print_error(f"Error killing task: {e}")
-        elif sub_command == "monitor":
-            if self.background_tasks:
-                running_tasks = [(tid, info) for tid, info in self.background_tasks.items() if
-                                 not info['task'].done()]
-                if running_tasks:
-                    headers = ["ID", "Agent", "Status", "Elapsed", "Prompt"]
-                    rows = []
-                    for tid, tinfo in running_tasks:
-                        elapsed = asyncio.get_event_loop().time() - tinfo['started']
-                        rows.append([str(tid), tinfo['agent'][:15], "Running", f"{elapsed:.1f}s",
-                                     tinfo['prompt'][:30] + "..."])
-                    self.formatter.print_table(headers, rows)
-                else:
-                    self.formatter.print_info("No running tasks to monitor")
-            else:
-                self.formatter.print_info("No background tasks available")
         else:
             self.formatter.print_error(f"Unknown tasks command: {sub_command}")
 
@@ -1593,61 +1795,218 @@ class WorkspaceIsaasCli:
         return history
 
     async def handle_monitor_cmd(self, args: list[str]):
-        """Enter a real-time monitoring mode for background agent tasks."""
+        """Enters an interactive monitoring mode for background tasks."""
+        if not self.background_tasks:
+            self.formatter.print_info("No background tasks to monitor.")
+            return
 
-        now = asyncio.get_event_loop().time()
+        selected_task_index = 0
+        detail_view_task_id = None
+        stop_monitoring = False
 
-        self.formatter.log_header(f"Agent Monitor - {time.strftime('%H:%M:%S')}")
+        output_control = FormattedTextControl(text=ANSI(""), focusable=False)
+        layout = Layout(HSplit([Window(content=output_control, always_hide_cursor=True)]))
+        kb = KeyBindings()
 
-        running_tasks = [
-            (tid, info) for tid, info in self.background_tasks.items() if not info['task'].done()
-        ]
-        self._display_session_summary()
-        if not running_tasks:
-            print("No running agent tasks to monitor.")
-        else:
-            headers = ["ID", "Agent", "Status", "Runtime (s)", "Last Event", "Idle (s)"]
-            rows = []
-            for tid, tinfo in running_tasks:
-                runtime = now - tinfo['started']
-                idle_time = now - tinfo.get('last_activity', tinfo['started'])
-                status = "Running"
+        @kb.add('q')
+        @kb.add('escape')
+        @kb.add('c-c')
+        def _(event):
+            nonlocal stop_monitoring
+            stop_monitoring = True
+            event.app.exit()
 
-                # Einfache Logik zur Problemerkennung
-                if idle_time > 60:  # Mehr als 60 Sekunden keine Aktivität
-                    status = self.style.YELLOW("Stalled?")
+        @kb.add('up')
+        def _(event):
+            nonlocal selected_task_index
+            selected_task_index = max(0, selected_task_index - 1)
 
-                rows.append([
-                    str(tid),
-                    tinfo['agent'],
-                    status,
-                    f"{runtime:.1f}",
-                    tinfo.get('last_event', 'n/a'),
-                    f"{idle_time:.1f}"
-                ])
-            self.formatter.print_table(headers, rows)
+        @kb.add('down')
+        def _(event):
+            nonlocal selected_task_index
+            num_tasks = len(self.background_tasks)
+            selected_task_index = min(num_tasks - 1, selected_task_index + 1)
+
+        @kb.add('k')
+        async def _(event):
+            nonlocal selected_task_index
+            sorted_tasks = sorted(self.background_tasks.items())
+            if 0 <= selected_task_index < len(sorted_tasks):
+                task_id_to_kill, info = sorted_tasks[selected_task_index]
+                if not info['task'].done():
+                    await self.kill_background_task_tool(task_id_to_kill)
+
+        @kb.add('d')
+        def _(event):
+            nonlocal selected_task_index, detail_view_task_id
+            sorted_tasks = sorted(self.background_tasks.items())
+            if 0 <= selected_task_index < len(sorted_tasks):
+                task_id, _ = sorted_tasks[selected_task_index]
+                # Toggle detail view for the selected task
+                detail_view_task_id = task_id if detail_view_task_id != task_id else None
+
+        app = Application(layout=layout, key_bindings=kb, full_screen=True)
+
+        async def monitor_loop():
+            nonlocal stop_monitoring, selected_task_index, detail_view_task_id
+            while not stop_monitoring:
+                now = asyncio.get_event_loop().time()
+                lines = []
+
+                # Header
+                lines.append(Style.Bold(f"ISAA Agent Monitor @ {time.strftime('%H:%M:%S')}"))
+                lines.append(Style.GREY("Use [↑/↓] to select, [k] to kill, [d] for details, [q] to quit.\n"))
+
+                headers = ["ID", "Agent", "Status", "Runtime", "State", "Current Tool"]
+                lines.append(Style.Underlined(" | ".join(f"{h:<15}" for h in headers)))
+
+                sorted_tasks = sorted(self.background_tasks.items())
+                if not sorted_tasks:
+                    selected_task_index = 0
+                else:
+                    selected_task_index = min(selected_task_index, len(sorted_tasks) - 1)
+
+                for idx, (tid, tinfo) in enumerate(sorted_tasks):
+                    task = tinfo['task']
+
+                    # Correct runtime calculation
+                    if task.done() and tinfo.get('end_time') is None:
+                        tinfo['end_time'] = tinfo.get('last_activity', now)
+
+                    runtime = (tinfo['end_time'] or now) - tinfo['started']
+
+                    # Determine status
+                    if task.done():
+                        if task.cancelled():
+                            status = Style.YELLOW("Cancelled")
+                        elif task.exception():
+                            status = Style.RED("Failed")
+                        else:
+                            status = Style.GREEN("Completed")
+                    else:
+                        status = Style.CYAN("Running")
+
+                    # Agent state styling
+                    agent_state = tinfo.get('agent_state', 'n/a')
+                    if agent_state == 'Using Tool':
+                        agent_state = Style.BLUE(agent_state)
+                    elif agent_state == 'Thinking':
+                        agent_state = Style.MAGENTA(agent_state)
+                    else:
+                        agent_state = Style.GREY(agent_state)
+
+                    row_data = [
+                        str(tid),
+                        tinfo['agent'],
+                        status,
+                        human_readable_time(runtime),
+                        agent_state,
+                        tinfo.get('current_tool_name', 'None') or 'None'
+                    ]
+
+                    # Build and style the row
+                    row_str = " | ".join(f"{str(s):<15}" for s in row_data)
+                    if idx == selected_task_index:
+                        lines.append(HTML(f"<style bg='ansiyellow' fg='ansiblack'>{row_str}</style>"))
+                    else:
+                        lines.append(row_str)
+
+                    # Show details if toggled
+                    if detail_view_task_id == tid:
+                        lines.append(Style.GREY("  " + "─" * 60))
+                        if tinfo.get('history'):
+                            for log in reversed(tinfo['history'][-10:]):  # Show last 10 events
+                                log_time = time.strftime('%H:%M:%S', time.localtime(log['time']))
+                                lines.append(HTML(
+                                    f"  <grey>└ {log_time}</grey> <yellow>{log['type']:<15}</yellow> {log['content']}"))
+                        else:
+                            lines.append("  " + Style.GREY("└ No execution history recorded."))
+                        lines.append(Style.GREY("  " + "─" * 60))
+
+                output_control.text = ANSI("\n".join(lines))
+                await asyncio.sleep(1)  # Refresh rate
+
+        try:
+            await asyncio.gather(app.run_async(), monitor_loop())
+        except Exception as e:
+            # Exit fullscreen mode before printing error
+            print(f"\x1b[?1049l", end="")  # Exit alternate screen
+            self.formatter.print_error(f"Monitor crashed: {e}")
+        finally:
+            self.monitoring_active = False
 
     async def handle_system_cmd(self, args: list[str]):
         """Verarbeitet Systembefehle, einschließlich Status, Konfiguration, Performance und Git-Backup/Restore."""
         if not args:
-            self.formatter.print_error("Nutzung: /system <status|config|performance|backup|restore|log>")
+            self.formatter.print_error("Nutzung: /system <branch|config|performance|backup|restore|log>")
             return
 
         sub_command = args[0].lower()
 
-        if sub_command == "status":
-            agents_count = len(self.isaa_tools.config.get("agents-name-list", []))
-            bg_running = len([t for t in self.background_tasks.values() if not t['task'].done()])
-            bg_total = len(self.background_tasks)
-            status_data = [
-                ["Workspace", str(self.workspace_path)],
-                ["Active Agent", self.active_agent_name],
-                ["Total Agents", str(agents_count)],
-                ["Running Tasks", f"{bg_running}/{bg_total}"],
-                ["Session ID", self.session_id],
-                ["Data Directory", str(self.app.data_dir)]
-            ]
-            self.formatter.print_table(["Eigenschaft", "Wert"], status_data)
+        if sub_command == "branch":
+            try:
+                import git
+                repo = git.Repo(search_parent_directories=True)
+            except ImportError:
+                self.formatter.print_error("The 'GitPython' library is not installed. Run 'pip install GitPython'.")
+                return
+            except git.InvalidGitRepositoryError:
+                self.formatter.print_error("The current directory is not a valid Git repository.")
+                return
+
+            if len(args) < 2:
+                self.formatter.print_error("Usage: /system branch <branch-name>")
+                # Optional: show the current branch
+                try:
+                    self.formatter.print_info(f"Current branch: {repo.active_branch.name}")
+                except TypeError:
+                    self.formatter.print_warning("Repository has no initial commits (detached HEAD).")
+                return
+
+            branch_name = args[1]
+            existing_branches = [branch.name for branch in repo.branches]
+
+            # --- Case 1: Branch already exists, perform checkout ---
+            if branch_name in existing_branches:
+                if repo.active_branch.name == branch_name:
+                    self.formatter.print_info(f"You are already on branch '{branch_name}'.")
+                    return
+
+                self.formatter.print_info(f"Switching to existing branch '{branch_name}'...")
+                repo.git.checkout(branch_name)
+                self.formatter.print_success(f"Successfully checked out branch '{branch_name}'.")
+
+            # --- Case 2: Branch does not exist, create a new one ---
+            else:
+                base_branch = repo.active_branch
+                current_branch_name = base_branch.name
+
+                # Ask the user if not currently on 'main' or 'master'
+                if current_branch_name not in ["main", "master"]:
+                    try:
+                        choice_prompt = f"Which branch should '{branch_name}' be created from? (main/master/current) [{current_branch_name}]: "
+                        user_choice = await self.prompt_session.prompt_async(choice_prompt, default=current_branch_name)
+                        user_choice = user_choice.lower().strip()
+
+                        if user_choice == "main" and "main" in existing_branches:
+                            base_branch = repo.branches.main
+                        elif user_choice == "master" and "master" in existing_branches:
+                            base_branch = repo.branches.master
+                        elif user_choice in ["current", current_branch_name]:
+                            base_branch = repo.active_branch
+                        else:
+                            self.formatter.print_error(
+                                f"Invalid or unknown base branch '{user_choice}'. Action cancelled.")
+                            return
+                    except (KeyboardInterrupt, EOFError):
+                        self.formatter.print_warning("\nBranch creation cancelled by user.")
+                        return
+
+                self.formatter.print_info(f"Creating new branch '{branch_name}' from '{base_branch.name}'...")
+                new_branch = repo.create_head(branch_name, base_branch)
+                new_branch.checkout()
+                self.formatter.print_success(f"Branch '{branch_name}' created and checked out successfully.")
+
 
         elif sub_command == "config":
             config_preview = {k: v for k, v in self.isaa_tools.config.items() if "api_key" not in k.lower() and type(v) in (str, int, float, bool, list, dict)}
@@ -1776,64 +2135,69 @@ class WorkspaceIsaasCli:
         self.formatter.print_section(
             "🗣️  Natural Language Usage",
             "Simply type your request or question and press Enter. The active agent will process it.\n"
-            "You can write multi-line prompts by pressing Shift+Enter."
+            "The agent can use tools to perform actions like creating files, running commands, and managing projects."
         )
 
         # --- Command Reference ---
         self.formatter.print_section(
             "⌨️  Command Reference",
-            "Commands start with a forward slash (/). Use them for direct control over the workspace."
+            "Commands start with a forward slash (/). They provide direct control over the CLI and its features."
         )
         command_data = [
             # Workspace & File System
-            ["/workspace status", "Show current workspace path and information."],
+            ["/workspace status", "Show an overview of the current workspace, including Git status."],
             ["/workspace cd <dir>", "Change the current workspace directory."],
-            ["/workspace ls [path]", "List contents of the specified directory (or current)."],
+            ["/workspace ls [path]", "List contents of a directory. Use -r for recursive, -a for all."],
 
             # Agent Management
-            ["/agent list", "Show all available agents in the configuration."],
+            ["/agent list [-d]", "Show available agents. Use -d for detailed view."],
             ["/agent switch <name>", "Switch the currently active agent."],
+            ["/agent status", "Display information about the active agent and session."],
+
+            # World Model (Agent Memory)
+            ["/world show", "Display the agent's current world model (short-term memory)."],
+            ["/world add <k> <v>", "Add or update a key-value pair in the world model."],
+            ["/world remove <key>", "Remove a key from the world model."],
+            ["/world save <tag>", "Save the current world model to a file with a tag."],
+            ["/world load <tag>", "Load a previously saved world model."],
+            ["/world list", "List all saved world model tags."],
+            ["/world clear", "Clear the current world model."],
 
             # Task & Process Management
-            ["/monitor", "monitor for background agent tasks."],
-            ["/tasks attach <id>", "Attach to a specific task's live output."],
-            ["/tasks kill <id>", "Forcefully cancel (kill) a background task."],
+            ["/tasks list [-a]", "List background tasks. Use -a to show completed tasks."],
+            ["/tasks attach <id>", "Attach to a task's live output and follow its progress."],
+            ["/tasks kill <id>", "Cancel a running background task by its ID."],
+            ["/monitor", "Enter a full-screen interactive monitor for all background tasks."],
 
             # Context & Session
-            ["/context save [name]", "Save the current conversation history."],
-            ["/context load <name>", "Load a previously saved conversation."],
+            ["/context save [name]", "Save the current conversation history to a file."],
+            ["/context load <name>", "Load a previously saved conversation into the current session."],
             ["/context list", "Show all saved conversation contexts."],
+            ["/context delete <name>", "Delete a saved context file."],
+            ["/context clear", "Clear the message history for the current session."],
 
-            # System & Performance (Updated)
-            ["/system status", "Show a high-level status of the application."],
-            ["/system config", "Display the current (non-sensitive) agent configuration."],
+            # System & Git
+            ["/system branch <name>", "Switch to an existing Git branch or create a new one."],
+            ["/system config", "Display the current (non-sensitive) application configuration."],
             ["/system performance", "Show system CPU, memory, and process information."],
-            ["/system backup [msg]", "Create a versioned backup of the workspace using Git."],
-            ["/system restore [id]", "Restore workspace to a backup. Use with no ID to list backups."],
-            ["/system log", "Show the backup (git commit) history for the workspace."],
+            ["/system backup [msg]", "Create a workspace backup (Git commit)."],
+            ["/system restore [id]", "Restore workspace to a previous backup. Use 'list' to see history."],
+            ["/system log", "Show the backup (Git commit) history for the workspace."],
 
             # General
             ["/clear", "Clear the terminal screen."],
             ["/help", "Display this help message."],
-            ["/exit", "Exit the workspace manager session."],
+            ["/quit or /exit", "Exit the workspace CLI session."],
         ]
         self.formatter.print_table(["Command", "Description"], command_data)
-
-        # --- Agent Capabilities ---
-        self.formatter.print_section(
-            "🤖  Agent Capabilities",
-            "The active agent can do more than just chat. It can:\n"
-            "  - Use Tools: Execute functions like reading/writing files, searching the web, etc.\n"
-            "  - Access Memory: Utilize a 'World Model' to remember facts and context across turns.\n"
-            "  - Delegate Tasks: Communicate with other agents (A2A) to solve complex problems."
-        )
 
         # --- Tips & Tricks ---
         self.formatter.print_section(
             "💡  Tips & Tricks",
             "  - Shell Commands: Start a line with '!' to execute a shell command (e.g., !pip list).\n"
-            "  - Command History: Use the Up/Down arrow keys to cycle through your previous commands.\n"
-            "  - Autocompletion: Press Tab to autocomplete commands and file paths\n"
+            "  - Autocompletion: Press Tab to autocomplete commands, arguments, and file paths.\n"
+            "  - Command History: Use the Up/Down arrow keys to cycle through your previous inputs.\n"
+            "  - Interruption: Press Ctrl+C to interrupt a running agent task."
         )
 
     async def handle_clear_cmd(self, args: list[str]):
@@ -1871,7 +2235,6 @@ async def run(app, *args, **kwargs):
         print(f"💥 Fatal error: {e}")
         import traceback
         print(traceback.format_exc())
-
 
 if __name__ == "__main__":
     asyncio.run(run(None))
