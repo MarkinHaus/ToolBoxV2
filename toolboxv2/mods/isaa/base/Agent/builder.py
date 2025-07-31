@@ -1049,10 +1049,10 @@ class EnhancedAgentBuilder:
 
         except ValidationError as e:
             logger.error(f"Pydantic validation error Instantiating EnhancedAgent: {e}", exc_info=True)
-            raise
+            raise e
         except Exception as e:
             logger.error(f"Unexpected error Instantiating EnhancedAgent: {e}", exc_info=True)
-            raise
+            raise e
 
         # 7. Setup Agent's Internal Server Capabilities (if enabled and not pre-initialized)
         if self._config.a2a.enabled and not agent.a2a_server:

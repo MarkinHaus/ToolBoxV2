@@ -606,7 +606,7 @@ class KnowledgeBase:
     def __init__(self, embedding_dim: int = 768, similarity_threshold: float = 0.61, batch_size: int = 64,
                  n_clusters: int = 4, deduplication_threshold: float = 0.85, model_name=os.getenv("DEFAULTMODELSUMMERY"),
                  embedding_model=os.getenv("DEFAULTMODELEMBEDDING"),
-                 vis_class:str | None = "NumpyVectorStore",
+                 vis_class:str | None = "FastVectorStoreO",
                  vis_kwargs:dict[str, Any] | None=None,
                  requests_per_second=85.,
                  chunk_size: int = 3600,
@@ -908,7 +908,7 @@ class KnowledgeBase:
         """Enhanced retrieval with connected information"""
         if query_embedding is None:
             query_embedding = (await self._get_embeddings([query]))[0]
-        k = min(k, len(self.vdb.chunks)-1)
+        k = min(k, len(self.vdb.chunks))
         if k <= 0:
             return []
         initial_results = self.vdb.search(query_embedding, k, min_similarity)

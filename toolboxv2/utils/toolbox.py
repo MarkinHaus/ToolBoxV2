@@ -1673,22 +1673,25 @@ class App(AppType, metaclass=Singleton):
         # self.logger.info(f"Output : {text}")
         if 'live' in self.id:
             return
+
+        flush = kwargs.pop('flush', True)
         if self.sprint(None):
-            print(Style.CYAN(f"System${self.id}:"), end=" ")
-        print(text, *args, **kwargs)
+            print(Style.CYAN(f"System${self.id}:"), end=" ", flush=flush)
+        print(text, *args, **kwargs, flush=flush)
 
     def sprint(self, text="", *args, **kwargs):
         if text is None:
             return True
         if 'live' in self.id:
             return
+        flush = kwargs.pop('flush', True)
         # self.logger.info(f"Output : {text}")
-        print(Style.CYAN(f"System${self.id}:"), end=" ")
+        print(Style.CYAN(f"System${self.id}:"), end=" ", flush=flush)
         if isinstance(text, str) and kwargs == {} and text:
             stram_print(text + ' '.join(args))
             print()
         else:
-            print(text, *args, **kwargs)
+            print(text, *args, **kwargs, flush=flush)
 
     # ----------------------------------------------------------------
     # Decorators for the toolbox

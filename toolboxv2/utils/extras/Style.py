@@ -205,6 +205,11 @@ class Style:
 
     @staticmethod
     @text_save
+    def Underlined(text: str):
+        return Style._Underline + text + Style._END
+
+    @staticmethod
+    @text_save
     def Reversed(text: str):
         return Style._Reversed + text + Style._END
 

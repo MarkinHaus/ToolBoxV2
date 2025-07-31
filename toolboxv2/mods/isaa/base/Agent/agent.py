@@ -1073,17 +1073,19 @@ class EnhancedAgent(*_AgentBaseClass):
                 # 7. Track Cost (using last_llm_result if available)
                 if self.last_llm_result:
                     try:
-                        cost = completion_cost(completion_response=self.last_llm_result, model=self.amd.model)
+                        model_name = self.amd.model if self.amd.model.count("/") < 2 else '/'.join(self.amd.model.split("/")[1:])
+                        if 'google' in model_name: model_name = model_name.replace('google', 'gemini')
+                        cost = completion_cost(completion_response=self.last_llm_result, model=model_name)
                         if cost:
                             turn_cost = cost
                             self.total_cost += turn_cost
                             logger.info(f"Turn Cost: ${turn_cost:.6f}, Total Cost: ${self.total_cost:.6f}")
                             span.set_attribute("llm_cost", turn_cost)
                             span.set_attribute("total_agent_cost", self.total_cost)
-                        self.last_llm_result = None # Clear after use
                     except Exception as cost_e:
-                        logger.warning(f"Failed to calculate cost: {cost_e}")
-                        span.add_event("Cost calculation failed", attributes={"error": str(cost_e)})
+                        pass
+                        #logger.warning(f"Failed to calculate cost: {cost_e}")
+                        #span.add_event("Cost calculation failed", attributes={"error": str(cost_e)})
 
 
                 # 8. Run Post Callback

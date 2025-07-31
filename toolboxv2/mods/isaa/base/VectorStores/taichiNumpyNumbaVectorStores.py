@@ -921,7 +921,7 @@ class FastVectorStore1(AbstractVectorStore):
         query_embedding = query_embedding.astype(np.float32)
 
         # Pre-compute normalized embeddings if not cached
-        if self.normalized_embeddings is None:
+        if self.normalized_embeddings is None and len(self.chunks) > 1:
             self._precompute_normalized_embeddings()
 
         # Normalize query

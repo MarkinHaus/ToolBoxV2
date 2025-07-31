@@ -54,7 +54,7 @@ class JSExecutionRecord:
 class DynamicVerboseFormatter:
     """Unified, dynamic formatter that adapts to screen size"""
 
-    def __init__(self, print_func=None, min_width: int = 40, max_width: int = 120):
+    def __init__(self, print_func=None, min_width: int = 40, max_width: int = 240):
         self.style = Style()
         self.print = print_func or print
         self.min_width = min_width
@@ -579,6 +579,21 @@ class EnhancedVerboseOutput:
     def print_separator(self, char: str = "─"):
         """Print a separator line"""
         self.print(self.formatter.style.GREY(char * self.formatter._terminal_width))
+
+    def print_warning(self, message: str):
+        """Print a warning message with yellow style"""
+        if self.verbose:
+            self.print(self.formatter.style.YELLOW(f"⚠️  WARNING: {message}"))
+
+    def print_error(self, message: str):
+        """Print an error message with red style"""
+        if self.verbose:
+            self.print(self.formatter.style.RED(f"❌ ERROR: {message}"))
+
+    def print_success(self, message: str):
+        """Print a success message with green style"""
+        if self.verbose:
+            self.print(self.formatter.style.GREEN(f"✅ SUCCESS: {message}"))
 
 
 

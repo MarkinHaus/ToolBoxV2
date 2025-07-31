@@ -64,7 +64,14 @@ class WorkspaceIsaasCli:
         self.history = FileHistory(Path(self.app.data_dir) / "isaa_cli_history.txt")
 
         # Dedizierte Completer für Pfade
-        self.dir_completer = PathCompleter(only_directories=True, expanduser=True)
+
+        from toolboxv2 import __init_cwd__
+        self.workspace_path = __init_cwd__
+        if self.workspace_path.parent.exists():
+            get_paths = (lambda:['.','..'])
+        else:
+            get_paths = (lambda:['.'])
+        self.dir_completer = PathCompleter(only_directories=True, expanduser=True, get_paths=get_paths)
         self.path_completer = PathCompleter(expanduser=True)
 
         self.completion_dict = self.build_workspace_completer()
@@ -87,8 +94,6 @@ class WorkspaceIsaasCli:
 
         self.background_tasks = {}
         self.interrupt_count = 0
-        from toolboxv2 import __init_cwd__
-        self.workspace_path = __init_cwd__
         self.default_exclude_dirs = [
             "node_modules",
             "__pycache__",
@@ -183,29 +188,36 @@ class WorkspaceIsaasCli:
                 task_id_completer = WordCompleter(running_task_ids, ignore_case=True)
                 self.completion_dict["/tasks"]["attach"] = task_id_completer
                 self.completion_dict["/tasks"]["kill"] = task_id_completer
+                self.completion_dict["/tasks"]["view"] = task_id_completer
             else:
                 # Wenn keine Tasks laufen, leere Completer setzen
                 self.completion_dict["/tasks"]["attach"] = WordCompleter([])
                 self.completion_dict["/tasks"]["kill"] = WordCompleter([])
+                self.completion_dict["/tasks"]["view"] = WordCompleter([])
         except Exception:
             self.completion_dict["/tasks"]["attach"] = WordCompleter([])
             self.completion_dict["/tasks"]["kill"] = WordCompleter([])
+            self.completion_dict["/tasks"]["view"] = WordCompleter([])
 
         try:
             import git
             repo = git.Repo(search_parent_directories=False)
             branch_names = [branch.name for branch in repo.branches]
-            if branch_names:
-                branch_completer = WordCompleter(branch_names, ignore_case=True)
-                self.completion_dict["/system"]["branch"] = branch_completer
-            else:
-                if "/system" in self.completion_dict:
-                    self.completion_dict["/system"]["branch"] = WordCompleter([])
-        except ImportError:
-            self.completion_dict["/system"]["branch"] = None
-        except Exception as e:
+            self.completion_dict["/system"]["branch"] = WordCompleter(branch_names,
+              ignore_case=True) if branch_names else WordCompleter([])
 
-            self.completion_dict["/system"]["branch"] = None
+            commit_hashes = [commit.hexsha[:7] for commit in repo.iter_commits(max_count=20)]
+            self.completion_dict["/system"]["restore"] = WordCompleter(commit_hashes,
+               ignore_case=True) if commit_hashes else WordCompleter([])
+
+        except ImportError:
+            # Fallback if GitPython not installed or not a repo
+            self.completion_dict["/system"]["branch"] = WordCompleter([])
+            self.completion_dict["/system"]["restore"] = WordCompleter([])
+        except Exception:
+            # Generic fallback
+            self.completion_dict["/system"]["branch"] = WordCompleter([])
+            self.completion_dict["/system"]["restore"] = WordCompleter([])
 
 
         self.prompt_session.completer = FuzzyCompleter(NestedCompleter.from_nested_dict(self.completion_dict)) #self.completer_dict_to_world_completer()
@@ -247,7 +259,7 @@ class WorkspaceIsaasCli:
                 "switch": WordCompleter([]),  # Wird dynamisch gefüllt
             },
             "/tasks": {
-                "list": None, "attach": WordCompleter([]), "kill": WordCompleter([]), "status": None,
+                "list": None, "attach": WordCompleter([]), "kill": WordCompleter([]), "status": None, "view": WordCompleter([]),
             },
             "/context": {
                 "list": None, "clear": None, "save": None,
@@ -585,29 +597,77 @@ class WorkspaceIsaasCli:
             return f"❌ Error removing agent: {str(e)}"
 
     async def list_agents_tool(self, detailed: bool = False):
-        """List all available agents with optional details"""
+        """List all available agents with optional details including session stats and tools."""
         agents = self.isaa_tools.config.get("agents-name-list", [])
-        if not agents: return "📝 No agents available"
+        if not agents:
+            return "📝 No agents available"
+
+        # --- Simple, non-detailed view ---
         if not detailed:
             agent_list = "🤖 Available Agents:\n"
             for name in agents:
                 marker = "🟢" if name == self.active_agent_name else "⚪"
                 agent_list += f"{marker} {name}\n"
             return agent_list
-        agent_info = "🤖 Detailed Agent Information:\n\n"
+
+        # --- Enhanced, detailed view ---
+        # Use a list to build the output parts
+        output_lines = [Style.Bold("🤖 Detailed Agent Information")]
+
         for name in agents:
+            output_lines.append("\n" + "─" * 60)
+            marker = "🟢" if name == self.active_agent_name else "⚪"
+
             try:
                 agent = await self.isaa_tools.get_agent(name)
-                status = "✅ Active" if agent else "❌ Inactive"
-                marker = "🟢" if name == self.active_agent_name else "⚪"
-                agent_info += f"{marker} {name}: {status}\n"
-                if agent and hasattr(agent, 'system_message'):
-                    msg = agent.system_message[:100] + "..." if len(agent.system_message) > 100 else agent.system_message
-                    agent_info += f"   System: {msg}\n"
-                agent_info += "\n"
+                status = Style.GREEN("✅ Active") if agent else Style.YELLOW("❌ Inactive")
+                output_lines.append(f"{marker} {Style.Bold(name)}: {status}")
+
+                if not agent:
+                    output_lines.append(Style.GREY("   (Agent could not be loaded)"))
+                    continue
+
+                # System Message
+                if hasattr(agent.amd, 'system_message') and agent.amd.system_message:
+                    msg = (agent.amd.system_message[:250] + '...') if len(
+                        agent.amd.system_message) > 250 else agent.amd.system_message
+                    output_lines.append(
+                        f"\n   {Style.Underlined('System Prompt')}:\n     {Style.GREY(msg.replace('\n', '\n     '))}")
+
+                # Tools
+                if hasattr(agent, '_adk_tools_transient') and agent._adk_tools_transient:
+                    tool_names = [tool.__name__ for tool in agent._adk_tools_transient]
+                    output_lines.append(f"\n   {Style.Underlined('Tools')}:")
+                    if tool_names:
+                        tools_str = ", ".join(tool_names)
+                        output_lines.append(f"     {Style.CYAN(tools_str)}")
+                    else:
+                        output_lines.append(f"     {Style.GREY('No tools configured.')}")
+
+                # Session Statistics
+                stats = self.session_stats["agents"].get(name)
+                output_lines.append(f"\n   {Style.Underlined('Session Stats')}:")
+                if stats:
+                    cost = stats.get('cost', 0.0)
+                    prompt_tokens = stats.get('tokens', {}).get('prompt', 0)
+                    completion_tokens = stats.get('tokens', {}).get('completion', 0)
+                    tool_calls = stats.get('tool_calls', 0)
+
+                    stats_table = [
+                        f"     - Est. Cost   : {Style.YELLOW(f'${cost:.5f}')}",
+                        f"     - Tokens (P/C): {Style.BLUE(f'{prompt_tokens} / {completion_tokens}')}",
+                        f"     - Tool Calls  : {Style.MAGENTA(str(tool_calls))}"
+                    ]
+                    output_lines.extend(stats_table)
+                else:
+                    output_lines.append(f"     {Style.GREY('No activity recorded in this session.')}")
+
             except Exception as e:
-                agent_info += f"⚪ {name}: Error - {str(e)}\n\n"
-        return agent_info
+                output_lines.append(
+                    f"⚪ {Style.Bold(name)}: {Style.RED(f'Error - {str(e)}')}")
+
+        output_lines.append("\n" + "─" * 60)
+        return "\n".join(output_lines)
 
     async def run_agent_background_tool(self, agent_name: str, task_prompt: str, session_id: Optional[str] = None,
                                         priority: Optional[str] = "normal"):
@@ -729,8 +789,8 @@ class WorkspaceIsaasCli:
             overview_text = (
                 f"  Path:         {Style.CYAN(str(self.workspace_path))}\n"
                 f"  Active Agent: {Style.YELLOW(self.active_agent_name)}\n"
-                f"  Background:   {Style.BLUE(f'{bg_running} running')} / {bg_total} total"
-                f"  Session ID: {self.session_id}\n"
+                f"  Background:   {Style.BLUE(f'{bg_running} running')} / {bg_total} total\n"
+                f"  Session ID: {self.session_id}"
             )
             self.formatter.print_section("Overview 📝", overview_text)
 
@@ -897,28 +957,126 @@ class WorkspaceIsaasCli:
             self.active_agent_name = "workspace_supervisor"
         builder = self.isaa_tools.get_agent_builder(self.active_agent_name)
         builder.with_system_message(
-            """You are the Workspace Supervisor, a sophisticated AI agent designed to manage a development environment with precision and efficiency.
+            """You are the Workspace Supervisor, an elite AI agent operating within the Google ADK framework. Your mission is to orchestrate and supervise a complex multi-agent development environment with unwavering precision and strategic intelligence.
 
-**Your Core Directives:**
+## Core Identity & Persona
 
-*   **Orchestrate Tasks:** Your primary role is to manage files, directories, and complex workflows. You are the central coordinator for all activities within the workspace.
-*   **Delegate and Conquer:** You are not meant to perform every task yourself. You have a team of specialized agents at your disposal. Delegate tasks like coding, writing, or analysis to the appropriate agent. For any long-running process, you MUST execute it as a background task to keep the main interface responsive.
-*   **Maintain Clarity:** Report your actions clearly and concisely. Provide detailed feedback on the success or failure of operations. Keep the workspace organized and clean.
-*   **Master Your Tools:** You have a comprehensive set of tools for file manipulation, agent management, and task execution. Use them wisely and efficiently.
+You embody the characteristics of a seasoned operations director - methodical, decisive, and perpetually vigilant. You think three steps ahead, anticipate bottlenecks, and maintain absolute situational awareness across your domain. Your communication is crisp, professional, and solution-oriented.
 
-**Your Workflow:**
+Key Traits:
+- Strategic Thinker: You evaluate the complexity and scope of every request
+- Efficiency Expert: You optimize workflows and eliminate redundancy
+- Quality Assurance: You ensure all delegated tasks meet standards
+- Adaptive Leader: You adjust strategies based on real-time feedback
 
-1.  **Analyze the Request:** Understand the user's goal.
-2.  **Formulate a Plan:** Decide which tools and agents are needed.
-3.  **Execute and Delegate:** Run commands and delegate to other agents, preferably in the background.
-4.  **Report Results:** Inform the user of the outcome.
+## Operational Framework
 
-**Key Principles:**
+### Task Classification & Execution Strategy
 
-*   **Efficiency:** Always choose the most direct path to accomplish a goal.
-*   **Robustness:** Anticipate and handle potential errors.
-*   **Clarity:** Communicate with the user in a clear and professional manner.
-*   **Proactiveness:** When appropriate, suggest next steps or improvements."""
+DIRECT EXECUTION (Simple/Small Tasks):
+- File operations (create, move, delete, read)
+- Basic directory management
+- Simple queries or information retrieval
+- Quick status checks
+- Execute immediately using available tools
+
+BACKGROUND DELEGATION (Medium/Moderate Tasks):
+- Code generation or modification
+- Document creation or editing
+- Data analysis or processing
+- Multi-step workflows
+- MUST use `run_agent_background_tool` or to wait for the result direcly use `run_agent`
+
+SELF-BACKGROUND ASSIGNMENT (Complex/Large Tasks):
+- Multi-agent orchestration projects
+- System-wide refactoring
+- Comprehensive testing suites
+- Large-scale data migrations
+- Assign yourself as background task for oversight
+
+### Mandatory Operational Protocols
+
+1. Tool-First Approach: Every action MUST utilize available tools through the Google ADK framework
+2. Regular Reflection Cycle: Every 2.5 operations, pause and assess:
+   - Are tasks progressing efficiently?
+   - Do any agents need course correction?
+   - Are there emerging bottlenecks or issues?
+   - Should priorities be adjusted?
+3. JSON Syntax Compliance: All tool usage must follow strict JSON formatting
+4. Background Task Preference: Default to background execution for anything beyond trivial operations
+
+## Workflow Execution Pattern
+
+### Phase 1: Strategic Analysis
+- Complexity Assessment: Categorize request (Simple/Medium/Complex)
+- Resource Mapping: Identify required tools and agents
+- Risk Evaluation: Anticipate potential failure points
+- Execution Strategy: Choose direct, delegate, or self-background approach
+
+### Phase 2: Tactical Execution
+- Tool Activation: Execute using Google ADK framework tools
+- Agent Coordination: Deploy specialized agents as needed
+- Background Orchestration: Monitor and manage concurrent tasks
+- Quality Gates: Implement checkpoints for critical operations
+
+### Phase 3: Monitoring & Reflection
+- Progress Tracking: Continuously monitor all active operations
+- Performance Analysis: Evaluate efficiency and effectiveness
+- Corrective Actions: Adjust course when deviations occur
+- Stakeholder Communication: Provide clear, actionable updates
+
+## Agent Management Responsibilities
+
+Supervision Standards:
+- Verify each agent is executing within scope
+- Ensure task completion meets quality benchmarks
+- Intervene when agents deviate from objectives
+- Reallocate resources when bottlenecks emerge
+- Maintain comprehensive audit trail of all activities
+
+Performance Optimization:
+- Monitor agent workload distribution
+- Identify and eliminate process inefficiencies
+- Implement continuous improvement initiatives
+- Scale resources dynamically based on demand
+
+## Communication Protocols
+
+Status Reporting:
+- Lead with executive summary
+- Detail specific actions taken
+- Highlight any issues or blockers
+- Recommend next steps or alternatives
+
+Error Handling:
+- Acknowledge failures immediately
+- Provide root cause analysis
+- Outline remediation steps
+- Implement preventive measures
+
+## Critical Success Factors
+
+1. Unwavering Tool Usage: Never attempt manual processes when tools exist
+2. Background Task Mastery: Prefer asynchronous execution for scalability
+3. Reflection Discipline: Maintain the 2.5-operation reflection cycle
+4. Google ADK Adherence: All operations must comply with framework standards
+5. Agent Accountability: Ensure every delegated task has clear success criteria
+
+## Example Decision Matrix
+
+Simple Request (e.g., "Check file status")
+→ Execute directly with appropriate tool
+
+Medium Request (e.g., "Generate API documentation")
+→ Delegate to specialized agent via `run_agent` in background
+
+Complex Request (e.g., "Refactor entire codebase with testing")
+→ Create comprehensive background task for self-execution with multiple agent coordination
+
+---
+
+Remember: You are not just managing tasks - you are orchestrating a symphony of specialized intelligence. Every decision you make cascades through the entire system. Think strategically, act decisively, and maintain relentless focus on delivering exceptional results.
+"""
         )
         builder = await self.add_comprehensive_tools_to_agent(builder)
         print("Registering workspace agent...")
@@ -1140,7 +1298,10 @@ class WorkspaceIsaasCli:
             nonlocal agent_task
             if agent_task and not agent_task.done():
                 agent_task.cancel()
-            event.app.exit()
+            try:
+                event.app.exit()
+            except Exception as e:
+                print(f"Error exiting app: {e}")
 
         # Handler for Esc
         @kb.add('escape')
@@ -1148,7 +1309,10 @@ class WorkspaceIsaasCli:
             nonlocal agent_task
             if agent_task and not agent_task.done():
                 agent_task.cancel()
-            event.app.exit()
+            try:
+                event.app.exit()
+            except Exception as e:
+                print(f"Error exiting app: {e}")
 
         # Statuszeile ganz unten mit invertierter Farbe
         from prompt_toolkit.layout.dimension import D
@@ -1186,11 +1350,14 @@ class WorkspaceIsaasCli:
                 nonlocal agent_task
                 try:
                     response = await agent_task
-                    main_app.print_text("\n" + response)
+                    await self.formatter.print_agent_response(response)
                 except asyncio.CancelledError:
-                    main_app.print_text("\nOperation interrupted by user.")
+                    main_app.print_text("\nOperation interrupted by user.\n")
                 finally:
-                    main_app.exit()
+                    try:
+                        main_app.exit()
+                    except Exception as e:
+                        pass
 
             main_app.create_background_task(run_task())
 
@@ -1202,7 +1369,7 @@ class WorkspaceIsaasCli:
             if agent_task and not agent_task.done():
                 agent_task.cancel()
             print()
-            self.formatter.print_warning("Operation interrupted by user.")
+            self.formatter.print_warning("Operation interrupted by user.\n")
 
         except asyncio.CancelledError:
             # This is expected after a KeyboardInterrupt, so we can pass silently.
@@ -1448,7 +1615,7 @@ class WorkspaceIsaasCli:
                     handler = command_map.get(cmd_)
                     break
             else:
-                self.formatter.print_error(f"Unknown command: {command} {args}")
+                self.formatter.print_error(f"Unknown command: {command} {args if args else ''}")
                 self.formatter.print_info("Type /help for available commands")
                 return
         try:
@@ -1485,7 +1652,7 @@ class WorkspaceIsaasCli:
                 return
             try:
                 key, value = args[1], " ".join(args[2:])
-                await agent.world_model.set(key, value)
+                agent.world_model.set(key, value)
                 self.formatter.print_success(f"World model updated with {key}: {value}")
             except Exception as e:
                 self.formatter.print_error(f"Error adding to world model: {e}")
@@ -1495,7 +1662,7 @@ class WorkspaceIsaasCli:
                 return
             try:
                 key = args[1]
-                await agent.world_model.remove(key)
+                agent.world_model.remove(key)
                 self.formatter.print_success(f"World model key '{key}' removed")
             except Exception as e:
                 self.formatter.print_error(f"Error removing from world model: {e}")
@@ -1612,11 +1779,12 @@ class WorkspaceIsaasCli:
             self.formatter.print_error(f"Unknown agent command: {sub_command}")
 
     async def handle_tasks_cmd(self, args: list[str]):
-        """Handle background task management with direct calls."""
+        """Handle background task management, now with an interactive attach mode."""
         if not args:
-            self.formatter.print_error("Usage: /tasks <list|attach|kill|status>")
+            self.formatter.print_error("Usage: /tasks <list|attach|kill|status|view>")
             return
-        sub_command = args[0]
+        sub_command = args[0].lower()
+
         if sub_command in ["list", "status"]:
             try:
                 show_completed = "--all" in args or "-a" in args
@@ -1624,6 +1792,7 @@ class WorkspaceIsaasCli:
                 print(status_output)
             except Exception as e:
                 self.formatter.print_error(f"Error getting task status: {e}")
+
         elif sub_command == "attach":
             if len(args) < 2:
                 self.formatter.print_error("Usage: /tasks attach <task_id>")
@@ -1633,20 +1802,150 @@ class WorkspaceIsaasCli:
                 if task_id not in self.background_tasks:
                     self.formatter.print_error(f"Task {task_id} not found")
                     return
-                task_info = self.background_tasks[task_id]
-                task = task_info['task']
-                if task.done():
-                    try:
-                        self.formatter.print_section(f"Task {task_id} Results", str(task.result()))
-                    except Exception as e:
-                        self.formatter.print_error(f"Task {task_id} failed: {e}")
-                else:
-                    result = await self.formatter.process(f"Attaching to task {task_id}", task)
-                    self.formatter.print_section(f"Task {task_id} Results", str(result))
             except ValueError:
-                self.formatter.print_error("Invalid task ID")
+                self.formatter.print_error("Invalid task ID. Must be a number.")
+                return
+
+            task_info = self.background_tasks[task_id]
+            task = task_info['task']
+
+            # If task is already done, just show the result and exit.
+            if task.done():
+                self.formatter.print_info(f"Task {task_id} has already completed.")
+                try:
+                    self.formatter.print_section(f"Final Result for Task {task_id}", str(task.result()))
+                except asyncio.CancelledError:
+                    self.formatter.print_warning(f"Task {task_id} was cancelled.")
+                except Exception as e:
+                    self.formatter.print_error(f"Task {task_id} failed with an error: {e}")
+                return
+
+            # --- Begin Interactive Attach Mode ---
+            stop_attaching = False
+            output_control = FormattedTextControl(text=ANSI("[q] or [esc] to leave. [k] to kill..."), focusable=False)
+            layout = Layout(HSplit([Window(content=output_control, always_hide_cursor=True)]))
+            kb = KeyBindings()
+
+            @kb.add('l')
+            @kb.add('q')
+            @kb.add('escape')
+            def _(event):
+                """Leave the attach view."""
+                nonlocal stop_attaching
+                stop_attaching = True
+                try:
+                    event.app.exit()
+                except Exception as e:
+                    print(f"Error exiting app: {e}")
+
+            @kb.add('k')
+            async def _(event):
+                """Kill the task and leave."""
+                nonlocal stop_attaching
+                stop_attaching = True
+                await self.kill_background_task_tool(task_id, force=True)
+                try:
+                    event.app.exit()
+                except Exception as e:
+                    print(f"Error exiting app: {e}")
+
+            app = Application(layout=layout, key_bindings=kb, full_screen=True)
+
+            async def attach_view_loop():
+                """The main loop to update the UI with live task events."""
+                while not stop_attaching and not task.done():
+                    lines = []
+                    # Header
+                    header = f"Attaching to Task {task_id} (Agent: {task_info['agent']})"
+                    controls = "[L]eave | [K]ill Task"
+                    lines.append(Style.Bold(f"{header:<60}{controls:>20}"))
+                    lines.append("─" * 80)
+
+                    # Live Log from agent's history
+                    if not task_info.get('history'):
+                        lines.append(Style.GREY("   Waiting for first agent event..."))
+                    else:
+                        for log in task_info['history']:
+                            log_time = time.strftime('%H:%M:%S', time.localtime(log['time']))
+                            log_type = log['type']
+                            log_content = str(log['content']).replace('\n', ' ')
+
+                            if log_type == "Thinking":
+                                line_style = Style.GREY
+                                log_type_str = f"🤔 {log_type:<15}"
+                            elif log_type == "Tool Call":
+                                line_style = Style.BLUE
+                                log_type_str = f"🔧 {log_type:<15}"
+                            else:  # Tool Response
+                                line_style = Style.CYAN
+                                log_type_str = f"💡 {log_type:<15}"
+
+                            lines.append(line_style(f"[{log_time}] {log_type_str} - {log_content[:100]}"))
+
+                    output_control.text = ANSI("\n".join(lines))
+                    await asyncio.sleep(0.5)  # Refresh rate
+
+                # --- Task Finished or User Exited ---
+                final_lines = list(output_control.text.value.split('\n'))
+                final_lines.append("\n" + "─" * 80)
+
+                if task.done() and not stop_attaching:
+                    try:
+                        result = task.result()
+                        final_lines.append(Style.GREEN("✅ Task Completed Successfully."))
+                        final_lines.append(Style.Bold("Final Result:"))
+                        final_lines.append(str(result))
+                    except asyncio.CancelledError:
+                        final_lines.append(Style.YELLOW("⏹️ Task was cancelled or killed."))
+                    except Exception as e:
+                        final_lines.append(Style.RED(f"❌ Task Failed: {e}"))
+
+                    output_control.text = ANSI("\n".join(final_lines))
+                    await asyncio.sleep(3)  # Show final status for a few seconds
+                    app.exit()  # Automatically exit app if task finishes
+
+            try:
+                await asyncio.gather(app.run_async(), attach_view_loop())
+            finally:
+                self.formatter.print_info(f"Detached from task {task_id}.")
+
+        elif sub_command == "view":
+            if len(args) < 2:
+                self.formatter.print_error("Usage: /tasks view <task_id> [-d]")
+                return
+            try:
+                task_id = int(args[1])
+                if task_id not in self.background_tasks:
+                    self.formatter.print_error(f"Task {task_id} not found")
+                    return
+            except ValueError:
+                self.formatter.print_error("Invalid task ID. Must be a number.")
+                return
+
+            task_info = self.background_tasks[task_id]
+            task = task_info['task']
+
+            if not task.done():
+                self.formatter.print_warning(f"Task {task_id} is still running. Use 'attach' to see live progress.")
+                return
+
+            show_details = '-d' in args
+
+            self.formatter.print_section(f"Result for Task {task_id}", f"Agent: {task_info['agent']}")
+            try:
+                result = task.result()
+                if show_details:
+                    history_str = json.dumps(task_info.get('history', []), indent=2, default=str)
+                    self.formatter.print_section("Full Execution Details", history_str)
+                    self.formatter.print_section("Final Output", str(result))
+                else:
+                    await self.formatter.print_agent_response(result)
+
+            except asyncio.CancelledError:
+                self.formatter.print_warning(f"Task {task_id} was cancelled.")
             except Exception as e:
-                self.formatter.print_error(f"Error attaching to task: {e}")
+                self.formatter.print_error(f"Task {task_id} failed with an error: {e}")
+
         elif sub_command == "kill":
             if len(args) < 2:
                 self.formatter.print_error("Usage: /tasks kill <task_id> [--force]")
@@ -1814,7 +2113,10 @@ class WorkspaceIsaasCli:
         def _(event):
             nonlocal stop_monitoring
             stop_monitoring = True
-            event.app.exit()
+            try:
+                event.app.exit()
+            except Exception as e:
+                print(f"Error exiting app: {e}")
 
         @kb.add('up')
         def _(event):
@@ -2016,8 +2318,8 @@ class WorkspaceIsaasCli:
         elif sub_command == "performance":
             perf_data = [
                 ["System", f"{platform.system()} {platform.release()}"],
-                ["CPU Auslastung", f"{psutil.cpu_percent()}%"],
-                ["RAM Auslastung", f"{psutil.virtual_memory().percent}%"],
+                ["CPU Usage", f"{psutil.cpu_percent()}%"],
+                ["RAM Usage", f"{psutil.virtual_memory().percent}%"],
                 ["Python Version", platform.python_version()],
                 ["Prozess PID", str(os.getpid())],
             ]
@@ -2049,42 +2351,55 @@ class WorkspaceIsaasCli:
             if not await self._ensure_git_repo():
                 return
 
-            target = " ".join(args[1:]) if len(args) > 1 else "list"
+            # If no commit ID is provided, list the last 10 backups.
+            if len(args) < 2:
+                self.formatter.print_info("Listing last 10 backups (commits):")
+                log_format = "--pretty=format:%h|%cs|%s"
+                log_result = await self._run_git_command(['log', log_format, '-n', '10'])
 
-            if target == "list":
-                self.formatter.print_info("Letzte 10 Backups (Commits):")
-                log_result = await self._run_git_command(
-                    ['log', '--oneline', '--pretty=format:%h - %s (%cr)', '-n', '10'])
-                if log_result.returncode == 0:
-                    self.formatter.print_code_block(log_result.stdout)
-                    self.formatter.print_info(
-                        "\nUm einen Zustand wiederherzustellen, nutzen Sie: /system restore <commit_id>")
+                if log_result.returncode == 0 and log_result.stdout:
+                    headers = ["Commit ID", "Date", "Message"]
+                    rows = [line.split('|', 2) for line in log_result.stdout.strip().split('\n') if line]
+                    self.formatter.print_table(headers, rows)
+                    self.formatter.print_info("\nTo restore, use: /system restore <commit_id>")
                 else:
-                    self.formatter.print_error("Konnte die Backup-Historie nicht abrufen.")
-                    self.formatter.print_code_block(log_result.stderr)
+                    self.formatter.print_error("Could not retrieve backup history.")
+                    if log_result.stderr:
+                        self.formatter.print_code_block(log_result.stderr)
+                return
+
+            target_commit = args[1]
+            self.formatter.print_warning(f"WARNING: This will reset the workspace to commit '{target_commit}'.")
+            self.formatter.print_warning("All uncommitted changes will be PERMANENTLY LOST.")
+
+            try:
+                confirm = await self.prompt_session.prompt_async(
+                    f"Type '{target_commit[:4]}' to confirm restore or anything else to cancel: ")
+                if confirm.strip().lower() != target_commit[:4].lower():
+                    self.formatter.print_info("Restore operation cancelled.")
+                    return
+            except (KeyboardInterrupt, EOFError):
+                self.formatter.print_info("\nRestore operation cancelled by user.")
+                return
+
+            self.formatter.print_info(f"Restoring workspace to '{target_commit}'...")
+            result = await self._run_git_command(['reset', '--hard', target_commit])
+
+            if result.returncode == 0:
+                self.formatter.print_success(f"Workspace successfully restored to commit '{target_commit}'.")
+                self.formatter.print_code_block(result.stdout)
             else:
-                self.formatter.print_warning(
-                    f"WARNUNG: Der Workspace wird unwiderruflich auf den Stand von '{target}' zurückgesetzt.")
-                self.formatter.print_warning("Alle nicht gespeicherten Änderungen gehen verloren.")
-
-                # Hier könnte man eine zusätzliche Bestätigung einbauen
-                # z.B. /system restore <commit_id> --force
-
-                result = await self._run_git_command(['reset', '--hard', target])
-                if result.returncode == 0:
-                    self.formatter.print_success(f"Workspace erfolgreich auf '{target}' zurückgesetzt.")
-                else:
-                    self.formatter.print_error(f"Fehler bei der Wiederherstellung zu '{target}':")
-                    self.formatter.print_code_block(result.stderr)
+                self.formatter.print_error(f"Error while restoring to '{target_commit}':")
+                self.formatter.print_code_block(result.stderr)
 
         elif sub_command == "log":
             # Alias für /system restore list
             await self.handle_system_cmd(["restore", "list"])
 
         else:
-            self.formatter.print_error(f"Unbekannter Systembefehl: {sub_command}")
+            self.formatter.print_error(f"Unknown system command: {sub_command}")
 
-        # --- Private Git Helper Methods ---
+    # --- Private Git Helper Methods ---
 
     async def _ensure_git_repo(self) -> bool:
         """Stellt sicher, dass der Workspace ein Git-Repository ist, und initialisiert es bei Bedarf."""
@@ -2092,7 +2407,7 @@ class WorkspaceIsaasCli:
         if os.path.isdir(git_dir):
             return True
 
-        self.formatter.print_warning("Kein Git-Repository im Workspace gefunden. Initialisiere ein Neues...")
+        self.formatter.print_warning("No Git-Repository in Workspace found. crating new one...")
         result = await self._run_git_command(['init'])
         if result.returncode == 0:
             self.formatter.print_success("Git-Repository erfolgreich initialisiert.")
@@ -2103,28 +2418,33 @@ class WorkspaceIsaasCli:
             return False
 
     async def _run_git_command(self, command_args: list[str]) -> subprocess.CompletedProcess:
-        """Führt einen Git-Befehl sicher im Workspace-Verzeichnis aus."""
-        # '-C' weist Git an, im angegebenen Verzeichnis zu laufen, ohne das CWD zu ändern
+        """Runs a Git command safely in the workspace directory with explicit UTF-8 encoding."""
+        # '-C' tells Git to run in the specified directory without changing the script's CWD
         base_command = ['git', '-C', str(self.workspace_path)]
         full_command = base_command + command_args
 
         try:
-            # Führe den Prozess in einem Thread aus, um den Haupt-Event-Loop nicht zu blockieren
+            # Run the blocking subprocess call in a separate thread to not block the asyncio event loop
             return await asyncio.to_thread(
                 subprocess.run,
                 full_command,
                 capture_output=True,
-                text=True,
-                check=False  # Wir prüfen den returncode manuell
+                text=True,  # Keep True to get strings, not bytes
+                check=False,  # We check the returncode manually
+                # ---- THE FIX IS HERE ----
+                # Explicitly decode the output from Git as UTF-8, overriding the Windows default (cp1252)
+                encoding='utf-8',
+                # As a safeguard, replace any characters that still can't be decoded
+                errors='replace'
             )
         except FileNotFoundError:
-            # Dies passiert, wenn 'git' nicht im System-PATH ist
+            # This happens if 'git' is not installed or not in the system PATH
             self.formatter.print_error(
-                "Fehler: Der 'git'-Befehl wurde nicht gefunden. Bitte stellen Sie sicher, dass Git installiert und im PATH ist.")
-            # Gebe ein "leeres" Fehlerergebnis zurück
-            return subprocess.CompletedProcess(args=full_command, returncode=1, stderr="Git-Befehl nicht gefunden.")
+                "Error: The 'git' command was not found. Please ensure Git is installed and in your system's PATH.")
+            # Return a "blank" failed process result
+            return subprocess.CompletedProcess(args=full_command, returncode=1, stderr="Git command not found.")
         except Exception as e:
-            self.formatter.print_error(f"Ein unerwarteter Fehler ist bei der Ausführung von Git aufgetreten: {e}")
+            self.formatter.print_error(f"An unexpected error occurred while running Git: {e}")
             return subprocess.CompletedProcess(args=full_command, returncode=1, stderr=str(e))
 
     async def handle_help_cmd(self, args: list[str]):
@@ -2145,14 +2465,19 @@ class WorkspaceIsaasCli:
         )
         command_data = [
             # Workspace & File System
+            ["Workspace & File System", ""],
             ["/workspace status", "Show an overview of the current workspace, including Git status."],
             ["/workspace cd <dir>", "Change the current workspace directory."],
             ["/workspace ls [path]", "List contents of a directory. Use -r for recursive, -a for all."],
+            ["", ""],
+            ["Agent Management",""],
 
             # Agent Management
             ["/agent list [-d]", "Show available agents. Use -d for detailed view."],
             ["/agent switch <name>", "Switch the currently active agent."],
             ["/agent status", "Display information about the active agent and session."],
+            ["", ""],
+            ["World Model (Agent Memory)",""],
 
             # World Model (Agent Memory)
             ["/world show", "Display the agent's current world model (short-term memory)."],
@@ -2162,12 +2487,17 @@ class WorkspaceIsaasCli:
             ["/world load <tag>", "Load a previously saved world model."],
             ["/world list", "List all saved world model tags."],
             ["/world clear", "Clear the current world model."],
+            ["", ""],
+            ["Task & Process Management",""],
 
             # Task & Process Management
+            ["/tasks view <id> [-d]", "View the result of a completed task with optional details."],
             ["/tasks list [-a]", "List background tasks. Use -a to show completed tasks."],
             ["/tasks attach <id>", "Attach to a task's live output and follow its progress."],
             ["/tasks kill <id>", "Cancel a running background task by its ID."],
             ["/monitor", "Enter a full-screen interactive monitor for all background tasks."],
+            ["", ""],
+            ["Context & Session",""],
 
             # Context & Session
             ["/context save [name]", "Save the current conversation history to a file."],
@@ -2175,14 +2505,18 @@ class WorkspaceIsaasCli:
             ["/context list", "Show all saved conversation contexts."],
             ["/context delete <name>", "Delete a saved context file."],
             ["/context clear", "Clear the message history for the current session."],
+            ["", ""],
+            ["System & Git",""],
 
             # System & Git
             ["/system branch <name>", "Switch to an existing Git branch or create a new one."],
             ["/system config", "Display the current (non-sensitive) application configuration."],
             ["/system performance", "Show system CPU, memory, and process information."],
             ["/system backup [msg]", "Create a workspace backup (Git commit)."],
-            ["/system restore [id]", "Restore workspace to a previous backup. Use 'list' to see history."],
+            ["/system restore [id]", "Restore workspace to a previous backup"],
             ["/system log", "Show the backup (Git commit) history for the workspace."],
+            ["", ""],
+            ["General",""],
 
             # General
             ["/clear", "Clear the terminal screen."],
@@ -2223,7 +2557,7 @@ class WorkspaceIsaasCli:
         exit(0)
 
 
-async def run(app, *args, **kwargs):
+async def run(app, *args):
     """Entry point for the enhanced ISAA CLI"""
     app = get_app("isaa_cli_instance")
     cli = WorkspaceIsaasCli(app)

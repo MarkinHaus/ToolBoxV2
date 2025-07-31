@@ -45,7 +45,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from typing import Any, Optional
+from typing import Any, Optional, Awaitable
 
 from toolboxv2 import FileHandler, MainTool, Spinner, Style, get_app, get_logger
 
@@ -53,7 +53,7 @@ from toolboxv2 import FileHandler, MainTool, Spinner, Style, get_app, get_logger
 from .base.Agent.agent import (
     EnhancedAgent,
     AgentModelData,  # For type hinting if needed
-    WorldModel,  # For type hinting if needed
+    WorldModel, ProcessingStrategy,  # For type hinting if needed
 )
 from .base.Agent.builder import (
     EnhancedAgentBuilder,
@@ -840,6 +840,7 @@ class Tools(MainTool, FileHandler):
                         session_id: Optional[str] = None,
                         persist_history: bool = True,
                         strategy_override: str | None = None,  # Maps to ProcessingStrategy enum
+                        progress_callback: Callable[[Any], None | Awaitable[None]] | None = None,
                         **kwargs):  # Other kwargs for a_run
         if text is None: return ""
         if text == "test": return ""
@@ -854,11 +855,14 @@ class Tools(MainTool, FileHandler):
                 f"Invalid agent identifier type: {type(name)}")
 
         self.print(f"Running agent {agent_instance.amd.name} for task: {text[:100]}...")
+        save_p = None
+        if progress_callback:
+            save_p = agent_instance.progress_callback
+            agent_instance.progress_callback = progress_callback
 
         # Map strategy_override string to Enum if needed
         # from toolboxv2.mods.isaa.base.Agent.agent import ProcessingStrategy (example)
-        # strategy_enum = ProcessingStrategy[strategy_override.upper()] if strategy_override else None
-        strategy_enum = None  # Placeholder, actual enum needed if used
+        strategy_enum = ProcessingStrategy[strategy_override.upper()] if strategy_override else None
 
         # Call EnhancedAgent's a_run method
         response = await agent_instance.a_run(
@@ -868,6 +872,9 @@ class Tools(MainTool, FileHandler):
             strategy_override=strategy_enum,
             kwargs_override=kwargs  # Pass other kwargs if a_run supports them
         )
+        if save_p:
+            agent_instance.progress_callback = save_p
+
         return response
 
     # mass_text_summaries and related methods remain complex and depend on AISemanticMemory
